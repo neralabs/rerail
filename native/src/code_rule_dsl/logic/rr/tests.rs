@@ -4126,48 +4126,60 @@ ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
 const SPLIT_MODULES: usize = 32;
 const SPLIT_REFERENCES: usize = 4;
 
-/// python/calls over `SPLIT_MODULES` modules of `SPLIT_REFERENCES` builtin references each: no demand split's rows grow
-/// as the references times the modules (`plan::demand::over::disconnected`). `builtin_ref`'s split with `docof` cut
-/// was every reference against every module (8,801 rows of work in its `pre_<i>` here, over the 4,096 of references
-/// times modules; 129.7M rows on edx-platform's 4,459 files). The profile is the process's, so the run is a child
-/// process of its own (`demand_split_child`), its rows read from its `heads.tsv`.
+/// python/calls over `SPLIT_MODULES` modules of `SPLIT_REFERENCES` builtin references each, and over half as many: no
+/// demand split's rows grow faster than the modules (`plan::demand::over::disconnected`). `builtin_ref`'s split with
+/// `docof` cut was every reference against every module (8,801 rows of work in its `pre_<i>` at 32 modules, four times
+/// its rows at 16; 129.7M rows on edx-platform's 4,459 files). A phase's splits do work per node of each file (py_names'
+/// `nameref`, every identifier), linear in the modules, which a bound on the references alone took for growth. The
+/// profile is the process's, so each run is a child process of its own (`demand_split_child`), its rows read from its
+/// `heads.tsv`.
 #[test]
 fn a_demand_split_stays_linear_in_the_modules() {
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().join("src");
-    std::fs::create_dir_all(&root).unwrap();
     // Plain nodes make the program's rarer kinds anchors (fewer than 1/32 of the nodes), so `docof` is a candidate.
     let filler = (1..=300).map(|i| i.to_string()).collect::<Vec<_>>().join(", ");
     let source = format!("x = len([1])\nprint(x)\ny = len(\"ab\")\nprint(y)\nDATA = [{filler}]\n");
     assert_eq!(source.matches("len(").count() + source.matches("print(").count(), SPLIT_REFERENCES);
-    for m in 0..SPLIT_MODULES {
-        std::fs::write(root.join(format!("m{m}.py")), &source).unwrap();
-    }
-    let rule = directory.path().join("calls.rerail");
-    std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
-    let profile = directory.path().join("profile");
-    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
-    child
-        .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])
-        .env("RERAIL_PROFILE", &profile)
-        .env("RERAIL_TAPE_CACHE", "off")
-        .env("DEMAND_SPLIT_RULE", &rule)
-        .env("DEMAND_SPLIT_ROOT", &root)
-        .env("DEMAND_SPLIT_OUT", directory.path().join("out"));
-    let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
-    assert!(status.success());
-    // part, head, cpu_s, work (rows into the head's steps), plans
-    let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
-    let rows: Vec<(&str, &str, u64)> = heads.lines().skip(1).map(|l| {
-        let c: Vec<&str> = l.split('\t').collect();
-        (c[0], c[1], c[3].parse().unwrap())
-    }).collect();
-    assert!(rows.iter().any(|(part, _, _)| part.contains("typing programs")), "the typing program ran: {heads}");
-    let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
-    for (part, head, work) in &rows {
-        if head.starts_with("pre_") || head.starts_with("demand_") {
-            assert!(*work < product / 4, "{head} ({part}): {work} rows, against {product} for every reference times every module");
+    // Per part, its largest split's rows into its steps and the split, of a run over `modules` modules.
+    let run = |modules: usize| -> std::collections::BTreeMap<String, (u64, String)> {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("src");
+        std::fs::create_dir_all(&root).unwrap();
+        for m in 0..modules {
+            std::fs::write(root.join(format!("m{m}.py")), &source).unwrap();
         }
+        let rule = directory.path().join("calls.rerail");
+        std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
+        let profile = directory.path().join("profile");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("RERAIL_TAPE_CACHE", "off")
+            .env("DEMAND_SPLIT_RULE", &rule)
+            .env("DEMAND_SPLIT_ROOT", &root)
+            .env("DEMAND_SPLIT_OUT", directory.path().join("out"));
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success());
+        // part, head, cpu_s, work (rows into the head's steps), plans
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
+        assert!(heads.lines().any(|l| l.contains("typing programs")), "the typing program ran: {heads}");
+        let mut rows: std::collections::BTreeMap<String, (u64, String)> = std::collections::BTreeMap::new();
+        for l in heads.lines().skip(1) {
+            let c: Vec<&str> = l.split('\t').collect();
+            let work = c[3].parse::<u64>().unwrap();
+            if (c[1].starts_with("pre_") || c[1].starts_with("demand_")) && rows.get(c[0]).is_none_or(|(w, _)| work > *w) {
+                rows.insert(c[0].to_owned(), (work, c[1].to_owned()));
+            }
+        }
+        rows
+    };
+    let (half, whole) = (run(SPLIT_MODULES / 2), run(SPLIT_MODULES));
+    // Splits are numbered as each run's plan made them, so a part's largest is compared. Twice the modules, a linear
+    // split's rows about twice (a fixed cost besides: the slack); every reference against every module's, four times.
+    let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
+    for (part, (work, head)) in &whole {
+        let (before, was) = half.get(part).cloned().unwrap_or((0, String::new()));
+        assert!(*work <= 5 * before / 2 + product / 16, "{head} ({part}): {work} rows over {SPLIT_MODULES} modules, against {was}'s {before} over {}", SPLIT_MODULES / 2);
     }
 }
 

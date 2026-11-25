@@ -226,6 +226,40 @@ Found on the way and fixed:
      commit: Django's `bwh_method`, `dj_instance_value`, `ghw_model_instance`, `ghw_model_ref`,
      `sora_model_instance` (split), and `dj_fetch_call`, `dj_instance_class`, `dj_instance_value`, `dj_qs_model`
      (node), which pair two files' class nodes. Fix 3b keys them by symbol.
+9. **Django's models, Meta options, managers, hooks and receivers by symbol** (the branch's ff0924b589, a2cd36b350
+   and 91ce1bf9c1: 0677 fixes 3b, 3c and 3d).
+   - The phase `py_names` gains a Django section. It turns each Meta class's body into symbols and joins Meta
+     inheritance by symbol (the model's own, an abstract base's, a concrete base's). It also hands on managers,
+     `save()`/`delete()` overrides and signal receivers, all under the model's module.
+   - Django's library reads these at a node of the reading file. `dj_model_base` and `dj_test_doc` move to
+     `python/django-shared.rerail`, one list for the library and the phase.
+   - Python's syntax-only helpers (`unparen`, `call_arg`, `body_stmt`, `docstring`, ...) move to
+     `python/syntax.rerail`, which `python/scopes` includes, so the phase reads them.
+   - The touched rules follow: `bulk-write-skips-hooks`, `fk-id-not-relation`, `get-or-create-needs-unique`,
+     `read-modify-write`, `select-related-in-loop`, `task-arg-model-instance`.
+   - The one data-layer edit: `swallowed-exceptions`' own `unparen` is `se_unparen`. The library's `unparen` now
+     reaches it through `python/scopes`, and two definitions of one relation do not load.
+   - Tests: a Django model, its Meta and managers, and its hooks are each read by symbol in another file. On main the
+     library is the pack's (`packs/django/rules/lib`), so the tests' programs include it as the pack's rules do,
+     copied beside the program. The Django pack's 27 rule tests pass (`test-rr`).
+   - Not ported: demand stored as a sorted set (`program_facts`), the tests that compare with it, and the branch's
+     test compile fix. Main has neither the linked program nor that crate.
+   - Found on the way, on main:
+     - The inliner (`simplify::inline_filters`) numbered its fresh variables across the whole program. Dropping
+       an unreached clause renumbered every later rule, so `lazy-architecture`'s program changed when only
+       unreached clauses were dropped. The numbers are now per rule, each copy carrying its count, and a number
+       whose names the rule already holds is skipped.
+     - `python/scopes`' `in_first_iter` went through `first_iter`, now one definition in `scopes`, taken from
+       `pyflakes`. It binds the comprehension kinds itself, so it is no filter the inliner folds back. Before this,
+       the phase's demand split cut `first_for` off and started from `field(fc, "right", e)`, walking every
+       assignment's right side: 20,385 rows on the split test's 32 files, against 1,441 now.
+     - `a_demand_split_stays_linear_in_the_modules` measured every split against the references times the
+       modules. Since fix 7 the phase does work per identifier (`nameref`, 1,441 rows), linear, which that bound
+       took for growth; the test failed from fix 7 on. It now runs 16 and 32 modules, and each part's largest
+       split may grow at most 2.5 times, plus a fixed slack. The quadratic split it was written for grows 4 times.
+   - Lists: split 40 → 35, node 418 → 394 (Django 179 → 155). Added: Django's `sora_async_call` and `sora_hit`. The
+     rule's text is the branch's: the crossing `sora_query` and `sora_model_instance` named is now named where its
+     node enters the cross part. On the branch, the points-to phase (b754ec6c93) moves it.
 
 ## Consequences
 

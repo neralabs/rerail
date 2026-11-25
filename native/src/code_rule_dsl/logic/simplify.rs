@@ -1180,23 +1180,31 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
     if bodies.is_empty() {
         return Vec::new();
     }
-    let mut fresh = 0usize;
+    // Fresh names are numbered per rule, each copy carrying its count: a variable is the rule's own, and a program-wide
+    // count renumbered every later rule when an earlier clause was dropped (unreached), so the same rule lowered two
+    // ways.
     let mut out = Vec::with_capacity(prog.rules.len());
-    let mut work: Vec<Rule> = prog.rules.iter().filter(|r| !bodies.contains_key(r.head.rel.as_str())).cloned().collect();
+    let mut work: Vec<(Rule, usize)> = prog.rules.iter().filter(|r| !bodies.contains_key(r.head.rel.as_str())).map(|r| (r.clone(), 0)).collect();
     work.reverse();
-    while let Some(rule) = work.pop() {
+    while let Some((rule, mut fresh)) = work.pop() {
         let Some(at) = rule.body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && bodies.contains_key(a.rel.as_str()))) else {
             out.push(rule);
             continue;
         };
         let Literal::Atom(read) = rule.body[at].clone() else { unreachable!("a read") };
+        let mut taken = BTreeSet::new();
+        rule.body.iter().for_each(|l| taken.extend(l.vars()));
+        rule.head.args.iter().for_each(|t| t.vars(&mut taken));
         for def in &bodies[read.rel.as_str()] {
-            fresh += 1;
             // The definition's variables renamed apart; a head variable read as a variable becomes it, anything else
             // an equality.
             let mut local = BTreeSet::new();
             def.body.iter().for_each(|l| local.extend(l.vars()));
             def.head.args.iter().for_each(|t| t.vars(&mut local));
+            fresh += 1;
+            while local.iter().any(|v| taken.contains(&format!("{v}_f{fresh}"))) {
+                fresh += 1;
+            }
             let mut to: BTreeMap<String, String> = local.iter().map(|v| (v.clone(), format!("{v}_f{fresh}"))).collect();
             let mut body: Vec<Literal> = Vec::new();
             for (h, r) in def.head.args.iter().zip(&read.args) {
@@ -1223,7 +1231,7 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             }
             let mut c = rule.clone();
             c.body.splice(at..=at, body);
-            work.push(c);
+            work.push((c, fresh));
         }
     }
     prog.rules = out;

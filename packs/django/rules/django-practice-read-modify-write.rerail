@@ -24,7 +24,7 @@
 
 .violation ReadModifyWrite(at: node, o: symbol, x: symbol, model: symbol) "{o}.{x} is read into Python, changed and saved back with {o}.save(): two concurrent requests both read the old value and one change is lost. Let the database do the arithmetic: `{o}.{x} = F(\"{x}\") + n` before {o}.save() (save() and its signals still run; call {o}.refresh_from_db() before reading {o}.{x} again), or `{model}.objects.filter(pk={o}.pk).update({x}=F(\"{x}\") + n)`, which skips them; or lock the row with select_for_update() inside transaction.atomic()."
 ReadModifyWrite(s, o, x, m) :- rmw_change(f, s, o, x), rmw_save(f, sv, o), earlier(s, sv), !rmw_locked(f),
-    rmw_model(f, o, mc), rmw_numeric(mc, x), def_name(mc, m), docof(s, d), !dj_test_doc(d).
+    rmw_model(f, o, mc), rmw_numeric(mc, x), dj_model_named(mc, mq), split_dot(mq, _, m), docof(s, d), !dj_test_doc(d).
 
 // rmw_change(f, s, o, x): statement s in function f sets `o.x` from its own value: `o.x += n`, `o.x -= n`,
 // `o.x = o.x + n`, `o.x = n + o.x`, `o.x = o.x - n`; o is a plain name.
@@ -45,28 +45,27 @@ rmw_save(f, c, o) :- kind(c, "call"), field(c, "function", e), attr_of(e, on, "s
 rmw_locked(f) :- kind(f, "function_definition"), kind(c, "call"), within(c, f), field(c, "function", e),
     attr_of(e, _, "select_for_update").
 
-// rmw_model(f, o, mc): in function f, o holds an instance of model mc read from the database (not created: a new
-// instance is inserted, so `M(...)` and `create()` are left out).
+// rmw_model(f, o, mc): in function f, o holds an instance of the model node mc names (dj_model_named: the class
+// itself, or an expression of f's file naming it) read from the database (not created: a new instance is inserted, so
+// `M(...)` and `create()` are left out).
 .decl rmw_model(f: node, o: symbol, mc: node)
 rmw_model(f, "self", mc) :- dj_model_method(mc, f, _).
 rmw_model(f, o, mc) :- asg(f, o, r, _), unparen(r, c), dj_qs_call(c, m), dj_row_method(m), m != "create",
     field(c, "function", e), attr_of(e, q, _), dj_qs_model(q, mc).
 rmw_model(f, o, mc) :- asg(f, o, r, _), unparen(r, c), kind(c, "call"), field(c, "function", g),
-    sym_of(g, "django.shortcuts.get_object_or_404"), posarg(c, 0, a), (dj_qs_model(a, mc) ; rmw_class(a, mc)).
+    sym_of(g, "django.shortcuts.get_object_or_404"), posarg(c, 0, a), dj_qs_model(a, mc).
+rmw_model(f, o, a) :- asg(f, o, r, _), unparen(r, c), kind(c, "call"), field(c, "function", g),
+    sym_of(g, "django.shortcuts.get_object_or_404"), posarg(c, 0, a), dj_model_named(a, _).
 rmw_model(f, o, mc) :- kind(a, "assignment"), nearest(a, f, fdef), field(a, "left", l),
     (kind(l, "pattern_list") ; kind(l, "tuple_pattern")), child(l, n, 0), kind(n, "identifier"), text(n, o),
     field(a, "right", r), unparen(r, c), (dj_qs_call(c, "get_or_create") ; dj_qs_call(c, "update_or_create")),
     field(c, "function", e), attr_of(e, q, _), dj_qs_model(q, mc).
 rmw_model(f, o, mc) :- kind(s, "for_statement"), nearest(s, f, fdef), field(s, "left", l), kind(l, "identifier"),
     text(l, o), field(s, "right", r), unparen(r, q), dj_qs_model(q, mc).
-// rmw_class(e, mc): e names model class mc of the run.
-.decl rmw_class(e: node, mc: node) cross_file  // pairs two files' class nodes: decision 0677 fix 3b (models by symbol)
-rmw_class(e, mc) :- sym_of(e, q), class_def(mc, q), dj_model(mc).
-
-// rmw_numeric(mc, x): model mc has numeric field x (lib/django's dj_number_field, or a DurationField), declared in
-// its body or in a base class of the run.
+// rmw_numeric(mc, x): the model mc names has numeric field x (python/django's dj_number_field, or a DurationField),
+// declared in its body or an ancestor's of the run.
 .decl rmw_numeric(mc: node, x: symbol)
-rmw_numeric(mc, x) :- dj_has_field(mc, x, t), (dj_number_field(t) ; t = "DurationField").
+rmw_numeric(mc, x) :- dj_model_field(mc, x, t), (dj_number_field(t) ; t = "DurationField").
 
 // The cases, `cases/django-practice-read-modify-write/`, read as one repository: each line ending in `# caught` is
 // reported, and no other line.

@@ -2069,11 +2069,17 @@ fn py_classes_run(dir: &std::path::Path, program: &str) -> (super::Report, std::
     crate::install_store_functions();
     let rule = dir.join("program.rerail");
     std::fs::write(&rule, program).unwrap();
+    // Django's library is the pack's (`packs/django/rules/lib`), included as its rules do: beside the program.
+    if program.contains("#include \"lib/django.rerail\"") {
+        let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/django/rules/lib/django.rerail");
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::copy(lib, dir.join("lib/django.rerail")).unwrap();
+    }
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
-    let rows = ["anc", "old_anc", "lib", "old_lib", "call", "kw", "ref", "meth"]
+    let rows = ["anc", "old_anc", "lib", "old_lib", "call", "kw", "ref", "meth", "dq", "df", "dk", "dm", "mg", "mc", "mu", "mo", "da", "mm", "hk", "rd"]
         .into_iter()
         .filter_map(|name| {
             let mut rows: Vec<Vec<String>> = outputs.get(name).map(|r| r.shown())?;
@@ -2172,6 +2178,188 @@ meth(q, x) :- class_anc_method(c, x), class_def(c, q).
     );
     assert_eq!(rows["ref"], [r(&["use.Leaf", "objects", "django.db.models.Manager"])], "{rows:?}");
     assert_eq!(rows["meth"], [r(&["app.base.Mid", "label"]), r(&["use.Leaf", "label"])], "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A model class read by its symbol in another file (decision 0677 fix 3b: python/django's dj_model_named,
+/// dj_model_field, dj_model_field_kw, dj_model_has_method): a queryset in views.py starts at `Book`, defined in
+/// shop/models.py, and reads Book's own fields and method and those it inherits from `Base`, in a module views.py
+/// never imports, each at the queryset's own root.
+#[test]
+fn a_django_model_is_read_by_its_symbol_in_another_file() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Base(models.Model):\n    name = models.CharField(max_length=10, unique=True)\n",
+        ),
+        ("shop/__init__.py", ""),
+        (
+            "shop/models.py",
+            "from django.db import models\nfrom models_base import Base\n\n\nclass Book(Base):\n    pages = models.IntegerField()\n    author = models.ForeignKey(\"Author\", to_field=\"code\")\n\n    def label(self):\n        return self.pages\n",
+        ),
+        ("views.py", "from shop.models import Book\n\n\ndef count():\n    return Book.objects.filter(pages=1).count()\n"),
+    ];
+    let dir = py_classes_workspace("dj-models", &edits);
+    let program = r#".language python
+#include "lib/django.rerail"
+.decl dq(p: symbol, mq: symbol)
+dq(p, mq) :- dj_qs_class(q, mq), docof(q, d), doc(d, p, _).
+.output dq
+.decl df(p: symbol, x: symbol, t: symbol)
+df(p, x, t) :- dj_qs_model(q, r), dj_model_field(r, x, t), docof(q, d), doc(d, p, _).
+.output df
+.decl dk(p: symbol, x: symbol, k: symbol, v: symbol)
+dk(p, x, k, v) :- dj_qs_model(q, r), dj_model_field_kw(r, x, k, v), docof(q, d), doc(d, p, _).
+.output dk
+.decl dm(p: symbol, x: symbol)
+dm(p, x) :- dj_qs_model(q, r), dj_model_has_method(r, x), docof(q, d), doc(d, p, _).
+.output dm
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(rows["dq"], [r(&["views.py", "shop.models.Book"])], "{rows:?}");
+    assert_eq!(
+        rows["df"],
+        [
+            r(&["views.py", "author", "ForeignKey"]),
+            r(&["views.py", "name", "CharField"]),
+            r(&["views.py", "pages", "IntegerField"]),
+        ],
+        "Book's own fields and Base's: {rows:?}"
+    );
+    assert_eq!(
+        rows["dk"],
+        [
+            r(&["views.py", "author", "to_field", "\"code\""]),
+            r(&["views.py", "name", "max_length", "10"]),
+            r(&["views.py", "name", "unique", "True"]),
+        ],
+        "{rows:?}"
+    );
+    assert_eq!(rows["dm"], [r(&["views.py", "label"])], "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A model's Meta options and managers read by its symbol in another file (decision 0677 fix 3c: the phase py_names'
+/// Django section, python/django's dj_model_group and the rest). views.py imports shop.models alone; the Meta options
+/// and the manager's methods come from models_base and shop.managers, which it never imports, each by Django's
+/// inheritance: Plank's Meta subclasses its abstract base's (`class Meta(Named.Meta)`), Board declares a Meta of its
+/// own and takes none of Named's, Part takes its concrete base's constraints, and Part's manager builds a queryset
+/// class that defines get_or_create.
+#[test]
+fn a_django_models_meta_and_managers_are_read_by_their_symbol_in_another_file() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Named(models.Model):\n    name = models.CharField(max_length=50)\n    owner = models.ForeignKey(\"auth.User\", on_delete=models.CASCADE)\n\n    class Meta:\n        abstract = True\n        unique_together = (\"name\", \"owner\")\n\n\nclass Coded(models.Model):\n    code = models.CharField(max_length=10)\n    kind = models.CharField(max_length=10)\n\n    class Meta:\n        constraints = [\n            models.UniqueConstraint(fields=[\"code\"], name=\"c\"),\n            models.UniqueConstraint(fields=[\"code\", \"kind\"], condition=models.Q(kind=\"a\"), name=\"d\"),\n        ]\n",
+        ),
+        ("shop/__init__.py", ""),
+        (
+            "shop/managers.py",
+            "from django.db import models\n\n\nclass SlugQuerySet(models.QuerySet):\n    def get_or_create(self, **kw):\n        return super().get_or_create(**kw)\n\n\nclass SlugManager(models.Manager):\n    def get_queryset(self):\n        return SlugQuerySet(self.model, using=self._db)\n",
+        ),
+        (
+            "shop/models.py",
+            "from django.db import models\nfrom django.db.models.functions import Lower\nfrom models_base import Coded, Named\nfrom shop.managers import SlugManager\n\n\nclass Plank(Named):\n    class Meta(Named.Meta):\n        ordering = [\"name\"]\n\n\nclass Board(Named):\n    class Meta:\n        managed = False\n\n\nclass Part(Coded):\n    objects = SlugManager()\n\n\nclass Tag(models.Model):\n    label = models.CharField(max_length=10)\n\n    class Meta:\n        constraints = [models.UniqueConstraint(Lower(\"label\"), name=\"l\")]\n",
+        ),
+        ("views.py", "from shop.models import Board, Part, Plank, Tag\n\n\ndef make():\n    Plank.objects.get_or_create(name=\"n\")\n    Board.objects.get_or_create(name=\"n\")\n    Part.objects.get_or_create(code=\"c\")\n    Tag.objects.get_or_create(label=\"l\")\n"),
+    ];
+    let dir = py_classes_workspace("dj-meta", &edits);
+    let program = r#".language python
+#include "lib/django.rerail"
+.decl at_view(e: node, mq: symbol)
+at_view(e, mq) :- dj_qs_root(_, e), dj_model_named(e, mq), docof(e, d), doc(d, "views.py", _).
+.decl mg(mq: symbol, g: symbol, x: symbol)
+mg(mq, g, x) :- at_view(e, mq), dj_model_group(e, g, x).
+.output mg
+.decl mc(mq: symbol, g: symbol, x: symbol)
+mc(mq, g, x) :- at_view(e, mq), dj_model_cond_group(e, g, x).
+.output mc
+.decl mu(mq: symbol)
+mu(mq) :- at_view(e, mq), dj_model_unmanaged(e).
+.output mu
+.decl mo(mq: symbol)
+mo(mq) :- at_view(e, mq), dj_model_opaque(e).
+.output mo
+.decl da(p: symbol, mq: symbol)
+da(p, mq) :- dj_model_abstract(e), dj_model_named(e, mq), docof(e, d), doc(d, p, _).
+.output da
+.decl mm(mq: symbol, a: symbol, x: symbol)
+mm(mq, a, x) :- at_view(e, mq), dj_model_manager_method(e, a, x).
+.output mm
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        rows["mg"],
+        [
+            r(&["shop.models.Part", "models_base.Coded#constraints.0", "code"]),
+            r(&["shop.models.Plank", "models_base.Named#unique_together", "name"]),
+            r(&["shop.models.Plank", "models_base.Named#unique_together", "owner"]),
+        ],
+        "Plank takes its abstract base's Meta, Board does not, Part its concrete base's: {rows:?}"
+    );
+    assert_eq!(
+        rows["mc"],
+        [r(&["shop.models.Part", "models_base.Coded#constraints.1", "code"]), r(&["shop.models.Part", "models_base.Coded#constraints.1", "kind"])],
+        "{rows:?}"
+    );
+    assert_eq!(rows["mu"], [r(&["shop.models.Board"])], "{rows:?}");
+    assert_eq!(rows["mo"], [r(&["shop.models.Tag"])], "an expression constraint: {rows:?}");
+    assert_eq!(rows["da"], [r(&["models_base.py", "models_base.Named"]), r(&["shop/models.py", "models_base.Named"])], "{rows:?}");
+    assert_eq!(rows["mm"], [r(&["shop.models.Part", "objects", "get_or_create"])], "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A model's hooks read by its symbol in another file (decision 0677 fix 3d: the phase py_names' Django section,
+/// python/django's dj_model_hook and dj_receiver_def). views.py imports shop.models alone. Book's save() is
+/// inherited from Stamped, in models_base, which views.py never imports; Book's receivers are connected in
+/// shop/signals.py, which nothing imports: a decorated def, and a def connected with `.connect`, both for sender Book.
+/// Note's save() only calls the base class's, so it is no hook. signals.py's own defs know they are receivers.
+#[test]
+fn a_django_models_hooks_are_read_by_their_symbol_in_another_file() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Stamped(models.Model):\n    class Meta:\n        abstract = True\n\n    def save(self, *args, **kwargs):\n        self.updated = None\n        super().save(*args, **kwargs)\n",
+        ),
+        ("shop/__init__.py", ""),
+        (
+            "shop/models.py",
+            "from django.db import models\nfrom models_base import Stamped\n\n\nclass Book(Stamped):\n    title = models.CharField(max_length=10)\n\n\nclass Note(models.Model):\n    def save(self, *args, **kwargs):\n        \"\"\"Just super.\"\"\"\n        return super().save(*args, **kwargs)\n",
+        ),
+        (
+            "shop/signals.py",
+            "from django.db.models.signals import post_save, pre_save\nfrom django.dispatch import receiver\n\nfrom .models import Book\n\n\n@receiver([pre_save, post_save], sender=Book)\ndef book_saved(sender, instance, **kwargs):\n    pass\n\n\ndef book_checked(sender, instance, **kwargs):\n    pass\n\n\npre_save.connect(book_checked, sender=Book)\n",
+        ),
+        ("views.py", "from shop.models import Book, Note\n\n\ndef bulk():\n    Book.objects.update(title=\"t\")\n    Note.objects.update(title=\"t\")\n"),
+    ];
+    let dir = py_classes_workspace("dj-hooks", &edits);
+    let program = r#".language python
+#include "lib/django.rerail"
+.decl hk(mq: symbol, k: symbol, h: symbol)
+hk(mq, k, h) :- dj_qs_root(_, e), dj_model_named(e, mq), docof(e, d), doc(d, "views.py", _), dj_model_hook(e, k, h).
+.output hk
+.decl rd(p: symbol, f: symbol, mq: symbol)
+rd(p, x, mq) :- dj_receiver_def(f, mq), def_name(f, x), docof(f, d), doc(d, p, _).
+.output rd
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        rows["hk"],
+        [
+            r(&["shop.models.Book", "save", "Stamped.save() (models_base.py:8)"]),
+            r(&["shop.models.Book", "save", "post_save/pre_save receiver `book_saved` (shop/signals.py:7)"]),
+            r(&["shop.models.Book", "save", "pre_save receiver `book_checked` (shop/signals.py:16)"]),
+        ],
+        "Book's inherited save() and its receivers; Note's bare save() is none: {rows:?}"
+    );
+    assert_eq!(
+        rows["rd"],
+        [r(&["shop/signals.py", "book_checked", "shop.models.Book"]), r(&["shop/signals.py", "book_saved", "shop.models.Book"])],
+        "{rows:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -26,15 +26,10 @@ data-layer:alone pos_allow_broken
 data-layer:alone pos_bypass
 data-layer:alone static_tests
 data-layer:alone vmi_backed
-django bwh_in_hook
-django bwh_method
 django call_target
 django dar_non_atomic_wrapped
-django dj_instance_value
 django ghw_model_instance
-django ghw_model_ref
 django sfu_atomic_def
-django sora_model_instance
 django tam_task_call
 javascript types_apart
 python copy_only

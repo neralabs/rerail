@@ -1,0 +1,19 @@
+// python/django-shared: what python/django and the phase py_names' Django section (decision 0677 fix 3) both read,
+// one definition for both: the classes outside the run that Django's rules take for models, and which documents are
+// test code. The phase includes neither python/names nor python/django.
+// dj_model_base(q): classes outside the run that are models: Django's own and common third-party bases.
+.decl dj_model_base(q: symbol)
+dj_model_base("django.db.models.Model"). dj_model_base("django.db.models.base.Model").
+dj_model_base("django.contrib.auth.models.AbstractUser"). dj_model_base("django.contrib.auth.models.AbstractBaseUser").
+dj_model_base("django.contrib.auth.base_user.AbstractBaseUser"). dj_model_base("django.contrib.auth.models.PermissionsMixin").
+dj_model_base("django.contrib.auth.models.User"). dj_model_base("django.contrib.auth.models.Group").
+dj_model_base("mptt.models.MPTTModel"). dj_model_base("polymorphic.models.PolymorphicModel").
+dj_model_base("treebeard.mp_tree.MP_Node"). dj_model_base("treebeard.ns_tree.NS_Node").
+dj_model_base("treebeard.al_tree.AL_Node"). dj_model_base("model_utils.models.TimeStampedModel").
+dj_model_base("django_extensions.db.models.TimeStampedModel"). dj_model_base("wagtail.models.Page").
+// dj_test_doc(d): DefectDojo keeps its tests in `unittests/`, netbox its test helpers in `utilities/testing/`.
+.decl dj_test_doc(d: number)
+dj_test_doc(d) :- doc(d, _, _), (path_part(d, "tests") ; path_part(d, "test") ; path_part(d, "testing") ;
+    path_part(d, "unittests")).
+dj_test_doc(d) :- file_name(d, s), (glob("test_*.py", s) ; glob("*_tests.py", s) ; glob("*_test.py", s) ; s = "tests.py" ;
+    s = "test.py" ; s = "conftest.py").

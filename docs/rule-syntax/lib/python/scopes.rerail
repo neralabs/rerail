@@ -25,6 +25,7 @@
 //
 // Precision: this is approximate, file-local name resolution, not a type checker. Lookup lands on a scope, and every
 // binding of the name in that scope is a candidate (may-precise); only straight-line rebinding (layer 5) prunes.
+#include "python/syntax.rerail"       // syntax alone: unparen, call_arg, body_stmt, docstring, ...
 #include "python/imports.rerail"
 
 // Kind sets used with `nearest`/`within`. `scope` is every node that opens a Python scope.
@@ -54,6 +55,10 @@ lfscope(k) :- comp_scope(k).
 .decl first_for(c: node, fc: node)
 first_for(c, fc) :- comp_scope(k), kind(c, k), child(c, fc, i), kind(fc, "for_in_clause"),
     count : { child(c, g, j), kind(g, "for_in_clause"), j < i } = 0.
+// first_iter(c, e): e is the iterable of comprehension c's first `for` clause, which runs in the enclosing scope.
+.decl first_iter(c: node, e: node)
+// Built from the comprehensions (comp_scope binds their kinds), so it is no filter the inliner folds into a reader.
+first_iter(c, e) :- comp_scope(k), kind(c, k), first_for(c, fc), field(fc, "right", e).
 
 // modnode(d, m): m is the root "module" node of document d.
 .decl modnode(d: number, m: node)
@@ -201,8 +206,9 @@ wstart(n, s) :- in_first_iter(n, c), nearest(c, s, lscope).
 wstart(n, s) :- nameref(n, _), parsed_in(n, h), nearest(h, s, lscope), kind(s, k), scope(k).
 wstart(n, c) :- nameref(n, _), parsed_in(n, h), nearest(h, c, lscope), kind(c, k), comp_scope(k).
 .decl in_first_iter(n: node, c: node)
-in_first_iter(n, c) :- nameref(n, _), nearest(n, c, lscope), comp_scope(k), kind(c, k), first_for(c, fc),
-    field(fc, "right", e), (n = e ; within(n, e)).
+// Through first_iter, a relation of the comprehensions' iterables: split from first_for, a join started from
+// `field(fc, "right", e)` and walked every assignment's right side.
+in_first_iter(n, c) :- nameref(n, _), nearest(n, c, lscope), first_iter(c, e), (n = e ; within(n, e)).
 // PEP 695 type parameters: `def f[T](x: T)`, `class K[T]`, `type A[T] = list[T]`. They live in an annotation
 // scope that sees the whole definition (methods included), so a T read anywhere inside its owner is resolved,
 // and is not looked up. tp_name(o, x): definition o declares type parameter x (`T`, `T: int`, `*Ts`, `**P`).

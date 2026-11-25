@@ -9,7 +9,7 @@
 //   2. Contexts:  outside_loop(s)           a break/continue with no loop body around it in its scope (F701, F702)
 //                 run_scope(n, s, k)        n runs in scope s of kind k, as CPython compiles it: "function", "lambda",
 //                                           "class", "module", "comprehension" or "generator" (F704, F706, F823)
-//                 first_iter(c, e)          e is comprehension c's first iterable, which runs outside c
+//                 first_iter(c, e)          (python/scopes) e is comprehension c's first iterable, run outside c
 //                 branch_block(b)           the body of an if/elif/else/try/except/case (Ruff's branches; F402)
 //   3. Literals:  py_literal(e), py_const(e), singleton(e), const_non_singleton(e), mutable_literal(e)
 //                                           Ruff's is_literal, is_constant, … (F632, E711)
@@ -81,10 +81,6 @@ region(fc, c, k) :- comp_kind(ck, k), kind(c, ck), child(c, fc, _), kind(fc, "fo
 .decl comp_kind(ck: symbol, k: symbol)
 comp_kind("list_comprehension", "comprehension"). comp_kind("set_comprehension", "comprehension").
 comp_kind("dictionary_comprehension", "comprehension"). comp_kind("generator_expression", "generator").
-// first_iter(c, e): e is the iterable of comprehension c's first `for` (python/names' first_for: a comment may
-// come before it, so it is not always child 1).
-.decl first_iter(c: node, e: node)
-first_iter(c, e) :- first_for(c, fc), field(fc, "right", e).
 .decl region_root(r: node)
 region_root(r) :- region(r, _, _).
 .decl run_scope(n: node, s: node, k: symbol)
