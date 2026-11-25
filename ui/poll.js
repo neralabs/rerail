@@ -168,7 +168,7 @@ export function queueInScope(scope, method, path, body) {
   const before = lastAttachmentWrite;
   const waits = before.pending && before.token === scope.token;
   const ready = Promise.resolve(body);
-  // Read only once the writes before it went out OK; a dropped write's failing body is nobody's error.
+  // Read only once the writes before it made their change (`clear`); a dropped write's failing body is nobody's error.
   ready.catch(() => {});
   const sending = (async () => {
     if (waits) {
