@@ -184,6 +184,29 @@ Found on the way and fixed:
    - Not ported, as not split work: the branch's run options decided before the run (9dccfd0b30, on constant-folding
      passes main lacks), the configuration files' kept rows (12b6ba7e77, 4e11f91949), embedders' places read in place
      (362ad19b9f), and the kept-facts staging lock in fc57da4d1a.
+7. **Python's names are the phase `py_names`** (the branch's fc57da4d1a, 0677 fix 2).
+   - The phase (`typing/programs/py_names.rerail`) resolves modules across the workspace from their definitions and
+     import statements, and hands on symbols alone: `reads_at(p, m)` (the modules the file at `p` can name),
+     `exports`, `class`, `defined`, `public`. They are read as settings, keyed by the reading file's path
+     (`SETTINGS_BY_PATH`) and by module (`SETTINGS_BY_FOLDER`).
+   - `python/names.rerail` is now `python/scopes.rerail` (who binds a name, file by file) and a short
+     `python/names.rerail` that adds `sym_of`'s re-export and class-member rules and `site_exported` through the
+     phase. The phase includes `scopes`, so it never reads its own exports. Main's own `names.rerail` was split this
+     way, not the branch's copy, which holds other branches' work.
+   - `pyupgrade`'s `sym_at` and Django's practices read the phase too.
+   - The split: a rule that never holds (a false comparison of constants, `unset`'s empty value in a placing column)
+     places nothing (`never_holds`).
+   - Tests: the phase's names are the old cross-file rules' answers (`python_names_through_the_phase_are_the_cross_file_rules_answers`);
+     a Python file's memo entry is kept under its own names' resolution.
+   - Not ported: the store's naming of a hit's tapes in a warm run (`Parses::name_kept`, on the branch's value store,
+     which main lacks), with the two warm-run tests that check it; `GateRules`' late-bound keys (main's gate has no
+     binding analysis, and no test needs it).
+   - Lists: split 32 → 35, node 2,939 → 456 (python-main 2,300 → 7, Python 171 → 40, Django 247 → 206, the data layer
+     89 → 80 and 90 → 81).
+   - Added, as on the branch after this commit: holders the `sym_of` crossing hid, now under their own roots. In
+     Django, `bwh_in_hook`, `dar_non_atomic_wrapped` and `tam_task_call` (split), and `fdm_drf`, `fdm_drf_q`,
+     `ghw_drf_q`, `ghw_model_ref`, `rmw_class`, `s_dj_deferring_task_class` (node). Python's `D412`, the data
+     layer's `pub_member` and `true_lazy`. The branch's fix 3 commits fix the Django ones.
 
 ## Consequences
 
@@ -198,5 +221,3 @@ Found on the way and fixed:
 - A lowering's value view (`match_all`'s `rr_ctx`/`rr_mall`) is not covered by its readers (React's `sandbox_token`).
 - Producers for `spec_resolved` (from main's `import_target` resolver) and `npm_ignored` (package.json `files`,
   `.npmignore`, `.gitignore`).
-- `resolve_export`'s family needs Python's names as a phase over symbols (oscar's `py_names`), an engine change of its
-  own.

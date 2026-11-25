@@ -232,12 +232,24 @@ pub fn setting_input(rel: &str) -> bool {
 }
 
 /// The settings with a row per file (decision 0665), keyed by its path in column 0, and the column that names the
-/// folder (`package_for(path, dir)`, `tsconfig_for(path, dir)`) or target (`tsx_names__target_at(path, spec, t)`)
-/// whose rows it reads. `SETTINGS_BY_FOLDER` holds those keyed by such a folder or target, in column 0.
-pub const SETTINGS_BY_PATH: [(&str, usize); 3] = [("package_for", 1), ("tsconfig_for", 1), ("tsx_names__target_at", 2)];
-pub const SETTINGS_BY_FOLDER: [&str; 6] = ["package", "package_field", "tsconfig", "tsconfig_path", "tsx_names__exports", "tsx_names__module"];
+/// folder (`package_for(path, dir)`, `tsconfig_for(path, dir)`), target (`tsx_names__target_at(path, spec, t)`) or
+/// module (`py_names__reads_at(path, m)`) whose rows it reads. `SETTINGS_BY_FOLDER` holds those keyed by such a folder,
+/// target or module, in column 0.
+pub const SETTINGS_BY_PATH: [(&str, usize); 4] = [("package_for", 1), ("tsconfig_for", 1), ("tsx_names__target_at", 2), ("py_names__reads_at", 1)];
+pub const SETTINGS_BY_FOLDER: [&str; 10] = [
+    "package",
+    "package_field",
+    "tsconfig",
+    "tsconfig_path",
+    "tsx_names__exports",
+    "tsx_names__module",
+    "py_names__exports",
+    "py_names__class",
+    "py_names__defined",
+    "py_names__public",
+];
 
-/// The folder or target column of a setting keyed by a file's path (`SETTINGS_BY_PATH`).
+/// The folder, target or module column of a setting keyed by a file's path (`SETTINGS_BY_PATH`).
 pub fn setting_by_path(rel: &str) -> Option<usize> {
     SETTINGS_BY_PATH.iter().find(|(r, _)| *r == rel).map(|(_, c)| *c)
 }

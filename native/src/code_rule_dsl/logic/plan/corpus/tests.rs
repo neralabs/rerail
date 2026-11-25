@@ -1894,6 +1894,209 @@ fn a_files_entry_is_kept_under_its_own_imports_resolution() {
     let _ = std::fs::remove_dir_all(&fresh);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Decision 0677, fix 2: Python's names through the phase `py_names`. `sym_of` and `site_exported` read the phase's
+/// rows at their own file's path (or by a module those name), so they are file-local, and they find what the cross-file
+/// rules found before: those rules are written out here (`old_sym`, `old_public`) and run beside them. The workspace
+/// has a package re-exporting a class from a submodule, a chain of two re-exports, a star import under `__all__` and
+/// one without, a class's nested class and method read as its attributes, and a module outside the workspace.
+const PY_NAMES_FILES: [(&str, &str); 6] = [
+    ("pkg/__init__.py", "from .core import App\nfrom .more import *\nfrom .nall import *\n"),
+    ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        pass\n"),
+    ("pkg/more.py", "__all__ = [\"helper\"]\n\n\ndef helper():\n    pass\n\n\ndef hidden():\n    pass\n"),
+    ("pkg/nall.py", "def visible():\n    pass\n\n\ndef _private():\n    pass\n"),
+    ("pkg/chain.py", "from pkg import App as Root\n"),
+    ("use.py", "import os\nfrom pkg import App, helper, visible\nfrom pkg.chain import Root\nApp.Meta\nApp.run\nRoot\nhelper\nvisible\nos.path.join\n"),
+];
+
+const PY_NAMES_PROGRAM: &str = r#".language python
+#include "python/names.rerail"
+.decl at(n: node, p: symbol, l: number)
+at(n, p, l) :- kind(e, "expression_statement"), child(e, n, 0), line(n, l), docof(n, d), doc(d, p, _).
+.decl used(p: symbol, l: number, q: symbol)
+used(p, l, q) :- at(n, p, l), sym_of(n, q).
+.output used
+.decl exported_at(p: symbol, x: symbol)
+exported_at(p, x) :- site_exported(site), binding(s, x, site, _), docof(s, d), doc(d, p, _).
+.output exported_at
+"#;
+
+/// The rules `py_names` replaced (python/names' `sym_of` rules 1 and 3, and `site_exported`, before 0677 fix 2): they
+/// read every file's rows.
+const PY_NAMES_OLD: &str = r#"
+.decl old_sym(n: node, q: symbol) cross_file
+old_sym(n, q) :- qn(n, q0), resolve_export(q0, q).
+export_query(q) :- qn(_, q).
+old_sym(n, q) :- look(n, x, s), defn(s, x, f), qualname(f, q).
+old_sym(n, q) :- attr_of(n, o, a), old_sym(o, c), class_def(_, c), q = @dot(c, a), qualname(_, q).
+old_sym(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
+.decl old_used(p: symbol, l: number, q: symbol)
+old_used(p, l, q) :- at(n, p, l), old_sym(n, q).
+.output old_used
+.decl old_exported_at(p: symbol, x: symbol)
+old_exported_at(p, x) :- binding(s, x, site, _), kind(s, "module"), module_of(s, m), public_name(m, x), docof(s, d), doc(d, p, _).
+.output old_exported_at
+"#;
+
+/// The workspace `files` (with `edits` written over them) in a fresh directory named for `name`.
+fn py_names_workspace(name: &str, edits: &[(&str, &str)]) -> std::path::PathBuf {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    for (path, text) in PY_NAMES_FILES.iter().chain(edits) {
+        let to = dir.join("ws").join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, text).unwrap();
+    }
+    dir
+}
+
+/// `program` run over `dir`'s workspace: the report, and each output's rows, shown, by name.
+fn py_names_run(dir: &std::path::Path, program: &str) -> (super::Report, std::collections::BTreeMap<String, Vec<Vec<String>>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, program).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let rows = ["used", "exported_at", "old_used", "old_exported_at"]
+        .into_iter()
+        .filter_map(|name| {
+            let mut rows: Vec<Vec<String>> = outputs.get(name).map(|r| r.shown())?;
+            rows.sort();
+            Some((name.to_owned(), rows))
+        })
+        .collect();
+    (report, rows)
+}
+
+#[test]
+fn python_names_through_the_phase_are_the_cross_file_rules_answers() {
+    let dir = py_names_workspace("py-names", &[]);
+    let (_, rows) = py_names_run(&dir, &format!("{PY_NAMES_PROGRAM}{PY_NAMES_OLD}"));
+    let row = |p: &str, l: i64, q: &str| vec![p.to_owned(), l.to_string(), q.to_owned()];
+    assert_eq!(
+        rows["used"],
+        [
+            row("use.py", 4, "pkg.App.Meta"),
+            row("use.py", 4, "pkg.core.App.Meta"),
+            row("use.py", 5, "pkg.App.run"),
+            row("use.py", 5, "pkg.core.App.run"),
+            row("use.py", 6, "pkg.core.App"),
+            row("use.py", 7, "pkg.more.helper"),
+            row("use.py", 8, "pkg.nall.visible"),
+            row("use.py", 9, "os.path.join"),
+        ],
+        "each name, re-exports and star imports followed, and each member of a class read as its attribute: {rows:?}"
+    );
+    assert_eq!(rows["used"], rows["old_used"], "sym_of finds what the cross-file rules found");
+    assert_eq!(rows["exported_at"], rows["old_exported_at"], "site_exported finds what the cross-file rule found");
+    let exported = |p: &str, x: &str| rows["exported_at"].contains(&vec![p.to_owned(), x.to_owned()]);
+    assert!(exported("pkg/more.py", "helper") && !exported("pkg/more.py", "hidden"), "__all__ names helper alone: {:?}", rows["exported_at"]);
+    assert!(exported("pkg/nall.py", "visible") && !exported("pkg/nall.py", "_private"), "without __all__, no leading _: {:?}", rows["exported_at"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0677, fix 2: an edit misses the files whose `py_names` rows changed. A body edit in pkg/core.py misses that
+/// file alone. A method added to `App` adds a row to pkg.core's `defined`: the files that read pkg.core (core.py,
+/// pkg/__init__.py and chain.py, which re-export App, and use.py, which reads it) miss, and more.py and nall.py are
+/// read from the memo. The rows are a fresh run's.
+#[test]
+fn a_python_files_entry_is_kept_under_its_own_names_resolution() {
+    let body = ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        return 1\n");
+    let method = ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        return 1\n\n    def stop(self):\n        pass\n");
+    let dir = py_names_workspace("py-names-memo", &[]);
+    let (_, before) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    std::fs::write(dir.join("ws").join(body.0), body.1).unwrap();
+    let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    assert_eq!(rows, before, "a body edit changes no name");
+    assert_eq!(edited.memo.0, edited.files - 1, "a body edit misses its own file alone: {:?} of {}", edited.memo, edited.files);
+    std::fs::write(dir.join("ws").join(method.0), method.1).unwrap();
+    let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    assert_eq!(edited.memo.0, edited.files - 4, "pkg.core's readers alone miss: {:?} of {}", edited.memo, edited.files);
+    let fresh = py_names_workspace("py-names-memo-fresh", &[method]);
+    assert_eq!(rows, py_names_run(&fresh, PY_NAMES_PROGRAM).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0665: a rule over another file's rows, read through an option (`doc_ignored`: a decorator the
+/// `pydocstyle.ignore-decorators` option lists, resolved across files), and a constant of the run's settings
+/// (`py_version`: `env`, else a file read, else a default). The option's name reaches `option_item` from its
+/// reader, as `naming.rerail`'s `method_dec_named(e, o)` from `method_dec_named(e, "pep8-naming.…")`. And an option
+/// named by a computed name, as pytest's
+/// `option(cat(c, "-require-match-for"), p)`: `option` stays an input, `option_item` is stated still.
+const OPTION_READ: &str = r#"
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
+.decl dec_named(n: node, o: symbol) cross_file
+dec_named(n, o) :- def(n, _), option_item(o, _, q), def(_, q).
+.decl ignored(n: node) cross_file
+ignored(n) :- dec_named(n, "ignore").
+.decl ver(v: symbol)
+ver(v) :- env("demo.version", v).
+ver(v) :- !env("demo.version", _), env("demo.venv", e), f = cat(e, "/demo.cfg"), file_line(f, _, v).
+ver("3.13") :- !env("demo.version", _), !env("demo.venv", _).
+.decl shown(p: symbol, x: symbol)
+shown(p, x) :- def(n, x), !ignored(n), ver("3.13"), docof(n, d), doc(d, p, _).
+.output shown
+.decl flagged(n: node)
+flagged(n) :- def(n, x), option(cat(x, "-on"), _).
+.output flagged
+"#;
+
+/// A run of `OPTION_READ` with `options` over `ws` in the store and output of `dir`: its report and `shown`'s rows.
+fn option_read_run(dir: &std::path::Path, options: &serde_json::Value) -> (super::Report, Vec<Vec<String>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, OPTION_READ).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run_with_options(&[&program], &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), options).unwrap();
+    let mut rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("shown").map(|r| r.shown()).unwrap_or_default();
+    rows.sort();
+    (report, rows)
+}
+
+/// Decision 0665: the run's options and settings are decided before the run. With no `ignore` option, the rule that
+/// reads every file's definitions through it cannot hold and goes, and with no `env` the version is the default,
+/// folded first: `shown` is per-file, and an edit of one file reads the others from the memo. With the option set,
+/// the rule holds and reads across files. Each run's rows are a fresh run's.
+#[test]
+fn an_option_the_run_does_not_set_is_decided_before_the_run() {
+    let make = |name: &str| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in [("x.py", "def f():\n    pass\n"), ("y.py", "def g():\n    pass\n"), ("z.py", "def h():\n    pass\n")] {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let row = |p: &str, x: &str| vec![p.to_owned(), x.to_owned()];
+    let none = serde_json::Value::Null;
+    let dir = make("option-decided");
+    let (first, rows) = option_read_run(&dir, &none);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")], "no option: nothing ignored, the default version");
+    std::fs::write(dir.join("ws/z.py"), "# an edit\ndef h():\n    pass\n").unwrap();
+    let (edited, rows) = option_read_run(&dir, &none);
+    assert_eq!(edited.memo.0, edited.files - 1, "shown is per-file: every other file is read from the memo: {:?} of {} (first {:?})", edited.memo, edited.files, first.memo);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")]);
+    let _ = std::fs::remove_dir_all(&dir);
+    // The option set: any file defining `h` ignores every definition.
+    let set = serde_json::json!({"ignore": ["h"]});
+    let dir = make("option-set");
+    let (_, rows) = option_read_run(&dir, &set);
+    assert_eq!(rows, Vec::<Vec<String>>::new(), "the option set: every definition ignored");
+    let _ = std::fs::remove_dir_all(&dir);
+    let set = serde_json::json!({"ignore": ["k"]});
+    let dir = make("option-set-unmatched");
+    let (_, rows) = option_read_run(&dir, &set);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")], "an option naming no definition ignores none");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0665: which settings a memoised relation's rows can read. A read keyed by the file's own path, or by a
 /// folder or target its own path's row names (directly, through a relation keyed by it, or carried by a relation
 /// derived from its own rows), is the file's own; one through another key (a constant folder, any file's row) is

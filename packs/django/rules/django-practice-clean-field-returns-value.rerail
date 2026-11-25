@@ -36,7 +36,7 @@ CleanFieldBareReturn(r, m, x) :- cfr_clean(f, m, x), fn_return(f, r), bare_retur
 
 // cfr_form_base(q): a form class outside the run: django.forms' own, or a `…Form` class of another package's
 // `forms` module (UserCreationForm, allauth's SignupForm, wagtail's WagtailAdminModelForm).
-.decl cfr_form_base(q: symbol)
+.decl cfr_form_base(q: symbol) cross_file  // every file's bases: symbols alone (decisions 0652, 0677)
 cfr_form_base(q) :- class_base(_, q), !class_def(_, q), split_dot(q, m, x), suffix("Form", x),
     (m = "django.forms" ; prefix("django.forms.", m) ; suffix(".forms", m) ; contains(".forms.", m)).
 .decl cfr_form(c: node)

@@ -96,7 +96,7 @@ goc_meta_opt(mc, k, v) :- dj_model(mc), class_base(mc, bq), class_def(cb, bq), !
 // (and so inherits its bases' Meta attribute), or c's Meta subclasses b's own Meta (`class Meta(B.Meta)`, its
 // class_base the qualified name of the Meta class b declares); through a chain of such classes. A base b that declares
 // no Meta is concrete, and its options reach c through goc_meta_opt's concrete-base clause instead.
-.decl goc_meta_from(c: node, b: node)
+.decl goc_meta_from(c: node, b: node) cross_file  // a base in another file: a node pair, decision 0677's fix 3
 goc_meta_from(c, cb) :- class_base(c, bq), class_def(cb, bq), !goc_meta_class(c, _).
 goc_meta_from(c, cb) :- class_base(c, bq), class_def(cb, bq), goc_meta_class(c, mt), class_base(mt, mq),
     goc_meta_class(cb, bm), class_def(bm, mq).
