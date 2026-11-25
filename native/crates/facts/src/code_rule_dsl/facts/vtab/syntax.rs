@@ -2505,6 +2505,9 @@ pub struct Growth {
     renew: Option<Arc<Batch>>,
     /// Whether the batch made keeps its groups' strings, for a later run to renew from it (decision 0616).
     keeps_strings: bool,
+    /// The run's chunks' made documents, which the batch made next shares where its projection makes them alike
+    /// (decision 0683).
+    share: Vec<made::Projections>,
     /// Each tape value admitted (decision 0431 §8): its batch, the places it has rows of, and whether it is withheld
     /// (no root). One given more places adds their rows alone (`GuestRows::places_added`).
     values: std::collections::BTreeMap<u32, (Arc<Batch>, usize, bool)>,
@@ -3736,6 +3739,23 @@ impl Batch {
                 None => (made::Docs::new(documents, context, given), added_valued, None),
             },
         };
+        // The chunks' made documents (decision 0683): each slot shared that this batch holds as it is and has not
+        // taken from a held batch, where the chunk's projection makes a document as this batch's does.
+        let mut docs = docs;
+        let share = std::mem::take(&mut grown.share);
+        if !share.is_empty() {
+            let (mut shared, mut alike, mut held) = (0, 0, 0);
+            for from in &share {
+                held += from.len();
+                if made::Making::alike(&from.projection, &projection) {
+                    alike += 1;
+                    shared += docs.share(from);
+                }
+            }
+            crate::code_rule_dsl::logic::profile::decision("the corpus batch's documents shared from the chunks (decision 0683)", || {
+                format!("{shared} of {} documents shared, of the {held} the chunks made; {alike} of {} chunks' batches made them alike", docs.len(), share.len())
+            });
+        }
         // Each lazy family's strings, where the batch has documents of its dialect, interned with the batch's.
         let vocabulary: Vec<Option<u8>> = families().iter().map(|f| crate::code_rule_dsl::language::tape_tag(f.dialect()).filter(|&tag| (0..docs.len()).any(|i| docs.tag(i) == tag))).collect();
         let named: Vec<&str> = families().iter().zip(&vocabulary).filter(|(_, v)| v.is_some()).flat_map(|(f, _)| f.strings().iter().copied()).collect();
@@ -4263,11 +4283,11 @@ impl Batch {
         Ok(made::Made { relations, matched, waved, read: made, strings_from, used })
     }
 
-    /// A batch of `documents` that keeps its groups' strings, renewed from `held` where it can be (decision 0616), as
-    /// a session's corpus batch is (`with_matchers_renewed`), with no matchers.
+    /// A batch of `documents` taking what `earlier` holds of them as made, as a run's corpus batch does
+    /// (`with_matchers_from`: decisions 0616, 0683), with no matchers.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn renewed(store: &dyn FactStore, documents: Vec<impl Into<Input>>, projection: &Projection, held: Option<Arc<Batch>>) -> StoreResult<Arc<Self>> {
-        let mut growth = Growth { renew: held, keeps_strings: true, ..Growth::default() };
+    pub fn after(store: &dyn FactStore, documents: Vec<impl Into<Input>>, projection: &Projection, earlier: Earlier) -> StoreResult<Arc<Self>> {
+        let mut growth = Growth { renew: earlier.held, keeps_strings: earlier.session, share: earlier.chunks, ..Growth::default() };
         Self::add(&mut growth, store, inputs(documents), projection, &[], &[], false, None, &HashMap::new(), false).map(|(batch, _)| batch)
     }
     /// Its vocabulary's strings (`vocabulary`), sorted: a text test's scan reads them.
@@ -5980,10 +6000,20 @@ pub fn with_matchers(
     Grower::default().sources_of(store, inputs(documents), Some(matchers), tests, binding, projection, given, false).map(|(out, batch)| finish(out, &batch, sets, projection, binding))
 }
 
-/// [`with_matchers`]'s sources of a session's corpus batch (decision 0616): renewed from `held` (its last run's
-/// batch) where it can be, its groups keeping their strings for the next run's.
+/// What a run's corpus batch takes from the batches made before it.
+#[derive(Default)]
+pub struct Earlier {
+    /// A session's last run's corpus batch, which this one is renewed from where it can be (decision 0616).
+    pub held: Option<Arc<Batch>>,
+    /// A session's batch: its groups keep their strings for the next run's (decision 0616).
+    pub session: bool,
+    /// The run's chunks' made documents, shared where they are made alike (decision 0683).
+    pub chunks: Vec<made::Projections>,
+}
+
+/// [`with_matchers`]'s sources of a run's corpus batch, taking what `earlier` holds of its documents as made.
 #[allow(clippy::too_many_arguments)]
-pub fn with_matchers_renewed(
+pub fn with_matchers_from(
     store: &dyn FactStore,
     documents: Vec<impl Into<Input>>,
     sets: &[(String, Vector<i64>)],
@@ -5992,11 +6022,12 @@ pub fn with_matchers_renewed(
     binding: crate::code_rule_dsl::facts::nearest::Binding,
     projection: &Projection,
     given: &HashMap<u32, made::ViewCounts>,
-    held: Option<Arc<Batch>>,
+    earlier: Earlier,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     let mut grower = Grower::default();
-    grower.growth.renew = held;
-    grower.growth.keeps_strings = true;
+    grower.growth.renew = earlier.held;
+    grower.growth.keeps_strings = earlier.session;
+    grower.growth.share = earlier.chunks;
     grower.sources_of(store, inputs(documents), Some(matchers), tests, binding, projection, given, false).map(|(out, batch)| finish(out, &batch, sets, projection, binding))
 }
 
@@ -6025,6 +6056,11 @@ pub struct Grower {
 }
 
 impl Grower {
+    /// The batch it grew last, which holds every document of its rounds (decision 0431 §6).
+    pub fn batch(&self) -> Option<&Arc<Batch>> {
+        self.growth.last.as_ref()
+    }
+
     /// [`with_matchers`]'s sources, and the grower that adds a round's documents to them.
     #[allow(clippy::too_many_arguments)]
     pub fn start(

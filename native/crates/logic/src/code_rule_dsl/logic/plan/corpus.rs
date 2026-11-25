@@ -3462,6 +3462,8 @@ fn run_observed_within(
     // chunks' (`Evaluated::documents`, their guests' with them), and the memo hits', each made from its stored tape
     // once the chunks are done (`CorpusHit`).
     let mut corpus_docs: Vec<syntax::Document> = Vec::new();
+    // Their projections as the chunks made them, which the corpus batch shares (decision 0683): none made twice.
+    let mut corpus_projections: Vec<syntax::made::Projections> = Vec::new();
     // The chunks' counts of the base relations the cross part reads (decision 0458's statistics), merged as filed.
     let mut chunk_counts = ChunkCounts::default();
     let mut corpus_hits: Vec<CorpusHit> = Vec::new();
@@ -5247,6 +5249,8 @@ fn run_observed_within(
         /// Its documents, its guests' with them, for the corpus batch the cross part reads its base relations off
         /// (decision 0458); none where the cross part reads none.
         documents: Vec<syntax::Document>,
+        /// Their projections as its batch made them, which the corpus batch shares (decision 0683).
+        projections: Option<syntax::made::Projections>,
         /// What the chunk's work held at its most (bytes, `rows::Chunk::held_most`, Q203 item 3): a report beside what
         /// its blocks wrote (`written`), which sizes the next (decision 0469).
         held: usize,
@@ -5277,6 +5281,8 @@ fn run_observed_within(
     let measured_once = parking_lot::Mutex::new(measured_once);
     let evaluate_in = |task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> Result<Evaluated> {
         let Task { chunk_nodes_built: _, sources, mut grower, documents, mut stats, mix, cone, asked_before, seq, view: _ } = task;
+        // Its batch, whose made documents the corpus batch shares (decision 0683), where the cross part reads any.
+        let chunk_batch = if stored.is_empty() { None } else { sources.iter().find_map(|(_, s)| s.python_batch()) };
         // A measurement made once per mix (Q88): taken from a chunk filed before this one began (`plan_window` back),
         // else made here, and kept for the chunks after as the earliest chunk's that made it.
         let once_seen = |by: usize| by + plan_window <= seq;
@@ -5582,6 +5588,9 @@ fn run_observed_within(
         }
         // Handed on to the corpus batch (decision 0458): the same documents, not their rows.
         let documents = if stored.is_empty() { Vec::new() } else { documents };
+        // Its documents' projections, its rounds' with them (the grower's last batch holds every one).
+        let projections = grower.as_ref().and_then(syntax::Grower::batch).or(chunk_batch.as_ref()).map(|b| b.projections());
+        drop(chunk_batch);
         // The rows of its exports not handed off, read out before its relations are forgotten. A relation the engine
         // holds is read from it (an output is not written to a table to be read back); one a SQL stratum derived is in
         // its table.
@@ -5687,7 +5696,7 @@ fn run_observed_within(
             }
             t.iter().map(|(g, (made, placed, texts))| format!("{g}: {made} made in chunks, {placed} places more, {} texts in the run", texts.len())).collect::<Vec<_>>().join("; ")
         });
-        Ok(Evaluated { got, host_of, askers, answered, totals_add, export_rows, export_totals, base_counts, documents, held, written: Default::default(), kept_values })
+        Ok(Evaluated { got, host_of, askers, answered, totals_add, export_rows, export_totals, base_counts, documents, projections, held, written: Default::default(), kept_values })
     };
     // A chunk's relations go in blocks of its own, given back with it (Q58): not in blocks every chunk at once
     // shares, which a few rows of each kept whole and the memory line counted whole.
@@ -5922,11 +5931,12 @@ fn run_observed_within(
         phase("wait", statements.count());
         statements.enter("local");
         let Ctx { chunk_nodes_built, chunk_docs, chunk_own, at_once, mut chunk_partials, cone } = ctx;
-        let Evaluated { got, host_of, askers, answered, totals_add, export_rows, export_totals, base_counts, documents, held, written, kept_values } = ev;
+        let Evaluated { got, host_of, askers, answered, totals_add, export_rows, export_totals, base_counts, documents, projections, held, written, kept_values } = ev;
         chunk_counts.add(base_counts);
         totals.absorb(&export_totals);
         drop(export_totals);
         corpus_docs.extend(documents);
+        corpus_projections.extend(projections);
         for (rel, rows, measured) in &totals_add {
             totals.add(rel, *rows, measured);
         }
@@ -7458,11 +7468,9 @@ fn run_observed_within(
             .collect();
         crate::code_rule_dsl::logic::profile::decision("the corpus batch's row space (decision 0494)", || format!("{} of {} documents' views' counts kept", given.len(), all.len()));
         // A session's batch is renewed from its last run's (decision 0616): the unchanged documents' rows as made.
-        let sources = if session_binds.is_some() {
-            syntax::with_matchers_renewed(store, all, sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &given, session_batch.take())
-        } else {
-            syntax::with_matchers(store, all, sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &given)
-        }
+        // The chunks' projections are shared (decision 0683): the corpus batch makes only the memo hits' documents.
+        let earlier = syntax::Earlier { held: session_batch.take(), session: session_binds.is_some(), chunks: std::mem::take(&mut corpus_projections) };
+        let sources = syntax::with_matchers_from(store, all, sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &given, earlier)
         .map_err(|e| Error::Plan(e.to_string()))?;
         corpus_batch = sources.iter().find_map(|(_, s)| s.python_batch());
         sources.into_iter().filter(|(r, _)| stored.iter().any(|(s, _)| s == r)).collect()

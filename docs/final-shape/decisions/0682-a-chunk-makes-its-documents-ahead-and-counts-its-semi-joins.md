@@ -1,4 +1,6 @@
-# 0680: A chunk makes its documents ahead, and counts its semi-joins; only the counts are kept
+# 0682: A chunk makes its documents ahead, and counts its semi-joins; only the counts are kept
+
+Numbered 0680 where it was written (5bddb66b9d); renumbered, Native-and-GPU-strata holding 0680 and Parser-generators 0681.
 
 Date: 2026-11-24. Follows decision 0458 (the base relations' statistics), decision 0494 (the batch made by group)
 and 2bc2d88258 (t50 item 1: the cross part's statistics from the chunks).
