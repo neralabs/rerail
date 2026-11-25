@@ -12,6 +12,9 @@ pub(crate) enum Cond {
     Text(String),
     /// The word of the token `at` places on is one of `ws` (`w::…`): the lean parser's `is_p` and `is_p_at`.
     Word { at: usize, ws: Vec<String> },
+    /// The word of the token `at` places on is one of a choice of tokens': its table (`G::anon_table`) gives it a leaf,
+    /// as the lean parser's `anon()` asks a punctuation (decision 0685 step 3).
+    Class { at: usize, table: String },
     /// The token is of kind `kind` (the grammar's name): its test (`G::kind_test`), the lean parser's `kind() == STR`.
     Kind { kind: String, test: String },
     /// Mark `mark` (its first definition) holds at the token: its peek's tests of the tokens (`G::peek`), or its
@@ -50,6 +53,10 @@ impl Cond {
                     ws => format!("matches!({s}, {})", ws.join(" | ")),
                 }
             }
+            Cond::Class { at, table } => {
+                let s = if *at == 0 { "self.word()".to_owned() } else { format!("self.word_at(self.i + {at})") };
+                format!("{table}[{s} as usize] != 0")
+            }
             Cond::Kind { test, .. } => test.clone(),
             Cond::Mark { test, .. } => test.print(),
             Cond::Flag(f) => format!("self.flags & {f} == 0"),
@@ -57,9 +64,10 @@ impl Cond {
                 let call = if *held { f.clone() } else { format!("self.{f}({at})") };
                 if tail.is_empty() { format!("{call}.is_some()") } else { format!("{call}.is_some_and(|e| {tail})") }
             }
+            Cond::Not(c) if matches!(&**c, Cond::Word { ws, .. } if ws.len() == 1) => c.print().replacen(" == ", " != ", 1),
             Cond::Not(c) => {
                 let t = c.print();
-                if one_group(&t) || (t.starts_with("self.") && !t.contains(' ')) { format!("!{t}") } else { format!("!({t})") }
+                if one_group(&t) || (t.starts_with("self.") && !t.contains(' ')) || matches!(&**c, Cond::Word { .. }) { format!("!{t}") } else { format!("!({t})") }
             }
             Cond::And(cs) => cs.iter().map(|c| if matches!(c, Cond::Or(_)) { format!("({})", c.print()) } else { c.print() }).collect::<Vec<_>>().join(" && "),
             Cond::Or(cs) => cs.iter().map(Cond::print).collect::<Vec<_>>().join(" || "),
@@ -114,19 +122,19 @@ impl Cond {
         }
     }
 
-    /// Whether it holds where one of two tests does (an `||` in it, its text's too).
     /// The test that always holds (`true`): a take's where the code before it tested its token.
     pub(crate) fn is_true(&self) -> bool {
         matches!(self, Cond::Text(s) if s == "true")
     }
 
+    /// Whether it holds where one of two tests does (an `||` in it, its text's too).
     pub(crate) fn has_or(&self) -> bool {
         match self {
             Cond::Text(s) | Cond::Kind { test: s, .. } | Cond::Scan { tail: s, .. } => s.contains("||"),
             Cond::Or(cs) => cs.len() > 1 || cs.iter().any(Cond::has_or),
             Cond::And(cs) => cs.iter().any(Cond::has_or),
             Cond::Mark { test: c, .. } | Cond::Not(c) | Cond::Group(c) => c.has_or(),
-            Cond::Word { .. } | Cond::Flag(_) => false,
+            Cond::Word { .. } | Cond::Class { .. } | Cond::Flag(_) => false,
         }
     }
 
@@ -461,6 +469,74 @@ pub(crate) fn no_refusing(b: &mut Block) {
     takes_in(b, &mut |_, nf, _| *nf = true);
 }
 
+/// `b` with each test of every word of a choice of tokens (`anon`: each one's table and words) that choice's test,
+/// the other words after it: one test where the grammar lists the choice's words (decision 0685 step 3).
+pub(crate) fn classes(b: &mut Block, anon: &[(String, HashSet<String>)]) {
+    let split = |at: usize, ws: &[String]| -> Option<Cond> {
+        // The choice that leaves the fewest words to list: those it tests besides the choice's, and the choice's it does
+        // not. A choice of a few words is as plain as its words, and so is one that leaves as many to list.
+        let listed = |c: &HashSet<String>| ws.iter().filter(|w| !c.contains(*w)).count() + c.iter().filter(|w| !ws.contains(w)).count();
+        let (table, class) = anon.iter().filter(|(_, c)| c.len() >= 4).min_by_key(|(_, c)| listed(c))?;
+        if listed(class) + 2 > ws.len() {
+            return None;
+        }
+        let rest: Vec<String> = ws.iter().filter(|w| !class.contains(*w)).cloned().collect();
+        let mut but: Vec<String> = class.iter().filter(|w| !ws.contains(w)).cloned().collect();
+        but.sort();
+        let mut c = Cond::Class { at, table: table.clone() };
+        if !but.is_empty() {
+            c = Cond::And(vec![c, Cond::Not(Box::new(Cond::Word { at, ws: but }))]);
+        }
+        Some(if rest.is_empty() { c } else { Cond::Or(vec![c, Cond::Word { at, ws: rest }]) })
+    };
+    let cond = |c: &mut Cond| {
+        c.each(&mut |c| {
+            if let Cond::Word { at, ws } = c
+                && let Some(n) = split(*at, ws)
+            {
+                *c = n;
+            }
+        })
+    };
+    blocks(b, &mut |x| {
+        for op in x.iter_mut() {
+            match op {
+                // A take under the arm's test takes its token untested, the test now the choice's.
+                Op::If { arms, .. } => arms.iter_mut().for_each(|(c, body)| {
+                    cond(c);
+                    untested(body, c, None);
+                }),
+                Op::While(c, _) => cond(c),
+                Op::Take { take, .. } => {
+                    if let Some(c) = take.test_mut() {
+                        cond(c);
+                    }
+                }
+                Op::Match { subject, arms, .. } if subject == "self.word()" => {
+                    for (p, body) in arms.iter_mut() {
+                        if let Some(n) = split(0, &p.words) {
+                            p.words.clear();
+                            p.guard = Some(match p.guard.take() {
+                                Some(g) => Cond::And(vec![n, g]),
+                                None => n,
+                            });
+                        }
+                        if let Some(g) = &mut p.guard {
+                            cond(g);
+                        }
+                        if p.words.is_empty()
+                            && let Some(g) = &p.guard
+                        {
+                            untested(body, g, None);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
 /// `b` with each call of `f` its code `body` (`G::inlined`): whether it had one.
 pub(crate) fn inline_call(b: &mut Block, f: &str, body: &Block) -> bool {
     let mut found = false;
@@ -486,6 +562,7 @@ pub(crate) struct Cx<'a> {
 pub(crate) fn rewrite(b: &mut Block, cx: &Cx<'_>) {
     leaf_fields(b);
     takes(b, cx);
+    blocks(b, &mut or_arms);
     blocks(b, &mut one_arm_a_take);
     blocks(b, &mut no_retests);
     blocks(b, &mut ifs_and_whiles);
@@ -549,6 +626,30 @@ fn takes(b: &mut Block, cx: &Cx<'_>) {
             }
         });
     });
+}
+
+/// An arm of `a || b` whose code is `if a { x } else { y }`: two arms, `a`'s `x` and `b`'s `y`, as the lean parser asks
+/// each test once (a choice of tokens' arm, `punctuation`'s words or a `#` word).
+fn or_arms(b: &mut Block) {
+    for op in b.iter_mut() {
+        let Op::If { arms, .. } = op else { continue };
+        let mut out = Vec::new();
+        for (c, body) in std::mem::take(arms) {
+            if let Cond::Or(cs) = c.core()
+                && cs.len() > 1
+                && let [Op::If { arms: inner, els: Some(y) }] = body.as_slice()
+                && let [(a, x)] = inner.as_slice()
+                && *a == cs[0]
+            {
+                let rest = if cs.len() == 2 { cs[1].clone() } else { Cond::Or(cs[1..].to_vec()) };
+                out.push((a.clone(), x.clone()));
+                out.push((rest, y.clone()));
+            } else {
+                out.push((c, body));
+            }
+        }
+        *arms = out;
+    }
 }
 
 /// A `match self.word()`'s arms as the lean parser takes a class of tokens (`raw_line`'s loop, `is_p`): an arm whose

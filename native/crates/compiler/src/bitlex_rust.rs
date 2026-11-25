@@ -148,8 +148,9 @@ struct G<'a> {
     call_saves: std::cell::RefCell<Option<(HashSet<String>, HashSet<String>)>>,
     /// The marks the code peeks at as the lean parser does (`peeks`), a bit each by order.
     peek_marks: std::cell::Cell<Option<u64>>,
-    /// The words a choice of tokens taken where it is used (`anon_choice`) may be, and each one's leaf's kind (`ANON`).
-    anon: std::cell::RefCell<std::collections::BTreeMap<u8, String>>,
+    /// The choices of tokens taken where they are used (`anon_choice`), by their table's name (`anon_table`): the words
+    /// each may be, and each one's leaf's kind.
+    anon: std::cell::RefCell<std::collections::BTreeMap<String, std::collections::BTreeMap<u8, String>>>,
     /// The rules a `leaf K R` reaches (`R` and those it calls): they read the tokens and make nothing, the leaf made
     /// over them after (decision 0673 step 6).
     recognizers: HashSet<String>,
@@ -1191,15 +1192,7 @@ impl<'a> G<'a> {
             // A choice of tokens, each its own word's leaf: one take where it is used, as the lean parser's `anon()`.
             Gram::Sym(n) if let Some((ws, Some((k, x)))) = self.anon_choice(n) => {
                 let words: Vec<String> = ws.iter().map(|(w, _)| format!("w::{}", self.word_const(*w))).collect();
-                let kind = if let [(_, t)] = ws.as_slice() {
-                    self.kind_const(t)?
-                } else {
-                    for (w, t) in &ws {
-                        let k = self.kind_const(t)?;
-                        self.anon.borrow_mut().insert(*w, k);
-                    }
-                    "ANON[self.word() as usize]".to_owned()
-                };
+                let kind = if let [(_, t)] = ws.as_slice() { self.kind_const(t)? } else { self.anon_table(Some(n), &ws)? };
                 let test = Cond::Word { at: 0, ws: words };
                 let take = |test: Cond, kind: String| vec![moves::take(Take::Leaf { test, kind, field: "0".into() })];
                 vec![Op::If { arms: vec![(test.clone(), take(test, kind))], els: Some(take(self.kind_cond(&k), self.kind_const(&x)?)) }]
@@ -1207,12 +1200,8 @@ impl<'a> G<'a> {
             Gram::Sym(n) if let Some((ws, None)) = self.anon_choice(n) => match ws.as_slice() {
                 [(w, t)] => self.take_token(&Test::Word(*w), Some(t))?,
                 _ => {
-                    for (w, t) in &ws {
-                        let k = self.kind_const(t)?;
-                        self.anon.borrow_mut().insert(*w, k);
-                    }
                     let words: Vec<String> = ws.iter().map(|(w, _)| format!("w::{}", self.word_const(*w))).collect();
-                    vec![moves::take(Take::Leaf { test: Cond::Word { at: 0, ws: words.clone() }, kind: "ANON[self.word() as usize]".into(), field: "0".into() })]
+                    vec![moves::take(Take::Leaf { test: Cond::Word { at: 0, ws: words }, kind: self.anon_table(Some(n), &ws)?, field: "0".into() })]
                 }
             },
             Gram::Sym(n) if self.rules.contains_key(n.as_str()) => vec![Op::Call(rule_fn(n))],
@@ -1264,12 +1253,8 @@ impl<'a> G<'a> {
             // A choice of words, each a leaf of its own kind or of one it is taken as (`'w' as K`): one take, as the lean
             // parser's `anon()`.
             Gram::Alt(gs) if let Some(ws) = self.anon_words(gs) => {
-                for (w, t) in &ws {
-                    let k = self.kind_const(t)?;
-                    self.anon.borrow_mut().insert(*w, k);
-                }
                 let words: Vec<String> = ws.iter().map(|(w, _)| format!("w::{}", self.word_const(*w))).collect();
-                vec![moves::take(Take::Leaf { test: Cond::Word { at: 0, ws: words.clone() }, kind: "ANON[self.word() as usize]".into(), field: "0".into() })]
+                vec![moves::take(Take::Leaf { test: Cond::Word { at: 0, ws: words }, kind: self.anon_table(None, &ws)?, field: "0".into() })]
             }
             Gram::Alt(_) => {
                 let mut arms = self.arms(g, rest, rule)?;
@@ -2261,6 +2246,21 @@ impl<'a> G<'a> {
         Some((words, free))
     }
 
+    /// The table of a choice of tokens (`ws`, each its word and its leaf's kind): rule `rule`'s, named for it, or the one
+    /// of the choices written in rules (`ANON`). The take's leaf's kind, the word's in it.
+    fn anon_table(&self, rule: Option<&str>, ws: &[(u8, String)]) -> Result<String, String> {
+        let table = match rule.map(upper) {
+            Some(t) if !["ANON", "NONE", "UNSET", "DEPTH", "TERMINATORS", "REMEMBERED", "REFUSED"].contains(&t.as_str()) && !t.starts_with("FLAG_") => t,
+            Some(t) => format!("WORDS_{t}"),
+            None => "ANON".to_owned(),
+        };
+        for (w, t) in ws {
+            let k = self.kind_const(t)?;
+            self.anon.borrow_mut().entry(table.clone()).or_default().insert(*w, k);
+        }
+        Ok(format!("{table}[self.word() as usize]"))
+    }
+
     /// The rules' methods (`made`, each its method's name and moves), each rule called from one place written there
     /// (`rule`'s inline form): its method gone, as the lean parser writes one function where the grammar has a rule
     /// for each part (decision 0685 step 1). Not one that calls itself, nor one the root is, nor one longer than
@@ -2296,8 +2296,10 @@ impl<'a> G<'a> {
     /// their takes named as all of them ask (`moves::Names`).
     pub(crate) fn printed(&self, mut bs: Vec<Block>) -> Vec<String> {
         let marks = self.mark_words.get_or_init(|| self.open_mark_words());
+        let anon: Vec<(String, HashSet<String>)> = self.anon.borrow().iter().filter(|(t, _)| *t != "ANON").map(|(t, ws)| (t.clone(), ws.keys().map(|w| format!("w::{}", self.word_const(*w))).collect())).collect();
         for b in bs.iter_mut() {
             moves::rewrite(b, &moves::Cx { marks: marks.as_ref(), marked: self.marked_read.get() });
+            moves::classes(b, &anon);
         }
         let names = self.names.get_or_init(|| moves::Names::of(&mut bs));
         bs.iter().map(|b| moves::print_named(b, "", names)).collect()
@@ -2779,11 +2781,11 @@ impl<'a> G<'a> {
             let _ = writeln!(out, "    pub const {}: u32 = {};", self.word_const((i + 1) as u8), i + 1);
         }
         out.push_str("}\n\n");
-        // Each word's leaf's kind where a choice of tokens takes it (`anon_choice`), as the lean parser's `anon()`.
-        if !self.anon.borrow().is_empty() {
-            let anon = self.anon.borrow();
-            let kinds: Vec<String> = (0..=self.x.words.len()).map(|w| anon.get(&(w as u8)).cloned().unwrap_or_else(|| "0".to_owned())).collect();
-            let _ = writeln!(out, "/// A word's leaf's kind where a choice of tokens takes it (the lean parser's `anon()`); 0: none.\nconst ANON: [u16; {}] = [{}];\n", kinds.len(), kinds.join(", "));
+        // Each choice of tokens' table (`anon_table`): each word's leaf's kind, as the lean parser's `anon()`.
+        for (table, words) in self.anon.borrow().iter() {
+            let kinds: Vec<String> = (0..=self.x.words.len()).map(|w| words.get(&(w as u8)).cloned().unwrap_or_else(|| "0".to_owned())).collect();
+            let what = if table == "ANON" { "a choice of tokens written in a rule".to_owned() } else { format!("`{}`", table.to_ascii_lowercase()) };
+            let _ = writeln!(out, "/// A word's leaf's kind where {what} takes it (the lean parser's `anon()`); 0: none of its words.\nconst {table}: [u16; {}] = [{}];\n", kinds.len(), kinds.join(", "));
         }
         for (i, f) in self.flags.iter().enumerate() {
             let _ = writeln!(out, "const FLAG_{}: u32 = 1 << {i};", upper(f));

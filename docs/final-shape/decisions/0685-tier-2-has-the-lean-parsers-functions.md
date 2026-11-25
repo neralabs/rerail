@@ -51,5 +51,13 @@ changed and how.
    and the declaration, functor, violation, lattice and I/O directives, a setting and the literal's parts are still
    functions of their own.)
 2. The node's kind as a table; open and close hoisted.
-3. Token classes.
+3. Token classes. (Done: each choice of tokens of several words has a table of its own, named for it (`G::anon_table`:
+   rr's `PUNCTUATION`, `COMPARISON_OPERATOR`, `ADDITIVE`, `MULTIPLICATIVE`; Kotlin's `SOFT_WORD`,
+   `ASSIGNMENT_OPERATOR`, `INTERP_SOFT`), and the words chosen in a rule's own `|` the one `ANON`. A test of a
+   choice's words is its table's (`Cond::Class`, `moves::classes`): `PUNCTUATION[self.word() as usize] != 0`, not
+   31 words, the few words besides or but listed after it (`… != 0 && !matches!(self.word(), w::LPAREN | w::RPAREN)`);
+   a take under it takes untested. An arm of `a || b` whose code is `if a { x } else { y }` is two arms (`or_arms`),
+   so a setting's, a declaration's and a functor's tail ask a punctuation, then a `#` word, once each, and take the
+   `#` word as `bump_as(k::IDENTIFIER)`. A negated word test is `!=` or `!matches!`. The changes: rr's and Kotlin's
+   lists of a choice's words are its table's test, its takes' kinds its table's, in both forms.)
 4. Repeated code as functions.
