@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 #include "tsx/eslint-a-globals.rerail"
-//   es_builtin(x), global_ref_to(r, x), static_prop(m, o, x), estree_parent(n, p), callee(c, f), call_arg(c, a, i), capital(x)
+//   es_builtin(x), global_ref_to(r, x), static_prop(m, o, x), estree_parent(n, p), callee(c, f), call_arg(c, a, i), capital_id(n)
 
 // ESLint's no-extend-native: writing to the prototype of a capitalised ECMAScript built-in.
 //   Array.prototype.last = f;                         an assignment to a member of the prototype
@@ -26,5 +26,5 @@ no_extend_native(c, g) :- proto(p, g), call_arg(c, w, 0), deparen(w, p), callee(
 
 // proto(p, g): p is `G.prototype` for a built-in G that is not an exception.
 .decl proto(p: node, g: symbol)
-proto(p, g) :- static_prop(p, o, "prototype"), kind(o, "identifier"), global_ref_to(o, g), es_builtin(g), capital(g),
+proto(p, g) :- static_prop(p, o, "prototype"), kind(o, "identifier"), global_ref_to(o, g), es_builtin(g), capital_id(o),
     !option_item("exceptions", _, g).

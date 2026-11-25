@@ -175,7 +175,7 @@ policies split alone). It held 3,190 when the check was built; fix 1 took out 18
    **done (2026-11-25)**, § Fix 3e: built (note t55 is its design). The data layer's purity call graph
    (`plp_anycand`, 3f): **done (2026-11-25)**, § Fix 3f: built. The TSX `/* global */` items (`item_parts`, 3g):
    **done (2026-11-25)**, § Fix 3g: built.
-4. **The tail:** 146 crossings of 1–14 relations each, read one by one, as 0652's were.
+4. **The tail:** 146 crossings of 1–14 relations each, read one by one, as 0652's were. In progress, § The tail.
 
 ### Fix 2: the design of `py_names`
 
@@ -676,6 +676,35 @@ line break. Its findings, and eslint-no-redeclare's, are the same as the old eng
 tests and every rule file's own tests pass. javascript's split test runs in 3 shards, so its stale entries came from
 the union of their `RERAIL_SHOW_CROSSINGS` lines (§ Open).
 
+### The tail (2026-11-25, in progress)
+
+After fix 3g, 110 distinct crossings were left, of 1–11 relations each. Most are one mistake. A table is keyed by a
+value (a name, a comment's text) and its rule leaves out the node the value came from (`comment(_, w)`,
+`fn_words(_, w)`). So the table holds every file's values. Its readers join it at their own nodes, and they all land
+in the cross part. Some of these are wrong as well as misplaced. A per-file ESLint rule then depends on other files:
+`capital(x)` held only for texts some identifier in the run had. The fix is the same each time: key the table by the
+node, or test the value in the reader's own rule.
+
+**Batch 1: the TSX libraries' text helpers.** The list went from 312 to 288: javascript 17, typescript 7.
+- `capital(x)` is now `capital_id(n)`, a test of the identifier node. `bound_this` and no-extend-native's `proto`
+  read it at their own node: a function's name, and a reference whose name is the global's.
+- `unescape` and its pieces are keyed by the identifier. A piece is a span of it (`match_all` over the node), ordered
+  by its column. The `match_all` over the text was a native table of texts. The lowering's helper for `match_all`
+  over a symbol is keyed by the text alone, so it is cross-file wherever its text comes from.
+- `upper_first_ask(n, s)`: the asker names its node. capitalized-comments keys `bare`, `url` and `upper` by the
+  comment.
+- no-octal-escape's message named a span's id, not the escape (`'\204539970558885890'`). On a node, a `match`
+  group is a span. The message now reads its text, `'\01'` as ESLint's.
+
+Compared on 3,671 files: up to 40 cases of each of the 121 rules in ESLint's pack test data. Both runs are the CLI
+at O0 with `test-hooks` on this Mac: the old engine with the old rules (fcc1ef18c3), and the new engine with the new
+rules.
+
+| Pack | Findings, old and new | Instructions, old → new | Peak RSS, old → new |
+|---|---|---|---|
+| javascript (121 policies) | 9,922, the same, apart from no-octal-escape's 34 messages | 1.091 → 1.032 × 10¹² | 1.94 → 1.71 GB |
+| typescript (65 policies) | 4,365, the same | 0.450 → 0.384 × 10¹² | 1.29 → 1.31 GB |
+
 ## Open
 
 - **A sharded pack's stale entries.** Each shard runs in a process of its own and sees its own policies, so no shard
@@ -683,6 +712,14 @@ the union of their `RERAIL_SHOW_CROSSINGS` lines (§ Open).
   and fix 3f's from the union of one run's `RERAIL_SHOW_CROSSINGS` lines. The same holds for a run of each policy
   alone (`data-layer:alone`).
   The gate needs a test that unions the shards' logs and refuses a listed relation none of them names.
+
+- **A `match_all` over a node that only a derived relation binds scans nothing.** `match_all("re", n, m)` goes to
+  `rx_span`, which scans nodes of the kinds the span analysis gives, only when a `kind(n, "K")` atom of the same rule
+  binds n (`lower.rs`, `kind_bound`). Otherwise it goes to the batch's `matchall_` relations. Those scan `source`,
+  `src_line` and comment spans, so a node of another kind gets no row, and nothing says so. `pk(n) :-
+  kind(n, "property_identifier")` and `pk(n), match_all("[a-z]+", n, m)` give nothing. eslint-b-objects'
+  `escape_piece` writes one rule per kind until the dispatch reads a node column's kinds from the span analysis.
+  The span analysis's error for an unbounded subject then applies.
 
 - **Where a finding that pairs two files' nodes is written.** `call_target(call, def)` is an example. An output
   keeps its node (§ Built), but once its family is rewritten it names the second file's node by that node's symbol,

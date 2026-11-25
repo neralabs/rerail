@@ -26,22 +26,24 @@ capitalized_comments(c, "Comments should not begin with an uppercase character."
 
 // first_char(c, x): the first character of c that is not whitespace or `*`, for a comment the rule checks.
 .decl first_char(c: node, x: symbol)
-first_char(c, @slice(w, 0, 1)) :- js_comment(c, t, v), !tool_comment(c), bare(v, b), !url(b), !ignored(c, t, b),
+first_char(c, @slice(w, 0, 1)) :- js_comment(c, t, _), !tool_comment(c), bare(c, b), !url(c), !ignored(c, t, b),
     w = @replace_all(b, "\\s", ""), w != "".
 // A lower-case letter is one toLocaleUpperCase changes: Unicode's lower-case and title-case letters (Ll, Lt).
-// upper(x, u): ESLint's toLocaleUpperCase of one character, for the fix. Core has @lower and no @upper (proposed in
-// NOTES); until it has, common's upper_first table does ASCII letters, so `// über` is reported without a fix.
-.decl upper(x: symbol, u: symbol)
-upper(x, u) :- first_char(_, x), upper_first(x, u).
-upper_first_ask(x) :- first_char(_, x).
-.decl bare(v: symbol, b: symbol)  // the comment's value with its asterisks removed
-bare(v, @replace_all(v, "\\*", "")) :- js_comment(_, _, v).
-.decl url(b: symbol)  // starts with something like a URL:  // https://example.com/a
-url(b) :- bare(_, b), match("\\s*[^:/?#\\s]+://[^?#][\\s\\S]*", b).
+// upper(c, u): ESLint's toLocaleUpperCase of comment c's first character, for the fix. Core has @lower and no @upper
+// (proposed in NOTES); until it has, common's upper_first table does ASCII letters, so `// über` is reported without a
+// fix. bare, url and upper are keyed by the comment, in its own file: keyed by its text, they were tables of every
+// file's comments, joined by text in the cross-file part (decision 0677).
+.decl upper(c: node, u: symbol)
+upper(c, u) :- first_char(c, x), upper_first(c, x, u).
+upper_first_ask(c, x) :- first_char(c, x).
+.decl bare(c: node, b: symbol)  // the comment's value with its asterisks removed
+bare(c, @replace_all(v, "\\*", "")) :- js_comment(c, _, v).
+.decl url(c: node)  // starts with something like a URL:  // https://example.com/a
+url(c) :- bare(c, b), match("\\s*[^:/?#\\s]+://[^?#][\\s\\S]*", b).
 .decl ignored(c: node, t: symbol, b: symbol)
-ignored(c, t, b) :- js_comment(c, t, v), bare(v, b), pattern(t, p), match(cat("\\s*(?:", p, ")[\\s\\S]*"), b).
-ignored(c, t, b) :- js_comment(c, t, v), bare(v, b), option("ignoreInlineComments", "true"), token_neighbours(c).
-ignored(c, t, b) :- js_comment(c, t, v), bare(v, b), option("ignoreConsecutiveComments", "true"),
+ignored(c, t, b) :- js_comment(c, t, _), bare(c, b), pattern(t, p), match(cat("\\s*(?:", p, ")[\\s\\S]*"), b).
+ignored(c, t, b) :- js_comment(c, t, _), bare(c, b), option("ignoreInlineComments", "true"), token_neighbours(c).
+ignored(c, t, b) :- js_comment(c, t, _), bare(c, b), option("ignoreConsecutiveComments", "true"),
     follows_comment(c).
 .decl pattern(t: symbol, p: symbol)  // the ignore pattern for comments of type t
 pattern("Line", p) :- option("line.ignorePattern", p).
@@ -50,7 +52,7 @@ pattern(t, p) :- option("ignorePattern", p), (t = "Line", !option("line.ignorePa
     t = "Block", !option("block.ignorePattern", _)).
 
 // The fix rewrites that one letter: `// fix` becomes `// Fix` ("always"), `// Fix` becomes `// fix` ("never").
-recase(c, _) :- match("(?://|/\\*)[\\s*]*(?<L>[^\\s*])[\\s\\S]*", c), text(L, x), !option("option", "never"),
-    upper(x, u) => replace(L, `$u`).
+recase(c, _) :- match("(?://|/\\*)[\\s*]*(?<L>[^\\s*])[\\s\\S]*", c), !option("option", "never"),
+    upper(c, u) => replace(L, `$u`).
 recase(c, _) :- match("(?://|/\\*)[\\s*]*(?<L>[^\\s*])[\\s\\S]*", c), text(L, x), option("option", "never"),
     u = @lower(x) => replace(L, `$u`).
