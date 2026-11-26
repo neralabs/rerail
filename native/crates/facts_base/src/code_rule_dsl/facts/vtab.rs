@@ -393,6 +393,17 @@ pub trait Source: Send + Sync {
     fn holds_each(&self, _by: usize, _ids: &[i64], _col: usize, _want: Option<i64>, _cursor: &mut ProbeCursor, _out: &mut [i64]) -> bool {
         false
     }
+    /// The column whose every value has at most one row, which `read_one_at` reads that row by (a view of a node's
+    /// own facts: its id's column), or `None`.
+    fn row_column(&self) -> Option<usize> {
+        None
+    }
+    /// The one row with `value` in `row_column`'s `column`: its values in `columns` written to `out`, `Some(false)`
+    /// where there is no such row, `None` where the source has no such read (the caller probes instead). A step
+    /// reading a node's kind by its id reads it so, with no candidates found or rows handed on.
+    fn read_one_at(&self, _column: usize, _value: i64, _columns: &[usize], _out: &mut [i64], _cursor: &mut ProbeCursor) -> Option<bool> {
+        None
+    }
     /// `for_rows` over rows `range` alone, until `each` returns false: a join step's scan of a view reads its rows
     /// so (decision 0353 step 2), a view of a batch's documents walking the documents the range holds once, each row's
     /// node, id and parent coming from the walk, not a point read a row.

@@ -11711,3 +11711,34 @@ final-rerail-shape-phased-facts' two new commits are merges: of the hub (through
 Checked with Relax: tape-format, lang, lang-json, rr-syntax, run, tests-lang, c-pp, clif, facts, ukl-rust, lean-tapes, json-aot, tests-tape, tests-sql, store, workspace, lang-php, lang-python, corpus-memo and compiler all check with 0 errors.
 
 Tests: tape-format 54/54, lang 80/80, rr-syntax 12/12, tests-tape 115/115 (one thread; four pass the 12 GB cap), tests-lang 192/192 (two threads).
+
+### Q567. Roll-up 139 (final-rerail-shape 8fd061fa9b onto Pulling-it-all-together): what the merge chose
+
+final-rerail-shape's six commits:
+- layer c (a matcher's bits grouped by slot);
+- the first shape kernel (a scan's tests on its nodes asked a chunk at a time);
+- derived inputs probed by value;
+- a made relation's node bits and node-keyed index made from its rows where they lie;
+- a node's own facts read as its one row (`Source::row_column` / `read_one_at`).
+
+- **Fused tests: one mechanism.** Both lines fuse an atom that binds nothing into the row program before it, as a computed verdict column:
+  - the hub, through Typing's t57 E6 (f9d7157b90): a view's test of a node, read for the chunk at once (`Word::Holds`, `Source::holds_each`);
+  - final-rerail-shape's shape kernel (295b492a33): any input's test, asked only of the rows still passing the tests before it (`Word::Held`, `Fused::tests`, `cands::holds`).
+
+  Keeping both would be two ways to fuse the same step. They are now one: every fused test is a `Held` column (`rowcode::Test`) and shares the alive mask. A test whose input is a view keyed by the row's node (`Test::view`, `ViewTest`) is answered by the view for the chunk's rows still passing, at once and in place (`holds_each`, a cursor kept from chunk to chunk). Every other test is asked row by row (`cands::holds`, which reads a node's own row by `read_one_at`).
+  - `Word::Holds` and `Fused::reads` are gone.
+  - `fused(binds, after, ask)` (the device's, no views) wraps `fused_viewing(binds, after, ask, view)`.
+  - A view's tests fuse even where `ask` is off: the hub had them fused regardless, and the shape kernel's fall-back to factoring (a bound slot no test reads) turns off only the row-by-row tests.
+  - `RERAIL_VIEW_TESTS=off` and `RERAIL_FUSED_TESTS=off` still turn each off. `run_counts().view_tests` counts the chunks' rows where a view's test is fused.
+- `cands.rs`: both readers. The hub's ranged read of a column alone (a document's nodes by `index_then`) comes first, then final-rerail-shape's one-column key by its value-keyed index.
+- `Source`: both pairs, `reads_tests_by` / `holds_each` and `row_column` / `read_one_at`. They do different jobs: a chunk's membership tests, and one row's columns by its key.
+- The device's (`device.rs`) and the lab's (`lab/tests.rs`) row-program inputs: final-rerail-shape's. The device asks no tests (`ask` false, no view), so `Held` is unreachable there.
+
+Checked with Relax: setfix, facts, facts-base, tests-corpus, blocks and the device crate check with 0 errors.
+
+Tests:
+- setfix 143/144: `a_scans_tests_on_its_nodes_are_asked_a_chunk_at_a_time` and `a_fused_tests_key_from_a_let_is_the_bound_value` pass.
+- facts 18/18, facts-base 87/87, blocks 116/116.
+- tests-corpus `a_kind_test_of_a_node_the_atom_bound_is_read_in_its_row_program` passes: the view's chunk path runs, and its rows are the unfused rules'.
+
+Still red: `cut_tests::a_step_clocks_switches_are_no_steps_time` (f9d7157b90's), alone too. The test builds a `StepClock` directly, and this merge touches nothing it calls. It sets the best of eight 4,096-switch batches against the average over a 200,000-switch loop. At load 30, under Relax, the average is about 60% above the best (6.6 against 4.0 ticks a switch), so 30–40% of the empty steps' ticks are kept, where the test allows 20%. It passed at roll-up 130.

@@ -2360,6 +2360,21 @@ impl InBlock {
         }
     }
 
+    /// The relation's node-keyed index with rows on column `col` over its rows (`Relation::try_add_node_index`): found, or
+    /// built now into its block. `None` as `own_node_bits`'s.
+    pub fn own_node_rows(&self, col: u16) -> Option<usize> {
+        let r = self.relation();
+        if self.dead != 0 || r.base_rows != 0 || self.far().is_some() {
+            return None;
+        }
+        let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = r.find_node_index(rerail_blocks::relation::NODE_ROWS, col, self.rows) {
+            return Some(i);
+        }
+        // SAFETY: under the block's index lock; the relation's rows `0..rows` are written.
+        unsafe { r.try_add_node_index(&self.facts.block, col, self.rows, true) }
+    }
+
     /// The relation's node-keyed index on column `col` over its rows (decision 0694 step 1): found, or built now into
     /// its block. `None` for a delta (dead rows), a continuation, a chain past its block, or a block with no room.
     pub fn own_node_bits(&self, col: u16) -> Option<usize> {
@@ -2368,11 +2383,13 @@ impl InBlock {
             return None;
         }
         let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(i) = r.find_node_bits(col, self.rows) {
+        // Its rows' index holds the bits too: read there where it is, not built twice.
+        use rerail_blocks::relation::{NODE_BITS, NODE_ROWS};
+        if let Some(i) = r.find_node_index(NODE_ROWS, col, self.rows).or_else(|| r.find_node_index(NODE_BITS, col, self.rows)) {
             return Some(i);
         }
         // SAFETY: under the block's index lock; the relation's rows `0..rows` are written.
-        unsafe { r.try_add_node_bits(&self.facts.block, col, self.rows) }
+        unsafe { r.try_add_node_index(&self.facts.block, col, self.rows, false) }
     }
 
     fn own_index_if(&self, cols: &[u16], keys: usize, build: bool) -> Option<usize> {

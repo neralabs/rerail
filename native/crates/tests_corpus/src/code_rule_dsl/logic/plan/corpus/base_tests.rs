@@ -1757,7 +1757,7 @@ fn str_answered_on_request_holds_the_eager_rows() {
 }
 
 /// t57 E6: a test `kind(n, #k)` of a node the atom before it bound is read in that atom's row program, a chunk's nodes
-/// at once off the tape (`rowcode::Word::Holds`, `Source::holds_each`), not a membership step's probe a row. Its rows
+/// at once off the tape (`rowcode::Test::view`, `Source::holds_each`), not a membership step's probe a row. Its rows
 /// are those of the same rules written so that no test is fused (each kind bound, then compared): positive and
 /// negated, a node a row holds and one bound before, a kind constant and a kind another atom bound.
 #[test]

@@ -5268,6 +5268,34 @@ impl Source for Viewed {
         }
         true
     }
+    /// A node's own facts: a row a node, by its id (`test_at`'s views).
+    fn row_column(&self) -> Option<usize> {
+        matches!(self.view, View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Unit | View::End).then(|| self.own())
+    }
+    /// A node's row by its id, read (`kind(n, k)` by `n`): its tape node found once, each column read off the tape, as
+    /// `test_at` reads them.
+    fn read_one_at(&self, column: usize, value: i64, columns: &[usize], out: &mut [i64], cursor: &mut super::ProbeCursor) -> Option<bool> {
+        use read_op::*;
+        if self.row_column() != Some(column) {
+            return None;
+        }
+        let plan = self.plan_for(column, columns, cursor)?;
+        let b = &*self.batch;
+        let Some((doc, local)) = b.node_nearer(value, &mut cursor.hint[0], &mut cursor.near[0]) else { return Some(false) };
+        let p = &b.docs[doc];
+        let x = if plan.needs & NEED_X == 0 {
+            NONE
+        } else if p.tape_ids() {
+            (value & 0xffff_ffff) as u32
+        } else {
+            p.node_near(local, &mut cursor.near[1])
+        };
+        let up = if plan.needs & NEED_UP != 0 { Self::parent_id_of(p, local, x) } else { 0 };
+        for (o, &op) in out.iter_mut().zip(&plan.ops[..usize::from(plan.len)]) {
+            *o = Self::op_value(b, p, local, x, value, up, Known::default(), op);
+        }
+        Some(true)
+    }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.lookup_docs(column, values, None)
     }

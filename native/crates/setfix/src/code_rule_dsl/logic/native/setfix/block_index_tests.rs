@@ -252,7 +252,7 @@ fn a_test_by_one_node_column_reads_the_blocks_node_bits() {
         }
     }
     let ib = rel.in_block().unwrap();
-    assert!(ib.relation().find_node_bits(0, n as u32).is_some(), "in the relation's block");
+    assert!(ib.relation().find_node_index(rerail_blocks::relation::NODE_BITS, 0, n as u32).is_some(), "in the relation's block");
     assert_eq!(super::run_counts().node_bits[0].load(std::sync::atomic::Ordering::Relaxed), 1);
     let mut dead = rerail_blocks::vector![0u64; n.div_ceil(64)];
     dead[0] = 1;

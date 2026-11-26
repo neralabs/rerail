@@ -1033,6 +1033,46 @@ impl Source for Layered {
         });
         Some(found)
     }
+    fn row_column(&self) -> Option<usize> {
+        self.base.row_column()
+    }
+    /// The base's read, else the row of the part that holds the value (as `test_at` asks them: the base, then each
+    /// part that may hold it, a value's rows are few). Made on lookup, `None` (the matches are read).
+    fn read_one_at(&self, column: usize, value: i64, columns: &[usize], out: &mut [i64], cursor: &mut super::super::ProbeCursor) -> Option<bool> {
+        if self.values.admitted.load(Ordering::Acquire) == 0 {
+            return self.base.read_one_at(column, value, columns, out, cursor);
+        }
+        let all = self.values.parts.load();
+        let Some(p) = all.get(self.name.as_str()).filter(|p| p.total > 0) else {
+            return self.base.read_one_at(column, value, columns, out, cursor);
+        };
+        if self.made.is_some() || columns.len() > out.len() {
+            return None;
+        }
+        if self.base.read_one_at(column, value, columns, out, cursor)? {
+            return Some(true);
+        }
+        let mut found = false;
+        p.of(value, self.base.keys_documents(column), &mut |part| {
+            if found {
+                return;
+            }
+            let mut each = |_: usize, got: &[i64]| {
+                if !found {
+                    out[..got.len()].copy_from_slice(got);
+                    found = true;
+                }
+            };
+            if !part.src.lookup_read(column, value, columns, &mut each) {
+                let rows = part.src.lookup(column, &[value]).unwrap_or_else(|| (0..part.src.len()).filter(|&r| part.src.value(r, column) == value).collect());
+                if let Some(&r) = rows.first() {
+                    part.src.row_at(r, columns, &mut out[..columns.len()]);
+                    found = true;
+                }
+            }
+        });
+        Some(found)
+    }
     fn keys_documents(&self, column: usize) -> bool {
         self.base.keys_documents(column)
     }

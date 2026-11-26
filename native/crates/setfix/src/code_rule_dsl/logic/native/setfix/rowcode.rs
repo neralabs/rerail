@@ -14,9 +14,13 @@
 //!   expression list (`Word`), evaluated over the chunk's columns before the program runs. They
 //!   do not fit `Program`, which holds no word-valued row code (decision 0095 §2).
 //!
-//! - a test of a node the atom bound by a view of it (`kind(n, #k)` after the atom that binds `n`, t57 E6) is
-//!   computed too: 1 where the view holds the node with the value, read for the chunk's nodes at once and in place
-//!   (`Source::holds_each`: a view of the tape reads each node's tape node and kind), not a step's probe a row.
+//! - a test (an atom of an input that binds nothing: `rr_ast_8(n)`, `!binder(n)`) whose keys read the
+//!   chunk's columns is computed too: the run asks the input for each row still passing the tests
+//!   before it (`Fused::tests`), its verdicts a column (`Word::Held`), 1 where the row passes. The
+//!   shape kernel of a scan and the tests on its nodes (the design's layer 5): the chunk's tests are
+//!   asked one input at a time, not a row at a time through the walk. A test of a node by a view keyed by it
+//!   (`kind(n, #k)` after the atom that binds `n`, t57 E6) is asked of those rows at once and in place
+//!   (`Test::view`, `Source::holds_each`: a view of the tape reads each node's tape node and kind).
 //!
 //! The steps' observed fanouts (`JoinRule::counts`) stay exact: the program outputs each fused
 //! step's running mask, and its popcount is the rows that step passed on.
@@ -38,14 +42,31 @@ pub enum Word {
     Col(usize),
     /// The atom's column's document: `@doc(x)`, `x >> 32`.
     Doc(usize),
-    /// Whether view test `reads[r]` holds the node in the atom's column `c`, `Holds(c, r)`: 1 or 0.
-    Holds(usize, usize),
+    /// Test `k`'s verdict on the row (`Fused::tests`): 1 where it passes (a negated one, where its input holds no
+    /// row), else 0.
+    Held(usize),
 }
 
-/// A test of a node by a view of it, fused (`Word::Holds`): the view's source, the node's column in it (`by`, a
-/// column it reads tests by), the column tested and the parameter holding its value (`None`: any value).
+/// A test fused as a computed column: the step (after the atom) whose atom it asks, and each slot its keys read with
+/// where its value is: a program column (the row's), or a parameter (a slot bound before the atom, or a constant,
+/// that a fused `let` put in another slot, which the walk sets only for a row that passes).
+#[derive(Clone)]
+pub struct Test {
+    pub at: usize,
+    pub neg: bool,
+    pub slots: Vec<(usize, Bind)>,
+    /// Where the input is a view that answers a chunk's tests by the node a row holds (t57 E6): asked so, for the
+    /// rows still passing at once, not row by row.
+    pub view: Option<ViewTest>,
+}
+
+/// A test of a node by a view of it, asked a chunk at a time (`Test::view`): the view's source, the program column
+/// holding the node (`node`), the node's column in the source (`by`, a column it reads tests by), the column tested
+/// and the parameter holding its value (`None`: any value).
+#[derive(Clone)]
 pub struct ViewTest {
     pub src: Arc<dyn Source>,
+    pub node: usize,
     pub by: usize,
     pub col: usize,
     pub want: Option<usize>,
@@ -70,6 +91,7 @@ enum Val {
 }
 
 /// An atom fused with the steps after it.
+#[derive(Clone)]
 pub struct Fused {
     /// The steps fused after the atom.
     pub steps: usize,
@@ -86,8 +108,8 @@ pub struct Fused {
     pub binds: Vec<(usize, Bind)>,
     /// The gathered columns: (program column, atom column).
     pub(super) gather: Vec<(usize, usize)>,
-    /// The view tests its computed columns read (`Word::Holds`).
-    pub reads: Vec<ViewTest>,
+    /// The tests asked of an input, in step order (`Word::Held`).
+    pub tests: Vec<Test>,
 }
 
 #[derive(Clone, Copy)]
@@ -102,7 +124,6 @@ struct Build {
     columns: Vec<Word>,
     params: Vec<Param>,
     ops: Vec<BlockOp>,
-    reads: Vec<ViewTest>,
 }
 
 impl Build {
@@ -166,25 +187,33 @@ pub(super) fn fuse(steps: &[Step], view: ViewOf<'_>) -> Vec<Option<Box<Fused>>> 
         if let Step::Atom { neg: false, binds, .. } = step
             && !binds.is_empty()
         {
-            out[i] = fused_viewing(binds, &steps[i + 1..], view).map(Box::new);
+            out[i] = fused_viewing(binds, &steps[i + 1..], tests_on(), view).map(Box::new);
         }
     }
     out
 }
 
-/// `fused_viewing` with no view tests (a reader that has none, the device's).
-pub fn fused(binds: &[(usize, usize)], after: &[Step]) -> Option<Fused> {
-    fused_viewing(binds, after, &|_| None)
+/// Whether a test of an input is fused into its scan's chunk (`Test`): `RERAIL_FUSED_TESTS=off` (a measurement aid,
+/// the run's setting) leaves it to the walk, as before.
+fn tests_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_FUSED_TESTS").map_or(true, |v| v != "off"))
+}
+
+/// `fused_viewing` with no view's tests (a reader that has none, the device's).
+pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool) -> Option<Fused> {
+    fused_viewing(binds, after, ask, &|_| None)
 }
 
 /// The steps after an atom that binds `binds` fused with it, as far as each is row code: a comparison, a document's
-/// test or read, a `let`, a set's test, or a test by a view (`view`) of a node a row holds.
-pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], view: ViewOf<'_>) -> Option<Fused> {
+/// test or read, a `let`, a set's test, or a test of an input (`Test`). `ask`: whether a test of an input is asked
+/// row by row (which only the CPU's walk does); a test a view answers a chunk at a time (`view`) is fused either way.
+pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], ask: bool, view: ViewOf<'_>) -> Option<Fused> {
     let mut env: Vec<(usize, Val)> = binds.iter().map(|&(c, s)| (s, Val::Row(Word::Col(c)))).collect();
     let mut b = Build::default();
     let mut acc: Option<u16> = None;
     let mut passed: Vec<Option<u16>> = Vec::new();
     let mut steps = 0;
+    let mut tests: Vec<Test> = Vec::new();
     for (at, step) in after.iter().enumerate() {
         let val = |env: &[(usize, Val)], k: Key| -> Val {
             match k {
@@ -200,21 +229,12 @@ pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], view: ViewOf<'_>)
                 _ => None,
             }
         };
-        // A test by a view of a node a row holds (`kind(n, #k)`, t57 E6): binds nothing, its node a row's column the
-        // view's rows are keyed by, its other key (if any) a parameter. Negated, the rows it does not hold.
-        if let Step::Atom { src, neg, keys, binds: b2, tests } = step
-            && b2.is_empty()
-            && tests.is_empty()
-        {
-            let Some(mask) = view_test(&mut b, &env, val, src, *neg, keys, view) else { break };
-            steps = at + 1;
-            acc = Some(match acc {
-                Some(a) => b.op(BlockOp::And(a, mask)),
-                None => mask,
-            });
-            passed.push(acc);
-            continue;
-        }
+        // A view's test of a node a row holds (t57 E6): binds nothing, its node a row's column the view's rows are
+        // keyed by, its other key (if any) a parameter.
+        let mut viewed = match step {
+            Step::Atom { src, keys, binds, tests: st, .. } if binds.is_empty() && st.is_empty() => view_test(&mut b, &env, val, src, keys, view),
+            _ => None,
+        };
         let mask: Option<Option<u16>> = match *step {
             Step::Unused { .. } => Some(None),
             Step::Lt { a, b: y, or_eq } => b.compare(val(&env, a), if or_eq { CmpOp::Le } else { CmpOp::Lt }, val(&env, y)).map(Some),
@@ -249,6 +269,43 @@ pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], view: ViewOf<'_>)
                 }
                 Val::Param(_) => None,
             },
+            // A view's test (`viewed`): its verdicts a computed column, asked of the view a chunk at a time.
+            Step::Atom { neg, .. } if viewed.is_some() => {
+                tests.push(Test { at, neg, slots: Vec::new(), view: viewed.take() });
+                let col = Val::Row(Word::Held(tests.len() - 1));
+                b.compare(col, CmpOp::Eq, Val::Param(Param { key: Key::Const(1), doc: false })).map(Some)
+            }
+            // A test of an input whose keys read the row (`Src::In`: an input, fixed while the rule runs; the
+            // relations the stratum derives change under it): its verdicts a computed column.
+            Step::Atom { src: super::Src::In(..), neg, ref keys, ref binds, .. } if ask && binds.is_empty() => {
+                let mut slots = Vec::new();
+                let mut row = false;
+                let mut ok = true;
+                for &(_, k) in keys {
+                    if let Key::Slot(s) = k {
+                        match val(&env, k) {
+                            Val::Row(w @ Word::Col(_)) => {
+                                row = true;
+                                slots.push((s, Bind::Column(usize::from(b.column(w)))));
+                            }
+                            Val::Param(p @ Param { doc: false, .. }) => {
+                                // The slot itself, bound before the atom, needs nothing; another (a `let`'s) is set.
+                                if p.key != Key::Slot(s) {
+                                    slots.push((s, Bind::Param(usize::from(b.param(p)))));
+                                }
+                            }
+                            _ => ok = false,
+                        }
+                    }
+                }
+                if ok && row {
+                    tests.push(Test { at, neg, slots, view: None });
+                    let col = Val::Row(Word::Held(tests.len() - 1));
+                    b.compare(col, CmpOp::Eq, Val::Param(Param { key: Key::Const(1), doc: false })).map(Some)
+                } else {
+                    None
+                }
+            }
             _ => None,
         };
         let Some(mask) = mask else { break };
@@ -266,6 +323,19 @@ pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], view: ViewOf<'_>)
     }
     // The steps after the last test are left to themselves.
     passed.truncate(steps);
+    tests.retain(|t| t.at < steps);
+    // The kernel's shape is a scan and the tests on what it binds: every slot the atom binds is read by a fused test.
+    // An atom whose tests leave one of its slots unread (`p(c, o, m), f(k, m)`, `$c` the head's alone) is factored by
+    // the walk instead (`setfix::factored`): its tests asked once per group of what they read, not once per row.
+    if ask && !tests.is_empty() {
+        let read = |s: usize| tests.iter().any(|t| {
+            let Step::Atom { keys, .. } = &after[t.at] else { return false };
+            keys.iter().any(|&(_, k)| k == Key::Slot(s))
+        });
+        if !binds.iter().all(|&(_, s)| read(s)) {
+            return fused_viewing(binds, after, false, view);
+        }
+    }
     // Only the binds the kept steps made, and the atom's.
     let kept_binds = binds.len() + count_binds(&after[..steps]);
     env.truncate(kept_binds);
@@ -286,7 +356,7 @@ pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], view: ViewOf<'_>)
     }
     // A column a computed one reads is gathered too.
     for k in 0..b.columns.len() {
-        if let Word::Doc(c) | Word::Holds(c, _) = b.columns[k] {
+        if let Word::Doc(c) = b.columns[k] {
             b.column(Word::Col(c));
         }
     }
@@ -295,23 +365,23 @@ pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], view: ViewOf<'_>)
     let program = BlockProgram::row_program(shape, b.ops, outputs, extracts).ok()?;
     let gather = b.columns.iter().enumerate().filter_map(|(k, w)| match *w {
         Word::Col(c) => Some((k, c)),
-        Word::Doc(_) | Word::Holds(..) => None,
+        Word::Doc(_) | Word::Held(_) => None,
     }).collect();
-    Some(Fused { steps, program, columns: b.columns, params: b.params, passed, last, binds: bind_list, gather, reads: b.reads })
+    Some(Fused { steps, program, columns: b.columns, params: b.params, passed, last, binds: bind_list, gather, tests })
 }
 
-/// A view test's mask (`fused_viewing`): `None` where the step is not one (its source no view, its node no row's
-/// column the view reads tests by, `Source::reads_tests_by`, a key neither the node nor a parameter, or more than two
-/// keys). A test asks whether some row holds the node with the value, so the view's rows need not be one a node (a
-/// view with values admitted holds more).
-fn view_test(b: &mut Build, env: &[(usize, Val)], val: impl Fn(&[(usize, Val)], Key) -> Val, src: &Src, neg: bool, keys: &[(usize, Key)], view: ViewOf<'_>) -> Option<u16> {
+/// A view's test (`Test::view`): `None` where the step is not one (its source no view, its node no row's column the
+/// view reads tests by, `Source::reads_tests_by`, a key neither the node nor a parameter, or more than two keys). A
+/// test asks whether some row holds the node with the value, so the view's rows need not be one a node (a view with
+/// values admitted holds more).
+fn view_test(b: &mut Build, env: &[(usize, Val)], val: impl Fn(&[(usize, Val)], Key) -> Val, src: &Src, keys: &[(usize, Key)], view: ViewOf<'_>) -> Option<ViewTest> {
     let (source, cols) = view(src)?;
     if keys.is_empty() || keys.len() > 2 {
         return None;
     }
     let at = |k: usize| cols.get(keys[k].0).copied();
     let node = (0..keys.len()).find(|&k| matches!(val(env, keys[k].1), Val::Row(Word::Col(_))) && at(k).is_some_and(|c| source.reads_tests_by(c)))?;
-    let Val::Row(Word::Col(c)) = val(env, keys[node].1) else { return None };
+    let Val::Row(w @ Word::Col(_)) = val(env, keys[node].1) else { return None };
     let (by, want) = (at(node)?, match keys.len() {
         1 => None,
         _ => {
@@ -322,10 +392,7 @@ fn view_test(b: &mut Build, env: &[(usize, Val)], val: impl Fn(&[(usize, Val)], 
     });
     // With no value, the column tested is the node's own (a row there is the test).
     let (col, want) = want.map_or((by, None), |(c, p)| (c, Some(usize::from(p))));
-    b.reads.push(ViewTest { src: source, by, col, want });
-    let word = b.column(Word::Holds(c, b.reads.len() - 1));
-    let one = Rhs::Param(b.param(Param { key: Key::Const(i64::from(!neg)), doc: false }));
-    Some(b.op(BlockOp::Cmp { col: word, op: CmpOp::Eq, rhs: one, width: 64 }))
+    Some(ViewTest { src: source, node: usize::from(b.column(w)), by, col, want })
 }
 
 /// The slots the steps bind (`docof` into an unbound slot, `let`), in order.
@@ -342,31 +409,69 @@ pub(super) struct Scratch {
     pub(super) rows: usize,
     /// The chunk's rows' ids in their relation, when the fused atom is the join's first step (`table`'s counts per row).
     pub(super) ids: Vector<u32>,
-    /// Each view test's probe cursor (`Fused::reads`), kept from chunk to chunk: a chunk's nodes after the last's.
+    /// The rows still passing the fused tests (`Fused::run`), a bit each.
+    pub(super) alive: Vector<u64>,
+    /// Each fused test's probe state, kept from chunk to chunk.
+    pub(super) asked: Vec<super::cands::Asked>,
+    /// Each fused test's view cursor (`Test::view`), kept from chunk to chunk: a chunk's nodes after the last's.
     pub(super) cursors: Vec<ProbeCursor>,
+    /// A view's test's rows still passing, their nodes and its answers (`Source::holds_each`).
+    pub(super) view_rows: Vector<u32>,
+    pub(super) view_ids: Vector<i64>,
+    pub(super) view_out: Vector<i64>,
 }
 
 impl Fused {
     /// The chunk's computed columns from its gathered ones, then the program over the chunk:
     /// calls `each` with each fused step's passed count (`counts`), then returns the output
-    /// words of the rows that go on.
-    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, mut each: impl FnMut(usize, u64)) -> &'s [u64] {
+    /// words of the rows that go on. `held(test, row, columns, params)` is whether test `test`'s input (`Fused::tests`) holds row `row`'s keys,
+    /// asked only of rows that passed the tests before it.
+    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, mut each: impl FnMut(usize, u64), mut held: impl FnMut(usize, usize, &[Vector<i64>], &[i64]) -> bool) -> &'s [u64] {
         let n = s.rows;
-        s.cursors.resize_with(self.reads.len(), ProbeCursor::default);
-        for (k, w) in self.columns.iter().enumerate() {
-            if let Word::Holds(c, r) = *w {
-                let from = self.columns.iter().position(|&x| x == Word::Col(c)).expect("gathered");
-                let mut dst = std::mem::take(&mut s.columns[k]);
-                dst.clear();
-                dst.resize(n, 0);
-                let t = &self.reads[r];
-                let want = t.want.map(|p| s.params[p]);
-                // Fused only where the source reads such tests (`reads_tests_by`).
-                let answered = t.src.holds_each(t.by, &s.columns[from][..n], t.col, want, &mut s.cursors[r], &mut dst);
-                assert!(answered, "a view keyed by its node's column answers its tests");
-                s.columns[k] = dst;
-                continue;
+        if !self.tests.is_empty() {
+            // The rows still passing, a bit each: a test is asked only of rows every test before it passed.
+            let mut alive = std::mem::take(&mut s.alive);
+            alive.clear();
+            alive.resize(n.div_ceil(64), u64::MAX);
+            s.cursors.resize_with(self.tests.len(), ProbeCursor::default);
+            for (t, test) in self.tests.iter().enumerate() {
+                let k = self.columns.iter().position(|&w| w == Word::Held(t)).expect("a test's column");
+                let mut out = std::mem::take(&mut s.columns[k]);
+                out.clear();
+                out.resize(n, 0);
+                if let Some(v) = &test.view {
+                    // The rows still passing, their nodes asked of the view at once and in place (t57 E6).
+                    let (mut rows, mut ids, mut got) = (std::mem::take(&mut s.view_rows), std::mem::take(&mut s.view_ids), std::mem::take(&mut s.view_out));
+                    rows.clear();
+                    ids.clear();
+                    for r in 0..n {
+                        if alive[r / 64] >> (r % 64) & 1 != 0 {
+                            rows.push(r as u32);
+                            ids.push(s.columns[v.node][r]);
+                        }
+                    }
+                    got.clear();
+                    got.resize(ids.len(), 0);
+                    let want = v.want.map(|p| s.params[p]);
+                    // Fused only where the source reads such tests (`reads_tests_by`).
+                    let answered = v.src.holds_each(v.by, &ids, v.col, want, &mut s.cursors[t], &mut got);
+                    assert!(answered, "a view keyed by its node's column answers its tests");
+                    for (&r, &h) in rows.iter().zip(got.iter()) {
+                        let r = r as usize;
+                        if (h == 1) != test.neg { out[r] = 1; } else { alive[r / 64] &= !(1u64 << (r % 64)); }
+                    }
+                    (s.view_rows, s.view_ids, s.view_out) = (rows, ids, got);
+                } else {
+                    for (r, o) in out.iter_mut().enumerate() {
+                        if alive[r / 64] >> (r % 64) & 1 == 0 { continue; }
+                        if held(t, r, &s.columns, &s.params) != test.neg { *o = 1; } else { alive[r / 64] &= !(1u64 << (r % 64)); }
+                    }
+                }
+                s.columns[k] = out;
             }
+            s.alive = alive;
+        }
+        for (k, w) in self.columns.iter().enumerate() {
             if let Word::Doc(c) = *w {
                 let from = self.columns.iter().position(|&x| x == Word::Col(c)).expect("gathered");
                 let (src, dst) = if from < k {
