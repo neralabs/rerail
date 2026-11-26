@@ -40,18 +40,21 @@ td.n { text-align: right; white-space: nowrap }
 tr.pick td { background: color-mix(in srgb, var(--accent) 9%, transparent) }
 tr:last-child td { border-bottom: 0 }
 .chart { display: grid; gap: 4px; min-width: 640px }
-.crow { display: grid; grid-template-columns: 340px minmax(0, 1fr) 175px; gap: 12px; align-items: center; min-height: 28px; border-radius: 4px; padding: 0 6px }
+.crow { display: grid; grid-template-columns: 340px minmax(0, 1fr) 200px; gap: 12px; align-items: center; min-height: 28px; border-radius: 4px; padding: 0 6px }
 .crow:hover { background: var(--soft) }
 .crow .lab { font-size: 13px; text-align: right }
 .crow.pick .lab { font-weight: 600 }
-.crow .track { position: relative; height: 14px }
-.crow .seg { position: absolute; top: 1px; height: 12px }
+.crow .track { position: relative; height: 24px }
+.crow .seg { position: absolute; left: 0; height: 10px; border-radius: 0 3px 3px 0 }
+.crow .seg.w { top: 1px; background: var(--warm) }
+.crow .seg.c { top: 13px; background: var(--cold) }
 .crow .num { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap }
 .crow .num b { color: var(--ink); font-weight: 500 }
-.ticks { display: grid; grid-template-columns: 340px minmax(0, 1fr) 175px; gap: 12px; padding: 0 6px }
+.ticks { display: grid; grid-template-columns: 340px minmax(0, 1fr) 200px; gap: 12px; padding: 0 6px }
 .ticks .t { position: relative; height: 18px; border-top: 1px solid var(--line) }
 .ticks .t span { position: absolute; top: 2px; transform: translateX(-50%); font-size: 11px; color: var(--muted); white-space: nowrap }
-.gl { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--soft) }
+.gl { position: absolute; top: -3px; bottom: -3px; width: 1px; z-index: 1; background: color-mix(in srgb, var(--ink) 18%, transparent) }
+.gl.major { background: color-mix(in srgb, var(--ink) 45%, transparent) }
 .tip { position: fixed; z-index: 20; pointer-events: none; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 12.5px; box-shadow: 0 4px 16px rgba(0,0,0,.12); max-width: 360px }
 .bars td.track { width: 46%; position: relative }
 .bars .b { height: 12px; border-radius: 0 3px 3px 0; background: var(--bar); display: block }
@@ -414,12 +417,12 @@ svg .muted { fill: var(--muted) }
       <li>one file deleted;</li>
       <li>three steps that each change 5 files.</li>
     </ul>
-    <p class="text">Each bar is one design: one edit, then the first run, end to end.</p>
+    <p class="text">Each design has two bars: one edit (warm) above, the first run (cold) below.</p>
     <ul class="text">
       <li><b>cold</b> is the first run from nothing: a whole process that reads the base, builds the index and computes its findings, and for the saved index also writes it;</li>
       <li><b>warm</b> is one later edit. For the in-memory incremental designs, it is the median per-edit cost inside a running process (over all 50 steps). For the others, it is a whole new process: one that maps the saved index and applies the edit, or one that rebuilds the edited tree, since a rebuild keeps nothing. Medians over six steps.</li>
     </ul>
-    <p class="text">One log axis of instructions for the whole bar: the warm edit runs from 1 M to its count, and the cold run from there to the two together. On a log axis, a cold run of billions after an edit of a few million spans most of the bar, while a cold run after an edit of billions adds only the last stretch. Instructions are the process's own count, which the machine's load doesn't change, unlike CPU time. Hover a bar for both figures.</p>
+    <p class="text">Both bars start at the axis's origin, on one log axis of instructions with gridlines at 1, 2 and 5 of each decade, so equal costs have equal bars. Each count is shown with its CPU seconds. The bars use instructions because they are the process's own count, which the machine's load doesn't change; CPU time grows with load. Hover a design for both figures.</p>
     <div class="legend" style="display:flex; gap:18px; font-size:13px; color:var(--muted)">
       <span style="display:inline-flex; align-items:center; gap:6px"><span style="width:14px; height:10px; border-radius:2px; background:var(--warm)"></span>warm: one edit after it</span>
       <span style="display:inline-flex; align-items:center; gap:6px"><span style="width:14px; height:10px; border-radius:2px; background:var(--cold)"></span>cold: first run from nothing</span>
@@ -559,27 +562,29 @@ svg .muted { fill: var(--muted) }
 
 <div class="tip" id="tip" hidden></div>
 <script>
-// [method, design, cold instructions, warm instructions], from coldwarm.py.
-const DATA = [["lines", "Rebuild every run, SA-IS", 2674341171, 2873446583], ["lines", "Rebuild every run, doubling", 2368464242, 2374469326], ["lines", "Whole file re-inserted", 2368464242, 2989080], ["lines", "Tombstones and edit-local delta, in memory", 2368464242, 1443058], ["lines", "Tombstones and edit-local delta, saved index mapped", 2940079346, 54656140], ["nodes", "Rebuild every run, SA-IS", 6623197860, 6639333186], ["nodes", "Rebuild every run, doubling", 7244600359, 7268662848], ["nodes", "Whole file re-inserted", 7244600359, 54197124], ["nodes", "Tombstones and edit-local delta, in memory", 7244600359, 5689310], ["nodes", "Tombstones and edit-local delta, saved index mapped", 7815492625, 90711366]];
-// One log axis for the whole bar: warm from 1 M to its count, then cold from there to warm + cold.
-const LO = 1e6, HI = 1e11;
+// [method, design, cold instructions, warm instructions, cold CPU s, warm CPU s], from coldwarm.py.
+const DATA = [["lines", "Rebuild every run, SA-IS", 2669329213, 2673678906, 0.22, 0.2105], ["lines", "Rebuild every run, doubling", 2364056048, 2390420919, 0.179, 0.2175], ["lines", "Whole file re-inserted", 2364056048, 2983105, 0.179, 0.0002], ["lines", "Tombstones and edit-local delta, in memory", 2364056048, 1445460, 0.179, 8e-05], ["lines", "Tombstones and edit-local delta, saved index mapped", 2939304471, 55208300, 0.248, 0.007], ["nodes", "Rebuild every run, SA-IS", 6618802649, 6655353043, 0.663, 0.7215], ["nodes", "Rebuild every run, doubling", 7244183146, 7285056426, 0.669, 0.8425], ["nodes", "Whole file re-inserted", 7244183146, 54215359, 0.669, 0.006045], ["nodes", "Tombstones and edit-local delta, in memory", 7244183146, 5764408, 0.669, 0.00061], ["nodes", "Tombstones and edit-local delta, saved index mapped", 7836028785, 91013114, 0.892, 0.0125]];
+// One log axis; per design two bars from its origin: warm above, cold below.
+const LO = 1e6, HI = 2e10;
 const x = v => Math.max(0.004, Math.min(1, (Math.log10(Math.max(v, LO)) - Math.log10(LO)) / (Math.log10(HI) - Math.log10(LO))));
 const fmt = v => v >= 1e9 ? (v / 1e9).toFixed(1) + " G" : v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + " M" : (v / 1e3).toFixed(0) + " K";
-const ticks = [1e6, 1e7, 1e8, 1e9, 1e10, 1e11];
-const tickLab = v => v >= 1e9 ? v / 1e9 + " G" : v / 1e6 + " M";
+const ticks = [1e6, 1e7, 1e8, 1e9, 1e10].flatMap(d => [d, 2 * d, 5 * d]).filter(t => t <= HI);
+const major = t => [1e6, 1e7, 1e8, 1e9, 1e10].includes(t);
+const tickLab = v => major(v) ? (v >= 1e9 ? v / 1e9 + " G" : v / 1e6 + " M") : String(v / 10 ** Math.floor(Math.log10(v)));
+const secs = v => v >= 1 ? v.toFixed(v >= 10 ? 0 : 1) + " s" : v >= 0.01 ? Math.round(v * 1e3) + " ms" : (v * 1e3).toFixed(1) + " ms";
 const titles = { lines: "Lines (0.63 M counted lines, window 30)", nodes: "Node symbols (5.9 M nodes, window 150)" };
 const tip = document.getElementById("tip");
 document.getElementById("charts").innerHTML = ["lines", "nodes"].map(m => {
   const rows = DATA.filter(r => r[0] === m);
-  return `<div style="display:grid; gap:6px"><h3>${titles[m]}</h3><div class="tscroll" style="padding:8px 0"><div class="chart">${rows.map(([, name, cold, warm], i) => {
-    const b = 100 * x(warm), e = 100 * x(warm + cold);
-    return `<div class="crow${name.includes("in memory") ? " pick" : ""}" data-m="${m}" data-i="${i}"><div class="lab">${name}</div><div class="track">${ticks.map(t => `<span class="gl" style="left:${(100 * x(t)).toFixed(2)}%"></span>`).join("")}<span class="seg" style="left:0;width:${b.toFixed(2)}%;background:var(--warm)"></span><span class="seg" style="left:${b.toFixed(2)}%;width:${(e - b).toFixed(2)}%;background:var(--cold);border-left:2px solid var(--panel);border-radius:0 3px 3px 0"></span></div><div class="num">warm <b>${fmt(warm)}</b> + cold ${fmt(cold)}</div></div>`;
-  }).join("")}<div class="ticks"><div class="note" style="text-align:right">instructions, log scale</div><div class="t">${ticks.map(t => `<span style="left:${(100 * x(t)).toFixed(2)}%">${tickLab(t)}</span>`).join("")}</div><div></div></div></div></div></div>`;
+  return `<div style="display:grid; gap:6px"><h3>${titles[m]}</h3><div class="tscroll" style="padding:8px 0"><div class="chart">${rows.map(([, name, cold, warm, coldS, warmS], i) => {
+    const b = 100 * x(warm), e = 100 * x(cold);
+    return `<div class="crow${name.includes("in memory") ? " pick" : ""}" data-m="${m}" data-i="${i}"><div class="lab">${name}</div><div class="track">${ticks.map(t => `<span class="gl${major(t) ? " major" : ""}" style="left:${(100 * x(t)).toFixed(2)}%"></span>`).join("")}<span class="seg w" style="width:${b.toFixed(2)}%"></span><span class="seg c" style="width:${e.toFixed(2)}%"></span></div><div class="num">warm <b>${fmt(warm)}</b> · ${secs(warmS)}<br>cold ${fmt(cold)} · ${secs(coldS)}</div></div>`;
+  }).join("")}<div class="ticks"><div class="note" style="text-align:right">instructions, log scale</div><div class="t">${ticks.map(t => `<span style="left:${(100 * x(t)).toFixed(2)}%${major(t) ? "" : ";opacity:.75"}">${tickLab(t)}</span>`).join("")}</div><div></div></div></div></div></div>`;
 }).join("");
 for (const el of document.querySelectorAll(".crow")) {
-  const [, name, cold, warm] = DATA.filter(r => r[0] === el.dataset.m)[+el.dataset.i];
+  const [, name, cold, warm, coldS, warmS] = DATA.filter(r => r[0] === el.dataset.m)[+el.dataset.i];
   const move = e => { const w = tip.offsetWidth; tip.style.left = Math.min(e.clientX + 14, innerWidth - w - 8) + "px"; tip.style.top = (e.clientY + 14) + "px" };
-  el.onmouseenter = e => { tip.innerHTML = `<b>${name}</b><br>${titles[el.dataset.m]}<table style="margin-top:4px;font-variant-numeric:tabular-nums"><tr><td>cold, first run</td><td style="text-align:right;padding-left:12px">${(cold / 1e6).toLocaleString(undefined, {maximumFractionDigits: 1})} M instr.</td></tr><tr><td>warm, one edit</td><td style="text-align:right;padding-left:12px">${(warm / 1e6).toLocaleString(undefined, {maximumFractionDigits: 2})} M instr.</td></tr><tr><td>warm against cold</td><td style="text-align:right;padding-left:12px">${cold / warm >= 1 ? (cold / warm).toFixed(cold / warm >= 10 ? 0 : 1) + "× less" : (warm / cold).toFixed(1) + "× more"}</td></tr></table>`; tip.hidden = false; move(e) };
+  el.onmouseenter = e => { tip.innerHTML = `<b>${name}</b><br>${titles[el.dataset.m]}<table style="margin-top:4px;font-variant-numeric:tabular-nums"><tr><td>warm, one edit</td><td style="text-align:right;padding-left:12px">${(warm / 1e6).toLocaleString(undefined, {maximumFractionDigits: 2})} M instr.</td><td style="text-align:right;padding-left:12px">${secs(warmS)} CPU</td></tr><tr><td>cold, first run</td><td style="text-align:right;padding-left:12px">${(cold / 1e6).toLocaleString(undefined, {maximumFractionDigits: 1})} M instr.</td><td style="text-align:right;padding-left:12px">${secs(coldS)} CPU</td></tr><tr><td>warm against cold</td><td style="text-align:right;padding-left:12px">${cold / warm >= 1 ? (cold / warm).toFixed(cold / warm >= 10 ? 0 : 1) + "× less" : (warm / cold).toFixed(1) + "× more"}</td></tr></table>`; tip.hidden = false; move(e) };
   el.onmousemove = move;
   el.onmouseleave = () => { tip.hidden = true };
 }
