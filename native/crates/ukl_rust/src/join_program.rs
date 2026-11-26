@@ -1437,7 +1437,7 @@ unsafe fn rx_group_closure(w: *const u32, list: &mut [u32], count: &mut u32, sta
     }
 }
 
-/// A regex's capture group (`TEXTFN_RX_GROUP`, decision 0668): program `g` (`text::table::GroupProgram`, the regex's
+/// A regex's capture group (`TEXTFN_RX_GROUP`, decision 0688): program `g` (`text::table::GroupProgram`, the regex's
 /// Thompson NFA) walked over `x` by a Pike VM, as `regex_automata`'s `PikeVM` walks it: its threads in priority order,
 /// each state once a position, the group's two slots a thread; a match cuts the threads after it, and the last match
 /// found is the leftmost-first one (`rx_group_range`). `scratch`: two thread lists and the closure's stack, grown here.

@@ -3,7 +3,7 @@
 //! `C++ only`). Its reference is `rerail_c_lean::pp::PpLexer` (C23 and C++26, GNU); a file the
 //! grammar refuses goes to it.
 
-use crate::{Compiled, compile_kinds};
+use crate::{Compiled, Seed, compile_kinds};
 
 /// The grammar, C++'s.
 pub const TOKENS: &str = include_str!("../bitlex_tokens/tokens.bitlex");
@@ -24,6 +24,14 @@ pub struct Tok {
     pub flags: u8,
 }
 
+/// The provers' answers to the C and the C++ grammar's questions, shipped beside them (decision 0669).
+pub const ANSWERS: &[u8] = include_bytes!("../bitlex_tokens/tokens.answers");
+
+/// The answers of the grammar for C or C++ (`cpp`): one file, kept apart on the machine.
+pub(crate) fn seed(cpp: bool) -> Seed {
+    Seed { family: if cpp { "cpp-tokens" } else { "c-tokens" }, shipped: ANSWERS }
+}
+
 /// The grammar's text for C (`cpp` false: its `C++ only` lines left out) or C++ (its `C only`
 /// lines left out).
 pub fn grammar(cpp: bool) -> String {
@@ -37,7 +45,7 @@ static CPP: std::sync::OnceLock<Result<Compiled, String>> = std::sync::OnceLock:
 /// The process's compiled token grammar for C or C++, compiled the first time.
 pub fn compiled(cpp: bool) -> Result<&'static Compiled, &'static str> {
     let cell = if cpp { &CPP } else { &C };
-    cell.get_or_init(|| compile_kinds(&grammar(cpp), KINDS, &[], None)).as_ref().map_err(String::as_str)
+    cell.get_or_init(|| compile_kinds(&grammar(cpp), KINDS, &[], seed(cpp), None)).as_ref().map_err(String::as_str)
 }
 
 type Lowered = (rerail_compiler::program::Words, rerail_tape_format::f16::Lang);
@@ -48,7 +56,7 @@ static CPP_WORDS: std::sync::OnceLock<Result<Lowered, String>> = std::sync::Once
 /// interpreter's input, and its tape's table (`crate::table`).
 pub fn lowered(cpp: bool) -> Result<&'static Lowered, &'static str> {
     let cell = if cpp { &CPP_WORDS } else { &C_WORDS };
-    cell.get_or_init(|| crate::lower_kinds(&grammar(cpp), KINDS, &[]).map(|l| { let lang = crate::table(KINDS.len(), l.4, 0, &l.0.readings.extras); (l.0, lang) })).as_ref().map_err(String::as_str)
+    cell.get_or_init(|| crate::lower_kinds(&grammar(cpp), KINDS, &[], seed(cpp)).map(|l| { let lang = crate::table(KINDS.len(), l.4, 0, &l.0.readings.extras); (l.0, lang) })).as_ref().map_err(String::as_str)
 }
 
 /// `src`'s tokens by the interpreter, or `None` where it refuses the file.

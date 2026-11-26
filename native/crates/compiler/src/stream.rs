@@ -141,7 +141,8 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         .collect();
     // A state: `TOKEN`, a `MARK` and its way (`GOTO` or `STOP`) per mark it tests, `SWITCH`; or
     // a state that only calls (decision 0492): `TOKEN`, then its call's code (its guards, acts,
-    // `PUSH`), or a `GOTO` to it, with no mark test.
+    // `PUSH`; a `WRAP` around what a call made, where a call returns to it), or a `GOTO` to it,
+    // with no mark test.
     // After the `TOKEN`, a call's field on the node it made (`NODE_FIELD m=4`), where both
     // returns land (`RETURN m=0` at the `TOKEN`, `m=1` past it). A mark that loses (`, loses`)
     // has its `SETTLE m=2` right before its `MARK`, and one that refuses (`, refuses`) its
@@ -170,7 +171,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             }
             q += 2;
         }
-        split(words[p]).0 == TOKEN && words.get(q).is_some_and(|&w| split(w).0 == SWITCH || q == p + 1 + st + usize::from(split(words[p + 1 + st]).0 == NODE_FIELD) && matches!(split(w).0, GOTO | PUSH | OPEN | FLAG | REMEMBER | SETTLE))
+        split(words[p]).0 == TOKEN && words.get(q).is_some_and(|&w| split(w).0 == SWITCH || q == p + 1 + st + usize::from(split(words[p + 1 + st]).0 == NODE_FIELD) && matches!(split(w).0, GOTO | PUSH | OPEN | FLAG | REMEMBER | SETTLE | WRAP))
     };
     for &p in &returns {
         if !state(p) {
@@ -631,7 +632,13 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                                 strings += 1;
                             }
                             let (s, l): (Vec<u32>, Vec<u32>) = tokens.iter().map(|&(a, b)| (a as u32, b as u32)).unzip();
-                            let (codes, _) = crate::records::pass(r, table, bytes, &s, &l, &tier1.outputs);
+                            let (mut codes, _) = crate::records::pass(r, table, bytes, &s, &l, &tier1.outputs);
+                            // The opener's gap is the record's: the pass over the parts alone
+                            // reads it from the file's start.
+                            let gaps = r.gaps << crate::records::MARK_SHIFT;
+                            if let Some(c) = codes.first_mut() {
+                                *c = *c & !gaps | code & gaps;
+                            }
                             parts.extend(s.iter().zip(&l).zip(&codes).map(|((&a, &b), &c)| (a, b, c)));
                             let (s, l, c) = parts.pop_front().expect("the opener");
                             (start, end, rec_end, code) = (s, s, l + 1, c);
@@ -1349,10 +1356,10 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
         // `TOKEN` test is the one entry's), and none an `unless` alone of a refusing mark.
         let rising = i == 0 || program.token_marks[i - 1].order < m.order || (program.token_marks[i - 1].order == m.order && !m.refuses && !program.token_marks[i - 1].refuses);
         let rising = rising && !(m.refuses && m.unless);
-        // One run at most, after the mark's token, not last, of no `end`.
-        let runs = m.elems.iter().filter(|e| e.run).count();
+        // Its runs after the mark's token, none last or right after another, of no `end`.
         let last = m.elems.last().is_some_and(|e| e.run);
-        let rising = rising && runs <= 1 && !last && m.elems.iter().all(|e| !e.run || (e.offset > 0 && !e.end));
+        let twice = m.elems.windows(2).any(|w| w[0].run && w[1].run);
+        let rising = rising && !twice && !last && m.elems.iter().all(|e| !e.run || (e.offset > 0 && !e.end));
         let offsets = m.elems.windows(2).all(|w| w[0].offset < w[1].offset) && m.elems.iter().any(|e| e.offset == 0) && m.elems.first().is_some_and(|e| e.offset >= -1);
         // A `not` or an `end` only after the mark's token, but for the token before's `not`,
         // which has an `end` (no token before holds), and the mark's own token's `not`, a gap
@@ -1368,6 +1375,7 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
                 && e.ending.as_ref().is_none_or(|x| !x.not && !x.end && !x.run && x.nests.is_empty() && x.ending.is_none())
                 && e.nests.iter().all(|n| usize::from(n.counter) < crate::program::NESTS && !n.test.not && !n.test.end && !n.test.run && n.test.nests.is_empty())
                 && counters(true) == counters(false)
+                && e.whole & !counters(true) == 0
         });
         let words = m.elems.iter().flat_map(|e| e.words.iter().chain(e.nests.iter().flat_map(|n| &n.test.words))).all(|&s| usize::from(s) < program.strings.len());
         let words = words && nests;
@@ -1464,7 +1472,7 @@ fn token_follows(rest: &[&crate::program::TokenElem], at: Option<usize>, last: O
                 return true;
             }
             match at {
-                Some(j) if e.holds(Some(codes[j])) => match crate::program::nest_step(&e.nests, depth, codes[j]) {
+                Some(j) if !crate::program::tests_at(e.whole, depth) || e.holds(Some(codes[j])) => match crate::program::nest_step(&e.nests, depth, codes[j]) {
                     Some(d) => {
                         depth = d;
                         last = Some(j);

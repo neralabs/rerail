@@ -15,6 +15,9 @@ use rerail_cpu_stream::native_cpu_stream;
 /// The grammar: JSONC.
 const GRAMMAR: &str = include_str!("../../../../../json_parser/jsonc.bitlex");
 
+/// The provers' answers to the grammar's questions, shipped beside it (decision 0669).
+const ANSWERS: &[u8] = include_bytes!("../../../../../json_parser/jsonc.answers");
+
 /// The compiled parser, and its format 16 tier 2's keys numbered in JSON's table (`CompiledStream::numbers`).
 struct Compiled {
     parser: native_cpu_stream::Parser,
@@ -42,6 +45,11 @@ fn kind_id(language: &tree_sitter::Language, name: &str) -> Option<u16> {
 }
 
 fn compile() -> Result<Compiled, String> {
+    rerail_bitlex::answers::answered_shipped("jsonc", GRAMMAR.as_bytes(), ANSWERS, compile_known)
+}
+
+/// `compile` from the provers' answers `known` (decision 0669), and the answers its compile made.
+fn compile_known(known: rerail_bitlex::bitlex_prove::Known) -> Result<(Compiled, Vec<(rerail_bitlex::bitlex_prove::Key, rerail_bitlex::bitlex_prove::Answer)>), String> {
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_language::LanguageExt;
     let language = GrammarDialect::Json.get_ts_language();
@@ -49,14 +57,24 @@ fn compile() -> Result<Compiled, String> {
     let kind = |n: &str| kind_id(&language, n);
     let field = |n: &str| language.field_id_for_name(n.trim_start_matches("field ")).map(|f| f.get());
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: crate::code_rule_dsl::lines::terminators(GrammarDialect::Json) };
-    let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols))?;
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Auto, known, bitlex_compile::AsRust::No)?;
     let program = rir::assemble(&compiled.text())?;
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     native.tag = crate::code_rule_dsl::language::tape_tag(GrammarDialect::Json).ok_or("JSON has no tape tag")?;
     let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
     let lang = crate::code_rule_dsl::tape::f16::lang(native.tag).ok_or("JSON has no format 16 table")?;
     let numbers = parser.tier2.numbers(lang);
-    Ok(Compiled { parser, numbers })
+    Ok((Compiled { parser, numbers }, compiled.proofs))
+}
+
+/// The shipped answers (`jsonc.answers`, decision 0669) answer every question the grammar's compile
+/// asks (`answers::check_shipped`; `RERAIL_BLESS_ANSWERS=1` writes them again). Its crate is
+/// `rerail-lang-json`, which mounts this module.
+#[cfg(test)]
+#[test]
+fn the_shipped_answers_answer_the_grammar() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../json_parser/jsonc.answers");
+    rerail_bitlex::answers::check_shipped(&path, ANSWERS, |known| Ok(compile_known(known)?.1));
 }
 
 // Its tape (`tape::TreeParser`).

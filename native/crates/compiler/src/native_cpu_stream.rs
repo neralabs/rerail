@@ -1475,6 +1475,183 @@ fn elem_test(f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenEl
     f.switch_to_block(ok);
 }
 
+/// A token mark's records (`token_pattern`): the codes' column, their count, a record's stride,
+/// the extras' bit, and the lazy marks its elements ask of the bytes (`Lazy`), with the records' starts.
+struct Pat<'a, 'b> {
+    e: &'a WordEnv<'b>,
+    codes: Value,
+    n: Value,
+    stride: Value,
+    starts: Value,
+    extra_bit: Option<u8>,
+    lazy: Option<&'a Lazy<'b>>,
+}
+
+/// The code of record `j`.
+fn pat_code(f: &mut FunctionBuilder<'_>, p: &Pat<'_, '_>, j: Value) -> Value {
+    let off = f.ins().imul(j, p.stride);
+    let a = f.ins().iadd(p.codes, off);
+    f.ins().uload32(MemFlags::trusted(), a, 0)
+}
+
+/// The record after `at` that is no extra: a stated loop over the extras. Past the last, to
+/// `past`; else the found record and its code.
+fn pat_after(f: &mut FunctionBuilder<'_>, p: &Pat<'_, '_>, at: Value, past: Block, heads: &mut Vec<(Block, Step)>) -> (Value, Value) {
+    let head = f.create_block();
+    f.append_block_param(head, types::I64);
+    f.ins().jump(head, &[BlockArg::from(at)]);
+    f.switch_to_block(head);
+    heads.push((head, Step::Token));
+    let j = f.block_params(head)[0];
+    let j = f.ins().iadd_imm(j, 1);
+    let beyond = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, j, p.n);
+    let on = f.create_block();
+    f.ins().brif(beyond, past, &[], on, &[]);
+    f.switch_to_block(on);
+    let c = pat_code(f, p, j);
+    let found = f.create_block();
+    match p.extra_bit {
+        Some(b) => {
+            let x = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT) + i64::from(b));
+            let x = f.ins().band_imm(x, 1);
+            f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
+        }
+        None => {
+            f.ins().jump(found, &[]);
+        }
+    }
+    f.switch_to_block(found);
+    (j, c)
+}
+
+/// Element `el`'s test of record `j`, code `c`: a lazy mark it reads (`with M`, `without M`) asked of the bytes there
+/// (`lazy_mark`), the rest of the code (`elem_test`). Fails to `fail`.
+fn pat_test(f: &mut FunctionBuilder<'_>, p: &Pat<'_, '_>, j: Value, c: Value, el: &crate::program::TokenElem, fail: Block, heads: &mut Vec<(Block, Step)>) {
+    let ask = (el.without | el.with) & p.lazy.map_or(0, Lazy::bits);
+    let Some(l) = p.lazy.filter(|_| ask != 0) else {
+        elem_test(f, c, el, fail);
+        return;
+    };
+    let off = f.ins().imul(j, p.stride);
+    let sa = f.ins().iadd(p.starts, off);
+    let s = f.ins().uload32(MemFlags::trusted(), sa, 0);
+    for (k, o, unless, coded) in l.marks.iter().filter(|x| ask >> x.0 & 1 == 1) {
+        let v = lazy_mark(f, p.e, &l.bw, *o, l.extra, unless, *coded, j, s, heads);
+        let on = f.create_block();
+        if el.without >> k & 1 == 1 {
+            f.ins().brif(v, fail, &[], on, &[]);
+        } else {
+            f.ins().brif(v, on, &[], fail, &[]);
+        }
+        f.switch_to_block(on);
+    }
+    let rest = crate::program::TokenElem { without: el.without & !ask, with: el.with & !ask, ..el.clone() };
+    elem_test(f, c, &rest, fail);
+}
+
+/// Whether elements `els` hold from the record after `at` on, as `stream::token_follows`: each at
+/// the next record (past the last, an `end` element holds there); a run (decision 0416) any
+/// number of its records, then the elements after it tried from each of them on, its depths
+/// (Q339) 0 and its `ending` (Q342) held, so a run after it nests its scan in this one's. Holds:
+/// to `yes`; else to `fail`. It ends the block it is in.
+fn pat_follow(f: &mut FunctionBuilder<'_>, p: &Pat<'_, '_>, els: &[&crate::program::TokenElem], at: Value, fail: Block, yes: Block, heads: &mut Vec<(Block, Step)>) {
+    let mut at = at;
+    for (i, el) in els.iter().enumerate() {
+        if !el.run {
+            let past = f.create_block();
+            let (j, c) = pat_after(f, p, at, past, heads);
+            pat_test(f, p, j, c, el, fail, heads);
+            let tested = f.current_block().expect("a block");
+            f.switch_to_block(past);
+            f.ins().jump(if el.end { yes } else { fail }, &[]);
+            f.switch_to_block(tested);
+            at = j;
+            continue;
+        }
+        let r = el;
+        // The run's depths (Q339): a block parameter each, from 0.
+        let counters = r.nests.iter().map(|n| usize::from(n.counter) + 1).max().unwrap_or(0);
+        let scan = f.create_block();
+        for _ in 0..=counters {
+            f.append_block_param(scan, types::I64);
+        }
+        let zero = f.ins().iconst(types::I64, 0);
+        let start: Vec<BlockArg> = std::iter::once(at).chain(std::iter::repeat_n(zero, counters)).map(BlockArg::from).collect();
+        f.ins().jump(scan, &start);
+        f.switch_to_block(scan);
+        heads.push((scan, Step::Token));
+        let from = f.block_params(scan)[0];
+        let depth: Vec<Value> = f.block_params(scan)[1..].to_vec();
+        let step = f.create_block();
+        // The rest only where every depth is 0.
+        if counters > 0 {
+            let any = depth[1..].iter().fold(depth[0], |a, &d| f.ins().bor(a, d));
+            let try_rest = f.create_block();
+            f.ins().brif(any, step, &[], try_rest, &[]);
+            f.switch_to_block(try_rest);
+        }
+        // Its `ending` (Q342): the record it took last (`from`, the one before it where it took
+        // none) one the test takes, else one more record.
+        if let Some(x) = &r.ending {
+            let c = pat_code(f, p, from);
+            pat_test(f, p, from, c, x, step, heads);
+        }
+        // The rest from here; where it fails, one more record of the run.
+        pat_follow(f, p, &els[i + 1..], from, step, yes, heads);
+        f.switch_to_block(step);
+        let (j, c) = pat_after(f, p, from, fail, heads);
+        // Its test, but inside a depth it takes whole (decision 0633): there any record.
+        let inside = (0..counters).filter(|&k| r.whole >> k & 1 == 1).map(|k| depth[k]).reduce(|a, d| f.ins().bor(a, d));
+        match inside {
+            Some(x) => {
+                let (tested, taken) = (f.create_block(), f.create_block());
+                f.ins().brif(x, taken, &[], tested, &[]);
+                f.switch_to_block(tested);
+                pat_test(f, p, j, c, r, fail, heads);
+                f.ins().jump(taken, &[]);
+                f.switch_to_block(taken);
+            }
+            None => pat_test(f, p, j, c, r, fail, heads),
+        }
+        // 1 where a side of a depth takes the record, else 0.
+        let hit = |f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem, heads: &mut Vec<(Block, Step)>| -> Value {
+            let (miss, merged) = (f.create_block(), f.create_block());
+            f.append_block_param(merged, types::I64);
+            pat_test(f, p, j, c, el, miss, heads);
+            let one = f.ins().iconst(types::I64, 1);
+            f.ins().jump(merged, &[BlockArg::from(one)]);
+            f.switch_to_block(miss);
+            let zero = f.ins().iconst(types::I64, 0);
+            f.ins().jump(merged, &[BlockArg::from(zero)]);
+            f.switch_to_block(merged);
+            f.block_params(merged)[0]
+        };
+        let mut next: Vec<BlockArg> = vec![BlockArg::from(j)];
+        for (k, &d) in depth.iter().enumerate() {
+            let mut d2 = d;
+            for n in r.nests.iter().filter(|n| usize::from(n.counter) == k) {
+                let h = hit(f, c, &n.test, heads);
+                if n.open {
+                    d2 = f.ins().iadd(d2, h);
+                } else {
+                    // A closer where the depth is 0 ends the run: the rest did not hold.
+                    let at_zero = f.ins().icmp_imm(IntCC::Equal, d2, 0);
+                    let at_zero = f.ins().uextend(types::I64, at_zero);
+                    let bad = f.ins().band(h, at_zero);
+                    let on = f.create_block();
+                    f.ins().brif(bad, fail, &[], on, &[]);
+                    f.switch_to_block(on);
+                    d2 = f.ins().isub(d2, h);
+                }
+            }
+            next.push(BlockArg::from(d2));
+        }
+        f.ins().jump(scan, &next);
+        return;
+    }
+    f.ins().jump(yes, &[]);
+}
+
 /// `code`: the token's code where the caller holds it (`Mem::Taken`, where `TOKEN` keeps it there): the element at
 /// offset 0 is tested on it first, before any record is read, as the lean parser asks the token's kind before it peeks.
 fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark, extra_bit: Option<u8>, lazy: Option<&Lazy<'_>>, code: Option<Value>, heads: &mut Vec<(Block, Step)>) -> Value {
@@ -1504,67 +1681,8 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
         }
         None => f.ins().iconst(types::I64, 0),
     };
-    // An element's test of record `j`, code `c`: a lazy mark it reads (`with M`, `without M`) asked of the bytes there
-    // (`lazy_mark`), the rest of the code (`elem_test`).
     let starts = (e.ctx)(f, STARTS);
-    let test = |f: &mut FunctionBuilder<'_>, j: Value, c: Value, el: &crate::program::TokenElem, fail: Block, heads: &mut Vec<(Block, Step)>| {
-        let ask = (el.without | el.with) & asked;
-        let Some(l) = lazy.filter(|_| ask != 0) else {
-            elem_test(f, c, el, fail);
-            return;
-        };
-        let off = f.ins().imul(j, stride);
-        let sa = f.ins().iadd(starts, off);
-        let s = f.ins().uload32(flags, sa, 0);
-        for (k, o, unless, coded) in l.marks.iter().filter(|x| ask >> x.0 & 1 == 1) {
-            let v = lazy_mark(f, e, &l.bw, *o, l.extra, unless, *coded, j, s, heads);
-            let on = f.create_block();
-            if el.without >> k & 1 == 1 {
-                f.ins().brif(v, fail, &[], on, &[]);
-            } else {
-                f.ins().brif(v, on, &[], fail, &[]);
-            }
-            f.switch_to_block(on);
-        }
-        let rest = crate::program::TokenElem { without: el.without & !ask, with: el.with & !ask, ..el.clone() };
-        elem_test(f, c, &rest, fail);
-    };
-    // The record after `at` that is no extra: a stated loop over the extras. Past the last, to
-    // `past`; else the found record and its code.
-    let after = |f: &mut FunctionBuilder<'_>, at: Value, past: Block, heads: &mut Vec<(Block, Step)>| -> (Value, Value) {
-        let head = f.create_block();
-        f.append_block_param(head, types::I64);
-        f.ins().jump(head, &[BlockArg::from(at)]);
-        f.switch_to_block(head);
-        heads.push((head, Step::Token));
-        let j = f.block_params(head)[0];
-        let j = f.ins().iadd_imm(j, 1);
-        let beyond = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, j, n);
-        let on = f.create_block();
-        f.ins().brif(beyond, past, &[], on, &[]);
-        f.switch_to_block(on);
-        let c = code_at(f, j);
-        let x = is_extra(f, c);
-        let found = f.create_block();
-        f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
-        f.switch_to_block(found);
-        (j, c)
-    };
-    // The elements after `at`, in turn: each at the next record; past the last, an `end`
-    // element (the last) holds, any other goes to `fail`.
-    let run_of = |f: &mut FunctionBuilder<'_>, els: &[&crate::program::TokenElem], mut at: Value, fail: Block, heads: &mut Vec<(Block, Step)>| -> Value {
-        for el in els {
-            let past = f.create_block();
-            let (j, c) = after(f, at, past, heads);
-            test(f, j, c, el, fail, heads);
-            let tested = f.current_block().expect("a block");
-            f.switch_to_block(past);
-            f.ins().jump(if el.end { yes } else { fail }, &[]);
-            f.switch_to_block(tested);
-            at = j;
-        }
-        at
-    };
+    let p = Pat { e, codes, n, stride, starts, extra_bit, lazy };
     for el in m.elems.iter().filter(|e| e.offset < 0) {
         // The record before, past the extras. No record before: an `end` element (`after ~E`)
         // holds there, any other fails.
@@ -1585,97 +1703,23 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
         let found = f.create_block();
         f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
         f.switch_to_block(found);
-        test(f, j, c, el, no, heads);
+        pat_test(f, &p, j, c, el, no, heads);
         f.ins().jump(held, &[]);
         f.switch_to_block(held);
     }
-    // The token's own element, then those before the run, then the run (decision 0416): the
-    // rest tried from each record of it on, as a forward scan, each turn a record's.
+    // The token's own element, then the rest from the record after it (`pat_follow`).
     let rest: Vec<&crate::program::TokenElem> = m.elems.iter().filter(|e| e.offset >= 0).collect();
-    let run = rest.iter().position(|e| e.run).unwrap_or(rest.len());
-    let mut at = here;
-    for el in rest.iter().take(run) {
-        if el.offset == 0 && first.is_some_and(|(i, _)| std::ptr::eq(*el, &m.elems[i])) {
-            continue;
-        }
-        if el.offset == 0 {
+    let tail = match rest.first() {
+        // Tested on the code held (`first`).
+        Some(el) if el.offset == 0 && first.is_some_and(|(i, _)| std::ptr::eq(*el, &m.elems[i])) => &rest[1..],
+        Some(el) if el.offset == 0 => {
             let c = code_at(f, here);
-            test(f, here, c, el, no, heads);
-        } else {
-            at = run_of(f, std::slice::from_ref(el), at, no, heads);
+            pat_test(f, &p, here, c, el, no, heads);
+            &rest[1..]
         }
-    }
-    if let Some(r) = rest.get(run) {
-        // The run's depths (Q339): a block parameter each, from 0.
-        let counters = r.nests.iter().map(|n| usize::from(n.counter) + 1).max().unwrap_or(0);
-        let scan = f.create_block();
-        for _ in 0..=counters {
-            f.append_block_param(scan, types::I64);
-        }
-        let zero = f.ins().iconst(types::I64, 0);
-        let start: Vec<BlockArg> = std::iter::once(at).chain(std::iter::repeat_n(zero, counters)).map(BlockArg::from).collect();
-        f.ins().jump(scan, &start);
-        f.switch_to_block(scan);
-        heads.push((scan, Step::Token));
-        let from = f.block_params(scan)[0];
-        let depth: Vec<Value> = f.block_params(scan)[1..].to_vec();
-        let step = f.create_block();
-        // The rest only where every depth is 0.
-        if counters > 0 {
-            let any = depth[1..].iter().fold(depth[0], |a, &d| f.ins().bor(a, d));
-            let try_rest = f.create_block();
-            f.ins().brif(any, step, &[], try_rest, &[]);
-            f.switch_to_block(try_rest);
-        }
-        // Its `ending` (Q342): the record it took last (`from`, the one before it where it took
-        // none) one the test takes, else one more record.
-        if let Some(x) = &r.ending {
-            let c = code_at(f, from);
-            test(f, from, c, x, step, heads);
-        }
-        run_of(f, &rest[run + 1..], from, step, heads);
-        f.ins().jump(yes, &[]);
-        // The rest fails here: one more record of the run, or none.
-        f.switch_to_block(step);
-        let (j, c) = after(f, from, no, heads);
-        test(f, j, c, r, no, heads);
-        // 1 where a side of a depth takes the record, else 0.
-        let hit = |f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem, heads: &mut Vec<(Block, Step)>| -> Value {
-            let (miss, merged) = (f.create_block(), f.create_block());
-            f.append_block_param(merged, types::I64);
-            test(f, j, c, el, miss, heads);
-            let one = f.ins().iconst(types::I64, 1);
-            f.ins().jump(merged, &[BlockArg::from(one)]);
-            f.switch_to_block(miss);
-            let zero = f.ins().iconst(types::I64, 0);
-            f.ins().jump(merged, &[BlockArg::from(zero)]);
-            f.switch_to_block(merged);
-            f.block_params(merged)[0]
-        };
-        let mut next: Vec<BlockArg> = vec![BlockArg::from(j)];
-        for (k, &d) in depth.iter().enumerate() {
-            let mut d2 = d;
-            for n in r.nests.iter().filter(|n| usize::from(n.counter) == k) {
-                let h = hit(f, c, &n.test, heads);
-                if n.open {
-                    d2 = f.ins().iadd(d2, h);
-                } else {
-                    // A closer where the depth is 0 ends the run: the rest did not hold.
-                    let at_zero = f.ins().icmp_imm(IntCC::Equal, d2, 0);
-                    let at_zero = f.ins().uextend(types::I64, at_zero);
-                    let bad = f.ins().band(h, at_zero);
-                    let on = f.create_block();
-                    f.ins().brif(bad, no, &[], on, &[]);
-                    f.switch_to_block(on);
-                    d2 = f.ins().isub(d2, h);
-                }
-            }
-            next.push(BlockArg::from(d2));
-        }
-        f.ins().jump(scan, &next);
-    } else {
-        f.ins().jump(yes, &[]);
-    }
+        _ => &rest[..],
+    };
+    pat_follow(f, &p, tail, here, no, yes, heads);
     let done = f.create_block();
     f.append_block_param(done, types::I64);
     f.switch_to_block(no);
@@ -8047,8 +8091,10 @@ impl CompiledStream {
     fn sized(&self, nodes: usize, pushes: usize) -> Tape {
         use crate::native_cpu_tape::SLACK;
         let poison = std::env::var_os("RERAIL_TAPE_POISON").is_some();
-        // The working rows, their sizes only where the nodes are passed from rows (not `direct`).
+        // The working rows and their sizes only where the nodes are passed from rows (not `direct`).
         let rowed = !self.direct;
+        // Each buffer a Vector in the run's room, whose free list gives back the regions a tape before dropped
+        // (0696's reuse, as simdjson's parser keeps its room from one document to the next).
         let room = |n: usize, used: bool| -> Vector<u32> {
             match (used, poison) {
                 (false, _) => Vector::new(),
@@ -8402,7 +8448,7 @@ impl AnyStride {
 
 /// The record stride of `tier1`'s records as the CPU's batch holds them (`Parser::words`): its layout's, or a
 /// column's where it keeps no records.
-fn cpu_stride(tier1: &crate::native_cpu_block::CompiledBlock) -> u32 {
+pub fn cpu_stride(tier1: &crate::native_cpu_block::CompiledBlock) -> u32 {
     tier1.records.as_ref().map_or(crate::records::RecordLayout::Columns, |t| t.layout).stride() as u32
 }
 

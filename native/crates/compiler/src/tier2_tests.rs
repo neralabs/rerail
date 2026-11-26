@@ -415,6 +415,25 @@ fn a_tokens_end_is_its_gaps_as_the_lasts_extract() {
     }
 }
 
+/// Decision 0654: `speculate … gap ends` takes the fact with no proof, and checks it as a file is
+/// read. On a grammar where it is proved (RFC JSON's), the program reads every file as the proved
+/// one: its tokens end at their gaps, and its check refuses none of them.
+#[test]
+fn speculated_gap_ends_read_as_proved() {
+    let (name, source) = crate::ladder::grammars().into_iter().find(|(n, _)| n.starts_with("json-rfc")).expect("RFC JSON's grammar");
+    let proved = crate::ladder::compile_step(&name, &source);
+    let speculated = crate::ladder::compile_step(&name, &format!("{source}\nspeculate \"a token ends where the blanks before the next begin\" gap ends\n"));
+    let (p, s) = (&proved.program.block_programs[0], &speculated.program.block_programs[0]);
+    assert!(s.records.as_ref().is_some_and(|r| r.gap.is_some()), "the speculated program's tokens end at their gaps");
+    let lasts = usize::from(p.records.as_ref().expect("records").lasts);
+    for doc in ["[1, 2.5e3, -0, true, null, false]", "{ \"k\" :\t[ \"a\\\"b\" ] }  ", "  [ ]\n", "\"x\"", "[1 2]", "{\"a\":"] {
+        let (a, b) = (p.run(doc.as_bytes()), s.run(doc.as_bytes()));
+        assert_eq!(a.totals, b.totals, "{doc:?}");
+        assert_eq!(a.positions[lasts], b.positions[lasts], "{doc:?}");
+        assert_eq!(a.codes, b.codes, "{doc:?}");
+    }
+}
+
 /// Decisions 0405 and 0406: the hot loop carries the bytes before its block in a register
 /// (simdjson's `prev_input_block`), and its UTF-8 error as bytes ORed into a vector (simdjson's
 /// `error`), reduced where the loop leaves.

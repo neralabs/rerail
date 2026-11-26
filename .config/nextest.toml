@@ -37,7 +37,8 @@ default-filter = """not (
   | test(/^code_rule_dsl::waves::matches::tests::the_wave_/)
   | test(=class_pack::tests::random_needs_are_answered)
   | package(rerail-c-directives)
-  | (package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/))
+  | (package(rerail-kotlin-parser) & test(=tests::a_cold_compile_makes_the_shipped_answers_program))
+  | (package(rerail-python-parser) & test(=tests::a_cold_compile_makes_the_shipped_answers_program))
 )"""
 # A test past this is reported as slow; past four periods it is stopped.
 slow-timeout = { period = "60s", terminate-after = 4 }
@@ -60,10 +61,10 @@ platform = "cfg(target_os = \"macos\")"
 filter = "test(/^(content_store::(observe|journal)|tree_watch)::/)"
 test-group = "fsevents"
 
-# Kotlin's grammar compiled cold (no shipped answers, 0414: 41 s on a Linux Spark): without the walk lemmas,
-# and twice to compare programs. The rest of the crate's tests compile with the answers, in 1.5 s (Q371).
+# Kotlin's and Python's grammars compiled cold (no shipped answers, 0414; the budget lifted, 0646), to compare programs. The rest
+# of the crate's tests compile with the answers, in 1.5 s (Q371). The walk lemmas' test is rr's.
 [[profile.default.overrides]]
-filter = "package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/)"
+filter = "(package(rerail-kotlin-parser) | package(rerail-python-parser)) & test(=tests::a_cold_compile_makes_the_shipped_answers_program)"
 slow-timeout = { period = "60s", terminate-after = 8 }
 
 [profile.default.junit]

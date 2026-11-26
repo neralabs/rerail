@@ -19,11 +19,11 @@ fn same(texts: &[&str]) {
     let c = compiled().unwrap_or_else(|e| panic!("the grammar compiles: {e}"));
     for &text in texts {
         let want = lean_text(text).unwrap_or_else(|| panic!("the lean parser refuses {text:?}"));
-        let image = c.tape(text).unwrap_or_else(|why| panic!("the grammar refuses {text:?}: {why}\n{}", c.explain(text)));
-        let got = image_text(&image).expect("a tape image");
+        let tape = c.tape(text).unwrap_or_else(|why| panic!("the grammar refuses {text:?}: {why}\n{}", c.explain(text)));
+        let got = image_text(&tape).expect("a tape");
         assert_eq!(got, want, "{text:?}");
         let interp = c.interpreted(text).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why}"));
-        assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
+        assert_eq!(image_text(&interp).expect("a tape"), want, "the interpreter, {text:?}");
     }
 }
 
@@ -164,4 +164,38 @@ fn corpus() {
     }
     eprintln!("python corpus: {same} the same, {refused} refused, {differ} differ ({lean_refused} the lean parser refuses)");
     assert_eq!(differ, 0);
+}
+
+/// The shipped answers (`python.answers`, decision 0669) answer every question the grammar asks: a compile from them
+/// alone, not the machine's kept answers, proves nothing (`answers::check_shipped`; `RERAIL_BLESS_ANSWERS=1` writes
+/// them again, from a cold compile's).
+#[test]
+fn the_shipped_answers_answer_the_grammar() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python.answers");
+    rerail_bitlex::answers::check_shipped(&path, crate::ANSWERS, |known| Ok(crate::compile_timed(GRAMMAR, known, &mut |_, _| {})?.proofs));
+}
+
+/// What was compiled, as one number: tier 2's words and machine, and tier 1's program.
+fn fingerprint(c: &crate::Compiled) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (&c.words, &c.machine, c.program.block_programs.iter().map(|b| b.canonical_bytes()).collect::<Vec<_>>()).hash(&mut h);
+    h.finish()
+}
+
+/// A cold compile (no answers known) makes the program the shipped answers make, and its answers, given to another
+/// compile, leave nothing to ask (decision 0414), as Kotlin's. Cold, so in nextest's slow tier; the budget lifted, as
+/// a bless lifts it.
+#[test]
+fn a_cold_compile_makes_the_shipped_answers_program() {
+    bitlex_compile::PROVING_STEPS_HERE.set(Some(1 << 40));
+    let cold = compile_text(GRAMMAR);
+    bitlex_compile::PROVING_STEPS_HERE.set(None);
+    let cold = cold.expect("the grammar compiles");
+    let shipped = super::compiled().expect("the grammar compiles");
+    assert_eq!(fingerprint(&cold), fingerprint(shipped), "the shipped answers make another program");
+    let known: crate::Proofs = cold.proofs.iter().cloned().collect();
+    let warm = crate::compile_timed(GRAMMAR, known, &mut |_, _| {}).expect("the grammar compiles");
+    assert_eq!(warm.proofs.len(), 0, "a question asked again");
+    assert_eq!(fingerprint(&warm), fingerprint(&cold));
 }

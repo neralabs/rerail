@@ -588,12 +588,16 @@ pub struct TokenElem {
     /// The file's end takes it too: no token left (the last element only).
     pub end: bool,
     /// A run (decision 0416): any number of records the element takes, then the elements after
-    /// it from any of them on (one run at most, after offset 0, never last).
+    /// it from any of them on (after offset 0, never last nor right after another run).
     pub run: bool,
     /// A run's depths (Q339, Bitlex's `nest`): each side of one, the run's records it takes go
     /// one deeper (`open`) or one out. The elements after the run are tried only where every
     /// depth is 0; a closer where its depth is 0 ends the run.
     pub nests: Vec<Nest>,
+    /// The depths (bits of `nests`' counters) whose contents the run takes whole (decision 0633,
+    /// `nest (O to C whole)`): where one of them is above 0, a record is the run's whatever it is,
+    /// as the lean parsers read a bracket's contents in full.
+    pub whole: u8,
     /// A run's `ending` (Q342): the elements after it are tried only where its last record (the
     /// one before it, where it took none) is one this test takes.
     pub ending: Option<Box<TokenElem>>,
@@ -633,6 +637,12 @@ pub const NESTS: usize = 4;
 
 /// A run's depths after it takes a record (`code`): `None` where a closer's depth is 0, which
 /// ends the run (Q339).
+/// Whether a run's test is asked of a record at `depth` (`TokenElem::whole`): not inside a depth
+/// it takes whole.
+pub fn tests_at(whole: u8, depth: [u32; NESTS]) -> bool {
+    (0..NESTS).all(|k| whole >> k & 1 == 0 || depth[k] == 0)
+}
+
 pub fn nest_step(nests: &[Nest], depth: [u32; NESTS], code: u32) -> Option<[u32; NESTS]> {
     let mut d = depth;
     for n in nests.iter().filter(|n| n.test.takes(code)) {

@@ -1,5 +1,5 @@
-//! A small CDCL SAT solver, for the Bitlex compiler's proofs over a window of bytes
-//! (`bitlex_prove::never_unrolled`).
+//! A small CDCL SAT solver over clauses: the reference the circuit's solver (`bitlex_csat`, decision 0670) is
+//! tested against. The prover's windows are solved on the circuit.
 //!
 //! Clauses are lists of literals: a variable `v` (from 1) is `v` true or `-v` false. The search
 //! is the usual one: two watched literals a clause, unit propagation, a conflict's first unique
@@ -8,6 +8,8 @@
 //! from a heap ordered by activity: a decision costs the log of the variables, not their number.
 //! A conflict budget bounds the work: past it, the answer is "unknown", which a proof reads as
 //! "not proved" (sound).
+
+use crate::bitlex_grown::{FormulaBlock, Grown};
 
 /// A literal: a variable from 1, negative for its negation.
 pub type Lit = i32;
@@ -24,11 +26,22 @@ pub enum Answer {
 /// window's thousands of clauses are two allocations, not one each.
 #[derive(Clone, Debug, Default)]
 pub struct Clauses {
-    lits: Vec<Lit>,
-    ends: Vec<u32>,
+    lits: Grown<Lit>,
+    ends: Grown<u32>,
 }
 
 impl Clauses {
+    /// None yet, built in `block`, where a kernel reads them (`bitlex_grown`).
+    pub fn in_block(block: &FormulaBlock) -> Clauses {
+        Clauses { lits: Grown::in_block(block), ends: Grown::in_block(block) }
+    }
+
+    /// Its literals and ends: their block and byte offsets there (`None` on the heap).
+    pub fn placed(&self) -> Option<(&FormulaBlock, usize, usize)> {
+        let (b, lits) = self.lits.placed()?;
+        Some((b, lits, self.ends.placed()?.1))
+    }
+
     pub fn push(&mut self, c: &[Lit]) {
         self.lits.extend_from_slice(c);
         self.ends.push(self.lits.len() as u32);
@@ -50,7 +63,7 @@ impl Clauses {
         &self.lits[self.range(i)]
     }
 
-    fn get_mut(&mut self, i: usize) -> &mut [Lit] {
+    pub(crate) fn get_mut(&mut self, i: usize) -> &mut [Lit] {
         let r = self.range(i);
         &mut self.lits[r]
     }
@@ -58,6 +71,49 @@ impl Clauses {
     pub fn iter(&self) -> impl Iterator<Item = &[Lit]> {
         (0..self.len()).map(|i| self.get(i))
     }
+
+    /// Every clause's literals, end to end.
+    pub fn lits(&self) -> &[Lit] {
+        &self.lits
+    }
+
+    /// Where each clause ends in `lits`.
+    pub fn ends(&self) -> &[u32] {
+        &self.ends
+    }
+
+    /// The first `n` clauses kept, the rest dropped.
+    pub fn truncate(&mut self, n: usize) {
+        if n < self.ends.len() {
+            self.ends.truncate(n);
+            self.lits.truncate(self.ends.last().map_or(0, |&e| e as usize));
+        }
+    }
+}
+
+/// `lits` sorted, without repeats, into `c`: its length, or none where it is a tautology (a
+/// literal and its negation), as `Solver::add` takes a clause. A short clause (a window's are
+/// two or three literals) sorted in place, a longer one by `sort_unstable`: the same order.
+pub(crate) fn normal(lits: &[Lit], c: &mut Vec<Lit>) -> Option<usize> {
+    c.clear();
+    c.extend_from_slice(lits);
+    if c.len() <= 8 {
+        for i in 1..c.len() {
+            let x = c[i];
+            let mut j = i;
+            while j > 0 && c[j - 1] > x {
+                c[j] = c[j - 1];
+                j -= 1;
+            }
+            c[j] = x;
+        }
+    } else {
+        c.sort_unstable();
+    }
+    c.dedup();
+    // Sorted: a literal's negation, if there, by a search (a scan, for a short one).
+    let taut = if c.len() <= 8 { c.iter().any(|&a| c.contains(&-a)) } else { c.iter().any(|&a| c.binary_search(&-a).is_ok()) };
+    (!taut).then_some(c.len())
 }
 
 /// Not in the heap (`Solver::at`).
@@ -72,84 +128,45 @@ fn slot(l: Lit) -> usize {
     2 * var(l) + usize::from(l < 0)
 }
 
-pub struct Solver {
-    clauses: Clauses,
-    /// `add`'s clause, sorted (kept to reuse its allocation).
-    scratch: Vec<Lit>,
-    watches: Vec<Vec<usize>>,
-    /// Each variable's value: 0 unset, 1 true, -1 false.
-    value: Vec<i8>,
-    level: Vec<u32>,
-    reason: Vec<Option<usize>>,
-    trail: Vec<Lit>,
-    /// Where each decision level starts in the trail.
-    limits: Vec<usize>,
-    head: usize,
+/// The variables in the order decisions take them (`Solver`'s and `bitlex_csat`'s): the unset ones (and some set
+/// ones, dropped when they come up) in a max-heap by activity, then by number; `at` each variable's place in it
+/// (`NONE`: not in it). Activity is bumped in each learned clause, and the bump grows each conflict.
+#[derive(Default)]
+pub(crate) struct Order {
     activity: Vec<f64>,
     bump: f64,
-    /// The unset variables (and some set ones, dropped when they come up), a max-heap by
-    /// activity, then by number; `at` each variable's place in it (`NONE`: not in it).
     heap: Vec<usize>,
     at: Vec<usize>,
-    /// `analyze`'s marks, all false between conflicts.
-    seen: Vec<bool>,
-    /// The clauses given empty, or two units against each other: unsatisfiable at once.
-    broken: bool,
 }
 
-impl Solver {
-    pub fn new(vars: usize) -> Self {
-        let mut s = Solver {
-            clauses: Clauses::default(),
-            scratch: Vec::new(),
-            watches: Vec::new(),
-            value: Vec::new(),
-            level: Vec::new(),
-            reason: Vec::new(),
-            trail: Vec::new(),
-            limits: Vec::new(),
-            head: 0,
-            activity: Vec::new(),
-            bump: 1.0,
-            heap: Vec::new(),
-            at: Vec::new(),
-            seen: Vec::new(),
-            broken: false,
-        };
-        s.reset(vars);
-        s
-    }
-
-    /// No clauses, of `vars` variables: as `new`, in the memory this one has (a prover asks
-    /// thousands of formulas, each of tens of thousands of clauses).
-    pub fn reset(&mut self, vars: usize) {
-        self.clauses.lits.clear();
-        self.clauses.ends.clear();
-        for w in &mut self.watches {
-            w.clear();
-        }
-        self.watches.resize_with(2 * vars + 2, Vec::new);
-        self.value.clear();
-        self.value.resize(vars + 1, 0);
-        self.level.clear();
-        self.level.resize(vars + 1, 0);
-        self.reason.clear();
-        self.reason.resize(vars + 1, None);
+impl Order {
+    /// `vars` variables, every activity 0: the heap's order is the numbers', highest first, a valid
+    /// heap as it stands.
+    pub(crate) fn reset(&mut self, vars: usize) {
         self.at.clear();
         self.at.resize(vars + 1, NONE);
         self.activity.clear();
         self.activity.resize(vars + 1, 0.0);
-        self.seen.clear();
-        self.seen.resize(vars + 1, false);
-        self.trail.clear();
-        self.limits.clear();
-        (self.head, self.bump, self.broken) = (0, 1.0, false);
-        // Every activity 0: the heap's order is the numbers', highest first, a valid heap as
-        // it stands.
+        self.bump = 1.0;
         self.heap.clear();
         self.heap.extend((1..=vars).rev());
         for (i, &v) in self.heap.iter().enumerate() {
             self.at[v] = i;
+        }
+    }
+
+    /// The next conflict's bump.
+    pub(crate) fn decay(&mut self) {
+        self.bump *= 1.05;
+    }
+
+    /// The most active unset variable (`value` 0), taken out of the heap.
+    pub(crate) fn next(&mut self, value: &[i8]) -> Option<usize> {
+        loop {
+            match self.pop() {
+                Some(v) if value[v] != 0 => continue,
+                other => return other,
+            }
         }
     }
 
@@ -198,7 +215,7 @@ impl Solver {
         self.at[v] = i;
     }
 
-    fn insert(&mut self, v: usize) {
+    pub(crate) fn insert(&mut self, v: usize) {
         if self.at[v] == NONE {
             self.heap.push(v);
             let i = self.heap.len() - 1;
@@ -220,7 +237,7 @@ impl Solver {
     }
 
     /// A variable's activity raised; past 1e100, every one scaled down alike (the order kept).
-    fn bump_var(&mut self, v: usize) {
+    pub(crate) fn bump(&mut self, v: usize) {
         self.activity[v] += self.bump;
         if self.activity[v] > 1e100 {
             for a in &mut self.activity {
@@ -231,6 +248,73 @@ impl Solver {
         if self.at[v] != NONE {
             self.up(self.at[v]);
         }
+    }
+}
+
+pub struct Solver {
+    clauses: Clauses,
+    /// `add`'s clause, sorted (kept to reuse its allocation).
+    scratch: Vec<Lit>,
+    watches: Vec<Vec<usize>>,
+    /// Each variable's value: 0 unset, 1 true, -1 false.
+    value: Vec<i8>,
+    level: Vec<u32>,
+    reason: Vec<Option<usize>>,
+    trail: Vec<Lit>,
+    /// Where each decision level starts in the trail.
+    limits: Vec<usize>,
+    head: usize,
+    order: Order,
+    /// `analyze`'s marks, all false between conflicts.
+    seen: Vec<bool>,
+    /// The clauses given empty, or two units against each other: unsatisfiable at once.
+    broken: bool,
+    /// The conflicts its solves met, in all (a caller's work budget reads it).
+    pub conflicts: u64,
+}
+
+impl Solver {
+    pub fn new(vars: usize) -> Self {
+        let mut s = Solver {
+            clauses: Clauses::default(),
+            scratch: Vec::new(),
+            watches: Vec::new(),
+            value: Vec::new(),
+            level: Vec::new(),
+            reason: Vec::new(),
+            trail: Vec::new(),
+            limits: Vec::new(),
+            head: 0,
+            order: Order::default(),
+            seen: Vec::new(),
+            broken: false,
+            conflicts: 0,
+        };
+        s.reset(vars);
+        s
+    }
+
+    /// No clauses, of `vars` variables: as `new`, in the memory this one has (a prover asks
+    /// thousands of formulas, each of tens of thousands of clauses).
+    pub fn reset(&mut self, vars: usize) {
+        self.clauses.lits.clear();
+        self.clauses.ends.clear();
+        for w in &mut self.watches {
+            w.clear();
+        }
+        self.watches.resize_with(2 * vars + 2, Vec::new);
+        self.value.clear();
+        self.value.resize(vars + 1, 0);
+        self.level.clear();
+        self.level.resize(vars + 1, 0);
+        self.reason.clear();
+        self.reason.resize(vars + 1, None);
+        self.seen.clear();
+        self.seen.resize(vars + 1, false);
+        self.trail.clear();
+        self.limits.clear();
+        (self.head, self.broken) = (0, false);
+        self.order.reset(vars);
     }
 
     fn lit_value(&self, l: Lit) -> i8 {
@@ -249,13 +333,9 @@ impl Solver {
     /// A clause, before the search: duplicates dropped, a tautology ignored.
     pub fn add(&mut self, lits: &[Lit]) {
         let mut c = std::mem::take(&mut self.scratch);
-        c.clear();
-        c.extend_from_slice(lits);
-        c.sort_unstable();
-        c.dedup();
-        // A tautology (a literal and its negation; sorted, so by a search) is ignored.
-        if !c.iter().any(|&a| c.binary_search(&-a).is_ok()) {
-            self.place(&c);
+        // A tautology (a literal and its negation) is ignored.
+        if let Some(n) = normal(lits, &mut c) {
+            self.place(&c[..n]);
         }
         self.scratch = c;
     }
@@ -353,7 +433,7 @@ impl Solver {
                     continue;
                 }
                 self.seen[v] = true;
-                self.bump_var(v);
+                self.order.bump(v);
                 if self.level[v] == here {
                     count += 1;
                 } else {
@@ -380,7 +460,7 @@ impl Solver {
         for &q in &learned[1..] {
             self.seen[var(q)] = false;
         }
-        self.bump *= 1.05;
+        self.order.decay();
         let back = learned[1..].iter().map(|&q| self.level[var(q)]).max().unwrap_or(0);
         // The literal of that level second, so it is watched.
         if learned.len() > 1 {
@@ -396,7 +476,7 @@ impl Solver {
             let v = var(self.trail[i]);
             self.value[v] = 0;
             self.reason[v] = None;
-            self.insert(v);
+            self.order.insert(v);
         }
         self.trail.truncate(start);
         self.limits.truncate(level as usize);
@@ -423,6 +503,7 @@ impl Solver {
                     return Answer::Unknown;
                 }
                 left -= 1;
+                self.conflicts += 1;
                 let (learned, back) = self.analyze(c);
                 self.back_to(back);
                 if learned.len() == 1 {
@@ -438,12 +519,7 @@ impl Solver {
                 continue;
             }
             // A decision: the most active unset variable, false first.
-            let next = loop {
-                match self.pop() {
-                    Some(v) if self.value[v] != 0 => continue,
-                    other => break other,
-                }
-            };
+            let next = self.order.next(&self.value);
             let Some(v) = next else { return Answer::Sat };
             self.limits.push(self.trail.len());
             self.assign(-(v as Lit), None);

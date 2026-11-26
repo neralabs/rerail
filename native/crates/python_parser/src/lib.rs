@@ -33,7 +33,7 @@ pub struct Compiled {
     numbers: std::sync::OnceLock<native_cpu_stream::Numbers>,
 }
 
-/// The tape: format 16 in Python's table (decision 0631), as the lean parser's sink writes it.
+/// The tape: format 16, in Python's table (decision 0631), as the lean parser's (`lean::Tape`).
 pub type Tape = rerail_tape_format::f16::Written;
 
 /// Python's format 16 table.
@@ -41,22 +41,19 @@ pub fn lang() -> &'static rerail_tape_format::f16::Lang {
     rerail_tape_format::f16::lang(TAG).expect("Python's format 16 table")
 }
 
-/// A key's number in Python's table, as the lean parser's sink numbers it (`lean::sink`, by its names): the grammar's
-/// kinds, fields and supertypes are the lean parser's (its supertype ids `SUPERTYPE_IDS` on), so its keys are too. A
-/// kind of the grammar's own (`OWN_IDS`) or a set of supertypes the lean parser never writes has none.
+/// A key's number in Python's table, as the lean parser's sink numbers it (`lean::names`, by its names): the grammar's
+/// kinds, fields and supertypes are the lean parser's, so its keys are too.
 fn number(kind: u16, field: u16, classes: &[u16], extra: bool) -> Option<u32> {
-    let mut names: Vec<&str> = classes.iter().map(|&c| c.checked_sub(SUPERTYPE_IDS).and_then(|j| SUPERTYPES.get(usize::from(j))).copied()).collect::<Option<_>>()?;
-    names.sort_unstable();
-    let class = lean::CLASSES.iter().position(|set| {
-        let mut set = set.to_vec();
-        set.sort_unstable();
-        set == names
-    })?;
-    if kind >= 1 << 8 || field >= 1 << 6 {
-        return None;
-    }
-    let key = u32::from(kind) | u32::from(field) << 8 | (class as u32) << 14 | u32::from(extra) << 17;
-    lang().number_named(&lean::names(key)?)
+    let &(kind, named) = lean::KINDS.get(usize::from(kind))?;
+    let field = lean::FIELDS.get(usize::from(field)).copied()?;
+    let names: Vec<&str> = classes.iter().map(|&c| c.checked_sub(SUPERTYPE_IDS).and_then(|j| SUPERTYPES.get(usize::from(j))).copied()).collect::<Option<_>>()?;
+    // The lean parser's set of these supertypes (`lean::CLASSES`); an extra has none.
+    let classes = match extra {
+        true if names.is_empty() => &[][..],
+        true => return None,
+        false => lean::CLASSES.iter().copied().find(|set| set.len() == names.len() && names.iter().all(|n| set.contains(n)))?,
+    };
+    lang().number_named(&rerail_tape_format::KeyNames { kind, named, field, flags: if extra { rerail_tape_format::CODE_EXTRA } else { 0 }, classes })
 }
 
 /// The provers' answers by question (decision 0414).
@@ -67,10 +64,22 @@ pub type Proofs = rerail_bitlex::bitlex_prove::Known;
 unsafe impl Send for Compiled {}
 unsafe impl Sync for Compiled {}
 
-/// The grammar compiled, its provers' answers kept on the machine (`answers::answered`): what an
-/// edit asks anew is proved by one compile, and kept for the next.
+/// The provers' answers to the grammar's questions, shipped beside it (`python.answers`, in `bitlex_prove::encode`'s
+/// bytes), as Kotlin's (decision 0669): a compile given them proves only what an edit asks anew. Answers of another
+/// provers' version are none (`decode`), so the seed is never wrong, only slow.
+/// `tests::the_shipped_answers_answer_the_grammar` says when it lacks one, and writes it again
+/// (`RERAIL_BLESS_ANSWERS=1`, `answers::check_shipped`).
+pub const ANSWERS: &[u8] = include_bytes!("../python.answers");
+
+/// [`ANSWERS`], decoded: `compile_timed`'s `known`.
+pub fn shipped_answers() -> Proofs {
+    rerail_bitlex::bitlex_prove::decode(ANSWERS)
+}
+
+/// The grammar compiled from the shipped answers and the machine's (`answers::answered`: what an
+/// edit asks anew is proved by one compile on the machine, and kept for the others).
 pub fn compile_answered(grammar: &str) -> Result<Compiled, String> {
-    rerail_bitlex::answers::answered("python", grammar.as_bytes(), Proofs::default(), |known| {
+    rerail_bitlex::answers::answered("python", grammar.as_bytes(), shipped_answers(), |known| {
         // `RERAIL_PYTHON_LAPS`: each phase's time, as it ends, on stderr.
         let laps = std::env::var_os("RERAIL_PYTHON_LAPS").is_some();
         let c = compile_timed(grammar, known, &mut |name, d| {
@@ -140,7 +149,7 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
         })
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
-    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known)?;
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::No)?;
     lap("bitlex compiler");
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
     lap("assembled");
@@ -155,6 +164,8 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
     let block = native.block_programs.first().ok_or("no tier 1 program")?;
     let tier1 = rerail_cpu_block::native_cpu_block::compile(block).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 1 Cranelift");
+    // Tier 2 at the stride of its own tier 1's records, compiled in (decision 0696).
+    let cut = native_cpu_clusters::Cut { stride: Some(native_cpu_stream::cpu_stride(&tier1)), ..cut };
     let tier2 = native_cpu_stream::compile_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 2 Cranelift");
     let parser = native_cpu_stream::Parser::with_tiers(&native, &cut, tier1, tier2);
@@ -219,10 +230,10 @@ impl Compiled {
     }
 }
 
-/// A tape as the lean parser's `tape_text` prints its tape: a node a line, indented by depth, its kind, field, flags,
-/// supertypes and span.
+/// A tape as the lean parser's `tape_text` prints its tape (`tape::plain_text`, by Python's names): a node a line,
+/// indented by depth, its kind, field, flags, supertypes and span.
 pub fn image_text(tape: &Tape) -> Result<String, String> {
-    tape.text()
+    tape.plain_text(lang())
 }
 
 /// The lean parser's tape of `src` as text, or `None` where it refuses.

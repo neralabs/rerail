@@ -153,6 +153,9 @@ fn elem_rows(out: &mut String, elems: &[crate::program::TokenElem]) {
             if e.since {
                 out.push_str(" since");
             }
+            if e.whole != 0 {
+                let _ = write!(out, " whole{:x}", e.whole);
+            }
             if e.without != 0 {
                 let _ = write!(out, " w{:x}", e.without);
             }

@@ -23,6 +23,12 @@ bitlex = { path = "../../../tools/bitlex", default-features = false }
 rustc-hash = "=2.1.3"
 # The provers' answers keyed by their questions' digests (`bitlex_prove::Key`, decision 0414).
 sha2 = "0.11"
+# The prover's results kept by their formulas' fingerprints (`bitlex_csat_lanes::Formula::fingerprint`, decision 0670).
+foldhash = "=0.2.0"
+# A batch's questions asked in parallel on the engine's one pool (`bitlex_masks::either_never_many`).
+rayon = "=1.12.0"
+# The process's CPU time, for the proving trace (`bitlex_masks`).
+libc = "0.2.189"
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

@@ -29,8 +29,6 @@ pub struct Compiled {
     pub machine: String,
     /// The provers' answers the compile made, for the next (`compile_timed`'s `known`).
     pub proofs: Vec<(rerail_bitlex::bitlex_prove::Key, rerail_bitlex::bitlex_prove::Answer)>,
-    /// Tier 2 as Rust, written by the Bitlex compiler from the tree rules (`bitlex_rust`).
-    pub rust: Option<Result<String, String>>,
     /// Kotlin's numbers by tier 2's keys, made at the first tape.
     numbers: std::sync::OnceLock<native_cpu_stream::Numbers>,
 }
@@ -74,7 +72,7 @@ unsafe impl Sync for Compiled {}
 /// A compile given them proves only what an edit asks anew: 41 s cold, 1.5 s with them. Answers of
 /// another provers' version are none (`decode`), so the seed is never wrong, only slow.
 /// `tests::the_shipped_answers_answer_the_grammar` says when it lacks one, and writes it again
-/// (`RERAIL_BLESS_KOTLIN_ANSWERS=1`).
+/// (`RERAIL_BLESS_ANSWERS=1`, `answers::check_shipped`).
 pub const ANSWERS: &[u8] = include_bytes!("../kotlin.answers");
 
 /// [`ANSWERS`], decoded: `compile_timed`'s `known`.
@@ -121,6 +119,13 @@ fn field(name: &str) -> Option<u16> {
 /// statements (`bitlex_lex_rust`) and the tree rules (`bitlex_rust`), without either tier
 /// compiled. The provers start from the shipped answers ([`ANSWERS`]), as every other compile of the grammar.
 pub fn tiers_rust(grammar: &str) -> Result<(String, String), String> {
+    tiers_rust_given(grammar, shipped_answers()).map(|(t1, t2, _)| (t1, t2))
+}
+
+/// [`tiers_rust`] from the answers `known`, and the answers its compile made: the Rust's compile
+/// asks what the grammar's (`compile_timed`) does not, with the symbols and tier 2's shape, so
+/// the shipped answers hold both (`tests::the_shipped_answers_answer_the_grammar`).
+pub fn tiers_rust_given(grammar: &str, known: Proofs) -> Result<(String, String, Vec<(rerail_bitlex::bitlex_prove::Key, rerail_bitlex::bitlex_prove::Answer)>), String> {
     let stmts = ::bitlex::syntax::parse(grammar)?;
     let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
     let kind = |name: &str| {
@@ -131,12 +136,11 @@ pub fn tiers_rust(grammar: &str) -> Result<(String, String), String> {
         })
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
-    // From the shipped answers, as every compile of the grammar but the cold one's test (decision 0414): asked again,
-    // the provers took the test past its time.
-    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, shipped_answers())?;
+    // The shipped answers: the compile's own, so the same Rust, with no cold proofs.
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::Yes)?;
     let tier1 = compiled.lexer_rust.ok_or_else(|| "no tree section".to_owned())??;
     let tier2 = compiled.rust.ok_or_else(|| "no tree section".to_owned())??;
-    Ok((tier1, tier2))
+    Ok((tier1, tier2, compiled.proofs))
 }
 
 /// `grammar` compiled: a Bitlex grammar's text.
@@ -165,7 +169,7 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
         })
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
-    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known)?;
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::No)?;
     lap("bitlex compiler");
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
     lap("assembled");
@@ -180,10 +184,12 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
     let block = native.block_programs.first().ok_or("no tier 1 program")?;
     let tier1 = rerail_cpu_block::native_cpu_block::compile(block).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 1 Cranelift");
+    // Tier 2 at the stride of its own tier 1's records, compiled in (decision 0696).
+    let cut = native_cpu_clusters::Cut { stride: Some(native_cpu_stream::cpu_stride(&tier1)), ..cut };
     let tier2 = native_cpu_stream::compile_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 2 Cranelift");
-    let parser = native_cpu_stream::Parser::from_parts(tier1, tier2);
-    Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone(), rust: compiled.rust.clone(), numbers: Default::default() })
+    let parser = native_cpu_stream::Parser::with_tiers(&native, &cut, tier1, tier2);
+    Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone(), numbers: Default::default() })
 }
 
 impl Compiled {

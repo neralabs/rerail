@@ -502,7 +502,7 @@ impl<'a> G<'a> {
         }
         let mut out = Vec::new();
         for d in self.x.marks.iter().filter(|x| x.name == self.x.marks[m].name) {
-            for x in d.tokens.and_then(|(_, seq)| seq.first())? {
+            for x in d.tokens.filter(|_| Self::run_alone(d)).and_then(|(_, seq)| seq.first())? {
                 match x {
                     TokenElem::Kind(k) => out.push(Test::Kind(k.clone())),
                     TokenElem::Word(w) => out.push(Test::Word(self.word_of(&String::from_utf8_lossy(w))?)),
@@ -617,7 +617,7 @@ impl<'a> G<'a> {
         let peeks = self.peeks();
         let firsts = |m: usize| -> Option<Vec<String>> {
             let defs = self.x.marks.iter().filter(|x| x.name == self.x.marks[m].name);
-            defs.map(|d| d.tokens.and_then(|(_, seq)| self.first_words(seq))).collect::<Option<Vec<Vec<String>>>>().map(|v| v.concat())
+            defs.map(|d| d.tokens.filter(|_| Self::run_alone(d)).and_then(|(_, seq)| self.first_words(seq))).collect::<Option<Vec<Vec<String>>>>().map(|v| v.concat())
         };
         let all = marks.clone();
         marks.retain(|(m, f, t)| {
@@ -899,7 +899,7 @@ impl<'a> G<'a> {
                 // A mark: each definition's first token, a choice of words and kinds.
                 let (mut ws, mut ks) = (Vec::new(), Vec::new());
                 for d in self.x.marks.iter().filter(|x| x.name == self.x.marks[*mark].name) {
-                    for x in d.tokens.and_then(|(_, seq)| seq.first())? {
+                    for x in d.tokens.filter(|_| Self::run_alone(d)).and_then(|(_, seq)| seq.first())? {
                         match x {
                             TokenElem::Kind(k) => ks.push(k.clone()),
                             TokenElem::Word(w) => ws.push(format!("w::{}", self.word_const(self.word_of(&String::from_utf8_lossy(w))?))),
@@ -1156,6 +1156,7 @@ impl<'a> G<'a> {
             }
             Gram::Opt(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.sites(a, rest, caller, out)?,
             Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => self.sites(body, rest, caller, out)?,
+            Gram::Relabel { field: None, moved: Some(m), inner: None, body } if m == ::bitlex::syntax::GONE => self.sites(body, rest, caller, out)?,
             Gram::Leaf { rule, .. } => self.sites(&Gram::Sym(rule.clone()), rest, caller, out)?,
             _ => {}
         }
@@ -1900,6 +1901,12 @@ impl<'a> G<'a> {
     }
 
     /// The words a run's first token must be, where its first element tests only words (`.` or `@`): else none.
+    /// Whether a mark definition's token run alone says where it may hold: no `before` of it holds instead (its run
+    /// or one of its `before`s, decision 0633), so its run's first words are the mark's.
+    fn run_alone(d: &Mark<'_>) -> bool {
+        d.next.iter().all(|(unless, _)| *unless)
+    }
+
     fn first_words(&self, seq: &[Vec<TokenElem>]) -> Option<Vec<String>> {
         let mut ws = Vec::new();
         for x in seq.first()? {
@@ -2010,6 +2017,9 @@ impl<'a> G<'a> {
                 let ok_end = if ending.is_empty() { "true".to_owned() } else { format!("prev < self.n && {}", self.elem(ending, "prev")?) };
                 let _ = writeln!(b, "            if depth.iter().all(|&d| d == 0) && {ok_end} && {after} {{\n                return true;\n            }}");
                 let c = self.elem(choices, "j")?;
+                // Inside a depth it takes whole (decision 0633): any token.
+                let inside: Vec<String> = nests.iter().enumerate().filter(|(_, n)| n.whole).map(|(d, _)| format!("depth[{d}] > 0")).collect();
+                let c = if inside.is_empty() { c } else { format!("{} || {c}", inside.join(" || ")) };
                 let _ = writeln!(b, "            if j >= self.n || !({c}) {{\n                return false;\n            }}");
                 for (d, n) in nests.iter().enumerate() {
                     let _ = writeln!(b, "            if {} {{\n                depth[{d}] += 1;\n            }} else if {} {{\n                if depth[{d}] == 0 {{\n                    return false;\n                }}\n                depth[{d}] -= 1;\n            }}", moves::bare(&self.elem(&n.open, "j")?), moves::bare(&self.elem(&n.close, "j")?));
@@ -2365,7 +2375,7 @@ impl<'a> G<'a> {
             }
             let mut firsts: Option<Vec<String>> = Some(Vec::new());
             for def in self.x.marks.iter().filter(|x| x.name == m.name) {
-                match (def.tokens.and_then(|(_, seq)| self.first_words(seq)), firsts.as_mut()) {
+                match (def.tokens.filter(|_| Self::run_alone(def)).and_then(|(_, seq)| self.first_words(seq)), firsts.as_mut()) {
                     (Some(ws), Some(all)) => all.extend(ws),
                     _ => firsts = None,
                 }
@@ -2389,17 +2399,22 @@ impl<'a> G<'a> {
     }
 
     /// The table of a choice of tokens (`ws`, each its word and its leaf's kind): rule `rule`'s, named for it, or the one
-    /// of the choices written in rules (`ANON`). The take's leaf's kind, the word's in it.
+    /// of the choices written in rules (`ANON`). The take's leaf's kind, the word's in it. A choice that gives a word
+    /// another kind than the table has for it (Kotlin's `class`: a `class` leaf in a declaration, a `simple_identifier`
+    /// after `::`) takes the next table of the name where none does (`ANON_2`, …), so no choice's kind is another's.
     fn anon_table(&self, rule: Option<&str>, ws: &[(u8, String)]) -> Result<String, String> {
-        let table = match rule.map(upper) {
+        let base = match rule.map(upper) {
             Some(t) if !["ANON", "NONE", "UNSET", "DEPTH", "TERMINATORS", "REMEMBERED", "REFUSED"].contains(&t.as_str()) && !t.starts_with("FLAG_") => t,
             Some(t) => format!("WORDS_{t}"),
             None => "ANON".to_owned(),
         };
-        for (w, t) in ws {
-            let k = self.kind_const(t)?;
-            self.anon.borrow_mut().entry(table.clone()).or_default().insert(*w, k);
-        }
+        let kinds: Vec<(u8, String)> = ws.iter().map(|(w, t)| Ok((*w, self.kind_const(t)?))).collect::<Result<_, String>>()?;
+        let mut anon = self.anon.borrow_mut();
+        let table = (1..)
+            .map(|n| if n == 1 { base.clone() } else { format!("{base}_{n}") })
+            .find(|t| anon.get(t).is_none_or(|have| kinds.iter().all(|(w, k)| have.get(w).is_none_or(|h| h == k))))
+            .expect("a table");
+        anon.entry(table.clone()).or_default().extend(kinds);
         Ok(format!("{table}[self.word() as usize]"))
     }
 
@@ -2781,7 +2796,7 @@ impl<'a> G<'a> {
     /// their takes named as all of them ask (`moves::Names`).
     pub(crate) fn printed(&self, mut bs: Vec<Block>) -> Vec<String> {
         let marks = self.mark_words.get_or_init(|| self.open_mark_words());
-        let anon: Vec<(String, HashSet<String>)> = self.anon.borrow().iter().filter(|(t, _)| *t != "ANON").map(|(t, ws)| (t.clone(), ws.keys().map(|w| format!("w::{}", self.word_const(*w))).collect())).collect();
+        let anon: Vec<(String, HashSet<String>)> = self.anon.borrow().iter().filter(|(t, _)| *t != "ANON" && !t.starts_with("ANON_")).map(|(t, ws)| (t.clone(), ws.keys().map(|w| format!("w::{}", self.word_const(*w))).collect())).collect();
         let rewrite = |b: &mut Block| {
             moves::rewrite(b, &moves::Cx { marks: marks.as_ref(), marked: self.marked_read.get() });
             moves::classes(b, &anon);
@@ -2931,19 +2946,24 @@ impl<'a> G<'a> {
             let mut firsts: Option<Vec<String>> = Some(Vec::new());
             for (d, (_, def)) in defs.iter().enumerate() {
                 let mut c = Vec::new();
-                match (def.tokens.and_then(|(_, seq)| self.first_words(seq)), firsts.as_mut()) {
+                // The words the token must be (`run_alone`).
+                match (def.tokens.filter(|_| Self::run_alone(def)).and_then(|(_, seq)| self.first_words(seq)), firsts.as_mut()) {
                     (Some(ws), Some(all)) => all.extend(ws),
                     _ => firsts = None,
                 }
+                // A token mark's run and its `after`: one of the mark's patterns, its other
+                // `before`s the rest (decision 0633).
+                let mut main = None;
                 if let Some((before, seq)) = def.tokens {
                     let pat = format!("pat_{n}_{d}");
                     self.run(seq, &pat, &mut fns)?;
-                    c.push(format!("self.{pat}_0(self.i, {})", Self::run_prev(seq)));
+                    let mut m = vec![format!("self.{pat}_0(self.i, {})", Self::run_prev(seq))];
                     if !before.is_empty() {
                         let p = self.elem(before, "p")?;
                         let negated = matches!(before, [TokenElem::Not(_)]);
-                        c.push(if negated { format!("{{ let p = self.prev_tok(self.i); p >= self.n || {p} }}") } else { format!("{{ let p = self.prev_tok(self.i); p < self.n && {p} }}") });
+                        m.push(if negated { format!("{{ let p = self.prev_tok(self.i); p >= self.n || {p} }}") } else { format!("{{ let p = self.prev_tok(self.i); p < self.n && {p} }}") });
                     }
+                    main = Some(m.join(" && "));
                 } else if let Some(b) = def.bit {
                     self.read_bit(u32::from(b));
                     if def.word != 0 {
@@ -2969,6 +2989,9 @@ impl<'a> G<'a> {
                 }
                 for x in no {
                     c.push(format!("!{x}"));
+                }
+                if let Some(m) = main {
+                    yes.insert(0, format!("({m})"));
                 }
                 if !yes.is_empty() {
                     c.push(format!("({})", yes.join(" || ")));
@@ -3142,7 +3165,9 @@ impl<'a> G<'a> {
                 // Its opener's kind: its own row's.
                 let rows = self.x.lexer.iter().filter(|s| matches!(s, ::bitlex::syntax::Stmt::Token { .. }));
                 let own = rows.enumerate().find(|(_, s)| matches!(s, ::bitlex::syntax::Stmt::Token { kind, .. } if *kind == rd.kind)).and_then(|(i, _)| self.x.row_kinds.get(i).copied().flatten());
-                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_bit(&self.m.{}, from).filter(|&p| p < (if self.i + 1 < self.n {{ self.recs[self.i + 1].start }} else {{ u32::MAX }}).min(self.next_x) as usize) {{\n            self.known = 0;\n            return self.resume_{r}(p);\n        }}\n", rd.open);
+                // Before the next grammar token: its pieces at the `}`, the comments before it in the
+                // template's code passed (`xi`), as the JIT's tier 2 looks at each record it fetches.
+                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_bit(&self.m.{}, from).filter(|&p| self.i + 1 >= self.n || p < self.recs[self.i + 1].start as usize) {{\n            while (self.next_x as usize) < p {{\n                self.xi += 1;\n                self.next_x = self.xs.get(self.xi).map_or(u32::MAX, |x| x.start);\n            }}\n            self.known = 0;\n            return self.resume_{r}(p);\n        }}\n", rd.open);
                 (format!("resume_{r}"), "at byte `s`, no record of its own: the string's parts after its template's `}`", format!("s: usize) -> R {{\n        self.sub.clear();\n        self.k = 0;\n        self.piece(s, s, {});", kind_or(own, "s")))
             } else {
                 (format!("split_{r}"), "record `j`", "j: usize) -> R {\n        let s = self.recs[j].start as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.recs[j].code));".to_owned())
@@ -3300,7 +3325,7 @@ impl<'a> G<'a> {
         // Each choice of tokens' table (`anon_table`): each word's leaf's kind, as the lean parser's `anon()`.
         for (table, words) in self.anon.borrow().iter() {
             let kinds: Vec<String> = (0..=self.x.words.len()).map(|w| words.get(&(w as u8)).cloned().unwrap_or_else(|| "0".to_owned())).collect();
-            let what = if table == "ANON" { "a choice of tokens written in a rule".to_owned() } else { format!("`{}`", table.to_ascii_lowercase()) };
+            let what = if table == "ANON" || table.starts_with("ANON_") { "a choice of tokens written in a rule".to_owned() } else { format!("`{}`", table.to_ascii_lowercase()) };
             let _ = writeln!(out, "/// A word's leaf's kind where {what} takes it (the lean parser's `anon()`); 0: none of its words.\nconst {table}: [u16; {}] = [{}];\n", kinds.len(), kinds.join(", "));
         }
         for (i, f) in self.flags.iter().enumerate() {

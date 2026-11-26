@@ -6384,7 +6384,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
     `key_of`, taken in `Proofs::ask`). The text, the question's whole cone, was 4.7 KB a key: Kotlin's 2,974 answers
     were 14 MB. They are now 52 KB (`RRANSWER`, 17 bytes a yes or no), so no zstd and no LFS.
   - **The seed** is `kotlin_parser/kotlin.answers`, a tracked file. Its test (`the_shipped_answers_answer_the_grammar`)
-    says when it lacks an answer, and `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes it again.
+    says when it lacks an answer, and `RERAIL_BLESS_ANSWERS=1` (decision 0669) writes it again.
   - **The machine's answers** are `answers::answered` (rerail-compiler): one file a grammar family in the
     temporary directory's `rerail-prover-answers/`, written whole. Its `.done` mark names the text the file answers
     all of: a compile of that text takes no lock; a compile of another takes the family's lock, so compiles that
@@ -8522,7 +8522,7 @@ on an M3 or M5:
     is proved once on a machine and kept there (`answers::answered`, Q234).
     - The quick tier: 44 tests in 14.1 s.
     - `the_shipped_answers_answer_the_grammar` (1.6 s) fails when an edit asks a question they lack;
-      `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes them again.
+      `RERAIL_BLESS_ANSWERS=1` (decision 0669) writes them again.
     - The cold compiles (`a_cold_compile_makes_the_shipped_answers_program`, 45 s, and `walk_lemmas_keep_the_tapes`,
       53 s) are the slow tier's.
     - Still open: about 1.5 s of warm compile in each test's process (0.8 s the Bitlex compiler, the rest Cranelift),

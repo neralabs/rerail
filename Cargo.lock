@@ -3449,6 +3449,7 @@ dependencies = [
  "cranelift-jit-wasm",
  "cranelift-module",
  "cranelift-native",
+ "foldhash",
  "libc",
  "rayon",
  "rerail-blocks",

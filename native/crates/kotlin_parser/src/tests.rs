@@ -85,18 +85,22 @@ fn the_0x_escape_is_the_interpreters() {
     tier1_same(&["val a = 0x", "val a = 0x1F\n", "val a = 0b10\n", "val a = x0x\n", "val a = \"0x\"\n", "val a = 0\nval x = 1\n", "val a = 10x\n"]);
 }
 
-/// "A dotted type after `as` before a `<`", which the token loop keeps (decision 0609): after a
-/// token, over a gap, over a token's bytes after its first (`..<`), and never from an `as` in a
-/// region or across one.
+/// The masks of a type after `as` the lean parser may split (`as_run`, `as_lt`), as the
+/// interpreter's: after a token, over a gap, over a token's bytes after its first (`..<`), and
+/// never from an `as` in a region or across one.
 #[test]
-fn the_as_escape_is_the_interpreters() {
-    refused(&[
+fn the_as_split_masks_are_the_interpreters() {
+    tier1_same(&[
         "val a = b as java.util.List<Int>\n",
         "val a = b as  x.y<Int>\n",
         "val a = b as x?.y<Int>\n",
         "val r = x as a.B..<c\n",
-    ]);
-    tier1_same(&[
+        "val a = b as x.y<Int>\n  c()\n",
+        "val a = b is x.y<Int>\n  val c = 1\n",
+        "val a = b as x.y<Int>  \n  c()\n",
+        "val a = b as x.y<Int> // c\n  c()\n",
+        "val a = b as x.y<Int>\r\n  c()\n",
+        "val a = b as x.y // c\n  c()\n",
         "val a = b as List<Int>\n",
         "val a = b // as\nval c = d.e<Int>()\n",
         "val a = \"as\" + d.e<Int>()\n",
@@ -503,7 +507,36 @@ fn raw_strings_are_the_lean_parsers() {
     same(&[
         "val a = \"\"\"x\n  \"y\" $b \\n\"\"\"\nval d = \"\"\"\"\"\"\nval f = \"\"\"$\"\"\"\nval g = \"\"\"\n    a\"\"b\n\"\"\"\nval i = \"\"\"a\"\n\"\"\"\n",
         "fun q() = \"\"\"\n    SELECT * FROM t WHERE a = $b\n\"\"\".trimIndent()\n",
+        // An opener's run of four or five quotes: its `"""`, then content.
+        "val h = \"\"\"\"a\"\"\"\n",
+        "val h = \"\"\"\"\"a\"\"\"\n",
+        "val h = \"\"\"\"\n\"\"\"\n",
+        "val h = \"\"\"\"$a\"\"\"\n",
+        "val h = \"\"\"\"${a}\"\"\"\n",
+        "val h = \"\"\"a\"b\"\"c\"\"\"\n",
+        "val h = \"\"\"\"\"\"\nval i = 1\n",
+        // A quote one or two bytes before a closer, in a run of its own.
+        "val i = \"\"\"a\"\n\"\"\"\n",
+        "val i = \"\"\"a\"b\"\"\"\n",
+        "val i = \"\"\"a\" \"\"\"\n",
+        // A closing run of four quotes or more: the lean parser's closer takes them all, its
+        // quotes before the last three no leaves (`r_lead`).
+        "val h = \"\"\"a\"\"\"\"\n",
+        "val h = \"\"\"a\"\"\"\"\"\n",
+        "val h = \"\"\"${a}\"\"\"\"\n",
+        "val h = \"\"\"\"\"\"\"\n",
+        "val h = \"\"\"\"\"\"\"\"\"\n",
+        "val h = \"\"\"a ${b}\"\"\"\"\"\n",
+        "val h = \"\"\"a\"\" b\"\"\"\"\n",
+        "val h = \"\"\"\"a\"\"\"\"\n",
+        "val h = \"\"\"a\"\"\" + \"\"\"b\"\"\"\n",
     ]);
+    // An opener in a block's last two bytes: its closer past them, in the next block (the JIT's
+    // walk carries the opener's bytes over, as the places it hides).
+    let pad = |p: usize, body: &str| format!("//{}\nval s = {body}\n", "x".repeat(p - 3));
+    let bodies = ["\"\"\"\"x\"\"\"", "\"\"\"\"\"\"", "\"\"\"\"\"\"\"", "\"\"\"a\"\"\"\"", "\"\"\"\"${a}\"\"\""];
+    let edges: Vec<String> = (52..=56).flat_map(|p| bodies.iter().map(move |b| pad(p, b))).collect();
+    same(&edges.iter().map(String::as_str).collect::<Vec<_>>());
     // A string whose `"` starts a block (byte 64, 65, 128), the token before in the block
     // before: the refill reads the block before its rows' words are final, and the opener of
     // the two regions is read from the rows (the CPU's tier 1 waits on it).
@@ -723,37 +756,343 @@ fn a_string_with_templates_is_one_record() {
     }
 }
 
+/// Texts the grammar refused and the lean parser reads: a `when` entry ended by nothing or by
+/// `;`, a parameter named by a modifier's word (`vararg`, `noinline`, `crossinline`, `reified`),
+/// a lambda's trailing comma, a header ended by an `import` on its line, a string over a line,
+/// and a `\$` in a raw string.
+#[test]
+fn small_readings_are_the_lean_parsers() {
+    same(&[
+        "val x = when (y) { else -> 1 }\n",
+        "val x = when (y) { 1 -> a 2 -> b }\n",
+        "val x = when (y) { 1 -> a; 2 -> b }\n",
+        "val x = when (y) { 1 -> a; }\n",
+        "val x = when (y) {\n    1 -> a; // c\n    2 -> b\n}\n",
+        "val x = when { a -> { b } else -> c }\n",
+        "fun f(noinline: Int) {}\n",
+        "fun f(vararg: Int, noinline b: () -> Unit) {}\n",
+        "fun f(vararg a: Int, vararg @A b: Int) {}\n",
+        "val vararg = 1\n",
+        "fun f() { noinline(1) }\n",
+        "class A(val vararg: Int)\n",
+        "class A(vararg val a: Int)\n",
+        "val reified = 1\n",
+        "inline fun <reified T : Any> g(reified: T) = reified\n",
+        "fun <reified> f() {}\n",
+        "class A<reified out T>\n",
+        "val f = { a, -> a }\n",
+        "val f = { a, b, -> a }\n",
+        "val f = { (a, b), -> a }\n",
+        "import a.b import c\n",
+        "package a import b\n",
+        "import a.b as c import d.*\n",
+        "import a.b; import c\n",
+        "val s = \"a\nb\"\n",
+        "val s = \"a ${b}\nc\"\n",
+        "val s = \"a $b\nc\"\n",
+        "val s = \"\n\"\nval t = 1\n",
+        "val h = \"\"\"\\$a\"\"\"\n",
+        "val h = \"\"\"a\\$b c\"\"\"\n",
+        "val h = \"\"\"\\\\$a\"\"\"\n",
+        "val h = \"\"\"\\${a}\"\"\"\n",
+        // A line break in a template's code.
+        "val s = \"a ${\n    b\n} c\"\n",
+        "val s = \"a ${\n    f(\n        x\n    )\n} | c\"\n",
+        "val s = \"a ${b\n}\"\n",
+        "val s = \"a ${\nb}\"\n",
+        "val s = \"a ${ b\n    .c }\"\n",
+        "val s = \"\"\"a ${\n    b\n} c\"\"\"\n",
+        "val s = \"a ${b +\n c}\"\n",
+        "val s = \"a ${b\n + c}\"\n",
+        "val s = \"a ${b\n?: c}\"\n",
+        "val s = \"a ${if (x)\n 1 else 2}\"\n",
+        "val s = \"a ${b\n as C}\"\n",
+        "fun f() {\n    g(\"a ${\n        b\n    }\")\n    h()\n}\n",
+    ]);
+    refused(&["val h = \"\"\"a\\$$b\"\"\"\n", "val h = \"\"\"a\\$\"\"\"\n", "val s = `a\nb`\n"]);
+}
+
+/// Braces in a template's code (decision 0621): the tail opens at the `}` that closes the
+/// template, as the lean lexer's `interpolation_end` counts them; a block of more than 4 levels
+/// is refused.
+#[test]
+fn braces_in_templates_are_the_lean_parsers() {
+    same(&[
+        "val s = \"a ${x.f { it.name }} b\"\n",
+        "val s = \"${if (p) { \"granted\"} else { \"denied\" }}\"\n",
+        "val s = \"${if (a) { 1 } else 2}\"\n",
+        "val s = \"${ {x} }\"\n",
+        "val s = \"${x.joinToString(\",\") { it.name }}\"\n",
+        "val s = \"\"\"${a.map { b -> { c } }}\"\"\"\n",
+        "fun f() { val s = \"${g { 1 }}\"; h { 2 } }\n",
+        "val s = \"${a}\" + \"${b {}}\"\n",
+        "val s = \"${a}\"; val t = { \"${b}\" }\n",
+        "val s = \"${a { b { c { d } } }} e\"\n",
+        "val s = \"${a { \"}\" }} e\"\n",
+        "val s = \"${a { '}' }} e\"\n",
+        "val s = \"${a {\n    b\n}} e\"\n",
+        "fun f() {\n    log(\"x ${g.joinToString(\",\") { it.name }}\")\n}\n",
+    ]);
+    refused(&["val s = \"${a {{{{ b }}}} }\"\n"]);
+}
+
+/// Templates and comments in a template's code (decision 0621): each string's record open over
+/// its template's code, innermost last, as the lean lexer's `interpolation_end` recurses into a
+/// string and a comment; across a block's edge too.
+#[test]
+fn templates_and_comments_in_templates_are_the_lean_parsers() {
+    let texts = [
+        "val s = \"${f(\"${x}\")}\"\n",
+        "val s = \"a ${f(\"b ${x} c\")} d\"\n",
+        "val s = \"${\"${\"${x}\"}\"}\"\n",
+        "val s = \"\"\"${f(\"${x}\")} y\"\"\"\n",
+        "val s = \"${f(\"\"\"${x}\"\"\")} y\"\n",
+        "val s = \"${a { \"${b}\" }} c\"\n",
+        "val s = \"${f(\"${x}\") + g(\"${y}\")} z\"\n",
+        "val s = \"${f(\"${x}\")}\" + \"${y}\"\n",
+        "val s = \"${f(\"${x} $y\")} ${z}\"\n",
+        // Comments in a template's code, after a template in it too.
+        "val s = \"${f(\"${x}\") /* c */} z\"\n",
+        "val s = \"${f(\"${x}\") // c\n} z\"\n",
+        "val s = \"${f(x) /* c */} z\"\n",
+        "val s = \"${f(x) // c\n} z\"\n",
+        "val s = \"${/* c */ x}\"\n",
+        "val s = \"${f(x, /* c */ y)} z\"\n",
+        "val s = \"${f(\n    // c\n    x\n)} z\"\n",
+        "val s = \"${a { /* c */ b }} z\"\n",
+        "val s = \"${x /* } */} z\"\n",
+        "val s = \"${x // }\n} z\"\n",
+        "val s = \"\"\"${x /* c */} y\"\"\"\n",
+        "val s = \"${x /* a */ /* b */} z\"\n",
+        "val s = \"${x\n// c\n} z\"\n",
+        "val s = \"${if (a) b /* c */ else c}\"\n",
+    ];
+    let line = "val v = \"a ${f(\"b ${x} c\")} d\"";
+    let edges: Vec<String> = (58..70).map(|q| format!("//{}\n{line}\n", "x".repeat(q))).collect();
+    same(&texts.iter().copied().chain(edges.iter().map(String::as_str)).collect::<Vec<_>>());
+}
+
+/// Block comments after a line break, one after another (`semi`'s `loses since`): the first loses
+/// its bytes, at the next one's start, as the lean lexer's `asi` reads it through to another
+/// comment; the next is the line's, and a line break after it decides at the token first on its
+/// line (`own_line`), as after any token; a comment of its own line before the token is the
+/// line's, neither dropped nor lost.
+#[test]
+fn block_comments_one_after_another_are_the_lean_parsers() {
+    same(&[
+        "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
+        "val a = 1\n/* c */ /* d */ /* e */\nval b = 2\n",
+        "val a = 1\n/* c */ /* d */\n+ 2\n",
+        "val a = 1\n/* c */\n/* d */\nexternal fun f()\n",
+        "val a = 1\n/* c */ /* d */\n/* e */\nabstract class A\n",
+        "val a = 1\n/* c */ /* d */\n.f()\n",
+        "val a = 1\n/* c */ /* d */ // e\nval b = 2\n",
+        "val a = 1\n/* c */\n/* d */\n.f()\n",
+        "fun f() {\n    if (a) b()\n    /* c */\n    /* e */\n    else d()\n}\n",
+        "fun f() {\n    if (a) b()\n    /* c */ /* e */\n    else d()\n}\n",
+        "fun f() {\n    g()\n    /* c */\n    /* d */\n    h()\n}\n",
+        "class A {\n    val b = 1\n    /* c */ /* d */\n    abstract fun e()\n}\n",
+    ]);
+}
+
+/// A block comment nests (`nests`, decision 0625), as the lean lexer's `block_comment_end`
+/// counts its `/*` and `*/`: to three levels in it, a `/*/` in it, after a token, before a line
+/// break, in a function's body, a doc comment, a `/*` in a string before one.
+#[test]
+fn nested_block_comments_are_the_lean_parsers() {
+    same(&[
+        "/* /* nested */ */\npackage a\n",
+        "/* a /* b /* c */ d */ e */\nval x = 1\n",
+        "/* /* /* /* deep */ */ */ */\nval x = 1\n",
+        "/* /*/ */ */\nval x = 1\n",
+        "val a = 1 /* x /* y */ z */ + 2\n",
+        "/** doc /* inner */ more */\nfun f() {}\n",
+        "val s = \"/* not */\"\n/* /* c */ */ val t = 2\n",
+        "fun f() {\n    /* /* c */ */\n    g()\n}\n",
+        "val a = 1\n/* /* c */\n */\nexternal fun f()\n",
+        "/* ** /* * */ ** */\nval x = 1\n",
+    ]);
+}
+
+/// A `;` after a line break is the semicolon, not the line break (decision 0626), as the lean
+/// lexer's `asi` returns the `;` it finds: first on a line, at the file's end, in a block and a
+/// class body, after a comment on the line before, alone on its line.
+#[test]
+fn a_semicolon_after_a_line_break_is_the_lean_parsers() {
+    same(&[
+        "val a = 1\n;val b = 2\n",
+        "val a = 1;\n",
+        "val a = 1 ;\n",
+        "val a = 1\n;\n",
+        "fun f() {\n    a()\n    ;b()\n}\n",
+        "class A {\n    val a = 1\n    ;val b = 2\n}\n",
+        "import a.b\n;val c = 1\n",
+        "package a\n;\n",
+        "val a = 1 // c\n;val b = 2\n",
+        "val a = 1 /* c */\n;val b = 2\n",
+        "val a = 1\n// c\nval b = 2;\n",
+        "val a = 1\n\"s\" // c\n;val b = 2\n",
+        "val a = 1\n// c\n\"s\";\n",
+        "val a = \"x/y\"\n;val b = 2\n",
+    ]);
+}
+
+/// A name with letters past ASCII (decision 0627), as the lean lexer's `name_end` reads one: Latin,
+/// Greek, Cyrillic, CJK, Hangul and kana, first and after ASCII, a function's, a class's, a call's,
+/// in a template (`$é`, `$aé`, `${é}`), after `as`; a `$` before a backtick (content).
+#[test]
+fn names_past_ascii_are_the_lean_parsers() {
+    same(&[
+        "val é = 1\n",
+        "val aé1 = 2\n",
+        "val ж = 1; val 中文 = 2; val 한 = 3; val カ = 4\n",
+        "fun é() = é.b()\n",
+        "class Ünïcode : Bäse()\n",
+        "val Ωμέγα = 1\n",
+        "val s = \"$é\"\n",
+        "val s = \"$aé\"\n",
+        "val x = \"${é}\"\n",
+        "val s = \"é €\"\n",
+        "val x = a as Lé\n",
+        "val c = 'é'\n",
+        "val s = \"$`a`\"\n",
+        "val s = \"x$`a b`y\"\n",
+        "val s = \"\"\"$`a`\"\"\"\n",
+        "val s = \"$`a`$b\"\n",
+    ]);
+}
+
+/// `x as a.b.C<…>` at a line's end splits only with names and dots between the angles (decision
+/// 0629), as the lean parser's `as_split` asks: a `?` or a second `<` there keeps the type whole.
+#[test]
+fn as_types_the_lean_parser_does_not_split_are_its() {
+    same(&[
+        "fun f() {\n  val a = x as java.util.List<Int?>\n  foo()\n}\n",
+        "fun f() {\n  val a = x as java.util.List<Map<A>>\n  foo()\n}\n",
+        "fun f() {\n  val a = x as? a.B<C?>\n  foo()\n}\n",
+        "fun f() {\n  val a = x as a.B<C, D>\n  foo()\n}\n",
+        "fun f() {\n  val a = x as a.B<c.D>\n  foo()\n}\n",
+        "fun f() {\n  val a = x as a.B<C>?\n  foo()\n}\n",
+        "fun f() {\n  if (x is a.B<C?>)\n    foo()\n}\n",
+        "fun f() {\n  val a = x as a.B<C>\n  (b)\n}\n",
+        "fun f() {\n  val a = x as a.B<C>\n  { b }\n}\n",
+    ]);
+}
+
+/// The line after a type the lean parser may split (decisions 0630, 0632, 0633): split where the
+/// lean parser's trial read reaches the line's end (a keyword no expression starts with a name
+/// there, brackets read whole, lines that continue the statement read on); where it stops or
+/// fails, the type whole and the line a statement.
+#[test]
+fn split_lines_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) {}\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) g(x)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  while (c) {}\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  while (c) g(x)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  do {} while (c)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  for.x\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  typealias\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) {\n    a\n  }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) {\n    if (a) {\n    } else if (a == b) {\n    }\n  }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(a == b)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f { a = 1 }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f { x -> x }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(\"a == b\")\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(\n    a\n  )\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(\n    a\n  ).g(a == b)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  val y = a == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  .x == y\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a ?: b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  assertFailsWith<E> { d.add(4) }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<b>(c)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(a < b)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a .. b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a = b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a += 1\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a && b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a || b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  -a == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a.b = c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  this.a = b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(a) == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(a).b = c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a[0] = b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f { a } == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a = f(b) == c\n}\n",        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) g()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  while (c) g()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  class D\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a < b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  -a < b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(a) < b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(a < b) == c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(g(x)) == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(\n    a\n  ) == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a < b > (c)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<b> (c)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(if (a) b else c) == d\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  class D : B()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  class D\n  foo()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) g()\n  foo()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a < b > c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f<T>(a) == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(\n    a\n  ) < b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a(\n    b, c\n  )\n  d()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a\n    .b()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a\n    ?.b()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a\n    ?: b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a\n  (b)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a\n  b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(x) {\n    y\n  }\n  z\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a > b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  return x\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a + b * c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a !in b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(x) { y }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a + \"s${b}\"\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a = b\n  c < d\n}\n",
+    ]);
+}
+
 /// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&[
-        "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
-        "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
-        "val s = \"${f(\"${x}\")}\"\n",
-        "val s = \"${if (a) { 1 } else 2}\"\n",
-        "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
-        "val h = \"\"\"\"a\"\"\"\n",
-        "val h = \"\"\"a\"\"\"\"\n",
-        "val h = \"\"\"\\$a\"\"\"\n",
-        "import a.b import c\n",
+        // `suspend fun (` at a statement's start: the lean parser's anonymous function, where the
+        // declaration's modifiers take `suspend` (decision 0634).
+        "fun f() {\n  suspend fun() = 1\n}\n",
+        // A token on the line of a block comment after one that starts the line: the lean
+        // lexer's `asi` inserts no semicolon there, which a mark's questions can not say.
+        "val a = 1\n/* c */ /* d */ + 2\n",
+        "fun f() {\n    a\n    /* c */ /* d */ .b()\n}\n",
         "val s = 'x\n",
-        "val s = \"a\nb\"\n",
-        "val s = \"${ {x} }\"\n",
         "val s = \"${}\"\n",
         "val s = \"open\n",
-        "/* /* nested */ */\npackage a\n",
+        // A block comment nested past three levels in it, or with a `*/*/` in it.
+        "/* /* /* /* /* deep */ */ */ */ */\nval x = 1\n",
+        "/*/**/*/\nval x = 1\n",
+        "/* /* c\n",
+        // Past ASCII in code, what is no name's letter, or a name's touching a number or before
+        // an `@`: the lean parser refuses these too.
+        "val a×b = 1\n",
+        "val a = b·c\n",
+        "val x = 1é\n",
+        "val x = é@f\n",
+        // A template's name before a byte past ASCII no name's letter: the lean parser reads it,
+        // ending the name there; the masks of names read every byte past ASCII as a letter's.
+        "val s = \"$€\"\n",
+        "val s = \"$a€\"\n",
+        // A `;` after a line break and a comment: the lean parser refuses it too.
+        "val a = 1\n// c\n;val b = 2\n",
+        "val a = 1\n/* c */\n;val b = 2\n",
+        "val a = 1\n/* c */ ;val b = 2\n",
         "/* open\n",
-        "val f = { a, -> a }\n",
-        "val x = when (y) { else -> 1 }\n",
         "val x = 1d\n",
         "val x = 1.5L\n",
         "val x = 1_\n",
         "val x = 0x\n",
         "class A { val x = 1 }\n",
-        "fun f(noinline: Int) {}\n",
-        "val a = b as java.util.List<Int>\n",
-        // A comment lost before `catch`, `finally` or `else` (not `else ->`): not read yet.
-        "fun f() {\n    try { a() }\n    /* c */ catch (e: E) {}\n}\n",
     ]);
 }
 
@@ -775,6 +1114,251 @@ fn generic_calls_over_tighter_operations_are_the_lean_parsers() {
         "val a = mapOf(\"a\" to mutableListOf<String>(\"456\"), \"b\" to c)\n",
         "val a = x && y == f<T> { z }\nval b = p || q as R\n",
     ]);
+}
+
+/// A `<` that opens a call's type arguments whatever is around it, as the lean parser's
+/// `type_args_end` reads it: blanks, an operand that is no name, a `,` and an `&` among them
+/// (decision 0633).
+#[test]
+fn spaced_generic_calls_are_the_lean_parsers() {
+    same(&[
+        "val x = a < b > (c)\n",
+        "val x = f <T>()\n",
+        "val x = a<b> (c)\n",
+        "val x = f(a < b, c > (d))\n",
+        "val x = a[0] < b > (c)\n",
+        "val x = a < b > c\n",
+        "fun f() {\n  if (a < b && c > (d)) g()\n}\n",
+    ]);
+}
+
+/// A split's line read as the lean parser's trial does: one that starts with a string or a
+/// character, an `if` whose body or `else` is read in full, a jump's value, an `if`, a `when` or a
+/// `try` that ends at a block before an operator the trial stops at, two generic calls, and a
+/// navigation after type arguments (decision 0634).
+#[test]
+fn split_lines_past_0633_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n  val v = x as a.B<C>\n  \"s\" + a\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  \"s\".f()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  \"a${b}c\" == d\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  'c' == d\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  \"s\"\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) d == e\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) d < e\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) a = b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) {a} == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) {a} else {b} == c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) d else {e} == f\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) d else e == f\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) {d} else e == f\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) d\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  return a == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  return\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  when (x) {\n    1 -> a\n  } == y\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  when {\n    a -> b\n  } == y\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  try {\n    a\n  } catch (e: E) {\n    b\n  } == y\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<B>.c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<B>.c == d\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<B>(c).d<E>(f)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f<T>(a) + g<U>(b)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<B>::c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<B>?.c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  x.y<Z>().w\n}\n",
+    ]);
+}
+
+/// A navigation after type arguments (`a<B>.c`), whose suffix holds them, as the lean parser's
+/// `navigation` (decision 0634).
+#[test]
+fn generic_navigations_are_the_lean_parsers() {
+    same(&[
+        "val x = a<B>.c\n",
+        "val x = a<B>::class\n",
+        "val x = a<B>?.c()\n",
+        "val x = f(a<B>.c)\n",
+        "val x = a<B, C>.d.e()\n",
+        "fun f() {\n  a<B>.c = 1\n}\n",
+        "val x = a < b > .c\n",
+    ]);
+}
+
+/// A definitely non-nullable type (`T & Any`) and a parenthesized user type before its `&`, as the
+/// lean parser's `ty_core`, after `as` and `is` too (decision 0634).
+#[test]
+fn intersection_types_are_the_lean_parsers() {
+    same(&[
+        "fun <T> f(x: T & Any) {}\n",
+        "val x = f<A & B>()\n",
+        "fun <T> f(x: (T) & Any) {}\n",
+        "fun <T> f(x: T & (Any)) {}\n",
+        "fun <T> f(x: T & ((Any))) {}\n",
+        "fun <T> f(x: List<T & Any>) {}\n",
+        "fun <T> f(x: @A T & Any) {}\n",
+        "val x = y as T & Any\n",
+        "val x = y is T & Any\n",
+        "val x = y as? (T) & Any\n",
+        "val x = y !is T & (Any)\n",
+        "fun f() {\n  when (x) {\n    is T & Any -> 1\n  }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f<A & B>()\n}\n",
+    ]);
+}
+
+/// Anonymous functions, with a receiver and `suspend`, and a statement's `fun (`, as the lean
+/// parser's `anonymous_function` and `declaration_ahead` (decision 0634).
+#[test]
+fn anonymous_functions_are_the_lean_parsers() {
+    same(&[
+        "val f = fun(x: Int): Int = x + 1\n",
+        "val f = fun(x: Int) { g(x) }\n",
+        "val f = fun Int.(x: Int) = this + x\n",
+        "val f = fun A<B>.C.(x: Int) = 1\n",
+        "val f = suspend fun() { g() }\n",
+        "fun f() {\n  fun(x: Int) = x\n}\n",
+        "fun f() {\n  fun g() = 1\n}\n",
+        "val f = fun(x: Int)\n",
+        "val f = fun(x: Int)\n  {}\n",
+        "val f = g(fun(x: Int) = x)\n",
+        "suspend fun f() = 1\n",
+    ]);
+}
+
+/// A `when` entry's guard (`is A if c ->`): its commas leaves of the lean tape there, as
+/// tree-sitter's automaton keeps them (decision 0634).
+#[test]
+fn when_guards_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n  when (x) {\n    is A if x.b -> 1\n    is B, is C if c -> 2\n    else -> 3\n  }\n}\n",
+        "fun f() {\n  when (x) {\n    1 if a && b -> 1\n  }\n}\n",
+        "fun f() {\n  when (x) {\n    1, 2, 3 if c -> 2\n  }\n}\n",
+        "fun f() {\n  when (x) {\n    is A if c, is B -> 1\n  }\n}\n",
+        "fun f() {\n  when (x) {\n    is A, is B if c, -> 1\n  }\n}\n",
+        "fun f() {\n  when (x) {\n    is A, -> 1\n    is A, is B -> 1\n  }\n}\n",
+    ]);
+}
+
+/// What the 1,266-file corpus (`kt200`) found after 0634 (decision 0635): accessor calls and
+/// annotated accessors, annotations before an expression with `::class` in their arguments, a
+/// backtick name as a named argument, a setter's annotated parameter, enum bodies' `;` and `,`
+/// leaves, a `\$` before a `$`, and a block's statements after its last `;`.
+#[test]
+fn the_wide_corpus_lines_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    get()\n    set(1)\n    get(1).x\n}\n",
+        "class A {\n    val b: Int\n        @JvmName(\"c\") get() = 1\n    var d: Int = 0\n        private set(@A v) { field = v }\n}\n",
+        "fun f() {\n    @OptIn(A::class)\n    return g()\n}\n",
+        "class A\n@Inject\n@OptIn(B::class)\nconstructor(\n    @C d: D,\n) : E(d)\n",
+        "val x = f(`a b` = 1)\n",
+        "enum class E {\n  ;\n}\n",
+        "enum class E { ; }\n",
+        "enum class E {\n  A, B,\n  ;\n}\n",
+        "enum class E {\n  A;\n}\n",
+        "enum class E {\n  A, B;\n  fun f() = 1; fun g() = 2;\n}\n",
+        "enum class E { A; fun f() = 1;\n  // c\n}\n",
+        "val x = \"a\\$$b\"\n",
+        "val x = \"a\\$${b.c}\"\n",
+        "fun f() {\n    a(b);\n    // c\n}\n",
+        "fun f() {\n    a(b); /* c */\n}\n",
+        "fun f() {\n    a(b)\n    c(d);\n    // e\n}\n",
+        "class A {\n    val x = 1;\n    // c\n}\n",
+        "class A { val x = 1; val y = 2; }\n",
+        "fun A.B<C<*>>.e() = 1\n",
+        "fun <T> A<T>.e() = 1\n",
+    ]);
+    // The lean parser refuses these, and so does the grammar: a nullable type's `?` apart from it,
+    // a receiver with a `.` in its type arguments (`receiver_end`), a class member with no
+    // semicolon after it (`members`).
+    let both = [
+        "val x: String ? = null\n",
+        "fun A<C.D>.e() = 1\n",
+        "fun A.B<out C.D<*>>.e() = 1\n",
+        "class A { val x = 1 }\n",
+        "enum class E { A; fun f() = 1 }\n",
+        "interface I { fun f() }\n",
+        "class A { ; }\n",
+    ];
+    for text in both {
+        assert!(lean_text(text).is_none(), "the lean parser reads {text:?}");
+    }
+    refused(&both);
+}
+
+/// A string with the prefix `$$` (`$$"…"`, `$$"""…"""`): its templates take two `$`s, a `$` alone
+/// or a run short of a template's is content, and the prefix is a token of its own, as the lean
+/// parser's string reader counts a run against its prefix (decision 0699).
+#[test]
+fn prefixed_strings_are_the_lean_parsers() {
+    same(&[
+        "val x = $$\"a $b $$c\"\n",
+        "val x = $$\"a ${b} $${c} d\"\n",
+        "val x = $$\"$$$c\"\n",
+        "val x = $$\"a\\$$b\"\n",
+        "val x = $$\"\"\"a $b $${c}\"\"\"\n",
+        "val x = $\"a $b\"\n",
+        "val x = $$\"$$ $\"\n",
+        "val x = $$\"$${\"$x\"}\"\n",
+        "val x = $$\"$${a}b$$c\"\n",
+        "val x = $$\"\"\"\n  {\"a\": \"$$b\", \"c\": $${d}}\n\"\"\"\n",
+        "val x = f($$\"a\")\n",
+        "val x = \"a$$b\" + $$\"c\"\n",
+        "val x = $$\"a\\$\"\n",
+    ]);
+    // Three `$`s or more: not read.
+    refused(&["val x = $$$\"a $$b $$$c\"\n"]);
+}
+
+/// A `\$` before a line string's quote ends the string there, and the content of its piece makes
+/// no leaf; the byte after a `\$` is plain; a run of `$`s that starts no template is one content
+/// token (the lean parser's string reader, decision 0636).
+#[test]
+fn escaped_dollars_and_dollar_runs_are_the_lean_parsers() {
+    same(&[
+        "val x = \"a\\$\"\n",
+        "val x = \"\\$\"\n",
+        "val x = \"${a}b\\$\"\n",
+        "val x = \"$a\\$\"\n",
+        "val x = \"a$ b\\$\"\n",
+        "val x = \"a$\\$\"\n",
+        "val x = \"${a}\\$\"\n",
+        "val x = \"ab\\\\\\$\"\n",
+        "val x = \"${\"a\\$\"}\"\n",
+        "val x = \"${\"${b}\\$\"}c\"\n",
+        "val x = \"a\\$\\$b\"\n",
+        "val x = \"a\\$\\n\"\n",
+        "val x = \"a$$ b\"\n",
+        "val x = \"$$\"\n",
+        "val x = \"$$$\"\n",
+        "val x = \"a$$$b\"\n",
+        "val x = \"$$${a}\"\n",
+        "val x = \"$$ $\"\n",
+        "val x = \"$$\\$\"\n",
+        "val x = \"\"\"$$ a\"\"\"\n",
+        "val x = \"\"\"a$$$\"\"\"\n",
+        "val x = \"${a}$$\"\n",
+        "val x = \"$_a\"\n",
+    ]);
+    let both = ["val x = \"a\\$\\\\\"\n", "val x = \"a\\$\\\"b\"\n"];
+    for text in both {
+        assert!(lean_text(text).is_none(), "the lean parser reads {text:?}");
+    }
+    refused(&both);
+}
+
+/// A string in a template's code whose own template ends in the next 64-byte block: a wait reads
+/// the block's tokens again from the loop's head, with the stack of open records as the head had
+/// it, so a `}` that resumes a string ends that string again, not the one around it (the JIT's
+/// tier 1, decision 0635).
+#[test]
+fn templates_over_a_block_edge_are_the_lean_parsers() {
+    let tail = format!("val y = {}\n", "a".repeat(60));
+    let mut texts = Vec::new();
+    for t in ["val x = \"${\"ab${d}\"}\"\n", "val x = \"${\"${d}\"}\"\n", "val x = \"${c { \"\\\"${d}\\\"\" }}\"\n"] {
+        for k in 0..64 {
+            texts.push(format!("{}{t}{tail}", "\n".repeat(k)));
+        }
+    }
+    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+    same(&texts);
 }
 
 /// An accessor alone at a statement's level, a property's on the line after: the lean parser's
@@ -868,6 +1452,49 @@ fn templates_read_again_across_a_block_are_the_lean_parsers() {
     let texts: Vec<String> = (122..127).map(|at| format!("{head}{l1}//{}\nval b = \"${{C.D}}\"\n", "x".repeat(at - head.len() - l1.len() - 11))).collect();
     assert_eq!(texts[2].find("\"${C").expect("the second template"), 124);
     same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+}
+
+/// `x as a.b.C<D>` (`as?`, `is`) where `>` ends its line: tree-sitter's reading, as the lean
+/// parser's `split_type`: navigations over `x as a`, then a call's type arguments before `(`
+/// or `{` on the next line, or comparisons before an operand there; elsewhere the type whole.
+/// Where the lean parser's trial read stops on an assignment on the next line, the type whole
+/// (decision 0632). Before a string there, or past a blank or a comment after the `>`, the file
+/// is refused.
+#[test]
+fn as_splits_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    (g)\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    { g }\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    val e = 1\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n}\n",
+        "val d = x as java.util.List<Int>\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    a.b()\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>; g(d)\n}\n",
+        "fun f() {\n    g(x as java.util.List<Int>)\n}\n",
+        "fun f() {\n    val d = x as? java.util.List<Int>\n    g(d)\n}\n",
+        "fun f() {\n    val d = x as java.util.Map<Int, Int>\n    g(d)\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    assertFailsWith<E> { d.add(4) }\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    return d\n}\n",
+        "fun f() {\n    val d = x is a.B<C>\n    g(d)\n}\n",
+        "fun f() {\n    val d = x is a.B<C>\n    val e = 1\n}\n",
+        "fun f() {\n    val d = x !is a.B<C>\n    val e = 1\n}\n",
+        "fun f() {\n    if (x is a.B<C>) g()\n}\n",
+        "fun f() {\n    val d = x !is a.B<C>\n    g(d)\n}\n",
+        "fun f() {\n    val d = x ! is a.B<C>\n    g(d)\n}\n",
+        "fun f() {\n    val d = x as a.b >\n    c\n}\n",
+        "fun f() {\n    g(\n        x as java.util.List<Int>\n    )\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n        .size\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    if (d) g()\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    a = b\n}\n",
+        // A string first (decision 0634).
+        "fun f() {\n    val d = x as java.util.List<Int>\n    \"s\".f()\n}\n",
+    ]);
+    refused(&[
+        "fun f() {\n    val d = x as java.util.List<Int>  \n    g(d)\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int> // c\n    g(d)\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\r\n    g(d)\n}\n",
+    ]);
 }
 
 /// A `?.` after a type is its `?` and a `.` (a nullable receiver, `x as T?.f`, `as?.`), and a
@@ -1119,13 +1746,24 @@ fn corpus() {
     let (mut same, mut refused, mut differ, mut lean_refused) = (0, 0, 0, 0);
     let mut aot = (0, 0, 0);
     let mut tier1 = 0;
+    let mut accepted: Vec<String> = Vec::new();
     let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
     paths.sort();
     for p in &paths {
         let Ok(text) = std::fs::read_to_string(p) else { continue };
         let Some(want) = lean_text(&text) else {
             lean_refused += 1;
-            assert!(c.image(&text).is_none(), "{}: accepted a file the lean parser refuses", p.display());
+            if c.image(&text).is_some() {
+                // Where the lean parser refuses it, and the text there.
+                let why = lean::tape(text.as_bytes()).err();
+                let at = match why {
+                    Some(lean::Refusal::Parse(a) | lean::Refusal::Lex(a)) => a as usize,
+                    _ => 0,
+                };
+                let near: String = text.get(at.saturating_sub(40)..(at + 40).min(text.len())).unwrap_or("").into();
+                eprintln!("lean refuses, ours reads: {}: {why:?} near {near:?}", p.display());
+                accepted.push(p.display().to_string());
+            }
             continue;
         };
         // Tier 1 as Rust: the interpreter's records.
@@ -1190,6 +1828,7 @@ fn corpus() {
     eprintln!("kotlin corpus: {same} the same, {refused} refused, {differ} differ ({lean_refused} the lean parser refuses)");
     eprintln!("the parser as Rust: {} the same, {} refused, {} differ; tier 1's records differ in {tier1}", aot.0, aot.1, aot.2);
     assert_eq!(differ, 0);
+    assert!(accepted.is_empty(), "accepted files the lean parser refuses: {accepted:?}");
     assert_eq!(aot.2, 0, "the parser as Rust: a wrong tape");
     assert_eq!(tier1, 0, "tier 1 as Rust: records not the interpreter's");
 }
@@ -1322,7 +1961,7 @@ fn program_size() {
         Ok(p) => std::fs::read_to_string(p).expect("the grammar file"),
         Err(_) => crate::GRAMMAR.to_owned(),
     };
-    let c = crate::compile_text(&text).expect("the grammar compiles");
+    let c = crate::compile_timed(&text, crate::shipped_answers(), &mut |_, _| {}).expect("the grammar compiles");
     let lines: Vec<&str> = c.words.lines().collect();
     let mut by_op: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for l in &lines {
@@ -1388,30 +2027,31 @@ fn fingerprint(c: &crate::Compiled) -> u64 {
 }
 
 /// The shipped answers (`kotlin.answers`, decision 0414's seed) answer every question the grammar
-/// asks: a compile from them alone, not the machine's kept answers, proves nothing.
-/// `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes them again, from a cold compile's.
+/// asks, and the parser as Rust's compile (`tiers_rust`): a compile from them alone, not the
+/// machine's kept answers, proves nothing (`answers::check_shipped`; `RERAIL_BLESS_ANSWERS=1` writes
+/// them again, from a cold compile's and the Rust's compile's from those).
 #[test]
 fn the_shipped_answers_answer_the_grammar() {
-    if std::env::var_os("RERAIL_BLESS_KOTLIN_ANSWERS").is_some() {
-        let cold = compile_text(GRAMMAR).expect("the grammar compiles");
-        let path = &format!("{}/kotlin.answers", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-        std::fs::write(path, rerail_bitlex::bitlex_prove::encode(&cold.proofs)).expect("kotlin.answers written");
-        return;
-    }
-    let c = crate::compile_timed(GRAMMAR, crate::shipped_answers(), &mut |_, _| {}).expect("the grammar compiles");
-    assert!(
-        c.proofs.is_empty(),
-        "{} questions the shipped answers lack (the grammar or the provers changed): RERAIL_BLESS_KOTLIN_ANSWERS=1 writes kotlin.answers",
-        c.proofs.len()
-    );
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("kotlin.answers");
+    rerail_bitlex::answers::check_shipped(&path, crate::ANSWERS, |known| {
+        let c = crate::compile_timed(GRAMMAR, known.clone(), &mut |_, _| {})?;
+        let mut given = known;
+        given.extend(c.proofs.iter().copied());
+        let (_, _, rust) = crate::tiers_rust_given(GRAMMAR, given)?;
+        Ok(c.proofs.into_iter().chain(rust).collect())
+    });
 }
 
 /// A cold compile (no answers known) makes the program the shipped answers make, and its answers,
 /// given to another compile, leave nothing to ask (decision 0414): the answers decide nothing a
-/// proof would not, and the compiler's maps hash with a fixed seed. Cold, so in nextest's slow tier.
+/// proof would not, and the compiler's maps hash with a fixed seed. Cold, so in nextest's slow tier;
+/// the budget lifted, as a bless lifts it (a cold compile does not fit in it, decision 0646).
 #[test]
 fn a_cold_compile_makes_the_shipped_answers_program() {
-    let cold = compile_text(GRAMMAR).expect("the grammar compiles");
+    bitlex_compile::PROVING_STEPS_HERE.set(Some(1 << 40));
+    let cold = compile_text(GRAMMAR);
+    bitlex_compile::PROVING_STEPS_HERE.set(None);
+    let cold = cold.expect("the grammar compiles");
     let shipped = super::compiled().expect("the grammar compiles");
     assert_eq!(fingerprint(&cold), fingerprint(shipped), "the shipped answers make another program");
     assert!(cold.words == shipped.words && cold.program.words == shipped.program.words, "the grammar compiles to two programs");
@@ -1480,7 +2120,7 @@ fn tier1_cones() {
         })
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
-    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default()).expect("compiles");
+    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, crate::shipped_answers(), bitlex_compile::AsRust::No).expect("compiles");
     let b = &c.program;
     let n = b.ops.len();
     let cone = |v: u16| {
@@ -1730,7 +2370,7 @@ fn token_level_probe() {
         })
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
-    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default()).expect("compiles");
+    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, crate::shipped_answers(), bitlex_compile::AsRust::No).expect("compiles");
     let mut by: HashMap<String, usize> = HashMap::new();
     for o in &c.origin {
         if let Some(m) = o.strip_prefix("mask ") {
@@ -1779,6 +2419,21 @@ fn asked_comments_are_the_lean_parsers() {
         "val x = \"\"\"\n  a/*/\n\"\"\"\n    .trimIndent()\n",
         "fun f() = g(a, 0 /*r*/, b)\n",
         "fun f() {\n    g(\n        true /* s */,\n        x,\n    )\n}\n",
+        // Before `catch` or `finally`: the `try`'s comment. Before a `when` entry's `else ->`:
+        // swallowed, the entry to the `else`. Before an `if`'s `else`: lost, of no width there.
+        "fun f() {\n    try { a() }\n    /* c */ catch (e: E) {}\n}\n",
+        "fun f() {\n    try { a() }\n    /* c */\n    catch (e: E) {}\n}\n",
+        "fun f() {\n    try { a() } catch (e: E) {}\n    /* c */ finally {}\n}\n",
+        "val x = try { a() }\n/* c */ catch (e: E) { b }\n",
+        "fun f() {\n    try {\n        a()\n    }\n    /* c */\n    finally {\n        b()\n    }\n}\n",
+        "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
+        "val x = when (a) {\n    1 -> b\n    /* c */ else -> d\n}\n",
+        "val x = when (a) {\n    1 -> b\n    /* c */\n    else\n    -> d\n}\n",
+        "val x = when (a) {\n    1 -> b\n    /* c */\n    2 -> d\n}\n",
+        "fun f() {\n    if (a) b()\n    /* c */\n    else d()\n}\n",
+        "fun f() {\n    if (a) { b() }\n    /* c */ else { d() }\n}\n",
+        "val x = if (a) b\n/* c */ else d\n",
+        "fun f() {\n    if (a) b()\n    /* c */ elsewhere()\n}\n",
     ]);
 }
 
@@ -1833,39 +2488,6 @@ fn lazy_probe() {
     eprintln!("blank marks read by the CPU loop: {blank_bits:b}; records_made {:?}", native.records_made());
 }
 
-/// The walk lemmas (`bitlex_masks::NO_WALK_LEMMAS`: a walk's regions never overlap) change at most what tier 2 is
-/// proved to need: the grammar reads each text as without them, the same tape or the same refusal.
-#[test]
-fn walk_lemmas_keep_the_tapes() {
-    let with = super::compiled().expect("the grammar compiles");
-    assert!(!with.program.block_programs[0].walks.is_empty(), "the grammar has no walk for the lemmas");
-    bitlex_compile::NO_WALK_LEMMAS.set(true);
-    let without = compile_text(GRAMMAR);
-    bitlex_compile::NO_WALK_LEMMAS.set(false);
-    let without = without.expect("the grammar compiles without the walk lemmas");
-    // Since tier 1 reads a string as one token (3a5cf85230) and the comment escapes became questions (86d31b6fae),
-    // Kotlin's tier 2 is proved to need the same without them (5,892 words either way, as `.rerail`'s 2,745; JSON's
-    // grammars have no walk): what is checked is that they never make tier 2 need more.
-    assert!(with.program.words.len() <= without.program.words.len(), "the walk lemmas make tier 2 larger: {} words, {} without", with.program.words.len(), without.program.words.len());
-    let texts = [
-        "package a\n\nimport b.c\n",
-        "val s = \"a // b\" // c \"d\"\n",
-        "/* \"x\" */ val c = '\"'\n",
-        "val a = 0x1F + 1_000L - 1.5e-3f // \"\n",
-        "val s = \"\"\"raw /* x */ \"\"\"\n",
-        "val s = \"${a + \"b\"}\"\n",
-        "// only\n",
-        "/* open\n",
-        "val s = \"open\n",
-        "val c = '\\n' + '\\'' /* '\" */\n",
-        "fun f() {\n    a(\"x\") /* y */ // z\n}\n",
-    ];
-    for t in texts {
-        assert_eq!(with.tape(t).ok(), without.tape(t).ok(), "{t:?}");
-    }
-}
-
-
 /// Each text of the file `RERAIL_KOTLIN_PROBE` (texts separated by a line `---`): whether the lean
 /// parser and the compiled grammar read it, and whether their tapes agree. A tool, run by hand.
 #[test]
@@ -1916,6 +2538,10 @@ fn probe() {
         if std::env::var_os("RERAIL_KOTLIN_PROBE_LEAN").is_some() {
             eprintln!("  lean:\n{}", lean.as_deref().unwrap_or("(refused)"));
         }
+        if std::env::var_os("RERAIL_KOTLIN_PROBE_EXPLAIN").is_some() && ours.is_none() {
+            // The program's words around where it refuses.
+            eprintln!("{}", c.explain(&text).lines().filter(|l| !l.starts_with("token ") && !l.starts_with("cpu token ")).collect::<Vec<_>>().join("\n"));
+        }
         if std::env::var_os("RERAIL_KOTLIN_PROBE_INTERP").is_some() {
             // The interpreter's nodes, in its order: kind and span.
             let run = c.program.block_programs[0].run(text.as_bytes());
@@ -1940,5 +2566,75 @@ fn probe() {
             let tree = out.tree.as_ref().map(|d| ::bitlex::tree::nodes(d, &out.tokens, text.len()).map(|n| n.len()));
             eprintln!("  the reference tree: {tree:?}");
         }
+    }
+}
+
+/// The compiled grammar's speed against the lean parser's, on `RERAIL_KOTLIN_CORPUS`'s files that all three read to
+/// the same tape: the lean parser (`lean::tape`), the parser as Rust (`rerail_kotlin_aot::parse`, both into the lean
+/// parser's sink), each lexer alone too (`lean::lex_only`, `rerail_kotlin_aot::lex`), and the JIT whole (`Compiled::tape`, a writer made for each file; then with one writer kept), then its tier 1 alone and its tier 2 and writer alone (over
+/// tier 1's kept runs, a writer kept between files). `RERAIL_KOTLIN_ROUNDS` rounds (default 15), the forms in turn in
+/// each, so a loaded machine weighs on each alike; each form's best and median round, in thread CPU and wall time.
+/// Run on an optimized build (`--profile profiling`).
+#[test]
+#[ignore = "a measurement: run by hand, on an optimized build"]
+fn speed_against_lean() {
+    use rerail_cpu_block::native_cpu_block::thread_cpu;
+    let dir = std::env::var("RERAIL_KOTLIN_CORPUS").expect("set RERAIL_KOTLIN_CORPUS");
+    let rounds: usize = std::env::var("RERAIL_KOTLIN_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(15);
+    let c = compiled().expect("compiles");
+    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
+    paths.sort();
+    let (mut all, mut files) = (0usize, Vec::new());
+    for p in &paths {
+        let Ok(text) = std::fs::read_to_string(p) else { continue };
+        all += 1;
+        let Some(want) = lean_text(&text) else { continue };
+        let jit = c.tape(&text).ok().and_then(|t| image_text(&t).ok());
+        if jit.as_deref() == Some(&want) && aot_text(&text).ok().as_deref() == Some(&want) {
+            files.push(text);
+        }
+    }
+    let bytes: usize = files.iter().map(String::len).sum();
+    let p = &c.parser;
+    let mut batches: Vec<_> = files.iter().map(|f| rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();
+    for b in &mut batches {
+        b.call(&p.tier1);
+    }
+    let mut writing = rerail_cpu_stream::ladder::Writing { w: rerail_tape_format::f16::Writer::empty(), lang: lang(), numbers: p.tier2.numbers_by(&number), terminators: lean::TERMINATORS };
+    let forms = ["lean", "lean lexer", "aot", "aot tier 1", "jit", "jit, writer kept", "jit tier 1", "jit tier 2"];
+    let mut took: Vec<Vec<(f64, f64)>> = vec![Vec::new(); forms.len()];
+    let mut n = 0usize;
+    for _ in 0..rounds {
+        for (k, form) in forms.iter().enumerate() {
+            let (c0, w0) = (thread_cpu(), std::time::Instant::now());
+            match *form {
+                "lean" => files.iter().for_each(|f| n += lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
+                "lean lexer" => files.iter().for_each(|f| n += lean::lex_only(f.as_bytes())),
+                "aot tier 1" => files.iter().for_each(|f| n += std::hint::black_box(rerail_kotlin_aot::lex(f.as_bytes())).recs.len()),
+                "aot" => files.iter().for_each(|f| n += rerail_kotlin_aot::parse(f.as_bytes(), &mut lean::sink()).ok().and_then(Result::ok).map_or(0, |t| t.tape.len())),
+                "jit" => files.iter().for_each(|f| n += c.tape(f).map_or(0, |t| t.len())),
+                // Tier 1's batch made for each file, as `image16`'s, the writer kept (`image16_in`).
+                "jit, writer kept" => files.iter().for_each(|f| {
+                    let mut b = rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()]);
+                    b.call(&p.tier1);
+                    n += writing.words(p, &b, f.as_bytes()).unwrap_or(0);
+                }),
+                "jit tier 1" => batches.iter_mut().for_each(|b| b.call(&p.tier1)),
+                _ => batches.iter().zip(&files).for_each(|(b, f)| n += writing.words(p, b, f.as_bytes()).unwrap_or(0)),
+            }
+            took[k].push((thread_cpu() - c0, w0.elapsed().as_secs_f64()));
+        }
+    }
+    std::hint::black_box(n);
+    eprintln!("{} of {all} files ({:.2} MB) read to the lean parser's tape by all three; {rounds} rounds", files.len(), bytes as f64 / 1e6);
+    let best = |k: usize, w: bool| -> (f64, f64) {
+        let mut v: Vec<f64> = took[k].iter().map(|t| if w { t.1 } else { t.0 }).collect();
+        v.sort_by(f64::total_cmp);
+        (v[0], v[v.len() / 2])
+    };
+    let lean_cpu = best(0, false).0;
+    for (k, form) in forms.iter().enumerate() {
+        let ((cb, cm), (wb, wm)) = (best(k, false), best(k, true));
+        eprintln!("{form:>11}: CPU best {:7.2} ms, median {:7.2} ms; wall best {:7.2} ms, median {:7.2} ms; {:6.1} MB/s; {:.2}x lean's CPU", cb * 1e3, cm * 1e3, wb * 1e3, wm * 1e3, bytes as f64 / cb / 1e6, cb / lean_cpu);
     }
 }

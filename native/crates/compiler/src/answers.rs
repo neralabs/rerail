@@ -63,6 +63,36 @@ pub fn answered_in<T>(dir: &Path, family: &str, text: &[u8], seed: Known, mut co
     Ok(t)
 }
 
+/// What `compile` made of the grammar `text` of `family`, from the answers shipped with it
+/// (`shipped`, `<grammar>.answers`' bytes, decision 0669) and the machine's ([`answered`]).
+pub fn answered_shipped<T>(family: &str, text: &[u8], shipped: &[u8], compile: impl FnMut(Known) -> Result<(T, Vec<(Key, Answer)>), String>) -> Result<T, String> {
+    answered(family, text, bitlex_prove::decode(shipped), compile)
+}
+
+/// The test of a grammar's shipped answers (decision 0669; `<grammar>.answers` at `path`, `shipped`
+/// its bytes as built): `compile`, given them alone and not the machine's kept answers, proves
+/// nothing. `compile` compiles each of the grammar's variants (C and C++, say) from the answers it is
+/// given, as its callers do, and returns every answer they made.
+///
+/// With `RERAIL_BLESS_ANSWERS=1` it writes the file again instead, from `compile` given none. The
+/// budget must be lifted too (`RERAIL_PROVING_STEPS`): answers a budget cut short would ship "not
+/// proved" for questions a compile can prove, and every compile from them would keep that.
+pub fn check_shipped(path: &Path, shipped: &[u8], compile: impl Fn(Known) -> Result<Vec<(Key, Answer)>, String>) {
+    let name = path.display();
+    if std::env::var_os("RERAIL_BLESS_ANSWERS").is_some() {
+        assert!(std::env::var_os("RERAIL_PROVING_STEPS").is_some(), "{name}: blessing asks for the budget lifted too (RERAIL_PROVING_STEPS=1000000000000)");
+        let made = compile(Known::default()).unwrap_or_else(|e| panic!("{name}: the grammar compiles: {e}"));
+        std::fs::write(path, bitlex_prove::encode(&made)).unwrap_or_else(|e| panic!("{name}: written: {e}"));
+        return;
+    }
+    let made = compile(bitlex_prove::decode(shipped)).unwrap_or_else(|e| panic!("{name}: the grammar compiles: {e}"));
+    assert!(
+        made.is_empty(),
+        "{name}: {} questions the shipped answers lack (the grammar or the provers changed): RERAIL_BLESS_ANSWERS=1 RERAIL_PROVING_STEPS=1000000000000 writes it again",
+        made.len()
+    );
+}
+
 /// A family's files in the answers directory.
 struct Files {
     answers: PathBuf,
