@@ -500,12 +500,14 @@ impl ComputeQueue {
 
     /// Which span of its launches a buffer made resident (`GridBindContext::use_buffer`) stays resident over: while
     /// this is the same, a launch after it needs it made resident no more (decision 0641). Metal's is its open
-    /// compute encoder (`useResource` holds for the encoder's life). The other backends keep what a launch uses with
-    /// that launch alone (OpenCL's indirect-access list, the CPU's and CUDA's buffers kept), so each launch is a span.
+    /// compute encoder (`useResource` holds for the encoder's life). The CPU's is its submission: its queue keeps a
+    /// resident buffer until the work flushed with it has run. The other backends keep what a launch uses with that
+    /// launch alone (OpenCL's indirect-access list, CUDA's buffers kept), so each launch is a span.
     pub fn residency_span(&self) -> u64 {
         match &self.kind {
             #[cfg(target_os = "macos")]
             QueueKind::Native(q) => q.encoders(),
+            QueueKind::Cpu(q) => q.flushes(),
             _ => self.launches.get(),
         }
     }

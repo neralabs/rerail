@@ -3895,6 +3895,7 @@ dependencies = [
  "libc",
  "metal",
  "objc",
+ "rayon",
  "rerail-ukl",
  "rerail-ukl-rust",
 ]

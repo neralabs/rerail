@@ -637,11 +637,21 @@ impl CpuQueueRoot {
 pub struct CpuComputeQueue {
     root: CpuQueueRoot,
     ops: RefCell<Vec<Op>>,
+    /// The buffers made resident (`CpuBindContext::use_buffer`) for the work not yet flushed: kept until that work has
+    /// run, as Metal's `useResource` holds for its encoder's life. A span of residency is a submission (`flushes`).
+    resident: RefCell<Vec<CpuBuffer>>,
+    flushes: std::cell::Cell<u64>,
 }
 
 impl CpuComputeQueue {
     pub fn new(root: &CpuQueueRoot) -> Self {
-        CpuComputeQueue { root: root.clone(), ops: Default::default() }
+        CpuComputeQueue { root: root.clone(), ops: Default::default(), resident: Default::default(), flushes: Default::default() }
+    }
+
+    /// Its submissions so far: a buffer made resident stays resident for every launch of the work until the next
+    /// (`ComputeQueue::residency_span`).
+    pub fn flushes(&self) -> u64 {
+        self.flushes.get()
     }
 
     pub fn new_bind_context<'a>(&'a self, function: &'a CpuComputeFunction) -> CpuBindContext<'a> {
@@ -696,7 +706,16 @@ impl CpuComputeQueue {
     /// The work so far, handed to the root's thread; its event.
     pub fn flush(&mut self) -> CpuComputeEvent {
         let done = Arc::new(Done::default());
-        let ops = std::mem::take(&mut *self.ops.borrow_mut());
+        let mut ops = std::mem::take(&mut *self.ops.borrow_mut());
+        // The submission's resident buffers, kept until its last work has run.
+        let resident = std::mem::take(&mut *self.resident.borrow_mut());
+        if !resident.is_empty() {
+            ops.push(Box::new(move |_| {
+                drop(resident);
+                Ok(())
+            }));
+        }
+        self.flushes.set(self.flushes.get() + 1);
         match &self.root.0 {
             Root::Thread(tx) => tx.lock().unwrap().send(Batch { ops, done: done.clone() }).expect("the CPU queue's thread is gone"),
             Root::Inline(workers) => {
@@ -750,6 +769,13 @@ enum Grid {
 
 /// The bind context of one launch: each parameter's bytes, the threadgroup memory its rows take, and the buffers it
 /// binds (kept until it has run).
+/// A Rust launch's arguments (`Run::Host`), read by its groups on the pool's threads: the addresses of the launch's
+/// bound rows and of the shim's two words, which the launch keeps until its last group has run.
+struct Argv(Vec<*const u8>);
+
+// SAFETY: read only, by the launch's groups, while the launch holds what each address names.
+unsafe impl Sync for Argv {}
+
 pub struct CpuBindContext<'a> {
     queue: &'a CpuComputeQueue,
     function: &'a CpuComputeFunction,
@@ -794,7 +820,8 @@ impl CpuBindContext<'_> {
     }
 
     pub fn use_buffer(&mut self, buffer: &CpuBuffer) {
-        self.keep.push(buffer.clone());
+        // Kept for the submission, not this launch alone: the launches after it in the submission use it too.
+        self.queue.resident.borrow_mut().push(buffer.clone());
     }
 
     /// The counts are read when the launch runs, after the work before it (the root runs a queue's work in order).
@@ -843,16 +870,25 @@ impl CpuBindContext<'_> {
                     let mut argv: Vec<*const u8> = params.iter().map(|p| p.as_ptr().cast::<u8>()).collect();
                     argv.extend([(&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>()]);
                     // A kernel's panic is its launch's error: the queue's thread goes on, and its waiters hear of it.
+                    // Its groups run across the cores, in no order, as a GPU runs them: what one group writes that
+                    // another reads is written atomically, as in the kernel's UKL (the join program's claims, counters,
+                    // arena and `ctl`, decision 0648), and no group waits on another.
+                    let argv = &Argv(argv);
+                    let groups = grid.iter().map(|&g| u64::from(g)).product::<u64>();
+                    let one = |i: u64| {
+                        let (x, rest) = ((i % u64::from(grid[0])) as u32, i / u64::from(grid[0]));
+                        let (y, z) = ((rest % u64::from(grid[1])) as u32, (rest / u64::from(grid[1])) as u32);
+                        let l = rerail_ukl_rust::Launch { group: [x, y, z], block, groups: grid };
+                        // SAFETY: `argv` holds the kernel's arguments as its rows bound them (each buffer's address,
+                        // each value's bytes), and the shim's two; it outlives the launch's groups.
+                        unsafe { k(argv.0.as_ptr(), &l) };
+                    };
                     let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        for z in 0..grid[2] {
-                            for y in 0..grid[1] {
-                                for x in 0..grid[0] {
-                                    let l = rerail_ukl_rust::Launch { group: [x, y, z], block, groups: grid };
-                                    // SAFETY: `argv` holds the kernel's arguments as its rows bound them (each buffer's
-                                    // address, each value's bytes), and the shim's two.
-                                    unsafe { k(argv.as_ptr(), &l) };
-                                }
-                            }
+                        if groups == 1 {
+                            one(0);
+                        } else {
+                            use rayon::prelude::*;
+                            (0..groups).into_par_iter().for_each(one);
                         }
                     }));
                     return ran.map_err(|p| {
