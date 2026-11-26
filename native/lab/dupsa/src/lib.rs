@@ -8,3 +8,4 @@ pub mod multi;
 pub mod nodes;
 pub mod report;
 pub mod sais;
+pub mod store;

@@ -117,12 +117,128 @@ pub fn files(root: &Path, include: &[String], ext: &[String]) -> Vec<String> {
 }
 
 pub fn read(root: &Path, include: &[String], ext: &[String]) -> LineDocs {
-    read_with(root, &files(root, include, ext), &mut HashMap::new())
+    read_with(root, &files(root, include, ext), &mut LineDict::new())
 }
 
-/// The files `rels` under `root`, their lines numbered by `ids_of` (shared between batches, so that a line has one id
+/// The normalised lines' ids (an interned text). A dictionary a run before saved is read in place: the lines by id,
+/// and the ids in the lines' order, for a lookup by binary search. A line it lacks gets the next id.
+pub struct LineDict {
+    saved: Option<(&'static [u32], &'static [u8], &'static [u32])>,
+    added: HashMap<String, u32>,
+    pub next: u32,
+}
+
+impl Default for LineDict {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LineDict {
+    pub fn new() -> Self {
+        Self { saved: None, added: HashMap::new(), next: 0 }
+    }
+
+    fn saved_line(&self, id: u32) -> &[u8] {
+        let (off, bytes, _) = self.saved.unwrap();
+        &bytes[off[id as usize] as usize..off[id as usize + 1] as usize]
+    }
+
+    pub fn id(&mut self, line: &str) -> u32 {
+        if let Some((_, _, sorted)) = self.saved {
+            if let Ok(k) = sorted.binary_search_by(|&i| self.saved_line(i).cmp(line.as_bytes())) {
+                return sorted[k];
+            }
+        }
+        if let Some(&id) = self.added.get(line) {
+            return id;
+        }
+        let id = self.next;
+        self.next += 1;
+        self.added.insert(line.to_owned(), id);
+        id
+    }
+
+    /// The dictionary as bytes (`store` arrays): each line's start by id, the lines, the ids in the lines' order.
+    pub fn write(&self, out: &mut Vec<u8>) {
+        assert!(self.saved.is_none(), "a dictionary is saved once, from the run that built it");
+        let mut by_id = vec![""; self.next as usize];
+        for (l, &id) in &self.added {
+            by_id[id as usize] = l;
+        }
+        let (mut off, mut bytes) = (vec![0u32], Vec::new());
+        for l in &by_id {
+            bytes.extend_from_slice(l.as_bytes());
+            off.push(bytes.len() as u32);
+        }
+        let mut sorted: Vec<u32> = (0..self.next).collect();
+        sorted.sort_unstable_by(|&a, &b| by_id[a as usize].cmp(by_id[b as usize]));
+        crate::store::put(out, &off);
+        crate::store::put(out, &bytes);
+        crate::store::put(out, &sorted);
+    }
+
+    pub fn read(b: &'static [u8], at: &mut usize) -> Self {
+        let off = crate::store::view::<u32>(b, at);
+        let bytes = crate::store::view::<u8>(b, at);
+        let sorted = crate::store::view::<u32>(b, at);
+        Self { saved: Some((off, bytes, sorted)), added: HashMap::new(), next: off.len() as u32 - 1 }
+    }
+}
+
+/// The base's lines as a run before saved them, read in place: per document its first unit in `ids` and `lines`.
+pub struct MappedLines {
+    pub paths: Vec<String>,
+    pub offsets: &'static [u32],
+    pub ids: &'static [u32],
+    pub lines: &'static [u32],
+    pub distinct: u32,
+}
+
+impl Docs for MappedLines {
+    fn count(&self) -> usize {
+        self.paths.len()
+    }
+    fn doc_len(&self, d: usize) -> usize {
+        (self.offsets[d + 1] - self.offsets[d]) as usize
+    }
+    #[inline(always)]
+    fn at(&self, d: usize, j: usize) -> u32 {
+        self.ids[self.offsets[d] as usize + j]
+    }
+    fn upper(&self) -> u32 {
+        self.distinct.saturating_sub(1)
+    }
+}
+
+impl MappedLines {
+    /// A line documents' paths, ids and line numbers as bytes (`store` arrays).
+    pub fn write(docs: &LineDocs, out: &mut Vec<u8>) {
+        crate::store::put(out, docs.paths.join("\n").as_bytes());
+        let mut off = vec![0u32];
+        for ids in &docs.ids {
+            off.push(off.last().unwrap() + ids.len() as u32);
+        }
+        crate::store::put(out, &off);
+        crate::store::put(out, &docs.ids.concat());
+        crate::store::put(out, &docs.lines.concat());
+        crate::store::put(out, &[docs.distinct]);
+    }
+
+    pub fn read(b: &'static [u8], at: &mut usize) -> Self {
+        let paths = std::str::from_utf8(crate::store::view::<u8>(b, at)).expect("paths");
+        let paths = if paths.is_empty() { Vec::new() } else { paths.split('\n').map(str::to_owned).collect() };
+        let offsets = crate::store::view::<u32>(b, at);
+        let ids = crate::store::view::<u32>(b, at);
+        let lines = crate::store::view::<u32>(b, at);
+        let distinct = crate::store::view::<u32>(b, at)[0];
+        Self { paths, offsets, ids, lines, distinct }
+    }
+}
+
+/// The files `rels` under `root`, their lines numbered by `dict` (shared between batches, so that a line has one id
 /// in every batch; new lines get the next).
-pub fn read_with(root: &Path, rels: &[String], ids_of: &mut HashMap<String, u32>) -> LineDocs {
+pub fn read_with(root: &Path, rels: &[String], dict: &mut LineDict) -> LineDocs {
     let mut docs = LineDocs { paths: Vec::new(), ids: Vec::new(), lines: Vec::new(), distinct: 0 };
     let mut norm = String::new();
     for rel in rels.iter().cloned() {
@@ -134,16 +250,14 @@ pub fn read_with(root: &Path, rels: &[String], ids_of: &mut HashMap<String, u32>
             if !normalise(raw, hash, &mut norm) {
                 continue;
             }
-            let next = ids_of.len() as u32;
-            let id = *ids_of.entry(norm.clone()).or_insert(next);
-            ids.push(id);
+            ids.push(dict.id(&norm));
             lines.push(k as u32 + 1);
         }
         docs.paths.push(rel);
         docs.ids.push(ids);
         docs.lines.push(lines);
     }
-    docs.distinct = ids_of.len() as u32;
+    docs.distinct = dict.next;
     docs
 }
 

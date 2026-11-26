@@ -26,6 +26,7 @@
 //! window compared or sorted again).
 
 use crate::multi::Docs;
+use crate::store::{self, Arr};
 use std::collections::HashMap;
 
 const NONE: u32 = u32::MAX;
@@ -61,23 +62,31 @@ impl Docs for Current<'_> {
     fn upper(&self) -> u32 {
         self.sources.iter().map(|s| s.upper()).max().unwrap_or(0)
     }
+    /// The first batch's joined text, while every document is still that batch's, in its order.
+    fn joined(&self) -> Option<&[u32]> {
+        let first = self.sources.first()?;
+        let same = self.at.len() == first.count() && self.at.iter().enumerate().all(|(d, &(s, n))| s == 0 && n as usize == d);
+        if same { first.joined() } else { None }
+    }
 }
 
 /// Every full window of a snapshot, in window order (a suffix array to depth `w`). Positions are document-major,
 /// without separators: document `d`'s unit `j` is `offsets[d] + j`.
+///
+/// Every array is owned (a base built in this run) or a slice of a saved index's mapping (read in place).
 pub struct Base {
     pub w: u32,
-    pub offsets: Vec<u32>,
+    pub offsets: Arr<u32>,
     /// The positions of the full windows (those with `w` units left in their document), in window order.
-    pub sa: Vec<u32>,
+    pub sa: Arr<u32>,
     /// Bit `r`: `sa[r]`'s window is `sa[r - 1]`'s.
-    pub eq: Vec<u64>,
+    pub eq: Arr<u64>,
     /// Per position: its window's rank, or NONE for a short window.
-    pub rank: Vec<u32>,
+    pub rank: Arr<u32>,
     /// Per rank: its class (a run of equal windows).
-    pub class_of: Vec<u32>,
+    pub class_of: Arr<u32>,
     /// Per class: its first rank; then `sa.len()`.
-    pub class_lo: Vec<u32>,
+    pub class_lo: Arr<u32>,
 }
 
 fn bit(v: &[u64], i: usize) -> bool {
@@ -90,27 +99,6 @@ fn set_bit(v: &mut [u64], i: usize, on: bool) {
     } else {
         v[i / 64] &= !(1 << (i % 64));
     }
-}
-
-pub fn put32(out: &mut Vec<u8>, v: &[u32]) {
-    out.extend_from_slice(&(v.len() as u64).to_le_bytes());
-    for x in v {
-        out.extend_from_slice(&x.to_le_bytes());
-    }
-}
-
-/// An array `put32` wrote (or, with `fixed` > 0, that many values without a length).
-pub fn get32(b: &[u8], at: &mut usize, fixed: usize) -> Vec<u32> {
-    let n = if fixed > 0 {
-        fixed
-    } else {
-        let n = u64::from_le_bytes(b[*at..*at + 8].try_into().unwrap()) as usize;
-        *at += 8;
-        n
-    };
-    let v = b[*at..*at + 4 * n].chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
-    *at += 4 * n;
-    v
 }
 
 fn offsets_of(docs: &dyn Docs) -> Vec<u32> {
@@ -139,7 +127,7 @@ impl Base {
             class_of.push(class_lo.len() as u32 - 1);
         }
         class_lo.push(sa.len() as u32);
-        Self { w, offsets, sa, eq, rank, class_of, class_lo }
+        Self { w, offsets: offsets.into(), sa: sa.into(), eq: eq.into(), rank: rank.into(), class_of: class_of.into(), class_lo: class_lo.into() }
     }
 
     /// From a whole suffix array (SA-IS, `MultiSuffixArray`): its full windows, with `eq` from the LCP (the common
@@ -270,26 +258,21 @@ impl Base {
         Self::from_order(w, offsets, full, eq)
     }
 
-    /// The base as bytes (each array little-endian, its length first), for a later run to read back.
+    /// The base as bytes, each array aligned for `read` to take in place.
     pub fn write(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.w.to_le_bytes());
+        store::put(out, &[self.w]);
         for v in [&self.offsets, &self.sa, &self.rank, &self.class_of, &self.class_lo] {
-            put32(out, v);
+            store::put(out, v);
         }
-        out.extend_from_slice(&(self.eq.len() as u64).to_le_bytes());
-        for x in &self.eq {
-            out.extend_from_slice(&x.to_le_bytes());
-        }
+        store::put(out, &self.eq);
     }
 
-    pub fn read(b: &[u8], at: &mut usize) -> Self {
-        let w = get32(b, at, 1)[0];
-        let (offsets, sa, rank, class_of, class_lo) = (get32(b, at, 0), get32(b, at, 0), get32(b, at, 0), get32(b, at, 0), get32(b, at, 0));
-        let n = u64::from_le_bytes(b[*at..*at + 8].try_into().unwrap()) as usize;
-        *at += 8;
-        let eq = b[*at..*at + 8 * n].chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
-        *at += 8 * n;
-        Self { w, offsets, sa, eq, rank, class_of, class_lo }
+    /// A base `write` wrote, its arrays slices of the mapped file (nothing is read into memory).
+    pub fn read(b: &'static [u8], at: &mut usize) -> Self {
+        let w = store::view::<u32>(b, at)[0];
+        let mut a = || Arr::Mapped(store::view::<u32>(b, at));
+        let (offsets, sa, rank, class_of, class_lo) = (a(), a(), a(), a(), a());
+        Self { w, offsets, sa, eq: Arr::Mapped(store::view::<u64>(b, at)), rank, class_of, class_lo }
     }
 
     pub fn classes(&self) -> usize {
@@ -387,8 +370,9 @@ pub struct Index<'a> {
     pub cur: Current<'a>,
     /// Per base rank: tombstoned.
     dead: Vec<u64>,
-    /// Per base class: its live base members.
-    count: Vec<u32>,
+    /// Per base class with a tombstone: how many of its base members are tombstoned (the rest are live). Nothing is
+    /// held for a class untouched, so an index starts without a pass over its classes.
+    gone: HashMap<u32, u32>,
     extra: HashMap<u32, Vec<(u32, u32)>>,
     fresh: Vec<Fresh>,
     fresh_by_hash: HashMap<u64, Vec<u32>>,
@@ -403,6 +387,8 @@ pub struct Index<'a> {
     /// Re-add a changed document's every window (the whole document as the change), not only those it overlaps.
     pub whole_doc: bool,
     pub stats: Stats,
+    /// The documents the last batch recomputed: outside them, every finding is as it was, at moved places.
+    pub affected: Vec<u32>,
 }
 
 impl<'a> Index<'a> {
@@ -415,12 +401,12 @@ impl<'a> Index<'a> {
                 v.extend_from_slice(&[b.first, b.end, b.class]);
             }
         }
-        put32(out, &v);
+        store::put(out, &v);
     }
 
     /// An index over a base read back, with the blocks a run before computed on it (none are recomputed).
-    pub fn with_blocks(base: Base, docs: Current<'a>, b: &[u8], at: &mut usize) -> Self {
-        let v = get32(b, at, 0);
+    pub fn with_blocks(base: Base, docs: Current<'a>, b: &'static [u8], at: &mut usize) -> Self {
+        let v = store::view::<u32>(b, at);
         let mut blocks = Vec::with_capacity(v[0] as usize);
         let mut k = 1;
         for _ in 0..v[0] {
@@ -443,11 +429,10 @@ impl<'a> Index<'a> {
     }
 
     fn empty(base: Base, docs: Current<'a>) -> Self {
-        let count = (0..base.classes()).map(|c| base.class_lo[c + 1] - base.class_lo[c]).collect();
         Self {
             w: base.w,
             dead: vec![0; base.sa.len().div_ceil(64)],
-            count,
+            gone: HashMap::new(),
             base,
             base_docs: docs.clone(),
             blocks: vec![Vec::new(); docs.count()],
@@ -462,6 +447,7 @@ impl<'a> Index<'a> {
             last_changes: HashMap::new(),
             whole_doc: false,
             stats: Stats::default(),
+            affected: Vec::new(),
         }
     }
 
@@ -475,7 +461,8 @@ impl<'a> Index<'a> {
         if c & FRESH != 0 {
             self.fresh[(c & !FRESH) as usize].members.len()
         } else {
-            self.count[c as usize] as usize + self.extra.get(&c).map_or(0, Vec::len)
+            let size = self.base.class_lo[c as usize + 1] - self.base.class_lo[c as usize];
+            (size - self.gone.get(&c).copied().unwrap_or(0)) as usize + self.extra.get(&c).map_or(0, Vec::len)
         }
     }
 
@@ -649,7 +636,11 @@ impl<'a> Index<'a> {
         for &r in &e.dead {
             set_bit(&mut self.dead, r as usize, false);
             let c = self.base.class_of[r as usize];
-            self.count[c as usize] += 1;
+            let g = self.gone.get_mut(&c).expect("a tombstoned class");
+            *g -= 1;
+            if *g == 0 {
+                self.gone.remove(&c);
+            }
             self.touch(c);
         }
         for (k, &c) in e.cls.iter().enumerate() {
@@ -700,7 +691,7 @@ impl<'a> Index<'a> {
                 let r = self.base.rank[(self.base.offsets[du] + p) as usize];
                 set_bit(&mut self.dead, r as usize, true);
                 let c = self.base.class_of[r as usize];
-                self.count[c as usize] -= 1;
+                *self.gone.entry(c).or_insert(0) += 1;
                 self.touch(c);
                 dead.push(r);
             }
@@ -734,6 +725,7 @@ impl<'a> Index<'a> {
         affected.dedup();
         self.stats.touched = self.touched.len();
         self.stats.affected = affected.len();
+        self.affected = affected.clone();
         for &d in &affected {
             self.stats.recomputed_units += self.cur.doc_len(d as usize);
             self.blocks[d as usize] = self.doc_blocks(d as usize);
@@ -745,15 +737,19 @@ impl<'a> Index<'a> {
 
     /// Every block with its other places, as `report::blocks` gives them for the current versions.
     pub fn findings(&self) -> Vec<crate::report::Block> {
-        let mut out = Vec::new();
-        for (d, bs) in self.blocks.iter().enumerate() {
-            for b in bs {
+        (0..self.blocks.len()).flat_map(|d| self.doc_findings(d)).collect()
+    }
+
+    /// One document's blocks with their other places.
+    pub fn doc_findings(&self, d: usize) -> Vec<crate::report::Block> {
+        self.blocks[d]
+            .iter()
+            .map(|b| {
                 let mut others: Vec<(u32, u32)> = self.members(b.class).into_iter().filter(|&x| x != (d as u32, b.first)).collect();
                 others.sort_unstable();
-                out.push(crate::report::Block { doc: d as u32, first: b.first, end: b.end, others });
-            }
-        }
-        out
+                crate::report::Block { doc: d as u32, first: b.first, end: b.end, others }
+            })
+            .collect()
     }
 
     /// Bytes the overlay holds.
@@ -834,7 +830,7 @@ impl<'a> Index<'a> {
                 debug_assert_ne!(b.class, NONE);
             }
         }
-        self.count = (0..base.classes()).map(|c| base.class_lo[c + 1] - base.class_lo[c]).collect();
+        self.gone.clear();
         self.dead = vec![0; base.sa.len().div_ceil(64)];
         self.base = base;
         self.base_docs = self.cur.clone();

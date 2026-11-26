@@ -35,6 +35,24 @@ unsafe extern "C" {
     fn getrusage(who: i32, usage: *mut libc_rusage) -> i32;
 }
 
+/// Instructions this process has retired (macOS's `proc_pid_rusage`, `ri_instructions` of `rusage_info_v4`: after
+/// its 16-byte uuid, the 30th u64); 0 elsewhere. Unlike CPU time, the machine's load does not change it.
+fn instr() -> u64 {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut u64) -> i32;
+            fn getpid() -> i32;
+        }
+        let mut b = [0u64; 64];
+        // RUSAGE_INFO_V4 = 4.
+        if unsafe { proc_pid_rusage(getpid(), 4, b.as_mut_ptr()) } == 0 {
+            return b[2 + 29];
+        }
+    }
+    0
+}
+
 fn peak_mb() -> f64 {
     let mut u: libc_rusage = unsafe { std::mem::zeroed() };
     unsafe { getrusage(0, &mut u) };
@@ -452,34 +470,51 @@ fn incr_command(o: Opts) -> Result<(), String> {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     names.sort();
-    let c0 = cpu();
-    // A saved index: "DUPIX001", the node dictionary (rows in rank order), the base, the blocks.
+    let (c0, i0) = (cpu(), instr());
+    // A saved index, mapped: "DUPIX002", the method's own part (lines: the base's line documents and dictionary;
+    // nodes: the dictionary's rows), the base, the blocks. Every array is read in place.
     let saved: Option<&'static [u8]> = match &o.load {
-        Some(p) => Some(Box::leak(std::fs::read(p).map_err(|e| format!("{p}: {e}"))?.into_boxed_slice())),
+        Some(p) => Some(rerail_dupsa_lab::store::map(Path::new(p))?),
         None => None,
     };
+    if let Some(b) = saved
+        && !b.starts_with(b"DUPIX002")
+    {
+        return Err("not a DUPIX002 index".into());
+    }
     let mut at = 8usize;
-    let values: Vec<u128> = match saved {
-        Some(b) => {
-            let n = u64::from_le_bytes(b[8..16].try_into().unwrap()) as usize;
-            at = 16 + 16 * n;
-            b[16..at].chunks_exact(16).map(|c| u128::from_le_bytes(c.try_into().unwrap())).collect()
-        }
-        None => Vec::new(),
+    // The method's part of the index, written when saving (before any step changes the dictionary).
+    let mut head: Vec<u8> = Vec::new();
+    let line_source = |docs: &'static dyn rerail_dupsa_lab::multi::Docs, paths: Vec<String>, at_line: Box<dyn Fn(u32, u32) -> u32>| Source {
+        docs,
+        paths,
+        lines: Box::new(move |nd, f, e| (at_line(nd, f), at_line(nd, e - 1))),
     };
-    let mut dict: Vec<u128> = Vec::new();
     let (base, mut load): (Source, Box<dyn FnMut(&str) -> Result<(Source, Vec<String>), String>>) = match kind.as_str() {
         "lines" => {
-            let root = Path::new(base_at).to_path_buf();
-            let mut interner = std::collections::HashMap::new();
-            let docs: &'static lines::LineDocs = Box::leak(Box::new(lines::read_with(&root, &lines::files(&root, &o.include, &o.ext), &mut interner)));
-            let base = Source { docs, paths: docs.paths.clone(), lines: Box::new(move |nd, f, e| (docs.lines[nd as usize][f as usize], docs.lines[nd as usize][e as usize - 1])) };
+            let (base, mut dict) = match saved {
+                Some(b) => {
+                    let m: &'static lines::MappedLines = Box::leak(Box::new(lines::MappedLines::read(b, &mut at)));
+                    let dict = lines::LineDict::read(b, &mut at);
+                    (line_source(m, m.paths.clone(), Box::new(move |nd, u| m.lines[(m.offsets[nd as usize] + u) as usize])), dict)
+                }
+                None => {
+                    let root = Path::new(base_at).to_path_buf();
+                    let mut dict = lines::LineDict::new();
+                    let docs: &'static lines::LineDocs = Box::leak(Box::new(lines::read_with(&root, &lines::files(&root, &o.include, &o.ext), &mut dict)));
+                    if o.save.is_some() {
+                        lines::MappedLines::write(docs, &mut head);
+                        dict.write(&mut head);
+                    }
+                    (line_source(docs, docs.paths.clone(), Box::new(move |nd, u| docs.lines[nd as usize][u as usize])), dict)
+                }
+            };
             let (include, ext, dir) = (o.include.clone(), o.ext.clone(), steps_dir.clone());
             (base, Box::new(move |name: &str| {
                 let root = dir.join(name);
-                let docs: &'static lines::LineDocs = Box::leak(Box::new(lines::read_with(&root, &lines::files(&root, &include, &ext), &mut interner)));
+                let docs: &'static lines::LineDocs = Box::leak(Box::new(lines::read_with(&root, &lines::files(&root, &include, &ext), &mut dict)));
                 let deleted = std::fs::read_to_string(dir.join(format!("{name}.deleted"))).unwrap_or_default().lines().map(str::to_owned).collect();
-                Ok((Source { docs, paths: docs.paths.clone(), lines: Box::new(move |nd, f, e| (docs.lines[nd as usize][f as usize], docs.lines[nd as usize][e as usize - 1])) }, deleted))
+                Ok((line_source(docs, docs.paths.clone(), Box::new(move |nd, u| docs.lines[nd as usize][u as usize])), deleted))
             }))
         }
         "nodes" => {
@@ -495,13 +530,19 @@ fn incr_command(o: Opts) -> Result<(), String> {
             let tag = capture.files.first().ok_or("no files in scope")?.tag;
             capture.files.retain(|f| f.tag == tag);
             let capture: &'static Capture = Box::leak(Box::new(capture));
-            let docs: &'static NodeDocs<'static> = Box::leak(Box::new(if saved.is_some() {
-                NodeDocs::with_values(capture, tag, o.cells, &values)?
-            } else {
-                NodeDocs::new(capture, tag, o.cells)?
+            let docs: &'static NodeDocs<'static> = Box::leak(Box::new(match saved {
+                Some(b) => {
+                    // The rows as two halves (an array of u128 would want 16-byte alignment).
+                    let (lo, hi) = (rerail_dupsa_lab::store::view::<u64>(b, &mut at), rerail_dupsa_lab::store::view::<u64>(b, &mut at));
+                    let values: Vec<u128> = lo.iter().zip(hi).map(|(&l, &h)| u128::from(l) | u128::from(h) << 64).collect();
+                    NodeDocs::with_values(capture, tag, o.cells, &values)?
+                }
+                None => NodeDocs::new(capture, tag, o.cells)?,
             }));
             if o.save.is_some() {
-                dict = docs.values();
+                let v = docs.values();
+                rerail_dupsa_lab::store::put(&mut head, &v.iter().map(|&x| x as u64).collect::<Vec<_>>());
+                rerail_dupsa_lab::store::put(&mut head, &v.iter().map(|&x| (x >> 64) as u64).collect::<Vec<_>>());
             }
             let span_lines = |docs: &'static NodeDocs<'static>| -> Box<dyn Fn(u32, u32, u32) -> (u32, u32)> {
                 Box::new(move |nd, f, e| {
@@ -527,13 +568,14 @@ fn incr_command(o: Opts) -> Result<(), String> {
         k => return Err(format!("incr {k}: lines or nodes")),
     };
     let read_base = cpu() - c0;
+    let i_read = instr() - i0;
     let w = o.min.unwrap_or(if kind == "lines" { 30 } else { 150 });
     let mut sources = vec![base];
     let mut path_doc: std::collections::HashMap<String, u32> =
         sources[0].paths.iter().enumerate().map(|(d, p)| (p.clone(), d as u32)).collect();
     let mut paths = sources[0].paths.clone();
     let cur = rerail_dupsa_lab::incr::Current::of(sources[0].docs);
-    let c1 = cpu();
+    let (c1, i1) = (cpu(), instr());
     let b = match o.build.as_str() {
         _ if saved.is_some() => rerail_dupsa_lab::incr::Base::read(saved.unwrap(), &mut at),
         "sais" => rerail_dupsa_lab::incr::Base::from_suffix_array(&cur, &MultiSuffixArray::new(&cur), w),
@@ -541,25 +583,17 @@ fn incr_command(o: Opts) -> Result<(), String> {
         x => return Err(format!("--build {x}: doubling or sais")),
     };
     let built = cpu() - c1;
+    let i_built = instr() - i1;
     let (n, windows, classes, bytes) = (cur.at.len(), b.sa.len(), b.classes(), b.bytes());
-    let c2 = cpu();
+    let (c2, i2) = (cpu(), instr());
     let mut ix = match saved {
         Some(bytes) => rerail_dupsa_lab::incr::Index::with_blocks(b, cur, bytes, &mut at),
         None => rerail_dupsa_lab::incr::Index::new(b, cur),
     };
     ix.whole_doc = o.whole_doc;
     let first_blocks = cpu() - c2;
-    if let Some(p) = &o.save {
-        let mut out = b"DUPIX001".to_vec();
-        out.extend_from_slice(&(dict.len() as u64).to_le_bytes());
-        for v in &dict {
-            out.extend_from_slice(&v.to_le_bytes());
-        }
-        ix.base.write(&mut out);
-        ix.write_blocks(&mut out);
-        std::fs::write(p, &out).map_err(|e| format!("{p}: {e}"))?;
-        eprintln!("saved {p}: {:.0} MB", out.len() as f64 / 1e6);
-    }
+    let i_blocks = instr() - i2;
+    // Findings as reported (at least `min_lines` lines), sorted: for comparing a rebuild's.
     let keyed = |ix: &rerail_dupsa_lab::incr::Index, blocks: Vec<rerail_dupsa_lab::report::Block>, sources: &[Source]| -> Vec<Key> {
         let mut v: Vec<Key> = blocks
             .into_iter()
@@ -573,19 +607,75 @@ fn incr_command(o: Opts) -> Result<(), String> {
         v.sort();
         v
     };
-    let mut before = keyed(&ix, ix.findings(), &sources);
+    // One document's findings, as reported (at least `min_lines` lines).
+    let keyed_doc = |ix: &rerail_dupsa_lab::incr::Index, d: usize, sources: &[Source]| -> Vec<Key> {
+        ix.doc_findings(d)
+            .into_iter()
+            .filter(|b| {
+                let (s, nd) = ix.cur.at[b.doc as usize];
+                let (f, l) = (sources[s as usize].lines)(nd, b.first, b.end);
+                l + 1 - f >= o.min_lines
+            })
+            .map(|b| (b.doc, b.first, b.end, b.others))
+            .collect()
+    };
+    let i3 = instr();
+    // The last findings, per document: computed (a cold run), or the ones the saved index holds (a warm one).
+    let mut prev: Vec<Vec<Key>> = match saved {
+        Some(bytes) => {
+            let v = rerail_dupsa_lab::store::view::<u32>(bytes, &mut at);
+            let mut k = 1;
+            (0..v[0])
+                .map(|d| {
+                    let n = v[k];
+                    k += 1;
+                    (0..n)
+                        .map(|_| {
+                            let (f, e, m) = (v[k], v[k + 1], v[k + 2] as usize);
+                            let others = (0..m).map(|i| (v[k + 3 + 2 * i], v[k + 4 + 2 * i])).collect();
+                            k += 3 + 2 * m;
+                            (d, f, e, others)
+                        })
+                        .collect()
+                })
+                .collect()
+        }
+        None => (0..ix.blocks.len()).map(|d| keyed_doc(&ix, d, &sources)).collect(),
+    };
+    eprintln!("instructions: base read {i_read}, index {i_built}, blocks {i_blocks}, first findings {}", instr() - i3);
+    if let Some(p) = &o.save {
+        let mut out = b"DUPIX002".to_vec();
+        out.extend_from_slice(&head);
+        ix.base.write(&mut out);
+        ix.write_blocks(&mut out);
+        let mut v = vec![prev.len() as u32];
+        for ks in &prev {
+            v.push(ks.len() as u32);
+            for (_, f, e, others) in ks {
+                v.extend_from_slice(&[*f, *e, others.len() as u32]);
+                for &(od, ou) in others {
+                    v.extend_from_slice(&[od, ou]);
+                }
+            }
+        }
+        rerail_dupsa_lab::store::put(&mut out, &v);
+        std::fs::write(p, &out).map_err(|e| format!("{p}: {e}"))?;
+        eprintln!("saved {p}: {:.0} MB", out.len() as f64 / 1e6);
+    }
     eprintln!(
         "{kind}: {n} files; base read {read_base:.2} s CPU, {} {built:.2} s, blocks {first_blocks:.2} s; {windows} windows of {w}, {classes} classes, {:.0} MB; {} findings",
-        if saved.is_some() { "index loaded".to_owned() } else { format!("built ({})", o.build) }, bytes as f64 / 1e6, before.len()
+        if saved.is_some() { "index loaded".to_owned() } else { format!("built ({})", o.build) }, bytes as f64 / 1e6, prev.iter().map(Vec::len).sum::<usize>()
     );
-    println!("step\tfiles\tdead\tadded\tfresh\ttouched\taffected\trecomputed\tload_ms\tupdate_ms\tdiff_ms\tfindings\tadded\tremoved\tcopies\tmoved\trebuild_ms\tcheck\tcompact_ms\toverlay");
+    println!("step\tfiles\tdead\tadded\tfresh\ttouched\taffected\trecomputed\tload_ms\tupdate_ms\tdiff_ms\tfindings\tadded\tremoved\tcopies\tmoved\trebuild_ms\tcheck\tcompact_ms\toverlay\tupdate_instr\tdiff_instr\trebuild_instr");
     for name in &names {
         let c3 = cpu();
+        let i3 = instr();
         let (src, deleted) = load(name)?;
         let load_ms = 1e3 * (cpu() - c3);
+        eprintln!("instructions: step {name} load {}", instr() - i3);
         ix.cur.sources.push(src.docs);
         let s = ix.cur.sources.len() as u32 - 1;
-        let c4 = cpu();
+        let (c4, i4) = (cpu(), instr());
         for (nd, p) in src.paths.iter().enumerate() {
             let d = *path_doc.entry(p.clone()).or_insert_with(|| {
                 paths.push(p.clone());
@@ -601,46 +691,65 @@ fn incr_command(o: Opts) -> Result<(), String> {
         sources.push(src);
         let st = ix.finish();
         let update_ms = 1e3 * (cpu() - c4);
-        // The findings, and what changed since the last step: the last ones moved onto the new versions.
-        let c5 = cpu();
-        let after = keyed(&ix, ix.findings(), &sources);
+        let update_i = instr() - i4;
+        // What changed in the findings. Outside the affected documents every finding is as it was, at places moved
+        // by the changes: their last findings are only moved. In the affected ones they are recomputed, and compared
+        // with their last ones moved.
+        let (c5, i5) = (cpu(), instr());
         let map = |d: u32, u: u32, wl: u32| match ix.last_changes.get(&d) {
             Some(ch) => ch.map(u, wl),
             None => Some(u),
         };
-        let now: std::collections::HashMap<(u32, u32, u32), &Vec<(u32, u32)>> = after.iter().map(|(d, f, e, x)| ((*d, *f, *e), x)).collect();
-        let (mut same, mut moved, mut copies, mut removed) = (0, 0, 0, 0);
-        let mut matched = std::collections::HashSet::new();
-        for (d, f, e, x) in &before {
-            let span = map(*d, *f, e - f);
-            let others: Option<Vec<(u32, u32)>> = x.iter().map(|&(od, ou)| map(od, ou, w).map(|u| (od, u))).collect();
-            let k = span.map(|f2| (*d, f2, f2 + (e - f)));
-            match (k, k.and_then(|k| now.get(&k))) {
-                (Some(k), Some(y)) => {
-                    matched.insert(k);
-                    let mut o2 = others.unwrap_or_default();
-                    o2.sort_unstable();
-                    if &o2 != *y {
-                        copies += 1;
-                    } else if k.1 != *f {
-                        moved += 1;
-                    } else {
-                        same += 1;
-                    }
-                }
-                _ => removed += 1,
+        let move_key = |(d, f, e, x): &Key| -> Option<Key> {
+            let f2 = map(*d, *f, e - f)?;
+            let mut others: Vec<(u32, u32)> = x.iter().map(|&(od, ou)| map(od, ou, w).map(|u| (od, u))).collect::<Option<_>>()?;
+            others.sort_unstable();
+            Some((*d, f2, f2 + (e - f), others))
+        };
+        prev.resize(ix.blocks.len(), Vec::new());
+        let affected: std::collections::HashSet<u32> = ix.affected.iter().copied().collect();
+        let (mut moved, mut copies, mut removed, mut added) = (0, 0, 0, 0);
+        for d in 0..prev.len() {
+            let was: Vec<Option<Key>> = prev[d].iter().map(move_key).collect();
+            if !affected.contains(&(d as u32)) {
+                prev[d] = was.into_iter().map(|k| k.expect("a finding outside the affected documents moves")).collect();
+                continue;
             }
+            let now = keyed_doc(&ix, d, &sources);
+            let by_span: std::collections::HashMap<(u32, u32), &Vec<(u32, u32)>> = now.iter().map(|(_, f, e, x)| ((*f, *e), x)).collect();
+            let mut matched = 0;
+            for (k, old) in was.iter().zip(&prev[d]) {
+                match k.as_ref().and_then(|k| by_span.get(&(k.1, k.2)).map(|y| (k, y))) {
+                    Some((k, y)) => {
+                        matched += 1;
+                        if k.3 != **y {
+                            copies += 1;
+                        } else if k.1 != old.1 {
+                            moved += 1;
+                        }
+                    }
+                    None => removed += 1,
+                }
+            }
+            added += now.len() - matched;
+            prev[d] = now;
         }
-        let added = after.len() - matched.len();
+        let total: usize = prev.iter().map(Vec::len).sum();
         let diff_ms = 1e3 * (cpu() - c5);
-        let _ = same;
+        let diff_i = instr() - i5;
         ix.last_changes.clear();
-        let (mut rebuild_ms, mut check) = (0.0, "-");
+        let (mut rebuild_ms, mut check, mut rebuild_i) = (0.0, "-", 0);
         if o.check {
-            let c6 = cpu();
-            let a = MultiSuffixArray::new(&ix.cur);
-            let full = rerail_dupsa_lab::report::blocks(&a, w);
+            let (c6, i6) = (cpu(), instr());
+            // The rebuild, by the build asked for: SA-IS and Jeff's blocks, or doubling and the index's blocks.
+            let full = if o.build == "sais" {
+                rerail_dupsa_lab::report::blocks(&MultiSuffixArray::new(&ix.cur), w)
+            } else {
+                rerail_dupsa_lab::incr::Index::new(rerail_dupsa_lab::incr::Base::doubling(&ix.cur, w), ix.cur.clone()).findings()
+            };
             rebuild_ms = 1e3 * (cpu() - c6);
+            rebuild_i = instr() - i6;
+            let after: Vec<Key> = prev.iter().flatten().cloned().collect();
             check = if keyed(&ix, full, &sources) == after { "same" } else { "DIFFERENT" };
         }
         let mut compact_ms = 0.0;
@@ -652,12 +761,12 @@ fn incr_command(o: Opts) -> Result<(), String> {
         }
         let (od, oa) = ix.overlay_size();
         println!(
-            "{name}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{load_ms:.1}\t{update_ms:.2}\t{diff_ms:.2}\t{}\t{added}\t{removed}\t{copies}\t{moved}\t{rebuild_ms:.0}\t{check}\t{compact_ms:.0}\t{od}+{oa}",
-            st.docs, st.dead, st.added, st.fresh, st.touched, st.affected, st.recomputed_units, after.len()
+            "{name}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{load_ms:.1}\t{update_ms:.2}\t{diff_ms:.2}\t{}\t{added}\t{removed}\t{copies}\t{moved}\t{rebuild_ms:.0}\t{check}\t{compact_ms:.0}\t{od}+{oa}\t{update_i}\t{diff_i}\t{rebuild_i}",
+            st.docs, st.dead, st.added, st.fresh, st.touched, st.affected, st.recomputed_units, total
         );
-        before = after;
     }
     eprintln!("peak {:.0} MB", peak_mb());
+    eprintln!("process: {} instructions, {:.3} s CPU", instr(), cpu());
     Ok(())
 }
 

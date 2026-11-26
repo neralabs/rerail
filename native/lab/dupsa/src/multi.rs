@@ -4,7 +4,8 @@
 //! One departure from MLDB: MLDB concatenates the strings into one (`str.append(s)` with a NUL after each). Here the
 //! concatenation is virtual: position `i` is mapped to (document, offset) by the document starts (MLDB's `offsets`,
 //! searched as its `offsetToStringIndex` does), and each document's symbol is read from the document where it lies.
-//! Nothing holds the documents' symbols a second time.
+//! Nothing holds the documents' symbols a second time. Where the symbols are a relation of their own (a node's
+//! symbol, derived once from its tape: `Docs::joined`), the sort reads that relation directly.
 
 use crate::sais::{self, Text};
 
@@ -15,6 +16,11 @@ pub trait Docs {
     /// Symbol `j` of document `d`, in `0..=upper()`.
     fn at(&self, d: usize, j: usize) -> u32;
     fn upper(&self) -> u32;
+    /// The documents as the joined text (symbol + 1, 0 after each document), where a relation holds them so: the
+    /// sort then reads it directly rather than locating each position's document.
+    fn joined(&self) -> Option<&[u32]> {
+        None
+    }
 }
 
 /// The documents as one text: each followed by a separator, symbol 0 (the documents' symbols are shifted up by one).
@@ -65,8 +71,18 @@ impl MultiSuffixArray {
             offsets.push(u32::try_from(at).expect("documents of 2^32 symbols or more"));
         }
         let joined = Joined { docs, offsets: &offsets };
-        let sa = sais::suffix_array(&joined, docs.upper() + 1);
-        let raw = sais::lcp(&joined, &sa);
+        let (sa, raw) = match docs.joined() {
+            Some(t) => {
+                let sa = sais::suffix_array(t, docs.upper() + 1);
+                let raw = sais::lcp(t, &sa);
+                (sa, raw)
+            }
+            None => {
+                let sa = sais::suffix_array(&joined, docs.upper() + 1);
+                let raw = sais::lcp(&joined, &sa);
+                (sa, raw)
+            }
+        };
         let mut entries = Vec::with_capacity(sa.len() - docs.count());
         let mut lcp = Vec::with_capacity(sa.len() - docs.count());
         // The common prefix of two kept entries is the least of the raw LCPs between them (the separators' suffixes

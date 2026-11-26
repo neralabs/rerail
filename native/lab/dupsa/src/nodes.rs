@@ -19,7 +19,8 @@ use std::ops::Range;
 /// A capture (`rerail-engine capture-tapes`): `T16CAP01`, then per file a path, a tape tag, the source and its
 /// format 16 tape. The files' parts are ranges of the loaded capture.
 pub struct Capture {
-    pub bytes: Vec<u8>,
+    /// The capture file, mapped: the tapes are read where the file holds them.
+    pub bytes: &'static [u8],
     pub files: Vec<CapturedFile>,
 }
 
@@ -32,7 +33,7 @@ pub struct CapturedFile {
 
 impl Capture {
     pub fn load(path: &std::path::Path) -> Result<Self, String> {
-        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let bytes = crate::store::map(path)?;
         if !bytes.starts_with(b"T16CAP01") {
             return Err("not a T16CAP01 capture".into());
         }
@@ -69,8 +70,42 @@ pub struct NodeDocs<'a> {
     pub files: Vec<usize>,
     pub placements: Vec<Placement>,
     pub views: Vec<TapeView>,
-    rank: HashMap<u128, u32>,
+    rank: HashMap<u128, u32, Fx>,
     cells: Cells,
+    /// The symbol relation: each node's symbol (its row's rank), derived once from the tape in tape order and kept
+    /// here as the one place the symbols live; laid out as the joined text the suffix array sorts (rank + 1 per
+    /// node, 0 after each document). `starts[d]`: where document `d` begins in it.
+    pub joined: Vec<u32>,
+    starts: Vec<u32>,
+}
+
+/// A hasher for the rows (one multiply a word): SipHash's resistance to chosen keys buys nothing on a tape's rows.
+#[derive(Default, Clone, Copy)]
+pub struct Fx(u64);
+impl std::hash::Hasher for Fx {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, b: &[u8]) {
+        for &x in b {
+            self.write_u64(u64::from(x));
+        }
+    }
+    #[inline(always)]
+    fn write_u64(&mut self, x: u64) {
+        self.0 = (self.0.rotate_left(5) ^ x).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+    #[inline(always)]
+    fn write_u128(&mut self, x: u128) {
+        self.write_u64(x as u64);
+        self.write_u64((x >> 64) as u64);
+    }
+}
+impl std::hash::BuildHasher for Fx {
+    type Hasher = Fx;
+    fn build_hasher(&self) -> Fx {
+        Fx(0)
+    }
 }
 
 /// Which cells of a row the symbol holds: all four, or the code and slot only (structure, no text extents), or
@@ -93,9 +128,10 @@ pub enum Cells {
 }
 
 impl<'a> NodeDocs<'a> {
-    pub fn new(capture: &'a Capture, tag: u8, cells: Cells) -> Result<Self, String> {
+    /// The language's tapes, with no symbols yet.
+    fn open(capture: &'a Capture, tag: u8, cells: Cells, rank: HashMap<u128, u32, Fx>) -> Result<Self, String> {
         let lang = f16::lang(tag).ok_or_else(|| format!("tape tag {tag} has no format 16 table"))?;
-        let mut docs = Self { capture, files: Vec::new(), placements: Vec::new(), views: Vec::new(), rank: HashMap::new(), cells };
+        let mut docs = Self { capture, files: Vec::new(), placements: Vec::new(), views: Vec::new(), rank, cells, joined: Vec::new(), starts: Vec::new() };
         for (k, f) in capture.files.iter().enumerate().filter(|(_, f)| f.tag == tag) {
             let image = &capture.bytes[f.image.clone()];
             let p = f16::placement(image).map_err(|e| format!("{}: {e}", f.path))?;
@@ -104,39 +140,53 @@ impl<'a> NodeDocs<'a> {
             docs.placements.push(p);
             docs.views.push(v);
         }
-        // The distinct rows, ranked in their value's order.
-        let mut distinct = std::collections::HashSet::new();
-        for d in 0..docs.files.len() {
-            for j in 0..docs.placements[d].n {
-                distinct.insert(docs.value(d, j, cells));
-            }
+        Ok(docs)
+    }
+
+    /// Each document's rows read once, in tape order, ranked by `rank_of` into the symbol relation.
+    fn derive(&mut self, mut rank_of: impl FnMut(&mut HashMap<u128, u32, Fx>, u128) -> u32) {
+        let total: usize = self.placements.iter().map(|p| p.n + 1).sum();
+        let mut joined = Vec::with_capacity(total);
+        let mut starts = Vec::with_capacity(self.files.len());
+        let mut rank = std::mem::take(&mut self.rank);
+        for d in 0..self.files.len() {
+            starts.push(joined.len() as u32);
+            self.rows(d, |v| joined.push(rank_of(&mut rank, v) + 1));
+            joined.push(0);
         }
-        let mut values: Vec<u128> = distinct.into_iter().collect();
+        self.rank = rank;
+        self.joined = joined;
+        self.starts = starts;
+    }
+
+    pub fn new(capture: &'a Capture, tag: u8, cells: Cells) -> Result<Self, String> {
+        let mut docs = Self::open(capture, tag, cells, HashMap::default())?;
+        // Each row's first-seen id, then the ids renumbered in the rows' value order.
+        docs.derive(|m, v| {
+            let next = m.len() as u32;
+            *m.entry(v).or_insert(next)
+        });
+        let mut values: Vec<(u128, u32)> = docs.rank.iter().map(|(&v, &r)| (v, r)).collect();
         values.sort_unstable();
-        docs.rank = values.into_iter().enumerate().map(|(r, v)| (v, r as u32)).collect();
+        let mut to = vec![0u32; values.len()];
+        for (r, &(_, first)) in values.iter().enumerate() {
+            to[first as usize] = r as u32;
+        }
+        for x in docs.joined.iter_mut().filter(|x| **x != 0) {
+            *x = to[*x as usize - 1] + 1;
+        }
+        docs.rank = values.into_iter().enumerate().map(|(r, (v, _))| (v, r as u32)).collect();
         Ok(docs)
     }
 
     /// A later batch's documents (new versions), ranked by `prev`'s dictionary and its own new rows after it, so that
     /// a row has one rank in every batch.
     pub fn extending(capture: &'a Capture, tag: u8, cells: Cells, prev: &NodeDocs) -> Result<Self, String> {
-        let lang = f16::lang(tag).ok_or_else(|| format!("tape tag {tag} has no format 16 table"))?;
-        let mut docs = Self { capture, files: Vec::new(), placements: Vec::new(), views: Vec::new(), rank: prev.rank.clone(), cells };
-        for (k, f) in capture.files.iter().enumerate().filter(|(_, f)| f.tag == tag) {
-            let image = &capture.bytes[f.image.clone()];
-            let p = f16::placement(image).map_err(|e| format!("{}: {e}", f.path))?;
-            let v = p.view(lang, 0).map_err(|e| format!("{}: {e}", f.path))?;
-            docs.files.push(k);
-            docs.placements.push(p);
-            docs.views.push(v);
-        }
-        for d in 0..docs.files.len() {
-            for j in 0..docs.placements[d].n {
-                let v = docs.value(d, j, cells);
-                let next = docs.rank.len() as u32;
-                docs.rank.entry(v).or_insert(next);
-            }
-        }
+        let mut docs = Self::open(capture, tag, cells, prev.rank.clone())?;
+        docs.derive(|m, v| {
+            let next = m.len() as u32;
+            *m.entry(v).or_insert(next)
+        });
         Ok(docs)
     }
 
@@ -151,17 +201,48 @@ impl<'a> NodeDocs<'a> {
 
     /// The documents ranked by a dictionary a run before kept (its rows in rank order).
     pub fn with_values(capture: &'a Capture, tag: u8, cells: Cells, values: &[u128]) -> Result<Self, String> {
-        let lang = f16::lang(tag).ok_or_else(|| format!("tape tag {tag} has no format 16 table"))?;
         let rank = values.iter().enumerate().map(|(r, &v)| (v, r as u32)).collect();
-        let mut docs = Self { capture, files: Vec::new(), placements: Vec::new(), views: Vec::new(), rank, cells };
-        for (k, f) in capture.files.iter().enumerate().filter(|(_, f)| f.tag == tag) {
-            let image = &capture.bytes[f.image.clone()];
-            let p = f16::placement(image).map_err(|e| format!("{}: {e}", f.path))?;
-            docs.files.push(k);
-            docs.views.push(p.view(lang, 0).map_err(|e| format!("{}: {e}", f.path))?);
-            docs.placements.push(p);
-        }
+        let mut docs = Self::open(capture, tag, cells, rank)?;
+        docs.derive(|m, v| m[&v]);
         Ok(docs)
+    }
+
+    /// Document `d`'s rows in tape order (`value`'s), each read once: starts by the running sum of gaps
+    /// (`start_next`, a checkpoint every K nodes), the line breaks by one scan of the source.
+    fn rows(&self, d: usize, mut f: impl FnMut(u128)) {
+        let n = self.placements[d].n;
+        if !matches!(self.cells, Cells::Indent | Cells::Local) {
+            (0..n).for_each(|j| f(self.value(d, j, self.cells)));
+            return;
+        }
+        let (t, p, v, src) = (self.image(d), &self.placements[d], &self.views[d], self.source(d));
+        let [w0, _, w2] = p.widths;
+        let cell = |b: usize, r: usize, col: usize, w: usize| -> u128 {
+            let at = p.column(b, col) + r * w;
+            let mut x = 0u128;
+            for (k, &byte) in t[at..at + w].iter().enumerate() {
+                x |= u128::from(byte) << (8 * k);
+            }
+            x
+        };
+        let mut prev = 0u32;
+        for j in 0..n {
+            let (b, r, i) = (j / Z, j % Z, j as u32);
+            let leaf = reads::slot(t, v, i) & 1 == 1;
+            let len = if leaf { cell(b, r, 3, w2) } else { 0 };
+            let s = reads::start_next(t, v, i, prev).min(v.source_len);
+            let gap = if j == 0 {
+                0
+            } else {
+                match src[prev as usize..s as usize].iter().position(|&c| c == b'\n') {
+                    None => u128::from(s - prev),
+                    Some(k) => 1 << 32 | (k as u128 + 1),
+                }
+            };
+            prev = s;
+            let code_slot = if self.cells == Cells::Local { cell(b, r, 0, 1) | u128::from(leaf) << 8 } else { cell(b, r, 0, 1) | cell(b, r, 1, w0) << 8 };
+            f(code_slot | gap << 40 | len << 80);
+        }
     }
 
     pub fn image(&self, d: usize) -> &'a [u8] {
@@ -248,7 +329,10 @@ impl Docs for NodeDocs<'_> {
     }
     #[inline(always)]
     fn at(&self, d: usize, j: usize) -> u32 {
-        self.rank[&self.value(d, j, self.cells)]
+        self.joined[self.starts[d] as usize + j] - 1
+    }
+    fn joined(&self) -> Option<&[u32]> {
+        Some(&self.joined)
     }
     fn upper(&self) -> u32 {
         self.rank.len().saturating_sub(1) as u32
