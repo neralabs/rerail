@@ -49,6 +49,8 @@ pub struct Work {
     pub probes: u64,
     pub rows_written: u64,
     pub excess: Vec<(&'static str, u64)>,
+    /// What its planning did (*0686: Operations* §8): none in an identity run.
+    pub planned: crate::plan::Planned,
 }
 
 impl std::ops::AddAssign for Work {
@@ -56,6 +58,7 @@ impl std::ops::AddAssign for Work {
         self.rows_read += w.rows_read;
         self.probes += w.probes;
         self.rows_written += w.rows_written;
+        self.planned += w.planned;
         for (name, n) in w.excess {
             match self.excess.iter_mut().find(|e| e.0 == name) {
                 Some(e) => e.1 += n,
@@ -191,6 +194,8 @@ pub struct Cx<'c> {
     pub blobs: &'c BlobRows,
     pub traces: &'c TraceOps,
     pub caches: &'c CacheOps,
+    /// The learned join model the planner's prices are corrected by (decision 0354), when one is given.
+    pub join: Option<&'c rerail_accel::join_model::JoinModel>,
 }
 
 /// A bistate per input port of `P`, read where its layers lie, with the heads it is between (a frozen layer's block
@@ -804,6 +809,8 @@ pub struct Bench {
     pub caches: CacheOps,
     /// Δanswer's operations (`answer_load`, `parse`).
     pub answers: crate::answer::AnswerOps,
+    /// The learned join model the planner corrects its prices by (decision 0354): none until one is given.
+    pub join: Option<rerail_accel::join_model::JoinModel>,
 }
 
 impl Bench {
@@ -813,7 +820,7 @@ impl Bench {
         let traces = TraceOps::declare(&mut reg)?;
         let caches = CacheOps::declare(&mut reg)?;
         let answers = crate::answer::AnswerOps::declare(&mut reg)?;
-        Ok(Bench { reg, dir: Directory::default(), blobs: BlobRows::new(&traces), traces, caches, answers })
+        Ok(Bench { reg, dir: Directory::default(), blobs: BlobRows::new(&traces), traces, caches, answers, join: None })
     }
 
     /// A bench over the kept blocks in folder `kept` (a store's, `files::Store::kept`): each mapped where it lies, at
@@ -848,7 +855,7 @@ impl Bench {
     }
 
     pub fn cx(&mut self) -> Cx<'_> {
-        Cx { reg: &self.reg, dir: &mut self.dir, blobs: &self.blobs, traces: &self.traces, caches: &self.caches }
+        Cx { reg: &self.reg, dir: &mut self.dir, blobs: &self.blobs, traces: &self.traces, caches: &self.caches, join: self.join.as_ref() }
     }
 }
 

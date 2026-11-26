@@ -1801,3 +1801,70 @@ Checks (Relax, local, `rerail-delta-exec --lib` 104 of 104):
 - Its M0, B2 and kept checks hold for the new code: no `stratum` stated per head, no second chain type, no map
   beside the leaves.
 - `check_no_block_copies.py` and `check_dev_features.py` pass.
+
+### The planning track: lines, price, search, choose, check, cut and handoff (Operations §8, §13 P1–P4; 2026-11-26)
+
+A stratum's chains are written in their rules' order (`phase`'s planner). Each round now plans the order they run in
+before `seed` starts them (`plan.rs`). Each step of the planner is an operation of the registry, its host version its
+reference, as the body's are:
+
+| Operation | Shape | What it does |
+|---|---|---|
+| `lines` | emit | each chain's line: no work (a change of no rows), one order (a fact, or one free step), its kept order under the budget (0122: last work, scaled by its first step's growth, under `SEARCH_WORK` = 250), or priced |
+| `price` | map | each priced line's steps in one batch: rows and each column's distinct values, read where they lie (`Env::side_stats`: a trace's layers' sketches through `Read::stats`, a view's documents' rows), with the exact pairs a slow line measured (0203 §3) |
+| `search` | a line a group | the dynamic program over subsets (0038), greedy past `GREEDY` = 12, the best order ending in each other step kept as runners-up (`RUNNERS_UP` = 4); a fanout is the rows over each bound column's distinct values, corrected; a `not` keeps what its key misses, a `cmp` a fixed share |
+| `choose` | map | the cheapest candidate, its price corrected by what its order measured when it last ran (0203 §6); an untried runner-up within `MARGIN` = 2 by a seeded draw of the line's key and runs (`EXPLORE_RATE` = 0.1, under `EXPLORE_ROWS`); at a handoff, the order a trial measured least, where it beats the running one by `TRIAL_MARGIN` = 1.25 |
+| `emit_plan` | emit, into the memo | the chosen chains into the plan block `seed`, `step` and `head` read (each argument bound again in the new order), and each searched line's choice and runners-up into the memo |
+| `check` | map, after each depth | each line's tuples made at that depth; at its due points (`SLOW_ROWS` = 100 000, then each doubling), slow past its limit (`SLOW_FACTOR` = 8 times its price) |
+| `stats` | map, into the memo | a slow line's exact pairs: the rows of each two of its atoms that share a variable, each with its own constants |
+| `note` | map, into the memo | what each line measured: its work, its first step's rows, its order's measured ratio, its runs and slow runs, and each step's sample (rows in and out against the price) |
+
+- **The learned correction** (0354) is asked in one batch of the model's (`JoinModel::fanouts`): every priced step,
+  at every set of its columns bound. A step's factor is `exp` of its target. The model comes through `Cx::join` (none
+  until one is given). `plan::samples` gives the memo's samples as the model's training rows (`StepSample`).
+- **A slow line** is planned again from the depth it reached (0206's cut):
+  - `stats`, `price` and `search` take the steps it ran as a fixed prefix, and its tuples there as the rows in;
+  - its running order, the search's best and the runners-up are trialled over a sample of those tuples (0207:
+    `TRIAL_ROWS` = 256 at most, what `TRIAL_SHARE` = 0.1 of its work pays for, none under `TRIAL_LEAST` = 8);
+  - each trial is cut at `TRIAL_CUTOFF` = 2 times the least measured so far, and the running order is measured once;
+  - the order that goes on is given its limit again (0271's `limit_again`, always finite).
+- **A trial's launch** is the body's `step`, told one chain and a limit by two new control words (`C_TERM`,
+  `C_LIMIT`). The steps a line already ran keep their places in the new order, so the tuples made so far read the
+  same; `run_block` takes the new plan block between depths.
+- **The memo** is the stratum's operator cache (`type Cache = plan::Memo`, P§11.3): a cache entry a line, by its key
+  (`rerail_delta_twins::cache::{line, keep_line}`). A line's key is a fixed hash of its rule's content, the order and
+  sides its steps are written in, its head, its sign, and whether it starts from candidates or keeps levels below a
+  bound (`phase::line_key`). The plain function plans from an empty memo. Dropping the memo changes what is planned,
+  never an answer (L5).
+- **Counters:** `Work::planned` (`Planned`) counts lines, kept orders, searches, steps priced, explorations, slow
+  lines, handoffs, trials and exact pairs.
+- `run_plan` is no longer called by a stratum: Δwave and every Δfix derivation run through `plan::Round`.
+
+Checks (Relax, local, `rerail-delta-exec --lib` 111 of 111):
+
+- `plan_tests`:
+  - `a_chain_bound_again_in_its_own_order_is_itself_and_every_valid_order_answers_the_same`: a join, a `not` and a
+    `cmp`, a level, a repeated variable; a filter is never placed before its variables are bound;
+  - `the_search_takes_the_cheapest_order_and_keeps_the_runners_up`: the small relation first, the runner-up kept,
+    an exact pair over the estimate, and a 14-step chain ordered greedily;
+  - `a_round_plans_keeps_its_order_under_the_budget_and_a_dropped_memo_answers_the_same`;
+  - `a_learned_correction_changes_the_order_chosen_not_the_answer`: a fake `LearnedJoin`;
+  - `exploration_is_a_seeded_draw_and_runs_a_runner_up`;
+  - `a_slow_line_is_cut_trialled_and_handed_off_to_a_better_order`: skew misleads the estimate; the line goes slow
+    at depth 1, its pairs are measured, the trials pick `c` before `d`, and it goes on in that order (one handoff,
+    work under 200 000 against the 400 800 tuples the first order would make), with the rule order's 8 000 rows;
+  - `a_handed_off_order_is_limited_again`.
+- Every other test of the crate passes with every stratum planned: the harness's laws through edits, Δwave, Δfix,
+  the levels, and the later process.
+- Clippy is clean on `delta_exec` and `delta_twins`.
+- The shape script's new section, `planning`, requires:
+  - Operations §8's constants;
+  - the eight operations declared;
+  - the batched correction, `limit_again`, the trial's launch and the memo's writes;
+  - the memo as the stratum's cache;
+  - no `run_plan` in `phase.rs`;
+  - `C_TERM` and `C_LIMIT`;
+  - each test above.
+- `plan.rs`, its tests and `contract.rs` may name `rerail_accel`, for the join model, as the residency does for its
+  budget.
+- `check_no_block_copies.py` and `check_dev_features.py` pass.

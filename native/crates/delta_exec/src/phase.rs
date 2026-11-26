@@ -30,7 +30,8 @@
 //! where it is now (L6: the composed operator's delta). What a level exports (O6): its K-form relations are the next
 //! level's program, the rest its facts in.
 
-use crate::body::{Arg, BodyOps, DocAt, Op, Plan, Side, Src, StepPlan, TermPlan, Text, run_plan};
+use crate::body::{Arg, BodyOps, DocAt, Op, Plan, Side, Src, StepPlan, TermPlan, Text};
+use crate::plan::{PlanOps, Round};
 use crate::boot::DocSet;
 use crate::contract::{Asks, At, Bench, CacheW, Cx, DeltaOp, GlobalIn, In, Instance, Out, Port, Ports, PortIn, PortOut, Programmed, Work, rows_at};
 use crate::dir::{BlockId, Directory};
@@ -53,11 +54,12 @@ pub struct PhaseOps {
     pub body: BodyOps,
     pub tally: TallyOps,
     pub drops: DropOps,
+    pub plan: PlanOps,
 }
 
 impl PhaseOps {
     pub fn declare(reg: &mut crate::op::Registry, drops: DropOps) -> Result<PhaseOps, String> {
-        Ok(PhaseOps { body: BodyOps::declare(reg)?, tally: TallyOps::declare(reg)?, drops })
+        Ok(PhaseOps { body: BodyOps::declare(reg)?, tally: TallyOps::declare(reg)?, drops, plan: PlanOps::declare(reg)? })
     }
 }
 
@@ -135,6 +137,9 @@ struct Sides {
     parts: Vec<BTreeSet<i64>>,
     docs: Vec<DocAt>,
     atoms: BlockId,
+    /// The planner's memo: the operator's cache block, open for writing (`None`: the plain function's run, which
+    /// plans from an empty one).
+    memo: Option<BlockId>,
 }
 
 fn cell(v: &View<'_>, id: RowId, c: usize) -> i64 {
@@ -187,6 +192,9 @@ struct Planner<'s> {
     st: &'s Stratum,
     s: &'s Sides,
     plan: Plan,
+    /// Each chain's line key (`plan`'s lines): its rule's content, the order and sides its steps are written in, its
+    /// head, its sign, and whether it starts from candidates or keeps levels below a bound.
+    keys: Vec<i64>,
     /// Each own head's working state: its heads before and after (a recursive stratum's).
     own: Vec<(Option<BlockId>, Option<BlockId>)>,
 }
@@ -202,7 +210,7 @@ enum Docs<'a> {
 impl<'s> Planner<'s> {
     fn new(st: &'s Stratum, s: &'s Sides) -> Planner<'s> {
         let docs = s.docs.clone(); // copy: derived (the documents' places, the plan's)
-        Planner { st, s, plan: Plan { srcs: Vec::new(), docs, terms: Vec::new() }, own: Vec::new() }
+        Planner { st, s, plan: Plan { srcs: Vec::new(), docs, terms: Vec::new() }, keys: Vec::new(), own: Vec::new() }
     }
 
     fn src(&mut self, src: Src) -> usize {
@@ -327,7 +335,32 @@ impl<'s> Planner<'s> {
             .collect();
         let level = self.st.recursive.then_some(levels);
         self.plan.terms.push(TermPlan { head: c.head, sign: c.sign, parts: parts.to_vec(), steps, out, level });
+        self.keys.push(line_key(&c));
     }
+}
+
+/// A chain's line key: a fixed hash (FNV-1a, the same in every build and run) of what makes it the same line from
+/// round to round and run to run.
+fn line_key(c: &Walk<'_>) -> i64 {
+    use std::hash::{Hash, Hasher};
+    struct Fnv(u64);
+    impl Hasher for Fnv {
+        fn finish(&self) -> u64 {
+            self.0
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            for &b in bytes {
+                self.0 = (self.0 ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+    }
+    let mut h = Fnv(0xcbf2_9ce4_8422_2325);
+    (c.rule.head, &c.rule.args, &c.rule.steps).hash(&mut h);
+    for &(si, side) in c.order {
+        (si, side as u8).hash(&mut h);
+    }
+    (c.head, c.sign, c.cand.is_some(), c.below).hash(&mut h);
+    h.finish() as i64
 }
 
 /// A rule's steps in their own order, each on `side`.
@@ -448,11 +481,25 @@ impl Stratum {
     }
 
     /// Runs `plan` into a runs block a head, read back: each head's derivations.
-    fn derive(&self, cx: &mut Cx<'_>, atoms: BlockId, plan: &Plan, work: &mut Work) -> Result<Derived, String> {
+    /// Plans planner `p`'s chains and runs them into the heads' runs `runs` (`plan::Round`): the probes made.
+    fn chains(&self, cx: &mut Cx<'_>, s: &Sides, p: &Planner<'_>, runs: &[BlockId], work: &mut Work) -> Result<u64, String> {
+        let fresh = s.memo.is_none().then(|| crate::cache::OpCache::new(cx.dir).0);
+        let memo = s.memo.or(fresh).expect("a memo");
+        let round = Round { reg: cx.reg, body: &self.ops.body, ops: &self.ops.plan, atoms: s.atoms, memo, join: cx.join };
+        let ran = round.run(cx.dir, &p.plan, &p.keys, runs);
+        if let Some(m) = fresh {
+            cx.dir.release(m);
+        }
+        let (probes, planned) = ran?;
+        work.planned += planned;
+        Ok(probes)
+    }
+
+    fn derive(&self, cx: &mut Cx<'_>, s: &Sides, p: &Planner<'_>, work: &mut Work) -> Result<Derived, String> {
         let mut cap = 256usize;
         loop {
             let runs: Vec<BlockId> = self.heads.iter().map(|h| Ok(open_runs(cx.dir, &h.shape.encode()?, cap))).collect::<Result<_, String>>()?;
-            let ran = run_plan(cx.reg, &self.ops.body, cx.dir, atoms, plan, &runs);
+            let ran = self.chains(cx, s, p, &runs, work);
             let read = ran.and_then(|probes| {
                 work.probes += probes;
                 let mut out = Vec::new();
@@ -537,7 +584,7 @@ impl Stratum {
                         work.rows_read += drop_counted(cx.reg, &self.ops.drops, cx.dir, kept, &parts, -1, derivs[k])?;
                     }
                 }
-                work.probes += run_plan(cx.reg, &self.ops.body, cx.dir, s.atoms, &p.plan, &derivs)?;
+                work.probes += self.chains(cx, s, &p, &derivs, &mut work)?;
                 let mut need = 0;
                 for &r in &derivs {
                     let l = cx.dir.read("a stratum's derivations", &[r])?;
@@ -644,7 +691,7 @@ impl Stratum {
                 let order = cold(r, Side::After);
                 p.chain(Walk { rule: r, order: &order, head: own(r.head).expect("own"), sign: 1, cand: None, below: None }, Docs::All, Docs::All, &[]);
             }
-            found(&mut seeds, self.derive(cx, s.atoms, &p.plan, work)?);
+            found(&mut seeds, self.derive(cx, s, &p, work)?);
         } else {
             // Candidates (0364 §2.1): the rows that lost a derivation through a gone input row, the derivation on the
             // inputs' before side and the heads as kept.
@@ -670,7 +717,7 @@ impl Stratum {
                     cands.entry(l).or_insert_with(|| vec![BTreeSet::new(); n])[k].insert(row);
                 }
             };
-            for (k, rows) in self.derive(cx, s.atoms, &p.plan, work)?.into_iter().enumerate() {
+            for (k, rows) in self.derive(cx, s, &p, work)?.into_iter().enumerate() {
                 for (row, d) in rows {
                     if d < 0 {
                         candidate(&mut cands, &now, k, row, i64::MIN);
@@ -699,7 +746,7 @@ impl Stratum {
                 }
                 let mut p = planner(&from, &heads_of(w));
                 self.own_terms(&mut p, Side::Before, Side::After);
-                for (k, rows) in self.derive(cx, s.atoms, &p.plan, work)?.into_iter().enumerate() {
+                for (k, rows) in self.derive(cx, s, &p, work)?.into_iter().enumerate() {
                     for (row, d) in rows {
                         if d < 0 {
                             candidate(&mut cands, &now, k, row, l);
@@ -722,7 +769,7 @@ impl Stratum {
                 let order: Vec<(usize, Side)> = std::iter::once((i, Side::Delta)).chain((0..r.steps.len()).filter(|&j| j != i).map(|j| (j, Side::After))).collect();
                 p.chain(Walk { rule: r, order: &order, head: own(r.head).expect("own"), sign: 1, cand: None, below: None }, Docs::All, Docs::Changed, &[]);
             }
-            found(&mut seeds, self.derive(cx, s.atoms, &p.plan, work)?);
+            found(&mut seeds, self.derive(cx, s, &p, work)?);
         }
         // Rounds: the rows found that are not present added at the level their derivation gives (one more than the
         // highest it reads: added rows never lower a level, §3), then what they derive, until a round adds nothing.
@@ -743,7 +790,7 @@ impl Stratum {
             let mut p = planner(&from, &heads_of(w));
             self.own_terms(&mut p, Side::After, Side::After);
             seeds = vec![BTreeMap::new(); n];
-            found(&mut seeds, self.derive(cx, s.atoms, &p.plan, work)?);
+            found(&mut seeds, self.derive(cx, s, &p, work)?);
         }
     }
 
@@ -770,7 +817,7 @@ impl Stratum {
                 }
             }
             let mut out: Found = vec![BTreeMap::new(); self.heads.len()];
-            found(&mut out, self.derive(cx, s.atoms, &p.plan, work)?);
+            found(&mut out, self.derive(cx, s, &p, work)?);
             Ok::<_, String>(out)
         })();
         temps.iter_mut().for_each(|t| t.clear(cx.dir));
@@ -826,13 +873,13 @@ impl Stratum {
         } else {
             Vec::new()
         };
-        Ok(Sides { heads, changed, parts, docs, atoms: ins.global(crate::contract::PortGlobal::new(0)).block })
+        Ok(Sides { heads, changed, parts, docs, atoms: ins.global(crate::contract::PortGlobal::new(0)).block, memo: None })
     }
 }
 
 impl DeltaOp for Stratum {
     type Ports = Programmed;
-    type Cache = ();
+    type Cache = crate::plan::Memo;
 
     fn ports(&self) -> Result<Ports, String> {
         let ins = self.tape.then(|| Port { name: "documents", shape: tape_shape() }).into_iter().chain(self.ins.iter().map(|(_, s)| Port { name: "relation", shape: s.clone() })).collect();
@@ -840,11 +887,12 @@ impl DeltaOp for Stratum {
         Ok(Ports { ins, globals: vec!["atoms"], outs })
     }
 
-    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_, Programmed>, _want: Option<&Bistate<View<'_>>>, _cache: &mut CacheW<()>, out: &mut Out<Programmed>, _asks: &mut Asks<Programmed>) -> Result<Work, String> {
+    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_, Programmed>, _want: Option<&Bistate<View<'_>>>, cache: &mut CacheW<crate::plan::Memo>, out: &mut Out<Programmed>, _asks: &mut Asks<Programmed>) -> Result<Work, String> {
         if ins.is_identity() && self.before == self.after {
             return Ok(Work::default());
         }
-        let s = self.sides_in(cx, ins)?;
+        let mut s = self.sides_in(cx, ins)?;
+        s.memo = Some(cache.write(cx)?);
         // Nothing kept and every input from ∅: the stratum has not run (a fresh instance's outputs are ∅, which is
         // op(∅) only for a program with no facts and no leading filters), so it runs cold, as from no rules (L2).
         let n = self.ins.len() + usize::from(self.tape);
@@ -857,7 +905,7 @@ impl DeltaOp for Stratum {
         let n = self.ins.len() + usize::from(self.tape);
         let heads = (0..n).map(|p| (None, ins.head(PortIn::new(p)))).collect();
         let docs = if self.tape { docs_of(cx, None, ins.port(PortIn::new(0)))? } else { Vec::new() };
-        let s = Sides { heads, changed: vec![true; n], parts: vec![BTreeSet::new(); n], docs, atoms: ins.global(crate::contract::PortGlobal::new(0)).block };
+        let s = Sides { heads, changed: vec![true; n], parts: vec![BTreeSet::new(); n], docs, atoms: ins.global(crate::contract::PortGlobal::new(0)).block, memo: None };
         if self.recursive { self.fix(cx, &s, &[], out) } else { self.wave(cx, &s, &[], out) }.map(drop)
     }
 }

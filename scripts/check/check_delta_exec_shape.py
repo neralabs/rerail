@@ -261,6 +261,9 @@ def b2(failures: list) -> None:
         # The residency's budget, slab size and drop: one definition with rerail_slabs (`rerail_accel::budget`).
         if path.name in ("residency.rs", "dir.rs"):
             allowed.add("rerail_accel")
+        # The planner's learned correction (*0686: Operations* §8's `price`; 0354): the join model, given through `Cx`.
+        if path.name in ("plan.rs", "plan_tests.rs", "contract.rs"):
+            allowed.add("rerail_accel")
         # Its tests narrow the observer's racy window, through the context's switches, as the engine's do.
         if path.name == "files_tests.rs":
             allowed.add("rerail_context")
@@ -765,16 +768,59 @@ def b8(failures: list) -> None:
             failures.append(f"B§8's tests lack {t}")
 
 
+def planning(failures: list) -> None:
+    """*0686: Operations* §8 and §13's planning track (P1–P4): lines and the budget (0122), price with the learned
+    correction (0354) and the exact pairs (0203 §3), the search over subsets (0038) with its runners-up, choose with
+    the memo and a seeded exploration (0203 §2, §6), emit_plan, check at its due points, the cut, trials and handoff
+    (0206, 0207) and the limit again (0271), each an operation of the registry; the memo the stratum's operator cache;
+    every chain of a stratum run through a planned round."""
+    src = CRATE / "src"
+    plan = strip_rust((src / "plan.rs").read_text())
+    for name, value in (("SEARCH_WORK", "250.0"), ("GREEDY", "12"), ("RUNNERS_UP", "4"), ("SLOW_FACTOR", "8.0"), ("SLOW_ROWS", "100_000.0"), ("EXPLORE_RATE", "0.1"), ("MARGIN", "2.0"), ("EXPLORE_ROWS", "1_000_000.0"), ("TRIAL_ROWS", "256"), ("TRIAL_CUTOFF", "2.0"), ("TRIAL_SHARE", "0.1"), ("TRIAL_MARGIN", "1.25"), ("TRIAL_LEAST", "8")):
+        if not re.search(rf"\bpub const {name}: \w+ = {re.escape(value)};", plan):
+            failures.append(f"plan.rs: {name} is not {value} (Operations §8)")
+    for op in ("LINES", "PRICE_OP", "SEARCH", "CHOOSE", "EMIT_PLAN", "CHECK", "STATS", "NOTE"):
+        if f"d(&{op}," not in plan:
+            failures.append(f"plan.rs: {op.lower()} not an operation of the registry (Operations §8)")
+    for want, why in (
+        ("model.fanouts(", "the learned correction asked in one batch (0354)"),
+        ("fn limit_again(", "a handed-off order's limit (0271)"),
+        ("body::emit_only(", "a trial launched over a sample of one line's tuples (0207)"),
+        ("memo_twin::keep_line(", "the memo written into the operator's cache"),
+    ):
+        if want not in plan:
+            failures.append(f"plan.rs: {why} ({want} missing)")
+    phase = strip_rust((src / "phase.rs").read_text())
+    if "type Cache = crate::plan::Memo;" not in phase or "s.memo = Some(cache.write(cx)?);" not in phase:
+        failures.append("phase.rs: the planner's memo is not the stratum's operator cache (P§11.3)")
+    hits(src / "phase.rs", phase, r"\brun_plan\s*\(", "a stratum's chains run in their rules' order, unplanned", failures)
+    body = strip_rust((src / "body.rs").read_text())
+    if "C_TERM" not in body or "C_LIMIT" not in body:
+        failures.append("body.rs: step has no trial's launch (one chain, a limit: 0207)")
+    tests = (src / "plan_tests.rs").read_text()
+    for t in (
+        "fn a_chain_bound_again_in_its_own_order_is_itself_and_every_valid_order_answers_the_same",
+        "fn the_search_takes_the_cheapest_order_and_keeps_the_runners_up",
+        "fn a_round_plans_keeps_its_order_under_the_budget_and_a_dropped_memo_answers_the_same",
+        "fn a_learned_correction_changes_the_order_chosen_not_the_answer",
+        "fn exploration_is_a_seeded_draw_and_runs_a_runner_up",
+        "fn a_slow_line_is_cut_trialled_and_handed_off_to_a_better_order",
+        "fn a_handed_off_order_is_limited_again",
+    ):
+        if t not in tests:
+            failures.append(f"the planning track's tests lack {t}")
+
+
 def main() -> int:
     failures: list = []
-    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, b6, reach, e1, kept, b8):
+    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, b6, reach, e1, kept, b8, planning):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, B6, reach, E1, kept, B8)")
+    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, B6, reach, E1, kept, B8, planning)")
     return 0
 
 

@@ -47,6 +47,7 @@ pub mod l1;
 pub mod kform;
 pub mod op;
 pub mod phase;
+pub mod plan;
 pub mod program;
 pub mod residency;
 pub mod sym;

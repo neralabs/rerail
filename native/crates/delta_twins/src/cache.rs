@@ -194,6 +194,56 @@ pub fn keep_sizes(c: &mut Ctx<'_, '_, '_>, slot: usize, d: u32, counts: &[u32]) 
     true
 }
 
+/// A line's memo entry's layer word (*0686: Operations* §8, decision 0203: what a planner keeps between rounds, the
+/// operator's cache): its key in its four columns, its words in its fences. An order's layer is a block id, a sizes
+/// entry has no columns, so neither reads one.
+pub const MEMO: u32 = u32::MAX - 1;
+
+fn key_cols(key: u64) -> [u16; 4] {
+    std::array::from_fn(|i| (key >> (16 * i)) as u16)
+}
+
+/// Line `key`'s memo words, if the cache holds them.
+pub fn line(cache: &[u8], key: u64) -> Option<&[i64]> {
+    let cols = key_cols(key);
+    let e = entries(cache).find(|e| e.layer == MEMO && e.cols == cols)?;
+    Some(words::<i64>(cache, e.at + ENTRY_BYTES, e.nf))
+}
+
+/// Writes line `key`'s memo `memo` into slot `slot`'s cache: over its entry in place when it has the same length;
+/// else the old one let go (a dead sizes entry of no counts) and the new one appended at the cursor. False past the
+/// cache's capacity, room asked (`Ctx::reach`): the phase runs again over the grown block, and writes the same.
+pub fn keep_line(c: &mut Ctx<'_, '_, '_>, slot: usize, key: u64, memo: &[i64]) -> bool {
+    let cols = key_cols(key);
+    let own = entries(c.read(slot)).find(|e| e.layer == MEMO && e.cols == cols).map(|e| (e.at, e.nf));
+    let (at, append) = match own {
+        Some((at, nf)) if nf == memo.len() => (at, false),
+        _ => (ENTRIES_AT + used(c.read(slot)), true),
+    };
+    let len = entry_len(0, memo.len());
+    if append && !c.reach(slot, at + len) {
+        return false;
+    }
+    let ([], [b]) = c.views([], [slot]);
+    if append && let Some((old, _)) = own {
+        set_word::<u32>(b, old + 4, 0);
+        set_word::<u32>(b, old, DEAD);
+    }
+    set_word::<u32>(b, at + 4, 4);
+    for (i, &k) in cols.iter().enumerate() {
+        set_word::<u16>(b, at + 8 + 2 * i, k);
+    }
+    set_word::<u32>(b, at + 24, 0);
+    set_word::<u32>(b, at + 28, memo.len() as u32);
+    words_mut::<i64>(b, at + ENTRY_BYTES, memo.len()).copy_from_slice(memo);
+    // Named last, and an appended entry counted last: a reader never finds one half written.
+    set_word::<u32>(b, at, MEMO);
+    if append {
+        set_word::<u64>(b, USED_AT, (at + len - ENTRIES_AT) as u64);
+    }
+    true
+}
+
 /// How many entries the cache holds.
 pub fn count(cache: &[u8]) -> usize {
     entries(cache).count()

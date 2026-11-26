@@ -289,7 +289,7 @@ impl Plan {
     }
 
     /// The blocks it reads, each once, with the offset a reference to it names.
-    fn reads(&self) -> Vec<(BlockId, usize)> {
+    pub(crate) fn reads(&self) -> Vec<(BlockId, usize)> {
         let mut r: BTreeSet<(u32, usize)> = BTreeSet::new();
         for s in &self.srcs {
             if let Src::Trace { before, after, .. } = s {
@@ -309,21 +309,21 @@ impl Plan {
 }
 
 /// A source as a launch reads it: a trace's two states, or a view's documents' two sides.
-enum Live<'t> {
+pub(crate) enum Live<'t> {
     Trace { before: rerail_blocks::relation::View<'t>, after: rerail_blocks::relation::View<'t> },
     View { docs: Vec<usize> },
 }
 
 /// Everything a launch reads, where it lies: the plan, its sources, and its documents' views.
-struct Env<'t> {
-    plan: Plan,
+pub(crate) struct Env<'t> {
+    pub(crate) plan: Plan,
     srcs: Vec<Live<'t>>,
     /// Each document's view of each kind on each side, by its place: `[before, after]`.
     views: Vec<[Vec<Option<TapeView<'t>>>; 2]>,
 }
 
 impl<'t> Env<'t> {
-    fn new(table: &'t Table<'t>, plan_bytes: &[u8], names: &'t Names) -> Env<'t> {
+    pub(crate) fn new(table: &'t Table<'t>, plan_bytes: &[u8], names: &'t Names) -> Env<'t> {
         let n = word::<i64>(plan_bytes, BODY_AT) as usize;
         let words: Vec<i64> = (0..n).map(|i| word::<i64>(plan_bytes, BODY_AT + 8 + 8 * i)).collect(); // copy: derived (the plan's few words, decoded)
         let plan = Plan::of_words(&words);
@@ -395,6 +395,65 @@ impl<'t> Env<'t> {
                 false
             }
         }
+    }
+
+    /// Source `src`'s rows on `side` (its change's, for `Delta`), and each of its first `ncols` columns' distinct values
+    /// (*0686: Operations* §8's statistics, read where they lie: a trace's from its layers' sketches, a view's from its
+    /// documents' rows).
+    pub(crate) fn side_stats(&self, src: usize, side: Side, ncols: usize) -> (u64, Vec<u64>) {
+        let of = |v: &dyn Fn(ColumnIndex) -> rerail_blocks::bistate::ColStats, rows: &dyn Fn() -> u64| -> (u64, Vec<u64>) {
+            let n = if ncols == 0 { rows() } else { v(ColumnIndex::new(0)).rows };
+            (n, (0..ncols).map(|c| v(ColumnIndex::new(c as u16)).ndv.max(1)).collect())
+        };
+        match &self.srcs[src] {
+            Live::Trace { before, after } => {
+                let v = if side == Side::Before { before } else { after };
+                let (rows, ndv) = of(&|c| Read::stats(v, c), &|| Read::live_ids(v).count() as u64);
+                if side == Side::Delta {
+                    let (g, a) = Bistate::new(*before, *after).counts();
+                    let n = (g + a) as u64;
+                    return (n, ndv.into_iter().map(|d| d.min(n.max(1))).collect());
+                }
+                (rows, ndv)
+            }
+            Live::View { docs } => {
+                let sides: &[bool] = if side == Side::Delta { &[true, false] } else { &[side == Side::Before] };
+                let (mut rows, mut ndv) = (0u64, vec![0u64; ncols]);
+                for &doc in docs {
+                    for &before in sides {
+                        let Some(t) = self.tape(src, doc, before) else { continue };
+                        let (r, d) = of(&|c| Read::stats(t, c), &|| Read::live_ids(t).count() as u64);
+                        rows += r;
+                        ndv.iter_mut().zip(d).for_each(|(x, y)| *x += y);
+                    }
+                }
+                (rows, ndv.into_iter().map(|d| d.clamp(1, rows.max(1))).collect())
+            }
+        }
+    }
+
+    /// The exact rows of step `a` joined with step `b` on the columns `on` (`(a's column, b's column)`), each on its
+    /// side, `a`'s constants applied (0203 §3's exact pair statistics, for a slow line): `a`'s rows read, `b` probed.
+    pub(crate) fn pair_rows(&self, a: &StepPlan, b: &StepPlan, on: &[(usize, usize)]) -> u64 {
+        // Each step's own constants (a column bound by another step of the chain is free here: the pair is the two
+        // relations' join, whatever binds them).
+        let consts = |s: &StepPlan| -> Vec<(usize, i64)> { s.args.iter().enumerate().filter_map(|(i, a)| if let Arg::Const(v) = *a { Some((i, v)) } else { None }).collect() };
+        let (ac, bc) = (consts(a), consts(b));
+        let cols: Vec<ColumnIndex> = ac.iter().map(|&(i, _)| ColumnIndex::new(i as u16)).collect();
+        let key: Vec<i64> = ac.iter().map(|&(_, v)| v).collect(); // copy: derived (a probe's key)
+        let bcols: Vec<ColumnIndex> = on.iter().map(|&(_, c)| c).chain(bc.iter().map(|&(i, _)| i)).map(|c| ColumnIndex::new(c as u16)).collect();
+        let mut n = 0u64;
+        self.each(a.src, a.side == Side::Before, &cols, &key, &mut |r| {
+            if self.same(a, r) {
+                let bkey: Vec<i64> = on.iter().map(|&(c, _)| self.get(a.src, r, c)).chain(bc.iter().map(|&(_, v)| v)).collect(); // copy: derived (a probe's key)
+                self.each(b.src, b.side == Side::Before, &bcols, &bkey, &mut |_| {
+                    n += 1;
+                    true
+                });
+            }
+            true
+        });
+        n
     }
 
     /// Each row of `src`'s change: gone (on the before side) −1, added +1.
@@ -566,14 +625,14 @@ fn frame_word(b: &[u8], i: usize, k: usize) -> i64 {
 }
 
 /// The tuples of a frames block: `(chain, sign, row ids)`, read where they lie.
-fn tuples(b: &[u8]) -> impl Iterator<Item = (usize, i64, Vec<u64>)> + '_ {
+pub(crate) fn tuples(b: &[u8]) -> impl Iterator<Item = (usize, i64, Vec<u64>)> + '_ {
     let (n, stride) = (word::<i64>(b, F_N) as usize, word::<i64>(b, F_STRIDE) as usize);
     // copy: derived (a tuple's few row ids, as a step reads them)
     (0..n).map(move |i| (frame_word(b, i, 0) as usize, frame_word(b, i, 1), (2..stride).map(|k| frame_word(b, i, k) as u64).collect()))
 }
 
 /// A frames block's body bytes for `n` tuples of a plan `width` steps wide.
-fn frames_bytes(n: usize, width: usize) -> usize {
+pub(crate) fn frames_bytes(n: usize, width: usize) -> usize {
     16 + 8 * n * (width + 2)
 }
 
@@ -616,7 +675,9 @@ const C_ARG: usize = BODY_AT;
 const C_NEEDED: usize = BODY_AT + 8;
 const C_PROBES: usize = BODY_AT + 16;
 const C_ROWS: usize = BODY_AT + 24;
-const CONTROL_BYTES: usize = 32;
+const C_TERM: usize = BODY_AT + 32;
+const C_LIMIT: usize = BODY_AT + 40;
+const CONTROL_BYTES: usize = 48;
 
 fn seed(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let table = c.table;
@@ -633,10 +694,22 @@ fn step(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let names = Names::new(atoms);
     let env = Env::new(table, plan, &names);
     let d = word::<i64>(ctl, C_ARG) as usize;
+    // A trial's launch (0207): only chain `C_TERM − 1`'s tuples, at most `C_LIMIT` of them (0: every chain, all).
+    let (only, limit) = (word::<i64>(ctl, C_TERM), word::<i64>(ctl, C_LIMIT));
     let width = env.plan.width();
     let mut probes = 0u64;
     emit_frames(out, ctl, width, &mut |placing, f| {
+        let mut taken = 0i64;
         for (ti, sign, refs) in tuples(frames) {
+            if only > 0 && ti as i64 != only - 1 {
+                continue;
+            }
+            if limit > 0 {
+                if taken == limit {
+                    break;
+                }
+                taken += 1;
+            }
             if d >= env.plan.terms[ti].steps.len() {
                 f(ti, sign, &refs);
                 continue;
@@ -753,8 +826,14 @@ impl BodyOps {
 }
 
 /// The plan block: its words, and a reference to every block it reads; frozen.
-fn plan_block(dir: &mut Directory, plan: &Plan) -> Result<BlockId, String> {
-    let words = plan.words();
+pub(crate) fn plan_block(dir: &mut Directory, plan: &Plan) -> Result<BlockId, String> {
+    plan_block_keyed(dir, plan, &[])
+}
+
+/// The plan block with each chain's line key after the plan's words (`plan::lines`; the body's operations read the
+/// plan's words alone).
+pub(crate) fn plan_block_keyed(dir: &mut Directory, plan: &Plan, keys: &[i64]) -> Result<BlockId, String> {
+    let words: Vec<i64> = plan.words().into_iter().chain(std::iter::once(keys.len() as i64)).chain(keys.iter().copied()).collect();
     let id = dir.make(kind::CONTROL, 8 + 8 * words.len());
     {
         let b = dir.block(id).expect("just made");
@@ -773,10 +852,20 @@ fn plan_block(dir: &mut Directory, plan: &Plan) -> Result<BlockId, String> {
 }
 
 fn control_with(dir: &mut Directory, arg: i64) -> Result<BlockId, String> {
+    control_for(dir, arg, None)
+}
+
+/// A control block: its argument, and for a trial's launch, the one chain it runs and its tuples' limit.
+fn control_for(dir: &mut Directory, arg: i64, only: Option<(usize, usize)>) -> Result<BlockId, String> {
     let id = dir.make(kind::CONTROL, CONTROL_BYTES);
     let b = dir.block(id).expect("just made");
     let mut w = pin_block(&b, "a body's control", true)?;
-    set_word::<i64>(w.bytes_mut().expect("a write pin"), C_ARG, arg);
+    let bytes = w.bytes_mut().expect("a write pin");
+    set_word::<i64>(bytes, C_ARG, arg);
+    if let Some((ti, limit)) = only {
+        set_word::<i64>(bytes, C_TERM, ti as i64 + 1);
+        set_word::<i64>(bytes, C_LIMIT, limit as i64);
+    }
     Ok(id)
 }
 
@@ -788,9 +877,15 @@ fn control_word(dir: &Directory, id: BlockId, at: usize) -> Result<i64, String> 
 /// first: the new block, and the probes it made.
 #[allow(clippy::too_many_arguments)]
 fn emit(reg: &Registry, op: OpId, dir: &mut Directory, plan: BlockId, atoms: BlockId, frames: Option<BlockId>, arg: i64, width: usize, room: &mut usize) -> Result<(BlockId, u64), String> {
+    emit_only(reg, op, dir, plan, atoms, frames, arg, width, room, None)
+}
+
+/// `emit`, for a trial's launch: only chain `only.0`'s first `only.1` tuples.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit_only(reg: &Registry, op: OpId, dir: &mut Directory, plan: BlockId, atoms: BlockId, frames: Option<BlockId>, arg: i64, width: usize, room: &mut usize, only: Option<(usize, usize)>) -> Result<(BlockId, u64), String> {
     loop {
         let out = dir.make(kind::SCRATCH, frames_bytes(*room, width));
-        let ctl = control_with(dir, arg)?;
+        let ctl = control_for(dir, arg, only)?;
         let slots: Vec<BlockId> = [plan, atoms, out, ctl].into_iter().chain(frames).collect();
         let ran = run_cpu(reg, dir, op, &slots, &[], Tiling::WHOLE);
         let (needed, probes) = match ran.and_then(|()| Ok((control_word(dir, ctl, C_NEEDED)?, control_word(dir, ctl, C_PROBES)?))) {
@@ -815,35 +910,53 @@ fn emit(reg: &Registry, op: OpId, dir: &mut Directory, plan: BlockId, atoms: Blo
 /// writes is not launched). The probes the steps made. A head's runs past their room are the caller's to open
 /// again (`Runs::needed`).
 pub fn run_plan(reg: &Registry, ops: &BodyOps, dir: &mut Directory, atoms: BlockId, plan: &Plan, runs: &[BlockId]) -> Result<u64, String> {
+    run_plan_with(reg, ops, dir, atoms, plan, runs, &mut |_, _, _, pb| Ok(pb))
+}
+
+/// What runs between a plan's depths (`plan::Round::check`): told the depth just run, its frames and the plan block,
+/// it gives the plan block the next depths read (the same, or a handoff's).
+pub(crate) type Between<'a> = dyn FnMut(&mut Directory, usize, BlockId, BlockId) -> Result<BlockId, String> + 'a;
+
+/// `run_plan`, with `between` after `seed` and after each depth's `step`; the plan block it gives is let go by the
+/// caller's, never here, unless it is the first, which this makes.
+pub(crate) fn run_plan_with(reg: &Registry, ops: &BodyOps, dir: &mut Directory, atoms: BlockId, plan: &Plan, runs: &[BlockId], between: &mut Between<'_>) -> Result<u64, String> {
+    let pb = plan_block(dir, plan)?;
+    let ran = run_block(reg, ops, dir, atoms, plan, pb, runs, between);
+    dir.release(pb);
+    ran
+}
+
+/// The chains of plan block `pb` (`plan`'s words, or a plan of the same chains' lengths and heads), run as
+/// `run_plan` runs them, `between` after each depth.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_block(reg: &Registry, ops: &BodyOps, dir: &mut Directory, atoms: BlockId, plan: &Plan, pb: BlockId, runs: &[BlockId], between: &mut Between<'_>) -> Result<u64, String> {
     if plan.terms.is_empty() {
         return Ok(0);
     }
     let width = plan.width();
-    let pb = plan_block(dir, plan)?;
     let mut room = 256usize;
+    let (mut frames, mut probes) = emit(reg, ops.seed, dir, pb, atoms, None, 0, width, &mut room)?;
+    let mut pb = pb;
     let ran = (|| {
-        let (mut frames, mut probes) = emit(reg, ops.seed, dir, pb, atoms, None, 0, width, &mut room)?;
+        pb = between(dir, 0, frames, pb)?;
         for d in 1..width {
             let next = emit(reg, ops.step, dir, pb, atoms, Some(frames), d as i64, width, &mut room);
             dir.release(frames);
             let (f, p) = next?;
             frames = f;
             probes += p;
+            pb = between(dir, d, frames, pb)?;
         }
         let heads: BTreeSet<usize> = plan.terms.iter().map(|t| t.head).collect();
-        let mut out = Ok(());
         for h in heads {
             let ctl = control_with(dir, h as i64)?;
-            out = run_cpu(reg, dir, ops.head, &[pb, atoms, runs[h], ctl, frames], &[], Tiling::WHOLE);
+            let out = run_cpu(reg, dir, ops.head, &[pb, atoms, runs[h], ctl, frames], &[], Tiling::WHOLE);
             dir.release(ctl);
-            if out.is_err() {
-                break;
-            }
+            out?;
         }
-        dir.release(frames);
-        out.map(|()| probes)
+        Ok(probes)
     })();
-    dir.release(pb);
+    dir.release(frames);
     ran
 }
 
