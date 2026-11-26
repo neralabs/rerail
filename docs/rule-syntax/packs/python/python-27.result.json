@@ -1,0 +1,30 @@
+[
+  {
+    "id": "ruff-ytt101-sys-version-slice3",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ytt102-sys-version2",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ytt103-sys-version-cmp-str3",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ytt201-sys-version-info0-eq3",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ytt301-sys-version0",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ytt302-sys-version-cmp-str10",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ytt303-sys-version-slice1",
+    "status": "same"
+  }
+]
