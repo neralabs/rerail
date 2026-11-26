@@ -11,7 +11,7 @@ import type * as WalkReads from "../../../../src/engine/code-rule/walk-read-buff
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
 import { lookMoved, WorktreeLooks } from "../../../../src/engine/code-rule/worktree-look.js";
 import { WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
-import { RepositoryWorktreeWalks, type WatcherWalk, WorktreeWalks, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
+import { RepositoryWorktreeWalks, type WatcherWalk, WorktreeWalks, type WorktreeWatch, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
 import type { WorktreeListLearning } from "../../../../src/engine/catalog/repository-identity.js";
 import { GitReads } from "../../../../src/engine/git.js";
 import type * as Git from "../../../../src/engine/git.js";
@@ -105,6 +105,9 @@ const bridges: CodeRuleBridge[] = [];
 const directories: string[] = [];
 const releases: Array<() => void> = [];
 afterEach(async () => {
+  // A case that timed out never reached its own `finally`: no fake clock or spy it made reaches the cases after it.
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   releases.splice(0).forEach(release => release());
   counted.held.clear();
   counted.heldOpenings.clear();
@@ -578,9 +581,9 @@ describe("WorktreeWalks", () => {
     const second = await opened(worktrees[1]!, checkouts, walks);
     await second.bridge.checkpoint("turn");
     const firstWalk = await within(second.bridge.settleWorktreeWalk(), 10_000);
-    // Its own gap holds: a walk it asks for again at once waits for it.
+    // Its own gap holds: a walk it asks for again at once waits for it. A settle would start that walk now.
     await shell(second.bridge, "shell-1", () => writeFile(join(worktrees[2]!, "src", "a.py"), "old\nmine\n"));
-    const again = await within(second.bridge.settleWorktreeWalk(), 2_000);
+    const again = await within(walks.idle(), 2_000);
     expect({ firstWalk, again }).toEqual({ firstWalk: true, again: false });
   });
 
@@ -1412,6 +1415,112 @@ describe("the reread of a worktree no notice told of a change in", () => {
     await second.close();
   });
 });
+
+describe("the time between a session's walks", () => {
+  /**
+   * The wait the walk after one of the worktree in `roots` is timed for (`setTimeout`'s delay, in ms), its session
+   * asking for it as that walk ends. That walk works `work` ms on every clock, then the time of day moves on `stood` ms
+   * while the clock timers run on stands still: a suspend inside the walk on Linux, or the system's clock set on.
+   */
+  async function waitAfter(roots: readonly string[], { work, stood }: { work: number; stood: number }): Promise<unknown[]> {
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    let walked = 0;
+    const watch = walks.watch(scanning(watcherOf(roots, []), () => {
+      if (walked++ > 0) return;
+      vi.advanceTimersByTime(work);
+      vi.setSystemTime(Date.now() + stood);
+    }));
+    const timed = vi.spyOn(globalThis, "setTimeout");
+    try {
+      vi.useFakeTimers({ toFake: ["Date", "performance"] });
+      watch.request();
+      await walks.idle();
+      timed.mockClear();
+      watch.request();
+      return timed.mock.calls.map(([, ms]) => ms);
+    } finally {
+      timed.mockRestore();
+      vi.useRealTimers();
+      await watch.close();
+    }
+  }
+
+  it("waits as long after a walk as the walk took", async () => {
+    const { worktrees } = await repository(["w1"]);
+    expect(await waitAfter(worktrees, { work: 300, stood: 0 })).toEqual([300]);
+  });
+
+  it("waits as long after a walk as the walk took though the time of day moved on an hour more inside it", async () => {
+    const { worktrees } = await repository(["w1"]);
+    expect(await waitAfter(worktrees, { work: 300, stood: 3_600_000 })).toEqual([300]);
+  });
+
+  // What settles a session is what the walk it asked for finds. Its gap is the walks' pace, and a machine that stood
+  // still inside the walk before it lengthens that gap by as long as it stood.
+  it("settles a session's ask once the walk for it has run, with no wait for its gap", async () => {
+    const { worktrees } = await repository(["w1"]);
+    const scans: string[] = [];
+    const watch = new WorktreeWalks({ gapMs: 3_600_000 }).watch(watcherOf(worktrees, scans));
+    try {
+      watch.request();
+      await watch.settled();
+      watch.request();
+      await watch.settled();
+      expect(scans).toHaveLength(2);
+    } finally {
+      await watch.close();
+    }
+  });
+
+  it("keeps the gap of a session that settles while it takes a walk it did not ask for", async () => {
+    const { worktrees } = await repository(["w1"]);
+    const walks = new WorktreeWalks({ gapMs: 3_600_000 });
+    const held = Promise.withResolvers<void>();
+    const taking = Promise.withResolvers<void>();
+    let takes = 0;
+    const first = walks.watch(taken(watcherOf(worktrees, []), async () => {
+      if (takes++ === 0) return;
+      taking.resolve();
+      await held.promise;
+    }));
+    const timed = vi.spyOn(globalThis, "setTimeout");
+    let second: WorktreeWatch | undefined;
+    try {
+      first.request();
+      await first.settled();
+      // The second session's first walk reads the worktree the first watches, so the first takes it too.
+      second = walks.watch(watcherOf(worktrees, []));
+      second.request();
+      await taking.promise;
+      const settled = first.settled();
+      held.resolve();
+      await settled;
+      timed.mockClear();
+      first.request();
+      const delays = timed.mock.calls.map(([, ms]) => Number(ms));
+      expect(delays.filter(ms => ms > 3_000_000)).toHaveLength(1);
+    } finally {
+      timed.mockRestore();
+      await Promise.all([first.close(), second?.close()]);
+    }
+  });
+});
+
+/** `watcher`, calling `during` as each read of a worktree begins. */
+function scanning(watcher: WorktreeWatcher, during: () => void): WorktreeWatcher {
+  return { ...watcher, start: () => {
+    const walk = watcher.start()!;
+    return { ...walk, scan: async request => {
+      during();
+      return await walk.scan(request);
+    } };
+  } };
+}
+
+/** `watcher`, taking each walk through `take`. */
+function taken(watcher: WorktreeWatcher, take: () => Promise<void>): WorktreeWatcher {
+  return { ...watcher, start: () => ({ ...watcher.start()!, take }) };
+}
 
 describe("the walks of each repository", () => {
   it("drops a repository's walk once no session watches it, and takes it back for a session it was handed to", async () => {
