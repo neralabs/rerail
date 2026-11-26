@@ -1,0 +1,31 @@
+// K1's rules (B§6, L3: "several heads", "disjunction split into rules"): a clause is one rule for each head, named by
+// the head; a clause of one head whose body is a disjunction, one rule for each alternative, named by the
+// alternative. A scope (a group, or a disjunction under several heads) is a relation of its own: an atom where it was
+// written, over its shared variables, and one rule for each alternative writing them (K1-b). A rule's steps are its
+// literals, each at its node (k, -1): nodes number a tape in source order, so a step stands where it was written,
+// with no arithmetic (the rebuild plan, O2). A relation's rules all read a view, so each is single-file (B§3,
+// sentence 5): a term's own node is read where nothing else is.
+inst(d, c, h, h) :- head_of(d, c, h), !onesplit(d, c).
+inst(d, c, a, h) :- head_of(d, c, h), onesplit(d, c), alt(d, c, a).
+read_rule(d, r, n) :- inst(d, _, r, h), field(d, h, "relation", x), text(d, x, n).
+read_arg(d, r, -1, -1, i, a) :- inst(d, _, r, h), field(d, h, "arguments", l), child(d, l, a, i).
+in_rule(d, r, l) :- inst(d, c, r, r), field(d, c, "body", b), field(d, b, "literal", l).
+in_rule(d, r, b) :- inst(d, c, r, r), split(d, c), field(d, c, "body", b).
+in_rule(d, r, l) :- inst(d, c, r, _), alt(d, c, r), field(d, r, "literal", l).
+// A scope's rules: an alternative's, writing the scope's relation over its shared variables.
+read_rule(d, a, s) :- aux_alt(d, x, a), name(d, x, s).
+read_arg(d, a, -1, -1, i, t) :- aux_alt(d, x, a), rank(d, x, v, i), rep(d, x, v, t), kind(d, t, _).
+in_rule(d, a, l) :- aux_alt(d, x, a), field(d, a, "literal", l).
+in_rule(d, a, l) :- aux_alt(d, x, a), ctx(d, x, l), kind(d, l, _).
+read_step(d, r, l, -1, s, x) :- in_rule(d, r, l), lit_step(d, l, s, x).
+// Each expression in a rule's literals and its head, a step of the rule (K1-a), where it was read.
+read_step(d, r, e, -1, "atom", op) :- in_rule(d, r, l), in_term(d, l, e), op_step(d, e, op).
+read_arg(d, r, e, -1, i, a) :- in_rule(d, r, l), in_term(d, l, e), op_arg(d, e, i, a), kind(d, a, _).
+read_step(d, r, e, -1, "atom", op) :- inst(d, _, r, h), in_term(d, h, e), op_step(d, e, op).
+read_arg(d, r, e, -1, i, a) :- inst(d, _, r, h), in_term(d, h, e), op_arg(d, e, i, a), kind(d, a, _).
+read_arg(d, r, e, -1, i, a) :- in_rule(d, r, l), in_term(d, l, e), agg_arg(d, e, i, a), kind(d, a, _).
+read_arg(d, r, e, -1, i, a) :- inst(d, _, r, h), in_term(d, h, e), agg_arg(d, e, i, a), kind(d, a, _).
+read_step(d, r, e, -1, "call", f) :- in_rule(d, r, l), in_term(d, l, e), call_fn(d, e, f).
+read_step(d, r, e, -1, "call", f) :- inst(d, _, r, h), in_term(d, h, e), call_fn(d, e, f).
+read_arg(d, r, l, -1, i, a) :- in_rule(d, r, l), lit_arg(d, l, i, a), kind(d, a, _).
+read_arg(d, r, x, -1, i, t) :- in_rule(d, r, x), scope(d, x), rank(d, x, v, i), rep(d, x, v, t), kind(d, t, _).

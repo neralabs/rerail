@@ -1,0 +1,14 @@
+// Each shared variable's column (counts the second's order): how many of its scope's shared variables sort before it.
+rank(d, x, v, n) :- shared(d, x, v), n = count : { gt(d, x, _, v) }.
+// An aggregate's own variables (no key), and its step's terms: the relation it folds (-1 for a body that is not one
+// atom, which the executor refuses), its answer, its value (its answer's term for a `count` of none), then its atom's
+// arguments from 3.
+agg_own(d, t) :- agg_under(d, g, t), kind(d, t, "variable"), text(d, t, v), !agg_outer(d, g, v).
+agg_rel(d, a, r) :- agg_atom(d, _, a), field(d, a, "relation", n), text(d, n, r).
+agg_rel(d, b, -1) :- kind(d, g, "aggregate"), !agg_one(d, g), field(d, g, "body", b).
+agg_arg(d, g, 0, a) :- agg_atom(d, g, a), kind(d, a, _).
+agg_arg(d, g, 0, b) :- kind(d, g, "aggregate"), !agg_one(d, g), field(d, g, "body", b).
+agg_arg(d, g, 1, g) :- kind(d, g, "aggregate").
+agg_arg(d, g, 2, v) :- kind(d, g, "aggregate"), field(d, g, "value", v).
+agg_arg(d, g, 2, g) :- kind(d, g, "aggregate"), !field(d, g, "value", _).
+agg_arg(d, g, k, t) :- agg_atom(d, g, a), field(d, a, "arguments", al), child(d, al, t, i), k = i + 3.

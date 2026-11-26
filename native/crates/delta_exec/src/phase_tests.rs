@@ -564,6 +564,23 @@ const KERNEL: [(&str, &str); 13] = [
     ("kernel/k1-12-strata.rerail", include_str!("../rerail/kernel/k1-12-strata.rerail")),
 ];
 
+/// The compiler (B§6, L4; B§10 step 9): the full lowerer, written in the language the kernel lowers. L3 reads it into
+/// P4, which reads the user's files at L4.
+const COMPILER: [(&str, &str); 12] = [
+    ("compiler/c-1-read.rerail", include_str!("../rerail/compiler/c-1-read.rerail")),
+    ("compiler/c-2-shared.rerail", include_str!("../rerail/compiler/c-2-shared.rerail")),
+    ("compiler/c-3-rank.rerail", include_str!("../rerail/compiler/c-3-rank.rerail")),
+    ("compiler/c-4-rules.rerail", include_str!("../rerail/compiler/c-4-rules.rerail")),
+    ("compiler/c-5-steps.rerail", include_str!("../rerail/compiler/c-5-steps.rerail")),
+    ("compiler/c-6-binds.rerail", include_str!("../rerail/compiler/c-6-binds.rerail")),
+    ("compiler/c-7-place.rerail", include_str!("../rerail/compiler/c-7-place.rerail")),
+    ("compiler/c-8-order.rerail", include_str!("../rerail/compiler/c-8-order.rerail")),
+    ("compiler/c-9-turn.rerail", include_str!("../rerail/compiler/c-9-turn.rerail")),
+    ("compiler/c-10-emit.rerail", include_str!("../rerail/compiler/c-10-emit.rerail")),
+    ("compiler/c-11-graph.rerail", include_str!("../rerail/compiler/c-11-graph.rerail")),
+    ("compiler/c-12-strata.rerail", include_str!("../rerail/compiler/c-12-strata.rerail")),
+];
+
 /// What L3 reads: the stand-in for the compiler's files (Bootstrap §6: "P3 loads the full compiler"), a K0 file of
 /// L2's whose `load` facts P3 then asks. Their strata are computed (K1-e): the rules read the facts' relations.
 const ASK: &str = "load(\"u-facts.rerail\", \"u-facts\", \"rr\").\nload(\"u.rerail\", \"u\", \"rr\").\n";
@@ -601,6 +618,24 @@ fn kernel_files(name: &str, ask: &str, files: &[(&str, &str)]) -> Run {
     r.fact("load", &load);
     r.fact("boot", &boot);
     r
+}
+
+/// A run over the compiler: L3 reads the compiler's files, and `c-ask.rerail`, whose `load` facts `ask` are L4's
+/// documents; P4, the compiler, lowers those files at L4, and L5 runs them.
+fn compiler_files(name: &str, ask: &str, files: &[(&str, &str)]) -> Run {
+    let l3: String = COMPILER.iter().map(|(p, _)| p).chain(std::iter::once(&"c-ask.rerail")).map(|p| format!("load(\"{p}\", \"{}\", \"rr\").\n", p.trim_end_matches(".rerail"))).collect();
+    let all: Vec<(&str, &str)> = std::iter::once(("c-ask.rerail", ask)).chain(files.iter().copied()).collect();
+    let r = kernel_files(name, &l3, &all);
+    std::fs::create_dir_all(r.root.join("compiler")).unwrap();
+    for (path, text) in COMPILER {
+        r.write(path, text, 50);
+    }
+    r
+}
+
+/// The compiler over one program and its facts, as `kernel_run` gives them to the kernel.
+fn compiler_run(name: &str, rules: &str) -> Run {
+    compiler_files(name, ASK, &[("u-facts.rerail", FACTS), ("u.rerail", rules)])
 }
 
 /// The same files read at L2's place, the a/b test's way: L2 reads them in K0, L3 runs them.
@@ -694,6 +729,65 @@ fn a_dozen_plain_datalog_programs_lowered_by_k1_give_their_hand_lowered_rows() {
         for &(rel, rows) in want {
             assert_eq!(r.rows(2, rel), rows.iter().map(|x| x.to_vec()).collect::<BTreeSet<_>>(), "{name}: {rel}, cold");
         }
+    }
+}
+
+/// K-form's rows of level `k`, by relation, each symbol column as its text (two runs intern in their own orders): a
+/// rule's head, a step's kind and relation, a variable's name, a string, a declaration's relation and type.
+fn kform_rows(r: &Run, k: usize) -> Vec<(&'static str, BTreeSet<Vec<String>>)> {
+    let syms: &[(&str, &[usize])] = &[("k_rule", &[2]), ("k_step", &[4, 5]), ("k_var", &[2]), ("k_str", &[2]), ("k_decl", &[1, 3])];
+    crate::kform::RELATIONS
+        .iter()
+        .map(|(n, _)| {
+            let cols = syms.iter().find(|(m, _)| m == n).map_or(&[][..], |(_, c)| c);
+            let rows = r.rows(k, n).into_iter().map(|row| row.iter().enumerate().map(|(i, &v)| if cols.contains(&i) && v > 0 { r.name(v) } else { v.to_string() }).collect()).collect();
+            (*n, rows)
+        })
+        .collect()
+}
+
+/// The compiler (B§6, L4; B§10 step 9): the full lowerer, written with what the kernel lowers (arithmetic, counts, a
+/// maximum, disjunctions), read by P3 at L3 into P4. P4 lowers each program into the K-form P3 makes of it, which runs
+/// to the same rows. And the self-hosting check (B§6: "P4 reading the compiler/ files must give the K-form of P4
+/// itself"): P4 reading the compiler's files gives the rows P3 made of them.
+#[test]
+fn the_compiler_lowers_as_the_kernel_does_and_reads_itself_into_itself() {
+    let programs: [(&str, &str, &[&str]); 7] = [
+        ("tc", "t(x, y) :- e(x, y) ; t(x, z), e(z, y).\n", &["t"]),
+        ("filters", "h(x, z) :- x != z, !b(y), e(x, y), e(y, z).\ng(x) :- e(x, y), y > 2, e(y, _).\n", &["h", "g"]),
+        ("groups", "h(x) :- e(x, y), (y = 3 ; !b(y)).\na(x, y), c(y, x) :- e(x, y).\n", &["h", "a", "c"]),
+        ("arith", "n(x, y + 1) :- e(x, y).\nm(z) :- e(x, y), z = x * 10 - y, z > 5.\n", &["n", "m"]),
+        ("agg", "deg(x, n) :- e(x, _), n = count : { e(x, _) }.\ns(x, n) :- e(x, _), n = sum y : { e(x, y) }.\n", &["deg", "s"]),
+        ("calls", "c(x, @max(x, y)) :- e(x, y).\nl(t) :- e(x, _), t = to_string(x + 100).\n", &["c", "l"]),
+        ("source", "src(x) :- e(x, _), !e(_, x).\nnot3(x) :- e(x, _), !b(x).\n", &["not3"]),
+    ];
+    for (name, rules, rels) in programs {
+        let mut k = kernel_run(&format!("phase-compiler-{name}-kernel"), rules);
+        k.run();
+        let mut c = compiler_run(&format!("phase-compiler-{name}"), rules);
+        c.run();
+        for ((rel, a), (_, b)) in kform_rows(&k, 1).into_iter().zip(kform_rows(&c, 2)) {
+            assert_eq!(b, a, "{name}: {rel}, P4's K-form against P3's");
+        }
+        for rel in rels {
+            assert!(!k.rows(2, rel).is_empty(), "{name}: {rel} holds rows");
+            // A text column (`l`'s) compares by its text: two runs intern in their own orders.
+            let named = |r: &Run, rows: BTreeSet<Vec<i64>>| -> BTreeSet<Vec<String>> { rows.into_iter().map(|row| row.iter().map(|&v| if *rel == "l" { r.name(v) } else { v.to_string() }).collect()).collect() };
+            assert_eq!(named(&c, c.rows(3, rel)), named(&k, k.rows(2, rel)), "{name}: {rel}, run");
+        }
+    }
+    // The self-hosting check: L4 reads the compiler's files, and P4's K-form of them is P4's own.
+    let ask: String = COMPILER.iter().map(|(p, _)| format!("load(\"{p}\", \"{}\", \"rr\").\n", p.trim_end_matches(".rerail"))).collect();
+    let mut c = compiler_files("phase-compiler-self", &ask, &[]);
+    c.run();
+    let p4 = kform_rows(&c, 1);
+    let again = kform_rows(&c, 2);
+    let modules: BTreeSet<String> = again.iter().flat_map(|(_, rows)| rows.iter().map(|r| r[0].clone())).collect();
+    assert_eq!(modules.len(), COMPILER.len(), "every compiler file read at L4");
+    for ((rel, a), (_, b)) in p4.into_iter().zip(again) {
+        let a: BTreeSet<Vec<String>> = a.into_iter().filter(|r| modules.contains(&r[0])).collect();
+        assert!(!a.is_empty() || matches!(rel, "k_wild" | "k_decl" | "k_num"), "{rel}: P4 holds rows");
+        assert_eq!(b, a, "{rel}: P4 reading the compiler gives P4");
     }
 }
 

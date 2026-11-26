@@ -1,0 +1,3 @@
+// A module's stratum (the deepest of the graph's chains below it): a module in a cycle has none, and the executor
+// refuses a program of several modules where one has no k_order row (B§7).
+k_order(d, n) :- writes(d, _), !cycle(d), n = max m : { depth(d, m) }.

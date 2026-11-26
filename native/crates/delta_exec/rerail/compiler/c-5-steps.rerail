@@ -1,0 +1,14 @@
+// The binding lowerer's first stratum (decision 0686; Steps, Strata, Roll-up §2; B§10 steps 7 and 8): each rule's
+// atoms and the steps that move, as read. An atom binds its variables. A filter (a `not`, a `cmp`), an operator
+// (K1-a) and a call move: each goes after the atom that binds the last of the variables under it.
+in_atom(d, r, v, k) :- read_step(d, r, k, -1, "atom", _), !expr(d, k), read_arg(d, r, k, -1, _, t), read_var(d, t, v).
+mover(d, r, f) :- read_step(d, r, f, -1, "not", _).
+mover(d, r, f) :- read_step(d, r, f, -1, "cmp", _).
+mover(d, r, e) :- read_step(d, r, e, -1, "atom", _), expr(d, e).
+mover(d, r, e) :- read_step(d, r, e, -1, "call", _).
+// The nodes under a step that moves, and the variables written there.
+below(d, m, t) :- mover(d, _, m), field(d, m, _, t).
+below(d, m, u) :- below(d, m, t), field(d, t, _, u).
+in_filter(d, r, f, v) :- mover(d, r, f), below(d, f, t), kind(d, t, "variable"), text(d, t, v), !agg_own(d, t).
+uses_var(d, r, f) :- in_filter(d, r, f, _).
+bound_before(d, r, v, k) :- in_atom(d, r, v, k), in_atom(d, r, v, j), j < k.

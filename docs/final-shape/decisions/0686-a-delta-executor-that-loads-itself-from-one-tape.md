@@ -2436,3 +2436,40 @@ Checks (Relax, local, 140 of 140):
 
 Still to build in step 9: the include resolution and the module plan as rules of the compiler level
 (`bootstrap.rerail`'s, B§6's L4 row), with the compiler level itself.
+
+### L4: the compiler, and the self-hosting check (B§6's L4 row, B§10 step 9; 2026-11-26)
+
+The full lowerer is the compiler, `rerail/compiler/c-*.rerail`, twelve files.
+- L3 reads them with P3, the kernel, into P4. P4 lowers the user's files at L4, and L5 runs them.
+- The compiler is the kernel's lowering restated in the language the kernel lowers, so it is written in K1 and
+  beyond, never K0:
+  - offsets are arithmetic (`k = i + 3` for an aggregate's pattern, `k = i + 1` for a call's arguments);
+  - a module's depth is `m = n + 1`, bounded at 64;
+  - a shared variable's column is how many sort before it (`count : { gt(d, x, _, v) }`);
+  - a step's turn is how many steps go before it at its place (`count : { before(d, r, _, b) }`);
+  - a module's stratum is its deepest chain (`max m : { depth(d, m) }`);
+  - kind lists are disjunctions.
+- With the counts, the kernel's successor chain is gone from the compiler, along with `succ`, `least`, `between`,
+  `has_smaller`, `then`, `twixt`, `not_first`, `deeper`, and the cross-file `call_in` and `agg_pat` (a call's and an
+  aggregate's arguments are single-file now).
+
+Checks (Relax, local, 141 of 141): `the_compiler_lowers_as_the_kernel_does_and_reads_itself_into_itself`.
+- Seven programs: recursion through a disjunction, filters before their bindings, groups and several heads,
+  arithmetic, aggregates, calls, and negations of a facts file.
+  - P4's K-form of each equals P3's, relation by relation, symbols compared by text, since two runs intern in their
+    own orders.
+  - Run, each gives the same rows.
+- **The self-hosting check** (B§6: "P4 reading the compiler/ files must give the K-form of P4 itself"). L4 reads the
+  compiler's twelve files. P4's K-form of them equals P3's, every relation and every module.
+- Mutations caught:
+  - an aggregate's pattern offset of 4, refused when the lowered program runs;
+  - a depth bound of 2, which only the self-hosting run sees: the user's two files never reach it, the compiler's
+    twelve do.
+- The shape check has a `compiler` section:
+  - the compiler's files exist, and each is loaded by the tests' compiler run;
+  - none counts with the successor chain;
+  - the test exists, and a level answers derived loads.
+  - The arithmetic ban (O2) is K0's, so it now covers `bootstrap-l0` and the kernel, not the compiler.
+
+Still to build in step 9, as the compiler's rules: include resolution and the module plan (`bootstrap.rerail`'s),
+patterns, lattices, the passes.

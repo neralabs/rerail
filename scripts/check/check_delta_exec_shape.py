@@ -83,7 +83,10 @@ def m0(failures: list) -> None:
                 pattern, why = (r"\b(trait|dyn)\s+World\b|fs::read|File::open|read_to_string|read_dir",
                                 "a test's file read (a test writes the files the file layer answers, and reads none)")
             hits(path, code, pattern, why, failures)
+    # K0's files (bootstrap-l0 and the kernel): the compiler is read by P3, in K1, which has arithmetic (B§6, L3).
     for path in sorted(CRATE.rglob("*.rerail")):
+        if "compiler" in path.relative_to(CRATE).parts:
+            continue
         code = strip_rerail(path.read_text())
         hits(path, code, r"[\w)]\s*[-+*/%]\s*[\w(]", "arithmetic (K0 has none, O2)", failures)
         hits(path, code, r"\bstratum\s*\(", "a stated stratum (strata are files, O4)", failures)
@@ -898,6 +901,28 @@ def k1(failures: list) -> None:
         failures.append("B§10 step 7's test is missing")
 
 
+def compiler(failures: list) -> None:
+    """B§6's L4 row and B§10 step 9: the compiler, the full lowerer in the language the kernel lowers (no successor
+    chain: it counts with arithmetic and aggregates), read by P3 into P4; every file of it loaded by the tests'
+    compiler run; the self-hosting check (P4 reading compiler/ gives P4) a test."""
+    comp = CRATE / "rerail" / "compiler"
+    files = sorted(p.stem for p in comp.glob("*.rerail")) if comp.exists() else []
+    if not files:
+        failures.append("rerail/compiler/ holds no file (B§6, L4: the full compiler)")
+    tests = (CRATE / "src" / "phase_tests.rs").read_text()
+    for f in files:
+        code = strip_rerail((comp / f"{f}.rerail").read_text())
+        if re.search(r"\bnext\(", code):
+            failures.append(f"compiler/{f}.rerail counts with the kernel's successor chain, not arithmetic")
+        if f'"compiler/{f}.rerail"' not in tests:
+            failures.append(f"compiler/{f}.rerail is not in the tests' COMPILER list")
+    if "fn the_compiler_lowers_as_the_kernel_does_and_reads_itself_into_itself" not in tests:
+        failures.append("the compiler's test and the self-hosting check are missing")
+    phase = strip_rust((CRATE / "src" / "phase.rs").read_text())
+    if "fn asked(" not in phase or "MAX_ROUNDS" not in phase:
+        failures.append("phase.rs: a level answers no load its rules derive (rounds until nothing new is asked)")
+
+
 def declared(failures: list) -> None:
     """Decision 0361 in the delta executor: relations declare their shapes as facts (`key`, `fanout`), read where they
     lie; a line they cover takes its default plan, unpriced and unsearched; run time checks they hold, and a line whose
@@ -941,14 +966,14 @@ def declared(failures: list) -> None:
 
 def main() -> int:
     failures: list = []
-    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, b6, reach, e1, kept, b8, planning, k1, declared):
+    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, b6, reach, e1, kept, b8, planning, k1, compiler, declared):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, B6, reach, E1, kept, B8, planning, K1, declared)")
+    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, B6, reach, E1, kept, B8, planning, K1, compiler, declared)")
     return 0
 
 
