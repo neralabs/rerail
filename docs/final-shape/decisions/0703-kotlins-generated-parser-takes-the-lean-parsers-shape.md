@@ -242,6 +242,15 @@ them.
    touching a number", "a `;` after a line break and a comment", "a blank, a comment or a `\r` after a type the lean
    parser may split", the last now with refusal tests of its own). Measured (same run, m1max, best of 15): tier 1
    34 ms against 45 ms after 28.
+30. **The token loop reads a block's cheap masks from its word, and a pair set by tables**: in a row of code (and the
+   loop's head), a read of a mask of four classes or fewer and no escape is its block's word (`k_M`, made once a block
+   at the loop's head), then windows past the block (`brun_last`, `bfirst_in`), as the lean lexer's `lex_blocks`
+   reads a name's run and a gap's line end of its block's `word` and `eol`. A mask of fills or more classes stays a
+   window where a token asks it: made every block, the number's and the decoding's masks made tier 1 4.4 times
+   slower. A set of four texts or more (a `pairs` mask, or one side of its `&`) is tested by a table a byte position,
+   each byte's bits the texts with it there (`AT_TWO_START_2_0[src[q]] & AT_TWO_START_2_1[src[q + 1]]`), as the lean
+   lexer's `ONE[c]` and `FOLLOW[next]`. Measured (same run, m1max, best of 15): tier 1 32.6 to 33.9 ms against 34.0 to
+   34.8 ms after 29.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`

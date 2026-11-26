@@ -509,7 +509,28 @@ pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(
         }
         let locals: HashMap<String, ::bitlex::syntax::Expr> = exprs.iter().filter(|e| cands.contains(e.0.as_str())).cloned().collect();
         let mut by = super::bytes::Bytes::new(stmts, locals, HashMap::new());
-        let out: Vec<String> = lines.iter().zip(&product).map(|(l, &p)| if p { by.partial_windows(l) } else { (*l).to_owned() }).collect();
+        // Each line's place: in the token loop and a token of code's row (`// `kind`: rule`, not a region's `read …`),
+        // where a read starts in the loop's block.
+        let mut in_loop = false;
+        let mut code_row = false;
+        let out: Vec<String> = lines
+            .iter()
+            .zip(&product)
+            .map(|(l, &p)| {
+                if l.starts_with("    'tokens: while b < nw {") {
+                    // Its head's reads (the gap's, the starts') are of code too, from the block.
+                    in_loop = true;
+                    code_row = true;
+                } else if in_loop && *l == "    }" {
+                    in_loop = false;
+                    code_row = false;
+                }
+                if let Some((_, rule)) = l.trim_start().strip_prefix("// `").and_then(|r| r.split_once("`: ")) {
+                    code_row = in_loop && !rule.starts_with("read ");
+                }
+                if p { by.partial_line(l, !(in_loop && code_row)) } else { (*l).to_owned() }
+            })
+            .collect();
         let done: String = out.iter().zip(&product).filter(|x| *x.1).map(|x| format!("{}\n", code_of(x.0))).collect();
         let keep: Vec<&str> = cands.iter().copied().filter(|n| by.failed.contains(*n) || whole(&done, n) > 0).collect();
         if keep.is_empty() {
@@ -518,6 +539,9 @@ pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(
             for &(a, b, from, to) in &cuts {
                 t.push_str(&text[at..a]);
                 let sec = out[from..to].join("\n");
+                // The block's words its rows read, made once a block (`partial_line`).
+                let head = "    'tokens: while b < nw {\n        let base = b * 64;\n";
+                let sec = if sec.contains(head) { sec.replacen(head, &format!("{head}{}", by.block_decls()), 1) } else { sec };
                 // A field's word of the 64 bytes from `p`: its writes of the window (`win_put`, `win_set`, `win_clear`).
                 if text[a..].starts_with(super::T2_BEGIN) {
                     t.push_str(&sec.replace("wput(&mut fwin, ", "win_put(&mut fwin, p, ").replace("set(&mut fwin, ", "win_set(&mut fwin, p, ").replace("clear(&mut fwin, ", "win_clear(&mut fwin, p, "));

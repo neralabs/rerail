@@ -110,7 +110,14 @@ impl<'a> Bytes<'a> {
     }
 
     pub(super) fn partial_windows(&mut self, code: &str) -> String {
-        self.in_region = true;
+        self.partial_line(code, true)
+    }
+
+    /// `partial_windows` of a line of the token loop: a token of code's (`in_region` false) reads a mask with no escapes
+    /// from its block's word (`k_M`, made once a block, as the lean lexer's `lex_blocks` reads its block's masks), then
+    /// windows past the block.
+    pub(super) fn partial_line(&mut self, code: &str, in_region: bool) -> String {
+        self.in_region = in_region;
         self.partial = true;
         let out = self.rewrite_line(code, code).unwrap_or_else(|_| code.to_owned());
         self.partial = false;
@@ -305,10 +312,29 @@ impl<'a> Bytes<'a> {
                         let f = format!("{}{}_{}", self.tag, if self.code_fn { "ca" } else { "at" }, ident(n));
                         if !self.named.borrow().iter().any(|x| x.0 == f) {
                             self.named.borrow_mut().push((f.clone(), String::new()));
-                            match self.at(&d.clone(), "q", depth + 1) {
+                            let byte = |c: &str| self.classes.get(c).and_then(|rs| match rs {
+                                [(lo, hi)] if lo == hi => u8::try_from(*lo).ok(),
+                                _ => None,
+                            });
+                            // A set of texts, or one and another test (`two & ~escaped(two)`): the set's tables first.
+                            let tabled = texts_table(&f, d, &byte).or_else(|| match d {
+                                Expr::And(a, b) => [(a, b), (b, a)].into_iter().find_map(|(t, o)| {
+                                    let tt = texts_table(&f, t, &byte)?;
+                                    let (st, test) = tt.strip_prefix('\u{0}')?.split_once('\u{0}')?;
+                                    let other = self.at(o, "q", depth + 1).ok()?;
+                                    Some(format!("\u{0}{st}\u{0}({test}) && {other}"))
+                                }),
+                                _ => None,
+                            });
+                            match tabled.map(Ok).unwrap_or_else(|| self.at(&d.clone(), "q", depth + 1)) {
                                 Ok(body) => {
                                     let param = if self.code_fn { ", code: &dyn Fn(usize) -> bool" } else { "" };
-                                    let code = format!("/// Whether mask `{n}` holds at byte `q`, from the bytes.\n#[inline]\n#[allow(unused_variables, dead_code)]\nfn {f}(src: &[u8], n: usize, q: usize{param}) -> bool {{\n    {body}\n}}\n\n");
+                                    // A set of texts' tables before its test (`texts_table`).
+                                    let (statics, body) = match body.strip_prefix('\u{0}').and_then(|b| b.split_once('\u{0}')) {
+                                        Some((st, b)) => (st.to_owned(), b.to_owned()),
+                                        None => (String::new(), body),
+                                    };
+                                    let code = format!("{statics}/// Whether mask `{n}` holds at byte `q`, from the bytes.\n#[inline]\n#[allow(unused_variables, dead_code)]\nfn {f}(src: &[u8], n: usize, q: usize{param}) -> bool {{\n    {body}\n}}\n\n");
                                     if let Some(x) = self.named.borrow_mut().iter_mut().find(|x| x.0 == f) {
                                         x.1 = code;
                                     }
@@ -800,7 +826,7 @@ impl<'a> Bytes<'a> {
         // A token's one-byte test at its start (`first_clear(&M, s, s + 1)`, `bit(&M, s)`): a bit of the block's mask,
         // as lean's masks of its one `Window`, where the mask reads no escapes.
         let one = name == "first_clear" && args.len() == 3 && args[1].trim() == "s" && args[2].trim() == "s + 1";
-        if (one || (name == "bit" && args.len() == 2 && args[1].trim() == "s")) && !self.in_region && !self.window_fn(&m)?.1 {
+        if (one || (name == "bit" && args.len() == 2 && args[1].trim() == "s")) && !self.in_region && !self.partial && !self.window_fn(&m)?.1 {
             let k = self.block_word(&m);
             let holds = format!("({k} >> (s - base) & 1 == 1)");
             return Ok(Some(if one { format!("(!{holds}).then_some(s)") } else { holds }));
@@ -811,8 +837,10 @@ impl<'a> Bytes<'a> {
             let a = args[1].trim();
             return Ok(Some(format!("(!{}).then_some({a})", self.at(&e, a, 0)?)));
         }
-        // A mask with no escapes: its block's word first, made once a block (`k_M`), then windows past the block.
-        if name != "bit" && !self.in_region && !self.window_fn(&m)?.1 {
+        // A mask with no escapes: its block's word first, made once a block (`k_M`), then windows past the block. In the
+        // token loop (`partial_line`), a mask of a few classes alone, as the lean lexer's block masks (a word's, a blank's,
+        // a line end's): one of fills or many classes is read where a token asks it.
+        if name != "bit" && !self.in_region && !self.window_fn(&m)?.1 && (!self.partial || self.expr(&m).is_ok_and(|e| self.few_classes(&e, 0).is_some_and(|k| k <= 4))) {
             let k = self.block_word(&m);
             let (f, _) = self.window_fn(&m)?;
             return Ok(Some(match (name, args.len()) {
@@ -996,6 +1024,29 @@ impl<'a> Bytes<'a> {
             return Ok(None);
         }
         Ok(Some((format!("unsafe {{ w_{m}::<S>(src, n, ({i} * 64) as isize, &mut 0) }}"), l + 1 + e + 1)))
+    }
+
+    /// The classes `e` reads, where it is made of classes and their shifts alone (no fill, no escape).
+    fn few_classes(&self, e: &Expr, depth: usize) -> Option<usize> {
+        if depth > 16 {
+            return None;
+        }
+        match e {
+            Expr::Name(n) if self.classes.contains_key(n.as_str()) => Some(1),
+            Expr::Name(n) => self.few_classes(self.defs.get(n).or_else(|| self.locals.get(n))?, depth + 1),
+            Expr::Not(a) => self.few_classes(a, depth + 1),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => Some(self.few_classes(a, depth + 1)? + self.few_classes(b, depth + 1)?),
+            Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => match args.first() {
+                Some(Arg::E(x)) => self.few_classes(x, depth + 1),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The block words the loop reads (`block_word`), each made of its window at the block's first byte.
+    pub(super) fn block_decls(&self) -> String {
+        self.block.iter().map(|m| format!("        let k_{m} = unsafe {{ w_{m}::<S>(src, n, base as isize, &mut 0) }};\n")).collect()
     }
 
     /// The block's word of mask `m` (`k_m`), made once a block.
@@ -1365,6 +1416,91 @@ const LIVE: &str = "\u{0}live";
 
 /// `e` with the range's bits (`LIVE`) ANDed into the first test of each side: down an `And`'s first operand, into both
 /// of an `Or`'s. Every early exit (`win`'s `And`) then asks only of them.
+/// The tests of a set of texts (a `pairs` mask: `text("->") | text("==") | …`) as the lean lexer's pair tables: for
+/// each length, a table a byte position, each byte's bits the texts with it there (`FIRST[c] & FOLLOW[d]`), so a text
+/// holds where every position's bits meet. With the tables (statics) before the test, by the test's name `f`. `None`
+/// where `d` is no set of four texts or more, of at most 64 of a length.
+fn texts_table(f: &str, d: &Expr, byte: &dyn Fn(&str) -> Option<u8>) -> Option<String> {
+    // A text: `text(T)`, or a pair's bytes (`pair_byte_2d & next(pair_byte_3e)`, classes of one byte, one at each offset).
+    fn texts(e: &Expr, out: &mut Vec<Vec<u8>>, byte: &dyn Fn(&str) -> Option<u8>) -> Option<()> {
+        match e {
+            Expr::Or(a, b) => {
+                texts(a, out, byte)?;
+                texts(b, out, byte)
+            }
+            Expr::Call(c, args) if c == "text" && let [Arg::S(t)] = args.as_slice() && !t.is_empty() => {
+                out.push(t.clone());
+                Some(())
+            }
+            Expr::And(..) => {
+                fn at(e: &Expr, out: &mut Vec<(i64, u8)>, byte: &dyn Fn(&str) -> Option<u8>) -> Option<()> {
+                    match e {
+                        Expr::And(a, b) => {
+                            at(a, out, byte)?;
+                            at(b, out, byte)
+                        }
+                        Expr::Name(c) => {
+                            out.push((0, byte(c)?));
+                            Some(())
+                        }
+                        Expr::Call(f, args) if f == "next" => match args.as_slice() {
+                            [Arg::E(Expr::Name(c))] => {
+                                out.push((1, byte(c)?));
+                                Some(())
+                            }
+                            [Arg::E(Expr::Name(c)), Arg::N(k)] => {
+                                out.push((*k as i64, byte(c)?));
+                                Some(())
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                }
+                let mut bs = Vec::new();
+                at(e, &mut bs, byte)?;
+                bs.sort_unstable();
+                if !bs.iter().enumerate().all(|(k, (o, _))| *o == k as i64) {
+                    return None;
+                }
+                out.push(bs.into_iter().map(|(_, b)| b).collect());
+                Some(())
+            }
+            _ => None,
+        }
+    }
+    let mut ts = Vec::new();
+    texts(d, &mut ts, byte)?;
+    if ts.len() < 4 {
+        return None;
+    }
+    let mut lens: Vec<usize> = ts.iter().map(Vec::len).collect();
+    lens.sort_unstable();
+    lens.dedup();
+    let mut statics = String::new();
+    let mut tests = Vec::new();
+    for len in lens {
+        let of: Vec<&Vec<u8>> = ts.iter().filter(|t| t.len() == len).collect();
+        if of.len() > 64 {
+            return None;
+        }
+        let ty = if of.len() <= 32 { "u32" } else { "u64" };
+        let mut reads = Vec::new();
+        for k in 0..len {
+            let mut tab = [0u64; 256];
+            for (bit, t) in of.iter().enumerate() {
+                tab[usize::from(t[k])] |= 1 << bit;
+            }
+            let name = format!("{}_{len}_{k}", f.to_uppercase());
+            let row: Vec<String> = tab.iter().map(|b| format!("{b:#x}")).collect();
+            let _ = writeln!(statics, "/// `{f}`'s texts of {len} bytes: each byte's bits the texts with it at their byte {k}.\nstatic {name}: [{ty}; 256] = [{}];", row.join(", "));
+            reads.push(if k == 0 { format!("{name}[usize::from(src[q])]") } else { format!("{name}[usize::from(src[q + {k}])]") });
+        }
+        tests.push(format!("(q + {len} <= n && {} != 0)", if reads.len() == 1 { reads[0].clone() } else { format!("({})", reads.join(" & ")) }));
+    }
+    Some(format!("\u{0}{statics}\u{0}{}", tests.join(" || ")))
+}
+
 fn with_live(e: &Expr) -> Expr {
     match e {
         Expr::And(a, b) => Expr::And(Box::new(with_live(a)), b.clone()),
