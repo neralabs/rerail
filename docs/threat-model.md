@@ -307,7 +307,13 @@ without hooks or network.
   folder the walk has just listed. A walk asks the engine about a path only where no answer is kept for its checkout
   (`GitIgnoreAnswers`), and reads on the same thread, once per walk, the end of each checkout's index (all of it where
   Git writes no checksum there, until a walk reads it 2 s or more after it last changed) and the `.gitignore` of each
-  folder it asks about. The repository index walk opens its rules under the same 10 s limit.
+  folder it asks about. Those 2 s take the index file's times to come from the clock the daemon reads, within a tick.
+  Where a server sets them (a network file system, some shared folders), a time ahead of the daemon's clock has the
+  next walk read the index whole again; a server clock more than about 2 s behind the daemon's can let a walk keep the
+  file's stamp right after a write, and a later write of the same size, with the same times on a reused inode, then
+  keeps the answers learnt under the old index (a file `git add --force` added still read as ignored) until the index
+  next changes. An index with Git's checksum is told by its bytes, whatever its times. The repository index walk opens
+  its rules under the same 10 s limit.
 - **SQL** uses bound parameters (Drizzle, `better-sqlite3`, `rusqlite`); raw SQL is only constants and quoted
   migration DDL.
 - **Embedding model** SHA-256 is checked against `model/manifest.json` before loading (`native/src/model.rs`).

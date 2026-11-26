@@ -31,7 +31,11 @@ const SHA1_BYTES = 20;
  * How far the clock must have left an index file's times when its bytes are read, in nanoseconds, for the file's stamp
  * to tell it from every later write (`IndexDigest`): the coarsest step a file system keeps times to, FAT's 2 s (ext4
  * and NTFS keep 1 to 100 ns), and one tick of the clock file times come from, which `Date.now` can run ahead of
- * (Windows's default tick is 1/64 s; Linux's coarse clock ticks every 1 to 10 ms).
+ * (Windows's default tick is 1/64 s; Linux's coarse clock ticks every 1 to 10 ms). It takes the file's times to come
+ * from the clock `Date.now` reads, within that tick. Where a server sets them (a network file system, some shared
+ * folders), a time ahead of the clock keeps no stamp, as one inside the window does; a server clock more than about
+ * 2 s behind this machine's can let a stamp be kept right after a write, and a later write of the same size with the
+ * same times on a reused inode then keeps the old digest, and the answers learnt by it, until the index next changes.
  */
 const STAMP_TELLS_AFTER_NS = 2_015_625_000n;
 
@@ -139,7 +143,8 @@ class IndexDigest {
   of(descriptor: number, stats: BigIntStats): string {
     const stamp = `${stats.dev} ${stats.ino} ${stats.size} ${stats.mtimeNs} ${stats.ctimeNs}`;
     if (stamp === this.#stamp) return this.#digest;
-    // The clock is read before the bytes, so a write the read misses comes after this reading.
+    // The clock is read before the bytes, so a write the read misses comes after this reading. A time ahead of the
+    // clock, as a server ahead of this machine sets it, fails the test as a time inside the window does.
     const now = BigInt(Date.now()) * 1_000_000n;
     const tells = [stats.mtimeNs, stats.ctimeNs].every(time => now > time + STAMP_TELLS_AFTER_NS);
     this.#digest = createHash("sha256").update(readFileSync(descriptor)).digest("hex");
