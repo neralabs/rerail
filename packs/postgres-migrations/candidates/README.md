@@ -1,4 +1,4 @@
-# Candidates: Postgres migrations
+# Rerail rule pack: Postgres migrations, candidates
 
 Rules written for the Postgres migrations pack that are not part of it: not listed in `pack.json`, not published
 (`package.json` ships only `pack.json`, `rules/` and the licence files). Each was on when the pack was measured on 20
