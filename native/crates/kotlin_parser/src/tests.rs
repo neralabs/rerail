@@ -2568,3 +2568,73 @@ fn probe() {
         }
     }
 }
+
+/// The compiled grammar's speed against the lean parser's, on `RERAIL_KOTLIN_CORPUS`'s files that all three read to
+/// the same tape: the lean parser (`lean::tape`), the parser as Rust (`rerail_kotlin_aot::parse`, both into the lean
+/// parser's sink), each lexer alone too (`lean::lex_only`, `rerail_kotlin_aot::lex`), and the JIT whole (`Compiled::tape`, a writer made for each file; then with one writer kept), then its tier 1 alone and its tier 2 and writer alone (over
+/// tier 1's kept runs, a writer kept between files). `RERAIL_KOTLIN_ROUNDS` rounds (default 15), the forms in turn in
+/// each, so a loaded machine weighs on each alike; each form's best and median round, in thread CPU and wall time.
+/// Run on an optimized build (`--profile profiling`).
+#[test]
+#[ignore = "a measurement: run by hand, on an optimized build"]
+fn speed_against_lean() {
+    use rerail_cpu_block::native_cpu_block::thread_cpu;
+    let dir = std::env::var("RERAIL_KOTLIN_CORPUS").expect("set RERAIL_KOTLIN_CORPUS");
+    let rounds: usize = std::env::var("RERAIL_KOTLIN_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(15);
+    let c = compiled().expect("compiles");
+    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
+    paths.sort();
+    let (mut all, mut files) = (0usize, Vec::new());
+    for p in &paths {
+        let Ok(text) = std::fs::read_to_string(p) else { continue };
+        all += 1;
+        let Some(want) = lean_text(&text) else { continue };
+        let jit = c.tape(&text).ok().and_then(|t| image_text(&t).ok());
+        if jit.as_deref() == Some(&want) && aot_text(&text).ok().as_deref() == Some(&want) {
+            files.push(text);
+        }
+    }
+    let bytes: usize = files.iter().map(String::len).sum();
+    let p = &c.parser;
+    let mut batches: Vec<_> = files.iter().map(|f| rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();
+    for b in &mut batches {
+        b.call(&p.tier1);
+    }
+    let mut writing = rerail_cpu_stream::ladder::Writing { w: rerail_tape_format::f16::Writer::empty(), lang: lang(), numbers: p.tier2.numbers_by(&number), terminators: lean::TERMINATORS };
+    let forms = ["lean", "lean lexer", "aot", "aot tier 1", "jit", "jit, writer kept", "jit tier 1", "jit tier 2"];
+    let mut took: Vec<Vec<(f64, f64)>> = vec![Vec::new(); forms.len()];
+    let mut n = 0usize;
+    for _ in 0..rounds {
+        for (k, form) in forms.iter().enumerate() {
+            let (c0, w0) = (thread_cpu(), std::time::Instant::now());
+            match *form {
+                "lean" => files.iter().for_each(|f| n += lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
+                "lean lexer" => files.iter().for_each(|f| n += lean::lex_only(f.as_bytes())),
+                "aot tier 1" => files.iter().for_each(|f| n += std::hint::black_box(rerail_kotlin_aot::lex(f.as_bytes())).recs.len()),
+                "aot" => files.iter().for_each(|f| n += rerail_kotlin_aot::parse(f.as_bytes(), &mut lean::sink()).ok().and_then(Result::ok).map_or(0, |t| t.tape.len())),
+                "jit" => files.iter().for_each(|f| n += c.tape(f).map_or(0, |t| t.len())),
+                // Tier 1's batch made for each file, as `image16`'s, the writer kept (`image16_in`).
+                "jit, writer kept" => files.iter().for_each(|f| {
+                    let mut b = rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()]);
+                    b.call(&p.tier1);
+                    n += writing.words(p, &b, f.as_bytes()).unwrap_or(0);
+                }),
+                "jit tier 1" => batches.iter_mut().for_each(|b| b.call(&p.tier1)),
+                _ => batches.iter().zip(&files).for_each(|(b, f)| n += writing.words(p, b, f.as_bytes()).unwrap_or(0)),
+            }
+            took[k].push((thread_cpu() - c0, w0.elapsed().as_secs_f64()));
+        }
+    }
+    std::hint::black_box(n);
+    eprintln!("{} of {all} files ({:.2} MB) read to the lean parser's tape by all three; {rounds} rounds", files.len(), bytes as f64 / 1e6);
+    let best = |k: usize, w: bool| -> (f64, f64) {
+        let mut v: Vec<f64> = took[k].iter().map(|t| if w { t.1 } else { t.0 }).collect();
+        v.sort_by(f64::total_cmp);
+        (v[0], v[v.len() / 2])
+    };
+    let lean_cpu = best(0, false).0;
+    for (k, form) in forms.iter().enumerate() {
+        let ((cb, cm), (wb, wm)) = (best(k, false), best(k, true));
+        eprintln!("{form:>11}: CPU best {:7.2} ms, median {:7.2} ms; wall best {:7.2} ms, median {:7.2} ms; {:6.1} MB/s; {:.2}x lean's CPU", cb * 1e3, cm * 1e3, wb * 1e3, wm * 1e3, bytes as f64 / cb / 1e6, cb / lean_cpu);
+    }
+}
