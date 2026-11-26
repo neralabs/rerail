@@ -82,6 +82,29 @@ fn random_run(r: &mut impl FnMut() -> u64, set: &Rows) -> (Vec<(Vec<i64>, i32)>,
     (pairs, next)
 }
 
+/// `random_run`, and the cases a chain's dedup is for: rows held killed and added again in the same run (no change),
+/// and rows killed in an earlier round added back (`gone_before`: each one's dead copy lies in a layer below, and the
+/// new one is live).
+fn random_run_with_history(r: &mut impl FnMut() -> u64, set: &Rows, gone_before: &Rows) -> (Vec<(Vec<i64>, i32)>, Rows) {
+    let (mut pairs, mut next) = random_run(r, set);
+    for x in set.iter() {
+        if next.contains(x) && r().is_multiple_of(9) {
+            pairs.push((x.clone(), -1));
+            pairs.push((x.clone(), 1));
+        }
+    }
+    for x in gone_before.iter() {
+        if !set.contains(x) && !next.contains(x) && r().is_multiple_of(3) {
+            pairs.push((x.clone(), 1));
+            next.insert(x.clone());
+        }
+    }
+    for i in (1..pairs.len()).rev() {
+        pairs.swap(i, (r() % (i as u64 + 1)) as usize);
+    }
+    (pairs, next)
+}
+
 fn parts_of(rows: &Rows) -> BTreeSet<i64> {
     rows.iter().map(|x| x[0]).collect()
 }
@@ -98,15 +121,27 @@ fn changed(a: &Rows, b: &Rows) -> Vec<i64> {
 /// counts, each partition restricted, the changed partitions, a probe, the sketches' counts, at varied tilings.
 #[test]
 fn a_random_trace_reads_as_its_set() {
+    // The rebuild plan's B2: "24 rounds of pushes and kills, 7 seeds".
+    std::thread::scope(|sc| {
+        for seed in [42, 7, 13, 99, 1234, 5, 77] {
+            sc.spawn(move || random_trace(seed, 24));
+        }
+    });
+}
+
+fn random_trace(seed: u64, rounds: usize) {
     let (reg, ops, mut dir, mut t) = setup();
-    let mut r = rng(42);
+    let mut r = rng(seed);
     let mut sets: Vec<Rows> = vec![Rows::new()];
     let mut heads: Vec<Option<BlockId>> = vec![None];
+    let mut gone_before = Rows::new();
     let tilings = [Tiling::WHOLE, Tiling { tile: 1, seed: 9 }, Tiling { tile: 5, seed: 0 }, Tiling { tile: 2, seed: 4 }];
-    for step in 0..6 {
-        let (pairs, next) = random_run(&mut r, sets.last().unwrap());
+    for step in 0..rounds {
+        let set = sets.last().unwrap().clone();
+        let (pairs, next) = random_run_with_history(&mut r, &set, &gone_before);
+        gone_before.extend(set.difference(&next).cloned());
         let id = runs(&mut dir, &t, &pairs);
-        let h = t.commit(&reg, &ops, &mut dir, id, tilings[step % tilings.len()]).unwrap_or_else(|e| panic!("step {step}: {e}"));
+        let h = t.commit(&reg, &ops, &mut dir, id, tilings[step % tilings.len()]).unwrap_or_else(|e| panic!("seed {seed}, step {step}: {e}"));
         sets.push(next);
         heads.push(Some(h));
     }
@@ -114,10 +149,10 @@ fn a_random_trace_reads_as_its_set() {
     let table = l.table();
     for (k, set) in sets.iter().enumerate() {
         let s = t.state(&table, heads[k]).unwrap();
-        assert_eq!(&rows_of(&s), set, "state {k} is its set");
+        assert_eq!(&rows_of(&s), set, "seed {seed}: state {k} is its set");
         for p in parts_of(set).into_iter().chain([3, 99]) {
             let want: Rows = set.iter().filter(|x| x[0] == p).cloned().collect();
-            assert_eq!(rows_of(&rerail_blocks::bistate::States::restrict(&s, p)), want, "state {k}, partition {p}");
+            assert_eq!(rows_of(&rerail_blocks::bistate::States::restrict(&s, p)), want, "seed {seed}: state {k}, partition {p}");
         }
         if let Some(x) = set.iter().next() {
             let cols: Vec<ColumnIndex> = ColumnIndex::all(3).collect();
@@ -127,7 +162,7 @@ fn a_random_trace_reads_as_its_set() {
         }
         for c in ColumnIndex::all(3) {
             let st = s.stats(c);
-            assert_eq!(st.rows, set.len() as u64, "state {k}: the sketch counts the live rows");
+            assert_eq!(st.rows, set.len() as u64, "seed {seed}: state {k}: the sketch counts the live rows");
             let ndv = set.iter().map(|x| x[c.get()]).collect::<BTreeSet<_>>().len() as f64;
             // Exact while the sketch keeps exact counts; past them a HyperLogLog's, about 6.5% off (the sketch's own
             // test allows 20%).
@@ -137,19 +172,35 @@ fn a_random_trace_reads_as_its_set() {
             }
         }
     }
+    // Each round's change from the one before (its before the previous state), and changes across several layers.
     for k in 1..sets.len() {
-        for j in 0..k {
+        let spans = [k - 1, k.saturating_sub(6)];
+        for j in spans.into_iter().collect::<BTreeSet<_>>() {
             let b = t.change(&table, heads[j], heads[k]).unwrap();
             check(&b);
             let gone: Rows = b.gone().map(|id| row(b.before().unwrap(), id)).collect();
             let added: Rows = b.added().map(|id| row(b.after(), id)).collect();
-            assert_eq!(gone, sets[j].difference(&sets[k]).cloned().collect::<Rows>(), "{j}→{k}: gone");
-            assert_eq!(added, sets[k].difference(&sets[j]).cloned().collect::<Rows>(), "{j}→{k}: added");
             assert_eq!(b.counts(), (gone.len(), added.len()));
+            // A round's change (a trace's two states) is the least one. A change across several layers is by id: a
+            // row killed in one and added back in a later one is gone under its old id and added under its new one,
+            // the same values; by value, the two cancel.
+            let back: Rows = gone.intersection(&added).cloned().collect();
+            if j == k - 1 {
+                // `bistate::is_least`, by the values' sets: no row gone has the values of a row added.
+                assert!(back.is_empty(), "seed {seed}: {j}→{k} is the least change");
+            }
+            assert!(back.iter().all(|x| sets[j].contains(x) && sets[k].contains(x)), "seed {seed}: {j}→{k}: a row gone and added is live at both");
+            assert_eq!(gone.difference(&back).cloned().collect::<Rows>(), sets[j].difference(&sets[k]).cloned().collect::<Rows>(), "seed {seed}: {j}→{k}: gone");
+            assert_eq!(added.difference(&back).cloned().collect::<Rows>(), sets[k].difference(&sets[j]).cloned().collect::<Rows>(), "seed {seed}: {j}→{k}: added");
             let mut ps = Vec::new();
             b.changed_parts(&mut |p| ps.push(p));
             ps.sort();
-            assert_eq!(ps, changed(&sets[j], &sets[k]), "{j}→{k}: the changed partitions");
+            // The partitions changed by digest: a row gone and back moves its partition's digest by nothing.
+            assert_eq!(ps, changed(&sets[j], &sets[k]), "seed {seed}: {j}→{k}: the changed partitions");
+            // Each partition's restriction, of each round's change (a span's is the same read over more layers).
+            if j + 1 < k {
+                continue;
+            }
             for p in parts_of(&sets[j]).union(&parts_of(&sets[k])) {
                 let rb = b.restrict(*p);
                 check(&rb);
