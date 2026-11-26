@@ -1,0 +1,8 @@
+[
+  { "id": "ruff-pyi057-byte-string-usage", "status": "same" },
+  { "id": "ruff-pyi058-generator-return-from-iter-method", "status": "same" },
+  { "id": "ruff-pyi061-redundant-none-literal", "status": "same" },
+  { "id": "ruff-pyi062-duplicate-literal-member", "status": "same" },
+  { "id": "ruff-pyi063-pep484-style-positional-only-parameter", "status": "same" },
+  { "id": "ruff-pyi064-redundant-final-literal", "status": "same" }
+]
