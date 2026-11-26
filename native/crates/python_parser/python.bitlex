@@ -1,0 +1,101 @@
+# Python.
+#
+# The reference is the lean parser (`rerail_python_lean`, decision 0163), whose tapes are
+# tree-sitter-python's. What the grammar does not read is refused, and goes to the lean parser
+# (decision 0698).
+#
+# Layout (decision 0698): a line break outside brackets is a mark of no width (`newline`), which
+# ends a statement. Inside brackets a line break is a blank (`in_br`, from a bracket depth).
+
+lexer python
+
+class blank     = ' ' '\t' 0x0c '\r'
+class lf        = '\n'
+class hash      = '#'
+class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
+class alpha     = 'a'..'z' 'A'..'Z' '_'
+class digit     = '0'..'9'
+class dot       = '.'
+class opens     = '(' '[' '{'
+class closes    = ')' ']' '}'
+class quote     = '\'' '"'
+class bslash    = '\\'
+class high      = 0x80..0xff
+class tab_ff    = '\t' 0x0c
+class punct     = '(' ')' '[' ']' '{' '}' ',' ':' ';' '.' '=' '+' '-' '*' '/' '%' '&' '|' '^' '~' '<' '>' '@' '!'
+
+# --- Regions -----------------------------------------------------------------------------------
+
+regions hidden {
+  cmt = hash .. lf outside
+}
+mask code       = ~hidden & ~o_cmt
+
+escape "a string" when code & quote
+escape "a backslash" when code & bslash
+escape "a byte above 0x7f outside a comment" when code & high
+# A line's indentation: the blanks after its line break. A tab or a form feed counts as tree-sitter's
+# scanner counts it, not read yet.
+escape "a tab or a form feed in a line's indentation" when tab_ff & fill(prev(lf), ~blank)
+escape "a tab or a form feed starting the file" when tab_ff & ~prev(~empty)
+
+# --- Words and numbers -------------------------------------------------------------------------
+
+mask w          = code & word
+mask word_start = w & alpha & ~prev(w)
+mask name_more  = fill(word_start, ~w) & ~word_start
+mask num_start  = w & digit & ~prev(w)
+mask digits     = fill(num_start, ~w)
+escape "a number with a letter or `_`" when digits & ~digit
+escape "a number with a `.`" when code & dot & (prev(digits) | next(digit))
+
+assume "a name starts at a word's first letter: a start is never in a word" at starts word_start = alpha
+assume "a number starts at a digit: a start is never in a word" at starts num_start = digit
+assume "a name runs over its word's bytes" in identifier name_more = word
+assume "a number's bytes are code" in integer code = ~empty
+
+token identifier = start word_start run name_more
+token integer   = start num_start run digit
+
+# --- Operators ---------------------------------------------------------------------------------
+
+pairs two_start = "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>="
+mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
+mask p_start    = code & punct & ~second
+assume "an operator starts at its first byte: a start is never a pair's second" at starts p_start = punct
+token punct     = start p_start pair two_start
+
+token comment   = start hash & o_cmt read cmt
+
+keywords identifier {
+  "False" "None" "True" "and" "as" "assert" "break" "class" "continue" "def" "del" "elif" "else"
+  "except" "finally" "for" "from" "global" "if" "import" "in" "is" "lambda" "nonlocal" "not" "or"
+  "pass" "raise" "return" "try" "while" "with" "yield"
+} soft {
+  "async" "await" "match" "case" "type" "print" "exec"
+}
+keywords punct { "(" ")" "[" "]" "{" "}" "," ":" ";" "." "=" "+" "-" "*" "/" "%" "&" "|" "^" "~" "<" ">" "@" "!" "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>=" } required
+
+skip code & (blank | lf)
+error "a byte no token takes" by tokens when code & ~blank & ~lf & ~word & ~punct
+
+# --- Layout ------------------------------------------------------------------------------------
+
+# The bracket depth over code: a line break inside brackets is a blank.
+scan depth      = count(code & opens, code & closes) max 31
+mask in_br      = depth.frame(code & opens)
+# A line break of code outside brackets, and the file's end: a statement's end.
+mark newline    = lf & code & ~in_br, end, ends
+
+tree python {
+  node module whole padded = statement*
+  choice statement nested = simple_statement (';' [simple_statement])* newline
+  choice simple_statement = expression_statement | pass_statement
+  node expression_statement = expression
+  node pass_statement = 'pass'
+  choice expression supertype expression = primary_expression
+  choice primary_expression supertype primary_expression = identifier | integer
+  hidden newline
+  implied pass_statement 'pass'
+  extra comment
+}
