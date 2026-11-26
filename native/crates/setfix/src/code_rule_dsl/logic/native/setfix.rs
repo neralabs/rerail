@@ -1579,6 +1579,104 @@ impl Slots<'_> {
     }
 }
 
+impl<'a> Slots<'a> {
+    /// The same slots, each span's columns resolved once (`SlotRuns`).
+    fn resolved(self, k: usize) -> SlotRuns<'a> {
+        let mut runs = Vec::with_capacity(self.spans.len() * k);
+        for &(r, at) in self.spans {
+            for c in 0..k {
+                // SAFETY: a span's slots are claimed whole (`WaveRoom::claim`), so reserved.
+                let first = unsafe { self.room.run(r, at, c) };
+                let run = match first {
+                    Some((p0, left)) if left >= rows::WAVE_SPAN => SpanCol { p0, split: rows::WAVE_SPAN, p1: std::ptr::null_mut() },
+                    Some((p0, left)) => {
+                        // SAFETY: as above.
+                        let next = unsafe { self.room.run(r, at + left, c) };
+                        match next {
+                            // Slot `o` past the split is `p1 + o`: the next chunk's first value less the split.
+                            Some((p1, more)) if left + more >= rows::WAVE_SPAN => SpanCol { p0, split: left, p1: p1.wrapping_sub(left as usize) },
+                            _ => SpanCol { p0, split: left, p1: std::ptr::null_mut() },
+                        }
+                    }
+                    None => SpanCol { p0: std::ptr::null_mut(), split: 0, p1: std::ptr::null_mut() },
+                };
+                runs.push(run);
+            }
+        }
+        SlotRuns { slots: self, k, runs }
+    }
+}
+
+/// A span's column where its values lie (`SlotRuns`): slot `o` of the span (`o < split`) at `p0 + o`, the rest at
+/// `p1 + o` (its next chunk's), or, with `p1` null, read as `Slots` reads them (a column of 4-byte values, a sealed
+/// chunk, a span over more than two chunks).
+#[derive(Clone, Copy)]
+struct SpanCol {
+    p0: *mut i64,
+    split: u32,
+    p1: *mut i64,
+}
+
+/// A wave's rows where they lie (`Slots`), each span's columns resolved once to where their values lie (`SpanCol`):
+/// a settle's sort, merges and layout read and write a value with one access, not the region's, the relation's and
+/// its chunk's resolution each time (decision 0353: the read of the block, not a copy of it).
+struct SlotRuns<'a> {
+    slots: Slots<'a>,
+    k: usize,
+    runs: Vec<SpanCol>,
+}
+
+// SAFETY: the pointers are into the wave room's slots, which are this writer's while it settles: the settle's
+// readers on other threads (a merge's) only read, and its one writer (the layout) writes alone.
+unsafe impl Send for SlotRuns<'_> {}
+unsafe impl Sync for SlotRuns<'_> {}
+
+impl SlotRuns<'_> {
+    /// Where slot `q`'s value in column `c` lies, if resolved.
+    #[inline(always)]
+    fn at(&self, q: u32, c: usize) -> Option<*mut i64> {
+        let e = self.runs[(q / rows::WAVE_SPAN) as usize * self.k + c];
+        let o = q % rows::WAVE_SPAN;
+        if o < e.split {
+            Some(e.p0.wrapping_add(o as usize))
+        } else if !e.p1.is_null() {
+            Some(e.p1.wrapping_add(o as usize))
+        } else {
+            None
+        }
+    }
+    /// Writes slot `q`.
+    ///
+    /// # Safety
+    /// As `Slots::put`.
+    #[inline(always)]
+    unsafe fn put(&self, q: u32, vals: &[i64]) {
+        for (c, &v) in vals.iter().enumerate() {
+            match self.at(q, c) {
+                // SAFETY: the caller's; the slot's value where it lies.
+                Some(p) => unsafe { *p = v },
+                // A column not resolved: the row written as `Slots` writes it.
+                None => return unsafe { self.slots.put(q, vals) },
+            }
+        }
+    }
+}
+
+impl RowData for SlotRuns<'_> {
+    #[inline(always)]
+    fn row(&self, q: u32, k: usize) -> crate::code_rule_dsl::facts::rows::Row {
+        crate::code_rule_dsl::facts::rows::Row::from_fn(k, |c| self.value(q, k, c))
+    }
+    #[inline(always)]
+    fn value(&self, q: u32, k: usize, c: usize) -> i64 {
+        match self.at(q, c) {
+            // SAFETY: a written slot's value where it lies.
+            Some(p) => unsafe { *p },
+            None => self.slots.value(q, k, c),
+        }
+    }
+}
+
 impl RowData for Slots<'_> {
     #[inline(always)]
     fn row(&self, q: u32, _k: usize) -> crate::code_rule_dsl::facts::rows::Row {
@@ -1721,7 +1819,7 @@ impl Fresh {
             return;
         }
         let room = Arc::clone(self.room.as_ref().expect("rows in a room"));
-        let data = Slots { room: &room, spans: &self.spans };
+        let data = Slots { room: &room, spans: &self.spans }.resolved(k);
         // The first order's sort (`runs::cmp_vals`: tagged, by the leading value's tag first, then the columns).
         let cols = &rel.idx[0].cols;
         let tagged = runs::tagged(cols, k);
@@ -1752,17 +1850,21 @@ impl Fresh {
             let taken = runs::sort_pieces(&mut order, &known, sort, |a, b| cmp(a, b).is_le());
             runs::presorted::site_known(runs::presorted::FRESH, taken as u64);
         }
+        let whole = self.lost || !runs::known_beyond_runs();
         self.breaks.clear();
         self.lost = false;
+        let rows_in = order.len();
         order.dedup_by(|a, b| cmp(*a, *b).is_eq());
         // The new rows' check: rows pushed since the last wave (in no order yet), then the first order.
         let mut held = vec![false; order.len()];
+        let one_by_one = if rel.indexed < rel.n { order.len() } else { 0 };
         if rel.indexed < rel.n {
             for (h, &q) in held.iter_mut().zip(&order) {
                 *h = rel.contains(&data.row(q, k));
             }
         }
         rel.idx[0].held_sorted(&rel.data, k, &data, &order, |id| !rel.dead(id), &mut held);
+        let nheld = held.iter().filter(|&&h| h).count();
         // Merged with the settled rows (sorted, distinct, not held), less those the new rows repeat: the slots each
         // kept row comes from, in order.
         let mut src: Vec<u32> = Vec::with_capacity(settled + order.len());
@@ -1777,6 +1879,8 @@ impl Fresh {
             }
         }
         src.extend(s..settled as u32);
+        let runs = rel.idx[0].runs().saturating_sub(1) * order.len();
+        runs::presorted::settled([1, u64::from(whole), rows_in as u64, order.len() as u64, one_by_one as u64, nheld as u64, settled as u64, src.len() as u64, runs as u64]);
         drop(order);
         let levels = (!self.levels.is_empty()).then_some(&mut self.levels);
         rows::permute(self.end, &src, |q| data.row(q, k), |q, row| {
@@ -9940,6 +10044,36 @@ pub mod posted_tests {
             for b in 0..30 {
                 assert_eq!(ids(&known, &[a, b]), ids(&plain, &[a, b]), "key {a} {b}");
             }
+        }
+    }
+
+    /// A settle's reader of its slots (`SlotRuns`) reads and writes each slot's value where `Slots` does: over a
+    /// relation's own tail (lent, its chunks small and many), the room's next regions, and spans across a chunk's end.
+    #[test]
+    fn a_settles_resolved_slots_are_the_slots_values() {
+        for held in [0usize, 3, 700, 5000] {
+            let mut rel = Rel::new("t", b"iii");
+            for i in 0..held as i64 {
+                rel.push(&[i, -i, 7]);
+            }
+            rel.set_delta(0, rel.n);
+            let mut f = Fresh::default();
+            let n = 3 * rows::WAVE_SPAN as i64 + 517;
+            for i in 0..n {
+                f.offer(&[n - i, i * 3, i % 5], &rel);
+            }
+            let slots = f.slots().expect("rows in a room");
+            let k = 3;
+            let resolved = Slots { room: slots.room, spans: slots.spans }.resolved(k);
+            let direct = resolved.runs.iter().filter(|e| e.split > 0).count();
+            assert!(direct > 0, "{held} held: no span resolved");
+            for q in f.live_from(0) {
+                assert_eq!(resolved.row(q, k).to_vec(), slots.row(q, k).to_vec(), "{held} held: slot {q}");
+            }
+            // A write through it lands where `Slots` reads.
+            let q = f.live_from(0)[rows::WAVE_SPAN as usize + 3];
+            unsafe { resolved.put(q, &[-1, -2, -3]) };
+            assert_eq!(slots.row(q, k).to_vec(), vec![-1, -2, -3], "{held} held");
         }
     }
 

@@ -224,6 +224,24 @@ impl ColRead {
         // SAFETY: the directory is its relation's, which outlives the reader; row `i` was claimed and reserved.
         unsafe { (*self.dir).get(self.min_log, i) }
     }
+
+    /// Where row `i`'s value lies and the rows of its chunk from it on, each next value 8 bytes on: a reader of a
+    /// stretch of rows resolves it once, and reads and writes each value with one access. `None` for a column whose
+    /// values are not each 8 bytes where they lie (4 bytes wide, or the chunk sealed, decision 0622).
+    ///
+    /// # Safety
+    /// Row `i` is reserved: its chunk is made.
+    #[inline]
+    pub unsafe fn run(&self, i: u32) -> Option<(*mut i64, u32)> {
+        let (chunk, place) = chunk_of(i, self.min_log);
+        // SAFETY: the caller's; the directory is its relation's, which outlives the reader.
+        let d = unsafe { &*self.dir };
+        if self.width != 8 || d.sealed(chunk).is_some() {
+            return None;
+        }
+        let left = chunk_rows(chunk, self.min_log) - place as u64;
+        Some((d.at(self.min_log, i).cast::<i64>(), left.min(u64::from(u32::MAX)) as u32))
+    }
 }
 
 impl Rows {

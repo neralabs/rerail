@@ -1300,6 +1300,17 @@ impl WaveRoom {
         (r as u8, reg.at + (g - reg.first))
     }
 
+    /// Where row `row` of region `r`'s value in column `c` lies, and the rows from it on that lie each 8 bytes past
+    /// the one before (`Part::run`): a reader of many of the room's slots resolves their stretches once.
+    ///
+    /// # Safety
+    /// The row is claimed (`claim`).
+    #[inline]
+    pub unsafe fn run(&self, r: u8, row: u32, c: usize) -> Option<(*mut i64, u32)> {
+        // SAFETY: the caller's: claimed, so reserved.
+        unsafe { self.region(r).part.run(row, c) }
+    }
+
     /// Row `row` of region `r`'s value in column `c`, where a writer wrote it.
     #[inline(always)]
     pub fn get(&self, r: u8, row: u32, c: usize) -> i64 {
@@ -1766,6 +1777,17 @@ impl Part {
     #[inline(always)]
     pub fn get(&self, i: u32, c: usize) -> i64 {
         self.cols[c].get(self.skip + i)
+    }
+
+    /// Where its row `i`'s value in column `c` lies, and the rows from it on that lie each 8 bytes past the one
+    /// before (`ColRead::run`): `None` where the column's values are not each 8 bytes.
+    ///
+    /// # Safety
+    /// Row `i` is reserved.
+    #[inline]
+    pub unsafe fn run(&self, i: u32, c: usize) -> Option<(*mut i64, u32)> {
+        // SAFETY: the caller's.
+        unsafe { self.cols[c].run(self.skip + i) }
     }
 
     /// An empty relation of `k` columns in a run's block, with room for `rows` rows that a writer other than the
