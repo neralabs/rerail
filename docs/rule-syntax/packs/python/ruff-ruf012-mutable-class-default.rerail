@@ -14,13 +14,13 @@
 //       items: list[int] = []                  ← RUF012
 //       cache = {}                             ← RUF012
 //       names: ClassVar[list[str]] = []        not reported
-#include "python/ruff-classes.rerail"
+#include "python/python-01.rerail"     // rt_immutable: `Union[(int, str)]` reads as `Union[int, str]`
 
 .violation RUF012(at: node) code "RUF012"
     "Initialize this mutable default in `__init__`, or annotate it `ClassVar[...]` if one object is meant to be shared; a class-level default is shared by every instance."
     suppress ruff "RUF012"
 RUF012(v) :- class_field(c, a, t, v), mutable_value(v), field(a, "type", ann), !special(t), !class_var_ann(ann),
-    !final_ann(ann), !immutable_ann(ann), !dataclass_of(c, _, _), checked(c, a).
+    !final_ann(ann), !rt_immutable(ann), !dataclass_of(c, _, _), checked(c, a).
 RUF012(v) :- class_assign(c, a, v), mutable_value(v), count : { assign_target(a, t), !special(t), !declared_cv(c, t) } > 0,
     checked(c, a).
 
