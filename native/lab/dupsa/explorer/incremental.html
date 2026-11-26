@@ -1,0 +1,253 @@
+<title>Incremental Duplicate Detection</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: one reading column (the argument, top to bottom: answer, why, how, numbers, the cold path, what is left),
+   with the tables and the diagram allowed wider than the text. */
+:root {
+  --bg: #f5f6f3; --panel: #ffffff; --ink: #1b1f1c; --muted: #5c655f; --line: #d8ddd8; --soft: #eceee9;
+  --accent: #1f5f8b; --dead: #b23e58; --new: #00826b; --kept: #7d8781; --bar: #1f5f8b;
+  --display: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #131614; --panel: #1b1f1c; --ink: #e4e8e4; --muted: #9aa39c; --line: #303631; --soft: #232825;
+  --accent: #6fb0e0; --dead: #d9677f; --new: #2aa58f; --kept: #8c968f; --bar: #5a8fd8; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #131614; --panel: #1b1f1c; --ink: #e4e8e4; --muted: #9aa39c; --line: #303631; --soft: #232825;
+  --accent: #6fb0e0; --dead: #d9677f; --new: #2aa58f; --kept: #8c968f; --bar: #5a8fd8; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 15px/1.6 var(--body) }
+.wrap { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 56px; max-width: 980px; margin: 0 auto; display: grid; gap: 28px }
+section { display: grid; gap: 12px; min-width: 0 }
+.text { max-width: 70ch }
+h1 { font: 600 30px/1.15 var(--display); margin: 0; letter-spacing: -0.015em; text-wrap: balance }
+h2 { font: 600 20px/1.25 var(--display); margin: 0; text-wrap: balance }
+h3 { font: 600 12px/1.3 var(--body); margin: 0; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted) }
+p, ul, ol { margin: 0 } ul, ol { padding-left: 20px; display: grid; gap: 6px }
+code { font: 13px var(--mono); background: var(--soft); padding: 0 4px; border-radius: 3px }
+.lede { font-size: 17px; color: var(--muted); max-width: 70ch }
+.answer { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; display: grid; gap: 10px }
+.answer ol { gap: 8px }
+.note { font-size: 13px; color: var(--muted) }
+.tscroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel) }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; font-variant-numeric: tabular-nums }
+th, td { padding: 7px 12px; border-bottom: 1px solid var(--soft); text-align: left; vertical-align: top }
+th { color: var(--muted); font-weight: 500; font-size: 12.5px; white-space: nowrap }
+td.n { text-align: right; white-space: nowrap }
+tr.pick td { background: color-mix(in srgb, var(--accent) 9%, transparent) }
+tr:last-child td { border-bottom: 0 }
+.bars { min-width: 640px }
+.bars td.track { width: 46%; position: relative }
+.bars .b { height: 12px; border-radius: 0 3px 3px 0; background: var(--bar); display: block }
+.bars .b.lsm { opacity: .55 }
+.axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); padding: 0 2px }
+figure { margin: 0; display: grid; gap: 8px }
+figcaption { font-size: 13px; color: var(--muted); max-width: 75ch }
+svg text { font-family: var(--body); fill: var(--ink) }
+svg .mono { font-family: var(--mono); font-size: 11px }
+svg .muted { fill: var(--muted) }
+.tag { font: 500 11px var(--body); border-radius: 4px; padding: 1px 6px; border: 1px solid var(--line); white-space: nowrap }
+.ok { color: var(--new); border-color: var(--new) }
+</style>
+
+<div class="wrap">
+  <header style="display:grid; gap:10px">
+    <h3>dupsa spike · native/lab/dupsa · branch jeremybarnes/duplicated-code-spike</h3>
+    <h1>Incremental Duplicate Detection</h1>
+    <p class="lede">After a small edit, the duplicated-block findings, and what changed in them, should cost about as much as the edit, not as much as the tree. This spike keeps the suffix-array index up to date over edits and checks every result against a full rebuild.</p>
+  </header>
+
+  <section class="answer">
+    <h2>The answer</h2>
+    <ol>
+      <li><b>A suffix array to depth w is enough, and it is local.</b> A finding only depends on which w-unit windows are equal, so the index needs the windows sorted, and nothing past depth w. An edit then changes only the windows that overlap it.</li>
+      <li><b>Two levels: an immutable base plus an overlay.</b> Base windows that the edit overlaps get tombstones. The new windows the edit makes are looked up in the base and added to their class. The rest of the edited file stays in the base and only moves. Compaction merges the overlay into a new base in one linear pass.</li>
+      <li><b>About 2,000× faster than a rebuild.</b> On Jeff's <code>native/src</code> as node symbols (5.6 M windows), an update takes a median <b>2.9 ms</b> with the index in memory, against 7.0 s to rebuild. A cold process that loads a saved index takes 0.05–0.07 s CPU. All 100 replayed steps (50 per method) gave the rebuild's exact findings.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Why it can be incremental</h2>
+    <div class="text" style="display:grid; gap:10px">
+      <p>Jeff's rule, and <code>report.rs</code> after it, decide two things per position:</p>
+      <ul>
+        <li>whether its window of w units (30 lines, or 150 nodes) is duplicated, meaning some neighbouring suffix shares at least w units with it;</li>
+        <li>for a block, its other copies: the suffixes that share its first window.</li>
+      </ul>
+      <p>Neither looks past depth w, so a suffix array truncated to depth w gives the same findings. In a full suffix array, a suffix's place depends on everything after it, up to the end of its document, so one edit can move suffixes anywhere in the order. In the truncated one, a window's class depends only on its own w units.</p>
+    </div>
+    <figure>
+      <div class="tscroll" style="border:0; background:none">
+        <svg viewBox="0 0 900 230" width="900" height="230" role="img" aria-label="An edit's effect on windows: windows wholly before or after the edit keep their content; windows overlapping it are tombstoned in the old version and added in the new.">
+          <text x="0" y="20" class="muted" font-size="12">old version</text>
+          <text x="0" y="132" class="muted" font-size="12">new version</text>
+          <!-- old strip: 30 units; edit at units 14-16 -->
+          <g transform="translate(90,6)">
+            <rect x="0" y="0" width="560" height="22" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+            <rect x="260" y="0" width="56" height="22" fill="var(--dead)" opacity=".28"/>
+            <text x="288" y="15" text-anchor="middle" font-size="11">edit</text>
+            <!-- windows of w=6 units, unit = 18.67px -->
+            <g stroke-width="3" stroke-linecap="round">
+              <line x1="0" y1="36" x2="112" y2="36" stroke="var(--kept)"/>
+              <line x1="37" y1="44" x2="149" y2="44" stroke="var(--kept)"/>
+              <line x1="149" y1="52" x2="261" y2="52" stroke="var(--kept)"/>
+              <line x1="168" y1="60" x2="280" y2="60" stroke="var(--dead)"/>
+              <line x1="224" y1="68" x2="336" y2="68" stroke="var(--dead)"/>
+              <line x1="299" y1="76" x2="411" y2="76" stroke="var(--dead)"/>
+              <line x1="318" y1="84" x2="430" y2="84" stroke="var(--kept)"/>
+              <line x1="448" y1="92" x2="560" y2="92" stroke="var(--kept)"/>
+            </g>
+          </g>
+          <g transform="translate(90,118)">
+            <rect x="0" y="0" width="598" height="22" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+            <rect x="260" y="0" width="94" height="22" fill="var(--new)" opacity=".28"/>
+            <text x="307" y="15" text-anchor="middle" font-size="11">new text</text>
+            <g stroke-width="3" stroke-linecap="round">
+              <line x1="0" y1="36" x2="112" y2="36" stroke="var(--kept)"/>
+              <line x1="149" y1="52" x2="261" y2="52" stroke="var(--kept)"/>
+              <line x1="168" y1="60" x2="280" y2="60" stroke="var(--new)"/>
+              <line x1="242" y1="68" x2="354" y2="68" stroke="var(--new)"/>
+              <line x1="336" y1="76" x2="448" y2="76" stroke="var(--new)"/>
+              <line x1="356" y1="84" x2="468" y2="84" stroke="var(--kept)"/>
+              <line x1="486" y1="92" x2="598" y2="92" stroke="var(--kept)"/>
+            </g>
+          </g>
+          <g font-size="12">
+            <line x1="714" y1="42" x2="736" y2="42" stroke="var(--kept)" stroke-width="3" stroke-linecap="round"/><text x="744" y="46">same window, kept in the base</text>
+            <line x1="714" y1="66" x2="736" y2="66" stroke="var(--dead)" stroke-width="3" stroke-linecap="round"/><text x="744" y="70">overlaps the edit: tombstoned</text>
+            <line x1="714" y1="178" x2="736" y2="178" stroke="var(--new)" stroke-width="3" stroke-linecap="round"/><text x="744" y="182">new: looked up, added to its class</text>
+            <line x1="714" y1="202" x2="736" y2="202" stroke="var(--kept)" stroke-width="3" stroke-linecap="round"/><text x="744" y="206">after the edit: same, moved</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>The change is the two versions with their common prefix and suffix trimmed off. An edit of e units touches at most e + w − 1 windows on each side, whatever the file's size. The windows after the edit keep their content, so they stay in the base, and their positions are remapped when they are reported.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>The index</h2>
+    <div class="text" style="display:grid; gap:10px">
+      <p><b>The base</b> holds every full window of a snapshot, in window order:</p>
+      <ul>
+        <li>a bit per window for "same as the window before", which replaces the LCP array;</li>
+        <li>each window's class (a run of equal windows);</li>
+        <li>each position's rank.</li>
+      </ul>
+      <p>That is 16 bytes per window: 91 MB for the node windows of <code>native/src</code>. The base is never edited.</p>
+      <p><b>The overlay</b> has an entry per document changed since the base. The entry is computed from the base version and the current version only, so editing a document again replaces its entry. A run that starts from a saved base only needs the documents changed since that base. An entry holds:</p>
+      <ul>
+        <li><b>Tombstones:</b> a bit per base window, with each class's count of live members.</li>
+        <li><b>Added windows:</b> each new window is found by a binary search over the base windows, skipping the units already matched at both bounds. It joins the base class it equals, or a fresh class, keyed by a hash of its units and compared in full, when no base window is the same.</li>
+        <li><b>A position map</b> for the rest of the document.</li>
+      </ul>
+      <p><b>The blocks</b> are kept per document, each holding its first window's class. After a batch of changes, blocks are recomputed only in documents with a member in a class that gained or lost one, since those classes' counts may have crossed 2. A block's other copies are read from its class when reported, so they never go stale. In the replays that was at most 6 documents a step.</p>
+      <p><b>Compaction</b> merges the overlay into a new base. It is one pass in window order:</p>
+      <ul>
+        <li>tombstoned windows are dropped;</li>
+        <li>added windows go at the end of their class;</li>
+        <li>fresh classes go at the rank their binary search stopped at.</li>
+      </ul>
+      <p>No window is compared or sorted again, and the "same as before" bits follow from the classes.</p>
+      <p><b>Finding changes:</b> each step, the last findings are moved through each document's change and compared with the new ones. A finding is then unchanged, moved, has changed copies, is added, or is removed.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>What was tried, and what it costs</h2>
+    <p class="text">The edits are 50 steps on Jeff's tree, from <code>make_steps.py</code>:</p>
+    <ul class="text">
+      <li>40 one-line renames;</li>
+      <li>a 60-line paste that creates a new duplicate, and a later step that removes it;</li>
+      <li>one file deleted;</li>
+      <li>three steps that each change 5 files.</li>
+    </ul>
+    <p class="text">The figures are CPU time on node symbols (<code>--cells local</code>, window 150 nodes, at least 30 lines). The rebuild is SA-IS and blocks over the same tree. Bars are on a log scale.</p>
+    <div class="tscroll">
+      <table class="bars">
+        <thead><tr><th>Per edit, node symbols (5.6 M windows)</th><th class="n">median</th><th class="n">worst</th><th>log scale, 1 ms to 10 s</th></tr></thead>
+        <tbody id="bars"></tbody>
+      </table>
+    </div>
+    <div class="axis" style="margin-left:auto; width:46%; min-width:290px"><span>1 ms</span><span>10 ms</span><span>100 ms</span><span>1 s</span><span>10 s</span></div>
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Design</th><th>What it does</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>Rebuild every run</td><td>SA-IS and Kasai LCP over every document, then blocks.</td><td>7.0 s median per step on nodes; 135 ms on lines.</td></tr>
+          <tr><td>Construction by prefix doubling, to depth w</td><td>Each symbol read once. Each round sorts only the groups still tied (Larsson and Sadakane), and the rounds stop at w.</td><td>Base in 0.6–1.0 s on nodes against 7.3 s for SA-IS; 0.02 s on lines against 0.11 s. Same classes (tested).</td></tr>
+          <tr><td>Log-structured, a whole file per insert</td><td>An edited file is tombstoned whole and all its windows are inserted again, as an LSM of per-file runs would do (<code>--whole-doc</code>).</td><td>35 ms median, 666 ms worst. It grows with the file, not the edit.</td></tr>
+          <tr class="pick"><td>Tombstones plus edit-local delta</td><td>Only the windows the edit overlaps go out and come in; the rest of the file moves.</td><td><b>2.9 ms median, 29 ms worst</b> on nodes; 0.06 ms median on lines.</td></tr>
+          <tr><td>Compaction</td><td>The overlay merged into a new base, in one pass (<code>--compact-every 10</code>).</td><td>About 230 ms. Lookups don't slow down as the overlay grows (7,347 tombstones and 6,361 added windows after 50 steps), so it is only needed to bound memory.</td></tr>
+          <tr><td>A cold process with a saved index</td><td>The base, the blocks and the node dictionary are read from a file, then the edits are applied (<code>--save</code>, <code>--load</code>).</td><td>0.6 G instructions, 0.05–0.07 s CPU, 0.1 s wall, against 13.6 G (1.2 s) building the base by doubling and 66 G (6.5 s) with SA-IS.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">This Mac's load average was 19–90 during these runs, which inflates CPU and wall times but not instruction counts. The worst updates (16–29 ms) are the 60-line paste and the 5-file steps: those add 600–1,100 windows, and each binary search reads up to 150 symbols per step from the tape.</p>
+  </section>
+
+  <section>
+    <h2>Checked against a full rebuild</h2>
+    <div class="text" style="display:grid; gap:10px">
+      <p><span class="tag ok">same</span> on every step, for both methods. With <code>--check</code>, every step rebuilds SA-IS and blocks over the current versions and compares the findings, with all their other copies, one for one:</p>
+      <ul>
+        <li>lines: 50 of 50 steps (562 findings, rising to 564 when the paste lands);</li>
+        <li>node symbols: 50 of 50 steps (600 to 602);</li>
+        <li>a cold run that loads the saved index: 6 of 6 steps, skipping steps 3–40.</li>
+      </ul>
+      <p>The unit test <code>edits_give_the_rebuilds_findings</code> runs random documents through random batches of edits, new and deleted documents, edits to the same document again, and random compactions. It covers both kinds of base, with and without <code>--whole-doc</code>: 19,320 findings compared across 1,560 compactions, all equal to the rebuild. A second test checks that doubling gives SA-IS's classes, in SA-IS's order.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Why the node rebuild took 7 s</h2>
+    <div class="text" style="display:grid; gap:10px">
+      <p>The algorithm isn't the problem; the symbol reads are.</p>
+      <ul>
+        <li><b>The same symbols, read three ways.</b> SA-IS and LCP reading the tape take 5.5 s. Over per-document arrays they take 1.3 s, and over one flat array 0.37 s. That last figure is 63 ns per symbol, in line with lines.</li>
+        <li><b>The tape reads cost about 4.2 s.</b> SA-IS and Kasai's LCP read each symbol 11.9 times, mostly in random order. Every read rebuilds the node's symbol from the tape: two <code>start</code> reads (<code>start_stated</code> tops the profile), a scan of the source for a newline, and a SipHash lookup in the dictionary.</li>
+        <li><b><code>Joined::locate</code> costs about 0.9 s.</b> It is a binary search over the document starts, done on every read.</li>
+      </ul>
+      <p>The doubling build reads each symbol once, into the rank array it sorts, which is the sort's own working state. That is what brings the base to 0.6–1.0 s, with no copy of the tape kept. Lookups in the incremental path read only about 150 symbols per binary-search step, so the read cost there is small.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The path after a small edit</h2>
+    <div class="text" style="display:grid; gap:10px">
+      <p><b>A process that stays up</b> (a watch mode or a language server) keeps the index in memory. After each save it reads the changed files' new versions, which for node symbols means parsing them. Reading a step's new tapes took 0.1–2.4 ms here; the engine's parse of the changed files is a separate cost, not measured here. It sets them in the overlay and recomputes the affected documents. That is milliseconds, and then it reports the changes in the findings.</p>
+      <p><b>A CLI run</b> loads the saved index and the base's tapes, applies every document changed since the base, and diffs against the last run's findings. That is 0.1 s wall today, with these costs left:</p>
+      <ul>
+        <li>The index file is read into memory, 91 MB. Mapping it would cost nearly nothing.</li>
+        <li>The lines method still reads and normalises every base file, 0.23 s, because the base lines' ids are not saved with the index. The node method reads its tapes in place.</li>
+        <li>The finding diff rebuilds every finding with its copies on each step, 4–7 ms on nodes. Building only the affected documents' findings would make it proportional to the change.</li>
+        <li>Each language (tape tag) needs its own base, and the spike runs one. With several languages there would be one base per language, as the node method already does.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where it lives</h2>
+    <ul class="text">
+      <li><code>native/lab/dupsa/src/incr.rs</code>: the base, both builds, the overlay, compaction, saving, and the oracle tests.</li>
+      <li><code>dupsa incr lines|nodes &lt;base&gt; &lt;steps&gt;</code> with <code>--check</code>, <code>--whole-doc</code>, <code>--compact-every N</code>, <code>--save</code> and <code>--load</code>. <code>dupsa readcost</code> is the profile of the node build above.</li>
+      <li><code>native/lab/dupsa/make_steps.py</code> writes the edit steps. Commit <code>5ddac0e5d0</code>, pushed.</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+const rows = [
+  ["Rebuild: SA-IS and blocks", 7016, 9772, false],
+  ["Fresh process: base by doubling, then the edit", 1270, 1380, false],
+  ["Fresh process: saved index loaded, then the edit", 60, 70, false],
+  ["In memory: whole file re-inserted (LSM per file)", 35.5, 666, true],
+  ["In memory: tombstones plus edit-local delta", 2.87, 29.1, false],
+];
+const x = v => Math.max(0, Math.min(1, (Math.log10(v) - 0) / 4));
+const fmt = v => v >= 1000 ? (v / 1000).toFixed(1) + " s" : v >= 10 ? Math.round(v) + " ms" : v.toFixed(1) + " ms";
+document.getElementById("bars").innerHTML = rows.map(([name, med, max, lsm]) =>
+  `<tr${name.includes("edit-local") ? ' class="pick"' : ""}><td>${name}</td><td class="n">${fmt(med)}</td><td class="n">${fmt(max)}</td><td class="track" title="median ${fmt(med)}, worst ${fmt(max)}"><span class="b${lsm ? " lsm" : ""}" style="width:${(100 * x(med)).toFixed(1)}%"></span></td></tr>`).join("");
+</script>
