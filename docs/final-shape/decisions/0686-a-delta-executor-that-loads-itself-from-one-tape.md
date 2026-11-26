@@ -1033,3 +1033,46 @@ cannot write: `tape.rs:142-143` (`text` and `value` read `syms::text` and `syms:
 `syms::value`); the one writer, `rerail_delta_twins/src/intern.rs` (`put`, `append_in`). `k0_pass_rows_by_hand` and
 `l0_is_k0` (14 rules) pass with symbols read, not made. The shape script's `B5` section; clippy over blocks, twins,
 tape_format and delta_exec, clean.
+
+**B6: L1, the boot operation** (2026-11-26; `delta_exec::{k0, l1, boot}`, twin `rerail_delta_twins::k0`).
+
+- `k0_pass` is an operation (read the document's tape block, its symbols block and the atoms · rw control · write
+  each K-form relation's δ runs block), of three phases, emit (shape 11): `count` walks each statement (an item) and
+  counts its rows by relation, writing the first refusal by node order into control (its node and why); `scan` turns
+  the counts into each statement's places, claimed at once in each runs block (`blocks::layer::runs_claim_in`);
+  `place` walks each statement again and writes its rows at its places with the run's sign (`runs_set_in`). No
+  atomics; a refused document writes no row. Its twin is today's walk, split a statement at a time
+  (`k0::statement`), registered as its reference. The host's walk (`k0::rows`) is gone: every reading goes through
+  the operation.
+- L1 (`l1::L1`) is a `DeltaOp` with B§4's ports: **tape**, a row a document (its tape block, where its source and
+  tape lie in it, its node count); **no program**; **one production**, K-form's eight relations, a trace each;
+  **facts in**, a row a document naming its symbols block; **output**, P2's bistate in those traces.
+- File grain, as built: a document added is read whole by `k0_pass` (+1), a document gone is read whole again from
+  its kept tape (−1), and `consolidate` nets the two, so the δ is the new rows against the kept ones. The kept rows
+  are not stored a second time: the old tape is a blob, never versioned, and its rows are its reading. L1 keeps no
+  cache. An unchanged tape is the identity: no operation runs. A symbols block now lives as long as its blob
+  (`Interned` keyed by path and blob), since a kept state of the facts-in port names it.
+- B§8's run, its first two lines (`boot::run`): the tape as a world read (`boot::Tape::read`: the file layer's
+  answer, `intern` when changed, the ports' next state), then L1's instance stepped over the tape since the last read.
+  Not built: the run's returning its pins, and the rest of B§8's run.
+
+Checks (Relax, local, `rerail-delta-exec --lib` 66 of 66):
+
+- the harness (`contract::harness_on`, over input traces made by the world read) passes L1 over a chain of edits of
+  a copy of l0 on disk: cold, unchanged, a rule added, a rule changed, unchanged, a rule removed, back to l0; the
+  cache dropped at steps 1, 3 and 5 (`the_harness_passes_l1_over_edits_of_l0_on_disk`);
+- cold: `k0_pass_rows_by_hand` (a five-line file's rows, through L1's plain function) and `l0_is_k0` (14 rules), and
+  `l1_cold_on_l0_gives_its_14_rules` through `boot::run`;
+- unchanged: the work is the checks alone, the outputs' heads and the cache's bytes as they were, and the file not
+  read (`files.reads` unchanged, under a 100 ms racy window);
+- edited: the outputs' change equals the reference's, the diff of two cold runs; the old tape and the new one read
+  once each;
+- `k0_pass_refuses_an_aggregate` (through L1's plain function) and `k0_pass_refuses_an_aggregate_through_l1` (as a
+  delta operator, through `boot::run`): refused naming the rule's node, no row written.
+
+L1's Rust beyond the operations, read: `l1.rs:34-53` (the ports' shapes and rows), `l1.rs:61-77` (a port's row read
+into `k0_pass`'s document), `l1.rs:81-86` (one `k0_pass` call into the outputs' runs), `l1.rs:97-112` (`delta`:
+identity, the gone documents −1, the added +1), `l1.rs:114-121` (`run`: every document +1); and the world read,
+`boot.rs` (the file layer, `intern`, the ports' next layer). The shape script's `B6` section holds L1's file to
+running no operation but `k0_pass`, writing no row itself and walking no tape on the host, and `k0_pass`'s phases to
+count, scan, place. Clippy over blocks, twins and delta_exec, clean.

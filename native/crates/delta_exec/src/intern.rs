@@ -78,29 +78,27 @@ pub fn intern(reg: &Registry, ops: &InternOps, dir: &mut Directory, atoms: Atoms
     Ok(id)
 }
 
-/// Each document's symbols block, by path, with the blob it was interned from: an unchanged tape's is the one it had,
-/// and `intern` runs only for a changed one.
+/// Each document's symbols block, by its path and the blob it was interned from: an unchanged tape's is the one it had,
+/// and `intern` runs only for a changed one. A symbols block lives as long as its blob (never versioned): a kept state
+/// of the tape port names both.
 #[derive(Default)]
 pub struct Interned {
-    syms: std::collections::HashMap<String, (BlobId, BlockId)>,
+    syms: std::collections::HashMap<(String, BlobId), BlockId>,
     /// `intern`'s runs.
     pub runs: u64,
 }
 
 impl Interned {
-    /// Document `doc`'s symbols block: kept when its tape is the one interned last, else `intern`'s.
+    /// Document `doc`'s symbols block: kept when its tape was interned at its path, else `intern`'s.
     pub fn of(&mut self, reg: &Registry, ops: &InternOps, dir: &mut Directory, atoms: Atoms, blobs: &Blobs, doc: &Doc) -> Result<BlockId, String> {
-        if let Some(&(b, s)) = self.syms.get(&doc.path)
-            && b == doc.after
-        {
+        let key = (doc.path.clone(), doc.after);
+        if let Some(&s) = self.syms.get(&key) {
             return Ok(s);
         }
         let blob = blobs.get(&doc.after).ok_or_else(|| format!("{}: a tape no blob holds", doc.path))?;
         let s = intern(reg, ops, dir, atoms, blob, &doc.path, &doc.module)?;
         self.runs += 1;
-        if let Some((_, old)) = self.syms.insert(doc.path.clone(), (doc.after, s)) {
-            dir.release(old);
-        }
+        self.syms.insert(key, s);
         Ok(s)
     }
 }

@@ -1,12 +1,11 @@
 //! B4's checks: l0's tape through the file layer.
 
 use super::*;
-use rerail_blocks::maps::Placed as _;
 use std::time::{Duration, SystemTime};
 
 /// A root of its own for test `name`, holding a copy of l0, its stat older than the racy window (a file written in
 /// the window's tick is read again, as git's racy rule has it).
-fn root(name: &str) -> (PathBuf, Files) {
+pub(crate) fn root(name: &str) -> (PathBuf, Files) {
     let dir = std::env::temp_dir().join(format!("rerail-b4-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -17,16 +16,16 @@ fn root(name: &str) -> (PathBuf, Files) {
 
 /// The racy window these tests run under (`RERAIL_RACY_MS`), as the engine's tests narrow it (`TEST_RACY_MS`): a file
 /// written (its ctime now) is trusted by its stat once twice the window has passed.
-fn racy_window() -> rerail_context::Bound {
+pub(crate) fn racy_window() -> rerail_context::Bound {
     rerail_context::bind(rerail_context::Switches(Arc::new(vec![("RERAIL_RACY_MS".into(), "100".into())])))
 }
 
-fn past_racy_window() {
+pub(crate) fn past_racy_window() {
     std::thread::sleep(Duration::from_millis(200));
 }
 
 /// Writes `text` at `path`, its modification time `ago` seconds back.
-fn write(path: &std::path::Path, text: &str, ago: u64) {
+pub(crate) fn write(path: &std::path::Path, text: &str, ago: u64) {
     std::fs::write(path, text).unwrap();
     let f = std::fs::File::options().write(true).open(path).unwrap();
     f.set_modified(SystemTime::now() - Duration::from_secs(ago)).unwrap();

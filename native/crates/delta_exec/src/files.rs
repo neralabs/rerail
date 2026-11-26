@@ -243,4 +243,4 @@ fn tape_block(dir: &mut Directory, len: usize) -> (BlockId, Arc<rerail_blocks::b
 
 #[cfg(test)]
 #[path = "files_tests.rs"]
-mod tests;
+pub(crate) mod tests;

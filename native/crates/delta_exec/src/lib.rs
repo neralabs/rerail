@@ -18,7 +18,10 @@
 //! - `tape`: a document's text and its views (`kind`, `field`, `child`, `text`, `value`, `doc`), read where the
 //!   tape and its symbols lie;
 //! - `kform`: K-form's relations;
-//! - `k0`: L1's walk of a K0 tape into K-form rows (the twins' `k0::walk`).
+//! - `k0`: `k0_pass`, L1's reading of a K0 tape into K-form rows (its twin, the twins' `k0`);
+//! - `boot`: B§8's run, its first two lines: the tape as a world read, then L1;
+//! - `l1`: L1, the boot operation: a delta operator of one tape, no program, K-form as its production and the symbols
+//!   as facts in.
 //!
 //! Files are not read here: a document is answered through the engine's file layer (`files`: the observer, its
 //! placed read into the placer's home, the rr parser's tape written into a tape block, a blob named by its content),
@@ -27,12 +30,14 @@
 //! The milestones toward one boot operation, L1 (the rebuild plan's §4), come after: the operator contract (B3), l0's
 //! tape through the file layer (B4), symbols (B5) and L1 itself (B6).
 
+pub mod boot;
 pub mod cache;
 pub mod contract;
 pub mod dir;
 pub mod files;
 pub mod intern;
 pub mod k0;
+pub mod l1;
 pub mod kform;
 pub mod op;
 pub mod sym;

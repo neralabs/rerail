@@ -4,21 +4,29 @@
 use crate::dir::{BlockId, Directory};
 use crate::files::{DocBlob, doc_of};
 use crate::intern::{InternOps, intern};
-use crate::kform::Refused;
+use crate::cache::CacheOps;
+use crate::contract::{Cx, apply, push_layer};
+use crate::k0::K0Ops;
+use crate::l1::{L1, syms_row, tape_row, tape_shape, syms_shape};
 use crate::op::Registry;
+use crate::trace::{RollUp, Trace, TraceOps};
 use crate::sym::{Atoms, Names};
 use crate::tape::{TapeView, View};
-use crate::{L0, k0, kform::RELATIONS};
+use crate::{L0, kform::RELATIONS};
 use rerail_blocks::bistate::{ColumnIndex, Read};
 use rerail_blocks::table::Table;
 use std::collections::BTreeSet;
 
 type Rows = BTreeSet<Vec<i64>>;
 
-/// A registry with `intern`, a directory and its atoms: documents of sources in hand, interned.
+/// A registry with `intern`, `k0_pass` and the trace's and the cache's operations, a directory and its atoms:
+/// documents of sources in hand, interned, read by L1.
 pub(crate) struct Fx {
     pub reg: Registry,
     pub ops: InternOps,
+    pub k0: K0Ops,
+    pub traces: TraceOps,
+    pub caches: CacheOps,
     pub dir: Directory,
     pub atoms: Atoms,
 }
@@ -27,9 +35,16 @@ impl Fx {
     pub fn new() -> Fx {
         let mut reg = Registry::default();
         let ops = InternOps::declare(&mut reg).unwrap();
+        let k0 = K0Ops::declare(&mut reg).unwrap();
+        let traces = TraceOps::declare(&mut reg).unwrap();
+        let caches = CacheOps::declare(&mut reg).unwrap();
         let mut dir = Directory::default();
         let atoms = Atoms::new(&mut dir);
-        Fx { reg, ops, dir, atoms }
+        Fx { reg, ops, k0, traces, caches, dir, atoms }
+    }
+
+    pub fn l1(&self) -> L1 {
+        L1 { ops: self.k0, atoms: self.atoms }
     }
 
     /// A document of `src` answered at `path`, interned: its blob and its symbols block.
@@ -45,10 +60,16 @@ impl Fx {
         self.atoms.find(&self.dir, x).unwrap_or_else(|| panic!("{x:?} not interned"))
     }
 
-    /// The K0 pass's rows of `doc` as module `d`.
-    pub fn rows(&self, doc: &DocBlob, syms: BlockId, d: i64) -> Result<[Rows; 8], Refused> {
-        let (s, a) = (self.dir.read("rows", &[syms]).unwrap(), self.dir.read("rows", &[self.atoms.0]).unwrap());
-        k0::rows(&doc.text, d, s.block(0), a.block(0))
+    /// L1's rows of `doc` as module `d`, by relation: its plain function over a tape port of the one document.
+    pub fn rows(&mut self, doc: &DocBlob, syms: BlockId, d: i64) -> Result<[Rows; 8], String> {
+        let mut t = Trace::new(&tape_shape())?.with_roll_up(RollUp::Never);
+        let mut s = Trace::new(&syms_shape())?.with_roll_up(RollUp::Never);
+        let ht = push_layer(&self.reg, &self.traces, &mut self.dir, &mut t, &[(tape_row(d, doc), 1)])?;
+        let hs = push_layer(&self.reg, &self.traces, &mut self.dir, &mut s, &[(syms_row(d, syms), 1)])?;
+        let l1 = self.l1();
+        let mut cx = Cx { reg: &self.reg, dir: &mut self.dir, traces: &self.traces, caches: &self.caches };
+        let rows = apply(&l1, &mut cx, &[(&t, Some(ht)), (&s, Some(hs))])?;
+        Ok(rows.try_into().expect("eight relations"))
     }
 }
 
@@ -164,14 +185,12 @@ fn k0_pass_rows_by_hand() {
 #[test]
 fn k_form_rows_are_stored_in_32_bits() {
     use crate::op::Tiling;
-    use crate::trace::{Trace, TraceOps};
     use rerail_blocks::layer::{ColType, RunsW};
     use rerail_blocks::region::pin_block;
     let mut fx = Fx::new();
     let (doc, syms) = fx.doc("e(1, 2).\np(x, z) :- e(x, y), e(y, z), !q(y), x != z.\nq(\"s\") :- e(_, -3).\n", "k.rerail");
     let rows = fx.rows(&doc, syms, 7).expect("K0");
-    let ops = TraceOps::declare(&mut fx.reg).unwrap();
-    let (reg, dir) = (&fx.reg, &mut fx.dir);
+    let (reg, ops, dir) = (&fx.reg, &fx.traces, &mut fx.dir);
     for (i, (name, arity)) in RELATIONS.iter().enumerate() {
         let shape = crate::kform::shape(i);
         let wide: Vec<usize> = (0..*arity).filter(|&c| shape.columns[c] == ColType::I64).collect();
@@ -274,7 +293,7 @@ fn k0_pass_refuses_an_aggregate() {
     let mut fx = Fx::new();
     let (doc, syms) = fx.doc("n(c) :- c = count : { e(_, _) }.\n", "agg.rerail");
     let e = fx.rows(&doc, syms, 1).expect_err("an aggregate is not K0");
-    assert!(e.why.contains("not K0"), "{e}");
+    assert!(e.contains("not K0"), "{e}");
     let (doc, syms) = fx.doc("n(x) :- e(x, _) ; e(_, x).\n", "or.rerail");
     assert!(fx.rows(&doc, syms, 1).is_err());
 }

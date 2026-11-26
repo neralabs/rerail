@@ -431,6 +431,35 @@ def b5(failures: list) -> None:
         failures.append("intern.rs: intern is not an operation (B5)")
 
 
+def b6(failures: list) -> None:
+    """B6: L1. `k0_pass` is an operation of three phases (emit: count, scan, place), its twin the walk; L1 is a
+    DeltaOp with B§4's ports, whose Rust beyond `k0_pass` is the wiring of its ports: it runs no other operation,
+    writes no row itself, and never walks a tape on the host."""
+    k0 = (CRATE / "src/k0.rs").read_text()
+    if "pub static K0_PASS: Signature" not in k0:
+        failures.append("k0.rs: k0_pass is not an operation (B6)")
+    raw = (TWINS / "src/k0.rs").read_text()
+    twin = strip_rust(raw)
+    if not re.search(r'K0_PASS: &\[TwinPhase\] = &\[\s*TwinPhase \{ name: "count".*name: "scan".*name: "place"', raw, flags=re.S):
+        failures.append("delta_twins/src/k0.rs: k0_pass's phases are not count, scan, place (emit)")
+    hits(TWINS / "src/k0.rs", twin, r"\bRunsW\b|\bruns\w*\.push\(", "a row written but at its place (emit: count, scan, place)", failures)
+    l1 = CRATE / "src/l1.rs"
+    code = strip_rust(l1.read_text())
+    for pattern, why in [
+        (r"\brun_cpu\b|\brun_on\b|\breg\.(declare|run)", "an operation run but k0_pass (L1's Rust is its ports' wiring)"),
+        (r"\.writer\(|\bRunsW\b|\bpush_layer\b", "a row written by L1's Rust (k0_pass writes them)"),
+        (r"\bwalk\(|\bstatement\(|\bReads\b|\.children\(", "a tape walked on the host (k0_pass's twin walks it)"),
+    ]:
+        hits(l1, code, pattern, why, failures)
+    for name in ("tape", "symbols"):
+        if f'name: "{name}"' not in l1.read_text():
+            failures.append(f"l1.rs: no {name} port (B§4)")
+    for path in sorted((CRATE / "src").rglob("*.rs")):
+        if path.name.endswith("_tests.rs") or path.name == "tests.rs":
+            continue
+        hits(path, strip_rust(path.read_text()), r"\bk0::walk\b|rerail_delta_twins::k0::(walk|statement)\b", "the walk called on the host, not through k0_pass", failures)
+
+
 def reach(failures: list) -> None:
     """The twins' rules reach the blocks code the twins call to write a layer (decision 0686): relation::layer_write,
     where the twins' clippy lints are denied (blocks' clippy.toml lists the twins' paths, and the two lists agree),
@@ -524,14 +553,14 @@ def e1(failures: list) -> None:
 
 def main() -> int:
     failures: list = []
-    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, reach, e1):
+    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, b6, reach, e1):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, reach, E1)")
+    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, B6, reach, E1)")
     return 0
 
 

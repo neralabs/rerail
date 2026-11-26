@@ -447,6 +447,37 @@ impl<'a> RunsW<'a> {
     }
 }
 
+/// Claims `n` places at once in the runs block `bytes` (an emit's scan, its one writer): the first, or `None` when
+/// they do not all fit, the claims past the capacity counted as needed (the driver runs again at the size needed).
+pub fn runs_claim_in(bytes: &mut [u8], n: u32) -> Option<u32> {
+    let h: RunsHead = word(bytes, BODY_AT);
+    assert_eq!(h.magic, RUNS_MAGIC, "a runs block");
+    let (old, new) = (h.claimed, h.claimed + n);
+    set_word::<u32>(bytes, CLAIMED_AT, new);
+    if new > h.cap {
+        set_word::<u32>(bytes, NEEDED_AT, h.needed + new - old.max(h.cap));
+        return None;
+    }
+    Some(old)
+}
+
+/// Writes `row` with `diff` at place `i` of the runs block `bytes`, a place claimed (`runs_claim_in`): an emit's place.
+pub fn runs_set_in(bytes: &mut [u8], i: u32, row: &[i64], diff: i32) {
+    let h: RunsHead = word(bytes, BODY_AT);
+    let s = &h.shape;
+    assert!(i < h.cap && row.len() == s.arity(), "a claimed place, a row of the trace's arity");
+    for (c, &v) in row.iter().enumerate() {
+        let at = h.col_at[c] as usize;
+        if s.width(c) == 8 {
+            set_word::<i64>(bytes, at + 8 * i as usize, v);
+        } else {
+            let v = i32::try_from(v).unwrap_or_else(|_| panic!("column {c} holds 32 bits: {v}"));
+            set_word::<i32>(bytes, at + 4 * i as usize, v);
+        }
+    }
+    set_word::<i32>(bytes, h.diff_at as usize + 4 * i as usize, diff);
+}
+
 /// A δ runs block, read in place.
 #[derive(Clone, Copy)]
 pub struct Runs<'a> {

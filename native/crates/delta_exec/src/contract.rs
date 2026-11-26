@@ -366,15 +366,40 @@ pub type Chain = Vec<Vec<Vec<(Vec<i64>, i32)>>>;
 /// alone, the cache unchanged), L5 (the run whose cache was dropped gives the threaded run's output) and L3 (the
 /// threaded run's output is the cold run's). The first that fails is returned.
 pub fn harness<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize) -> Result<(), Broken> {
-    let fail = |law, step, what: String| Broken { law, step, what };
-    let setup = |e: String| fail("setup", 0, e);
-    let mut reg = Registry::default();
-    let traces = TraceOps::declare(&mut reg).map_err(setup)?;
-    let caches = CacheOps::declare(&mut reg).map_err(setup)?;
-    let mut dir = Directory::default();
-    let ports = op.ports();
-    // The inputs: a trace a port, every state kept (a layer a step, none rolled up).
-    let mut ins: Vec<Trace> = ports.ins.iter().map(|p| Trace::new(&p.shape).map(|t| t.with_roll_up(RollUp::Never))).collect::<Result<_, _>>().map_err(setup)?;
+    let setup = |e: String| Broken { law: "setup", step: 0, what: e };
+    let mut bench = Bench::new().map_err(setup)?;
+    let (mut ins, heads) = inputs(op, &mut bench, chain).map_err(setup)?;
+    harness_on(op, &mut bench, &mut ins, &heads, drop_at)
+}
+
+/// What a harness runs in: a registry with the trace's and the cache's operations (and any its operator's own), and a
+/// directory.
+pub struct Bench {
+    pub reg: Registry,
+    pub dir: Directory,
+    pub traces: TraceOps,
+    pub caches: CacheOps,
+}
+
+impl Bench {
+    pub fn new() -> Result<Bench, String> {
+        let mut reg = Registry::default();
+        let traces = TraceOps::declare(&mut reg)?;
+        let caches = CacheOps::declare(&mut reg)?;
+        Ok(Bench { reg, dir: Directory::default(), traces, caches })
+    }
+
+    pub fn cx(&mut self) -> Cx<'_> {
+        Cx { reg: &self.reg, dir: &mut self.dir, traces: &self.traces, caches: &self.caches }
+    }
+}
+
+/// The input traces of a chain of row changes, a trace a port, every state kept (a layer a step, none rolled up), and
+/// each step's heads.
+#[allow(clippy::type_complexity)]
+fn inputs<O: DeltaOp>(op: &O, bench: &mut Bench, chain: &Chain) -> Result<(Vec<Trace>, Vec<Vec<Option<BlockId>>>), String> {
+    let Bench { reg, dir, traces, .. } = &mut *bench;
+    let mut ins: Vec<Trace> = op.ports().ins.iter().map(|p| Trace::new(&p.shape).map(|t| t.with_roll_up(RollUp::Never))).collect::<Result<_, _>>()?;
     let mut heads: Vec<Vec<Option<BlockId>>> = vec![vec![None; ins.len()]];
     for step in chain {
         let mut now = heads.last().cloned().expect("a state");
@@ -382,20 +407,35 @@ pub fn harness<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize) -> Result<(), 
             if pairs.is_empty() {
                 continue;
             }
-            let id = ins[k].open(&mut dir, pairs.len());
-            {
-                let b = dir.block(id).expect("made");
-                let pin = pin_block(&b, "the chain", true).map_err(setup)?;
-                let w = RunsW::new(&pin);
-                for (r, d) in pairs {
-                    w.push(r, *d).ok_or_else(|| setup("room for the chain's pairs".into()))?;
-                }
-            }
-            now[k] = Some(ins[k].commit(&reg, &traces, &mut dir, id, Tiling::WHOLE).map_err(setup)?);
+            now[k] = Some(push_layer(reg, traces, dir, &mut ins[k], pairs)?);
         }
         heads.push(now);
     }
-    let mut cx = Cx { reg: &reg, dir: &mut dir, traces: &traces, caches: &caches };
+    Ok((ins, heads))
+}
+
+/// Trace `t`'s next layer, of the `(row, ±1)` pairs `pairs`: its new head.
+pub fn push_layer(reg: &Registry, traces: &TraceOps, dir: &mut Directory, t: &mut Trace, pairs: &[(Vec<i64>, i32)]) -> Result<BlockId, String> {
+    let id = t.open(dir, pairs.len().max(1));
+    {
+        let b = dir.block(id).expect("made");
+        let pin = pin_block(&b, "a layer's pairs", true)?;
+        let w = RunsW::new(&pin);
+        for (r, d) in pairs {
+            w.push(r, *d).ok_or("room for the pairs")?;
+        }
+    }
+    t.commit(reg, traces, dir, id, Tiling::WHOLE)
+}
+
+/// `harness`'s laws over input traces `ins` made already, at `heads`, a step's heads each (the first, every port's
+/// state before the chain): the traces an operator's world read writes, as L1's tape port is (B6).
+pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], heads: &[Vec<Option<BlockId>>], drop_at: usize) -> Result<(), Broken> {
+    let fail = |law, step, what: String| Broken { law, step, what };
+    let setup = |e: String| fail("setup", 0, e);
+    let ports = op.ports();
+    let ins: &[Trace] = ins;
+    let mut cx = bench.cx();
     let at = |k: usize| -> Vec<(&Trace, Option<BlockId>)> { ins.iter().zip(&heads[k]).map(|(t, &h)| (t, h)).collect() };
     let mut want = vec![apply(op, &mut cx, &at(0)).map_err(setup)?];
     let mut threaded = Instance::new(op, cx.dir).map_err(setup)?;
