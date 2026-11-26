@@ -476,40 +476,69 @@ unsafe fn doc<'a>(d: *const ViewDir, e: *const ViewRow) -> rerail_reads::view_re
     reads::doc(d, e.offset_from(view_rows(d)) as u32)
 }
 
-unsafe fn vrow_dir<'a>(kind: u32, d: *const ViewDir, r: u32, memo: &mut u32) -> Row<'a> {
+unsafe fn vrow_dir(kind: u32, d: *const ViewDir, r: u32, f: &Found<'_>) -> Row {
     let k = kind - 1;
-    let lo = ViewDir::doc_of_row(d, k, r, *memo);
-    *memo = lo;
-    let e = view_rows(d).add(lo as usize);
-    let i = r.wrapping_sub((*e).rows[k as usize]);
-    Row::View(reads::at(doc(d, e), k.min(12), i))
+    let lo = ViewDir::doc_of_row(d, k, r, if f.d == d { f.lo } else { NONE });
+    let i = r.wrapping_sub((*view_rows(d).add(lo as usize)).rows[k as usize]);
+    Row::View(d, lo, k.min(12), i)
 }
 
-/// A row of a view or a relation, found once, so that each of its columns is read from it: a view row's document
-/// (`reads::At`), or a relation's row (`t + a0`'s row `r`, its far base's block `far`).
-#[derive(Clone)]
-enum Row<'a> {
-    View(reads::At<'a>),
-    Rel(*const u8, u64, u32, *const u8),
+/// The document a walk's view reads last found (`Row::get`): its directory, its row there and its reads (one `Doc`,
+/// which keeps the node it last selected). A walk's rows come in order, most of them in the document of the row
+/// before: such a row neither searches the directory again nor makes the document's reads again. (A select started
+/// from the row before's, `Numbering::select_near`, cost more: rows in an index's key order are far apart in the
+/// numbering, and the near search walked groups the sample skips.)
+struct Found<'a> {
+    d: *const ViewDir,
+    lo: u32,
+    doc: Option<rerail_reads::view_reads::Doc<'a>>,
 }
 
-impl Row<'_> {
-    #[inline(always)]
-    unsafe fn get(&self, col: u32) -> i64 {
-        match self {
-            Row::View(a) => a.col(col) as i64,
-            &Row::Rel(t, a0, r, far) => rel_get(t, a0, r, col, far) as i64,
+impl<'a> Found<'a> {
+    /// None found yet.
+    fn new() -> Self {
+        Found { d: core::ptr::null(), lo: NONE, doc: None }
+    }
+
+    /// Directory `d`'s document `lo`'s reads: the one found, else made (and kept).
+    #[inline]
+    unsafe fn doc(&mut self, d: *const ViewDir, lo: u32) -> &rerail_reads::view_reads::Doc<'a> {
+        if self.d != d || self.lo != lo || self.doc.is_none() {
+            *self = Found { d, lo, doc: Some(doc(d, view_rows(d).add(lo as usize))) };
+        }
+        match &self.doc {
+            Some(doc) => doc,
+            None => unreachable!("made just above"),
         }
     }
 }
 
-unsafe fn vrow<'a>(kind: u32, d: *const ViewDir, r: u32, memo: &mut u32) -> Row<'a> {
+/// A row of a view or a relation, found once, so that each of its columns is read from it: a view row's directory,
+/// document (its row there), view (`views::VIEWS`) and row in the document, read through the walk's `Found`; or a
+/// relation's row (`t + a0`'s row `r`, its far base's block `far`).
+#[derive(Clone, Copy)]
+enum Row {
+    View(*const ViewDir, u32, u32, u32),
+    Rel(*const u8, u64, u32, *const u8),
+}
+
+impl Row {
+    #[inline(always)]
+    unsafe fn get(&self, col: u32, f: &mut Found<'_>) -> i64 {
+        match *self {
+            Row::View(d, lo, k, i) => reads::col(f.doc(d, lo), k, i, col) as i64,
+            Row::Rel(t, a0, r, far) => rel_get(t, a0, r, col, far) as i64,
+        }
+    }
+}
+
+unsafe fn vrow(kind: u32, d: *const ViewDir, r: u32, f: &Found<'_>) -> Row {
     if kind & VIEW_PLACED == 0 {
-        return vrow_dir(kind, d, r, memo);
+        return vrow_dir(kind, d, r, f);
     }
     let p = d as *const PlacedDir;
     if r < (*p).rows {
-        return vrow_dir(kind & !VIEW_PLACED, (*p).dir, r, memo);
+        return vrow_dir(kind & !VIEW_PLACED, (*p).dir, r, f);
     }
     // The tail, one relation in its own block: no far base.
     Row::Rel((*p).tail, (*p).at, r - (*p).rows, (*p).tail)
@@ -517,8 +546,8 @@ unsafe fn vrow<'a>(kind: u32, d: *const ViewDir, r: u32, memo: &mut u32) -> Row<
 
 /// View `kind`'s row `r`, column `col` (`vrow`'s).
 #[inline]
-unsafe fn vread(kind: u32, d: *const ViewDir, r: u32, col: u32, memo: &mut u32) -> i64 {
-    vrow(kind, d, r, memo).get(col)
+unsafe fn vread(kind: u32, d: *const ViewDir, r: u32, col: u32, f: &mut Found<'_>) -> i64 {
+    vrow(kind, d, r, f).get(col, f)
 }
 
 // ---- A stage's values (decision 0095). ----
@@ -530,9 +559,11 @@ struct St<'a> {
     r: *const i64,
     /// The probed relation's far base (decision 0353 step 6): the block it lies in (`far_block`).
     far: *const u8,
-    /// The view row last found (`row`) and its number: a binding reads several columns of each row it walks. Its
-    /// reads point into the launch's buffers, which outlive every stage.
-    last: core::cell::RefCell<(u32, Option<Row<'static>>)>,
+    /// The view row last found (`row`) and its number: a binding reads several columns of each row it walks.
+    last: core::cell::Cell<(u32, Option<Row>)>,
+    /// The document its view reads last found (`Found`). Its reads point into the launch's buffers, which outlive
+    /// every stage.
+    found: core::cell::RefCell<Found<'static>>,
 }
 
 /// The block a relation's far base lies in, as the reads take it (`rel_get`, `lanes::rel_at`): `rf`, else its own.
@@ -544,7 +575,7 @@ fn far_block(r: *const u8, rf: *const u8) -> *const u8 {
 impl<'a> St<'a> {
     /// Stage `s` over the left rows `l` and the relation `r`, whose chain's far base lies in `rf` (none: its own).
     fn new(s: &'a Stage, l: *const i64, r: *const i64, rf: *const u8) -> Self {
-        St { s, l, r, far: far_block(r as *const u8, rf), last: core::cell::RefCell::new((NONE, None)) }
+        St { s, l, r, far: far_block(r as *const u8, rf), last: core::cell::Cell::new((NONE, None)), found: core::cell::RefCell::new(Found::new()) }
     }
 }
 
@@ -558,16 +589,15 @@ impl St<'_> {
             return rel_get(self.r as *const u8, s.r_at, r, col, self.far) as i64;
         }
         let col = if s.v_has != 0 { 1 } else { col };
-        if let (q, Some(row)) = &*self.last.borrow()
-            && *q == r
+        let mut f = self.found.borrow_mut();
+        if let (q, Some(row)) = self.last.get()
+            && q == r
         {
-            return row.get(col);
+            return row.get(col, &mut f);
         }
-        let mut memo = NONE;
-        let row = if s.v_has != 0 { vrow(1, s.v_dir, r, &mut memo) } else { vrow(s.r_view, s.v_dir, r, &mut memo) };
-        let v = row.get(col);
-        *self.last.borrow_mut() = (r, Some(row));
-        v
+        let row = if s.v_has != 0 { vrow(1, s.v_dir, r, &f) } else { vrow(s.r_view, s.v_dir, r, &f) };
+        self.last.set((r, Some(row)));
+        row.get(col, &mut f)
     }
 
     unsafe fn slot(&self, k: u32, t: u32) -> i64 {
@@ -665,8 +695,7 @@ impl St<'_> {
     /// Whether node row `q`'s kind atom is in the stage's set (ascending).
     unsafe fn has_member(&self, q: u32) -> bool {
         let s = self.s;
-        let mut memo = NONE;
-        let k = vread(1, s.v_dir, q, 2, &mut memo);
+        let k = vread(1, s.v_dir, q, 2, &mut self.found.borrow_mut());
         let set = core::slice::from_raw_parts(s.v_set, s.v_nset as usize);
         set.binary_search(&k).is_ok()
     }
@@ -1927,21 +1956,20 @@ unsafe fn witness_count_one(st: &St, j: &Job, b: &Bufs, t: u32) {
 }
 
 /// Row `t` of a copy that reads a view or a relation, or writes a relation: a read and a write each value.
-unsafe fn rows_copy_one(src: *const u8, far: *const u8, dst: *mut u8, c: &Copy, n: u32, t: u32) {
+unsafe fn rows_copy_one(src: *const u8, far: *const u8, dst: *mut u8, c: &Copy, n: u32, t: u32, f: &mut Found<'_>) {
     if t >= n {
         return;
     }
     let base = if c.flags & 1 != 0 { *c.off } else { 0 };
     let grown = if c.flags & 2 != 0 { rows_len(dst, c.dst_rows_at) } else { 0 };
     let a = c.dst_off.wrapping_add(base).wrapping_add(grown).wrapping_add(t);
-    let mut memo = NONE;
-    let row = if c.r_view != 0 { Some(vrow(c.r_view, c.v_dir, t, &mut memo)) } else { None };
+    let row = if c.r_view != 0 { Some(vrow(c.r_view, c.v_dir, t, f)) } else { None };
     for k in 0..c.ncols.min(16) as usize {
         let from = c.src[k];
         let v = if from == NONE {
             c.konst[k]
-        } else if let Some(row) = &row {
-            row.get(from)
+        } else if let Some(row) = row {
+            row.get(from, f)
         } else if c.src_at == 0 {
             col(src as *const i64, from, c.src_stride, t)
         } else {
@@ -2010,24 +2038,23 @@ unsafe fn ix_rows(bb: *const u8, p: &IxP) -> u32 {
 /// The index's row `t` (from its first, `from`), found once for its key columns; a relation's read with its far
 /// base's block `far`.
 #[inline]
-unsafe fn ix_row<'a>(bb: *const u8, far: *const u8, p: &IxP, t: u32, memo: &mut u32) -> Row<'a> {
-    if p.kind != 0 { vrow(p.kind as u32, p.dir, t, memo) } else { Row::Rel(bb, p.at, p.from.wrapping_add(t), far) }
+unsafe fn ix_row(bb: *const u8, far: *const u8, p: &IxP, t: u32, f: &Found<'_>) -> Row {
+    if p.kind != 0 { vrow(p.kind as u32, p.dir, t, f) } else { Row::Rel(bb, p.at, p.from.wrapping_add(t), far) }
 }
 
 /// Row `t`'s key hash (`key_hash`).
-unsafe fn ix_hash64(bb: *const u8, far: *const u8, p: &IxP, t: u32) -> u64 {
-    let mut memo = NONE;
-    let row = ix_row(bb, far, p, t, &mut memo);
+unsafe fn ix_hash64(bb: *const u8, far: *const u8, p: &IxP, t: u32, f: &mut Found<'_>) -> u64 {
+    let row = ix_row(bb, far, p, t, f);
     let mut h = KEY_SEED;
     for i in 0..(p.ncols & !IX_LIVE).min(8) as usize {
-        h = key_mix(h, row.get(p.cols[i]));
+        h = key_mix(h, row.get(p.cols[i], f));
     }
     h
 }
 
 /// Row `t`'s key hash, masked to the index's places.
-unsafe fn ix_hash(bb: *const u8, far: *const u8, p: &IxP, t: u32) -> u32 {
-    (ix_hash64(bb, far, p, t) & p.mask) as u32
+unsafe fn ix_hash(bb: *const u8, far: *const u8, p: &IxP, t: u32, f: &mut Found<'_>) -> u32 {
+    (ix_hash64(bb, far, p, t, f) & p.mask) as u32
 }
 
 /// `MARK_REACH` (decision 0671): the places before one a builder looks back over for its tag.
@@ -2043,10 +2070,14 @@ unsafe fn ix_mark_range(bb: *const u8, rf: *const u8, keys: *const u32, offs: *c
     // `u`'s, where `of` says so).
     const RING: u32 = 2 * MARK_REACH;
     let (mut at, mut of) = ([0u32; RING as usize], [NONE; RING as usize]);
+    // The places' rows, the sorted level's, are in key order: a document's rows apart. Each reads through its own
+    // found document (`Found`): the tags', and each pair compared.
+    let mut f = Found::new();
+    let (mut fu, mut ft) = (Found::new(), Found::new());
     let mut tag = |u: u32| {
         let k = (u % RING) as usize;
         if of[k] != u {
-            (at[k], of[k]) = (mark_tag(ix_hash64(bb, far, p, row(u))), u);
+            (at[k], of[k]) = (mark_tag(ix_hash64(bb, far, p, row(u), &mut f)), u);
         }
         at[k]
     };
@@ -2060,9 +2091,8 @@ unsafe fn ix_mark_range(bb: *const u8, rf: *const u8, keys: *const u32, offs: *c
             if tag(u) != tg {
                 continue;
             }
-            let (mut mu, mut mt) = (NONE, NONE);
-            let (a, b) = (ix_row(bb, far, p, ru, &mut mu), ix_row(bb, far, p, rt, &mut mt));
-            same = (0..(p.ncols & !IX_LIVE).min(8) as usize).all(|i| a.get(p.cols[i]) == b.get(p.cols[i]));
+            let (a, b) = (ix_row(bb, far, p, ru, &fu), ix_row(bb, far, p, rt, &ft));
+            same = (0..(p.ncols & !IX_LIVE).min(8) as usize).all(|i| a.get(p.cols[i], &mut fu) == b.get(p.cols[i], &mut ft));
             break;
         }
         *rows.add((p.n + t) as usize) = tg | u32::from(same);
@@ -2788,8 +2818,9 @@ unsafe fn rows_copy_range(src: *const u8, rf: *const u8, dst: *mut u8, totals: *
         return;
     }
     if c.r_view != 0 || c.src_at != 0 || c.dst_rows_at != 0 {
+        let mut f = Found::new();
         for t in t0..t1 {
-            rows_copy_one(src, far_block(src, rf), dst, c, n, t);
+            rows_copy_one(src, far_block(src, rf), dst, c, n, t, &mut f);
         }
         return;
     }
@@ -2826,8 +2857,9 @@ unsafe fn ix_key_range(bb: *const u8, rf: *const u8, out: *mut u32, places: *mut
         return;
     }
     let far = far_block(bb, rf);
+    let mut f = Found::new();
     for t in t0..t1 {
-        *out.add((eb + t) as usize) = kb.wrapping_add(ix_hash(bb, far, p, t));
+        *out.add((eb + t) as usize) = kb.wrapping_add(ix_hash(bb, far, p, t, &mut f));
     }
 }
 

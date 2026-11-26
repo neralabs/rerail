@@ -74,24 +74,30 @@ pub fn at(d: Doc<'_>, k: u32, r: u32) -> At<'_> {
 impl At<'_> {
     /// Its column `col`.
     #[inline]
-    pub fn col(&self, col: u32) -> u64 {
-        let (d, r) = (&self.d, self.r);
-        (match self.k {
-            0 => d.node(r, col),
-            1 => d.child(r, col),
-            2 => d.field(r, col),
-            3 => d.core(r, col),
-            4 => d.line(r, col),
-            5 => d.loc(Place::Line, r, col),
-            6 => d.loc(Place::EndLine, r, col),
-            7 => d.loc(Place::Col, r, col),
-            8 => d.loc(Place::Docof, r, col),
-            9 => d.tape_row(r, col),
-            10 => d.depth_row(r, col),
-            11 => d.order_row(r, col),
-            _ => d.op(r, col),
-        }) as u64
+    pub fn col(&self, c: u32) -> u64 {
+        col(&self.d, self.k, self.r, c)
     }
+}
+
+/// Column `col` of view `k`'s (`views::VIEWS`) row `r` of document `d`: through `d`, which keeps the tape node it last
+/// selected, so a row's columns select it once.
+#[inline]
+pub fn col(d: &Doc<'_>, k: u32, r: u32, col: u32) -> u64 {
+    (match k {
+        0 => d.node(r, col),
+        1 => d.child(r, col),
+        2 => d.field(r, col),
+        3 => d.core(r, col),
+        4 => d.line(r, col),
+        5 => d.loc(Place::Line, r, col),
+        6 => d.loc(Place::EndLine, r, col),
+        7 => d.loc(Place::Col, r, col),
+        8 => d.loc(Place::Docof, r, col),
+        9 => d.tape_row(r, col),
+        10 => d.depth_row(r, col),
+        11 => d.order_row(r, col),
+        _ => d.op(r, col),
+    }) as u64
 }
 
 /// An atoms directory's layout (`rerail_blocks::atoms::AtomsDirRoot`, `DirEntry`; a test holds it to it): its
