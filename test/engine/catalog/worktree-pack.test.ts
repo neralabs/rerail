@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { runProgram } from "../../support/processes/run-program.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -49,7 +49,7 @@ function writeRules(root: string, files: Record<string, unknown>): string {
 }
 
 function git(cwd: string, ...args: string[]): void {
-  execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, stdio: "ignore" });
+  runProgram("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd });
 }
 
 describe("a worktree's own rules", () => {
