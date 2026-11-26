@@ -99,7 +99,8 @@ impl Placing {
             return Ok(None);
         }
         let seg: i64 = t.query_row("SELECT coalesce(max(seg), 0) + 1 FROM object_segments", [], |r| r.get(0))?;
-        t.execute("INSERT INTO object_segments(seg) VALUES (?1)", [seg])?;
+        let bytes = self.segments.as_ref().and_then(|s| s.files().first().map(|f| super::segments::file_bytes(f))).unwrap_or(0);
+        t.execute("INSERT INTO object_segments(seg, bytes) VALUES (?1, ?2)", [seg, bytes as i64])?;
         Ok(Some(seg))
     }
     /// Entry `i`'s place, in the segment numbered `seg`.
@@ -315,9 +316,9 @@ impl ContentStore {
         let (ids, numbers) = self.immediate_transaction(|t| {
             let created = generation(t)?;
             let mut numbers: Vec<i64> = Vec::with_capacity(files.len());
-            for _ in &files {
+            for file in &files {
                 let seg: i64 = t.query_row("SELECT coalesce(max(seg), 0) + 1 FROM object_segments", [], |r| r.get(0))?;
-                t.execute("INSERT INTO object_segments(seg) VALUES (?1)", [seg])?;
+                t.execute("INSERT INTO object_segments(seg, bytes) VALUES (?1, ?2)", [seg, super::segments::file_bytes(file) as i64])?;
                 numbers.push(seg);
             }
             let place = |i: usize| {
@@ -363,9 +364,9 @@ impl ContentStore {
         let (ids, numbers) = self.immediate_transaction(|t| {
             let created = generation(t)?;
             let mut numbers: Vec<i64> = Vec::with_capacity(files.len());
-            for _ in &files {
+            for file in &files {
                 let seg: i64 = t.query_row("SELECT coalesce(max(seg), 0) + 1 FROM object_segments", [], |r| r.get(0))?;
-                t.execute("INSERT INTO object_segments(seg) VALUES (?1)", [seg])?;
+                t.execute("INSERT INTO object_segments(seg, bytes) VALUES (?1, ?2)", [seg, super::segments::file_bytes(file) as i64])?;
                 numbers.push(seg);
             }
             let mut ids = Vec::with_capacity(sources.len());

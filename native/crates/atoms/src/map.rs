@@ -500,12 +500,12 @@ pub const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
 /// counts, digests, encoded bytes of integers or text).
 #[cfg(any(test, feature = "test-hooks"))]
 pub const NOT_ATOMS: &[(&str, &[&str])] = &[
-    ("atom_blocks", &["seq", "tag"]),
-    ("facts_chain", &["space", "seq", "tag"]),
+    ("atom_blocks", &["seq", "tag", "bytes"]),
+    ("facts_chain", &["space", "seq", "tag", "bytes"]),
     ("file_documents", &["tape_id", "ordinal", "parent_ordinal", "role_id", "via_id", "document_tape_id", "source_map", "host_errors", "at_start", "at_end"]),
     // The per-file memo's entries (decision 0240 §4): their symbols are strings in the pack (memo/image.rs).
     ("memo_entries", &["space", "part", "digest", "doc", "pack", "at", "len", "raw", "over_pack", "over_at", "over_len", "over_raw", "framed"]),
-    ("memo_packs", &["pack"]),
+    ("memo_packs", &["pack", "bytes"]),
     // A guest's identity (a digest) and its key (decision 0391).
     ("guest_keys", &["identity", "key"]),
     ("git_tree_entries", &["tree_id", "name_string_id", "mode_id", "object_kind_id", "target_hash_id"]),
@@ -519,7 +519,8 @@ pub const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("snapshots", &["snapshot_id", "root_tree_id", "scanner_version", "grammar_set_hash_id", "tape_format_version"]),
     ("source_aliases", &["alias_hash_id", "source_id"]),
     ("source_objects", &["source_id", "canonical_hash_id", "raw_length", "codec_id", "created_generation", "seg", "seg_at", "seg_len"]),
-    ("object_segments", &["seg"]),
+    ("object_segments", &["seg", "bytes"]),
+    ("store_bytes", &["singleton", "bytes"]),
     ("sqlite_sequence", &["name", "seq"]),
     ("store_identity", &["singleton", "id"]),
     ("store_sessions", &["kind", "key", "latest", "last_used", "ended", "aged_bytes"]),
