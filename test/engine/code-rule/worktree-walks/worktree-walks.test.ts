@@ -11,7 +11,7 @@ import type * as WalkReads from "../../../../src/engine/code-rule/walk-read-buff
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
 import { lookMoved, WorktreeLooks } from "../../../../src/engine/code-rule/worktree-look.js";
 import { WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
-import { RepositoryWorktreeWalks, type WatcherWalk, WorktreeWalks, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
+import { RepositoryWorktreeWalks, type WatcherWalk, WorktreeWalks, type WorktreeWatch, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
 import type { WorktreeListLearning } from "../../../../src/engine/catalog/repository-identity.js";
 import { GitReads } from "../../../../src/engine/git.js";
 import type * as Git from "../../../../src/engine/git.js";
@@ -105,6 +105,9 @@ const bridges: CodeRuleBridge[] = [];
 const directories: string[] = [];
 const releases: Array<() => void> = [];
 afterEach(async () => {
+  // A case that timed out never reached its own `finally`: no fake clock or spy it made reaches the cases after it.
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   releases.splice(0).forEach(release => release());
   counted.held.clear();
   counted.heldOpenings.clear();
@@ -1420,7 +1423,6 @@ describe("the time between a session's walks", () => {
    * while the clock timers run on stands still: a suspend inside the walk on Linux, or the system's clock set on.
    */
   async function waitAfter(roots: readonly string[], { work, stood }: { work: number; stood: number }): Promise<unknown[]> {
-    vi.useFakeTimers({ toFake: ["Date", "performance"] });
     const walks = new WorktreeWalks({ gapMs: 0 });
     let walked = 0;
     const watch = walks.watch(scanning(watcherOf(roots, []), () => {
@@ -1428,17 +1430,18 @@ describe("the time between a session's walks", () => {
       vi.advanceTimersByTime(work);
       vi.setSystemTime(Date.now() + stood);
     }));
+    const timed = vi.spyOn(globalThis, "setTimeout");
     try {
+      vi.useFakeTimers({ toFake: ["Date", "performance"] });
       watch.request();
       await walks.idle();
-      const timed = vi.spyOn(globalThis, "setTimeout");
+      timed.mockClear();
       watch.request();
-      const delays = timed.mock.calls.map(([, ms]) => ms);
-      timed.mockRestore();
-      return delays;
+      return timed.mock.calls.map(([, ms]) => ms);
     } finally {
-      await watch.close();
+      timed.mockRestore();
       vi.useRealTimers();
+      await watch.close();
     }
   }
 
@@ -1458,12 +1461,15 @@ describe("the time between a session's walks", () => {
     const { worktrees } = await repository(["w1"]);
     const scans: string[] = [];
     const watch = new WorktreeWalks({ gapMs: 3_600_000 }).watch(watcherOf(worktrees, scans));
-    watch.request();
-    await watch.settled();
-    watch.request();
-    await watch.settled();
-    expect(scans).toHaveLength(2);
-    await watch.close();
+    try {
+      watch.request();
+      await watch.settled();
+      watch.request();
+      await watch.settled();
+      expect(scans).toHaveLength(2);
+    } finally {
+      await watch.close();
+    }
   });
 
   it("keeps the gap of a session that settles while it takes a walk it did not ask for", async () => {
@@ -1477,21 +1483,26 @@ describe("the time between a session's walks", () => {
       taking.resolve();
       await held.promise;
     }));
-    first.request();
-    await first.settled();
-    // The second session's first walk reads the worktree the first watches, so the first takes it too.
-    const second = walks.watch(watcherOf(worktrees, []));
-    second.request();
-    await taking.promise;
-    const settled = first.settled();
-    held.resolve();
-    await settled;
     const timed = vi.spyOn(globalThis, "setTimeout");
-    first.request();
-    const delays = timed.mock.calls.map(([, ms]) => Number(ms));
-    timed.mockRestore();
-    expect(delays.filter(ms => ms > 3_000_000)).toHaveLength(1);
-    await Promise.all([first.close(), second.close()]);
+    let second: WorktreeWatch | undefined;
+    try {
+      first.request();
+      await first.settled();
+      // The second session's first walk reads the worktree the first watches, so the first takes it too.
+      second = walks.watch(watcherOf(worktrees, []));
+      second.request();
+      await taking.promise;
+      const settled = first.settled();
+      held.resolve();
+      await settled;
+      timed.mockClear();
+      first.request();
+      const delays = timed.mock.calls.map(([, ms]) => Number(ms));
+      expect(delays.filter(ms => ms > 3_000_000)).toHaveLength(1);
+    } finally {
+      timed.mockRestore();
+      await Promise.all([first.close(), second?.close()]);
+    }
   });
 });
 
