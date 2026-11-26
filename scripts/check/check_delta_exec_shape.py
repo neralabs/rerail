@@ -396,10 +396,10 @@ def contract(failures: list) -> None:
     if not re.search(r"pub fn reference<O: DeltaOp>", text):
         failures.append("contract.rs: the generic reference is not written once")
     raw = p.read_text()
-    for law in ("L1", "L2", "L3", "L4", "L5"):
+    for law in ("L1", "L2", "L3", "L4", "L5", "D1"):
         if f'fail("{law}"' not in raw:
             failures.append(f"contract.rs: the harness does not check {law}")
-    if "Retention::Cache" in text or not re.search(r"pub struct Instance \{\s*pub outs: Vec<Trace>,\s*pub cache: OpCache,\s*\}", text):
+    if "Retention::Cache" in text or not re.search(r"pub struct Instance \{\s*pub outs: Vec<Trace>,\s*pub cache: OpCache,\s*pub want: Trace,\s*pub asks: Vec<Option<Trace>>,\s*\}", text):
         failures.append("contract.rs: an operator's cache is not the operator cache's block (OpCache)")
     tests = (CRATE / "src/contract_tests.rs").read_text()
     for flaw, law in (("Kills", "L1"), ("Cold", "L2"), ("Busy", "L4"), ("Cache", "L5")):
@@ -483,7 +483,7 @@ def b6(failures: list) -> None:
     code = strip_rust(l1.read_text())
     for pattern, why in [
         (r"\brun_cpu\b|\brun_on\b|\breg\.(declare|run)", "an operation run but k0_pass (L1's Rust is its ports' wiring)"),
-        (r"\.writer\(|\bRunsW\b|\bpush_layer\b", "a row written by L1's Rust (k0_pass writes them)"),
+        (r"\bout\.writer\(|\bRunsW\b|\bpush_layer\b", "a row written by L1's Rust (k0_pass writes them)"),
         (r"\bwalk\(|\bstatement\(|\bReads\b|\.children\(", "a tape walked on the host (k0_pass's twin walks it)"),
     ]:
         hits(l1, code, pattern, why, failures)
@@ -510,6 +510,15 @@ def b6(failures: list) -> None:
         failures.append("l1.rs: L1 keeps no cache, or reads none (Bootstrap, Figure 2: k0_pass rw L1's cache)")
     if not re.search(r'SlotSpec \{ name: "cache", mode: Mode::ReadWrite, kind: kind::CACHE \}', k0h):
         failures.append("k0.rs: k0_pass has no read-write slot for L1's cache")
+    # Demand (P§7.1): L1 asks of its tape port (its only rows written in Rust: the demand on its input), restricts its
+    # work to the want, and the boot's run answers only what is asked.
+    if "const ASKED: &'static [usize] = &[0];" not in l1 or "asks.writer(cx.dir, L1Ports::TAPE)" not in l1 or "want_rows(" not in l1:
+        failures.append("l1.rs: L1 neither restricts to its want nor asks of its tape port (P§7.1)")
+    boot = (CRATE / "src/boot.rs").read_text()
+    if "inst.asked(" not in boot or "docs.forget(" not in boot or "inst.set_want(" not in boot:
+        failures.append("boot.rs: the run's demand does not reach the world as reads (P§7.1)")
+    if "Asks::none()" in strip_rust((CRATE / "src/contract.rs").read_text()).split("pub fn none()")[-1]:
+        failures.append("contract.rs: a driver runs an operator with no asks (P§7.1: demand out is a port)")
     if re.search(r"for drop_at in \[", (CRATE / "src/l1_tests.rs").read_text()):
         failures.append("l1_tests.rs: L5's cache dropped at fixed steps, not random ones")
     dirs = (CRATE / "src/dir.rs").read_text()

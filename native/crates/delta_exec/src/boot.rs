@@ -36,13 +36,15 @@ use crate::dir::{BlockId, Directory};
 use crate::drop::{DropOps, drop_parts};
 use crate::files::{Doc, World, key_of, probe};
 use crate::intern::InternOps;
-use crate::l1::{L1, TAPE_PATH, row_blobs, tape_row, tape_shape};
+use crate::kform::RELATIONS;
+use crate::l1::{L1, L1Ports, TAPE_PATH, row_blobs, tape_row, tape_shape};
 use crate::op::Tiling;
 use crate::sym::Atoms;
 use crate::trace::{RollUp, Trace};
 use rerail_blocks::bistate::{ColumnIndex, Read};
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::BODY_AT;
+use std::collections::BTreeSet;
 
 /// The document set as the world and its answerers give it (B§7's first answerer, `load`, then `parse` and
 /// `intern`): L1's tape port, P§11.4's document set.
@@ -75,6 +77,32 @@ impl DocSet {
         Ok(Read::matching(&s, &[ColumnIndex::new(TAPE_PATH as u16)], &[p]).next().map(|r| (0..Read::arity(&s) as u16).map(|c| Read::get(&s, r, ColumnIndex::new(c))).collect()))
     }
 
+    /// The key of the document at `path` (decision 0052 §3, from its path's hash): its row's, when the set has one.
+    pub fn key(&self, dir: &Directory, atoms: Atoms, path: &str) -> Result<i64, String> {
+        Ok(match self.row_at(dir, atoms, path)? {
+            Some(r) => r[0],
+            None => key_of(path, |k| probe(dir, &self.tape, &[k]).ok().flatten().is_some()),
+        })
+    }
+
+    /// The keys of the documents the set holds.
+    pub fn keys(&self, dir: &Directory) -> Result<BTreeSet<i64>, String> {
+        Ok(crate::contract::rows_at(dir, &self.tape, self.tape.head())?.into_iter().map(|r| r[0]).collect())
+    }
+
+    /// Document `d` let go: nothing asks for it any more (P§7, "a file goes as X → ∅ when nothing asks for it"), its
+    /// row retracted where the set keeps it and its place forgotten.
+    pub fn forget(&mut self, bench: &mut Bench, d: i64) -> Result<(), String> {
+        let Some(h) = self.tape.head() else { return Ok(()) };
+        let runs = self.tape.open(&mut bench.dir, 4);
+        if let Err(e) = drop_parts(&bench.reg, &self.drops, &mut bench.dir, h, &[d], -1, runs) {
+            bench.dir.release(runs);
+            return Err(e);
+        }
+        self.tape.commit(&bench.reg, &bench.traces, &mut bench.dir, runs, Tiling::WHOLE)?;
+        self.world.place(&bench.reg, &bench.traces, &mut bench.dir, d, None)
+    }
+
     /// Reads document `path` as module `module` (B§8's first line; the engine's load names both): its load answer;
     /// when it changed, its symbols (the intern answer, into `atoms`), its places, and the document set's next
     /// state, its old row retracted where the set keeps it (`drop_parts`) and its new row added; an unchanged document
@@ -83,10 +111,7 @@ impl DocSet {
         let kept = self.row_at(&bench.dir, atoms, path)?;
         let d = match &kept {
             Some(r) => r[0],
-            None => {
-                let (dir, tape) = (&bench.dir, &self.tape);
-                key_of(path, |k| probe(dir, tape, &[k]).ok().flatten().is_some())
-            }
+            None => self.key(&bench.dir, atoms, path)?,
         };
         let before = kept.as_ref().map(|r| row_blobs(r).0);
         let doc = self.world.load(&bench.reg, &bench.traces, &mut bench.dir, &mut bench.blobs, d, path, module, before)?;
@@ -145,21 +170,32 @@ pub struct Pins {
     pub atoms: Global,
     pub world: [Option<BlockId>; 3],
     pub blobs: Option<BlockId>,
+    /// L1's want (its productions) and its requests of each input port (P§7.1).
+    pub want: Option<BlockId>,
+    pub asks: Vec<Option<BlockId>>,
 }
 
 /// A kept pins block's first word.
 const PINS_MAGIC: i64 = i64::from_le_bytes(*b"PINS0686");
 
+/// A kept pins block's words before its requests' and outputs' heads: the magic, the atoms' count, the outputs' and
+/// requests' counts, then the tape's, the world's three, the blobs' and the want's heads.
+const HEAD: usize = 10;
+
+/// The rounds a run may take (each a step of L1, then the world answering what it asked) before it is refused: the
+/// boot's demand is l0 alone, answered in the round after it is first asked.
+const MAX_ROUNDS: usize = 4;
+
 impl Pins {
     fn heads(&self) -> Vec<Option<BlockId>> {
-        [self.tape].into_iter().chain(self.world).chain([self.blobs]).chain(self.outs.iter().copied()).collect()
+        [self.tape].into_iter().chain(self.world).chain([self.blobs, self.want]).chain(self.asks.iter().copied()).chain(self.outs.iter().copied()).collect()
     }
 
     /// Kept: a frozen block, its words the pins and a reference to every head, where the directory keeps what lasts.
     /// Its id (a later one's is larger: the newest pins are the largest id's).
     pub fn keep(&self, dir: &mut Directory) -> Result<BlockId, String> {
         let heads = self.heads();
-        let words: Vec<i64> = [PINS_MAGIC, self.atoms.count as i64, self.outs.len() as i64]
+        let words: Vec<i64> = [PINS_MAGIC, self.atoms.count as i64, self.outs.len() as i64, self.asks.len() as i64]
             .into_iter()
             .chain(heads.iter().map(|h| h.map_or(-1, |b| i64::from(b.0))))
             .collect(); // copy: derived (the pins' words, written once)
@@ -191,55 +227,94 @@ impl Pins {
             if word(0) != Some(PINS_MAGIC) {
                 continue;
             }
-            let n = word(2).unwrap_or(0) as usize;
-            let words: Option<Vec<i64>> = (0..3 + 5 + n).map(word).collect(); // copy: derived (the pins' words)
+            let n = word(2).unwrap_or(0) as usize + word(3).unwrap_or(0) as usize;
+            let words: Option<Vec<i64>> = (0..HEAD + n).map(word).collect(); // copy: derived (the pins' words)
             best = Some((id, words.ok_or("a kept pins block, short")?));
         }
         let Some((id, w)) = best else { return Ok(None) };
         let head = |x: i64| (x >= 0).then_some(BlockId(x as u32));
+        let asks = w[3] as usize;
         Ok(Some((id, Pins {
-            tape: head(w[3]),
-            world: [head(w[4]), head(w[5]), head(w[6])],
-            blobs: head(w[7]),
-            outs: w[8..].iter().map(|&x| head(x)).collect(),
+            tape: head(w[4]),
+            world: [head(w[5]), head(w[6]), head(w[7])],
+            blobs: head(w[8]),
+            want: head(w[9]),
+            asks: w[HEAD..HEAD + asks].iter().map(|&x| head(x)).collect(),
+            outs: w[HEAD + asks..].iter().map(|&x| head(x)).collect(),
             atoms: Global { block: BlockId(u32::MAX), count: w[1] as u64 },
         })))
     }
 }
 
-/// B§8's run, its first two lines: `l0` read by the world (its load, parse and intern answers), its changed names
-/// interned into `globals`, then L1 over the document set since `last` (`None`: cold, every bistate from ∅, L1's
-/// outputs emptied first). Refused when `last` is not where the last run left the traces. The run's pins, kept where
-/// the directory keeps what lasts; l0's answer; L1's work.
+/// B§8's run, its first two lines, under demand (P§7.1): the run's productions, l0's K-form (every relation of it, by
+/// l0's key), are the want on L1; L1 asks of its tape port the documents it needs, and the world answers what is asked
+/// (its load, parse and intern answers; the names it interns into `globals`), and lets go what is no longer asked. A
+/// run is rounds: L1 stepped over the document set since the last round, then every key asked answered (the first
+/// round's answers each kept request again, the world's cover; a later round's, those asked since), until a round
+/// moves nothing. `last`: `None` is cold (every bistate from ∅, L1's traces emptied first); refused when not where the
+/// last run left the traces. The run's pins, kept where the directory keeps what lasts; l0's answer; L1's work.
 #[allow(clippy::too_many_arguments)]
 pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms, docs: &mut DocSet, bench: &mut Bench, last: Option<&Pins>) -> Result<(Pins, Doc, Work), String> {
     match last {
-        Some(p) if p.tape != docs.tape.head() || p.outs != inst.heads() || p.atoms.count != u64::from(globals.count(&bench.dir)) => {
+        Some(p) if p.tape != docs.tape.head() || p.outs != inst.heads() || p.want != inst.want.head() || p.asks != inst.ask_heads() || p.atoms.count != u64::from(globals.count(&bench.dir)) => {
             return Err(format!("pins of another state: {p:?} (a run starts where the last run left its traces)"));
         }
         Some(_) => {}
-        None => inst.outs.iter_mut().for_each(|t| t.clear(&mut bench.dir)),
+        None => inst.clear(&mut bench.dir),
     }
     docs.world.begin();
     let ran = (|| {
         // The blobs of slabs the residency retired or dropped since, forgotten (their documents load again).
         bench.blobs.forget_dead(&bench.reg, &mut bench.dir)?;
-        let doc = docs.read(bench, globals, l0, module)?;
-        docs.resident(bench)?;
-        let count = u64::from(globals.count(&bench.dir));
-        let ins = [(&docs.tape, last.and_then(|p| p.tape), docs.tape.head())];
-        let atoms = [GlobalIn { block: globals.0, before: last.map(|p| p.atoms.count), after: count }];
-        let work = inst.step(l1, &mut bench.cx(), &ins, &atoms)?;
+        // The run's productions: the want on L1's outputs. A request is answered by the spelling the run names it by.
+        let d = docs.key(&bench.dir, globals, l0)?;
+        let productions: BTreeSet<(usize, i64)> = (0..RELATIONS.len()).map(|k| (k, d)).collect();
+        let (wb, wa) = inst.set_want(&mut bench.cx(), &productions)?;
+        let mut want = (wb, wa);
+        let mut from = (last.and_then(|p| p.tape), last.map(|p| p.atoms.count));
+        let (mut work, mut doc, mut answered) = (Work::default(), None, BTreeSet::new());
+        for round in 0.. {
+            if round == MAX_ROUNDS {
+                return Err(format!("a run past {MAX_ROUNDS} rounds: each asked what the last answered"));
+            }
+            docs.resident(bench)?;
+            let count = u64::from(globals.count(&bench.dir));
+            let ins = [(&docs.tape, from.0, docs.tape.head())];
+            let atoms = [GlobalIn { block: globals.0, before: from.1, after: count }];
+            work += inst.step(l1, &mut bench.cx(), &ins, &atoms, Some(want))?;
+            from = (docs.tape.head(), Some(count));
+            want = (wa, wa);
+            // Demand reaches the world as reads: what is asked answered, what is no longer asked let go.
+            let asked = inst.asked(&bench.dir, L1Ports::TAPE.index())?;
+            for gone in docs.keys(&bench.dir)?.difference(&asked) {
+                docs.forget(bench, *gone)?;
+            }
+            for &k in &asked {
+                if round > 0 && answered.contains(&k) {
+                    continue;
+                }
+                if k != d {
+                    return Err(format!("a request for document {k}, which the run names no path for"));
+                }
+                doc = Some(docs.read(bench, globals, l0, module)?);
+                answered.insert(k);
+            }
+            if docs.tape.head() == from.0 && u64::from(globals.count(&bench.dir)) == count {
+                break;
+            }
+        }
         // Its delta read, the run's before is no longer a layer the set needs: its layers rolled up (P§11.4's roll-up,
         // the document set's), so the next run's before is one head.
         docs.tape.roll_up_run(&bench.reg, &bench.traces, &mut bench.dir, last.and_then(|p| p.tape), Tiling::WHOLE)?;
-        Ok::<_, String>((doc, work, count))
+        inst.roll_up_want(&mut bench.cx(), last.and_then(|p| p.want))?;
+        let doc = doc.ok_or("l0 was not asked")?;
+        Ok::<_, String>((doc, work, from.1.unwrap_or(0)))
     })();
     docs.world.end();
     // An execution ended: the residency drops everything `DROP_AFTER` from now, unless another run comes first.
     bench.dir.executed();
     let (doc, work, count) = ran?;
-    let pins = Pins { tape: docs.tape.head(), outs: inst.heads(), atoms: Global { block: globals.0, count }, world: docs.world.heads(), blobs: bench.blobs.head() };
+    let pins = Pins { tape: docs.tape.head(), outs: inst.heads(), atoms: Global { block: globals.0, count }, world: docs.world.heads(), blobs: bench.blobs.head(), want: inst.want.head(), asks: inst.ask_heads() };
     if bench.dir.lasting() == crate::dir::PLACE_KEPT {
         let id = pins.keep(&mut bench.dir)?;
         if let Some(old) = docs.kept.replace(id) {

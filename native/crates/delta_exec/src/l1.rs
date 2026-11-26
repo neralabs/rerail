@@ -26,7 +26,7 @@
 //! Its Rust beyond `k0_pass` and `drop_parts` is the wiring of these ports.
 
 use crate::cache::Sizes;
-use crate::contract::{Asks, At, CacheW, Cx, DeltaOp, In, Out, Port, PortGlobal, PortIn, PortOut, PortSet, Ports, Work, outs};
+use crate::contract::{Asks, At, CacheW, Cx, DeltaOp, In, Out, Port, PortGlobal, PortIn, PortOut, PortSet, Ports, Work, outs, want_rows};
 use crate::dir::{BlockId, Directory};
 use crate::drop::{DropOps, drop_parts};
 use crate::files::{BlobId, BlobRows, DocIds};
@@ -35,6 +35,7 @@ use crate::kform::{self, RELATIONS};
 use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
 use rerail_blocks::layer::{ColType, Shape};
 use rerail_blocks::relation::View;
+use std::collections::BTreeSet;
 
 /// L1's port set (B§4's ports): the tape, the atoms, and K-form's eight relations.
 pub struct L1Ports;
@@ -64,6 +65,9 @@ impl PortSet for L1Ports {
             outs: RELATIONS.iter().enumerate().map(|(i, (name, _))| Port { name, shape: kform::shape(i) }).collect(),
         }
     }
+
+    /// It asks of its tape port: the documents it needs, by key (P§7.1).
+    const ASKED: &'static [usize] = &[0];
 }
 
 /// The tape port's rows, P§11.4's document set (path → tape id, grammar; indexed by path, partitioned by document):
@@ -132,16 +136,48 @@ impl DeltaOp for L1 {
     type Ports = L1Ports;
     type Cache = Sizes;
 
-    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_, L1Ports>, _: Option<&Bistate<View<'_>>>, cache: &mut CacheW<Sizes>, out: &mut Out<L1Ports>, _: &mut Asks<L1Ports>) -> Result<Work, String> {
+    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_, L1Ports>, want: Option<&Bistate<View<'_>>>, cache: &mut CacheW<Sizes>, out: &mut Out<L1Ports>, asks: &mut Asks<L1Ports>) -> Result<Work, String> {
         let mut work = Work::default();
-        if ins.is_identity() {
+        // The documents wanted on each side (`None`: all). L1's grain is the document: a wanted relation of a document
+        // is all of that document's relations (over-demand at its grain, which D1 allows).
+        let docs_of = |v: &View<'_>| want_rows(v).into_iter().map(|w| w.1).collect::<BTreeSet<i64>>();
+        let (wb, wa) = match want {
+            None => (None, None),
+            Some(w) => (Some(w.before().map_or_else(BTreeSet::new, docs_of)), Some(docs_of(w.after()))),
+        };
+        if ins.is_identity() && wb == wa {
             return Ok(work);
         }
+        let (was, now) = (|d: i64| wb.as_ref().is_none_or(|s| s.contains(&d)), |d: i64| wa.as_ref().is_none_or(|s| s.contains(&d)));
+        let (newly, dropped): (Vec<i64>, Vec<i64>) = match (&wb, &wa) {
+            (Some(b), Some(a)) => (a.difference(b).copied().collect(), b.difference(a).copied().collect()), // copy: derived (the want's change, by document)
+            _ => (Vec::new(), Vec::new()),
+        };
+        // Demand out (P§7.1): the documents newly wanted asked of the tape port, those no longer wanted let go.
+        if !newly.is_empty() || !dropped.is_empty() {
+            let w = asks.writer(cx.dir, L1Ports::TAPE)?;
+            for (&d, diff) in newly.iter().map(|d| (d, 1)).chain(dropped.iter().map(|d| (d, -1))) {
+                w.push(&[d], diff);
+            }
+        }
         let (tape, atoms) = (ins.port(L1Ports::TAPE), ins.global(L1Ports::ATOMS).block);
-        let mut parts: Vec<i64> = tape.before().map_or_else(Vec::new, |tb| tape.gone().map(|id| cell(tb, id, 0)).collect()); // copy: derived (the gone documents' ids)
+        // Retracted: the documents gone from the tape port that were wanted, and those no longer wanted.
+        let mut parts: Vec<i64> = tape.before().map_or_else(Vec::new, |tb| tape.gone().map(|id| cell(tb, id, 0)).filter(|&d| was(d)).collect()); // copy: derived (the gone documents' ids)
+        parts.extend(&dropped);
         parts.sort_unstable();
         parts.dedup();
-        let docs = tape.added().map(|id| doc_at(cx.blobs, cx.dir, tape.after(), id)).collect::<Result<Vec<_>, _>>()?; // copy: derived (the documents' places, from their blobs)
+        // Read: the documents added to the tape port that are wanted, and those newly wanted that it holds unchanged (a
+        // newly wanted relation is an initial run of it, P§5).
+        let mut ids: Vec<RowId> = tape.added().filter(|&id| now(cell(tape.after(), id, 0))).collect(); // copy: derived (the documents to read)
+        let added: BTreeSet<RowId> = ids.iter().copied().collect(); // copy: derived (the added rows' ids)
+        for &d in &newly {
+            ids.extend(Read::matching(tape.after(), &[ColumnIndex::new(0)], &[d]).filter(|id| !added.contains(id)));
+        }
+        let docs = ids.into_iter().map(|id| doc_at(cx.blobs, cx.dir, tape.after(), id)).collect::<Result<Vec<_>, _>>()?; // copy: derived (the documents' places, from their blobs)
+        if docs.is_empty() && parts.is_empty() {
+            // Only its demand moved (or a document no one wants): nothing to read or retract.
+            return Ok(work);
+        }
         // The room the run needs, from the cache's sizes: each gone document's kept rows, and each added one's as they
         // were, an eighth more for an edit that grew.
         let need = cache.body(cx, |sizes| {

@@ -1571,3 +1571,63 @@ Checks (Relax, local, 86 of 86):
   It requires `World` and `doc_of` to go through `answer_load` and `parse`, and refuses the file layer or the parser
   called anywhere else in the crate.
 - Clippy is clean on `delta_exec`, the twins and `rr_syntax`.
+
+### Demand: want and asks (P§7.1, D1)
+
+Each operator now has the four data ports of Figure 7: facts in, facts out, demand in and demand out.
+
+- **The instance keeps both demand ports as traces.**
+  - `Instance::want` is demand in, `(output port, key)` (`want_shape`). It is set by the driver (`set_want`) and
+    handed to `delta` as a bistate.
+  - `Instance::asks` holds the requests of each input port its port set asks of (`PortSet::ASKED`): `(key)`, the
+    input's partition key. Each run commits there the asks δ that `delta` wrote, through `Asks::writer`.
+  - A cache names its inputs' state and its want's.
+  - Keys are content and symbols, never node ids. A document's key comes from its path's hash, in 32 bits as every
+    partition's is.
+- **L1 under demand.** Its grain is the document: a wanted relation of a document is all of that document's relations.
+  That is over-demand, which D1 allows.
+  - A newly wanted document is an initial run of it, read from the tape port where it lies unchanged.
+  - A document no longer wanted has its rows retracted (`drop_parts` on its kept rows).
+  - A tape change to a document nobody wants costs nothing.
+  - It asks of its tape port: +d for each document newly wanted, −d for each no longer wanted.
+  - Its only rows written in Rust are these asks. The K-form rows are still `k0_pass`'s.
+- **The boot's run is rounds.**
+  - The run's productions (l0's eight relations, by l0's key) are L1's want.
+  - Each round steps L1 over the document set since the last round. Then the world answers:
+    - a document that nothing asks for any more leaves the set (`DocSet::forget`: X → ∅, its place forgotten);
+    - every key asked is read. The first round re-asks the kept requests, which is the world's cover. A later round
+      asks only what was asked since.
+  - The run ends at the first round that moves nothing, and is refused past four rounds.
+  - Requests are answered by the spelling the run names a document by (its root), so no atom is written outside
+    `intern`.
+  - The pins keep the want and the requests heads, and a later process resumes them.
+- **The harness checks D1** under a want chain (`harness_on`'s `wants`, `harness_under`). Every law is judged on the
+  outputs restricted to their side's want. At each step D1 is checked three ways:
+  - the output has no row that the full output lacks;
+  - an instance under no want (every output) gives the same rows where the want asks;
+  - the plain function on the inputs restricted to what the operator asked gives the same wanted output.
+
+Checks (Relax, local, 90 of 90):
+
+- `the_harness_passes_a_toy_operator_under_a_changing_want`: six seeds.
+- `a_toy_that_writes_past_its_want_fails_d1`: it fails on D1 and no other law, and passes with no want.
+- `the_harness_passes_l1_under_a_changing_want`: over the edit chain on disk, with l0 wanted whole, then two of its
+  relations, then none, in turn. The cache is dropped at random steps.
+- `a_document_no_longer_asked_goes_and_is_not_read`:
+  - a run whose productions name another file reads that file alone;
+  - l0 leaves the document set, L1's requests and L1's output;
+  - the output is the plain function's on the set as it now is;
+  - asked again, l0 comes back as an initial run and is not parsed again.
+- Two mutations were each caught:
+  - L1 not retracting the documents no longer wanted fails L1;
+  - L1 not asking fails D1, "on the inputs it asked".
+
+  Both were restored.
+- Every earlier check passes with the boot run under demand.
+- The shape script:
+  - requires the instance's four fields and D1 in the harness;
+  - requires L1 to restrict to its want and ask of its tape port;
+  - requires the boot to set the want, read the asks and let go of what is not asked;
+  - its "a row written by L1's Rust" pattern is narrowed to the output's writer, because asks are demand rows that
+    P§12 has the operator write.
+- Clippy is clean on `delta_exec`.

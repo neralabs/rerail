@@ -353,7 +353,7 @@ fn a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape() {
     let l1 = fx.l1();
     let mut inst = Instance::new(&l1, &mut fx.dir).unwrap();
     let mut cx = Cx { reg: &fx.reg, dir: &mut fx.dir, blobs: &fx.blobs, traces: &fx.traces, caches: &fx.caches };
-    inst.step(&l1, &mut cx, &[(&t, None, Some(h1))], &atoms).unwrap();
+    inst.step(&l1, &mut cx, &[(&t, None, Some(h1))], &atoms, None).unwrap();
     let kept: usize = inst.outs.iter().map(|o| rows_at(&fx.dir, o, o.head()).unwrap().len()).sum();
     assert!(kept > 0);
     // The new document's blobs alone.
@@ -363,7 +363,7 @@ fn a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape() {
         only_b.house(&fx.reg, &mut fx.dir, p).unwrap();
     }
     let mut cx = Cx { reg: &fx.reg, dir: &mut fx.dir, blobs: &only_b, traces: &fx.traces, caches: &fx.caches };
-    let work = inst.step(&l1, &mut cx, &[(&t, Some(h1), Some(h2))], &atoms).unwrap();
+    let work = inst.step(&l1, &mut cx, &[(&t, Some(h1), Some(h2))], &atoms, None).unwrap();
     let added: usize = want.iter().map(BTreeSet::len).sum();
     assert_eq!(work.rows_written as usize, kept + added, "the kept rows retracted, the new ones placed");
     for (k, o) in inst.outs.iter().enumerate() {

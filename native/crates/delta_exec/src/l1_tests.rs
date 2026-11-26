@@ -42,7 +42,7 @@ impl Disk {
         let drops = crate::drop::DropOps::declare(&mut bench.reg).unwrap();
         let l1 = L1 { ops, drops };
         let place = bench.dir.lasting();
-        let inst = Instance::new(&l1, &mut bench.dir).unwrap().resumed(place, pins.as_ref().map_or(&[][..], |p| &p.1.outs));
+        let inst = Instance::new(&l1, &mut bench.dir).unwrap().resumed(place, pins.as_ref().map_or(&[][..], |p| &p.1.outs), pins.as_ref().and_then(|p| p.1.want), pins.as_ref().map_or(&[][..], |p| &p.1.asks));
         let docs = DocSet::new(world, iops, drops, &bench.dir, pins.as_ref().and_then(|p| p.1.tape), pins.as_ref().map(|p| p.0)).unwrap();
         let last = pins.map(|(_, p)| Pins { atoms: Global { block: atoms.0, ..p.atoms }, ..p });
         Disk { root, docs, atoms, l1, inst, last }
@@ -107,8 +107,80 @@ fn the_harness_passes_l1_over_edits_of_l0_on_disk() {
     // L5: the cache dropped at a random step of the chain, a seed each.
     for seed in 1..=3u64 {
         let drop_at = 1 + (rerail_blocks::layer::mix(seed) % (heads.len() as u64 - 1)) as usize;
-        harness_on(&l1, &mut bench, std::slice::from_mut(&mut docs.tape), &heads, &globals, drop_at).unwrap_or_else(|b| panic!("{b:?}"));
+        harness_on(&l1, &mut bench, std::slice::from_mut(&mut docs.tape), &heads, &globals, drop_at, None).unwrap_or_else(|b| panic!("{b:?}"));
     }
+}
+
+/// D1 on L1 over the same chain of edits on disk: under a want that names all of l0's relations, two of them, none,
+/// in turn, its output restricted to the want is the full output restricted (its grain is the document: a wanted
+/// relation of l0 is all of l0's, over-demand); l0 asked of its tape port while wanted, and on the inputs it asks, the
+/// same wanted output; a newly wanted l0 an initial run of it, and one no longer wanted its rows retracted.
+#[test]
+fn the_harness_passes_l1_under_a_changing_want() {
+    let mut bench = Bench::new().unwrap();
+    let mut disk = Disk::new(&mut bench, "b6-want");
+    let (mut heads, mut globals) = (vec![vec![None]], vec![vec![Global { block: disk.atoms.0, count: 0 }]]);
+    let [added, changed, removed] = edits();
+    let chain = [None, None, Some(added.as_str()), None, Some(changed.as_str()), None, Some(removed.as_str()), Some(L0)];
+    for (k, e) in chain.into_iter().enumerate() {
+        if let Some(text) = e {
+            disk.edit(text, 50 - 5 * k as u64);
+        }
+        disk.answer(&mut bench);
+        heads.push(vec![disk.docs.tape.head()]);
+        globals.push(vec![disk.globals(&bench)]);
+    }
+    let d = disk.docs.key(&bench.dir, disk.atoms, PATH).unwrap();
+    let all: BTreeSet<(usize, i64)> = (0..crate::kform::RELATIONS.len()).map(|k| (k, d)).collect();
+    let some = BTreeSet::from([(1, d), (3, d)]);
+    let cycle = [all.clone(), some, BTreeSet::new(), BTreeSet::new(), all];
+    let wants: Vec<BTreeSet<(usize, i64)>> = (0..heads.len()).map(|k| cycle[k % cycle.len()].clone()).collect();
+    let Disk { l1, mut docs, .. } = disk;
+    for seed in 4..=5u64 {
+        let drop_at = 1 + (rerail_blocks::layer::mix(seed) % (heads.len() as u64 - 1)) as usize;
+        harness_on(&l1, &mut bench, std::slice::from_mut(&mut docs.tape), &heads, &globals, drop_at, Some(&wants)).unwrap_or_else(|b| panic!("{b:?}"));
+    }
+}
+
+/// Demand reaches the world as reads (P§7.1): a run whose productions name another document asks for it and lets l0
+/// go: l0 is not read, its row leaves the document set (X → ∅) and its rows leave L1's output, which is the plain
+/// function's on the set as it now is.
+#[test]
+fn a_document_no_longer_asked_goes_and_is_not_read() {
+    let _racy = racy_window();
+    let mut bench = Bench::new().unwrap();
+    let mut disk = Disk::new(&mut bench, "b6-demand");
+    write(&disk.root.join("other.rerail"), &edits()[0], 60);
+    past_racy_window();
+    disk.run(&mut bench).unwrap();
+    let (reads, l0) = (disk.docs.world.asked.reads, disk.docs.key(&bench.dir, disk.atoms, PATH).unwrap());
+    let last = disk.last.take();
+    let (pins, doc, _) = crate::boot::run(&disk.l1, &mut disk.inst, "other.rerail", "other", disk.atoms, &mut disk.docs, &mut bench, last.as_ref()).unwrap();
+    disk.last = Some(pins);
+    assert!(!doc.is_identity());
+    assert_eq!(disk.docs.world.asked.reads, reads + 1, "the other document read; l0, asked by no one, not read");
+    let other = disk.docs.key(&bench.dir, disk.atoms, "other.rerail").unwrap();
+    assert_ne!(other, l0);
+    assert_eq!(disk.docs.keys(&bench.dir).unwrap(), BTreeSet::from([other]), "l0 gone from the document set");
+    assert_eq!(disk.inst.asked(&bench.dir, 0).unwrap(), BTreeSet::from([other]), "L1 asks for the other alone");
+    let outs: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap()).collect();
+    assert!(outs.iter().flatten().all(|r| r[0] == other), "no row of l0 left in L1's output");
+    let globals = [disk.globals(&bench)];
+    let plain = crate::contract::apply(&disk.l1, &mut bench.cx(), &[(&disk.docs.tape, disk.docs.tape.head())], &globals).unwrap();
+    assert_eq!(outs, plain, "L1's output is the plain function's on the document set as it is");
+    // Asked again, l0 comes back as an initial run of it, from the store (its content answered before).
+    let parses = disk.docs.world.asked.parses;
+    let last = disk.last.take();
+    let (pins, _, _) = crate::boot::run(&disk.l1, &mut disk.inst, PATH, MODULE, disk.atoms, &mut disk.docs, &mut bench, last.as_ref()).unwrap();
+    disk.last = Some(pins);
+    assert_eq!(disk.docs.keys(&bench.dir).unwrap(), BTreeSet::from([l0]));
+    assert_eq!(disk.docs.world.asked.parses, parses, "l0's content is answered before: not parsed again");
+    let outs: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap()).collect();
+    assert_eq!(outs[0].len(), 14, "l0's 14 rules again");
+    assert!(outs.iter().flatten().all(|r| r[0] == l0), "no row of the other left");
+    let globals = [disk.globals(&bench)];
+    let plain = crate::contract::apply(&disk.l1, &mut bench.cx(), &[(&disk.docs.tape, disk.docs.tape.head())], &globals).unwrap();
+    assert_eq!(outs, plain);
 }
 
 /// The digest of a block's bytes, where they lie.

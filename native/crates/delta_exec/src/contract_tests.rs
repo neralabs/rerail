@@ -16,6 +16,9 @@ enum Flaw {
     Busy,
     /// Drops the rows gone when its cache reads as ∅: its answer hangs on its cache (L5).
     Cache,
+    /// Under a want, writes a row of its own on a cold run, where nothing is wanted: past its want, a row the full
+    /// output lacks (D1).
+    Past,
 }
 
 /// `out(b, a) :- in(a, b), a % 3 != 0`, its added rows read in the order its cache keeps of its input's newest layer.
@@ -61,7 +64,7 @@ impl DeltaOp for Toy {
     type Ports = ToyPorts;
     type Cache = crate::cache::Orders;
 
-    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_, ToyPorts>, _: Option<&Bistate<View<'_>>>, cache: &mut CacheW<crate::cache::Orders>, out: &mut Out<ToyPorts>, _: &mut Asks<ToyPorts>) -> Result<Work, String> {
+    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_, ToyPorts>, want: Option<&Bistate<View<'_>>>, cache: &mut CacheW<crate::cache::Orders>, out: &mut Out<ToyPorts>, _: &mut Asks<ToyPorts>) -> Result<Work, String> {
         let x = ins.port(IN);
         let mut work = Work::default();
         if ins.is_identity() {
@@ -85,6 +88,9 @@ impl DeltaOp for Toy {
         }
         if self.0 == Flaw::Cold && x.before().is_none() {
             w.push(&[-1, -1], 1);
+        }
+        if self.0 == Flaw::Past && want.is_some() && x.before().is_none() {
+            w.push(&[-2, -2], 1);
         }
         // The added rows, each layer's between the two states read in its order by the second column, from the
         // cache: made once a layer, and kept while the cache holds its state.
@@ -243,9 +249,9 @@ fn an_identity_run_is_its_checks_alone() {
     let h = t.commit(&reg, &traces, &mut dir, id, Tiling::WHOLE).unwrap();
     let mut cx = Cx { reg: &reg, dir: &mut dir, blobs: &crate::files::BlobRows::new(&traces), traces: &traces, caches: &caches };
     let mut inst = Instance::new(&Toy(Flaw::None), cx.dir).unwrap();
-    inst.step(&Toy(Flaw::None), &mut cx, &[(&t, None, Some(h))], &[]).unwrap();
+    inst.step(&Toy(Flaw::None), &mut cx, &[(&t, None, Some(h))], &[], None).unwrap();
     let (heads, cache) = (inst.heads(), cache_facts(&cx.dir.read("t", &[inst.cache.0]).unwrap().table(), 0, cx.dir.read("t", &[inst.cache.0]).unwrap().block(0)));
-    let w = inst.step(&Toy(Flaw::None), &mut cx, &[(&t, Some(h), Some(h))], &[]).unwrap();
+    let w = inst.step(&Toy(Flaw::None), &mut cx, &[(&t, Some(h), Some(h))], &[], None).unwrap();
     assert!(w.is_checks_only(), "{w:?}");
     assert_eq!(inst.heads(), heads);
     assert_eq!(cache_facts(&cx.dir.read("t", &[inst.cache.0]).unwrap().table(), 0, cx.dir.read("t", &[inst.cache.0]).unwrap().block(0)), cache);
@@ -294,4 +300,32 @@ fn a_port_set_whose_ports_are_not_its_counts_is_refused() {
     }
     let e = Instance::new(&Bad, &mut Directory::default()).map(|_| ()).unwrap_err();
     assert!(e.contains("not its counts"), "{e}");
+}
+
+/// The want at each of a chain's ten states: the toy's one output wanted, then not, in turn by `seed`.
+fn wants(seed: u64, steps: usize) -> Vec<BTreeSet<(usize, i64)>> {
+    (0..=steps).map(|k| if rerail_blocks::layer::mix(seed + k as u64).is_multiple_of(3) { BTreeSet::new() } else { BTreeSet::from([(0, 0)]) }).collect()
+}
+
+/// D1 on the toy: under a want that comes and goes, its output restricted to the want is the full output restricted,
+/// over-demand changes nothing asked, and every other law holds on the restricted outputs.
+#[test]
+fn the_harness_passes_a_toy_operator_under_a_changing_want() {
+    for seed in 0..6 {
+        for drop_at in [1, 5] {
+            let w = wants(seed, 9);
+            if let Err(b) = harness_under(&Toy(Flaw::None), &chain(seed), drop_at, Some(&w)) {
+                panic!("seed {seed}, cache dropped at {drop_at}: {b:?}");
+            }
+        }
+    }
+}
+
+/// A toy that writes a row past its want, one the full output lacks, fails D1 and no other law.
+#[test]
+fn a_toy_that_writes_past_its_want_fails_d1() {
+    let none = vec![BTreeSet::new(); 10];
+    let b = harness_under(&Toy(Flaw::Past), &chain(0), 2, Some(&none)).unwrap_err();
+    assert_eq!(b.law, "D1", "{b:?}");
+    harness_under(&Toy(Flaw::Past), &chain(0), 2, None).unwrap();
 }

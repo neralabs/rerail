@@ -12,6 +12,12 @@
 //!   and the cache is returned unchanged;
 //! - L5, the cache changes cost, never answers: a run whose cache was dropped gives the same output.
 //!
+//! Under demand (P§7.1), the harness checks D1 as well: demand restricts, never changes. A run under a want gives,
+//! on each side, the full output restricted to that side's want, and no row the full output lacks. An operator may
+//! produce more at its grain, which is over-demand. Asking for more (every output) changes nothing asked. The inputs
+//! restricted to what the operator asks of them give the same wanted output. The instance keeps its want and its
+//! requests as traces (`Instance::want`, `Instance::asks`): the demand in and the demand out of Figure 7.
+//!
 //! The operator's cache is an operator cache (`cache`): a block with P§11.3's header, handed to a run as `CacheW`,
 //! whose header is marked open before the run's first write (`cache_open`) and committed with the state the run made
 //! (`cache_commit`) by the driver (`Instance`); a run that writes nothing leaves it untouched. A cache read as ∅ (open,
@@ -29,7 +35,7 @@ use crate::files::BlobRows;
 use crate::op::{Registry, Tiling};
 use crate::trace::{RollUp, Trace, TraceOps};
 use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
-use rerail_blocks::layer::{Runs, RunsW, Shape};
+use rerail_blocks::layer::{ColType, Runs, RunsW, Shape};
 use rerail_blocks::region::{BlockPin, pin_block};
 use rerail_blocks::relation::View;
 use rerail_delta_twins::cache as cache_twin;
@@ -43,6 +49,20 @@ pub struct Work {
     pub probes: u64,
     pub rows_written: u64,
     pub excess: Vec<(&'static str, u64)>,
+}
+
+impl std::ops::AddAssign for Work {
+    fn add_assign(&mut self, w: Work) {
+        self.rows_read += w.rows_read;
+        self.probes += w.probes;
+        self.rows_written += w.rows_written;
+        for (name, n) in w.excess {
+            match self.excess.iter_mut().find(|e| e.0 == name) {
+                Some(e) => e.1 += n,
+                None => self.excess.push((name, n)),
+            }
+        }
+    }
 }
 
 impl Work {
@@ -76,6 +96,9 @@ pub trait PortSet {
     const OUTS: usize;
     /// Its ports: their names and shapes, `INS`, `GLOBALS` and `OUTS` of them.
     fn ports() -> Ports;
+    /// The input ports it writes demand on (P§7.1's demand out, `Asks`): each is asked by key, its partition's, and
+    /// the driver answers only what is asked. An input port not listed is wanted whole.
+    const ASKED: &'static [usize] = &[];
 }
 
 macro_rules! port_handle {
@@ -229,22 +252,60 @@ pub struct Out<P> {
     of: PhantomData<fn() -> P>,
 }
 
-/// An operator's asks of its inputs (P§12's `asks`): a runs block per input port of `P`, the demand on it; none when
-/// it asks nothing.
+/// An operator's asks of its inputs (P§12's `asks`, P§7.1's demand out): a δ runs block per input port it asks of
+/// (`PortSet::ASKED`), the change of its demand on that port, `(key, ±1)` (`asks_shape`): a key newly needed +1, one
+/// no longer needed −1. The driver keeps them as the instance's requests traces (`Instance::asks`) and answers what
+/// they hold.
 pub struct Asks<P> {
-    runs: Vec<BlockId>,
+    runs: Vec<Option<BlockId>>,
     of: PhantomData<fn() -> P>,
 }
 
 impl<P> Asks<P> {
-    /// No asks: demand is not built (every run wants all of each output).
+    /// No asks: an operator run outside a driver that answers them (the reference's).
     pub fn none() -> Asks<P> {
         Asks { runs: Vec::new(), of: PhantomData }
     }
 
-    /// Whether it asks anything.
+    /// Whether it asks of no port.
     pub fn is_empty(&self) -> bool {
-        self.runs.is_empty()
+        self.runs.iter().all(Option::is_none)
+    }
+
+    /// A writer of its asks of input port `port`, pinned to write while it lives: refused for a port its port set
+    /// does not ask of.
+    pub fn writer(&self, dir: &Directory, port: PortIn<P>) -> Result<Writer, String> {
+        let r = self.runs.get(port.0).copied().flatten().ok_or_else(|| format!("input port {} is not asked of (PortSet::ASKED)", port.0))?;
+        let b = dir.block(r).ok_or("an ask's runs, held by nothing")?;
+        Ok(Writer { pin: pin_block(&b, "an operator's asks", true)? })
+    }
+}
+
+/// The want trace's rows (P§7.1's demand in; P§13: "Productions, demand: Trace (wanted relation, key)"): `(port,
+/// key)`, output port `port` wanted at `key`, its partition's (a port with no partition is wanted whole by any row of
+/// it). Keys are content and symbols, never node ids (P§7.2): a document's is its key from its path's hash, in 32
+/// bits as every partition's is.
+pub fn want_shape() -> Shape {
+    Shape::run(vec![ColType::I32, ColType::I32], vec![1, 0], Some(1))
+}
+
+/// An ask's rows on an input port (P§7.1's demand out): `(key)`, the port's partition key it needs.
+pub fn asks_shape() -> Shape {
+    Shape::run(vec![ColType::I32], vec![0], Some(0))
+}
+
+/// The want rows of a state, read where they lie: `(port, key)`.
+pub fn want_rows(v: &impl Read) -> BTreeSet<(usize, i64)> {
+    (0..Read::end(v).get()).map(RowId::new).filter(|&id| Read::live(v, id)).map(|id| (Read::get(v, id, ColumnIndex::new(0)) as usize, Read::get(v, id, ColumnIndex::new(1)))).collect() // copy: derived (the wanted keys)
+}
+
+/// Rows `rows` of output port `port` (its shape `shape`) restricted to `want` (P§7.1, D1): those whose partition key
+/// is wanted on the port; a port with no partition, whole when any key of it is wanted.
+pub fn restrict(rows: &BTreeSet<Vec<i64>>, port: usize, shape: &Shape, want: &BTreeSet<(usize, i64)>) -> BTreeSet<Vec<i64>> {
+    match shape.partition {
+        None if want.iter().any(|w| w.0 == port) => rows.clone(),
+        None => BTreeSet::new(),
+        Some(c) => rows.iter().filter(|r| want.contains(&(port, r[c as usize]))).cloned().collect(),
     }
 }
 
@@ -394,28 +455,84 @@ const FIRST_RUNS: usize = 256;
 /// The excess of a run that outgrew its runs: its attempts past the first.
 pub const OUTGROWN: &str = "attempts past the first, the runs outgrown";
 
-/// An operator's instance: its output traces and its cache, kept across its runs.
+/// An operator's instance: its output traces and its cache, kept across its runs, and its two demand ports' traces
+/// (P§7.1, Figure 7): the want on its outputs (demand in, `want_shape`) and its requests of each input it asks of
+/// (demand out, the asks it wrote, `asks_shape`).
 pub struct Instance {
     pub outs: Vec<Trace>,
     pub cache: OpCache,
+    pub want: Trace,
+    pub asks: Vec<Option<Trace>>,
 }
+
+/// The want a run is under: its want trace between two heads (`Instance::set_want`), or `None`, every output wanted.
+pub type WantIn = Option<(Option<BlockId>, Option<BlockId>)>;
 
 impl Instance {
     pub fn new<O: DeltaOp>(_: &O, dir: &mut Directory) -> Result<Instance, String> {
-        let outs = ports_of::<O>()?.outs.iter().map(|p| Trace::new(&p.shape)).collect::<Result<_, _>>()?;
-        Ok(Instance { outs, cache: OpCache::new(dir) })
+        let ports = ports_of::<O>()?;
+        let outs = ports.outs.iter().map(|p| Trace::new(&p.shape)).collect::<Result<_, _>>()?;
+        let asks = (0..ports.ins.len()).map(|p| O::Ports::ASKED.contains(&p).then(|| Trace::new(&asks_shape())).transpose()).collect::<Result<_, _>>()?;
+        Ok(Instance { outs, cache: OpCache::new(dir), want: Self::want_trace()?, asks })
     }
 
-    /// The instance with its outputs' layers placed at `place` (`dir::PLACE_KEPT`: they last across processes), at
-    /// `heads` (a kept run's; empty: none). Its cache is in memory: a new process's is ∅ (L5).
-    pub fn resumed(mut self, place: u32, heads: &[Option<BlockId>]) -> Instance {
-        self.outs = std::mem::take(&mut self.outs).into_iter().enumerate().map(|(k, t)| t.resumed(place, heads.get(k).copied().flatten())).collect();
+    /// The want trace: no roll-up while a run reads it (its before is a layer in its chain); rolled up at the run's end
+    /// (`roll_up_want`).
+    fn want_trace() -> Result<Trace, String> {
+        Ok(Trace::new(&want_shape())?.with_roll_up(RollUp::Never))
+    }
+
+    /// Its want's layers since `since` rolled up (a run's end: its before is no longer read).
+    pub fn roll_up_want(&mut self, cx: &mut Cx<'_>, since: Option<BlockId>) -> Result<(), String> {
+        self.want.roll_up_run(cx.reg, cx.traces, cx.dir, since, Tiling::WHOLE).map(drop)
+    }
+
+    /// The instance with its traces' layers placed at `place` (`dir::PLACE_KEPT`: they last across processes), at a
+    /// kept run's heads (`[]`, `None`: none). Its cache is in memory: a new process's is ∅ (L5).
+    pub fn resumed(mut self, place: u32, outs: &[Option<BlockId>], want: Option<BlockId>, asks: &[Option<BlockId>]) -> Instance {
+        self.outs = std::mem::take(&mut self.outs).into_iter().enumerate().map(|(k, t)| t.resumed(place, outs.get(k).copied().flatten())).collect();
+        self.want = std::mem::replace(&mut self.want, Self::want_trace().expect("the want's shape")).resumed(place, want);
+        self.asks = std::mem::take(&mut self.asks).into_iter().enumerate().map(|(p, t)| t.map(|t| t.resumed(place, asks.get(p).copied().flatten()))).collect();
         self
     }
 
     /// Its outputs' heads.
     pub fn heads(&self) -> Vec<Option<BlockId>> {
         self.outs.iter().map(Trace::head).collect()
+    }
+
+    /// Its requests traces' heads, a port each (`None` for a port it does not ask of, and for one asked nothing yet).
+    pub fn ask_heads(&self) -> Vec<Option<BlockId>> {
+        self.asks.iter().map(|t| t.as_ref().and_then(Trace::head)).collect()
+    }
+
+    /// The keys it asks of input port `p` now (its requests trace's state).
+    pub fn asked(&self, dir: &Directory, p: usize) -> Result<BTreeSet<i64>, String> {
+        let Some(t) = self.asks.get(p).and_then(Option::as_ref) else { return Ok(BTreeSet::new()) };
+        Ok(rows_at(dir, t, t.head())?.into_iter().map(|r| r[0]).collect())
+    }
+
+    /// Its want moved to `rows` (`(port, key)`), a layer of their change on its want trace: the heads the run's want is
+    /// between (the identity when they are the same rows).
+    pub fn set_want(&mut self, cx: &mut Cx<'_>, rows: &BTreeSet<(usize, i64)>) -> Result<(Option<BlockId>, Option<BlockId>), String> {
+        let before = self.want.head();
+        let now: BTreeSet<(usize, i64)> = match before {
+            None => BTreeSet::new(),
+            Some(_) => rows_at(cx.dir, &self.want, before)?.into_iter().map(|r| (r[0] as usize, r[1])).collect(),
+        };
+        let pairs: Vec<(Vec<i64>, i32)> = now.difference(rows).map(|w| (vec![w.0 as i64, w.1], -1)).chain(rows.difference(&now).map(|w| (vec![w.0 as i64, w.1], 1))).collect(); // copy: derived (the want's change)
+        if pairs.is_empty() {
+            return Ok((before, before));
+        }
+        let after = push_layer(cx.reg, cx.traces, cx.dir, &mut self.want, &pairs)?;
+        Ok((before, Some(after)))
+    }
+
+    /// Empties its outputs, want and requests (a cold run's start).
+    pub fn clear(&mut self, dir: &mut Directory) {
+        self.outs.iter_mut().for_each(|t| t.clear(dir));
+        self.want.clear(dir);
+        self.asks.iter_mut().flatten().for_each(|t| t.clear(dir));
     }
 
     /// Drops its cache: a new one, ∅ (L5: always correct).
@@ -425,25 +542,35 @@ impl Instance {
         dir.release(old.0);
     }
 
-    /// One run of `op` over `ins`, each input port's trace between two heads: its change pushed into a runs block a
-    /// port, then committed (an empty one is not: the output stays where it was), and the cache committed with the
-    /// state the run made when the run wrote it. A run whose outputs outgrew their runs runs again at the size they
-    /// needed, from a cache read as ∅ (its first attempt's writes may be half done).
-    pub fn step<O: DeltaOp>(&mut self, op: &O, cx: &mut Cx<'_>, ins: &[InPort<'_>], globals: &[GlobalIn]) -> Result<Work, String> {
+    /// One run of `op` over `ins`, each input port's trace between two heads, under `want` (its want trace between two
+    /// heads; `None`: every output wanted): its outputs' change pushed into a runs block a port and its asks' change a
+    /// runs block an asked port, each then committed (an empty one is not: the trace stays where it was), and the
+    /// cache committed with the state the run made when the run wrote it. A run whose runs outgrew their room runs
+    /// again at the size they needed, from a cache read as ∅ (its first attempt's writes may be half done).
+    pub fn step<O: DeltaOp>(&mut self, op: &O, cx: &mut Cx<'_>, ins: &[InPort<'_>], globals: &[GlobalIn], want: WantIn) -> Result<Work, String> {
         let befores: Vec<(&Trace, Option<BlockId>)> = ins.iter().map(|p| (p.0, p.1)).collect();
         let afters: Vec<(&Trace, Option<BlockId>)> = ins.iter().map(|p| (p.0, p.2)).collect();
         let (gb, ga): (Vec<Global>, Vec<Global>) = (globals.iter().map(|g| g.side(false)).collect(), globals.iter().map(|g| g.side(true)).collect());
-        let (from, to) = (inputs_digest(cx.dir, &befores, &gb)?, inputs_digest(cx.dir, &afters, &ga)?);
+        let (mut from, mut to) = (inputs_digest(cx.dir, &befores, &gb)?, inputs_digest(cx.dir, &afters, &ga)?);
+        // The state a cache names is its inputs' and its want's: a cache made under one want reads as ∅ under another.
+        if let Some((wb, wa)) = want {
+            from = rerail_blocks::layer::mix(from ^ self.want.digest(cx.dir, wb)?.rotate_left(17));
+            to = rerail_blocks::layer::mix(to ^ self.want.digest(cx.dir, wa)?.rotate_left(17));
+        }
         let mut cap = vec![FIRST_RUNS; self.outs.len()];
+        let mut ask_cap = vec![FIRST_RUNS; self.asks.len()];
         let mut again = 0;
         loop {
             let runs: Vec<BlockId> = self.outs.iter().zip(&cap).map(|(t, &c)| t.open(cx.dir, c)).collect();
             let mut out = Out::<O::Ports> { runs, kept: self.heads(), of: PhantomData };
+            let mut asks = Asks::<O::Ports> { runs: self.asks.iter().zip(&ask_cap).map(|(t, &c)| t.as_ref().map(|t| t.open(cx.dir, c))).collect(), of: PhantomData };
+            let release = |dir: &mut Directory, out: &Out<O::Ports>, asks: &Asks<O::Ports>| out.runs.iter().chain(asks.runs.iter().flatten()).for_each(|&r| dir.release(r));
             // After an attempt that outgrew its runs, a cache it wrote is open: it reads as ∅, and its first write
             // resets it.
             let mut cache = CacheW::<O::Cache>::new(self.cache, from);
             let work = {
-                let heads: Vec<BlockId> = ins.iter().flat_map(|p| [p.1, p.2]).flatten().collect();
+                let wanted = want.map_or(Vec::new(), |(b, a)| [b, a].into_iter().flatten().collect());
+                let heads: Vec<BlockId> = ins.iter().flat_map(|p| [p.1, p.2]).flatten().chain(wanted).collect();
                 let l = cx.dir.read("an operator's inputs", &heads)?;
                 let table = l.table();
                 let mut ports = Vec::with_capacity(ins.len());
@@ -454,13 +581,18 @@ impl Instance {
                         Some(_) => Bistate::new(t.state(&table, *b)?, after),
                     });
                 }
+                let w = match want {
+                    None => None,
+                    Some((None, a)) => Some(Bistate::cold(self.want.state(&table, a)?)),
+                    Some((b, a)) => Some(Bistate::new(self.want.state(&table, b)?, self.want.state(&table, a)?)),
+                };
                 let input = In { ports, heads: ins.iter().map(|p| (p.1, p.2)).collect(), globals: globals.to_vec(), of: PhantomData };
-                op.delta(cx, &input, None, &mut cache, &mut out, &mut Asks::none())
+                op.delta(cx, &input, w.as_ref(), &mut cache, &mut out, &mut asks)
             };
             let work = match work {
                 Ok(w) => w,
                 Err(e) => {
-                    out.runs.iter().for_each(|&r| cx.dir.release(r));
+                    release(cx.dir, &out, &asks);
                     return Err(e);
                 }
             };
@@ -473,12 +605,23 @@ impl Instance {
                     over = true;
                 }
             }
+            for (p, r) in asks.runs.iter().enumerate() {
+                let Some(r) = *r else { continue };
+                let l = cx.dir.read("an operator's asks", &[r])?;
+                let rr = Runs::new(l.block(0));
+                if rr.needed() > 0 {
+                    ask_cap[p] = rr.len() + rr.needed();
+                    over = true;
+                }
+            }
             if over {
-                out.runs.iter().for_each(|&r| cx.dir.release(r));
+                release(cx.dir, &out, &asks);
                 again += 1;
                 continue;
             }
-            for (t, &r) in self.outs.iter_mut().zip(&out.runs) {
+            let commits = self.outs.iter_mut().zip(out.runs.iter().copied().map(Some)).chain(self.asks.iter_mut().flatten().zip(asks.runs.iter().copied().filter(Option::is_some)));
+            for (t, r) in commits {
+                let r = r.expect("an asked port's runs");
                 let n = {
                     let l = cx.dir.read("an operator's output", &[r])?;
                     Runs::new(l.block(0)).len()
@@ -584,11 +727,17 @@ pub type Chain = Vec<Vec<Vec<(Vec<i64>, i32)>>>;
 /// alone, the cache unchanged), L5 (the run whose cache was dropped gives the threaded run's output) and L3 (the
 /// threaded run's output is the cold run's). The first that fails is returned.
 pub fn harness<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize) -> Result<(), Broken> {
+    harness_under(op, chain, drop_at, None)
+}
+
+/// `harness` under `wants` (a want a state of the chain, the first the state before it): D1 checked at each step
+/// (`harness_on`).
+pub fn harness_under<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize, wants: Option<&Wants>) -> Result<(), Broken> {
     let setup = |e: String| Broken { law: "setup", step: 0, what: e };
     let mut bench = Bench::new().map_err(setup)?;
     let (mut ins, heads) = inputs::<O>(&mut bench, chain).map_err(setup)?;
     let globals = vec![Vec::new(); heads.len()];
-    harness_on(op, &mut bench, &mut ins, &heads, &globals, drop_at)
+    harness_on(op, &mut bench, &mut ins, &heads, &globals, drop_at, wants)
 }
 
 /// What operators run in (a run's, a harness's): a registry with the trace's and the cache's operations (and any
@@ -683,10 +832,22 @@ pub fn push_layer(reg: &Registry, traces: &TraceOps, dir: &mut Directory, t: &mu
     t.commit(reg, traces, dir, id, Tiling::WHOLE)
 }
 
+/// A chain's wants: the want at each state of the chain (`(port, key)`), the first the state before it (its inputs ∅, so
+/// its output is ∅ under any want).
+pub type Wants = [BTreeSet<(usize, i64)>];
+
 /// `harness`'s laws over input traces `ins` made already, at `heads`, a step's heads each (the first, every port's
 /// state before the chain), and its globals' states at each step, `globals`: the traces and the globals an
-/// operator's world read writes, as L1's tape port and its atoms are (B6).
-pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], heads: &[Vec<Option<BlockId>>], globals: &[Vec<Global>], drop_at: usize) -> Result<(), Broken> {
+/// operator's world read writes, as L1's tape port and its atoms are (B6). Under `wants` (a want a state), every
+/// instance runs under them, each law is judged on the outputs restricted to the want of its side, and P§7.1's D1 is
+/// checked at each step:
+///
+/// - demand restricts, never changes: the output restricted to the want is the full output restricted, and holds no
+///   row the full output lacks (an operator may produce more, over-demand at its grain);
+/// - over-demand is sound: an instance under no want (every output) gives the same rows where the want asks;
+/// - the asks suffice: the plain function on the inputs restricted to what the operator asks of each asked port gives
+///   the same wanted output.
+pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], heads: &[Vec<Option<BlockId>>], globals: &[Vec<Global>], drop_at: usize, wants: Option<&Wants>) -> Result<(), Broken> {
     let fail = |law, step, what: String| Broken { law, step, what };
     let setup = |e: String| fail("setup", 0, e);
     let ports = ports_of::<O>().map_err(|e| fail("setup", 0, e))?;
@@ -696,39 +857,103 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
     let between = |a: Option<usize>, b: usize| -> Vec<GlobalIn> {
         globals[b].iter().enumerate().map(|(i, g)| GlobalIn { block: g.block, before: a.map(|a| globals[a][i].count), after: g.count }).collect()
     };
-    let mut want = vec![apply(op, &mut cx, &at(0), &globals[0]).map_err(setup)?];
+    // Each output's rows at state `k`, restricted to its want (all of them under no want).
+    let narrow = |rows: &[BTreeSet<Vec<i64>>], k: usize| -> Vec<BTreeSet<Vec<i64>>> {
+        match wants {
+            None => rows.to_vec(),
+            Some(w) => rows.iter().enumerate().map(|(p, r)| restrict(r, p, &ports.outs[p].shape, &w[k])).collect(),
+        }
+    };
+    let outs_of = |cx: &Cx<'_>, inst: &Instance| -> Result<Vec<BTreeSet<Vec<i64>>>, String> { inst.outs.iter().map(|t| rows_at(cx.dir, t, t.head())).collect() };
+    let mut full = vec![apply(op, &mut cx, &at(0), &globals[0]).map_err(setup)?];
     let mut threaded = Instance::new(op, cx.dir).map_err(setup)?;
     let mut dropped = Instance::new(op, cx.dir).map_err(setup)?;
+    let mut over = Instance::new(op, cx.dir).map_err(setup)?;
+    // Each instance's want moved to state `k`'s: the heads its run is between.
+    let move_want = |cx: &mut Cx<'_>, inst: &mut Instance, k: usize| -> Result<WantIn, String> { wants.map(|w| inst.set_want(cx, &w[k])).transpose() };
+    // The chain's instances start as any instance does, under no want; the chain's first state is ∅ (its inputs'), so
+    // the first step's want is ∅ → the second state's.
     for k in 1..heads.len() {
         let step: Vec<InPort<'_>> = ins.iter().enumerate().map(|(p, t)| (t, heads[k - 1][p], heads[k][p])).collect();
         let cold: Vec<InPort<'_>> = ins.iter().enumerate().map(|(p, t)| (t, None, heads[k][p])).collect();
         let (gstep, gcold) = (between(Some(k - 1), k), between(None, k));
-        want.push(apply(op, &mut cx, &at(k), &globals[k]).map_err(|e| fail("reference", k, e))?);
+        full.push(apply(op, &mut cx, &at(k), &globals[k]).map_err(|e| fail("reference", k, e))?);
         // L2: a null start, from ∅ and an empty cache, is ∅ → op(X).
         let mut fresh = Instance::new(op, cx.dir).map_err(setup)?;
-        fresh.step(op, &mut cx, &cold, &gcold).map_err(|e| fail("L2", k, e))?;
-        let cold_rows: Vec<_> = fresh.outs.iter().map(|t| rows_at(cx.dir, t, t.head())).collect::<Result<_, _>>().map_err(|e| fail("L2", k, e))?;
-        if cold_rows != want[k] {
-            return Err(fail("L2", k, format!("from ∅, the output is not op(X): {cold_rows:?}, want {:?}", want[k])));
+        let w = move_want(&mut cx, &mut fresh, k).map_err(|e| fail("L2", k, e))?;
+        fresh.step(op, &mut cx, &cold, &gcold, w).map_err(|e| fail("L2", k, e))?;
+        let cold_rows = outs_of(&cx, &fresh).map_err(|e| fail("L2", k, e))?;
+        if narrow(&cold_rows, k) != narrow(&full[k], k) {
+            return Err(fail("L2", k, format!("from ∅, the output is not op(X): {cold_rows:?}, want {:?}", narrow(&full[k], k))));
         }
-        // L1: the threaded run's change is the reference's.
+        // L1: the threaded run's change is the reference's (each side restricted to its want).
         let before = threaded.heads();
-        let rows_before: Vec<_> = threaded.outs.iter().map(|t| rows_at(cx.dir, t, t.head())).collect::<Result<_, _>>().map_err(|e| fail("L1", k, e))?;
+        let rows_before = outs_of(&cx, &threaded).map_err(|e| fail("L1", k, e))?;
         let cache_before = {
             let l = cx.dir.read("the harness", &[threaded.cache.0]).map_err(setup)?;
             cache_facts(&l.table(), 0, l.block(0))
         };
-        let work = threaded.step(op, &mut cx, &step, &gstep).map_err(|e| fail("L1", k, e))?;
-        let reference = reference(op, &mut cx, &step, &gstep).map_err(|e| fail("reference", k, e))?;
-        for (p, t) in threaded.outs.iter().enumerate() {
-            let after = rows_at(cx.dir, t, t.head()).map_err(|e| fail("L1", k, e))?;
-            let got = Change { added: after.difference(&rows_before[p]).cloned().collect(), gone: rows_before[p].difference(&after).cloned().collect() };
+        let w = move_want(&mut cx, &mut threaded, k).map_err(|e| fail("L1", k, e))?;
+        let work = threaded.step(op, &mut cx, &step, &gstep, w).map_err(|e| fail("L1", k, e))?;
+        let rows_after = outs_of(&cx, &threaded).map_err(|e| fail("L1", k, e))?;
+        let reference: Vec<Change> = if wants.is_none() {
+            reference(op, &mut cx, &step, &gstep).map_err(|e| fail("reference", k, e))?
+        } else {
+            let (b, a) = (narrow(&full[k - 1], k - 1), narrow(&full[k], k));
+            b.iter().zip(&a).map(|(b, a)| Change { added: a.difference(b).cloned().collect(), gone: b.difference(a).cloned().collect() }).collect()
+        };
+        let (nb, na) = (narrow(&rows_before, k - 1), narrow(&rows_after, k));
+        for p in 0..threaded.outs.len() {
+            let got = Change { added: na[p].difference(&nb[p]).cloned().collect(), gone: nb[p].difference(&na[p]).cloned().collect() };
             if got != reference[p] {
                 return Err(fail("L1", k, format!("port {}: the change is {got:?}; the reference's is {:?}", ports.outs[p].name, reference[p])));
             }
         }
+        // D1: demand restricts, never changes.
+        if wants.is_some() {
+            for p in 0..threaded.outs.len() {
+                if let Some(r) = rows_after[p].difference(&full[k][p]).next() {
+                    return Err(fail("D1", k, format!("port {}: row {r:?} is in no full output", ports.outs[p].name)));
+                }
+            }
+            over.step(op, &mut cx, &step, &gstep, None).map_err(|e| fail("D1", k, e))?;
+            if narrow(&outs_of(&cx, &over).map_err(|e| fail("D1", k, e))?, k) != na {
+                return Err(fail("D1", k, "over-demand (every output) changed what the want asks".into()));
+            }
+            // The asks suffice: each asked port restricted to the keys asked of it.
+            let mut narrowed: Vec<Trace> = Vec::new();
+            let mut nheads: Vec<Option<BlockId>> = Vec::new();
+            for (p, t) in ins.iter().enumerate() {
+                if threaded.asks[p].is_none() {
+                    continue;
+                }
+                let asked = threaded.asked(cx.dir, p).map_err(|e| fail("D1", k, e))?;
+                let c = ports.ins[p].shape.partition.map_or(0, |c| c as usize);
+                let rows: Vec<(Vec<i64>, i32)> = rows_at(cx.dir, t, heads[k][p]).map_err(|e| fail("D1", k, e))?.into_iter().filter(|r| asked.contains(&r[c])).map(|r| (r, 1)).collect();
+                let mut n = Trace::new(&ports.ins[p].shape).map_err(|e| fail("D1", k, e))?.with_roll_up(RollUp::Never);
+                nheads.push(if rows.is_empty() { None } else { Some(push_layer(cx.reg, cx.traces, cx.dir, &mut n, &rows).map_err(|e| fail("D1", k, e))?) });
+                narrowed.push(n);
+            }
+            let mut j = 0;
+            let restricted: Vec<(&Trace, Option<BlockId>)> = ins
+                .iter()
+                .enumerate()
+                .map(|(p, t)| {
+                    if threaded.asks[p].is_none() {
+                        return (t, heads[k][p]);
+                    }
+                    j += 1;
+                    (&narrowed[j - 1], nheads[j - 1])
+                })
+                .collect();
+            let on_asks = apply(op, &mut cx, &restricted, &globals[k]).map_err(|e| fail("D1", k, e))?;
+            if narrow(&on_asks, k) != narrow(&full[k], k) {
+                return Err(fail("D1", k, format!("on the inputs it asked ({:?}), the wanted output differs", threaded.ask_heads())));
+            }
+        }
         // L4: identity is free.
-        if (0..ins.len()).all(|p| heads[k][p] == heads[k - 1][p]) && gstep.iter().all(GlobalIn::is_identity) {
+        let want_same = wants.is_none_or(|w| w[k] == w[k - 1]);
+        if want_same && (0..ins.len()).all(|p| heads[k][p] == heads[k - 1][p]) && gstep.iter().all(GlobalIn::is_identity) {
             if !work.is_checks_only() {
                 return Err(fail("L4", k, format!("every input the identity, and its work is {work:?}")));
             }
@@ -747,18 +972,16 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
         if k == drop_at {
             dropped.drop_cache(cx.dir);
         }
-        dropped.step(op, &mut cx, &step, &gstep).map_err(|e| fail("L5", k, e))?;
-        for p in 0..threaded.outs.len() {
-            let (a, b) = (rows_at(cx.dir, &threaded.outs[p], threaded.outs[p].head()), rows_at(cx.dir, &dropped.outs[p], dropped.outs[p].head()));
-            let (a, b) = (a.map_err(|e| fail("L5", k, e))?, b.map_err(|e| fail("L5", k, e))?);
-            if a != b {
-                return Err(fail("L5", k, format!("port {}: with its cache dropped at step {drop_at}, the output differs", ports.outs[p].name)));
-            }
+        let w = move_want(&mut cx, &mut dropped, k).map_err(|e| fail("L5", k, e))?;
+        dropped.step(op, &mut cx, &step, &gstep, w).map_err(|e| fail("L5", k, e))?;
+        let rows_dropped = outs_of(&cx, &dropped).map_err(|e| fail("L5", k, e))?;
+        if narrow(&rows_dropped, k) != na {
+            return Err(fail("L5", k, format!("with its cache dropped at step {drop_at}, the output differs")));
         }
         // L3: the chain's output is a cold run's.
-        for (p, t) in threaded.outs.iter().enumerate() {
-            let a = rows_at(cx.dir, t, t.head()).map_err(|e| fail("L3", k, e))?;
-            if a != cold_rows[p] {
+        let nc = narrow(&cold_rows, k);
+        for p in 0..threaded.outs.len() {
+            if na[p] != nc[p] {
                 return Err(fail("L3", k, format!("port {}: the chain's output drifted from a cold run's", ports.outs[p].name)));
             }
         }
