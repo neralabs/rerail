@@ -238,6 +238,11 @@ impl Trace {
         Trace { roll, ..self }
     }
 
+    /// The roll-up policy changed to `roll`, for the commits after.
+    pub fn set_roll_up(&mut self, roll: RollUp) {
+        self.roll = roll;
+    }
+
     pub fn head(&self) -> Option<BlockId> {
         self.head
     }

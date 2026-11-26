@@ -1,0 +1,4 @@
+// Includes (B§6, L4: "#include resolution and the module plan (today's bootstrap.rerail, nearly as it is)"; the open
+// points' L4-g, option 1): what a document declares, read before its includes are resolved. A document that declares
+// `doc` is in T's shape, and is read without `core.rerail`.
+p0_declares_doc(d) :- kind(d, x, "declaration"), field(d, x, "name", n), text(d, n, "doc").

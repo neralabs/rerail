@@ -1,0 +1,6 @@
+// The module plan (decision 0639 §1, as B§ has a program: K-form rows, no image, so no key or image; L4-g option 1):
+// a module is a file (O4); its scope, the files its includes reach, which it is lowered against; its rank, how many
+// it reaches; and each include no file resolves.
+p0_scope(m, s) :- p0_reach(m, s), m != s.
+p0_module_rank(m, k) :- doc(_, m, _), k = count : { p0_reach(m, _) }.
+p0_missing(f, at, n) :- p0_from(f, at, n), !p0_found(f, at, n).

@@ -229,6 +229,9 @@ pub struct Rule {
 pub struct Known {
     pub views: BTreeMap<i64, View>,
     pub load: Option<i64>,
+    /// `missing(path)`: the paths `load` asked that the world has no file at (a miss is a row, D3), written by the
+    /// level's answer, read by rules (an include's resolution: the first candidate that is there).
+    pub missing: Option<i64>,
     /// The declarations' relations (decision 0361), in `shapes::DECLS`' order: `key`, `fanout`, `tree`, `order`; and
     /// the classes `one` and `few`.
     pub decls: [Option<i64>; 4],
@@ -243,7 +246,7 @@ impl Known {
     /// The views' and `load`'s symbols in the atoms block `atoms`, where they have one.
     pub fn new(atoms: &[u8]) -> Known {
         let views = View::ALL.iter().filter_map(|(v, name, _)| find(atoms, name).map(|s| (s, *v))).collect();
-        Known { views, load: find(atoms, "load"), decls: crate::shapes::DECLS.map(|d| find(atoms, d)), by: find(atoms, "by"), wave: find(atoms, "wave"), one: find(atoms, "one"), few: find(atoms, "few") }
+        Known { views, load: find(atoms, "load"), missing: find(atoms, "missing"), decls: crate::shapes::DECLS.map(|d| find(atoms, d)), by: find(atoms, "by"), wave: find(atoms, "wave"), one: find(atoms, "one"), few: find(atoms, "few") }
     }
 
     pub fn view(&self, rel: i64) -> Option<View> {

@@ -566,7 +566,7 @@ const KERNEL: [(&str, &str); 13] = [
 
 /// The compiler (B§6, L4; B§10 step 9): the full lowerer, written in the language the kernel lowers. L3 reads it into
 /// P4, which reads the user's files at L4.
-const COMPILER: [(&str, &str); 12] = [
+const COMPILER: [(&str, &str); 15] = [
     ("compiler/c-1-read.rerail", include_str!("../rerail/compiler/c-1-read.rerail")),
     ("compiler/c-2-shared.rerail", include_str!("../rerail/compiler/c-2-shared.rerail")),
     ("compiler/c-3-rank.rerail", include_str!("../rerail/compiler/c-3-rank.rerail")),
@@ -579,6 +579,9 @@ const COMPILER: [(&str, &str); 12] = [
     ("compiler/c-10-emit.rerail", include_str!("../rerail/compiler/c-10-emit.rerail")),
     ("compiler/c-11-graph.rerail", include_str!("../rerail/compiler/c-11-graph.rerail")),
     ("compiler/c-12-strata.rerail", include_str!("../rerail/compiler/c-12-strata.rerail")),
+    ("compiler/c-13-declares.rerail", include_str!("../rerail/compiler/c-13-declares.rerail")),
+    ("compiler/c-14-includes.rerail", include_str!("../rerail/compiler/c-14-includes.rerail")),
+    ("compiler/c-15-plan.rerail", include_str!("../rerail/compiler/c-15-plan.rerail")),
 ];
 
 /// What L3 reads: the stand-in for the compiler's files (Bootstrap §6: "P3 loads the full compiler"), a K0 file of
@@ -620,8 +623,9 @@ fn kernel_files(name: &str, ask: &str, files: &[(&str, &str)]) -> Run {
     r
 }
 
-/// A run over the compiler: L3 reads the compiler's files, and `c-ask.rerail`, whose `load` facts `ask` are L4's
-/// documents; P4, the compiler, lowers those files at L4, and L5 runs them.
+/// A run over the compiler: L3 reads the compiler's files, and `c-ask.rerail`, whose facts `ask` name the program's
+/// roots (`root(path, module)`) and its library (`p0_lib(dir)`); P4, the compiler, loads them and what they include
+/// at L4 and lowers them, and L5 runs them.
 fn compiler_files(name: &str, ask: &str, files: &[(&str, &str)]) -> Run {
     let l3: String = COMPILER.iter().map(|(p, _)| p).chain(std::iter::once(&"c-ask.rerail")).map(|p| format!("load(\"{p}\", \"{}\", \"rr\").\n", p.trim_end_matches(".rerail"))).collect();
     let all: Vec<(&str, &str)> = std::iter::once(("c-ask.rerail", ask)).chain(files.iter().copied()).collect();
@@ -633,9 +637,12 @@ fn compiler_files(name: &str, ask: &str, files: &[(&str, &str)]) -> Run {
     r
 }
 
+/// The compiler's roots for one program and its facts, as `ASK` gives them to the kernel.
+const ROOTS: &str = "root(\"u-facts.rerail\", \"u-facts\").\nroot(\"u.rerail\", \"u\").\np0_lib(\"lib\").\n";
+
 /// The compiler over one program and its facts, as `kernel_run` gives them to the kernel.
 fn compiler_run(name: &str, rules: &str) -> Run {
-    compiler_files(name, ASK, &[("u-facts.rerail", FACTS), ("u.rerail", rules)])
+    compiler_files(name, ROOTS, &[("u-facts.rerail", FACTS), ("u.rerail", rules)])
 }
 
 /// The same files read at L2's place, the a/b test's way: L2 reads them in K0, L3 runs them.
@@ -777,7 +784,7 @@ fn the_compiler_lowers_as_the_kernel_does_and_reads_itself_into_itself() {
         }
     }
     // The self-hosting check: L4 reads the compiler's files, and P4's K-form of them is P4's own.
-    let ask: String = COMPILER.iter().map(|(p, _)| format!("load(\"{p}\", \"{}\", \"rr\").\n", p.trim_end_matches(".rerail"))).collect();
+    let ask: String = COMPILER.iter().map(|(p, _)| format!("root(\"{p}\", \"{}\").\n", p.trim_end_matches(".rerail"))).chain(["p0_lib(\"lib\").\n".to_string()]).collect();
     let mut c = compiler_files("phase-compiler-self", &ask, &[]);
     c.run();
     let p4 = kform_rows(&c, 1);
@@ -789,6 +796,75 @@ fn the_compiler_lowers_as_the_kernel_does_and_reads_itself_into_itself() {
         assert!(!a.is_empty() || matches!(rel, "k_wild" | "k_decl" | "k_num"), "{rel}: P4 holds rows");
         assert_eq!(b, a, "{rel}: P4 reading the compiler gives P4");
     }
+}
+
+/// Includes and the module plan (B§6, L4; L4-g option 1), as the compiler's rules at L4. An include resolves to its
+/// first candidate that is there, the library's before its file's own directory; a root not in T's shape reads
+/// `core.rerail` first; an include no file resolves is `p0_missing`, its candidates `p0_absent`; each file's scope is
+/// the files its includes reach, and an include cycle settles. What the includes reach is the program L5 runs. An
+/// edit and a file appearing move the graph as a cold run gives it.
+#[test]
+fn includes_resolve_by_the_compilers_rules_into_the_program() {
+    const A: &str = "#include \"b.rerail\"\n#include \"dup.rerail\"\n#include \"nowhere.rerail\"\ngot(x) :- core_fact(x).\nall(x) :- bb(x).\ndl(x) :- dup_lib(x).\n";
+    let roots = "root(\"src/a.rerail\", \"a\").\nroot(\"t.rerail\", \"t\").\np0_lib(\"lib\").\n";
+    let files = [
+        ("src/a.rerail", A),
+        ("src/b.rerail", "#include \"c.rerail\"\nbb(2).\n"),
+        ("src/c.rerail", "#include \"a.rerail\"\ncc(3).\n"),
+        ("src/dup.rerail", "dup_src(9).\n"),
+        ("lib/core.rerail", "core_fact(1).\n"),
+        ("lib/dup.rerail", "dup_lib(1).\n"),
+        ("t.rerail", ".decl doc(d: number, p: symbol, m: symbol)\nt_fact(4).\n"),
+    ];
+    let c = compiler_files("phase-includes-compiler", roots, &[]);
+    for dir in ["src", "lib"] {
+        std::fs::create_dir_all(c.root.join(dir)).unwrap();
+    }
+    for (path, text) in files {
+        c.write(path, text, 50);
+    }
+    let mut c = c;
+    c.run();
+    let s = |r: &Run, cells: &[&str]| -> Vec<i64> { cells.iter().map(|x| x.parse::<i64>().unwrap_or_else(|_| r.s(x))).collect() };
+    let set = |r: &Run, rows: &[&[&str]]| -> BTreeSet<Vec<i64>> { rows.iter().map(|row| s(r, row)).collect() };
+    let includes = |r: &Run, cycle: bool| {
+        let mut rows: Vec<&[&str]> = vec![
+            &["src/a.rerail", "-1", "core.rerail", "lib/core.rerail"],
+            &["src/a.rerail", "0", "b.rerail", "src/b.rerail"],
+            &["src/a.rerail", "20", "dup.rerail", "lib/dup.rerail"],
+            &["src/b.rerail", "0", "c.rerail", "src/c.rerail"],
+        ];
+        if cycle {
+            rows.push(&["src/c.rerail", "0", "a.rerail", "src/a.rerail"]);
+        }
+        set(r, &rows)
+    };
+    assert_eq!(c.rows(2, "p0_include"), includes(&c, true), "each include's file");
+    assert_eq!(c.rows(2, "p0_missing"), set(&c, &[&["src/a.rerail", "42", "nowhere.rerail"]]), "the include no file resolves");
+    let absent = ["lib/nowhere.rerail", "src/nowhere.rerail", "lib/b.rerail", "lib/c.rerail", "lib/a.rerail"];
+    assert_eq!(c.rows(2, "p0_absent"), absent.iter().map(|p| vec![c.s(p)]).collect(), "the candidates not there");
+    let scope = ["src/b.rerail", "lib/dup.rerail", "lib/core.rerail", "src/c.rerail"];
+    assert_eq!(c.rows(2, "p0_scope").into_iter().filter(|r| r[0] == c.s("src/a.rerail")).collect::<BTreeSet<_>>(), scope.iter().map(|p| vec![c.s("src/a.rerail"), c.s(p)]).collect(), "a's scope");
+    assert!(c.rows(2, "p0_module_rank").contains(&vec![c.s("src/a.rerail"), 5]), "a's rank: the files it reaches, itself by the cycle");
+    // The program L5 runs: what the includes reach, the library's `dup.rerail` and not the other.
+    for (rel, rows) in [("got", vec![vec![1]]), ("all", vec![vec![2]]), ("dl", vec![vec![1]]), ("t_fact", vec![vec![4]])] {
+        assert_eq!(c.rows(3, rel), rows.into_iter().collect::<BTreeSet<_>>(), "{rel}");
+    }
+    assert!(c.rows(3, "dup_src").is_empty(), "a candidate after the one an include resolves to is not loaded");
+    // The cycle edited away, then a cold run: the same graph.
+    c.write("src/c.rerail", "cc(3).\n", 40);
+    c.run();
+    assert_eq!(c.rows(2, "p0_include"), includes(&c, false), "after the edit");
+    assert!(c.rows(2, "p0_module_rank").contains(&vec![c.s("src/a.rerail"), 4]), "a's rank after the edit");
+    c.last = None;
+    c.run();
+    assert_eq!(c.rows(2, "p0_include"), includes(&c, false), "cold");
+    // A file appearing where an include missed: the include resolves to it.
+    c.write("src/nowhere.rerail", "here(5).\n", 30);
+    c.run();
+    assert!(c.rows(2, "p0_missing").is_empty(), "nothing missing once the file is there");
+    assert!(c.rows(2, "p0_include").contains(&s(&c, &["src/a.rerail", "42", "nowhere.rerail", "src/nowhere.rerail"])), "the include resolves to the new file");
+    assert_eq!(c.rows(3, "here"), [vec![5]].into_iter().collect(), "and its rules are the program's");
 }
 
 /// L4's aggregates (B§10 step 9; L4-f): `count`, `sum`, `min`, `max` and `mean` as delta operators the executor knows
@@ -848,12 +924,14 @@ fn aggregates_fold_their_groups_and_are_maintained_by_changed_groups() {
 
 /// Loads a level's rules derive from its own documents (B§10 step 9, includes): each round answers the loads asked,
 /// then runs the strata, until a round asks nothing new. An include cycle settles. An edit that drops an include lets
-/// its file go, as a cold run gives it. An include of a file that is not there is refused, naming it.
+/// its file go, as a cold run gives it. An include of a file that is not there is a row of `missing`, and the file
+/// appearing loads it.
 #[test]
 fn a_level_loads_what_its_rules_derive_until_nothing_new_is_asked() {
     const RULES: &str = "load(\"a.rerail\", \"a.rerail\", \"rr\").\n\
 load(p, p, \"rr\") :- kind(d, i, \"include\"), field(d, i, \"path\", s), value(d, s, p).\n\
-seen(p) :- doc(_, p, _).\n";
+seen(p) :- doc(_, p, _).\n\
+gap(p) :- missing(p).\n";
     let mut r = kernel_run("phase-includes", RULES);
     r.write("a.rerail", "#include \"b.rerail\"\nx(1).\n", 50);
     r.write("b.rerail", "#include \"c.rerail\"\n#include \"a.rerail\"\nx(2).\n", 50);
@@ -867,9 +945,16 @@ seen(p) :- doc(_, p, _).\n";
     r.last = None;
     r.run();
     assert_eq!(r.rows(2, "seen"), seen(&r, &["a.rerail", "b.rerail"]), "cold");
+    // An include of no file: the load answer's miss, a row of `missing` (D3), and the file appearing loads it.
     r.write("b.rerail", "#include \"gone.rerail\"\n", 30);
-    let e = r.try_run().expect_err("an include of no file");
-    assert!(e.contains("gone.rerail: not a readable file"), "{e}");
+    r.run();
+    assert_eq!(r.rows(2, "missing"), seen(&r, &["gone.rerail"]), "the miss, a row");
+    assert_eq!(r.rows(2, "gap"), seen(&r, &["gone.rerail"]), "read by a rule");
+    assert_eq!(r.rows(2, "seen"), seen(&r, &["a.rerail", "b.rerail"]), "the miss is no document");
+    r.write("gone.rerail", "x(4).\n", 20);
+    r.run();
+    assert!(r.rows(2, "missing").is_empty() && r.rows(2, "gap").is_empty(), "no miss once the file is there");
+    assert_eq!(r.rows(2, "seen"), seen(&r, &["a.rerail", "b.rerail", "gone.rerail"]), "the file appearing");
 }
 
 /// L4's functors (B§10 step 9; L4-f option 3): `@f(…)` and `f(…)` as calls of functions the executor knows by name,

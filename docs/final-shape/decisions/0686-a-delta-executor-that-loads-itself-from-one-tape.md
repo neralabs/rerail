@@ -2473,3 +2473,53 @@ Checks (Relax, local, 141 of 141): `the_compiler_lowers_as_the_kernel_does_and_r
 
 Still to build in step 9, as the compiler's rules: include resolution and the module plan (`bootstrap.rerail`'s),
 patterns, lattices, the passes.
+
+### L4: includes and the module plan, as the compiler's rules (B§6's L4 row; 2026-11-26)
+
+`bootstrap.rerail`'s phase 0, ported as far as B§ has it: two answerers (B§7), modules as files (O4), a program as
+K-form rows with no image (B§11). Three files at the compiler's end, read by P3 into P4 with the rest:
+- `c-13-declares`: a document that declares `doc` is in T's shape.
+- `c-14-includes`:
+  - The program's files are `root(path, module)` facts, each loaded.
+  - Each `#include` of a loaded file names a file; a root not in T's shape names `core.rerail` first.
+  - An include's candidates, in order: the library's (`p0_lib(dir)`), then its file's own directory, by
+    `@join(@dir(f), n)` (`core.rerail`'s functions, now the executor's).
+  - Existence is the load answer's: the first candidate is asked, and the second only once the first missed, so
+    nothing loads that no include resolves to.
+  - Outputs: `p0_include`, `p0_absent` and the include graph (`p0_includes`, `p0_reach`).
+- `c-15-plan`: each file's scope (the files its includes reach), its rank (how many it reaches), and `p0_missing`.
+  `bootstrap.rerail`'s module key and image are not kept, since B§11 has no image.
+
+Left out of the port, with why:
+- Directory listings: existence is the load answer's miss.
+- The `env` globals: the library is a fact.
+- Regex paths: `dir` and `join` do it.
+- Windows separators.
+- Phase programs: the passes will say what a phase program is here.
+
+The executor's side:
+- A load the world has no file for is a row of `missing(path)`. The level writes it, it is kept for a rule that names
+  it, and its leaf is recorded as every read's is (D3). A file appearing there changes the next run.
+- No rule may write `missing`.
+- A relation the level makes in a round is read whole by that round's strata.
+- `DocSet::read_or_miss` is the read that tells a miss apart from an error.
+- The document set rolls up geometrically while the levels commit to it, since they read it only at its head. It
+  stays unrolled while L1's loop reads it as a chain. An include's rounds commit a layer a file, and the compiler's
+  run passed the 64-layer bound of the kill search.
+
+Checks (Relax, local, 142 of 142):
+- `includes_resolve_by_the_compilers_rules_into_the_program`:
+  - the library's file before the directory's;
+  - `core.rerail` first;
+  - T's shape without it;
+  - an include cycle, its scope and rank;
+  - an include no file resolves, and its candidates absent;
+  - the program L5 runs is what the includes reach;
+  - after an edit and cold, the same graph;
+  - a file appearing resolves the include, and its rules run.
+- `a_level_loads_what_its_rules_derive…`: its last part, a miss, is now a row read by a rule, and the file appearing
+  loads it.
+- The self-hosting check covers the fifteen files.
+- Mutation caught: loading every second candidate whatever the first did.
+
+Still to build in step 9: patterns (`~`), lattices, the passes, as the compiler's rules.

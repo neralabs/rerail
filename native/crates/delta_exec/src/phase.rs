@@ -1206,8 +1206,10 @@ pub struct Level {
     /// inputs from there (the first round's, the run's start).
     read: BTreeMap<i64, Option<BlockId>>,
     tapes_read: Option<BlockId>,
-    /// `load`'s symbol: the level's asks, kept out of its facts out.
+    /// `load`'s symbol: the level's asks, kept out of its facts out; and `missing`'s, the asks that missed, written
+    /// by the level's answer and kept out of its facts out too.
     load: Option<i64>,
+    missing: Option<i64>,
     /// Each module's operator cache, its planner's memo (Operations §6.1: "in memory across runs"): kept from one
     /// run of the level to the next, let go with its module.
     caches: BTreeMap<i64, crate::cache::OpCache>,
@@ -1225,7 +1227,7 @@ impl Level {
     /// An empty level, its layers placed at `place`.
     pub fn new(place: u32) -> Result<Level, String> {
         let tapes = Trace::new(&tape_shape())?.with_roll_up(RollUp::Never).resumed(place, None);
-        Ok(Level { place, rels: BTreeMap::new(), ran: Program::default(), tapes, seen: BTreeMap::new(), start: BTreeMap::new(), tapes_start: None, read: BTreeMap::new(), tapes_read: None, load: None, caches: BTreeMap::new() })
+        Ok(Level { place, rels: BTreeMap::new(), ran: Program::default(), tapes, seen: BTreeMap::new(), start: BTreeMap::new(), tapes_start: None, read: BTreeMap::new(), tapes_read: None, load: None, missing: None, caches: BTreeMap::new() })
     }
 
     /// Its relation `rel`'s trace between this run's start and now.
@@ -1254,7 +1256,7 @@ impl Level {
     /// Its facts out, the next level's facts in (O6): every relation it writes that is not K-form, and not its own
     /// `load` facts, which this level answered.
     pub fn facts(&self, ksyms: &[Option<i64>]) -> Vec<FactIn<'_>> {
-        self.rels.iter().filter(|(r, _)| !ksyms.contains(&Some(**r)) && self.load != Some(**r)).map(|(&rel, r)| FactIn { rel, trace: &r.head, shape: r.shape.clone() }).collect()
+        self.rels.iter().filter(|(r, _)| !ksyms.contains(&Some(**r)) && self.load != Some(**r) && self.missing != Some(**r)).map(|(&rel, r)| FactIn { rel, trace: &r.head, shape: r.shape.clone() }).collect()
     }
 
     /// Each fact in seen where it is now (a run's end, after the level before it rolled its traces up).
@@ -1319,8 +1321,11 @@ impl Level {
         // Its documents: the `load` answers its facts in ask, and its program's `load` facts (Bootstrap §5: "its load
         // facts ask the loader"; P3 loads what L3 reads).
         self.load = known.load;
+        self.missing = known.missing;
+        if let Some(r) = next.modules.values().flat_map(|m| &m.rules).find(|r| Some(r.head) == known.missing) {
+            return Err(format!("module {} rule {}: relation missing is the load answer's misses, which no rule writes", docs.path_of(&bench.dir, atoms, r.module), r.id));
+        }
         let mut asked = self.asked(&bench.dir, &known, facts, &next).map_err(|e| e.named(&docs.path_of(&bench.dir, atoms, e.module)))?;
-        self.answer(bench, docs, leaves, atoms, &asked).map_err(|e| format!("a level's documents: {e}"))?;
         // A head whose shape the edit changed (its grain, its stratum's recursion): a trace keeps one shape, so the
         // level runs from ∅, its documents kept.
         let mut reset = false;
@@ -1340,6 +1345,7 @@ impl Level {
         if reset {
             self.reset(&mut bench.dir);
         }
+        self.answer(bench, docs, leaves, atoms, &asked).map_err(|e| format!("a level's documents: {e}"))?;
         let mut round = 0;
         loop {
             // Its strata: modules gone first (their rows retracted), then the program's in k_order. A later round's
@@ -1452,11 +1458,29 @@ impl Level {
     /// parse and intern answers), and its row in the level's documents.
     fn answer(&mut self, bench: &mut Bench, docs: &mut DocSet, leaves: &mut LeavesW, atoms: Atoms, asked: &BTreeSet<Vec<i64>>) -> Result<(), String> {
         let mut want: BTreeSet<Vec<i64>> = BTreeSet::new();
+        let mut missed: BTreeSet<Vec<i64>> = BTreeSet::new();
         for r in asked {
             let (path, module) = (atoms.name(&bench.dir, r[0]), atoms.name(&bench.dir, r[1]));
-            docs.read(bench, leaves, atoms, &path, &module)?;
+            if docs.read_or_miss(bench, leaves, atoms, &path, &module)?.is_none() {
+                missed.insert(vec![r[0]]);
+                continue;
+            }
             if let Some(row) = docs.row_of(&bench.dir, atoms, &path)? {
                 want.insert(row);
+            }
+        }
+        // The misses, `missing`'s rows (a relation of the level's, its answer's to write).
+        if let Some(m) = self.missing {
+            if !self.rels.contains_key(&m) {
+                let shape = Shape::run(vec![ColType::I32], vec![0], None);
+                let head = Trace::new(&shape)?.with_roll_up(RollUp::Never).resumed(self.place, None);
+                self.rels.insert(m, Rel { shape, head, counts: None });
+            }
+            let rel = self.rels.get_mut(&m).expect("made");
+            let had = rows_at(&bench.dir, &rel.head, rel.head.head())?;
+            let pairs: Vec<(Vec<i64>, i32)> = had.difference(&missed).map(|r| (r.clone(), -1)).chain(missed.difference(&had).map(|r| (r.clone(), 1))).collect(); // copy: derived (the misses' change)
+            if !pairs.is_empty() {
+                crate::contract::push_layer(&bench.reg, &bench.traces, &mut bench.dir, &mut rel.head, &pairs)?;
             }
         }
         docs.resident(bench)?;
@@ -1503,7 +1527,8 @@ impl Level {
         let mut run = || {
             for (rel, _) in &st.ins {
                 if let Some(r) = self.rels.get(rel) {
-                    let start = self.read.get(rel).copied().unwrap_or(r.head.head());
+                    // A relation made in this run has no read point: all of it is new.
+                    let start = self.read.get(rel).copied().unwrap_or(None);
                     ins.push((&r.head, start, r.head.head()));
                 } else if let Some(f) = facts.iter().find(|f| f.rel == *rel) {
                     ins.push((f.trace, self.seen.get(rel).copied().flatten(), f.trace.head()));

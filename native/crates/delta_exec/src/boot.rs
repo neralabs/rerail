@@ -73,8 +73,9 @@ pub struct DocSet {
     pub world: World,
     pub iops: InternOps,
     pub drops: DropOps,
-    /// A row a document (`l1::tape_shape`): no roll-up while a run reads it (its before is a layer in its chain), then
-    /// rolled up at the run's end (`Trace::roll_up_run`).
+    /// A row a document (`l1::tape_shape`): no roll-up while L1's loop reads it as a chain (its before, the last run's
+    /// head, a layer in it), then the geometric roll-up while the levels read it, only ever at its head (their loads'
+    /// commits, as many as their includes' rounds read files); rolled up at the run's end (`Trace::roll_up_run`).
     pub tape: Trace,
     /// The last run's pins, kept (`Pins::keep`).
     kept: Option<BlockId>,
@@ -141,12 +142,17 @@ impl DocSet {
         self.world.place(&bench.reg, &bench.traces, &mut bench.dir, d, None)
     }
 
+    /// `read_or_miss`, a miss refused, naming the path.
+    pub fn read(&mut self, bench: &mut Bench, leaves: &mut LeavesW, atoms: Atoms, path: &str, module: &str) -> Result<Doc, String> {
+        self.read_or_miss(bench, leaves, atoms, path, module)?.ok_or_else(|| format!("{path}: not a readable file"))
+    }
+
     /// Reads document `path` as module `module` (B§8's first line; the engine's load names both) through the three
-    /// answerers (P§12 item 7), its leaf into the run's layer `leaves`: the load answer (its source; a miss refused,
-    /// naming the path); when it changed, the parse answer (its tape) and the intern answer (its symbols, into
+    /// answerers (P§12 item 7), its leaf into the run's layer `leaves`: the load answer (its source; a miss is `None`,
+    /// its leaf recorded as every read's is, D3); when it changed, the parse answer (its tape) and the intern answer (its symbols, into
     /// `atoms`), its places, and the document set's next state, its old row retracted where the set keeps it
     /// (`drop_parts`) and its new row added; an unchanged document is the identity (no layer).
-    pub fn read(&mut self, bench: &mut Bench, leaves: &mut LeavesW, atoms: Atoms, path: &str, module: &str) -> Result<Doc, String> {
+    pub fn read_or_miss(&mut self, bench: &mut Bench, leaves: &mut LeavesW, atoms: Atoms, path: &str, module: &str) -> Result<Option<Doc>, String> {
         let kept = self.row_at(&bench.dir, atoms, path)?;
         let d = match &kept {
             Some(r) => r[0],
@@ -162,7 +168,7 @@ impl DocSet {
         }
         let source = match (Load { at: reach!(), named: &named }).answer(&[d], leaves)? {
             Answer::Blob(s) => s,
-            Answer::Miss => return Err(format!("{path}: not a readable file")),
+            Answer::Miss => return Ok(None),
             a => return Err(format!("{path}: the load answer is {a:?}")),
         };
         let blob = |a: Answer, what: &str| match a {
@@ -177,7 +183,7 @@ impl DocSet {
             }
         };
         if doc.is_identity() {
-            return Ok(doc);
+            return Ok(Some(doc));
         }
         let key: Vec<i64> = std::iter::once(d).chain(doc.after.source.words()).chain(doc.after.tape.words()).collect(); // copy: derived (the intern answer's key)
         let syms = blob((Intern { at: reach!(), iops: &self.iops, atoms, named: &named }).answer(&key, leaves)?, "intern")?;
@@ -200,7 +206,7 @@ impl DocSet {
             return Err(e);
         }
         self.tape.commit(&bench.reg, &bench.traces, &mut bench.dir, runs, Tiling::WHOLE)?;
-        Ok(doc)
+        Ok(Some(doc))
     }
 
     /// Every document of the set resident (B§8's `world.tape`: a tape read where the residency holds it), its slabs
@@ -365,6 +371,7 @@ pub fn run(l1: &L1, inst: &mut Instance, levels: &mut Levels, l0: &str, module: 
         }
     }
     docs.world.begin();
+    docs.tape.set_roll_up(RollUp::Never);
     let mut leaves = docs.world.leaves_w(&mut bench.dir);
     let ran = (|| {
         // The blobs of slabs the residency retired or dropped since, forgotten (their documents load again).
@@ -409,7 +416,9 @@ pub fn run(l1: &L1, inst: &mut Instance, levels: &mut Levels, l0: &str, module: 
                 break;
             }
         }
-        // B§8's loop: each level over the export of the one before; the first that exports no program ends it.
+        // B§8's loop: each level over the export of the one before; the first that exports no program ends it. No level
+        // reads the document set as a chain: it rolls up as it is committed.
+        docs.tape.set_roll_up(RollUp::Geometric);
         let mut k = 0;
         loop {
             // K-form's symbols as each level starts: a level's documents may name a K-form relation first (a level

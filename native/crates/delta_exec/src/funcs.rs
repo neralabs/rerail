@@ -46,6 +46,8 @@ pub const FUNCS: &[(&str, Args, Ty)] = &[
     ("min", Some(&[Num, Num]), Num),
     ("dot", Some(&[Text, Text]), Text),
     ("head", Some(&[Text]), Text),
+    ("dir", Some(&[Text]), Text),
+    ("join", Some(&[Text, Text]), Text),
 ];
 
 /// Function `name`'s place in `FUNCS`.
@@ -107,6 +109,26 @@ pub fn call<'a>(f: usize, args: &[i64], text: &dyn Fn(i64) -> Option<&'a str>) -
         }
         // The first dotted segment (`@head("os.path") = "os"`).
         "head" => txt(t(0)?.split('.').next().unwrap_or("").to_string()),
+        // A path's parent: "" for a path of one part (`core.rerail`: `@dir("src/a/b.ts")` = `"src/a"`).
+        "dir" => txt(t(0)?.rsplit_once('/').map_or("", |(d, _)| d).to_string()),
+        // `rel` from `dir`, normalised, `..` resolved (`@join(@dir("src/a/b.ts"), "../c")` = `"src/c"`).
+        "join" => txt(join(t(0)?, t(1)?)),
         other => unreachable!("a function of FUNCS: {other}"),
     }
+}
+
+/// `join`'s meaning (`core.rerail`): `rel` from `dir`, its `.` and empty parts dropped and each `..` taking one part
+/// away; a `rel` from `/` is from the root.
+fn join(dir: &str, rel: &str) -> String {
+    let mut parts: Vec<&str> = if rel.starts_with('/') { Vec::new() } else { dir.split('/').filter(|p| !p.is_empty()).collect() };
+    for p in rel.split('/') {
+        match p {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            p => parts.push(p),
+        }
+    }
+    parts.join("/")
 }
