@@ -410,9 +410,11 @@ pub fn run(l1: &L1, inst: &mut Instance, levels: &mut Levels, l0: &str, module: 
             }
         }
         // B§8's loop: each level over the export of the one before; the first that exports no program ends it.
-        let ksyms = kform_syms(&bench.dir, globals);
         let mut k = 0;
         loop {
+            // K-form's symbols as each level starts: a level's documents may name a K-form relation first (a level
+            // that lowers `.decl` writes `k_decl`), interned as it loaded them.
+            let ksyms = kform_syms(&bench.dir, globals);
             if k == MAX_LEVELS {
                 return Err(format!("a run past {MAX_LEVELS} levels: each exported a program"));
             }
@@ -451,6 +453,7 @@ pub fn run(l1: &L1, inst: &mut Instance, levels: &mut Levels, l0: &str, module: 
         for (j, l) in levels.levels[..k].iter_mut().enumerate() {
             l.finish(bench).map_err(|e| format!("level {}'s roll-up: {e}", j + 2))?;
         }
+        let ksyms = kform_syms(&bench.dir, globals);
         for j in 1..k {
             let (done, rest) = levels.levels.split_at_mut(j);
             rest[0].saw(&done[j - 1].facts(&ksyms));

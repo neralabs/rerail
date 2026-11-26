@@ -253,6 +253,8 @@ impl Module {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Program {
     pub modules: BTreeMap<i64, Module>,
+    /// The declared relations (`k_decl`, K1-d): each one's columns' types, in column order.
+    pub decls: BTreeMap<i64, Vec<i64>>,
 }
 
 /// A step's place: its module, its rule, and its `(k, j)` (`(-1, -1)`: the head).
@@ -336,7 +338,28 @@ impl Program {
                 md.k = Some(r[1]);
             }
         }
-        let p = Program { modules };
+        // The declarations: each module's columns of a relation, dense from 0, one type a column (a module's
+        // declarations of one relation are the union of their columns); two modules' that differ are refused.
+        let mut by: BTreeMap<(i64, i64), BTreeMap<i64, i64>> = BTreeMap::new();
+        for r in &rows[at("k_decl")] {
+            if let Some(t) = by.entry((r[0], r[1])).or_default().insert(r[2], r[3]).filter(|&t| t != r[3]) {
+                let (a, b) = (crate::sym::name_of(atoms, t), crate::sym::name_of(atoms, r[3]));
+                return Err(Refused { module: r[0], rule: -1, why: format!("relation {}'s column {} is declared of type {a} and of {b}", crate::sym::name_of(atoms, r[1]), r[2]) });
+            }
+        }
+        let mut decls: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
+        for ((m, rel), cols) in by {
+            let name = crate::sym::name_of(atoms, rel);
+            if cols.keys().copied().ne(0..cols.len() as i64) {
+                return Err(Refused { module: m, rule: -1, why: format!("relation {name} is declared with its columns not 0 to {}", cols.len() - 1) });
+            }
+            let types: Vec<i64> = cols.into_values().collect();
+            if let Some(other) = decls.get(&rel).filter(|o| **o != types) {
+                return Err(Refused { module: m, rule: -1, why: format!("relation {name} is declared with {} columns and with {}, or of other types", types.len(), other.len()) });
+            }
+            decls.insert(rel, types);
+        }
+        let p = Program { modules, decls };
         p.check(atoms)?;
         Ok(p)
     }
@@ -412,6 +435,17 @@ impl Program {
                             return Err(rule.refuse(format!("step {:?} reads relation {}, the head of module {}, of the same stratum place", s.key, n(s.rel), n(w))));
                         }
                     }
+                }
+                // A declared relation's arity, in its head and its steps.
+                let arity = |rel: i64, n: usize, at: &str| -> Result<(), Refused> {
+                    match self.decls.get(&rel) {
+                        Some(cols) if cols.len() != n => Err(rule.refuse(format!("{at} {} of {n} columns, declared with {}", crate::sym::name_of(atoms, rel), cols.len()))),
+                        _ => Ok(()),
+                    }
+                };
+                arity(rule.head, rule.args.len(), "head")?;
+                for s in rule.steps.iter().filter(|s| s.kind.reads()) {
+                    arity(s.rel, s.args.len(), &format!("step {:?} reads", s.key))?;
                 }
                 for t in &rule.args {
                     match t {

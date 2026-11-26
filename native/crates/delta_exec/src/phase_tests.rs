@@ -397,7 +397,8 @@ impl Run {
 
     /// Level `k`'s relation `rel`'s rows, each its relation's columns (a level dropped).
     fn rows(&self, k: usize, rel: &str) -> BTreeSet<Vec<i64>> {
-        let Some(r) = self.levels.levels[k].rels.get(&self.s(rel)) else { return BTreeSet::new() };
+        // A relation no document names (`k_decl` where none declares) has no symbol, and no rows.
+        let Some(r) = self.atoms.find(&self.bench.dir, rel).and_then(|s| self.levels.levels[k].rels.get(&s)) else { return BTreeSet::new() };
         let n = r.shape.columns.len() - usize::from(r.shape.levels);
         rows_at(&self.bench.dir, &r.head, r.head.head()).unwrap().into_iter().map(|mut x| {
             x.truncate(n);
@@ -674,6 +675,28 @@ fn k1s_arithmetic_lowers_to_operator_steps_in_postorder() {
         r.last = None;
         r.run();
         assert_eq!(r.rows(2, "h"), want, "{name}: cold");
+    }
+}
+
+/// K1's declarations (B§6, L3; B§10 step 8; K1-d): a `.decl` is K-form rows, `k_decl`, a column each with its type,
+/// and the program runs as before. A head or a step of another arity than its relation's declaration is refused, as
+/// is a column declared of two types.
+#[test]
+fn k1s_declarations_are_k_form_rows_and_an_arity_against_them_is_refused() {
+    let mut r = kernel_run("phase-k1d", ".decl h(x: number)\n.decl e(a: number, b: symbol)\nh(x) :- e(x, _).\n");
+    r.run();
+    assert_eq!(r.rows(2, "h"), BTreeSet::from([vec![1], vec![2], vec![3]]));
+    let decls: BTreeSet<(String, i64, String)> = r.rows(1, "k_decl").into_iter().map(|x| (r.name(x[1]), x[2], r.name(x[3]))).collect();
+    let want = [("h", 0, "number"), ("e", 0, "number"), ("e", 1, "symbol")].map(|(a, i, t)| (a.to_string(), i, t.to_string()));
+    assert_eq!(decls, BTreeSet::from(want));
+    for (name, text, why) in [
+        ("head", ".decl h(x: number, y: number)\nh(x) :- e(x, _).\n", "head h of 1 columns, declared with 2"),
+        ("step", ".decl e(a: number)\nh(x) :- e(x, _).\n", "reads e of 2 columns, declared with 1"),
+        ("twice", ".decl h(x: number)\n.decl h(x: symbol)\nh(x) :- e(x, _).\n", "relation h's column 0 is declared of type number and of symbol"),
+    ] {
+        let mut r = kernel_run(&format!("phase-k1d-{name}"), text);
+        let e = r.try_run().err().unwrap_or_else(|| panic!("{name}: run, not refused: {:?}", r.rows(1, "k_decl")));
+        assert!(e.contains(why), "{name}: {e}");
     }
 }
 

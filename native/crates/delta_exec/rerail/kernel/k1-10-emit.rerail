@@ -10,5 +10,6 @@ k_var(d, t, v) :- read_var(d, t, v).
 k_str(d, t, s) :- read_str(d, t, s).
 k_num(d, t, n) :- read_num(d, t, n).
 k_wild(d, t) :- read_wild(d, t).
+k_decl(d, r, i, t) :- read_decl(d, r, i, t).
 // Strata are files, as at L2: a module's stratum its file's place, boot(path, k).
 k_order(d, k) :- boot(p, k), doc(d, p, _).

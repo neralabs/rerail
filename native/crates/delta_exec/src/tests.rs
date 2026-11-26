@@ -86,14 +86,14 @@ impl Fx {
     }
 
     /// L1's rows of `doc` as module `d`, by relation: its plain function over a tape port of the one document.
-    pub fn rows(&mut self, doc: &D, d: i64) -> Result<[Rows; 8], String> {
+    pub fn rows(&mut self, doc: &D, d: i64) -> Result<[Rows; 9], String> {
         let mut t = Trace::new(&tape_shape())?.with_roll_up(RollUp::Never);
         let ht = push_layer(&self.reg, &self.traces, &mut self.dir, &mut t, &[(tape_row(d, d, 0, &doc.ids, &doc.syms), 1)])?;
         let atoms = Global { block: self.atoms.0, count: u64::from(self.atoms.count(&self.dir)) };
         let l1 = self.l1();
         let mut cx = Cx { reg: &self.reg, dir: &mut self.dir, blobs: &self.blobs, traces: &self.traces, caches: &self.caches, join: None };
         let rows = apply(&l1, &mut cx, &[(&t, Some(ht))], &[atoms])?;
-        Ok(rows.try_into().expect("eight relations"))
+        Ok(rows.try_into().expect("nine relations"))
     }
 }
 

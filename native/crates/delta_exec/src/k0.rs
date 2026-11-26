@@ -48,6 +48,7 @@ pub static K0_PASS: Signature = Signature::new(
         runs("k_num"),
         runs("k_wild"),
         runs("k_order"),
+        runs("k_decl"),
         SlotSpec { name: "cache", mode: Mode::ReadWrite, kind: kind::CACHE },
     ],
     ParamsLayout::of::<K0P>(),

@@ -2265,3 +2265,22 @@ Checks (Relax, local, 134 of 134):
   in order, and a cold run gives the same.
   - Without the rule that runs a step under another first, two steps share a turn, and the executor refuses the rule.
   - Without the rule that runs constants first, an operator of constants is read unbound.
+
+### K1: declarations (K1-d; 2026-11-26)
+
+- **Rows.** A `.decl` is K-form rows of a ninth relation, `k_decl(m, rel, i, type)`: each column by its place and its
+  type's name (`kform::RELATIONS`, last, so the other eight keep their places).
+  - K1 reads a declaration's columns (`read_decl`, `k1-1-read`) and emits them (`k1-10-emit`).
+  - K0 declares none: L1's pass has a ninth runs slot, and it stays empty (`delta_twins::k0`, `R = 9`).
+- **Checks** (`Program::read`, sentence 3's checks):
+  - A head or a step of another arity than its relation's declaration is refused.
+  - So is a column declared of two types.
+  - A module's declarations of one relation are the union of their columns, since a row names no declaration. Two
+    modules that declare one relation differently are refused.
+- **A fix the rows needed.** B§8's loop found K-form's symbols once, before its first level. A relation that a
+  level's own documents name first (`k_decl`, which is interned only when the kernel's files load) was then passed on
+  as facts rather than as the next program. The symbols are now found as each level starts (`boot.rs`).
+
+Checks (Relax, local, 135 of 135): `k1s_declarations_are_k_form_rows_and_an_arity_against_them_is_refused`. It covers
+a declared program's rows and its `k_decl` rows, and refusals for a head's arity, a step's arity and a column of two
+types. Before the fix to the loop, the head's refusal did not fire: L4 read no declaration.

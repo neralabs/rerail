@@ -63,3 +63,5 @@ in_term(d, l, z) :- in_term(d, l, y), field(d, y, _, z).
 read_str(d, t, s) :- kind(d, t, "string"), value(d, t, s).
 read_num(d, t, n) :- kind(d, t, "number"), value(d, t, n).
 read_wild(d, t) :- kind(d, t, "wildcard").
+// A declaration (K1-d): its relation's columns, each by its place and its type's name.
+read_decl(d, r, i, t) :- kind(d, x, "declaration"), field(d, x, "name", n), text(d, n, r), field(d, x, "columns", l), child(d, l, c, i), field(d, c, "type", y), field(d, y, "name", tn), text(d, tn, t).

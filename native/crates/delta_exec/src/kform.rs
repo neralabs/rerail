@@ -1,4 +1,4 @@
-//! K-form: a program as rows of eight relations (decision 0686; Bootstrap from one tape, §3). Each row's first column
+//! K-form: a program as rows of nine relations (decision 0686; Bootstrap from one tape, §3). Each row's first column
 //! is its module, the document its rules were read from: the partition column. Rule and term ids are that document's
 //! node ids, local to it (L9): they renumber on any edit, and the module is the grain.
 //!
@@ -8,13 +8,16 @@
 //!   after atom `p` puts it at `(p, f)`, with no arithmetic (the rebuild plan, O2);
 //! - `k_arg(m, rule, k, j, i, term)`: the step's `i`-th argument; `(-1, -1)` is the head;
 //! - `k_var(m, term, name)`, `k_str(m, term, s)`, `k_num(m, term, n)`, `k_wild(m, term)`: what a term is;
-//! - `k_order(m, k)`: module `m`'s stratum, its file's place in the bootstrap (`boot(path, k)`): strata are files.
+//! - `k_order(m, k)`: module `m`'s stratum, its file's place in the bootstrap (`boot(path, k)`): strata are files;
+//! - `k_decl(m, rel, i, type)`: module `m` declares relation `rel` (`.decl`, K1-d), its `i`-th column of type `type`.
+//!   A step or a head of another arity is refused, as a relation of two declarations that differ is; K0 declares
+//!   none.
 //!
 //! What a program means is fixed by §3's five sentences, and nothing else is: the executor never reorders, rewrites
 //! or stratifies a rule.
 
 /// The K-form relations, by name, with their arities.
-pub const RELATIONS: [(&str, usize); 8] = [
+pub const RELATIONS: [(&str, usize); 9] = [
     ("k_rule", 3),
     ("k_step", 6),
     ("k_arg", 6),
@@ -23,6 +26,7 @@ pub const RELATIONS: [(&str, usize); 8] = [
     ("k_num", 3),
     ("k_wild", 2),
     ("k_order", 2),
+    ("k_decl", 4),
 ];
 
 /// The K-form relation at `RELATIONS[i]`'s trace shape: partitioned by module, sorted in column order, every

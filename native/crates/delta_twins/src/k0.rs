@@ -171,7 +171,8 @@ pub const DOCS: usize = 0;
 pub const ATOMS: usize = 1;
 pub const CONTROL: usize = 2;
 pub const RUNS: usize = 3;
-const R: usize = 8;
+/// K-form's relations, `k_decl` last (K0 declares none: its runs stay empty).
+const R: usize = 9;
 /// L1's cache (read-write): each document's sizes, the rows it was given by relation (`cache::keep_sizes`).
 pub const CACHE: usize = RUNS + R;
 
