@@ -20,7 +20,7 @@
 //! (`readers`).
 
 use ::bitlex::syntax::{Arg, Expr, PartLen, Region, Stmt, TokenRule, TokenTest};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 // Mounted by `rerail-bitlex` from the compiler's folder (`#[path]`): its submodule is found beside it.
@@ -1127,6 +1127,11 @@ struct Gen<'a> {
     /// in one pass over the blocks: each in the code where its marker is (`pass_marker`), the pass open last too.
     passes: Vec<Vec<PassNode>>,
     open_pass: Option<usize>,
+    /// The passes of the masks made of the loop's `code_l` (`code_escape`): a lane of the token loop's, each a word at a
+    /// time behind the loop (`render_passes`), not a pass after it.
+    lane_passes: HashSet<usize>,
+    /// Whether the masks made now are the lane's.
+    in_lane: bool,
 }
 
 /// A mask of a pass over the file's words (`Gen::fuse`): its word at word `i` a local of the step (`w_NAME`), the word
@@ -1142,6 +1147,12 @@ struct PassNode {
     /// A later mask of the pass reads its word before (`prev`).
     prev: bool,
 }
+
+/// The token loop's head, where the lane (`Gen::lane_passes`) is stepped.
+const LOOP_HEAD: &str = "    'tokens: while b < nw {\n        let base = b * 64;\n";
+
+/// Where the lane's last words are made, after the token loop.
+const LANE_DRAIN: &str = "    //~lane drain\n";
 
 /// The line that stands for pass `k` in the code until it is written (`Gen::render_passes`).
 fn pass_marker(k: usize) -> String {
@@ -1954,6 +1965,9 @@ impl Gen<'_> {
         let open = self.open_pass.filter(|&k| {
             let Some(at) = self.body.find(&pass_marker(k)) else { return false };
             let after = &self.body[at + pass_marker(k).len()..];
+            if self.lane_passes.contains(&k) != self.in_lane {
+                return false;
+            }
             let mine = |n: &str| self.passes[k].iter().any(|x| x.name == n);
             // A mask of a pass after it: made after its marker too.
             let later = |n: &str| self.passes[k + 1..].iter().any(|p| p.iter().any(|x| x.name == n));
@@ -1964,6 +1978,9 @@ impl Gen<'_> {
             None => {
                 self.passes.push(Vec::new());
                 let k = self.passes.len() - 1;
+                if self.in_lane {
+                    self.lane_passes.insert(k);
+                }
                 self.body.push_str(&pass_marker(k));
                 self.open_pass = Some(k);
                 k
@@ -1986,13 +2003,31 @@ impl Gen<'_> {
     /// kept in a vector where `readers`, `text` outside the pass or another pass reads them.
     fn render_passes(&self, text: &str, readers: &str) -> String {
         let mut text = text.to_owned();
+        // The lane (`lane_passes`): its decls before the token loop, its steps in it and after it.
+        let (mut lane_decl, mut lane_step, mut lanes) = (String::new(), String::new(), 0usize);
         for (k, nodes) in self.passes.iter().enumerate() {
             let marker = pass_marker(k);
             let Some(at) = text.find(&marker) else { continue };
+            let lane = self.lane_passes.contains(&k) && text.contains(LOOP_HEAD);
+            // A lane's escape is tested at each word, as the step makes it.
+            let mut tests = String::new();
+            if lane {
+                for x in nodes {
+                    let line = format!("    refused |= any(&{});\n", x.name);
+                    if let Some(j) = text.find(&line) {
+                        let comment = text[..j].rfind("\n    // ").map(|c| c + 1).filter(|&c| !text[c..j].trim_end().contains('\n'));
+                        let from = comment.unwrap_or(j);
+                        let why = text[from..j].to_owned();
+                        text.replace_range(from..j + line.len(), "");
+                        let _ = write!(tests, "{}            refused |= w_{} != 0;\n", indent(&why, "        "), x.name);
+                    }
+                }
+            }
+            let Some(at) = text.find(&marker).or(Some(at)) else { continue };
             let others: Vec<&str> = self.passes.iter().enumerate().filter(|(j, _)| *j != k).flat_map(|(_, p)| p.iter().map(|x| x.code.as_str())).collect();
             let stored: Vec<bool> = nodes.iter().map(|x| uses(&text, &x.name) || uses(readers, &x.name) || others.iter().any(|c| uses(c, &x.name))).collect();
-            // Live: kept, or read by a live mask of the pass.
-            let mut live = stored.clone();
+            // Live: kept, tested, or read by a live mask of the pass.
+            let mut live: Vec<bool> = nodes.iter().zip(&stored).map(|(x, s)| *s || uses(&tests, &format!("w_{}", x.name))).collect();
             for i in (0..nodes.len()).rev() {
                 if live[i] {
                     for j in 0..i {
@@ -2002,47 +2037,71 @@ impl Gen<'_> {
                     }
                 }
             }
-            let mut out = String::new();
+            let mut decl = String::new();
+            let mut step = String::new();
             if live.iter().any(|l| *l) {
                 let names: Vec<&str> = nodes.iter().zip(&stored).filter(|(_, s)| **s).map(|(x, _)| x.name.as_str()).collect();
-                let _ = writeln!(out, "    // A pass over the file's words: the masks below, each word a local of its step{}.", if names.is_empty() { String::new() } else { format!(", kept for what reads them later ({})", names.join(", ")) });
                 for n in &names {
-                    let _ = writeln!(out, "    let mut {n} = vec![0u64; nw];");
+                    let _ = writeln!(decl, "    let mut {n} = vec![0u64; nw];");
                 }
-                out.push_str("    {
-");
                 for (x, l) in nodes.iter().zip(&live) {
                     if *l && x.carry {
-                        let _ = writeln!(out, "        let mut c_{} = 0u64;", x.name);
+                        let _ = writeln!(decl, "    let mut c_{} = 0u64;", x.name);
                     }
                     if *l && x.prev {
-                        let _ = writeln!(out, "        let mut p_{} = 0u64;", x.name);
+                        let _ = writeln!(decl, "    let mut p_{} = 0u64;", x.name);
                     }
                 }
-                out.push_str("        for i in 0..nw {
-");
                 for ((x, l), st) in nodes.iter().zip(&live).zip(&stored) {
                     if !*l {
                         continue;
                     }
                     if !x.comment.is_empty() {
-                        out.push_str(&indent(&x.comment, "        "));
+                        step.push_str(&indent(&x.comment, "        "));
                     }
-                    let _ = writeln!(out, "            let w_{} = {};", x.name, x.code.replace("\n", "\n    "));
+                    let _ = writeln!(step, "            let w_{} = {};", x.name, x.code.replace("\n", "\n    "));
                     if *st {
-                        let _ = writeln!(out, "            {}[i] = w_{};", x.name, x.name);
+                        let _ = writeln!(step, "            {}[i] = w_{};", x.name, x.name);
                     }
                 }
+                step.push_str(&tests);
                 for (x, l) in nodes.iter().zip(&live) {
                     if *l && x.prev {
-                        let _ = writeln!(out, "            p_{} = w_{};", x.name, x.name);
+                        let _ = writeln!(step, "            p_{} = w_{};", x.name, x.name);
                     }
                 }
-                out.push_str("        }
-    }
-");
             }
+            let mut out = String::new();
+            if lane {
+                if !step.is_empty() {
+                    // Pass `lanes` of the lane makes word `lane - lanes`: the word after it is made by the pass before.
+                    lane_decl.push_str(&decl);
+                    let test = if lanes == 0 { "lane < nw".to_owned() } else { format!("lane >= {lanes} && lane - {lanes} < nw") };
+                    let _ = write!(lane_step, "        if {test} {{\n            let i = lane - {lanes};\n{}        }}\n", indent(&step, "    "));
+                    lanes += 1;
+                }
+                if lanes == 1 && !step.is_empty() {
+                    out.push_str(LANE_DRAIN);
+                }
+            } else if !step.is_empty() {
+                let names: Vec<&str> = nodes.iter().zip(&stored).filter(|(_, s)| **s).map(|(x, _)| x.name.as_str()).collect();
+                let _ = writeln!(out, "    // A pass over the file's words: the masks below, each word a local of its step{}.", if names.is_empty() { String::new() } else { format!(", kept for what reads them later ({})", names.join(", ")) });
+                out.push_str(&decl.lines().filter(|l| l.contains("vec![")).map(|l| format!("{l}\n")).collect::<String>());
+                out.push_str("    {\n");
+                out.push_str(&indent(&decl.lines().filter(|l| !l.contains("vec![")).map(|l| format!("{l}\n")).collect::<String>(), "    "));
+                out.push_str("        for i in 0..nw {\n");
+                out.push_str(&step);
+                out.push_str("        }\n    }\n");
+            }
+            let at = text.find(&marker).unwrap_or(at);
             text.replace_range(at..at + marker.len(), &out);
+        }
+        if lanes > 0 {
+            // The lane's words a step at a time: in the token loop, each word whose next the loop has passed (its
+            // `code_l` final there: a region token clears its bytes before the loop moves past them); after it, the rest.
+            let step = format!("    // The masks of the loop's code (`code_l`) and their escapes, a word at a time behind the loop, as the lean\n    // lexer's readers test a token's bytes as they read them: each pass a word behind the one before, whose next it reads.\n    let mut lane = 0usize;\n{lane_decl}");
+            text = text.replacen(LOOP_HEAD, &format!("{step}{LOOP_HEAD}        // The lane, to the words the loop has passed.\n        while lane + 2 <= b {{\n{}            lane += 1;\n        }}\n", indent(&lane_step, "    ")), 1);
+            text = text.replacen(LANE_DRAIN, &format!("    // The lane's words the loop left.\n    while lane < nw + {} {{\n{lane_step}        lane += 1;\n    }}\n", lanes - 1), 1);
         }
         text
     }
@@ -4267,7 +4326,11 @@ impl Gen<'_> {
             self.names.insert("code_l".to_owned(), "code_l".to_owned());
         }
         let before = std::mem::take(&mut self.body);
+        let open = self.open_pass.take();
+        self.in_lane = true;
         let v = self.val(&x);
+        self.in_lane = false;
+        self.open_pass = open;
         let lines = std::mem::replace(&mut self.body, before);
         let v = v?;
         let _ = write!(self.code_after, "{lines}    // {why}\n    refused |= any(&{v});\n");
@@ -7705,7 +7768,7 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), level: None, deep: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), passes: Vec::new(), open_pass: None }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), level: None, deep: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), passes: Vec::new(), open_pass: None, lane_passes: HashSet::new(), in_lane: false }.source()
 }
 
 /// `code` with no test build's checks (decision 0655 step 3): each `#[cfg(feature = "test-hooks")]` assert and the

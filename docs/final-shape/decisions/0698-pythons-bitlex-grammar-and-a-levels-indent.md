@@ -366,3 +366,16 @@ statements and blocks end.
     record's split, `take` sets it at a piece after another, and `advance` sets it after resuming a string. Past the
     last record it is `END_CODE` (word 0 and kind 255, which no token has). Grammars with no string read in parts had
     this already; it is now the runtime's own.
+68. **The masks of the loop's code are a lane of the token loop, not passes after it.** The escapes made of `code`
+    alone (Python's six of its numbers) read the loop's `code_l`, and were 7 passes over the file after the loop. The
+    loop goes over the blocks in order, and a region token clears its bytes from `code_l` before the loop moves past
+    them. So every block before the loop's is final. The lane makes those masks a word at a time behind the loop
+    (`Gen::lane_passes`, `render_passes`):
+    - at each block the loop comes to, the lane makes each word whose next block the loop has passed (`lane + 2 <=
+      b`);
+    - each of its passes makes the word one behind the pass before, whose `next` it reads;
+    - after the loop, it makes the words left;
+    - an escape is tested as its word is made (`refused |= w_X != 0`), so no vector is kept for it.
+
+    This is the first step to one pass over the file. The walk's masks, which the string escapes read, and stage 1
+    still run before the loop.

@@ -2409,8 +2409,185 @@ pub fn lex(src: &[u8]) -> Lexed {
     let mut c_depth = 0u32;
     // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).
     let mut b = at / 64;
+    // The masks of the loop's code (`code_l`) and their escapes, a word at a time behind the loop, as the lean
+    // lexer's readers test a token's bytes as they read them: each pass a word behind the one before, whose next it reads.
+    let mut lane = 0usize;
+    let mut t89 = vec![0u64; nw];
+    let mut t88 = vec![0u64; nw];
+    let mut t87 = vec![0u64; nw];
+    let mut t96 = vec![0u64; nw];
+    let mut t98 = vec![0u64; nw];
+    let mut t100 = vec![0u64; nw];
+    let mut t95 = vec![0u64; nw];
+    let mut t102 = vec![0u64; nw];
+    let mut t105 = vec![0u64; nw];
+    let mut t108 = vec![0u64; nw];
+    let mut t106 = vec![0u64; nw];
+    let mut t109 = vec![0u64; nw];
+    let mut p_t89 = 0u64;
+    let mut c_t92 = 0u64;
+    let mut p_t91 = 0u64;
+    let mut p_t90 = 0u64;
+    let mut c_t87 = 0u64;
+    let mut c_t96 = 0u64;
+    let mut c_t98 = 0u64;
+    let mut c_t100 = 0u64;
+    let mut p_t95 = 0u64;
+    let mut p_t104 = 0u64;
+    let mut c_t102 = 0u64;
+    let mut p_t105 = 0u64;
+    let mut p_t108 = 0u64;
+    let mut c_t106 = 0u64;
+    let mut p_t119 = 0u64;
+    let mut c_t117 = 0u64;
     'tokens: while b < nw {
         let base = b * 64;
+        // The lane, to the words the loop has passed.
+        while lane + 2 <= b {
+            if lane < nw {
+                let i = lane - 0;
+                    let w_t89 = code_l[i] & m_word[i];
+                    t89[i] = w_t89;
+                    let w_t93 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]);
+                    let w_t94 = !(code_l[i] & m_word[i]) & lv[i];
+                    let w_t92 = {
+                        let (s, e) = (w_t93, w_t94);
+                        let b = !e | s;
+                        let into = s.wrapping_add(b).wrapping_add(c_t92) ^ s ^ b;
+                        let f = s | (!e & into);
+                        c_t92 = f >> 63;
+                        f
+                    };
+                    let w_t91 = m_exp_l[i] & w_t92;
+                    let w_t90 = code_l[i] & m_sign[i] & (w_t91 << 1 | p_t91 >> 63) & next(&m_digit, i, 1);
+                    let w_t88 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]);
+                    t88[i] = w_t88;
+                    let w_t87 = {
+                        let (s, e) = (w_t88, w_t94);
+                        let b = !e | s;
+                        let into = s.wrapping_add(b).wrapping_add(c_t87) ^ s ^ b;
+                        let f = s | (!e & into);
+                        c_t87 = f >> 63;
+                        f
+                    };
+                    t87[i] = w_t87;
+                    let w_t97 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]) & m_zero[i] & next(&m_x_any, i, 1);
+                    let w_t96 = {
+                        let (s, e) = (w_t97, w_t94);
+                        let b = !e | s;
+                        let into = s.wrapping_add(b).wrapping_add(c_t96) ^ s ^ b;
+                        let f = s | (!e & into);
+                        c_t96 = f >> 63;
+                        f
+                    };
+                    t96[i] = w_t96;
+                    let w_t99 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]) & m_zero[i] & next(&m_o_any, i, 1);
+                    let w_t98 = {
+                        let (s, e) = (w_t99, w_t94);
+                        let b = !e | s;
+                        let into = s.wrapping_add(b).wrapping_add(c_t98) ^ s ^ b;
+                        let f = s | (!e & into);
+                        c_t98 = f >> 63;
+                        f
+                    };
+                    t98[i] = w_t98;
+                    let w_t101 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]) & m_zero[i] & next(&m_b_any, i, 1);
+                    let w_t100 = {
+                        let (s, e) = (w_t101, w_t94);
+                        let b = !e | s;
+                        let into = s.wrapping_add(b).wrapping_add(c_t100) ^ s ^ b;
+                        let f = s | (!e & into);
+                        c_t100 = f >> 63;
+                        f
+                    };
+                    t100[i] = w_t100;
+                    let w_t95 = w_t87 & (!w_t96 & lv[i]) & (!(w_t98 | w_t100) & lv[i]);
+                    t95[i] = w_t95;
+                    let w_t104 = (code_l[i] & m_dot[i] & (w_t95 << 1 | p_t95 >> 63) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]));
+                    let w_t103 = (w_t104 << 1 | p_t104 >> 63) & code_l[i] & m_word[i];
+                    let w_t102 = {
+                        let (s, e) = (w_t103, w_t94);
+                        let b = !e | s;
+                        let into = s.wrapping_add(b).wrapping_add(c_t102) ^ s ^ b;
+                        let f = s | (!e & into);
+                        c_t102 = f >> 63;
+                        f
+                    };
+                    t102[i] = w_t102;
+                    let w_t105 = (w_t87 & (!w_t96 & lv[i]) & (!(w_t98 | w_t100) & lv[i]) | w_t102) & m_exp_l[i];
+                    t105[i] = w_t105;
+                    let w_t108 = code_l[i] & m_sign[i] & (w_t105 << 1 | p_t105 >> 63) & next(&m_digit, i, 1);
+                    t108[i] = w_t108;
+                    let w_t107 = (w_t108 << 1 | p_t108 >> 63) & code_l[i] & m_word[i];
+                    let w_t106 = {
+                        let (s, e) = (w_t107, w_t94);
+                        let b = !e | s;
+                        let into = s.wrapping_add(b).wrapping_add(c_t106) ^ s ^ b;
+                        let f = s | (!e & into);
+                        c_t106 = f >> 63;
+                        f
+                    };
+                    t106[i] = w_t106;
+                    let w_t109 = ((((w_t87 | (code_l[i] & m_dot[i] & (w_t95 << 1 | p_t95 >> 63) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]))) | w_t102) | code_l[i] & m_sign[i] & (w_t105 << 1 | p_t105 >> 63) & next(&m_digit, i, 1)) | w_t106);
+                    t109[i] = w_t109;
+                    p_t89 = w_t89;
+                    p_t91 = w_t91;
+                    p_t90 = w_t90;
+                    p_t95 = w_t95;
+                    p_t104 = w_t104;
+                    p_t105 = w_t105;
+                    p_t108 = w_t108;
+            }
+            if lane >= 1 && lane - 1 < nw {
+                let i = lane - 1;
+                    let w_t86 = ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & m_letter[i] & (!(((t96[i] & (m_hex[i] | m_x_any[i] & prev(&t88, i, 1)) | (t98[i] | t100[i]) & (m_o_any[i] | m_b_any[i]) & prev(&t88, i, 1)) | (t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1))) | m_imag_l[i] & ((t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) | t106[i]) & (!next(&t109, i, 1) & lv[i])) & lv[i]);
+                    // a number with a letter it does not take
+                    refused |= w_t86 != 0;
+            }
+            if lane >= 2 && lane - 2 < nw {
+                let i = lane - 2;
+                    let w_t110 = ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & m_us[i] & (!((prev(&m_digit, i, 1) & next(&m_digit, i, 1) & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t96[i] & prev(&t111, i, 1) & next(&m_hex, i, 1)) | (t98[i] | t100[i]) & prev(&t112, i, 1) & next(&m_digit, i, 1)) & lv[i]);
+                    // a number with an `_` not between digits
+                    refused |= w_t110 != 0;
+            }
+            if lane >= 3 && lane - 3 < nw {
+                let i = lane - 3;
+                    let w_t113 = (t98[i] & m_not_oct[i] | t100[i] & m_not_bin[i]);
+                    // an octal or a binary number with a digit past its base
+                    refused |= w_t113 != 0;
+            }
+            if lane >= 4 && lane - 4 < nw {
+                let i = lane - 4;
+                    let w_t114 = (t98[i] | t100[i]) & (m_o_any[i] | m_b_any[i]) & prev(&t88, i, 1) & (!next(&t115, i, 1) & lv[i]);
+                    // an octal or a binary number with no digits
+                    refused |= w_t114 != 0;
+            }
+            if lane >= 5 && lane - 5 < nw {
+                let i = lane - 5;
+                    let w_t119 = (t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1));
+                    let w_t118 = (w_t119 << 1 | p_t119 >> 63) & ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]);
+                    let w_t120 = !((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & lv[i];
+                    let w_t117 = {
+                        let (s, e) = (w_t118, w_t120);
+                        let b = !e | s;
+                        let into = s.wrapping_add(b).wrapping_add(c_t117) ^ s ^ b;
+                        let f = s | (!e & into);
+                        c_t117 = f >> 63;
+                        f
+                    };
+                    let w_t116 = ((t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1)) | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) & w_t117;
+                    // a number with more after its exponent
+                    refused |= w_t116 != 0;
+                    p_t119 = w_t119;
+            }
+            if lane >= 6 && lane - 6 < nw {
+                let i = lane - 6;
+                    let w_t121 = t96[i] & m_x_any[i] & prev(&t88, i, 1) & (!next(&t122, i, 1) & lv[i]);
+                    // a hex number with no digits
+                    refused |= w_t121 != 0;
+            }
+            lane += 1;
+        }
         let mut firsts = !t128[b] & (!0u64 << at.saturating_sub(base));
         while firsts != 0 {
         let s = base + firsts.trailing_zeros() as usize;
@@ -3493,202 +3670,152 @@ pub fn lex(src: &[u8]) -> Lexed {
     if !refused {
         assert!(code_l == m_code, "code_l is the regions' code");
     }
-    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t89, t88, t87, t96, t98, t100, t95, t102, t105, t108, t106, t109).
-    let mut t89 = vec![0u64; nw];
-    let mut t88 = vec![0u64; nw];
-    let mut t87 = vec![0u64; nw];
-    let mut t96 = vec![0u64; nw];
-    let mut t98 = vec![0u64; nw];
-    let mut t100 = vec![0u64; nw];
-    let mut t95 = vec![0u64; nw];
-    let mut t102 = vec![0u64; nw];
-    let mut t105 = vec![0u64; nw];
-    let mut t108 = vec![0u64; nw];
-    let mut t106 = vec![0u64; nw];
-    let mut t109 = vec![0u64; nw];
-    {
-        let mut p_t89 = 0u64;
-        let mut c_t92 = 0u64;
-        let mut p_t91 = 0u64;
-        let mut p_t90 = 0u64;
-        let mut c_t87 = 0u64;
-        let mut c_t96 = 0u64;
-        let mut c_t98 = 0u64;
-        let mut c_t100 = 0u64;
-        let mut p_t95 = 0u64;
-        let mut p_t104 = 0u64;
-        let mut c_t102 = 0u64;
-        let mut p_t105 = 0u64;
-        let mut p_t108 = 0u64;
-        let mut c_t106 = 0u64;
-        for i in 0..nw {
-            let w_t89 = code_l[i] & m_word[i];
-            t89[i] = w_t89;
-            let w_t93 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]);
-            let w_t94 = !(code_l[i] & m_word[i]) & lv[i];
-            let w_t92 = {
-                let (s, e) = (w_t93, w_t94);
-                let b = !e | s;
-                let into = s.wrapping_add(b).wrapping_add(c_t92) ^ s ^ b;
-                let f = s | (!e & into);
-                c_t92 = f >> 63;
-                f
-            };
-            let w_t91 = m_exp_l[i] & w_t92;
-            let w_t90 = code_l[i] & m_sign[i] & (w_t91 << 1 | p_t91 >> 63) & next(&m_digit, i, 1);
-            let w_t88 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]);
-            t88[i] = w_t88;
-            let w_t87 = {
-                let (s, e) = (w_t88, w_t94);
-                let b = !e | s;
-                let into = s.wrapping_add(b).wrapping_add(c_t87) ^ s ^ b;
-                let f = s | (!e & into);
-                c_t87 = f >> 63;
-                f
-            };
-            t87[i] = w_t87;
-            let w_t97 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]) & m_zero[i] & next(&m_x_any, i, 1);
-            let w_t96 = {
-                let (s, e) = (w_t97, w_t94);
-                let b = !e | s;
-                let into = s.wrapping_add(b).wrapping_add(c_t96) ^ s ^ b;
-                let f = s | (!e & into);
-                c_t96 = f >> 63;
-                f
-            };
-            t96[i] = w_t96;
-            let w_t99 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]) & m_zero[i] & next(&m_o_any, i, 1);
-            let w_t98 = {
-                let (s, e) = (w_t99, w_t94);
-                let b = !e | s;
-                let into = s.wrapping_add(b).wrapping_add(c_t98) ^ s ^ b;
-                let f = s | (!e & into);
-                c_t98 = f >> 63;
-                f
-            };
-            t98[i] = w_t98;
-            let w_t101 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]) & m_zero[i] & next(&m_b_any, i, 1);
-            let w_t100 = {
-                let (s, e) = (w_t101, w_t94);
-                let b = !e | s;
-                let into = s.wrapping_add(b).wrapping_add(c_t100) ^ s ^ b;
-                let f = s | (!e & into);
-                c_t100 = f >> 63;
-                f
-            };
-            t100[i] = w_t100;
-            let w_t95 = w_t87 & (!w_t96 & lv[i]) & (!(w_t98 | w_t100) & lv[i]);
-            t95[i] = w_t95;
-            let w_t104 = (code_l[i] & m_dot[i] & (w_t95 << 1 | p_t95 >> 63) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]));
-            let w_t103 = (w_t104 << 1 | p_t104 >> 63) & code_l[i] & m_word[i];
-            let w_t102 = {
-                let (s, e) = (w_t103, w_t94);
-                let b = !e | s;
-                let into = s.wrapping_add(b).wrapping_add(c_t102) ^ s ^ b;
-                let f = s | (!e & into);
-                c_t102 = f >> 63;
-                f
-            };
-            t102[i] = w_t102;
-            let w_t105 = (w_t87 & (!w_t96 & lv[i]) & (!(w_t98 | w_t100) & lv[i]) | w_t102) & m_exp_l[i];
-            t105[i] = w_t105;
-            let w_t108 = code_l[i] & m_sign[i] & (w_t105 << 1 | p_t105 >> 63) & next(&m_digit, i, 1);
-            t108[i] = w_t108;
-            let w_t107 = (w_t108 << 1 | p_t108 >> 63) & code_l[i] & m_word[i];
-            let w_t106 = {
-                let (s, e) = (w_t107, w_t94);
-                let b = !e | s;
-                let into = s.wrapping_add(b).wrapping_add(c_t106) ^ s ^ b;
-                let f = s | (!e & into);
-                c_t106 = f >> 63;
-                f
-            };
-            t106[i] = w_t106;
-            let w_t109 = ((((w_t87 | (code_l[i] & m_dot[i] & (w_t95 << 1 | p_t95 >> 63) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]))) | w_t102) | code_l[i] & m_sign[i] & (w_t105 << 1 | p_t105 >> 63) & next(&m_digit, i, 1)) | w_t106);
-            t109[i] = w_t109;
-            p_t89 = w_t89;
-            p_t91 = w_t91;
-            p_t90 = w_t90;
-            p_t95 = w_t95;
-            p_t104 = w_t104;
-            p_t105 = w_t105;
-            p_t108 = w_t108;
+    // The lane's words the loop left.
+    while lane < nw + 6 {
+        if lane < nw {
+            let i = lane - 0;
+                let w_t89 = code_l[i] & m_word[i];
+                t89[i] = w_t89;
+                let w_t93 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]);
+                let w_t94 = !(code_l[i] & m_word[i]) & lv[i];
+                let w_t92 = {
+                    let (s, e) = (w_t93, w_t94);
+                    let b = !e | s;
+                    let into = s.wrapping_add(b).wrapping_add(c_t92) ^ s ^ b;
+                    let f = s | (!e & into);
+                    c_t92 = f >> 63;
+                    f
+                };
+                let w_t91 = m_exp_l[i] & w_t92;
+                let w_t90 = code_l[i] & m_sign[i] & (w_t91 << 1 | p_t91 >> 63) & next(&m_digit, i, 1);
+                let w_t88 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]);
+                t88[i] = w_t88;
+                let w_t87 = {
+                    let (s, e) = (w_t88, w_t94);
+                    let b = !e | s;
+                    let into = s.wrapping_add(b).wrapping_add(c_t87) ^ s ^ b;
+                    let f = s | (!e & into);
+                    c_t87 = f >> 63;
+                    f
+                };
+                t87[i] = w_t87;
+                let w_t97 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]) & m_zero[i] & next(&m_x_any, i, 1);
+                let w_t96 = {
+                    let (s, e) = (w_t97, w_t94);
+                    let b = !e | s;
+                    let into = s.wrapping_add(b).wrapping_add(c_t96) ^ s ^ b;
+                    let f = s | (!e & into);
+                    c_t96 = f >> 63;
+                    f
+                };
+                t96[i] = w_t96;
+                let w_t99 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]) & m_zero[i] & next(&m_o_any, i, 1);
+                let w_t98 = {
+                    let (s, e) = (w_t99, w_t94);
+                    let b = !e | s;
+                    let into = s.wrapping_add(b).wrapping_add(c_t98) ^ s ^ b;
+                    let f = s | (!e & into);
+                    c_t98 = f >> 63;
+                    f
+                };
+                t98[i] = w_t98;
+                let w_t101 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]) & m_zero[i] & next(&m_b_any, i, 1);
+                let w_t100 = {
+                    let (s, e) = (w_t101, w_t94);
+                    let b = !e | s;
+                    let into = s.wrapping_add(b).wrapping_add(c_t100) ^ s ^ b;
+                    let f = s | (!e & into);
+                    c_t100 = f >> 63;
+                    f
+                };
+                t100[i] = w_t100;
+                let w_t95 = w_t87 & (!w_t96 & lv[i]) & (!(w_t98 | w_t100) & lv[i]);
+                t95[i] = w_t95;
+                let w_t104 = (code_l[i] & m_dot[i] & (w_t95 << 1 | p_t95 >> 63) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]));
+                let w_t103 = (w_t104 << 1 | p_t104 >> 63) & code_l[i] & m_word[i];
+                let w_t102 = {
+                    let (s, e) = (w_t103, w_t94);
+                    let b = !e | s;
+                    let into = s.wrapping_add(b).wrapping_add(c_t102) ^ s ^ b;
+                    let f = s | (!e & into);
+                    c_t102 = f >> 63;
+                    f
+                };
+                t102[i] = w_t102;
+                let w_t105 = (w_t87 & (!w_t96 & lv[i]) & (!(w_t98 | w_t100) & lv[i]) | w_t102) & m_exp_l[i];
+                t105[i] = w_t105;
+                let w_t108 = code_l[i] & m_sign[i] & (w_t105 << 1 | p_t105 >> 63) & next(&m_digit, i, 1);
+                t108[i] = w_t108;
+                let w_t107 = (w_t108 << 1 | p_t108 >> 63) & code_l[i] & m_word[i];
+                let w_t106 = {
+                    let (s, e) = (w_t107, w_t94);
+                    let b = !e | s;
+                    let into = s.wrapping_add(b).wrapping_add(c_t106) ^ s ^ b;
+                    let f = s | (!e & into);
+                    c_t106 = f >> 63;
+                    f
+                };
+                t106[i] = w_t106;
+                let w_t109 = ((((w_t87 | (code_l[i] & m_dot[i] & (w_t95 << 1 | p_t95 >> 63) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]))) | w_t102) | code_l[i] & m_sign[i] & (w_t105 << 1 | p_t105 >> 63) & next(&m_digit, i, 1)) | w_t106);
+                t109[i] = w_t109;
+                p_t89 = w_t89;
+                p_t91 = w_t91;
+                p_t90 = w_t90;
+                p_t95 = w_t95;
+                p_t104 = w_t104;
+                p_t105 = w_t105;
+                p_t108 = w_t108;
         }
-    }
-    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t86).
-    let mut t86 = vec![0u64; nw];
-    {
-        for i in 0..nw {
-            let w_t86 = ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & m_letter[i] & (!(((t96[i] & (m_hex[i] | m_x_any[i] & prev(&t88, i, 1)) | (t98[i] | t100[i]) & (m_o_any[i] | m_b_any[i]) & prev(&t88, i, 1)) | (t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1))) | m_imag_l[i] & ((t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) | t106[i]) & (!next(&t109, i, 1) & lv[i])) & lv[i]);
-            t86[i] = w_t86;
+        if lane >= 1 && lane - 1 < nw {
+            let i = lane - 1;
+                let w_t86 = ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & m_letter[i] & (!(((t96[i] & (m_hex[i] | m_x_any[i] & prev(&t88, i, 1)) | (t98[i] | t100[i]) & (m_o_any[i] | m_b_any[i]) & prev(&t88, i, 1)) | (t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1))) | m_imag_l[i] & ((t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) | t106[i]) & (!next(&t109, i, 1) & lv[i])) & lv[i]);
+                // a number with a letter it does not take
+                refused |= w_t86 != 0;
         }
-    }
-    // a number with a letter it does not take
-    refused |= any(&t86);
-    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t110).
-    let mut t110 = vec![0u64; nw];
-    {
-        for i in 0..nw {
-            let w_t110 = ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & m_us[i] & (!((prev(&m_digit, i, 1) & next(&m_digit, i, 1) & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t96[i] & prev(&t111, i, 1) & next(&m_hex, i, 1)) | (t98[i] | t100[i]) & prev(&t112, i, 1) & next(&m_digit, i, 1)) & lv[i]);
-            t110[i] = w_t110;
+        if lane >= 2 && lane - 2 < nw {
+            let i = lane - 2;
+                let w_t110 = ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & m_us[i] & (!((prev(&m_digit, i, 1) & next(&m_digit, i, 1) & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t96[i] & prev(&t111, i, 1) & next(&m_hex, i, 1)) | (t98[i] | t100[i]) & prev(&t112, i, 1) & next(&m_digit, i, 1)) & lv[i]);
+                // a number with an `_` not between digits
+                refused |= w_t110 != 0;
         }
-    }
-    // a number with an `_` not between digits
-    refused |= any(&t110);
-    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t113).
-    let mut t113 = vec![0u64; nw];
-    {
-        for i in 0..nw {
-            let w_t113 = (t98[i] & m_not_oct[i] | t100[i] & m_not_bin[i]);
-            t113[i] = w_t113;
+        if lane >= 3 && lane - 3 < nw {
+            let i = lane - 3;
+                let w_t113 = (t98[i] & m_not_oct[i] | t100[i] & m_not_bin[i]);
+                // an octal or a binary number with a digit past its base
+                refused |= w_t113 != 0;
         }
-    }
-    // an octal or a binary number with a digit past its base
-    refused |= any(&t113);
-    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t114).
-    let mut t114 = vec![0u64; nw];
-    {
-        for i in 0..nw {
-            let w_t114 = (t98[i] | t100[i]) & (m_o_any[i] | m_b_any[i]) & prev(&t88, i, 1) & (!next(&t115, i, 1) & lv[i]);
-            t114[i] = w_t114;
+        if lane >= 4 && lane - 4 < nw {
+            let i = lane - 4;
+                let w_t114 = (t98[i] | t100[i]) & (m_o_any[i] | m_b_any[i]) & prev(&t88, i, 1) & (!next(&t115, i, 1) & lv[i]);
+                // an octal or a binary number with no digits
+                refused |= w_t114 != 0;
         }
-    }
-    // an octal or a binary number with no digits
-    refused |= any(&t114);
-    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t116).
-    let mut t116 = vec![0u64; nw];
-    {
-        let mut p_t119 = 0u64;
-        let mut c_t117 = 0u64;
-        for i in 0..nw {
-            let w_t119 = (t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1));
-            let w_t118 = (w_t119 << 1 | p_t119 >> 63) & ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]);
-            let w_t120 = !((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & lv[i];
-            let w_t117 = {
-                let (s, e) = (w_t118, w_t120);
-                let b = !e | s;
-                let into = s.wrapping_add(b).wrapping_add(c_t117) ^ s ^ b;
-                let f = s | (!e & into);
-                c_t117 = f >> 63;
-                f
-            };
-            let w_t116 = ((t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1)) | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) & w_t117;
-            t116[i] = w_t116;
-            p_t119 = w_t119;
+        if lane >= 5 && lane - 5 < nw {
+            let i = lane - 5;
+                let w_t119 = (t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1));
+                let w_t118 = (w_t119 << 1 | p_t119 >> 63) & ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]);
+                let w_t120 = !((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & lv[i];
+                let w_t117 = {
+                    let (s, e) = (w_t118, w_t120);
+                    let b = !e | s;
+                    let into = s.wrapping_add(b).wrapping_add(c_t117) ^ s ^ b;
+                    let f = s | (!e & into);
+                    c_t117 = f >> 63;
+                    f
+                };
+                let w_t116 = ((t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1)) | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) & w_t117;
+                // a number with more after its exponent
+                refused |= w_t116 != 0;
+                p_t119 = w_t119;
         }
-    }
-    // a number with more after its exponent
-    refused |= any(&t116);
-    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t121).
-    let mut t121 = vec![0u64; nw];
-    {
-        for i in 0..nw {
-            let w_t121 = t96[i] & m_x_any[i] & prev(&t88, i, 1) & (!next(&t122, i, 1) & lv[i]);
-            t121[i] = w_t121;
+        if lane >= 6 && lane - 6 < nw {
+            let i = lane - 6;
+                let w_t121 = t96[i] & m_x_any[i] & prev(&t88, i, 1) & (!next(&t122, i, 1) & lv[i]);
+                // a hex number with no digits
+                refused |= w_t121 != 0;
         }
+        lane += 1;
     }
-    // a hex number with no digits
-    refused |= any(&t121);
     // SAFETY: `len` records written.
     unsafe { recs.set_len(len) };
     Lexed {
