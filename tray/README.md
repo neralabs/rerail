@@ -14,5 +14,5 @@ outlives the daemon. It reads nothing from the Rerail home and makes no network 
 | `src/desktop.rs` | the macOS menu bar item and the Windows notification-area icon |
 | `src/linux.rs` | the Linux icon, a StatusNotifierItem over D-Bus |
 | `src/main.rs` | the program's entry point |
-| `assets/icon-template.png` | the Nera "n" alone, black on transparent, 44×44: the macOS template icon |
-| `assets/icon.png` | the full-colour Nera square, 32×32: the Windows and Linux icon |
+| `assets/icon-template.png` | the Nera "n" alone, black on transparent, 37×44 (16 pt tall in the 22 pt menu bar at 2×): the macOS template icon |
+| `assets/icon.png` | the full-colour Nera square, 32×32, its stems on the pixel grid: the Windows and Linux icon |

@@ -18,8 +18,11 @@ const BLACK: [u8; 3] = [0, 0, 0];
 
 /// The status circle's diameter, as a share of its image's edge.
 const CIRCLE: f32 = 0.75;
-/// The badge's diameter, as a share of the icon's edge.
-const BADGE: f32 = 0.45;
+/// The badge's diameter, as a share of the shorter side of what the icon draws.
+const BADGE: f32 = 0.55;
+/// How far the badge reaches past the lower right corner of what the icon draws, as a share of its radius, so it covers
+/// the end of the glyph's stroke there; the canvas's edge stops it.
+const OVERHANG: f32 = 0.25;
 /// The clear ring around the badge, in pixels, so the badge stands apart from the glyph under it.
 const KNOCK_OUT: f32 = 1.0;
 
@@ -74,8 +77,7 @@ pub fn icon(base: &Rgba, attention: bool, template: bool) -> Rgba {
     if !attention {
         return icon;
     }
-    let radius = base.width.min(base.height) as f32 * BADGE / 2.0;
-    let (cx, cy) = (base.width as f32 - radius, base.height as f32 - radius);
+    let (cx, cy, radius) = badge_circle(base);
     let colour = if template { BLACK } else { AMBER };
     icon.each_pixel(|x, y, pixel| {
         erase(pixel, disc(cx, cy, radius + KNOCK_OUT, x, y));
@@ -88,6 +90,26 @@ pub fn icon(base: &Rgba, attention: bool, template: bool) -> Rgba {
         }
     });
     icon
+}
+
+/// The badge's centre and radius on `base`: at the lower right corner of what the image draws (its pixels that are not
+/// fully transparent), so a glyph padded on its canvas gets a badge at its own size and corner.
+fn badge_circle(base: &Rgba) -> (f32, f32, f32) {
+    let (mut left, mut top, mut right, mut bottom) = (base.width, base.height, 0, 0);
+    for (at, pixel) in base.pixels.chunks_exact(4).enumerate() {
+        if pixel[3] > 0 {
+            let (x, y) = (at as u32 % base.width, at as u32 / base.width);
+            (left, top) = (left.min(x), top.min(y));
+            (right, bottom) = (right.max(x + 1), bottom.max(y + 1));
+        }
+    }
+    if right <= left || bottom <= top {
+        (left, top, right, bottom) = (0, 0, base.width, base.height);
+    }
+    let radius = (right - left).min(bottom - top) as f32 * BADGE / 2.0;
+    let reach =
+        |edge: u32, canvas: u32| (edge as f32 + radius * OVERHANG).min(canvas as f32) - radius;
+    (reach(right, base.width), reach(bottom, base.height), radius)
 }
 
 impl Rgba {
@@ -199,13 +221,13 @@ mod tests {
         image.pixels[at..at + 4].try_into().unwrap()
     }
 
-    /// Every pixel inside a disc of `radius` around the badge's centre, in a square icon.
-    fn badge_disc(image: &Rgba, radius: f32) -> Vec<[u8; 4]> {
-        let centre = image.width as f32 - image.width as f32 * BADGE / 2.0;
+    /// Every pixel of `image` inside a disc of `radius` around the centre of the badge drawn on `base`.
+    fn badge_disc(base: &Rgba, image: &Rgba, radius: f32) -> Vec<[u8; 4]> {
+        let (cx, cy, _) = badge_circle(base);
         let mut seen = Vec::new();
         for y in 0..image.height {
             for x in 0..image.width {
-                let (dx, dy) = (x as f32 + 0.5 - centre, y as f32 + 0.5 - centre);
+                let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
                 if (dx * dx + dy * dy).sqrt() <= radius {
                     seen.push(pixel(image, x, y));
                 }
@@ -243,12 +265,35 @@ mod tests {
         let base = solid(32, 32, [10, 20, 30, 255]);
         let with_badge = icon(&base, true, false);
         assert_eq!(
-            pixel(&with_badge, 22, 22),
+            pixel(&with_badge, 20, 24),
             [AMBER[0], AMBER[1], AMBER[2], 255]
         );
         assert_eq!(pixel(&with_badge, 0, 0), [10, 20, 30, 255]);
         assert_eq!(pixel(&with_badge, 31, 0), [10, 20, 30, 255]);
         assert_eq!(pixel(&with_badge, 0, 31), [10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn badge_follows_the_glyph_not_the_canvas() {
+        // A 29 x 32 px glyph box, from (4, 6) to (33, 38), on a transparent 37 x 44 px canvas.
+        let mut base = solid(37, 44, [0, 0, 0, 0]);
+        for y in 6..38 {
+            for x in 4..33 {
+                let at = ((y * 37 + x) * 4) as usize;
+                base.pixels[at..at + 4].copy_from_slice(&[10, 20, 30, 255]);
+            }
+        }
+        let with_badge = icon(&base, true, false);
+        let amber = [AMBER[0], AMBER[1], AMBER[2], 255];
+        // The badge is 55% of the box's 29 px width across, and reaches 2 px past the box's lower right corner, over
+        // the end of whatever the glyph draws there: its centre is at (27, 32). Left of its "!", the disc.
+        assert_eq!(pixel(&with_badge, 24, 34), amber);
+        assert_eq!(pixel(&with_badge, 33, 32), amber);
+        // The canvas's own corner and the padding beside the box stay as they were.
+        assert_eq!(pixel(&with_badge, 36, 43), [0, 0, 0, 0]);
+        assert_eq!(pixel(&with_badge, 35, 20), [0, 0, 0, 0]);
+        // Above the badge and its clear ring, the box is untouched.
+        assert_eq!(pixel(&with_badge, 28, 21), [10, 20, 30, 255]);
     }
 
     #[test]
@@ -262,7 +307,7 @@ mod tests {
     #[test]
     fn attention_badge_is_amber_with_a_mark() {
         let with_badge = icon(&solid(32, 32, [10, 20, 30, 255]), true, false);
-        let disc = badge_disc(&with_badge, 5.0);
+        let disc = badge_disc(&solid(32, 32, [10, 20, 30, 255]), &with_badge, 5.0);
         assert!(
             disc.contains(&[AMBER[0], AMBER[1], AMBER[2], 255]),
             "no amber in the badge"
@@ -283,18 +328,22 @@ mod tests {
         );
         assert_ne!(attention.pixels, base.pixels);
         // The badge is a solid disc with its "!" cut out.
-        assert!(badge_disc(&attention, 6.0).iter().any(|p| p[3] == 255));
-        assert!(badge_disc(&attention, 6.0).iter().any(|p| p[3] == 0));
+        assert!(
+            badge_disc(&base, &attention, 5.0)
+                .iter()
+                .any(|p| p[3] == 255)
+        );
+        assert!(badge_disc(&base, &attention, 5.0).iter().any(|p| p[3] == 0));
     }
 
     #[test]
     fn badge_leaves_a_clear_ring_around_its_disc() {
         let with_badge = icon(&solid(44, 44, [0, 0, 0, 255]), true, true);
-        // Up and left along the diagonal, from inside the badge clear of its "!" (its centre is at 34.1): the opaque
-        // disc, a clear gap, then the opaque base.
-        let alphas: Vec<u8> = (0..=31)
+        // Leftwards along the row through the badge's centre (31.9, 31.9), from inside its disc and clear of its "!":
+        // the opaque disc, a clear gap, then the opaque base.
+        let alphas: Vec<u8> = (0..=27)
             .rev()
-            .map(|at| pixel(&with_badge, at, at)[3])
+            .map(|x| pixel(&with_badge, x, 31)[3])
             .collect();
         assert_eq!(alphas[0], 255);
         let disc_ends = alphas.iter().position(|&a| a < 255).unwrap();
@@ -310,7 +359,7 @@ mod tests {
         let template = decode_png(include_bytes!("../assets/icon-template.png"));
         assert_eq!(
             (template.width, template.height, template.pixels.len()),
-            (44, 44, 44 * 44 * 4)
+            (37, 44, 37 * 44 * 4)
         );
         assert!(template.pixels.chunks(4).all(|p| p[..3] == [0, 0, 0]));
         assert!(template.pixels.chunks(4).any(|p| p[3] == 255));
