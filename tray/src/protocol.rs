@@ -27,8 +27,14 @@ pub struct UpdateItem {
 /// A menu click the daemon acts on.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Action {
+    /// Go to the Dashboard: the dashboard's main page.
     Open,
+    /// Settings…: the dashboard's Settings page.
+    Settings,
+    /// Documentation: Rerail's documentation site.
+    Docs,
     Update,
+    Restart,
     Stop,
 }
 
@@ -36,7 +42,10 @@ pub enum Action {
 pub fn encode_action(action: Action) -> String {
     let name = match action {
         Action::Open => "open",
+        Action::Settings => "settings",
+        Action::Docs => "docs",
         Action::Update => "update",
+        Action::Restart => "restart",
         Action::Stop => "stop",
     };
     format!("{{\"action\":\"{name}\"}}\n")
@@ -185,6 +194,12 @@ mod tests {
     #[test]
     fn encodes_actions() {
         assert_eq!(encode_action(Action::Open), "{\"action\":\"open\"}\n");
+        assert_eq!(
+            encode_action(Action::Settings),
+            "{\"action\":\"settings\"}\n"
+        );
+        assert_eq!(encode_action(Action::Docs), "{\"action\":\"docs\"}\n");
+        assert_eq!(encode_action(Action::Restart), "{\"action\":\"restart\"}\n");
         assert_eq!(encode_action(Action::Update), "{\"action\":\"update\"}\n");
         assert_eq!(encode_action(Action::Stop), "{\"action\":\"stop\"}\n");
     }

@@ -20,9 +20,11 @@ muda = { version = "=0.22.0", default-features = false }
 tao = { version = "=0.38.0", default-features = false }
 tray-icon = { version = "=0.27.0", default-features = false }
 
-# AppKit's newer menu calls that muda does not make (macOS 27's image visibility). The version muda uses.
+# AppKit calls muda does not make: SF Symbol item images and macOS 27's image visibility. The versions muda uses.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "=0.6.5", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSImage", "NSMenu", "NSMenuItem"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString"] }
 
 # The Linux icon, over the StatusNotifierItem D-Bus protocol: no GTK, and no async runtime of ours.
 [target.'cfg(target_os = "linux")'.dependencies]

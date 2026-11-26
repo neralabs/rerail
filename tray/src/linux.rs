@@ -156,16 +156,20 @@ impl Tray for RerailTray {
         };
         let mut menu = vec![
             status.into(),
-            MenuItem::Separator,
             line(&state.version),
             line(&state.home_path),
+            MenuItem::Separator,
+            button("Go to the Dashboard", true, Action::Open),
+            MenuItem::Separator,
+            button("Settings…", true, Action::Settings),
+            button("Documentation", true, Action::Docs),
+            MenuItem::Separator,
         ];
-        menu.push(MenuItem::Separator);
-        menu.push(button("Open dashboard", true, Action::Open));
         if let Some(update) = &state.update {
             menu.push(button(&update.label, update.enabled, Action::Update));
         }
-        menu.push(button("Stop daemon", true, Action::Stop));
+        menu.push(button("Restart", true, Action::Restart));
+        menu.push(button("Stop Rerail", true, Action::Stop));
         menu
     }
 }

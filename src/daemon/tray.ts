@@ -3,8 +3,8 @@
  * menu it shows ({@link trayMenuState}), and the child process the daemon runs it in ({@link startTray}).
  *
  * The tray is a child of the daemon with three pipes. The daemon writes a menu state, one JSON line, at once and again
- * whenever it changes; the tray writes back one JSON line per click (`open`, `update` or `stop`) and its diagnostics on
- * stderr, which go to daemon.log. The tray exits when its stdin closes, so it never outlives the daemon, however the
+ * whenever it changes; the tray writes back one JSON line per click (`open`, `settings`, `docs`, `update`, `restart`
+ * or `stop`) and its diagnostics on stderr, which go to daemon.log. The tray exits when its stdin closes, so it never outlives the daemon, however the
  * daemon ends. The tray is an extra: nothing it does or fails to do may stop the daemon, so a failure is logged once,
  * and the tray is never started again in that daemon.
  */
@@ -137,10 +137,15 @@ function updateItem(newer: string | null, run: TrayUpdateRun): TrayMenuState["up
 /** What the tray needs of the running daemon. */
 export interface TrayDaemon {
   health(): DaemonHealth;
-  /** The dashboard link with the access token, for this user's browser (`dashboardLink`). */
-  dashboardLink(): string;
+  /**
+   * The dashboard link with the access token, for this user's browser (`dashboardLink`): at the dashboard's `view`
+   * (`settings` opens `#settings`), its main page without one.
+   */
+  dashboardLink(view?: string): string;
   /** Whether the daemon binds only a loopback host. */
   loopback: boolean;
+  /** Closes the daemon and starts it again with the same arguments, as at its heap ceiling. Its new tray is its own. */
+  restart(): void;
   /** Stops the daemon as SIGTERM and `rerail daemon stop` do. */
   stop(): void;
 }
@@ -170,6 +175,8 @@ export interface TrayOptions {
 }
 
 const HEALTH_INTERVAL_MS = 5_000;
+/** Rerail's documentation site, which the menu's Documentation opens. */
+const DOCUMENTATION_URL = "https://neralabs.github.io/rerail/";
 /** How the tray program starts its own stderr lines; the daemon's log names it its own way. */
 const TRAY_PREFIX = "rerail-tray: ";
 
@@ -262,7 +269,10 @@ export function startTray(options: TrayOptions): TrayHandle {
 
   const actions: Readonly<Record<string, () => void>> = {
     open: () => options.openUrl(daemon.dashboardLink()),
+    settings: () => options.openUrl(daemon.dashboardLink("settings")),
+    docs: () => options.openUrl(DOCUMENTATION_URL),
     update,
+    restart: () => daemon.restart(),
     stop: () => daemon.stop(),
   };
 
@@ -377,7 +387,7 @@ export function startDaemonTray(daemon: TrayDaemon, deps: { isNewer(latest: stri
     isNewer: deps.isNewer,
     // The link carries the access token, so the line does not name it.
     openUrl: url => {
-      if (!openInBrowser(url)) log(`rerail tray: could not open the dashboard: ${BROWSER_OFF_NOTE}`);
+      if (!openInBrowser(url)) log(`rerail tray: could not open the page: ${BROWSER_OFF_NOTE}`);
     },
     runUpdate: async () => await runRerailUpdate(home, env),
     log,

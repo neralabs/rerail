@@ -25,6 +25,13 @@ vi.mock("../../src/engine/child-process.js", async () => {
   return { ...actual, spawn };
 });
 
+/** The daemon's relaunch after a restart: recorded, never run, so no test starts a second daemon. */
+const relaunched = vi.hoisted(() => ({ calls: [] as unknown[][] }));
+vi.mock("../../src/runtime/daemon-control.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
+  return { ...actual, relaunchDaemon: (...args: unknown[]) => void relaunched.calls.push(args) };
+});
+
 const FAKE_TRAY = join(dirname(fileURLToPath(import.meta.url)), "../support/processes/fake-tray.mjs");
 
 function health(overrides: Partial<DaemonHealth> = {}): DaemonHealth {
@@ -119,7 +126,7 @@ describe("startDaemonTray", () => {
 
   it("starts nothing when a gate fails", () => {
     vi.stubEnv("RERAIL_TRAY", "0");
-    const daemon: TrayDaemon = { health: () => health(), dashboardLink: () => "", loopback: true, stop: () => undefined };
+    const daemon: TrayDaemon = { health: () => health(), dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined };
     expect(startDaemonTray(daemon, { isNewer: () => false })).toBeUndefined();
   });
 });
@@ -236,14 +243,15 @@ describe("startTray", () => {
     vi.stubEnv("FAKE_TRAY_LINES", join(folder, "lines"));
     vi.stubEnv("FAKE_TRAY_PID", join(folder, "pid"));
     vi.stubEnv("FAKE_TRAY_REPLIES", JSON.stringify(options.replies ?? []));
-    const calls = { health: 0, opened: [] as string[], stopped: 0, updates: 0, logs: [] as string[] };
+    const calls = { health: 0, opened: [] as string[], stopped: 0, restarted: 0, updates: 0, logs: [] as string[] };
     const daemon: TrayDaemon = {
       health: () => {
         calls.health += 1;
         return (options.current ?? (() => health()))();
       },
-      dashboardLink: () => "http://127.0.0.1:4737/?access=secret",
+      dashboardLink: view => `http://127.0.0.1:4737/?access=secret${view === undefined ? "" : `#${view}`}`,
       loopback: true,
+      restart: () => void (calls.restarted += 1),
       stop: () => void (calls.stopped += 1),
     };
     const trayOptions: TrayOptions = {
@@ -286,6 +294,26 @@ describe("startTray", () => {
     const calls = start({ replies: ['{"action":"open"}\n'] });
     await until(() => calls.opened.length === 1, 10_000, "the open");
     expect(calls.opened).toEqual(["http://127.0.0.1:4737/?access=secret"]);
+  });
+
+  it("settings opens the dashboard's Settings page, with the access token", async () => {
+    const calls = start({ replies: ['{"action":"settings"}\n'] });
+    await until(() => calls.opened.length === 1, 10_000, "the settings");
+    expect(calls.opened).toEqual(["http://127.0.0.1:4737/?access=secret#settings"]);
+  });
+
+  it("docs opens the documentation site", async () => {
+    const calls = start({ replies: ['{"action":"docs"}\n'] });
+    await until(() => calls.opened.length === 1, 10_000, "the docs");
+    expect(calls.opened).toEqual(["https://neralabs.github.io/rerail/"]);
+  });
+
+  it("restart calls daemon.restart once", async () => {
+    const calls = start({ replies: ['{"action":"restart"}\n'] });
+    await until(() => calls.restarted === 1, 10_000, "the restart");
+    await delay(100);
+    expect(calls.restarted).toBe(1);
+    expect(calls.stopped).toBe(0);
   });
 
   it("stop calls daemon.stop", async () => {
@@ -341,6 +369,7 @@ describe("startTray", () => {
     const calls = start({ replies: ['{"action":"dance"}\nnot json\n[]\nnull\n{"action":"open"}\n'] });
     await until(() => calls.opened.length === 1, 10_000, "the open after the unknown lines");
     expect(calls.stopped).toBe(0);
+    expect(calls.restarted).toBe(0);
     expect(calls.updates).toBe(0);
     expect(calls.logs).toEqual([]);
   });
@@ -397,7 +426,7 @@ describe("startTray", () => {
   it("a tray whose pipes could not be opened is logged once", async () => {
     const options = (logs: string[]): TrayOptions => ({
       trayPath: process.execPath,
-      daemon: { health: () => health(), dashboardLink: () => "", loopback: true, stop: () => undefined },
+      daemon: { health: () => health(), dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined },
       homePath: "~/.rerail",
       isNewer: () => false,
       openUrl: () => undefined,
@@ -428,7 +457,7 @@ describe("startTray", () => {
     const logs: string[] = [];
     tray = startTray({
       trayPath: join(folder, process.platform === "win32" ? "missing.exe" : "missing"),
-      daemon: { health: () => health(), dashboardLink: () => "", loopback: true, stop: () => undefined },
+      daemon: { health: () => health(), dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined },
       homePath: "~/.rerail",
       isNewer: () => false,
       openUrl: () => undefined,
@@ -451,7 +480,7 @@ describe("startTray", () => {
     const logs: string[] = [];
     tray = startTray({
       trayPath: program,
-      daemon: { health: () => health(), dashboardLink: () => "", loopback: true, stop: () => undefined },
+      daemon: { health: () => health(), dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined },
       homePath: "~/.rerail",
       isNewer: () => false,
       openUrl: () => undefined,
@@ -589,6 +618,11 @@ describe("the daemon's tray service", () => {
     expect(link.origin).toBe(new URL(state.url).origin);
     expect(state.accessToken).toBeDefined();
     expect([...link.searchParams.values()]).toContain(state.accessToken);
+    // Settings… opens the same link at the dashboard's Settings page.
+    const settings = new URL(given.dashboardLink("settings"));
+    expect(settings.origin).toBe(link.origin);
+    expect(settings.hash).toBe("#settings");
+    expect([...settings.searchParams.values()]).toContain(state.accessToken);
     expect(given.health().pid).toBe(process.pid);
     expect(close).not.toHaveBeenCalled();
 
@@ -598,6 +632,34 @@ describe("the daemon's tray service", () => {
     expect(close).toHaveBeenCalledTimes(1);
     expect(close).toHaveReturnedWith(true);
     expect(existsSync(stateFile)).toBe(false);
+    expect((await probeDaemon(state)).status).toBe("unreachable");
+  }, 60_000);
+
+  it("the tray's restart closes the daemon, tray first, and relaunches it with the same arguments", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tray-"));
+    const home = join(root, "home");
+    await mkdir(home, { recursive: true });
+    process.env.RERAIL_HOME = home;
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const close = vi.fn(() => existsSync(stateFile));
+    const tray = vi.fn((daemon: TrayDaemon): TrayHandle => {
+      given = daemon;
+      return { close };
+    });
+    relaunched.calls.length = 0;
+
+    await serveRerailDaemon(["--port", "0", "--dev", "--workspace-root", root, "--state-file", stateFile], { tray });
+    const state = await readDaemonState(stateFile);
+    if (state === undefined || given === undefined) throw new Error("the daemon wrote no state file, or gave the tray nothing");
+
+    given.restart();
+    await until(() => exit.mock.calls.length > 0, 30_000, "the daemon's close");
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(close).toHaveReturnedWith(true);
+    expect(existsSync(stateFile)).toBe(false);
+    expect(relaunched.calls).toEqual([[process.argv.slice(1), join(home, "daemon.log")]]);
+    expect(exit).toHaveBeenCalledWith(0);
     expect((await probeDaemon(state)).status).toBe("unreachable");
   }, 60_000);
 

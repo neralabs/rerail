@@ -1673,8 +1673,14 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
   try {
     trayHandle = tray?.({
       health: () => daemon.health(),
-      dashboardLink: () => dashboardLink(daemon.state()),
+      dashboardLink: view => {
+        const state = daemon.state();
+        const page = new URL(state.url);
+        if (view !== undefined) page.hash = view;
+        return dashboardLink(state, page.href);
+      },
       loopback: loopbackBindHost(arguments_.host),
+      restart: way.restart,
       stop: way.stop,
     });
   } catch (error) {

@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+#[cfg(target_os = "macos")]
+use muda::accelerator::{Accelerator, Code, Modifiers};
 use muda::{IconMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tao::event::Event;
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
@@ -23,8 +25,16 @@ const TEMPLATE: bool = cfg!(target_os = "macos");
 /// The status line's circle, in pixels. macOS draws a menu item's icon at most 18 pt tall.
 const CIRCLE_SIZE: u32 = 32;
 
-/// Where the update line goes when there is one: after Open dashboard.
-const UPDATE_AT: usize = 6;
+/// The menu, top to bottom: the status line, Version and Home path (0 to 2), a separator, Go to the Dashboard (4), a
+/// separator, Settings… and Documentation, a separator, then the update line when there is one (9), Restart and Stop
+/// Rerail (9 and 10 without an update line). The items that carry an image on macOS are named by index.
+const UPDATE_AT: usize = 9;
+#[cfg(target_os = "macos")]
+const DASHBOARD_AT: usize = 4;
+#[cfg(target_os = "macos")]
+const RESTART_AT: usize = 9;
+#[cfg(target_os = "macos")]
+const STOP_AT: usize = 10;
 
 /// Runs the tray until stdin closes. The icon appears with the first menu state.
 pub fn run() -> ! {
@@ -83,7 +93,10 @@ pub fn run() -> ! {
 fn action_for(id: &str) -> Option<Action> {
     match id {
         "open" => Some(Action::Open),
+        "settings" => Some(Action::Settings),
+        "docs" => Some(Action::Docs),
         "update" => Some(Action::Update),
+        "restart" => Some(Action::Restart),
         "stop" => Some(Action::Stop),
         _ => None,
     }
@@ -115,18 +128,33 @@ impl Tray {
         let home_path = MenuItem::new("", false, None);
         let update = MenuItem::with_id("update", "", true, None);
         let menu = Menu::new();
+        // ⌘, on macOS, the shortcut every Mac app's Settings has; shown while the menu is open.
+        #[cfg(target_os = "macos")]
+        let settings_key = Some(Accelerator::new(Modifiers::META, Code::Comma));
+        #[cfg(windows)]
+        let settings_key = None;
         menu.append_items(&[
             &status,
-            &PredefinedMenuItem::separator(),
             &version,
             &home_path,
             &PredefinedMenuItem::separator(),
-            &MenuItem::with_id("open", "Open dashboard", true, None),
-            &MenuItem::with_id("stop", "Stop daemon", true, None),
+            &MenuItem::with_id("open", "Go to the Dashboard", true, None),
+            &PredefinedMenuItem::separator(),
+            &MenuItem::with_id("settings", "Settings…", true, settings_key),
+            &MenuItem::with_id("docs", "Documentation", true, None),
+            &PredefinedMenuItem::separator(),
+            &MenuItem::with_id("restart", "Restart", true, None),
+            &MenuItem::with_id("stop", "Stop Rerail", true, None),
         ])
         .map_err(|error| format!("could not build the menu: {error}"))?;
+        // Before the update line can shift them: AppKit keeps each image on its item.
         #[cfg(target_os = "macos")]
-        show_first_item_image(&menu);
+        {
+            show_item_image(&menu, 0, None);
+            show_item_image(&menu, DASHBOARD_AT, Some("sidebar.left"));
+            show_item_image(&menu, RESTART_AT, Some("arrow.clockwise"));
+            show_item_image(&menu, STOP_AT, Some("power"));
+        }
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu.clone()))
             .build()
@@ -202,30 +230,42 @@ impl Tray {
     }
 }
 
-/// Asks AppKit to draw the first item's image, the status circle. From macOS 27 AppKit hides menu item images unless
-/// an item's `preferredImageVisibility` is `.visible`; earlier versions have no such property and always draw them.
-/// muda does not expose its `NSMenuItem`s, so the item is reached through the menu's `NSMenu`.
+/// Gives the menu's item at `index` the SF Symbol `symbol`, as a template so it takes the menu's colour, and asks
+/// AppKit to draw that item's image: the status line's circle, which muda sets, has no symbol. From macOS 27 AppKit
+/// hides menu item images unless an item's `preferredImageVisibility` is `.visible`; earlier versions have no such
+/// property and always draw them. muda does not expose its `NSMenuItem`s, so the item is reached through the menu's
+/// `NSMenu`. Windows has no such images, so its menu is text alone, as Linux's is.
 #[cfg(target_os = "macos")]
-fn show_first_item_image(menu: &Menu) {
+fn show_item_image(menu: &Menu, index: usize, symbol: Option<&str>) {
     use muda::ContextMenu;
-    use objc2::runtime::AnyObject;
+    use objc2::runtime::NSObjectProtocol;
     use objc2::{msg_send, sel};
+    use objc2_app_kit::{NSImage, NSMenu};
+    use objc2_foundation::NSString;
 
     /// `NSMenuItemImageVisibilityVisible`.
     const VISIBLE: isize = 1;
     // SAFETY: `ns_menu` is the live `NSMenu` muda keeps for `menu`, and this runs on the main thread, as muda's own
-    // calls do. Each message is one `NSMenu` or `NSMenuItem` declares, sent only where it responds to it.
-    unsafe {
-        let Some(ns_menu) = (menu.ns_menu() as *const AnyObject).as_ref() else {
-            return;
-        };
-        let item: *mut AnyObject = msg_send![ns_menu, itemAtIndex: 0isize];
-        let Some(item) = item.as_ref() else { return };
-        let available: bool =
-            msg_send![item, respondsToSelector: sel!(setPreferredImageVisibility:)];
-        if available {
-            let _: () = msg_send![item, setPreferredImageVisibility: VISIBLE];
+    // calls do.
+    let ns_menu = unsafe { &*(menu.ns_menu() as *const NSMenu) };
+    let Some(item) = ns_menu.itemAtIndex(index as isize) else {
+        return eprintln!("rerail-tray: the menu has no item {index} to give an image");
+    };
+    if let Some(symbol) = symbol {
+        match NSImage::imageWithSystemSymbolName_accessibilityDescription(
+            &NSString::from_str(symbol),
+            None,
+        ) {
+            Some(image) => {
+                image.setTemplate(true);
+                item.setImage(Some(&image));
+            }
+            None => eprintln!("rerail-tray: macOS has no symbol named {symbol}"),
         }
+    }
+    if item.respondsToSelector(sel!(setPreferredImageVisibility:)) {
+        // SAFETY: the item responds to the setter, whose argument is an NSInteger.
+        let _: () = unsafe { msg_send![&*item, setPreferredImageVisibility: VISIBLE] };
     }
 }
 
@@ -242,6 +282,9 @@ mod tests {
     #[test]
     fn clicks_map_to_actions() {
         assert_eq!(action_for("open"), Some(Action::Open));
+        assert_eq!(action_for("settings"), Some(Action::Settings));
+        assert_eq!(action_for("docs"), Some(Action::Docs));
+        assert_eq!(action_for("restart"), Some(Action::Restart));
         assert_eq!(action_for("update"), Some(Action::Update));
         assert_eq!(action_for("stop"), Some(Action::Stop));
         assert_eq!(action_for("status"), None);
