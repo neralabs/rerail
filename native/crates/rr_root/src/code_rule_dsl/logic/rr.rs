@@ -171,7 +171,7 @@ pub use super::front::Error;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use lower::drop_unread_core;
 pub use lower::is_core;
-pub use lower::findings::{is_diagnostic, FOUND_NODE, FOUND_THROUGH, HEAD as DIAGNOSTIC_HEAD, PLACED_AT, PLACED_LINE, UNPLACED};
+pub use lower::findings::{is_diagnostic, PLACED_VALUE, UNPLACED_DOC, UNPLACED_NODE, UNPLACED_THROUGH, UNPLACED_VALUE, HEAD as DIAGNOSTIC_HEAD, PLACED_LINE, UNPLACED};
 pub use lower::{FILE_SYSTEM, WORLD};
 pub use print::print_version;
 pub use syntax::quote;
@@ -1155,6 +1155,9 @@ pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) 
     })?;
     let bytes: crate::content_store::record::Bytes = std::sync::Arc::new(module_image::encode(&m).map_err(Error::Syntax)?);
     let digest = image_digest((*bytes).as_ref());
+    // The module held is its image, read where the image is (its block), as every other reader of it reads it: not
+    // the lowering's own structures beside it.
+    let m = module_image::decode(std::sync::Arc::clone(&bytes)).map_err(Error::Syntax)?;
     let store = image_store();
     keep_image(store.as_deref(), "a module image", k, bytes);
     crate::code_rule_dsl::prof::count("rr.module_lowered_for_the_plan", 1);
@@ -1383,11 +1386,16 @@ fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_st
 /// `renew_image` of an image whose lease ends at `until`, read already: no statement here, the renewal queued behind
 /// the run.
 fn renew_image_leased(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId, until: Option<i64>) {
-    use crate::content_store::write_back::Syms;
     let now = image_lease() - IMAGE_LEASE_SECS;
     if until.is_some_and(|until| until - now > IMAGE_LEASE_SECS / 2) {
         return;
     }
+    queue_renewal(store, id);
+}
+
+/// Queues the renewal of image `id`'s lease to the store's writer, behind the run: no statement here.
+fn queue_renewal(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId) {
+    use crate::content_store::write_back::Syms;
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
         let id: crate::content_store::SourceId = crate::content_store::record::codec::from_body("an image's lease", body)?;
         cx.store.pin_source(id, IMAGE_OWNER, image_lease())

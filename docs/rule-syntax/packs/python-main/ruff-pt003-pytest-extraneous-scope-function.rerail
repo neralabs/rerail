@@ -13,7 +13,7 @@
 .violation PT003(at: node, f: loc) "Delete this `scope=\"function\"` argument from `{f}(...)`, since function scope is the default; drop the parentheses too if no arguments remain."
     suppress noqa "PT003"
 PT003(n, F) :- kind(n, "keyword_argument"), pt003_tok_has_1(n), field(n, "value", c9),
-    pt003_str_literal(c9), value(c9, v10), value_type(v10, "str"), v10 = "function",
+    pt003_str_literal(c9), value(c9, v10), value_type_of(c9, "str"), v10 = "function",
     count : { precedes(s11, n), kind(s11, "keyword_argument"), pt003_tok_has_2(s11) } = 0,
     child(p20, n, _), kind(p20, "argument_list"), child(p21, p20, _),
     kind(p21, "call"), field(p21, "function", c22), pt003_callee(c22, F), child(p23, p21, _),

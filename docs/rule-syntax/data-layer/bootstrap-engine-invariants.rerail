@@ -264,10 +264,11 @@ bei_watch("tripwire", "BEI036", f) :- bei_primitive(f).
 bei_ban("tripwire", "_unsupported_bootstrap_schema_surface_lazy").
 // BEI044: bootstrap lowerers emit no ordinary SQL step, except by calling themselves.
 BEI(c, "BEI044", cat("bootstrap lowerer must collect work into the fused terminal payload, not call ", x)) :-
-    bei_fn(f, "schema_transaction.py", n), bei_lowerer(n), bei_calls(f, c, x),
+    bei_fn(f, "schema_transaction.py", n), (prefix("ensure_bootstrap_", n) ; bei_lowerer(n)), bei_calls(f, c, x),
     bei_set("BOOTSTRAP_APPLICATION_SQL_STEP_EMITTERS", x), x != n.
+// bei_lowerer(n): the named lowerers; the ensure_bootstrap_* ones are f's own name, tested in the rule (decision
+// 0677: never a table of every file's function names).
 .decl bei_lowerer(n: symbol)
-bei_lowerer(n) :- bei_fn(_, "schema_transaction.py", n), prefix("ensure_bootstrap_", n).
 bei_lowerer("_build_ddl_effect_lazy"). bei_lowerer("_enqueue_bootstrap_dml_statements_lazy").
 bei_lowerer("assert_bootstrap_sql_assertions_lazy"). bei_lowerer("bootstrap_schema_tail_lazy").
 
@@ -404,8 +405,12 @@ BEI(c, "BEI032", "bootstrap lifecycle effects must not use dynamic connection di
 // BootstrapDataPrimitiveKind.X in one of the coordinator's install functions; a member that is not is reported at
 // line 1 of the coordinator.
 BEI(@place("l3200_metadata/bootstrap_coordinator.py", 1), "BEI038", cat("no lazy install family for BootstrapDataPrimitiveKind.", x)) :-
-    bei_kind_member(x), doc(dc, "l3200_metadata/bootstrap_coordinator.py", _),
-    count : { bei_install_fn(f), docof(f, dc), def_walk(n, f), bei_kind_ref(n, "BootstrapDataPrimitiveKind", x) } = 0.
+    bei_kind_member(x), doc(_, "l3200_metadata/bootstrap_coordinator.py", _), !bei_installed(x).
+// bei_installed(x): an install function of the coordinator names BootstrapDataPrimitiveKind.x. Found in that file,
+// by the member's name; the cross-file part joins the names (decision 0677).
+.decl bei_installed(x: symbol)
+bei_installed(x) :- doc(dc, "l3200_metadata/bootstrap_coordinator.py", _), bei_install_fn(f), docof(f, dc), def_walk(n, f),
+    bei_kind_ref(n, "BootstrapDataPrimitiveKind", x).
 .decl bei_kind_member(x: symbol)  // a member of the enum: `X = …` or `X: T …` directly in its body
 bei_kind_member(x) :- doc(d, "l3200_metadata/bootstrap_data_plan.py", _), kind(k, "class_definition"), docof(k, d),
     def_name(k, "BootstrapDataPrimitiveKind"), field(k, "body", b), body_stmt(b, s, _), child(s, a, 0),

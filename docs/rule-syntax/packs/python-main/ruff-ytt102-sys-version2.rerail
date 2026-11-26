@@ -19,7 +19,7 @@ YTT102(C, n) :- ytt102_in_string(n, C).
 
 // two_literal(n): the JSON util `two-literal`, used where the JSON says `matches: "two-literal"`
 .decl ytt102_two_literal(n: node)
-ytt102_two_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 2.
+ytt102_two_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 2.
 ytt102_two_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     ytt102_two_literal(c2).
 

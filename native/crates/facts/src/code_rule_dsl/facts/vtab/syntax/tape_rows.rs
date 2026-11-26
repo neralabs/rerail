@@ -125,6 +125,11 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     fn row(&self, at: &At, d: &Self::Doc, item: u32, k: u32, out: &mut [i64]);
     /// The tape nodes under tape node `x` that may have a row whose `parent()` column is `x`, in order.
     fn under(&self, _at: &At, _x: u32, _each: &mut dyn FnMut(u32)) {}
+    /// What bounds column `column`'s values before any row is read (`Source::col_bounds`, `Batch::bounds_of`): none
+    /// where nothing does.
+    fn col_kind(&self, _column: usize) -> Option<super::made::ColKind> {
+        None
+    }
     /// Whether a lookup on `column` finds its items (`find`).
     fn keyed(&self, column: usize) -> bool {
         column == self.own() || Some(column) == self.parent()
@@ -214,6 +219,9 @@ impl<R: TapeRows> RowsView<R> {
 }
 
 impl<R: TapeRows> Source for RowsView<R> {
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.rows.col_kind(column).map(|k| self.batch.bounds_of(k))
+    }
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         Some(Arc::clone(&self.batch) as _)
     }
@@ -712,6 +720,10 @@ impl TapeRows for DocRow {
     }
     fn columns(&self) -> &'static [&'static str] {
         &["d", "path", "module"]
+    }
+    /// A document's key, and two atoms.
+    fn col_kind(&self, column: usize) -> Option<super::made::ColKind> {
+        Some(if column == 0 { super::made::ColKind::Key } else { super::made::ColKind::Atom })
     }
     fn own(&self) -> usize {
         0

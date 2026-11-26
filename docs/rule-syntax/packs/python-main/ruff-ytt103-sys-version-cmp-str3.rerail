@@ -18,8 +18,8 @@ YTT103(C, n) :- ytt103_in_string(n, C).
 // other_string(n): the JSON util `other-string`, used where the JSON says `matches: "other-string"`
 .decl ytt103_other_string(n: node)
 ytt103_other_string(n) :- (kind(n, "string") ; kind(n, "concatenated_string")), value(n, v1),
-    value_type(v1, "str"),
-    ( value(n, v2), value_type(v2, "str"), match("(?:[\\s\\S]{2,}|[^\\x00-\\x7f]|)", v2)
+    value_type_of(n, "str"),
+    ( value(n, v2), value_type_of(n, "str"), match("(?:[\\s\\S]{2,}|[^\\x00-\\x7f]|)", v2)
     ; kind(n, "string"), match("(?s:.*)(?:^|[^\\\\])(?:\\\\\\\\)*\\r\\n(?s:.*)", n)
     ; has(n, c1, "string"), match("(?s:.*)(?:^|[^\\\\])(?:\\\\\\\\)*\\r\\n(?s:.*)", c1)
     ),

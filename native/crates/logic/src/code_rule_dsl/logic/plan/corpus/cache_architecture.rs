@@ -115,19 +115,22 @@ fn no_cache_tests_its_own_freshness_but_those_not_yet_moved() {
     needles.sort_unstable();
     needles.dedup();
     let mut found: Vec<(String, &str)> = Vec::new();
+    let mut at: Vec<(String, &str, String)> = Vec::new();
     for file in &files {
         let rel = relative(file);
         let text = std::fs::read_to_string(file).unwrap();
         for needle in &needles {
             let calls = text.lines().filter(|l| l.contains(needle) && !l.trim_start().starts_with("//") && !l.contains("fn ")).count();
             found.extend(std::iter::repeat_n((rel.clone(), *needle), calls));
+            at.extend(std::iter::repeat_n((rel.clone(), *needle, file.display().to_string()), calls));
         }
     }
     let extra: Vec<String> = found.iter().filter(|(file, needle)| !FRESHNESS_CALLS.iter().any(|(f, n, _)| f == file && n == needle)).map(|(f, n)| format!("{f}: {n}")).collect();
     assert!(extra.is_empty(), "a cache tests its own freshness (decision 0103: write its key rule instead): {extra:?}");
     for (file, needle, most) in FRESHNESS_CALLS {
         let calls = found.iter().filter(|(f, n)| f == file && n == needle).count();
-        assert!(calls <= *most, "{file}: {calls} calls of {needle}, at most {most} while it is not yet moved");
+        let files: Vec<&str> = at.iter().filter(|(f, n, _)| f == file && n == needle).map(|(_, _, p)| p.as_str()).collect();
+        assert!(calls <= *most, "{file}: {calls} calls of {needle}, at most {most} while it is not yet moved: {files:?}");
     }
 }
 

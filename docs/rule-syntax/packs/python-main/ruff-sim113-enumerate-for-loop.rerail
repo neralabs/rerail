@@ -31,12 +31,12 @@ SIM113(n, N) :- kind(n, "augmented_assignment"), sim113_tok_has_1(n), child(n, c
 
 // one(n): the JSON util `one`, used where the JSON says `matches: "one"`
 .decl sim113_one(n: node)
-sim113_one(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 1.
+sim113_one(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 1.
 sim113_one(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), sim113_one(c2).
 
 // zero(n): the JSON util `zero`, used where the JSON says `matches: "zero"`
 .decl sim113_zero(n: node)
-sim113_zero(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 0.
+sim113_zero(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 0.
 sim113_zero(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), sim113_zero(c2).
 
 // statement(n): the JSON util `statement`, used where the JSON says `matches: "statement"`

@@ -30,7 +30,11 @@
 
 // sidp_runtime(d, p): document d, at p, is a data path: no allowed marker occurs in "/" + p.
 .decl sidp_runtime(d: number, p: symbol)
-sidp_runtime(d, p) :- doc(d, p, _), q = cat("/", p), count : { sidp_path_marker(m), contains(m, q) } = 0.
+sidp_runtime(d, p) :- doc(d, p, _), !sidp_marked(d).
+// sidp_marked(d): an allowed marker occurs in document d's "/" + path. Keyed by the document: the test of the path
+// stays in its file (decision 0677).
+.decl sidp_marked(d: number)
+sidp_marked(d) :- doc(d, p, _), sidp_path_marker(m), contains(m, cat("/", p)).
 // sidp_authority_at(n): a def around n is schema authority.
 .decl sidp_authority_at(n: node)
 sidp_authority_at(n) :- def_walk(n, f), def_name(f, x), sidp_authority(w), icontains(w, x).

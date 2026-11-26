@@ -211,9 +211,10 @@ enum Scope<'a> {
 }
 
 /// `v`'s rules, each relation's reads (rule, literal) a part may stand in for, each relation's rules, and the plan
-/// for each relation the scope hands on as parts.
+/// for each relation the scope hands on as parts. `constants`: the relations the split holds constants (of facts and
+/// settings alone).
 #[allow(clippy::type_complexity)]
-fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys) -> (Vec<RuleRef<'v>>, BTreeMap<&'v str, Vec<(usize, usize)>>, BTreeMap<&'v str, Vec<RuleRef<'v>>>, Plan) {
+fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys, constants: &BTreeSet<String>) -> (Vec<RuleRef<'v>>, BTreeMap<&'v str, Vec<(usize, usize)>>, BTreeMap<&'v str, Vec<RuleRef<'v>>>, Plan) {
     let none = BTreeSet::new();
     let local = match scope {
         Scope::Exports(local) => local,
@@ -285,6 +286,30 @@ fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys) -> (
             }
             let fans = parts.iter().filter(|p| !functional(v, *rule, &part_lits(p), &key, &head, keys)).count();
             if fans < 2 {
+                break;
+            }
+            // Decision 0677: no node crosses into the cross-file part. Its readers (an export's, or a pair cache's,
+            // whose guard counts the whole factors) join the parts in the cross part, so a key that is a node
+            // carries it there. A relation that holds no node is handed on whole, its rows symbols; one that does
+            // holds a node already, a crossing the check names, and is factorized as before until its family is
+            // keyed by symbols. `base_name(q, q0) :- base_expr(q, e), qn(e, q0)` (py_names) held `e` in the cross
+            // part, by its pair cache.
+            let node_at = |rel: &str, c: usize| f.columns(rel).and_then(|cols| cols.get(c).map(|(_, t)| super::super::node_crossings::NODE_TYPES.contains(t))).unwrap_or(false);
+            let key_is_node = lits.iter().any(|l| match l.view() {
+                L::Atom(a) if !a.neg() => a.args().enumerate().any(|(c, t)| matches!(t, TermRef::Var(s) if name(v, *rule, s) == key) && node_at(v.rel_name(a.rel()), c)),
+                _ => false,
+            });
+            let head_holds_node = (0..rule.head().args().count()).any(|c| node_at(rel, c));
+            if key_is_node && !head_holds_node {
+                break;
+            }
+            // A join of a file's nodes with a constant (`export_all(e, m) :- star_export(e, s), node_module(s, m)`):
+            // a lookup in the constant, made in the file. Handed on as parts, the constant's part and the key were
+            // tables of every file's values, and their readers, which join them at the file's nodes, went to the
+            // cross part (decision 0677), as the deferred joins' lookups did (`product_demand::deferred`).
+            let constant = |r: &str| constants.contains(r) || (f.has_facts(r) && !rules_of.contains_key(r));
+            let lookup = parts.iter().any(|p| part_lits(p).iter().all(|l| l.atom().is_none_or(|a| constant(v.rel_name(a.rel())))));
+            if head_holds_node && lookup {
                 break;
             }
             plan.push((key, parts));
@@ -697,7 +722,8 @@ pub fn factorize_intermediates(v: &std::sync::Arc<Version>, first: bool, names: 
     let f = Fields::over(v, &d);
     // Its keys read in the named relations' rules alone (`choose`'s `functional`).
     let keys = relation_keys(v, f, Some(names));
-    let (rules, reads, rules_of, chosen) = choose(v, f, Scope::Intermediates(names), &keys);
+    // The deferred joins leave a lookup in a constant as written (`product_demand::deferred`): none is named here.
+    let (rules, reads, rules_of, chosen) = choose(v, f, Scope::Intermediates(names), &keys, &BTreeSet::new());
     if chosen.is_empty() {
         return Ok(None);
     }
@@ -724,7 +750,8 @@ impl ProgramPass for FactorizeExports {
         let f = Fields::over(v, &d);
         let split = cx.get::<FileLocal>()?;
         let keys = relation_keys(v, f, None);
-        let (rules, reads, rules_of, mut chosen) = choose(v, f, Scope::Exports(&split.local), &keys);
+        let (_, constants) = split.found();
+        let (rules, reads, rules_of, mut chosen) = choose(v, f, Scope::Exports(&split.local), &keys, &constants);
         // Made, checked by the split, and made again without the relations whose parts it does not find file-local.
         loop {
             if chosen.is_empty() {

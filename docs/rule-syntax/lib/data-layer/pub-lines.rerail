@@ -5,7 +5,6 @@
 //
 // Interface
 //   py_line(d, n, s)     line n of document d, from 1, has text s, as splitlines() gives it
-//   py_line_sep(s)       s holds one of the extra separators (a test on a src_line's text, or a rest of one)
 //
 // Example: "a b\nc\n" gives py_line(d, 1, "a"), py_line(d, 2, "b"), py_line(d, 3, "c").
 // One difference: a file whose last line ends in an extra separator and no \n ("a ") gets one more, empty,
@@ -14,11 +13,10 @@
 // The separators splitlines() adds to src_line's, as a regex class.
 // pyl_extra(d, l, k): physical line l holds k of them.
 .decl pyl_extra(d: number, l: number, k: number)
-pyl_extra(d, l, k) :- src_line(d, l, sp), text(sp, s), py_line_sep(s),
+pyl_extra(d, l, k) :- src_line(d, l, sp), text(sp, s), match("(?s).*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}].*", s),
     k = @count_matches("[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]", s).
-// A line's text, or the rest of it after a separator: each line's rests are tested, so each separator ends a line.
-.decl py_line_sep(s: symbol)
-py_line_sep(s) :- pyl_rest(_, _, _, s), match("(?s).*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}].*", s).
+// A line's text, or the rest of it after a separator, is tested for a separator in each rule that reads it, so each
+// separator ends a line: a test of the text, never a table of every file's line texts (decision 0677).
 
 // pyl_rest(d, l, j, r): r is physical line l from just after its j-th extra separator to its end.
 .decl pyl_rest(d: number, l: number, j: number, r: symbol)
@@ -28,8 +26,8 @@ pyl_rest(d, l, j + 1, a) :- pyl_rest(d, l, j, r),
 
 // Line n is physical line l, shifted by every extra separator on earlier lines and by j on its own.
 .decl py_line(d: number, n: number, s: symbol)
-py_line(d, n, s) :- pyl_rest(d, l, 0, s), !py_line_sep(s), off = sum k : { pyl_extra(d, m, k), m < l }, n = l + off.
-py_line(d, n, h) :- pyl_rest(d, l, j, r), py_line_sep(r),
+py_line(d, n, s) :- pyl_rest(d, l, 0, s), !match("(?s).*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}].*", s), off = sum k : { pyl_extra(d, m, k), m < l }, n = l + off.
+py_line(d, n, h) :- pyl_rest(d, l, j, r), match("(?s).*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}].*", r),
     match("(?<h>[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*)[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?s).*", r),
     off = sum k : { pyl_extra(d, m, k), m < l }, n = l + off + j.
-py_line(d, n, r) :- pyl_rest(d, l, j, r), j > 0, !py_line_sep(r), off = sum k : { pyl_extra(d, m, k), m < l }, n = l + off + j.
+py_line(d, n, r) :- pyl_rest(d, l, j, r), j > 0, !match("(?s).*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}].*", r), off = sum k : { pyl_extra(d, m, k), m < l }, n = l + off + j.

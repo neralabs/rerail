@@ -26,29 +26,32 @@
 unknown_prop(a, cat("Remove ", x, " from this <", tg, ">; React supports it only on ", t, ".")) :-
     checked_prop(a, x, n, tg), only_on_says(n, t), !only_on(n, tg).
 unknown_prop(a, cat("Rename ", x, " to ", std, ", the name React uses for this attribute.")) :-
-    checked_prop(a, x, n, _), !only_on(n, _), standard(n, std), std != n.
+    checked_prop(a, x, n, _), !only_on(n, _), standard(a, std), std != n.
 unknown_prop(a, cat("Rename ", x, " to an attribute React supports on DOM elements, move custom values to a data-* attribute, or remove it.")) :-
-    checked_prop(a, x, n, _), !only_on(n, _), !standard(n, _).
+    checked_prop(a, x, n, _), !only_on(n, _), !standard(a, _).
 // The fix writes the standard name over the prop's name.
-rename_prop(a, _) :- checked_prop(a, _, n, _), !only_on(n, _), standard(n, std), std != n, child(a, k, 0)
+rename_prop(a, _) :- checked_prop(a, _, n, _), !only_on(n, _), standard(a, std), std != n, child(a, k, 0)
     => replace(k, `$std`).
 
 // checked_prop(a, x, n, tg): prop a is written x on DOM tag tg; n is x with the any-case names normalised.
 .decl checked_prop(a: node, x: symbol, n: symbol, tg: symbol)
-checked_prop(a, x, n, tg) :- react_open(_, o), html_tag(o, tg), jsx_prop(o, x, a), normal(x, n),
-    !data_prop(n), !aria_property(n).
+checked_prop(a, x, n, tg) :- react_open(_, o), html_tag(o, tg), jsx_prop(o, x, a), normal(a, n),
+    !data_prop(a), !aria_property(n).
 // <div>, <svg>: a plain lower-case tag without `-` and without an `is` prop (both mark a custom element).
 .decl html_tag(o: node, tg: symbol)
 html_tag(o, tg) :- field(o, "name", t), kind(t, "identifier"), text(t, tg), match("[a-z][^-]*", tg),
     tg != "fbt", tg != "fbs", count : { jsx_prop(o, "is", i), child(i, k, 0), kind(k, "property_identifier") } = 0.
-.decl normal(x: symbol, n: symbol)
-normal(x, n) :- jsx_prop(_, x, _), any_case(n), @lower(n) = @lower(x).
-normal(x, x) :- jsx_prop(_, x, _), count : { any_case(c), @lower(c) = @lower(x) } = 0.
-.decl data_prop(n: symbol)  // data-foo, but not data-xml…, and no `:`
-data_prop(n) :- normal(_, n), match("data-[^:]*", n), !imatch_data_xml(n).
-.decl imatch_data_xml(n: symbol)
-imatch_data_xml(n) :- normal(_, n), iprefix("data-xml", n).
-// standard(n, std): the name React uses: the attribute's property, or the DOM property equal to n in any case.
-.decl standard(n: symbol, std: symbol)
-standard(n, std) :- normal(_, n), dom_attribute(n, std).
-standard(n, p) :- normal(_, n), !dom_attribute(n, _), dom_property(p), @lower(p) = @lower(n).
+// normal(a, n): prop a's name with the any-case names normalised. The tests below are keyed by the prop, not by
+// its name, so each file tests its own props (decision 0677).
+.decl normal(a: node, n: symbol)
+normal(a, n) :- jsx_prop(_, x, a), any_case(n), @lower(n) = @lower(x).
+normal(a, x) :- jsx_prop(_, x, a), l = @lower(x), !any_case_lower(l).
+.decl any_case_lower(l: symbol)
+any_case_lower(@lower(c)) :- any_case(c).
+.decl data_prop(a: node)  // data-foo, but not data-xml…, and no `:`
+data_prop(a) :- normal(a, n), match("data-[^:]*", n), !iprefix("data-xml", n).
+// standard(a, std): the name React uses for prop a: the attribute's property, or the DOM property equal to its
+// name in any case.
+.decl standard(a: node, std: symbol)
+standard(a, std) :- normal(a, n), dom_attribute(n, std).
+standard(a, p) :- normal(a, n), !dom_attribute(n, _), dom_property(p), @lower(p) = @lower(n).

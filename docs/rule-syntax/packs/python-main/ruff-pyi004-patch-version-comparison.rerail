@@ -48,14 +48,14 @@ pyi004_version_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 
 // int_literal(n): the JSON util `int-literal`, used where the JSON says `matches: "int-literal"`
 .decl pyi004_int_literal(n: node)
-pyi004_int_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+pyi004_int_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int").
 pyi004_int_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     pyi004_int_literal(c2).
 
 // small_literal(n): the JSON util `small-literal`, used where the JSON says `matches: "small-literal"`
 .decl pyi004_small_literal(n: node)
-pyi004_small_literal(n) :- pyi004_int_literal(n), value(n, v1), value_type(v1, "int"),
-    (value_type(v1, "int") ; value_type(v1, "float")), to_number(v1) >= 1,
+pyi004_small_literal(n) :- pyi004_int_literal(n), value(n, v1), value_type_of(n, "int"),
+    (value_type_of(n, "int") ; value_type_of(n, "float")), to_number(v1) >= 1,
     to_number(v1) <= 2.
 
 // sole_index(n): the JSON util `sole-index`, used where the JSON says `matches: "sole-index"`

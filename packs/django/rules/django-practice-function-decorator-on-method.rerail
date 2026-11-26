@@ -58,11 +58,8 @@ fdm_mark("django.views.decorators.common.no_append_slash").
 fdm_decorates(f, e, q) :- decorator(f, e), sym_of(e, q), fdm_decorator(q, _).
 fdm_decorates(f, e, q) :- decorator(f, e), kind(e, "call"), field(e, "function", g), sym_of(g, q), fdm_decorator(q, _).
 // fdm_drf(c): class c derives from a Django REST framework view (the library's linear closure, DRF's views only).
-.decl fdm_drf_q(q: symbol)
-fdm_drf_q(q) :- dj_view_lib(q), prefix("rest_framework.", q).
-fdm_drf_q(q) :- class_def(c, q), class_base(c, b), fdm_drf_q(b).
 .decl fdm_drf(c: node)
-fdm_drf(c) :- class_def(c, q), class_base(c, b), fdm_drf_q(b).
+fdm_drf(c) :- dj_drf_view_class(c).
 // fdm_case(f, q, effect, how): q does not work on method f, with this effect; how is "wrap" (method_decorator fixes
 // it) or "drop" (nothing to wrap: the decorator is redundant). Any decorator but a mark; a mark on a class-based view's
 // method other than dispatch(); csrf_exempt on a DRF view's method, which is redundant.

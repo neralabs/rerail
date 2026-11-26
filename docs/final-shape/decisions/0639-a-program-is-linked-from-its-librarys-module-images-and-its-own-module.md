@@ -179,6 +179,20 @@ and a program that includes one, lowered in its scope with any other program, me
 `Dirs::module_seed` seeds such a file as a text that includes it by its name from the library, as its program names
 it. Test: `every_library_file_a_pack_includes_is_a_planned_module`.
 
+**Read in place, with no statement inside the waves (2026-11-24, the user's choice B).** The answer is given inside
+the run's waves, where a run sends no SQL (decision 0104), so the hub's aec6f2539e had it read no store and lower
+every module the process did not hold; a copy of the template then lowered the library again, and T4 failed once the
+template was filled. Now, before phase 0's run, one statement reads the image store's index of the images it pins:
+each alias and where its bytes lie in the store's segments (`ContentStore::pinned_sources_by_alias`, `rr::images_ahead`).
+Inside the waves a module the process does not hold is read where its segment, a block, holds it, mapped
+(`ContentStore::source_at`, `rr::held_or_ahead`), and decoded in place; its lease is renewed behind the run where
+it runs down. Only a module the store does not hold is lowered. A module lowered here is held as its image's decode,
+read where the image is, as every other reader reads it. `Graph::holds` and the reuse check look in the index before
+the store. An archived image has no place in the index and is lowered again. Both lines
+built this on their own (decision 0675's third cause on one, choice B on the other); their merge (2026-11-26) keeps
+one: `images_ahead`'s index, which holds its store and reads the shipped bundle first, the lease renewed behind the
+run only where it runs down (`renew_image_leased`).
+
 **Precedent for rounds over answers.** `bootstrap.rerail` already derives requests through negation over an answer:
 `load` ← `p0_resolved` ← `!p0_before` ← `p0_exists` ← `dir_entry`, the answer to `rr_dir_req`. The count over
 `p0_module_lowered` is the same pattern.

@@ -1606,11 +1606,11 @@ impl<L: Layout> Writer<L> {
     /// size and end exactly; `Ok(Err)` where the writer writes no tape, or the nodes are not a format 16 tape (a code
     /// the language's table lacks, an edit before a commit, a node past format 16's bounds).
     pub fn finish_16(&mut self) -> Result<Result<f16::Finished, String>, Redo> {
-        self.finish_16_with(None)
+        self.finish_16_laid(None)
     }
 
-    /// `finish_16`, the tape's auxiliary index made by `aux` and laid where the tape lies (`f16::Writer::finish_with`).
-    pub fn finish_16_with(&mut self, aux: Option<f16::AuxMaker<'_>>) -> Result<Result<f16::Finished, String>, Redo> {
+    /// `finish_16`, the tape's auxiliary index laid in its home where `lay` builds one (`f16::ops::Writer::finish_laid`).
+    pub fn finish_16_laid(&mut self, lay: Option<f16::LayAux<'_>>) -> Result<Result<f16::Finished, String>, Redo> {
         debug_assert!(self.chains.is_empty(), "a chain not ended");
         self.commit();
         let w = self.layout.widths();
@@ -1636,7 +1636,7 @@ impl<L: Layout> Writer<L> {
             return Ok(Err(format!("node {node} read after its commit")));
         }
         s.close_to(self.n);
-        Ok(s.w.finish_with(aux))
+        Ok(s.w.finish_laid(lay))
     }
 }
 

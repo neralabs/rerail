@@ -172,8 +172,8 @@ list_index(l, m, i) :- accessor(l, _, m, _, _), child(l, m, _),
 //   ({ a: function b() {} })       Method 'a'            class A { f = () => {} }    Method 'f'
 // The words: static and private (class members), async, generator, then what it is, then its name.
 .decl fn_name_kind(f: node, s: symbol)
-fn_name_kind(f, s) :- fn_words(f, w), upper_first(w, s).
-upper_first_ask(w) :- fn_words(_, w).
+fn_name_kind(f, s) :- fn_words(f, w), upper_first(f, w, s).
+upper_first_ask(f, w) :- fn_words(f, w).
 // fn_words(f, s): the same, as written mid-sentence: "async method 'load'" (no-empty-function's message).
 .decl fn_words(f: node, s: symbol)
 fn_words(f, "constructor") :- ctor(f).

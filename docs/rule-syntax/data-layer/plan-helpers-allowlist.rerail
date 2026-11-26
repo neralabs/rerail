@@ -31,30 +31,22 @@
 #include "../data-layer/plan-helpers-allowlist.tables.rerail"
 
 // ---- helper names ----------------------------------------------------------------------------------------------
-// pha_tracked: every helper name the linter follows. pha_private: names it calls private.
+// pha_tracked: every helper name the linter follows.
 .decl pha_tracked(x: symbol)
 pha_tracked(x) :- pha_public(x) ; pha_private_terminal(x) ; pha_lazy(x) ; pha_legacy_private(x).
-// pha_private(x): one of the names in the file (identifiers and imported names) that the linter calls private.
-.decl pha_private(x: symbol)
-pha_private(x) :- pha_legacy_private(x).
-pha_private(x) :- kind(n, "identifier"), text(n, x), prefix("_", x), contains("via_plan", x).
-// pha_forbidden(x): imported or aliased, x is reported outright (lazy terminals only under an eager alias).
-.decl pha_forbidden(x: symbol)
-pha_forbidden(x) :- pha_public(x) ; pha_private(x).
-// pha_eager_alias(l): a local name that reads as eager (any case): execute, fetch, scalar, ddl.
+// A name the linter calls private: a legacy private form, or `_…via_plan…`. Forbidden, imported or aliased: a
+// public or private name (lazy terminals only under an eager alias). An eager alias: a local name that contains, in
+// any case, one of pha_eager_word. Each is tested in the rule that reads a name of its own file: a table of every
+// file's names held them in the cross part (decision 0677).
 .decl pha_eager_word(w: symbol)
 pha_eager_word("execute"). pha_eager_word("fetch"). pha_eager_word("scalar"). pha_eager_word("ddl").
-.decl pha_eager_alias(l: symbol)
-pha_eager_alias(l) :- pha_local(l), pha_eager_word(w), icontains(w, l).
-.decl pha_local(l: symbol)
-pha_local(l) :- pha_write(_, l, _, _).
 
 // ---- 1. what each name holds -------------------------------------------------------------------------------------
 // pha_import(i, a, y, l): `from impl.common.l2070_server_plan.plan_helpers import y as l` (alias node a), y a helper
 // or any private-looking name (`_renamed_via_plan_escape`).
 .decl pha_import(i: node, a: node, y: symbol, l: symbol)
 pha_import(i, a, y, l) :- from_module_raw(i, "impl.common.l2070_server_plan.plan_helpers"), field(i, "name", a),
-    dotted(a, y), (pha_tracked(y) ; pha_private(y)),
+    dotted(a, y), (pha_tracked(y) ; (pha_legacy_private(y) ; prefix("_", y), contains("via_plan", y))),
     (kind(a, "aliased_import"), field(a, "alias", n), text(n, l) ; kind(a, "dotted_name"), l = y).
 // pha_module_alias(i, l): l names the plan_helpers module itself (`import …plan_helpers as ph`,
 // `from impl.common.l2070_server_plan import plan_helpers`). A bare `import …plan_helpers` binds "plan_helpers".
@@ -98,8 +90,9 @@ pha_helper(e, h) :- pha_latest(e, v), pha_helper(v, h).
 pha_helper(e, x) :- pha_asked(e), kind(e, "identifier"), text(e, x), pha_tracked(x), !pha_latest(e, _).
 .decl pha_attr_helper(e: node, h: symbol)
 pha_attr_helper(e, h) :- pha_asked(e), kind(e, "attribute"), field(e, "attribute", n), text(n, h), pha_tracked(h).
-pha_attr_helper(e, h) :- pha_asked(e), kind(e, "attribute"), field(e, "attribute", n), text(n, h), pha_private(h),
-    field(e, "object", o), kind(o, "identifier"), text(o, m), pha_module_alias(i, m), earlier(i, e).
+pha_attr_helper(e, h) :- pha_asked(e), kind(e, "attribute"), field(e, "attribute", n), text(n, h),
+    (pha_legacy_private(h) ; prefix("_", h), contains("via_plan", h)), field(e, "object", o), kind(o, "identifier"),
+    text(o, m), pha_module_alias(i, m), earlier(i, e).
 // pha_stores(v): write value v puts a helper in the map. Whether it does is monotone (an entry is never removed),
 // so it needs no order; only which write is the latest needs one, and that is a max over this lower relation.
 .decl pha_stores(v: node)
@@ -107,10 +100,12 @@ pha_stores(a) :- pha_import(_, a, _, _).
 pha_stores(v) :- pha_write(_, _, v, _), pha_attr_helper(v, _).
 pha_stores(v) :- pha_write(_, _, v, _), kind(v, "identifier"), text(v, y),
     (pha_tracked(y) ; pha_write(_, y, v2, _), pha_stores(v2), earlier(v2, v)).
+// pha_latest(e, v): the latest write of e's name, before e, that stores a helper. The linter's map is its file's: the
+// writes are e's file's (by name alone, they were every file's, decision 0677).
 .decl pha_latest(e: node, v: node)
-pha_latest(e, v) :- pha_asked(e), kind(e, "identifier"), text(e, x),
-    k = max j : { pha_write(_, x, v2, _), pha_stores(v2), earlier(v2, e), visit_index(v2, j) },
-    visit_index(v, k), pha_write(_, x, v, _).
+pha_latest(e, v) :- pha_asked(e), kind(e, "identifier"), text(e, x), docof(e, d),
+    k = max j : { pha_write(_, x, v2, _), docof(v2, d), pha_stores(v2), earlier(v2, e), visit_index(v2, j) },
+    visit_index(v, k), docof(v, d), pha_write(_, x, v, _).
 
 // ---- 2. callsites -----------------------------------------------------------------------------------------------
 // pha_module(d, m): the linter's module name for a path: from the first `impl` directory on, else after the first
@@ -145,17 +140,19 @@ pha_allowed(n) :- pha_callsite(n, s), allow_entry("plan_helpers", s).
 pha_finding(c, cat("old or private ", h, "() call is forbidden")) :- kind(c, "call"), field(c, "function", e),
     pha_helper(e, h), !pha_own_private(c, h).
 .decl pha_own_private(c: node, h: symbol)
-pha_own_private(c, h) :- pha_helper(e, h), field(c, "function", e), pha_private(h), docof(c, d),
+pha_own_private(c, h) :- pha_helper(e, h), field(c, "function", e), (pha_legacy_private(h) ; prefix("_", h), contains("via_plan", h)),
+    docof(c, d),
     pha_module(d, "impl.common.l2070_server_plan.plan_helpers").
 // Importing a helper, at the import statement.
-pha_finding(i, cat("old or private ", y, " import is forbidden")) :- pha_import(i, _, y, _), pha_forbidden(y).
+pha_finding(i, cat("old or private ", y, " import is forbidden")) :- pha_import(i, _, y, _),
+    (pha_public(y) ; (pha_legacy_private(y) ; prefix("_", y), contains("via_plan", y))).
 pha_finding(i, cat("lazy terminal ", y, " imported under eager alias")) :- pha_import(i, _, y, l), pha_lazy(y),
-    pha_eager_alias(l).
+    pha_eager_word(ew), icontains(ew, l).
 // Assigning a helper to a name, at the target name. Legacy private forms may be aliased.
 pha_finding(t, cat("old or private ", h, " alias is forbidden")) :- assign_value(w, v), pha_write(w, _, v, t),
-    pha_helper(v, h), pha_forbidden(h), !pha_legacy_private(h).
+    pha_helper(v, h), (pha_public(h) ; (pha_legacy_private(h) ; prefix("_", h), contains("via_plan", h))), !pha_legacy_private(h).
 pha_finding(t, cat("lazy terminal ", h, " assigned to eager alias")) :- assign_value(w, v), pha_write(w, x, v, t),
-    pha_helper(v, h), pha_lazy(h), pha_eager_alias(x).
+    pha_helper(v, h), pha_lazy(h), pha_eager_word(ew), icontains(ew, x).
 
 .violation PHA001(at: node, c: symbol) "{c}"
 PHA001(n, c) :- pha_finding(n, c), !pha_allowed(n).

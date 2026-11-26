@@ -159,3 +159,40 @@ mod form {
     }
 }
 
+
+/// Decision 0094 §8: a reach index made again has its delta against the index its reads' old rows close to, read only
+/// at the starts that can differ: those whose seeds changed, and those that reach, before or after, the source of an
+/// edge gone or added. Through a reach, the starts whose reach changed, and those reaching a node whose values did.
+#[test]
+fn a_reach_index_made_again_has_its_delta_at_the_starts_that_reach_a_change() {
+    let set = |v: &[(i64, i64)]| v.iter().copied().collect::<std::collections::BTreeSet<_>>();
+    let pairs = |v: &[i64]| v.chunks(2).map(|p| (p[0], p[1])).collect::<std::collections::BTreeSet<_>>();
+    // A cycle with a tail, a separate chain, and a node of its own; an edge into the cycle removed, one out of the chain
+    // added (to a new node), and one start's seed moved.
+    let old_edges = [(1, 2), (2, 3), (3, 1), (3, 4), (5, 6), (6, 7), (8, 1)];
+    let new_edges = [(1, 2), (2, 3), (3, 1), (3, 4), (5, 6), (6, 7), (7, 20)];
+    let old_seed = [(10, 1), (11, 5), (12, 9), (13, 8), (14, 4)];
+    let new_seed = [(10, 1), (11, 5), (12, 9), (13, 6), (14, 4)];
+    let (old, new) = (Closed::reach(&old_seed, &old_edges), Closed::reach(&new_seed, &new_edges));
+    let changed_sources: Vec<i64> = set(&old_edges).symmetric_difference(&set(&new_edges)).map(|e| e.0).collect();
+    let mut starts: Vec<i64> = set(&old_seed).symmetric_difference(&set(&new_seed)).map(|s| s.0).collect();
+    starts.extend(old.starts_reaching(&changed_sources));
+    starts.extend(new.starts_reaching(&changed_sources));
+    let (gone, added) = new.changed_since(&old, &starts);
+    let (was, now) = (set(&naive(&old_seed, &old_edges)), set(&naive(&new_seed, &new_edges)));
+    assert_eq!(pairs(&gone), was.difference(&now).copied().collect(), "the rows gone");
+    assert_eq!(pairs(&added), now.difference(&was).copied().collect(), "the rows added");
+    // Start 10 reaches no changed edge's source and keeps its seeds: it is not read; 14 (node 4, no edges out) neither.
+    assert!(!starts.contains(&10) && !starts.contains(&14), "{starts:?}");
+    // Through the reach: a node's values changed (6), and the reach's own change.
+    let (old_map, new_map) = ([(2, 100), (6, 200), (7, 300)], [(2, 100), (6, 201), (7, 300), (20, 400)]);
+    let (old_t, new_t) = (old.through(&old_map), new.through(&new_map));
+    let mut t_starts: Vec<i64> = pairs(&gone).union(&pairs(&added)).map(|p| p.0).collect();
+    let keys: Vec<i64> = set(&old_map).symmetric_difference(&set(&new_map)).map(|m| m.0).collect();
+    t_starts.extend(old.starts_reaching(&keys));
+    t_starts.extend(new.starts_reaching(&keys));
+    let (t_gone, t_added) = new_t.changed_since(&old_t, &t_starts);
+    let (t_was, t_now) = (set(&rows(&old_t)), set(&rows(&new_t)));
+    assert_eq!(pairs(&t_gone), t_was.difference(&t_now).copied().collect(), "the rows gone through the reach");
+    assert_eq!(pairs(&t_added), t_now.difference(&t_was).copied().collect(), "the rows added through the reach");
+}

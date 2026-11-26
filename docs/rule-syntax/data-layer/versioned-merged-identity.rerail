@@ -100,10 +100,18 @@ vmi_projection(c, e) :- vmi_ctor(c), field(c, "arguments", al), child(al, k, _),
 
 .violation VMI001(at: loc, caller: symbol) "Expected merged constructor is absent. Caller: {caller}."
 // The linter reports it at line 0 of the steps directory; the recording puts it at line 1.
-VMI001(@place("impl/common/l2070_server_plan/steps", 1), s) :- vmi_expected(s), !vmi_caller(_, s, _).
+VMI001(@place("impl/common/l2070_server_plan/steps", 1), s) :- vmi_expected(s), !vmi_seen(s).
+// vmi_seen(s): some file has a constructor of caller s. By name: each file's callers, relayed, so the test of an
+// expected caller absent from every file reads no file's nodes (decision 0677).
+.decl vmi_seen(s: symbol)
+vmi_seen(s) :- vmi_caller(_, s, _).
 .violation VMI002(at: loc, caller: symbol) "Unreviewed merged constructor requires catalog identity audit. Caller: {caller}."
 VMI002(@place(p, l), s) :- vmi_caller(c, s, _), !vmi_expected(s), vmi_report_path(s, p), line(c, l).
 .violation VMI003(at: loc, caller: symbol) "Merged constructor must use a catalog-backed projection builder. Caller: {caller}."
-VMI003(@place(p, l), s) :- vmi_caller(c, s, _), vmi_expected(s), !vmi_backed_ctor(c), vmi_report_path(s, p), line(c, l).
+VMI003(@place(p, l), s) :- vmi_unbacked(c, s), vmi_report_path(s, p), line(c, l).
+// vmi_unbacked(c, s): expected caller s's constructor c, with no catalog-backed projection. Tested in c's file: the
+// report path is every file's, and a test of c beside it would ask for c in the cross-file part (decision 0677).
+.decl vmi_unbacked(c: node, s: symbol)
+vmi_unbacked(c, s) :- vmi_caller(c, s, _), vmi_expected(s), !vmi_backed_ctor(c).
 .decl vmi_backed_ctor(c: node)
 vmi_backed_ctor(c) :- vmi_projection(c, e), vmi_backed(c, e).

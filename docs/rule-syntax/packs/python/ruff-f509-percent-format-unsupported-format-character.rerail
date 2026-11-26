@@ -14,4 +14,4 @@
 .violation F509(at: node) code "F509"
     "Replace the unsupported conversion character in this %-format string with a valid one such as `s`, `d`, `r` or `f`."
     suppress ruff "F509"
-F509(b) :- percent_fmt(b, _, _, v), pct_error(v, "unsupported").
+F509(b) :- percent_fmt(b, _, _, _), pct_error(b, "unsupported").

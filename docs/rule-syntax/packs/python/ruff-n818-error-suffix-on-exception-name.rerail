@@ -14,7 +14,7 @@
     "Rename the exception class `{x}` to end in `Error`, e.g. `{x}Error` or swapping an `Exception` suffix for `Error`, and update references; keep it if it signals control flow, not an error."
     suppress ruff "N818"
 N818(nm, x) :- kind(c, "class_definition"), field(c, "name", nm), text(nm, x), !suffix("Error", x),
-    error_base(c), !naming_ignored(x).
+    error_base(c), !naming_ignored(nm, x).
 .decl error_base(c: node)  // a positional base that is the name `Exception` or `…Error`
 error_base(c) :- field(c, "superclasses", al), child(al, b, _), kind(b, "identifier"), text(b, t),
     (t = "Exception" ; suffix("Error", t)).

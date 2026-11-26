@@ -87,24 +87,23 @@ pv2_top(s) :- modnode(_, m), child(m, t, _), (s = t ; kind(t, "decorated_definit
 .decl pv2_import(i: node, m: symbol)
 pv2_import(i, m) :- kind(i, "import_statement"), field(i, "name", a), dotted(a, m).
 pv2_import(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "dotted_name"), text(n, m).
-// pv2_under(m, p): m is p or a submodule of p.
-.decl pv2_under(m: symbol, p: symbol)
-pv2_under(m, p) :- pv2_import(_, m), (pv2_io_module(p) ; pv2_core_forbidden(p)), (m = p ; prefix(cat(p, "."), m)).
-// pv2_io_like(m): an I/O module. Its import is PV2-001 only, whatever else it is.
-.decl pv2_io_like(m: symbol)
-pv2_io_like(m) :- pv2_under(m, p), pv2_io_module(p).
+// m is under p: p or a submodule of p, `(m = p ; prefix(cat(p, "."), m))`, tested in each rule: never a table of
+// every file's imported modules (decision 0677).
+// pv2_io_like(i, m): import i's module m is an I/O module. Its import is PV2-001 only, whatever else it is.
+.decl pv2_io_like(i: node, m: symbol)
+pv2_io_like(i, m) :- pv2_import(i, m), pv2_io_module(p), (m = p ; prefix(cat(p, "."), m)).
 // pv2_core(n): n is in l2065_plan_core, the bottom of the optimizer's import DAG.
 .decl pv2_core(n: node)
 pv2_core(n) :- docof(n, d), path_part(d, "l2065_plan_core").
 
 .violation PV2_001(at: node, m: symbol) code "PV2-001" "Import of I/O module '{m}' is forbidden in the v2 optimizer packages."
-PV2_001(i, m) :- pv2_in(i, _), pv2_import(i, m), pv2_under(m, p), pv2_io_module(p).
+PV2_001(i, m) :- pv2_in(i, _), pv2_import(i, m), pv2_io_module(p), (m = p ; prefix(cat(p, "."), m)).
 .violation PV2_002(at: node, m: symbol) code "PV2-002" "l2065_plan_core may not import '{m}'."
-PV2_002(i, m) :- pv2_in(i, _), pv2_core(i), pv2_import(i, m), pv2_under(m, p), pv2_core_forbidden(p),
-    !pv2_io_like(m).
+PV2_002(i, m) :- pv2_in(i, _), pv2_core(i), pv2_import(i, m), pv2_core_forbidden(p), (m = p ; prefix(cat(p, "."), m)),
+    !pv2_io_like(i, m).
 .violation PV2_003(at: node, m: symbol) code "PV2-003" "Only adapter.py may import legacy layer '{m}'."
-PV2_003(i, m) :- pv2_in(i, x), x != "adapter.py", !pv2_core(i), pv2_import(i, m), pv2_under(m, p),
-    pv2_legacy_module(p), !pv2_io_like(m).
+PV2_003(i, m) :- pv2_in(i, x), x != "adapter.py", !pv2_core(i), pv2_import(i, m),
+    pv2_legacy_module(p), (pv2_io_module(p) ; pv2_core_forbidden(p)), (m = p ; prefix(cat(p, "."), m)), !pv2_io_like(i, m).
 
 // ---- PV2-010 … 012: one scope authority --------------------------------------------------------------------------
 .violation PV2_010(at: node, a: symbol) code "PV2-010" "Direct access to PlanScope internal '{a}' outside scope.py."

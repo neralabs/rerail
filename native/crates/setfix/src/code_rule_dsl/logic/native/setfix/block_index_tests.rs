@@ -172,7 +172,7 @@ fn a_frozen_relations_dead_rows_are_its_blocks_and_the_devices() {
         rel.push(r);
     }
     for id in (0..n as u32).step_by(5) {
-        if super::kill(&mut rel.dead, id) {
+        if rel.kill_row(id) {
             rel.ndead += 1;
         }
     }

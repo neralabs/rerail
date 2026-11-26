@@ -10,7 +10,9 @@
 #include "tsx/exports.rerail"
 
 .phase tsx_names
-.export target_at, exports, module
+// Keyed in a reader's memo (decision 0705): a file's targets at its path, naming each target in column 2, and each
+// target's exports and module by the target.
+.export target_at by_path 2, exports by_key, module by_key
 
 // target(d, spec, t): specifier spec in document d names t: a workspace document's module, or a package name.
 // Resolution, in the order TypeScript tries it:

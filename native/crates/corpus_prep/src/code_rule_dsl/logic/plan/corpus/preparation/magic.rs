@@ -990,6 +990,87 @@ fn keys_once<'v>(v: &'v Version, about: &About, demand: &[String]) -> Result<Opt
     Ok(Some((build(&keep)?, decls, extras)))
 }
 
+/// Leaves out of a magic rule's body (`ks`) each literal the key does not need that the literals left out had tied to
+/// it, and that now joins it by a value alone. A literal's places are its variables at a `node`, `loc` or `span`
+/// column, or a document's (`document_column`), anywhere in rule `r`. Counting every literal of the body, its places
+/// reach the key's; counting the kept ones, none do. Left in, it joins another document's nodes to the key's by a
+/// value, and makes the demand of a relation of one file read two (decision 0677):
+/// `magic_unparen_bf(c) :- same_child(x, i, c), same_child(y, i, d)` was RUF034's, `same_pair(x, y)` left out (an
+/// extra that would unstratify the program), y's file joined to c's by the index i. A literal the program itself
+/// joins by a value (`magic_lookup_fbb(x, m)` beside a scope s) is the author's, and stays. Leaving a literal out
+/// only widens the demand. A key with no place is left as it is.
+///
+/// The same holds of a literal the key's binders need only through a value, where the rule ties it to the key through
+/// the demanded atom itself, or a literal after it. A demand answered through a coarser one (`unparen_bb` through
+/// `unparen_bf`) keeps the prefix that bound the dropped column: default-called-once's
+/// `magic_unparen_bf(v) :- field(c, "function", e), kind(c, "call"), sym_of(e, q), dco_w161_whole(t, q),
+/// dco_field(f, t), call_arg(f, -1, "default", v)` joined the call c's file to v's by t, c tied to v by the demanded
+/// `unparen(v, c)` alone. Such a literal is left out too unless it reads a key variable, and only while the positive
+/// literals kept still bind the key.
+fn drop_other_documents<'v>(v: &Version, r: RuleRef<'v>, key: &VarSet, pre: &[(M<'v>, bool)], needed: &[bool], ks: &mut [bool]) {
+    let mut places = VarSet::new();
+    let mut place = |a: AtomRef<'_>| {
+        let rel = v.rel_name(a.rel());
+        let Some(d) = v.decl_of(rel) else { return };
+        let document = crate::code_rule_dsl::logic::front::document_column(rel);
+        for (i, (t, (_, ty))) in a.args().zip(d.cols()).enumerate() {
+            if let TermRef::Var(x) = t
+                && (matches!(v.text(ty), "node" | "loc" | "span") || document == Some(i))
+            {
+                places.insert(x);
+            }
+        }
+    };
+    place(r.head());
+    for l in r.body() {
+        if let Lit::Atom(a) | Lit::Agg { atom: a, .. } = l.view() {
+            place(a);
+        }
+    }
+    let only_places = |vars: VarSet| vars.minus(&vars.minus(&places));
+    let placed: Vec<VarSet> = pre.iter().map(|(l, _)| only_places(l.vars(r))).collect();
+    // The places of each literal of the rule: the demanded atom's and those after it too.
+    let whole: Vec<VarSet> = r.body().map(|l| only_places(lit_vars(l))).collect();
+    let from = key.minus(&key.minus(&places));
+    if from.is_empty() {
+        return;
+    }
+    // The places the key reaches through the place sets `with` keeps.
+    let reach = |sets: &[VarSet], with: &dyn Fn(usize) -> bool| {
+        let mut reach = from.clone();
+        loop {
+            let mut grew = false;
+            for (i, p) in sets.iter().enumerate() {
+                if with(i) && !p.is_disjoint(&reach) && !p.is_subset(&reach) {
+                    reach.extend(p);
+                    grew = true;
+                }
+            }
+            if !grew {
+                return reach;
+            }
+        }
+    };
+    let (every, kept) = (reach(&whole, &|_| true), reach(&placed, &|i| ks[i]));
+    let before = ks.to_vec();
+    for (i, p) in placed.iter().enumerate() {
+        let reads_key = !pre[i].0.vars(r).is_disjoint(key);
+        if ks[i] && (!needed[i] || !reads_key) && !p.is_empty() && !p.is_disjoint(&every) && p.is_disjoint(&kept) {
+            ks[i] = false;
+        }
+    }
+    // The positive literals kept must still bind the key; otherwise the demand stays as it was.
+    let mut bound = VarSet::new();
+    for (i, (l, _)) in pre.iter().enumerate() {
+        if ks[i] && l.positive(v).is_some() {
+            bound.extend(&l.vars(r));
+        }
+    }
+    if !key.is_subset(&bound) {
+        ks.copy_from_slice(&before);
+    }
+}
+
 /// A trial's program: its rules, and with `gate`, the gates its negations wait for and the gates' declarations.
 #[derive(Default)]
 struct Trial<'v> {
@@ -1045,6 +1126,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
         mh.1.iter().for_each(|t| tm_vars(r, *t, &mut key));
         // A left-out literal that binds a key variable, or what such a literal needs, stays.
         let (mut ks, mut need) = (ks.to_vec(), key.clone());
+        let mut needed = vec![false; pre.len()];
         for i in (0..pre.len()).rev() {
             let l = &pre[i].0;
             // What `l` gives, and the right side of a comparison (its own or a binding's).
@@ -1068,6 +1150,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
                 continue;
             }
             ks[i] = true;
+            needed[i] = true;
             // A split gives its parts from the whole, and the whole from its parts.
             let split = match cmp_right {
                 Some((Some(s), rt)) if is_cat(v, rt) && {
@@ -1103,6 +1186,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
                 _ => {}
             }
         }
+        drop_other_documents(v, r, &key, pre, &needed, &mut ks);
         let (mut bound, mut body) = (VarSet::new(), Vec::new());
         for ((l, _), k) in pre.iter().zip(&ks) {
             if !k {

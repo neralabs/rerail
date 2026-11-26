@@ -209,11 +209,11 @@ impl TreeOps {
         Ok(n)
     }
 
-    /// The tape, or why the nodes are not a format 16 tape; its auxiliary index laid where it lies (`AuxFor`).
-    pub(super) fn finish(mut self, aux: &AuxFor<'_>) -> Result<f16::Finished, String> {
+    /// The tape, or why the nodes are not a format 16 tape; its auxiliary index laid where `lay` builds one.
+    pub(super) fn finish(mut self, lay: Option<f16::LayAux<'_>>) -> Result<f16::Finished, String> {
         match self.bad.take() {
             Some(why) => Err(why),
-            None => self.w.finish_with(Some(&|t, nodes, taken| aux.make(t, nodes, taken))),
+            None => self.w.finish_laid(lay),
         }
     }
 }
@@ -293,7 +293,7 @@ impl rerail_tape_format::Sink<Result<TapeImage, String>> for Lean<'_> {
 
     fn finish(&mut self, mut w: Writer) -> Result<Result<TapeImage, String>, Redo> {
         let aux = AuxFor::new(self.grammar.lang, self.source, None, self.budget);
-        Ok(w.finish_16_with(Some(&|t, nodes, taken| aux.make(t, nodes, taken)))?.and_then(|f| TapeImage::written_16(f, self.grammar.lang, self.source, aux.digest(), self.budget)))
+        Ok(w.finish_16_laid(Some(&|t, nodes, taken| aux.make(t, nodes, taken)))?.and_then(|f| TapeImage::written_16(f, self.grammar.lang, self.source, aux.digest(), self.budget)))
     }
 }
 
@@ -331,8 +331,9 @@ impl TapeImage {
     }
 }
 
-/// Lays `tape`'s auxiliary index in its home after its presence (decision 0656 step 3): every section, built once
-/// here, where the tape is written, and stored, placed and loaded with it, so every reader (the host's and the
+/// Lays `tape`'s auxiliary index in its home after its presence (decision 0656 step 3), where its writer did not
+/// (`aux_of`, laid by `f16::ops::Writer::finish_laid` in a room before the room is given out): every section, built
+/// once where the tape is written, and stored, placed and loaded with it, so every reader (the host's and the
 /// device's) reads it where the tape lies. Keyed by the tape's content: its header holds the source digest's first
 /// eight bytes, and the store keys the home by its layout (`F16_LAYOUT`). A tape without a presence (one no
 /// producer of the engine writes) is refused: its index lies after it.
@@ -343,7 +344,7 @@ fn lay_aux(tape: &mut f16::Written, nodes: &rerail_tape_format::aux_index::Nodes
     tape.lay_aux(&aux)
 }
 
-/// The maker of a document's auxiliary index, for its writer to lay where it writes the tape (`f16::AuxMaker`): a
+/// The maker of a document's auxiliary index, for its writer to lay where it writes the tape (`f16::LayAux`): a
 /// tape written in a room is given out with its index, as a room is never written after (0353 row 17). The source's
 /// digest is the one given (where the parse computed it), else the writer's, else computed once when the index is
 /// made, and kept for the image (`digest`).
@@ -439,7 +440,7 @@ pub fn code_sets(table: &rerail_tape_format::tape::CodeTable, language: GrammarD
 
 /// `source`'s tape from the `.rerail` parser, in the run's format: the parser's own sink (`lean::Sink16`, its keys
 /// numbered in the language's table), with each block's presence, through `lean::tape_to` (compiled in the parser's
-/// crate).
+/// crate), its auxiliary index laid by its writer (`aux_of`, keyed by `digest`, the source's).
 pub(super) fn rr_tape(source: &str, aux: &AuxFor<'_>) -> Result<f16::Finished, String> {
     let (_, _, z) = run_16(GrammarDialect::Rr)?;
     rerail_rr_syntax::lean::tape_to(source, z, true, super::placed::rooms(), Some(&|t, nodes, taken| aux.make(t, nodes, taken)))

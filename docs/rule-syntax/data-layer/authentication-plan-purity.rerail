@@ -28,17 +28,18 @@
 .decl app_step_base(x: symbol)
 app_step_base("ServerPlanStep"). app_step_base("NonPublishingStep"). app_step_base("SqlProducingStep").
 app_step_base("SqlRelationPublisherStep"). app_step_base("SqlScalarPublisherStep").
-// app_semantic(x): x names a semantic class. Every class of that name is one (the linter matches by name).
-.decl app_semantic(x: symbol)
-app_semantic(x) :- kind(c, "class_definition"), def_name(c, x), suffix("PlanStep", x).
-app_semantic(x) :- kind(c, "class_definition"), def_name(c, x), field(c, "superclasses", al), child(al, e, _),
-    short_name(e, b),
-    (app_step_base(b) ; app_semantic(b)).
+// app_semantic(d, x): x names a semantic class of file d. Every class of that name in the file is one (the linter
+// matches by name, in the file).
+.decl app_semantic(d: number, x: symbol)
+app_semantic(d, x) :- kind(c, "class_definition"), def_name(c, x), suffix("PlanStep", x), docof(c, d).
+app_semantic(d, x) :- kind(c, "class_definition"), def_name(c, x), field(c, "superclasses", al), child(al, e, _),
+    short_name(e, b), docof(c, d),
+    (app_step_base(b) ; app_semantic(d, b)).
 
 // app_assign(m, a, x): in method m of a semantic class, assignment a (`=` or annotated) stores `self.x`: the
 // first of its targets that is an attribute of the bare name self.
 .decl app_assign(m: node, a: node, x: symbol)
-app_assign(m, a, x) :- app_semantic(cx), def_name(c, cx), body_def(c, m, _), ast_walk(m, a), app_self(a, t, x),
+app_assign(m, a, x) :- app_semantic(d, cx), def_name(c, cx), docof(c, d), body_def(c, m, _), ast_walk(m, a), app_self(a, t, x),
     count : { app_self(a, t2, _), earlier(t2, t) } = 0.
 .decl app_self(a: node, t: node, x: symbol)
 app_self(a, t, x) :- assign_target(a, t), attr_of(t, o, x), kind(o, "identifier"), text(o, "self").
@@ -75,14 +76,12 @@ app_reach(c, e, m) :- app_reach(c, e, p), app_call(p, x), last_body_def(c, m, x)
     x != "_establish_legacy_write_authority", x != "_establish_native_write_authority".
 .decl app_call(f: node, x: symbol)  // def f calls x somewhere in its ast.walk
 app_call(f, x) :- ast_walk(f, k), kind(k, "call"), short_name(k, x).
-.decl app_eager(x: symbol)
-app_eager(x) :- app_call(_, x), contains("bind_cache_to_current_authority", x).
-app_eager(x) :- app_call(_, x), contains("adopt_authenticated_remote_session", x).
-app_eager(x) :- app_call(_, x), contains("resolve", x),
-    (contains("auth", x) ; contains("credential", x) ; contains("admission", x)).
 
+// The eager names are tested in the rule, never as a table of every file's call names (decision 0677).
 .violation APP003(at: node) "Transaction entry must not authenticate or bind authority eagerly"
-APP003(e) :- app_reach(_, e, m), app_call(m, x), app_eager(x).
+APP003(e) :- app_reach(_, e, m), app_call(m, x),
+    ( contains("bind_cache_to_current_authority", x) ; contains("adopt_authenticated_remote_session", x) ;
+      contains("resolve", x), (contains("auth", x) ; contains("credential", x) ; contains("admission", x)) ).
 
 // ---- APP004 -----------------------------------------------------------------------------------------------------
 .violation APP004(at: node) "Authentication compatibility methods must delegate to a pure lazy method"

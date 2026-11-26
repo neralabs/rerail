@@ -128,7 +128,7 @@ pub fn encode_with<'s>(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar
         return Ok(Err(why));
     }
     let aux = crate::code_rule_dsl::tape::formats::AuxFor::new(GrammarDialect::Json, source, digest, budget);
-    Ok(w.finish_with(Some(&|t, nodes, taken| aux.make(t, nodes, taken))).and_then(|f| TapeImage::written_16(f, GrammarDialect::Json, source, aux.digest(), budget)))
+    Ok(w.finish_laid(Some(&|t, nodes, taken| aux.make(t, nodes, taken))).and_then(|f| TapeImage::written_16(f, GrammarDialect::Json, source, aux.digest(), budget)))
 }
 
 /// The code of a node of kind `kind` and field `field` (`in_value`: a member of `_value`): a comment is an extra.

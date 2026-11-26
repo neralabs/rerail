@@ -178,9 +178,6 @@ pub struct Report {
     /// A session's run: the cross part's inputs that changed, and why its strata derived again were (each count).
     pub cross_changed: Vec<String>,
     pub cross_again: BTreeMap<&'static str, usize>,
-    /// With `RERAIL_CROSS_DELTA_COUNTS`: rows over-deleted, inserted and held by the maintained relations, the rows of
-    /// the deltas of their inputs, and the rows truly deleted and inserted.
-    pub cross_delta_counts: [usize; 6],
     /// What the run consulted, as (what, path, digest): each workspace document's bytes, and what its requests read
     /// (`world::World::consulted`). A run whose consulted things are as they were derives the same (`unchanged`).
     pub consulted: Vec<(String, String, String)>,
@@ -1397,7 +1394,11 @@ pub fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::A
     }
     let _merging = crate::code_rule_dsl::logic::profile::span(|| "merge the programs".into());
     if parsed.len() == 1 {
-        let one = parsed.pop().expect("one program");
+        let mut one = parsed.pop().expect("one program");
+        let empty = link::extensible_unstated(one.head());
+        if !empty.is_empty() {
+            one.edit_head(&mut |f| empty.iter().for_each(|rel| f.set_facts(rel, &[])))?;
+        }
         return Ok((one.alone()?, Tail::One));
     }
     let mut all = link::Merged::new(P::fields());
@@ -1724,8 +1725,8 @@ pub fn own_names<P: link::Part>(part: &P, core: &BTreeSet<String>) -> BTreeSet<S
     // program's findings' nodes by clause (named by the clause), one rule refusing them and the placement it reads,
     // the same rules in every program, so a pack holds one of each, not one a program.
     let shared_outputs = |r: &str| {
-        use crate::code_rule_dsl::logic::rr::{FOUND_NODE, FOUND_THROUGH, PLACED_AT, PLACED_LINE, UNPLACED};
-        r == "violation" || [UNPLACED, FOUND_NODE, FOUND_THROUGH, PLACED_AT, PLACED_LINE].contains(&r) || crate::code_rule_dsl::logic::rr::is_diagnostic(r)
+        use crate::code_rule_dsl::logic::rr::{PLACED_LINE, PLACED_VALUE, UNPLACED, UNPLACED_DOC, UNPLACED_NODE, UNPLACED_THROUGH, UNPLACED_VALUE};
+        r == "violation" || [UNPLACED, UNPLACED_NODE, UNPLACED_THROUGH, UNPLACED_DOC, UNPLACED_VALUE, PLACED_VALUE, PLACED_LINE].contains(&r) || crate::code_rule_dsl::logic::rr::is_diagnostic(r)
     };
     let file_inputs = file_inputs(prog);
     let inputs = prog.input_names();
@@ -2666,9 +2667,9 @@ Hit(n) :- e(n).
 "#;
         let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
         let heads: Vec<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
-        assert!(heads.iter().any(|h| h == crate::code_rule_dsl::logic::rr::FOUND_NODE), "the finding's node by its clause: {heads:?}");
+        assert!(heads.iter().any(|h| h == crate::code_rule_dsl::logic::rr::UNPLACED_NODE), "the nodes no file places: {heads:?}");
         let own = super::own_names(&super::super::link::Versioned::of_version(v).unwrap(), crate::code_rule_dsl::logic::rr::core_names());
-        for shared in [crate::code_rule_dsl::logic::rr::FOUND_NODE, crate::code_rule_dsl::logic::rr::FOUND_THROUGH, crate::code_rule_dsl::logic::rr::UNPLACED, crate::code_rule_dsl::logic::rr::PLACED_AT, crate::code_rule_dsl::logic::rr::PLACED_LINE] {
+        for shared in [crate::code_rule_dsl::logic::rr::UNPLACED_NODE, crate::code_rule_dsl::logic::rr::UNPLACED_THROUGH, crate::code_rule_dsl::logic::rr::UNPLACED_DOC, crate::code_rule_dsl::logic::rr::UNPLACED, crate::code_rule_dsl::logic::rr::UNPLACED_VALUE, crate::code_rule_dsl::logic::rr::PLACED_VALUE, crate::code_rule_dsl::logic::rr::PLACED_LINE] {
             assert!(!own.contains(shared), "{shared} is the pack's: {own:?}");
         }
         assert!(own.contains("Hit"), "the finding's relation is the program's own: {own:?}");
