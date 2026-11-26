@@ -86,6 +86,10 @@ pub struct TreeDecl {
     pub flags: Vec<String>,
     /// Each `ending RULE K …`: what a nested level does with the node made last at it where it ends (decision 0668).
     pub endings: Vec<(String, String, crate::syntax::Ending)>,
+    /// The `indented` levels (decision 0698): each holds the column of its first token, which a
+    /// mark's `deeper` and `shallower` compare with. `tree::nodes` does not ask columns yet, and
+    /// refuses a grammar that has them.
+    pub indented: Vec<String>,
 }
 
 pub struct Output {
@@ -476,6 +480,7 @@ impl<'a> Ev<'a> {
             Stmt::Reading { name, reading } => self.tree.get_or_insert_with(TreeDecl::default).readings.push((name.clone(), reading.clone())),
             Stmt::Flags(names) => self.tree.get_or_insert_with(TreeDecl::default).flags.extend(names.iter().cloned()),
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
+            Stmt::Indented(names) => self.tree.get_or_insert_with(TreeDecl::default).indented.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
             // The executors' (decision 0650): this evaluator refuses a file whose statement fails, as before.

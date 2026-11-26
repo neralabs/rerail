@@ -59,6 +59,7 @@ pub const OPCODES: &[(u8, &str)] = &[
     (WRAP, "WRAP"),
     (REMEMBER, "REMEMBER"),
     (FLAG, "FLAG"),
+    (INDENT, "INDENT"),
     (COUNT, "COUNT"),
     (CHECK, "CHECK"),
     (SETTLE, "SETTLE"),
@@ -510,6 +511,31 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 return Err(format!("markpasses {k} out of order"));
             }
             parts.mark_passes.push((k, m));
+        }
+        "markcolumn" => {
+            let k: u8 = line.number("")?;
+            let c: u8 = line.number("")?;
+            if parts.mark_columns.last().is_some_and(|&(x, _)| x >= k) {
+                return Err(format!("markcolumn {k} out of order"));
+            }
+            if !(1..=2).contains(&c) {
+                return Err(format!("markcolumn {k} {c}: 1 (deeper) or 2 (shallower)"));
+            }
+            parts.mark_columns.push((k, c));
+        }
+        "superclass" => {
+            let (s, k) = (line.kind()?, line.kind()?);
+            let mut cs = Vec::new();
+            while line.tokens.peek().is_some() {
+                cs.push(line.kind()?);
+            }
+            if parts.super_classes.last().is_some_and(|x| (x.0, x.1) >= (s, k)) {
+                return Err(format!("superclass #{s} #{k} out of order"));
+            }
+            if s == 0 || cs.is_empty() || cs.windows(2).any(|w| w[0] >= w[1]) {
+                return Err(format!("superclass #{s} #{k}: a slot, then its classes, rising"));
+            }
+            parts.super_classes.push((s, k, cs));
         }
         "wordkind" => {
             let s: u16 = line.number("s")?;
@@ -1128,6 +1154,8 @@ pub fn head_rows(out: &mut String, program: &Words) {
     reading_rows(out, &program.readings);
     crate::rir_text::mark_word_rows(out, &program.mark_words);
     crate::rir_text::mark_pass_rows(out, &program.mark_passes);
+    crate::rir_text::mark_column_rows(out, &program.mark_columns);
+    crate::rir_text::super_class_rows(out, &program.super_classes);
     crate::rir_text::word_kind_rows(out, &program.word_kinds);
     crate::rir_text::extra_rows(out, &program.extras);
     crate::rir_text::token_mark_rows(out, &program.token_marks);

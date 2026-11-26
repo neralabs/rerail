@@ -1,0 +1,310 @@
+# Python.
+#
+# The reference is the lean parser (`rerail_python_lean`, decision 0163), whose tapes are
+# tree-sitter-python's. What the grammar does not read is refused, and goes to the lean parser
+# (decision 0698).
+#
+# Layout (decision 0698): a line break outside brackets is a mark of no width (`newline`), which
+# ends a statement. Inside brackets a line break is a blank (`in_br`, from a bracket depth).
+
+lexer python
+
+class blank     = ' ' '\t' 0x0c '\r'
+class lf        = '\n'
+class hash      = '#'
+class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
+class alpha     = 'a'..'z' 'A'..'Z' '_'
+class digit     = '0'..'9'
+class dot       = '.'
+class opens     = '(' '[' '{'
+class closes    = ')' ']' '}'
+class quote     = '\'' '"'
+class bslash    = '\\'
+class high      = 0x80..0xff
+class tab_ff    = '\t' 0x0c
+class sq        = '\''
+class dq        = '"'
+class cr        = '\r'
+# A string's prefix letters (lean's `string_prefix`): raw, bytes, format and template, unicode.
+class pfx       = 'r' 'R' 'b' 'B' 'f' 'F' 't' 'T' 'u' 'U'
+class raw_l     = 'r' 'R'
+class bytes_l   = 'b' 'B'
+class format_l  = 'f' 'F' 't' 'T'
+# What a backslash and one byte make an escape of (tree-sitter-python's `escape_sequence`).
+class esc_one   = '\n' '\'' '"' 'a' 'b' 'f' 'r' 'n' 't' 'v' '\\'
+class hex       = '0'..'9' 'a'..'f' 'A'..'F'
+class x_l       = 'x'
+class u_l       = 'u'
+class uu_l      = 'U'
+class nn_l      = 'N'
+class bytes_esc = 'N' 'u' 'U'
+class punct     = '(' ')' '[' ']' '{' '}' ',' ':' ';' '.' '=' '+' '-' '*' '/' '%' '&' '|' '^' '~' '<' '>' '@' '!'
+
+# --- Regions -----------------------------------------------------------------------------------
+
+# A string's prefix: one or two prefix letters that start a word, then its quote. Three or more
+# are not read yet.
+mask pw         = pfx & ~prev(word)
+mask p1         = pw & next(quote)
+mask p2         = pw & next(pfx) & next(quote, 2)
+# A quote after a prefix with an `r`: a raw string's opener.
+mask raw_q      = quote & (prev(p1 & raw_l) | prev(p2 & raw_l, 2) | prev(raw_l & prev(p2)))
+mask sq3        = sq & next(sq) & next(sq, 2)
+mask dq3        = dq & next(dq) & next(dq, 2)
+# A closer: a quote no backslash escapes; a triple's, the last three of its run.
+mask sq_c       = sq & ~escaped(bslash)
+mask dq_c       = dq & ~escaped(bslash)
+mask sq3_c      = sq3 & ~next(sq, 3) & ~escaped(bslash)
+mask dq3_c      = dq3 & ~next(dq, 3) & ~escaped(bslash)
+# A raw string closes as any does (a quote no backslash escapes); only its escapes differ, so it
+# is a region of its quotes' kind, and `in_raw` says which strings are raw.
+regions hidden {
+  cmt = hash .. lf outside
+  s1  = sq & ~sq3 .. sq_c
+  d1  = dq & ~dq3 .. dq_c
+  s3  = sq3 .. sq3_c bytes 3
+  d3  = dq3 .. dq3_c bytes 3
+}
+mask o_str      = o_s1 | o_d1 | o_s3 | o_d3
+mask f_str      = f_s1 | f_d1 | f_s3 | f_d3
+mask in_raw     = fill(raw_q & o_str, ~f_str)
+mask code       = ~hidden & ~o_cmt & ~o_str
+
+# --- Strings -----------------------------------------------------------------------------------
+
+# A string's bytes after its opener; a triple's two quotes after its first are its opener's too.
+mask t_open     = o_s3 | o_d3
+mask t_more     = prev(t_open) | prev(t_open, 2)
+mask s_body     = f_str & ~o_str & ~t_more
+mask body       = s_body & ~in_raw
+mask r_body     = s_body & in_raw
+escape "an f-string" when o_str & (prev(p1 & format_l) | prev(p2 & format_l, 2) | prev(format_l & prev(p2)))
+escape "a string prefix of three letters or more" when code & pw & next(pfx) & next(pfx, 2) & (next(quote, 3) | next(pfx, 3) & next(quote, 4))
+escape "a string open at the end of the file" when f_str & ~next(~empty)
+escape "a line break in a one-line string that no backslash escapes" when (f_s1 | f_d1) & lf & ~escaped(bslash)
+escape "a carriage return in a string" when f_str & cr
+# A triple opened by four quotes or more (but the empty triple's six), or closed by four or more
+# not after a backslash: the lean lexer closes at the first three.
+escape "a triple-quoted string opened by four quotes or more" when t_open & next(quote, 3) & ~(next(quote, 4) & next(quote, 5) & ~next(quote, 6))
+escape "a triple-quoted string closed by four quotes or more" when (body | r_body) & quote & ~escaped(bslash) & (next(sq3_c) | next(dq3_c))
+# An escape: a backslash no backslash escapes, and what it escapes (lean's `escape`).
+mask esc        = body & bslash & ~escaped(bslash)
+escape "a `\\N{…}` escape" when esc & next(nn_l)
+# In a bytes string, `\N`, `\u` and `\U` are text: not read yet.
+mask b_open     = quote & (prev(p1 & bytes_l) | prev(p2 & bytes_l, 2) | prev(bytes_l & prev(p2)))
+escape "a `\\N`, `\\u` or `\\U` in a bytes string" when esc & next(bytes_esc) & fill(b_open, ~f_str)
+mask e2         = esc & next(esc_one)
+mask e_x        = esc & next(x_l) & next(hex, 2) & next(hex, 3)
+mask e_u        = esc & next(u_l) & next(hex, 2) & next(hex, 3) & next(hex, 4) & next(hex, 5)
+mask e_uu       = esc & next(uu_l) & next(hex, 2) & next(hex, 3) & next(hex, 4) & next(hex, 5) & next(hex, 6) & next(hex, 7) & next(hex, 8) & next(hex, 9)
+mask e_o3       = esc & next(digit) & next(digit, 2) & next(digit, 3)
+mask e_o2       = esc & next(digit) & next(digit, 2) & ~next(digit, 3)
+mask e_o1       = esc & next(digit) & ~next(digit, 2)
+# Any escape, and its last byte: escapes neither touch nor overlap, so the first last byte from
+# an escape's start is its own.
+mask e_any      = e2 | e_x | e_u | e_uu | e_o3 | e_o2 | e_o1
+mask e_last     = prev(e2 | e_o1) | prev(e_o2, 2) | prev(e_x | e_o3, 3) | prev(e_u, 5) | prev(e_uu, 9)
+# A raw string whose bytes are only backslashes and what they step over: the lean lexer's string
+# then ends at its first backslash. Not read yet.
+mask r_plain    = r_body & ~bslash & ~(escaped(bslash) & (quote | bslash | lf))
+# Its body's bytes from the first to the first plain one: where that reaches its last, none is.
+mask r_none     = fill(r_body & ~prev(r_body) & ~r_plain, r_plain | ~r_body)
+escape "a raw string of backslashes only" when r_none & r_body & ~next(r_body) & ~r_plain
+escape "a backslash" when code & bslash
+escape "a byte above 0x7f outside a comment" when code & high
+# A line's indentation: the blanks after its line break. A tab or a form feed counts as tree-sitter's
+# scanner counts it, not read yet.
+escape "a tab or a form feed in a line's indentation" when tab_ff & fill(prev(lf), ~blank)
+escape "a tab or a form feed starting the file" when tab_ff & ~prev(~empty)
+
+# --- Words and numbers -------------------------------------------------------------------------
+
+mask w          = code & word
+mask word_start = w & alpha & ~prev(w) & ~p1 & ~p2
+mask name_more  = fill(word_start, ~w) & ~word_start
+mask num_start  = w & digit & ~prev(w)
+mask digits     = fill(num_start, ~w)
+escape "a number with a letter or `_`" when digits & ~digit
+escape "a number with a `.`" when code & dot & (prev(digits) | next(digit))
+
+assume "a name starts at a word's first letter: a start is never in a word" at starts word_start = alpha
+assume "a number starts at a digit: a start is never in a word" at starts num_start = digit
+assume "a name runs over its word's bytes" in identifier name_more = word
+assume "a number's bytes are code" in integer code = ~empty
+
+token identifier = start word_start run name_more
+token integer   = start num_start run digit
+
+# --- Operators ---------------------------------------------------------------------------------
+
+pairs two_start = "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>="
+mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
+mask p_start    = code & punct & ~second
+assume "an operator starts at its first byte: a start is never a pair's second" at starts p_start = punct
+token punct     = start p_start pair two_start
+
+token comment   = start hash & o_cmt read cmt
+
+# A string: its prefix, its opener (a quote, and a triple's two more), its parts, and its closer.
+token str_prefix = start (p1 | p2) & code run prev(p2)
+# One reader of every kind of string, as each starts at its quote; a raw string's body has no
+# escapes (`esc` is a plain string's).
+token string_start = start o_str read s1 | d1 | s3 | d3 parts {
+                    quote2 = prev(t_open) bytes 2
+                    escape_sequence = e_any last e_last
+                    '\\' = esc & ~e_any bytes 1
+                  } else str_text closes {
+                    string_end = prev(f_s3 | f_d3) bytes 3
+                    string_end = prev(f_s1 | f_d1) bytes 1
+                  }
+
+keywords identifier {
+  "False" "None" "True" "and" "as" "assert" "break" "class" "continue" "def" "del" "elif" "else"
+  "except" "finally" "for" "from" "global" "if" "import" "in" "is" "lambda" "nonlocal" "not" "or"
+  "pass" "raise" "return" "try" "while" "with" "yield"
+} soft {
+  "async" "await" "match" "case" "type" "print" "exec" "__future__"
+}
+keywords punct { "(" ")" "[" "]" "{" "}" "," ":" ";" "." "=" "+" "-" "*" "/" "%" "&" "|" "^" "~" "<" ">" "@" "!" "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>=" } required
+
+skip code & (blank | lf)
+error "a byte no token takes" by tokens when code & ~blank & ~lf & ~word & ~punct
+
+# --- Layout ------------------------------------------------------------------------------------
+
+# The bracket depth over code: a line break inside brackets is a blank.
+scan depth      = count(code & opens, code & closes) max 31
+mask in_br      = depth.frame(code & opens)
+# A line break of code outside brackets, and the file's end: a statement's end.
+mark newline    = lf & code & ~in_br, end, ends
+# The next line deeper than the level's indent: a block's start, after its header's `:`. Less
+# deep: the end of each block it is less than (decision 0698), as tree-sitter's scanner gives
+# INDENT and DEDENT.
+mark indent     = lf & code & ~in_br, deeper
+mark dedent     = lf & code & ~in_br, end, shallower, ends
+# A list's trailing comma, before its closer: the lean parser keeps it and the closer.
+mark trail      = tokens "," ")" | "]" | "}"
+# `from __future__`: a statement of its own.
+mark future     = tokens "from" "__future__"
+# A name before `[`: in a type, a generic type's (tree-sitter-python's `generic_type`).
+mark generic    = tokens identifier "["
+
+tree python {
+  node module whole padded = statement*
+  choice statement      = simple_statements | compound_statement
+  choice simple_statements nested = simple_statement (';' [simple_statement])* newline
+  choice compound_statement = if_statement | while_statement
+  node if_statement     = 'if' condition: expression ':' indent consequence: block (alternative: elif_clause)* [alternative: else_clause]
+  node elif_clause      = 'elif' condition: expression ':' indent consequence: block
+  node else_clause      = 'else' ':' indent body: block
+  node while_statement  = 'while' condition: expression ':' indent body: block [alternative: else_clause]
+  # A block: the lines past its header's indent (the header's `indent`, asked with the header's
+  # indent), to the first line less deep than its own: its first token's column.
+  node block nested     = statement+
+  indented block
+  choice simple_statement = expression_statement | pass_statement | return_statement | raise_statement
+                        | delete_statement | assert_statement | global_statement | nonlocal_statement
+                        | break_statement | continue_statement | import_statement | import_from_statement
+                        | future_import_statement
+  # An assignment's target is read as an expression, then moved into its `left` (a pattern).
+  node expression_statement = expression [assign_tail]
+  choice assign_tail    = wrap assignment left in pattern assign_rest
+                        | wrap augmented_assignment left in pattern operator: aug_op right: rhs
+  choice assign_rest    = '=' right: rhs | ':' type: type ['=' right: rhs]
+  choice rhs nested     = expression [wrap expression_list _ in expression (',' [expression])+
+                                    | wrap assignment left in pattern '=' right: rhs]
+  choice aug_op         = '+=' | '-=' | '*=' | '/=' | '%=' | '&=' | '|=' | '^=' | '@=' | '**=' | '//=' | '<<=' | '>>='
+  # A type: a generic type, or an expression.
+  node type             = generic_type | expression
+  node generic_type     = generic identifier type_parameter
+  node type_parameter   = '[' type (',' type)* (trail_bracket | ']')
+  node pass_statement   = 'pass'
+  node return_statement = 'return' [expressions]
+  node raise_statement  = 'raise' [expressions] ['from' cause: expression]
+  node delete_statement = 'del' expressions
+  node assert_statement = 'assert' expression [',' expression]
+  node global_statement = 'global' identifier (',' identifier)*
+  node nonlocal_statement = 'nonlocal' identifier (',' identifier)*
+  node break_statement  = 'break'
+  node continue_statement = 'continue'
+  # One expression, or a list of them (tree-sitter-python's `_expressions`).
+  choice expressions    = expression [wrap expression_list _ in expression (',' [expression])+]
+  # --- Imports
+  node import_statement = 'import' import_name (',' import_name)*
+  choice import_name    = name: dotted_name [wrap aliased_import name 'as' alias: identifier]
+  node dotted_name nested = identifier ('.' identifier)*
+  node import_from_statement = 'from' module_name: module_path 'import' from_list
+  choice module_path    = relative_import | dotted_name
+  node relative_import  = import_prefix [dotted_name]
+  node import_prefix    = '.'+
+  choice from_list      = wildcard_import | import_names
+  choice import_names   = import_name (',' import_name)* | '(' import_name (',' import_name)* (trail_paren | ')')
+  node wildcard_import  = '*'
+  node future_import_statement = future 'from' '__future__' 'import' import_names
+  # --- Expressions
+  choice expression supertype expression = primary_expression
+  # A primary and its postfix operations, each a wrap of the primary so far.
+  choice primary_expression supertype primary_expression = atom postfix*
+  choice postfix        = wrap attribute object in primary_expression '.' attribute: identifier
+                        | wrap call function in primary_expression arguments: argument_list
+                        | wrap subscript value in primary_expression '[' subscript: expression (',' subscript: expression)* ']'
+  choice atom           = identifier | integer | string | list | parenthesized_expression
+                        | 'True' as true | 'False' as false | 'None' as none
+  # The patterns an assignment's target is in (tree-sitter-python's `pattern`).
+  choice pattern supertype pattern = identifier | attribute | subscript
+  node argument_list    = '(' [argument (',' argument)*] (trail_paren | ')')
+  choice argument       = expression [wrap keyword_argument name '=' value: expression] | list_splat | dictionary_splat
+  node list_splat       = '*' expression
+  node dictionary_splat = '**' expression
+  node list             = '[' [expression (',' expression)*] (trail_bracket | ']')
+  # `(a)`, or a tuple: `()`, `(a,)`, `(a, b)`.
+  node parenthesized_expression = '(' (retag tuple ')' | expression (')' | retag tuple paren_more))
+  choice paren_more     = (',' expression)+ (trail_paren | ')') | trail_paren
+  # A trailing comma: the lean parser leaves a list's tokens out only where they are the ones the
+  # grammar implies, so after one the `,` and the closer are leaves.
+  choice trail_paren    = trail ',' ')'
+  choice trail_bracket  = trail ',' ']'
+  # A string: its start (prefix, quote, a triple's two more quotes: one leaf), its content (its
+  # text and escapes), its end.
+  node string           = str_prefix merge string_start string_start string_rest
+                        | string_start string_rest
+  choice string_rest    = [merge string_start quote2] [string_content] string_end
+  # A backslash that starts no escape is a leaf of its own (lean's `Backslash`); a raw string's
+  # are its text.
+  node string_content   = (str_text | escape_sequence | '\\')+
+  hidden newline indent dedent trail future generic
+  # The tokens tree-sitter's grammar implies: no leaf on the tape.
+  implied pass_statement 'pass'
+  implied string_content str_text
+  implied if_statement 'if' ':'
+  implied elif_clause 'elif' ':'
+  implied else_clause 'else' ':'
+  implied while_statement 'while' ':'
+  implied assign_rest '=' ':'
+  implied rhs ',' '='
+  implied expressions ','
+  implied return_statement 'return'
+  implied raise_statement 'raise' 'from'
+  implied delete_statement 'del'
+  implied assert_statement 'assert' ','
+  implied global_statement 'global' ','
+  implied nonlocal_statement 'nonlocal' ','
+  implied break_statement 'break'
+  implied continue_statement 'continue'
+  implied import_statement 'import' ','
+  implied dotted_name '.'
+  implied import_name 'as'
+  implied import_from_statement 'from'
+  # An import list's `(` is a leaf: it is not the only way on after `import`.
+  implied import_names ',' ')'
+  implied postfix '.' '[' ']' ','
+  implied argument_list '(' ')' ','
+  implied argument '='
+  implied list_splat '*'
+  implied dictionary_splat '**'
+  implied list '[' ']' ','
+  implied type_parameter '[' ']' ','
+  implied parenthesized_expression '(' ')'
+  implied paren_more ',' ')'
+  extra comment
+}

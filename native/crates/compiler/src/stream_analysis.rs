@@ -11,11 +11,10 @@ use crate::Error;
 use crate::byte_needs::{Seq, sequential};
 use crate::native_ir::{FlagOp, Structure, StructuralOperation as Op};
 use crate::stream::{REFUSE, WORD_KIND};
-/// The most a program writes between two `TOKEN`s: nodes, supertypes and returns pushed.
+/// The most a program writes between two `TOKEN`s: nodes and returns pushed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Bounds {
     pub nodes: u64,
-    pub supers: u64,
     pub pushes: u64,
     /// Returns chain: a cycle passes a `RETURN` and no `TOKEN`.
     pub chains: bool,
@@ -23,7 +22,6 @@ pub struct Bounds {
     /// bound above and this for each call still open (the bound is per token over a file, the
     /// pops paid by the pushes; a path alone pops the calls open when it starts).
     pub pop_nodes: u64,
-    pub pop_supers: u64,
 }
 
 /// The most nodes a token's path may write for a run's tape to be the bound's from the start
@@ -36,7 +34,7 @@ impl Bounds {
     /// simdjson sizes its tape from the input once. Only where the bound holds for every run (no
     /// returns chain) and is small (`UNCHECKED_NODES`), with `marks` the program's marks.
     pub fn unchecked(&self, marks: u64) -> bool {
-        !self.chains && self.pop_nodes == 0 && self.pop_supers == 0 && self.nodes * (1 + marks) <= UNCHECKED_NODES
+        !self.chains && self.pop_nodes == 0 && self.nodes * (1 + marks) <= UNCHECKED_NODES
     }
 }
 
@@ -261,12 +259,11 @@ pub fn bounds(native: &Structure) -> Bounds {
     let token = |pc: usize| matches!(native.structural[pc].operation, Op::Token { .. });
     let weight = |pc: usize| match native.structural[pc].operation {
         Op::Open { .. } | Op::Leaf { .. } | Op::Wrap { .. } => Bounds { nodes: 1, ..Bounds::default() },
-        Op::NodeSuper { .. } => Bounds { supers: 1, ..Bounds::default() },
         Op::Push { .. } => Bounds { pushes: 1, ..Bounds::default() },
         _ => Bounds::default(),
     };
-    let max = |a: Bounds, b: Bounds| Bounds { nodes: a.nodes.max(b.nodes), supers: a.supers.max(b.supers), pushes: a.pushes.max(b.pushes), ..Bounds::default() };
-    let add = |a: Bounds, b: Bounds| Bounds { nodes: a.nodes + b.nodes, supers: a.supers + b.supers, pushes: a.pushes + b.pushes, ..Bounds::default() };
+    let max = |a: Bounds, b: Bounds| Bounds { nodes: a.nodes.max(b.nodes), pushes: a.pushes.max(b.pushes), ..Bounds::default() };
+    let add = |a: Bounds, b: Bounds| Bounds { nodes: a.nodes + b.nodes, pushes: a.pushes + b.pushes, ..Bounds::default() };
     let cut = |pc: usize, cut_return: bool| -> Vec<usize> {
         if cut_return && matches!(native.structural[pc].operation, Op::Return { .. }) {
             return vec![];
@@ -350,7 +347,7 @@ pub fn bounds(native: &Structure) -> Bounds {
     let chain = over(&landings, &|p| p.1.unwrap_or_default());
     let calls = first.pushes + last.pushes;
     let times = |x: u64, k: u64| x * k;
-    Bounds { nodes: first.nodes + last.nodes + times(chain.nodes, calls), supers: first.supers + last.supers + times(chain.supers, calls), pushes: calls, chains: true, pop_nodes: chain.nodes, pop_supers: chain.supers }
+    Bounds { nodes: first.nodes + last.nodes + times(chain.nodes, calls), pushes: calls, chains: true, pop_nodes: chain.nodes }
 }
 
 /// The places `PUSH` names, sorted: where a `RETURN` can go.
@@ -375,8 +372,6 @@ pub fn push_targets(native: &Structure) -> Vec<u16> {
 /// and no slower (docs/parser-generators/27-tier-2-table-spike.md).
 #[derive(Clone, Copy)]
 pub enum Mem {
-    /// The supertypes written.
-    Supers,
     /// The deferred extras' leaves at the table's end.
     Pending,
     /// While leaves are pending, the end of the token before them: a node closed then ends there.
@@ -433,14 +428,17 @@ pub enum Mem {
     /// at a template's `$`, their parts going on at the next opener of a reader that resumes
     /// (`SplitParts::resumers`).
     Strings,
+    /// The level's indent (`INDENT`, decision 0698): a column, kept beside each call's return.
+    Indent,
 }
 
 impl Mem {
     pub const COUNT: u32 = 30;
     /// Every field, in order: what a statement's mark keeps (decision 0650).
     pub const ALL: [Mem; Mem::COUNT as usize] = [
-        Mem::Supers, Mem::Pending, Mem::Keep, Mem::Moved, Mem::Sel, Mem::Shift, Mem::LastMade, Mem::Word, Mem::Flags, Mem::Next, Mem::Taken, Mem::Lw, Mem::Start, Mem::End, Mem::Limit, Mem::LastEnd,
+        Mem::Pending, Mem::Keep, Mem::Moved, Mem::Sel, Mem::Shift, Mem::LastMade, Mem::Word, Mem::Flags, Mem::Next, Mem::Taken, Mem::Lw, Mem::Start, Mem::End, Mem::Limit, Mem::LastEnd,
         Mem::Nodes, Mem::Open, Mem::Ret, Mem::Need, Mem::Live, Mem::Depth, Mem::Coded, Mem::Codes, Mem::PartAt, Mem::PartEnd, Mem::PartClose, Mem::PartRd, Mem::Lost, Mem::Strings,
+        Mem::Indent,
     ];
 }
 
@@ -696,16 +694,37 @@ pub fn one_byte(ft: &Fetch, rule: &crate::records::EndRule) -> bool {
     matches!(*rule, crate::records::EndRule::Next(i) if ft.nexts[usize::from(i)].1.iter().all(|s| s.iter().all(|&w| w == 0)))
 }
 
-/// The supertypes a program's nodes are put in (`NODE_SUPER`'s kinds), ascending: each a bit of
-/// a key's slot (`id_slots`). Past `MAX_CLASSES`, refused.
+/// The supertypes a program's nodes are in (`NODE_SUPER`'s slots and `Structure::super_classes`'
+/// classes), ascending. A node's slot is its supertype's place here, plus one, in its field's top
+/// bits (`SLOT_SHIFT`) and its code's key (`native_cpu_tape::slot_key`); its classes are its
+/// number's (`class_bits`, `numbers_by_key`). Past `MAX_CLASSES`, refused.
 pub fn supertype_classes(native: &Structure) -> Result<Vec<u16>, Error> {
-    let mut c: Vec<u16> = native.structural.iter().filter_map(|b| if let Op::NodeSuper { kind } = b.operation { Some(kind) } else { None }).collect();
+    let mut c: Vec<u16> = native.structural.iter().filter_map(|b| if let Op::NodeSuper { kind, .. } = b.operation { Some(kind) } else { None }).collect();
+    c.extend(native.super_classes.iter().flat_map(|r| r.2.iter().copied()));
     c.sort_unstable();
     c.dedup();
     if c.len() > MAX_CLASSES {
         return Err(Error::UnsupportedBackend);
     }
     Ok(c)
+}
+
+/// Where a node's slot is in its field (decision 0698): the top bits, past every field id.
+pub const SLOT_SHIFT: i64 = 12;
+/// A field's own bits, below its slot.
+pub const FIELD_BITS: i64 = (1 << SLOT_SHIFT) - 1;
+
+/// The slot of supertype `kind`: its place in `classes`, plus one.
+pub fn slot_of(classes: &[u16], kind: u16) -> u32 {
+    classes.iter().position(|&c| c == kind).map_or(0, |j| j as u32 + 1)
+}
+
+/// The classes of a node of `kind` in slot `slot` (0: none), a bit each by its place in `classes`:
+/// the slot's supertype's row of `super_classes` for the kind, else none.
+pub fn class_bits(table: &[(u16, u16, Vec<u16>)], classes: &[u16], slot: u32, kind: u16) -> u32 {
+    let Some(&s) = (slot as usize).checked_sub(1).and_then(|j| classes.get(j)) else { return 0 };
+    let Some(r) = table.iter().find(|r| r.0 == s && r.1 == kind) else { return 0 };
+    r.2.iter().filter_map(|c| classes.iter().position(|x| x == c)).fold(0, |m, j| m | 1 << j)
 }
 
 /// A body of shared arms (`shared_runs`): its words, from `start` (its first place) to the
@@ -731,7 +750,7 @@ pub struct SharedRuns {
 pub fn plain(op: &Op) -> bool {
     matches!(
         op,
-        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. } | Op::Count { .. } | Op::Check { .. } | Op::SettleBefore { .. }
+        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Indent | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. } | Op::Count { .. } | Op::Check { .. } | Op::SettleBefore { .. }
     )
 }
 
@@ -884,10 +903,10 @@ pub fn shared_runs(native: &Structure, pushes: &[u16], alone_to: Option<&[bool]>
 
 /// `lang`'s numbers by a program's keys, `u32::MAX` where the table has none: each entry of its table that a key names
 /// (no alias, a kind and field within a key's bits, its flags the extra's where its kind is one of `extras`, its
-/// classes among `classes`, the program's supertype classes), at the key (`kind | field << KIND_BITS | class bits <<
-/// 16`). The table's ERROR code (`stream::entry_of`'s) is at a recovered statement's row kind
-/// (`stream_ir::ERROR_ROW`, decision 0650). The JIT's run reads them at run time (`Ctx::numbers`).
-pub fn numbers_by_key(lang: &rerail_tape_format::f16::Lang, classes: &[u16], extras: &[u16]) -> rerail_tape_format::Vector<u32> {
+/// classes a slot's for its kind, `class_bits` of the program's `classes` and `table`), at each such key (`kind |
+/// field << KIND_BITS | slot << 16`). The table's ERROR code (`stream::entry_of`'s) is at a recovered statement's row
+/// kind (`stream_ir::ERROR_ROW`, decision 0650). The JIT's run reads them at run time (`Ctx::numbers`).
+pub fn numbers_by_key(lang: &rerail_tape_format::f16::Lang, classes: &[u16], table: &[(u16, u16, Vec<u16>)], extras: &[u16]) -> rerail_tape_format::Vector<u32> {
     use rerail_tape_format::{CODE_EXTRA, KIND_BITS};
     let mut by = rerail_tape_format::Vector::new();
     by.resize(id_slots(classes.len()), u32::MAX);
@@ -904,16 +923,19 @@ pub fn numbers_by_key(lang: &rerail_tape_format::f16::Lang, classes: &[u16], ext
         }
         let bits: Option<u32> = e.classes.iter().map(|c| classes.iter().position(|x| x == c).map(|j| 1u32 << j)).sum();
         let Some(bits) = bits else { continue };
-        let slot = u32::from(e.kind) | u32::from(e.field) << KIND_BITS | bits << 16;
-        by[slot as usize] = n;
+        for slot in 0..=classes.len() as u32 {
+            if class_bits(table, classes, slot, e.kind) == bits {
+                by[(u32::from(e.kind) | u32::from(e.field) << KIND_BITS | slot << 16) as usize] = n;
+            }
+        }
     }
     by
 }
 
-/// The id table's slots: a key's kind (10 bits) and field (6), then a bit for each supertype
-/// class the program names (`classes`, at most `MAX_CLASSES`).
+/// The id table's slots: a key's kind (10 bits) and field (6), then the node's slot, of the
+/// supertype classes the program names (`classes`, at most `MAX_CLASSES`), or none.
 pub const fn id_slots(classes: usize) -> usize {
-    1 << (16 + classes)
+    1 << (16 + (usize::BITS - classes.leading_zeros()))
 }
 /// The most supertype classes a program's codes carry (`NODE_SUPER`'s kinds).
 pub const MAX_CLASSES: usize = 4;

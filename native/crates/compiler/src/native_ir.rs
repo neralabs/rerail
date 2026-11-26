@@ -134,7 +134,9 @@ pub enum StructuralOperation {
     /// `word`: the string the token's record must name too (`Words::mark_words`).
     /// `keep`: on the mark, its arm, the mark left for the callee the arm calls.
     /// `pattern`: a token mark's (`Words::token_marks`, its index there).
-    Mark { mask: u16, order: u8, end: bool, keep: bool, word: Option<u16>, pattern: Option<u16> },
+    /// `column`: its question of the token's column against the level's indent (decision 0698;
+    /// `Words::column`): 0 none, 1 past it, 2 less than it.
+    Mark { mask: u16, order: u8, end: bool, keep: bool, word: Option<u16>, pattern: Option<u16>, column: u8 },
     /// The token starts at a bit of mask `mask`: run the next word; else skip it.
     Row { mask: u16 },
     /// A node becomes a `kind`: the innermost open node, or another (`On`).
@@ -154,11 +156,15 @@ pub enum StructuralOperation {
     Merge { kind: u16, fold: bool },
     /// A node's field: the last node's, or another's (`On`).
     NodeField { field: u16, on: On },
-    NodeSuper { kind: u16 },
+    /// A node's slot (decision 0698): the last node's (`On::Here`), or the node a wrap moved
+    /// (`On::Moved`).
+    NodeSuper { kind: u16, on: On },
     /// `flag`: the flag the call runs with, set or cleared (`push_flag`).
     Push { target: u16, flag: Option<(u16, bool)> },
     /// The token just taken is its level's word, of `kind` (`REMEMBER`).
     Remember { kind: u16 },
+    /// The level's indent is the token's column (`INDENT`, decision 0698).
+    Indent,
     /// The level's flag `flag`: set, clear, or a test that runs the next word where it is set
     /// (`FLAG m=0, 1, 2`).
     Flag { flag: u16, op: FlagOp },
@@ -251,9 +257,10 @@ impl StructuralOperation {
             Self::Wrap { kind } => (WRAP, 0, kind),
             Self::Merge { kind, fold } => (MERGE, u8::from(fold), kind),
             Self::NodeField { field, on } => (NODE_FIELD, on as u8, field),
-            Self::NodeSuper { kind } => (NODE_SUPER, 0, kind),
+            Self::NodeSuper { kind, on } => (NODE_SUPER, on as u8, kind),
             Self::Push { target, flag } => (PUSH, flag.map_or(0, |(k, set)| push_flag(k, set)), target),
             Self::Remember { kind } => (REMEMBER, 0, kind),
+            Self::Indent => (crate::program::INDENT, 0, 0),
             Self::Flag { flag, op } => (FLAG, op as u8, flag),
             Self::Count { count, up, .. } => (crate::program::COUNT, u8::from(!up), count),
             Self::Check { check } => (crate::program::CHECK, 0, check),
@@ -403,6 +410,8 @@ pub struct Structure {
     pub taken: Vec<u64>,
     /// The gap patterns (`Words::gap_patterns`).
     pub gap_patterns: Vec<crate::program::TokenMark>,
+    /// A node's supertypes by its slot and kind (`Words::super_classes`).
+    pub super_classes: Vec<(u16, u16, Vec<u16>)>,
     /// The local checks (`Words::local_checks`).
     pub local_checks: Vec<crate::program::LocalCheck>,
     pub rules: Vec<u16>,
@@ -514,6 +523,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
                 keep: mode & MARK_KEEP != 0,
                 word: program.mark_words.iter().find(|&&(k, _)| k == (mode & crate::program::MARK_ORDER)).map(|&(_, s)| s),
                 pattern: program.token_marks.iter().position(|m| m.order == (mode & crate::program::MARK_ORDER)).map(|i| i as u16),
+                column: program.column(mode & crate::program::MARK_ORDER),
             },
             ROW => StructuralOperation::Row { mask: operand },
             RETAG if mode == 3 => StructuralOperation::Reread { reading: operand },
@@ -522,9 +532,10 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             WRAP => StructuralOperation::Wrap { kind: operand },
             MERGE => StructuralOperation::Merge { kind: operand, fold: mode == 1 },
             NODE_FIELD => StructuralOperation::NodeField { field: operand, on: On::of(mode) },
-            NODE_SUPER => StructuralOperation::NodeSuper { kind: operand },
+            NODE_SUPER => StructuralOperation::NodeSuper { kind: operand, on: On::of(mode) },
             PUSH => StructuralOperation::Push { target: operand, flag: push_flag_of(mode) },
             REMEMBER => StructuralOperation::Remember { kind: operand },
+            crate::program::INDENT => StructuralOperation::Indent,
             FLAG => StructuralOperation::Flag {
                 flag: operand,
                 op: match mode {
@@ -594,6 +605,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         recover: program.recover.clone(),
         taken: (0..64u8).map(|k| program.taken(k)).collect(),
         gap_patterns: program.gap_patterns.clone(),
+        super_classes: program.super_classes.clone(),
         local_checks: program.local_checks.clone(),
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         output: FunctionRef::Output,

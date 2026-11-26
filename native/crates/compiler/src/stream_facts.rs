@@ -99,7 +99,7 @@ pub fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8) ->
     let part_kinds: Vec<usize> = records.map_or(Vec::new(), |r| r.retags.iter().filter(|t| t.part).map(|t| usize::from(t.kind)).collect());
     let words = &native.structural;
     let framed = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made | On::MadeUnset | On::Inner, .. }));
-    let context = words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Flag { .. } | Op::Push { flag: Some(_), .. }));
+    let context = words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Indent | Op::Flag { .. } | Op::Push { flag: Some(_), .. }));
     let mut entries: BTreeSet<usize> = BTreeSet::from([0]);
     for (pc, b) in words.iter().enumerate() {
         if let Op::Push { .. } = b.operation {
@@ -243,7 +243,7 @@ pub fn coded(x: &StreamFacts<'_>) -> bool {
 }
 
 /// The key bits node word `pc`'s key gets from the words after it that make no node (`coded`):
-/// each supertype's class (`native_cpu_tape::commit`'s), and a field set there (in `kf`'s
+/// its slot (`native_cpu_tape::slot_key`), and a field set there (in `kf`'s
 /// place, above its kind). Of a node with its field in the next word (`field_after`), that one
 /// is its own already.
 pub fn key_after(x: &StreamFacts<'_>, pc: usize) -> (u32, u32) {
@@ -253,11 +253,8 @@ pub fn key_after(x: &StreamFacts<'_>, pc: usize) -> (u32, u32) {
     for _ in 0..words.len() {
         let &[t] = plain_succ(x, q).as_slice() else { break };
         match words[t].operation {
-            Op::NodeSuper { kind } => {
-                if let Some(j) = x.classes.iter().position(|&c| c == kind) {
-                    bits |= 1 << (16 + j);
-                }
-            }
+            // Its slot (decision 0698), as `native_cpu_tape::slot_key` keys a node.
+            Op::NodeSuper { kind, on: On::Here } => bits = crate::stream_analysis::slot_of(&x.classes, kind) << 16,
             Op::NodeField { field: f, on: On::Here } => field = u32::from(f) << 16,
             Op::Goto { .. } | Op::Span { .. } => {}
             _ => break,

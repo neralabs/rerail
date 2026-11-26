@@ -70,89 +70,24 @@ pub fn kf(f: &mut FunctionBuilder<'_>, key: Value) -> Value {
 /// A row's kind for an ERROR leaf, a statement recovered (decision 0650): `stream_ir::ERROR_ROW`.
 pub use crate::stream_ir::ERROR_ROW;
 
-/// The first supertype record of a node from `from` on: back from the last (0 where the program
-/// names no classes).
-fn first_super(f: &mut FunctionBuilder<'_>, snode: Value, supers: Value, from: Value, classes: &[u16], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
-    let flags = MemFlags::trusted();
-    if classes.is_empty() {
-        f.ins().iconst(types::I64, 0)
-    } else {
-        // The first supertype record of a node from `from` on: back from the last.
-        let (back, look, found) = (f.create_block(), f.create_block(), f.create_block());
-        f.append_block_param(back, types::I64);
-        f.append_block_param(found, types::I64);
-        heads.push((back, Step::Node));
-        f.ins().jump(back, &[BlockArg::from(supers)]);
-        f.switch_to_block(back);
-        let k = f.block_params(back)[0];
-        f.ins().brif(k, look, &[], found, &[BlockArg::from(k)]);
-        f.switch_to_block(look);
-        let k1 = f.ins().iadd_imm(k, -1);
-        let a = f.ins().ishl_imm(k1, 2);
-        let a = f.ins().iadd(snode, a);
-        let at = f.ins().uload32(flags, a, 0);
-        let later = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at, from);
-        f.ins().brif(later, back, &[BlockArg::from(k1)], found, &[BlockArg::from(k)]);
-        f.switch_to_block(found);
-        f.block_params(found)[0]
-    }
-}
-
-/// Node `i`'s key as the id table's slot (`id_slots`): its `kf` and, where the program names
-/// supertypes (`classes`), a bit for each it is in, from its records at `k` (the first of node
-/// `i` or after). Gives back the key and the record after node `i`'s.
-#[allow(clippy::too_many_arguments)]
-fn slot_key(f: &mut FunctionBuilder<'_>, rows: Value, i: Value, k: Value, snode: Value, skind: Value, supers: Value, classes: &[u16], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value) {
-    let flags = MemFlags::trusted();
+/// Node `i`'s key as the id table's slot (`id_slots`): its `kf`, and its slot (its field's top
+/// bits, `SLOT_SHIFT`) at bit 16. Its classes are its number's (`stream_analysis::numbers_by_key`, `class_bits`).
+fn slot_key(f: &mut FunctionBuilder<'_>, rows: Value, i: Value) -> Value {
     let r = row(f, rows, i);
-    let key = f.ins().uload32(flags, r, AT_KIND);
+    let key = f.ins().uload32(MemFlags::trusted(), r, AT_KIND);
     let k_f = kf(f, key);
-    if classes.is_empty() {
-        (k_f, k)
-    } else {
-        // Node i's supertype records: a bit each, the class's place in `classes`.
-        let (sup, sbody, sdone) = (f.create_block(), f.create_block(), f.create_block());
-        f.append_block_param(sup, types::I64);
-        f.append_block_param(sup, types::I64);
-        f.append_block_param(sdone, types::I64);
-        f.append_block_param(sdone, types::I64);
-        heads.push((sup, Step::Node));
-        let zero = f.ins().iconst(types::I64, 0);
-        f.ins().jump(sup, &[BlockArg::from(k), BlockArg::from(zero)]);
-        f.switch_to_block(sup);
-        let (k, m) = (f.block_params(sup)[0], f.block_params(sup)[1]);
-        let more = f.ins().icmp(IntCC::UnsignedLessThan, k, supers);
-        let ka = f.ins().ishl_imm(k, 2);
-        let na = f.ins().iadd(snode, ka);
-        let safe = f.ins().select(more, na, snode);
-        let at = f.ins().uload32(flags, safe, 0);
-        let here = f.ins().icmp(IntCC::Equal, at, i);
-        let take = f.ins().band(more, here);
-        f.ins().brif(take, sbody, &[], sdone, &[BlockArg::from(k), BlockArg::from(m)]);
-        f.switch_to_block(sbody);
-        let sa = f.ins().iadd(skind, ka);
-        let class = f.ins().uload32(flags, sa, 0);
-        let mut bit = f.ins().iconst(types::I64, 0);
-        for (j, &cl) in classes.iter().enumerate() {
-            let is = f.ins().icmp_imm(IntCC::Equal, class, i64::from(cl));
-            let is = f.ins().uextend(types::I64, is);
-            let b = f.ins().ishl_imm(is, 16 + j as i64);
-            bit = f.ins().bor(bit, b);
-        }
-        let m1 = f.ins().bor(m, bit);
-        let k1 = f.ins().iadd_imm(k, 1);
-        f.ins().jump(sup, &[BlockArg::from(k1), BlockArg::from(m1)]);
-        f.switch_to_block(sdone);
-        let (k, m) = (f.block_params(sdone)[0], f.block_params(sdone)[1]);
-        (f.ins().bor(k_f, m), k)
-    }
+    let slot = f.ins().ushr_imm(key, 16 + crate::stream_analysis::SLOT_SHIFT);
+    let slot = f.ins().ishl_imm(slot, 16);
+    f.ins().bor(k_f, slot)
 }
 
 /// What the passes are compiled for: the widths (its sizes') and the supertype classes the keys carry, ascending.
 #[derive(Clone, Copy)]
 pub struct Image<'a> {
     pub widths: Widths,
+    /// The supertype classes the keys carry, ascending, and a node's by its slot and kind (`Structure::super_classes`).
     pub classes: &'a [u16],
+    pub table: &'a [(u16, u16, Vec<u16>)],
 }
 
 /// An op of the format 16 writer in tier 2's module: its id and signature.
@@ -209,30 +144,28 @@ const OPEN_LEN: i32 = std::mem::offset_of!(rerail_clif::writer::State, open_len)
 const OPEN_AT: i32 = (std::mem::offset_of!(rerail_clif::writer::State, open) + std::mem::offset_of!(rerail_clif::writer::Part, at)) as i32;
 const BAD: i32 = std::mem::offset_of!(rerail_clif::writer::State, bad) as i32;
 
-/// `(desc, rows, size_c, numbers, snode, skind, supers, from, to, keep)`: nodes `from..to` passed
+/// `(desc, rows, size_c, numbers, from, to, keep)`: nodes `from..to` passed
 /// to the format 16 writer's ops at `desc` (decision 0434 §6, R17), in preorder: before each
 /// node, and at `to`, the ops' open nodes whose subtrees end there closed at their ends (the
 /// bottom one, the root, kept where `keep`); each node opened with its number (`numbers` by its
 /// slot key, as `commit` keys it) and start, then committed. Nothing where the ops already
 /// failed; a key with no number is the ops' failure (`fail::NUMBER`). A step a node, a step a
 /// close.
-pub fn pass(f: &mut FunctionBuilder<'_>, p: &[Value], classes: &[u16], size_w: u8, ops: &Ops, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
+pub fn pass(f: &mut FunctionBuilder<'_>, p: &[Value], size_w: u8, ops: &Ops, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
     use rerail_clif::writer::{OPEN, fail};
     let flags = MemFlags::trusted();
-    let (desc, rows, size_c, numbers, snode, skind, supers, from, to, keep) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9]);
+    let (desc, rows, size_c, numbers, from, to, keep) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
     let (go, step, pop, look, shut, after, opening, missing) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
     let (opened, committed, done, out) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
     let bad = f.ins().uload32(flags, desc, BAD);
     f.ins().brif(bad, out, &[], go, &[]);
     f.switch_to_block(go);
-    // step(i, k): node i, the supertype record k (the first of node i or after).
-    f.append_block_param(step, types::I64);
+    // step(i): node i.
     f.append_block_param(step, types::I64);
     heads.push((step, Step::Node));
-    let k0 = first_super(f, snode, supers, from, classes, heads);
-    f.ins().jump(step, &[BlockArg::from(from), BlockArg::from(k0)]);
+    f.ins().jump(step, &[BlockArg::from(from)]);
     f.switch_to_block(step);
-    let (i, k) = (f.block_params(step)[0], f.block_params(step)[1]);
+    let i = f.block_params(step)[0];
     heads.push((pop, Step::Pop));
     f.ins().jump(pop, &[]);
     // The innermost open node of the ops, closed where its subtree ends at i or before.
@@ -260,7 +193,7 @@ pub fn pass(f: &mut FunctionBuilder<'_>, p: &[Value], classes: &[u16], size_w: u
     let at_to = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, i, to);
     f.ins().brif(at_to, done, &[], opening, &[]);
     f.switch_to_block(opening);
-    let (key, k_next) = slot_key(f, rows, i, k, snode, skind, supers, classes, heads);
+    let key = slot_key(f, rows, i);
     let number = number_of(f, numbers, key);
     let none = f.ins().icmp_imm(IntCC::Equal, number, i64::from(u32::MAX));
     f.ins().brif(none, missing, &[], opened, &[]);
@@ -278,22 +211,21 @@ pub fn pass(f: &mut FunctionBuilder<'_>, p: &[Value], classes: &[u16], size_w: u
     f.switch_to_block(committed);
     let failed = call_op(f, &ops.commit, desc, &[]);
     let i1 = f.ins().iadd_imm(i, 1);
-    f.ins().brif(failed, out, &[], step, &[BlockArg::from(i1), BlockArg::from(k_next)]);
+    f.ins().brif(failed, out, &[], step, &[BlockArg::from(i1)]);
     f.switch_to_block(done);
     f.ins().jump(out, &[]);
     f.switch_to_block(out);
     f.ins().return_(&[]);
 }
 
-/// `(desc, numbers, rows, snode, skind, supers, i)`: node `i`, already passed to the ops and open
+/// `(desc, numbers, rows, i)`: node `i`, already passed to the ops and open
 /// there (the root), retagged as its row now is (`w_retag`), its number by its key as `pass`
 /// takes it. A key with no number is the ops' failure (`fail::NUMBER`).
-pub fn retag(f: &mut FunctionBuilder<'_>, p: &[Value], classes: &[u16], ops: &Ops, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
+pub fn retag(f: &mut FunctionBuilder<'_>, p: &[Value], ops: &Ops, _heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
     use rerail_clif::writer::fail;
-    let (desc, numbers, rows, snode, skind, supers, i) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
+    let (desc, numbers, rows, i) = (p[0], p[1], p[2], p[3]);
     let (missing, known) = (f.create_block(), f.create_block());
-    let k0 = first_super(f, snode, supers, i, classes, heads);
-    let (key, _) = slot_key(f, rows, i, k0, snode, skind, supers, classes, heads);
+    let key = slot_key(f, rows, i);
     let number = number_of(f, numbers, key);
     let none = f.ins().icmp_imm(IntCC::Equal, number, i64::from(u32::MAX));
     f.ins().brif(none, missing, &[], known, &[]);

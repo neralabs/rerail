@@ -420,6 +420,9 @@ pub struct Lowering {
     pub refuses_taken: HashMap<usize, Vec<::bitlex::syntax::GapPattern>>,
     /// The marks a level that may end ends at (`, ends`), by their index in `marks`.
     pub ends: Vec<usize>,
+    /// The marks that ask a token's column against the level's indent (`, deeper`, `, shallower`,
+    /// decision 0698), by their index in `marks`.
+    pub columns: HashMap<usize, ::bitlex::syntax::Column>,
     /// The marks each mark passes too where it is taken (`, passes`), by its index in `marks`.
     pub passes: HashMap<usize, Vec<String>>,
     /// Each token test (`Stmt::TokenEscape`, a mark's, a rule's cut): its kind, whether a
@@ -590,6 +593,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         refuses: HashMap::default(),
         refuses_taken: HashMap::default(),
         ends: Vec::new(),
+        columns: HashMap::default(),
         passes: HashMap::default(),
         token_escapes: Vec::new(),
         tested_only: Vec::new(),
@@ -1190,7 +1194,7 @@ impl Lowering {
                 }
                 Stmt::Tree { body, .. } => self.stmts(body)?,
                 // The grammar's rules: the state machine is built once the token rows are known.
-                Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } | Stmt::Reading { .. } | Stmt::Remember(_) | Stmt::Flags(_) | Stmt::Recover { .. } | Stmt::Ending { .. } => self.tree.push(stmt.clone()),
+                Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } | Stmt::Reading { .. } | Stmt::Remember(_) | Stmt::Indented(_) | Stmt::Flags(_) | Stmt::Recover { .. } | Stmt::Ending { .. } => self.tree.push(stmt.clone()),
                 // Applied by the parser: each token it names marked `A as IMPLIED` in its rule.
                 Stmt::Implied { .. } => {}
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
@@ -1201,7 +1205,10 @@ impl Lowering {
                     self.tree.push(stmt.clone());
                 }
                 Stmt::Untaken(kinds) => self.untaken_kinds.extend(kinds.iter().cloned()),
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken, passes } => {
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken, passes, column } => {
+                    if let Some(c) = column {
+                        self.columns.insert(self.marks.len(), *c);
+                    }
                     if !passes.is_empty() {
                         self.passes.insert(self.marks.len(), passes.clone());
                     }
@@ -3732,7 +3739,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             readings.maps.push(r);
         }
     }
-    let (states, mut arms, whole, by_rules, desugared) = {
+    let (states, mut arms, whole, by_rules, desugared, super_classes) = {
         let is_token = |name: &str| {
             token_rows.iter().any(|t| t.0 == name && !required.contains(&t.0))
                 || is_keyword_kind(&low.keywords, name)
@@ -3763,7 +3770,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             Shape::Auto => machine.0.len() > MACHINE_STATES,
         };
         let (st, ar, wh) = if rules { grammar::build_shaped(&low.tree, &ids, true)? } else { machine };
-        (st, ar, wh, rules, grammar::desugared(&low.tree, &tokens))
+        (st, ar, wh, rules, grammar::desugared(&low.tree, &tokens), grammar::super_classes(&low.tree, &ids)?)
     };
     low.tree_desugared = desugared;
     low.shape = if by_rules { Shape::Rules } else { Shape::Machine };
@@ -3880,7 +3887,13 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         for b in a + 1..rows.len() {
             if shares(a, b) {
                 let both = low.and(token_rows[a].1, token_rows[b].1)?;
-                if !low.either_never(&mut settled, both) {
+                // `RERAIL_BITLEX_PROOFS`: each pair's question and its time, on stderr.
+                let at = std::env::var_os("RERAIL_BITLEX_PROOFS").map(|_| std::time::Instant::now());
+                let never = low.either_never(&mut settled, both);
+                if let Some(t) = at {
+                    eprintln!("rows {} & {}: never {never}, {:?}", token_rows[a].0, token_rows[b].0, t.elapsed());
+                }
+                if !never {
                     low.fallbacks.push(both);
                     pairs.push((a, b));
                 }
@@ -4038,7 +4051,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 _ => None,
             };
             let words = seq[0].iter().map(|c| if let TokenElem::Word(w) = c { Some(w.clone()) } else { None }).collect();
-            marks.push(bitlex_tier2::Mark { passes: 0, settle: None, drop: None, lose: None, moved: None, moves: vec![], refuse: None, refuse_taken: None, lose_flag: 0, ends: false, drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![], kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: low.mark_next.get(&k).cloned().unwrap_or_default(), unless: vec![] });
+            marks.push(bitlex_tier2::Mark { passes: 0, settle: None, drop: None, lose: None, moved: None, moves: vec![], refuse: None, refuse_taken: None, lose_flag: 0, ends: false, drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![], kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: low.mark_next.get(&k).cloned().unwrap_or_default(), unless: vec![], column: None });
             continue;
         }
         let mut expr = low.mark_exprs[k].clone();
@@ -4271,7 +4284,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             eprintln!("mark {k} {kind}: on starts {on_starts}, word {:?}, {} first bytes, words {:?}", word.as_ref().map(|w| String::from_utf8_lossy(w).into_owned()), first.iter().map(|w| w.count_ones()).sum::<u32>(), words.as_ref().map(|ws| ws.iter().map(|w| String::from_utf8_lossy(w).into_owned()).collect::<Vec<_>>()));
         }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, passes: 0, settle: None, drop: None, lose: None, moved: None, moves: vec![], refuse: None, refuse_taken: None, lose_flag: 0, ends: low.ends.contains(&k), drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![] });
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, passes: 0, settle: None, drop: None, lose: None, moved: None, moves: vec![], refuse: None, refuse_taken: None, lose_flag: 0, ends: low.ends.contains(&k), drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![], column: low.columns.get(&k).copied() });
         // A settling mark: `SETTLE` reads its bit in the pending extras' codes, each the marks
         // of its own gap (`Records::own`), as the lean lexer's `skip` knows a line end before
         // each comment.
@@ -4636,6 +4649,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // The words, once the fallback's totals are known: each must be zero.
     let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, (whole, padded), false, by_rules, token_extras, &counts, &check_kinds, recover)?;
     crate::rir_text::count_rows(&mut lowered.text, &count_most);
+    crate::rir_text::super_class_rows(&mut lowered.text, &super_classes);
     // The extras' kinds: the node table flags their nodes (comments).
     readings.extras = low.extra.iter().map(|k| id(k)).collect::<Result<_, _>>()?;
     crate::rir_text::reading_rows(&mut lowered.text, &readings);

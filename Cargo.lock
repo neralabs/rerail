@@ -5692,6 +5692,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-python-parser"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "rerail-bitlex",
+ "rerail-compiler",
+ "rerail-cpu-block",
+ "rerail-cpu-stream",
+ "rerail-python-lean",
+ "rerail-python-parser",
+ "rerail-rir",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-registry"
 version = "0.1.0"
 
