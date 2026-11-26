@@ -32,6 +32,14 @@ pub mod kind {
     pub const ATOMS: u32 = 7;
     /// A space's kept facts (decision 0401 F1).
     pub const KEPT: u32 = 8;
+    /// A launch's descriptor table (decision 0686, Operations §2 E2): block id → where it lies on the device.
+    pub const DESC: u32 = 9;
+    /// An operation's control words: work, flags, measured work, needed sizes, refusals (Operations §7).
+    pub const CONTROL: u32 = 10;
+    /// An operator cache's header (P§11.3): the state it describes and its open mark, mutated in place.
+    pub const CACHE: u32 = 11;
+    /// A document's tape, as the rr parser wrote it (decision 0686, B4): a blob, read where it lies.
+    pub const TAPE: u32 = 12;
 }
 
 structure! {

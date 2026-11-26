@@ -993,7 +993,10 @@ def wrapper(rustc, args):
             except OSError:
                 pass
             # As sccache would run it (`sccache_remaps`), so its incremental state serves both ways.
-            os.execv(rustc, [rustc] + sccache_remaps(os.getcwd(), out_dir, basedirs()) + args)
+            # A workspace wrapper (clippy-driver) takes rustc's path as its first argument, before the
+            # compile's own: the remaps go after it, or the driver reads that path as an input file.
+            lead = args[:1] if args and os.path.basename(args[0]).startswith("rustc") else []
+            os.execv(rustc, [rustc] + lead + sccache_remaps(os.getcwd(), out_dir, basedirs()) + args[len(lead):])
         env["RERAIL_FARM_INCREMENTAL"] = inc
         env["RERAIL_FARM_HOT"] = marker
         args = stripped

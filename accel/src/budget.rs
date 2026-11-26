@@ -76,6 +76,21 @@ pub fn metal() -> usize {
     budgets().metal()
 }
 
+/// A documents' slab's bytes (PIAT §20.2.1's default): the residency's (`rerail_slabs`) and the delta executor's
+/// directory's, one definition.
+pub const SLAB_BYTES: usize = 64 << 20;
+
+/// How long after a full execution everything resident is dropped (the residency's policy, both residencies').
+pub const DROP_AFTER: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The share of the Metal buffer budget the residency may hold: half, the rest for the runs.
+const RESIDENT_SHARE: (usize, usize) = (1, 2);
+
+/// The residency's limit: its share of the Metal buffer budget. Past it, the least recently used slabs are retired.
+pub fn resident() -> usize {
+    metal() / RESIDENT_SHARE.1 * RESIDENT_SHARE.0
+}
+
 /// Sets the overall budget (a command line's `--memory-mb`); 0 is refused.
 pub fn set_memory_mb(mb: usize) -> Result<(), String> {
     if mb == 0 {

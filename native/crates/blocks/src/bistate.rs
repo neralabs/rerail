@@ -28,7 +28,7 @@
 //! is read a liveness word at a time over every id: `after.end() / 64` words.
 
 pub use crate::ids::{ColumnIndex, RowId, WordIndex};
-use crate::relation::View;
+use crate::relation::{Relation, View};
 
 /// One column of a state, resolved once (`Read::column`): a row's value is the column's own read, with no lookup of
 /// the column again.
@@ -90,6 +90,71 @@ pub trait Read {
     /// Its change since its version, where it records one: none by default.
     fn since(&self) -> Option<Since<'_>> {
         None
+    }
+
+    /// The ids below `end` whose liveness may differ from the state that ended at `end`, ascending, each once: its
+    /// recorded change, over as many of its own versions as lie between (a trace's layers above `end`, however
+    /// many). `None` when it records none: the change is then read word by word.
+    fn flips_from(&self, end: RowId) -> Option<Flips<'_>> {
+        self.since().filter(|s| s.end == end).map(|s| Flips::one(s.flips))
+    }
+
+    /// Its recorded change since `before` (an earlier state of the same rows; `None`: the empty state): by default its
+    /// change since the state that ended where `before` ends (`flips_from`). A trace's state names the layers above
+    /// `before` itself, since two states can end at one id (a layer that only kills).
+    fn flips_since(&self, before: Option<&Self>) -> Option<Flips<'_>> {
+        self.flips_from(before.map_or(RowId::ZERO, Read::end))
+    }
+
+    /// The ids from `before`'s end on that may be live, as ranges, ascending and apart (a trace's layers' own rows
+    /// above `before`, a partition's alone when restricted): only these words are read for rows added. `None`: every
+    /// id from `before`'s end to its own.
+    fn new_ranges(&self, _before: Option<&Self>) -> Option<Vec<(RowId, RowId)>> {
+        None
+    }
+
+    /// The rows gone and added since `before`, when it keeps them counted: a layer's counts.
+    fn exact_counts_since(&self, _before: Option<&Self>) -> Option<(usize, usize)> {
+        None
+    }
+
+    /// Its live rows in its canonical order (P§12): by default, its ids' order.
+    fn scan(&self) -> impl Iterator<Item = RowId> + '_
+    where
+        Self: Sized,
+    {
+        self.live_ids()
+    }
+
+    /// Its live rows whose columns `cols` hold `key`, by its indexes where it has them: by default, a scan. (P§12's
+    /// `probe`; `table::Table::probe` is the same read given to a callback.)
+    fn matching<'s>(&'s self, cols: &'s [ColumnIndex], key: &'s [i64]) -> impl Iterator<Item = RowId> + 's
+    where
+        Self: Sized,
+    {
+        self.live_ids().filter(move |&id| cols.iter().zip(key).all(|(&c, &k)| self.get(id, c) == k))
+    }
+
+    /// The column its rows are partitioned by: none by default.
+    fn partition(&self) -> Option<ColumnIndex> {
+        None
+    }
+
+    /// Partition `p`'s live rows: by default, those whose partition column holds `p` (none without one).
+    fn part(&self, p: i64) -> impl Iterator<Item = RowId> + '_
+    where
+        Self: Sized,
+    {
+        let c = self.partition();
+        self.live_ids().filter(move |&id| c.is_some_and(|c| self.get(id, c) == p))
+    }
+
+    /// Column `c`'s statistics: by default, read from every live row (`stats_of`).
+    fn stats(&self, c: ColumnIndex) -> ColStats
+    where
+        Self: Sized,
+    {
+        stats_of(self, c)
     }
 
     /// Its live ids, ascending.
@@ -163,7 +228,7 @@ impl<F: Fn(WordIndex) -> u64> Bits<F> {
 fn bits_from(from: RowId, end: RowId, word: impl Fn(WordIndex) -> u64) -> Bits<impl Fn(WordIndex) -> u64> {
     let first = from.word();
     let words = first.get() as u32..end.get().div_ceil(64).max(first.get() as u32);
-    Bits { word: move |w: WordIndex| word(w) & !below(from, w), words, at: WordIndex::default(), cur: 0 }
+    Bits { word: move |w: WordIndex| word(w) & !below(from, w) & below(end, w), words, at: WordIndex::default(), cur: 0 }
 }
 
 /// One of two iterators of ids.
@@ -199,103 +264,282 @@ impl<F: Fn(WordIndex) -> u64> Iterator for Bits<F> {
     }
 }
 
-/// One relation's rows before and after: `before` `None` for a cold run (nothing before).
+/// A column's statistics (P§12 `stats`; P§11.2: "per column min, max and counts"): its live rows' bounds (a trace's
+/// are an estimate: the bounds of every row added, gone ones included), and its `blocks::sketch` reading (rows,
+/// distinct values, the sum of each value's rows squared).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ColStats {
+    pub min: i64,
+    pub max: i64,
+    pub rows: u64,
+    pub ndv: u64,
+    pub sq: u64,
+}
+
+/// Column `c`'s statistics read from every live row of `state`: its bounds, and a sketch of its values
+/// (`blocks::sketch`, the one sketch), made for this read and let go.
+pub fn stats_of<R: Read>(state: &R, c: ColumnIndex) -> ColStats {
+    let mut s = crate::sketch::Sketch::new_in(crate::layer::sketch_room());
+    let (mut min, mut max) = (i64::MAX, i64::MIN);
+    for id in state.live_ids() {
+        let v = state.get(id, c);
+        s.add(v);
+        min = min.min(v);
+        max = max.max(v);
+    }
+    let r = s.reading();
+    ColStats { min, max, rows: r.rows, ndv: r.ndv, sq: r.sq }
+}
+
+/// A state's recorded change over several of its versions (`Read::flips_from`): each version's flipped ids, merged
+/// ascending, each once, over as many versions as it has. The ids are read where they lie; it holds only a handle and
+/// a cursor a version.
+#[derive(Clone, Default)]
+pub struct Flips<'s> {
+    // copy: not block data (a handle and a cursor a version)
+    runs: Vec<(&'s [u32], u32)>,
+    /// Each run's next id, smallest first: a trace's layer gives a run a partition it changed, so there can be many.
+    heads: std::collections::BinaryHeap<std::cmp::Reverse<(u32, u32)>>,
+    started: bool,
+    last: Option<u32>,
+}
+
+impl<'s> Flips<'s> {
+    pub fn one(run: &'s [u32]) -> Flips<'s> {
+        let mut f = Flips::default();
+        f.push(run);
+        f
+    }
+
+    /// Adds one version's flips.
+    pub fn push(&mut self, run: &'s [u32]) {
+        self.runs.push((run, 0));
+    }
+
+    /// Whether no id flipped.
+    pub fn is_empty(&self) -> bool {
+        self.heads.is_empty() && self.runs.iter().all(|(r, at)| r.len() == *at as usize)
+    }
+
+    /// Run `k`'s next id onto the heap.
+    fn advance(&mut self, k: usize) {
+        let (run, at) = &mut self.runs[k];
+        if let Some(&id) = run.get(*at as usize) {
+            *at += 1;
+            self.heads.push(std::cmp::Reverse((id, k as u32)));
+        }
+    }
+}
+
+impl Iterator for Flips<'_> {
+    type Item = RowId;
+
+    fn next(&mut self) -> Option<RowId> {
+        if !self.started {
+            self.started = true;
+            for k in 0..self.runs.len() {
+                self.advance(k);
+            }
+        }
+        loop {
+            let std::cmp::Reverse((id, k)) = self.heads.pop()?;
+            self.advance(k as usize);
+            if self.last != Some(id) {
+                self.last = Some(id);
+                return Some(RowId::new(id));
+            }
+        }
+    }
+}
+
+/// States that can be inverted, composed and restricted to a partition (P§1): a trace's (`relation::View::chain`).
+pub trait States: Read + Copy {
+    /// The empty state of the same relation.
+    fn empty(&self) -> Self;
+    /// Whether two states are the same state.
+    fn same(&self, other: &Self) -> bool;
+    /// Partition `p`'s rows alone, by the partition's index.
+    fn restrict(&self, p: i64) -> Self;
+    /// Gives `out` each partition changed since `before` (`None`: the empty state), by partition digests, in the
+    /// change's size: false when it cannot (the change is then not recorded by partition).
+    fn changed_parts_since(&self, before: Option<&Self>, out: &mut dyn FnMut(i64)) -> bool;
+}
+
+/// One relation's rows at two states (P§1): `lo` the earlier, `hi` the later, of the same rows; `inverted` when the
+/// change runs from `hi` back to `lo` (`invert`), so that before is `hi` and after `lo`. `lo` `None`: a cold run.
 pub struct Bistate<S> {
-    before: Option<S>,
-    after: S,
+    lo: Option<S>,
+    hi: S,
+    inverted: bool,
 }
 
 impl<S: Read> Bistate<S> {
     /// A cold run's: nothing before, every live row of `after` added.
     pub fn cold(after: S) -> Self {
-        Bistate { before: None, after }
+        Bistate { lo: None, hi: after, inverted: false }
     }
 
     /// `before` and `after` are states of the same rows: ids below `before.end()` are the same rows in both.
     pub fn new(before: S, after: S) -> Self {
         assert_eq!(before.arity(), after.arity(), "two states of one relation");
         assert!(before.end() <= after.end(), "a later state keeps every id of the earlier one");
-        Bistate { before: Some(before), after }
+        Bistate { lo: Some(before), hi: after, inverted: false }
     }
 
     pub fn before(&self) -> Option<&S> {
-        self.before.as_ref()
+        if self.inverted { Some(&self.hi) } else { self.lo.as_ref() }
     }
 
     pub fn after(&self) -> &S {
-        &self.after
+        if self.inverted { self.lo.as_ref().expect("an inverted bistate holds its after state") } else { &self.hi }
+    }
+
+    /// Whether it runs from its later state back to its earlier one.
+    pub fn is_inverted(&self) -> bool {
+        self.inverted
     }
 
     #[inline]
-    fn before_word(&self, w: WordIndex) -> u64 {
-        self.before.as_ref().map_or(0, |b| b.live_word(w))
+    fn lo_word(&self, w: WordIndex) -> u64 {
+        self.lo.as_ref().map_or(0, |b| b.live_word(w))
     }
 
-    fn before_end(&self) -> RowId {
-        self.before.as_ref().map_or(RowId::ZERO, Read::end)
+    fn lo_end(&self) -> RowId {
+        self.lo.as_ref().map_or(RowId::ZERO, Read::end)
     }
 
-    /// The after state's record of its change, when it is a change of this bistate's before state.
-    fn listed(&self) -> Option<(&S, Since<'_>)> {
-        let before = self.before.as_ref()?;
-        let since = self.after.since()?;
-        (since.end == before.end()).then_some((before, since))
+    /// The later state's record of its change since the earlier one, when it keeps one.
+    fn listed(&self) -> Option<(Option<&S>, Flips<'_>)> {
+        let flips = self.hi.flips_since(self.lo.as_ref())?;
+        Some((self.lo.as_ref(), flips))
+    }
+
+    /// The ids past `lo`'s end live in `hi`, ascending: only the words of the ranges `hi` names, when it names them.
+    fn new_ids(&self) -> impl Iterator<Item = RowId> + '_ {
+        let hi = &self.hi;
+        let ranges = hi.new_ranges(self.lo.as_ref()).unwrap_or_else(|| vec![(self.lo_end(), hi.end())]);
+        ranges.into_iter().flat_map(move |(a, b)| bits_from(a, b, move |w| hi.live_word(w)))
+    }
+
+    /// The ids live in `hi` and not `lo`, ascending.
+    fn rise(&self) -> impl Iterator<Item = RowId> + '_ {
+        match self.listed() {
+            Some((lo, flips)) => {
+                let hi = &self.hi;
+                let back = flips.filter(move |&id| !lo.is_some_and(|l| l.live(id)) && hi.live(id));
+                Either::L(back.chain(self.new_ids()))
+            }
+            None => Either::R(Bits::new(self.hi.end(), move |w| self.hi.live_word(w) & !self.lo_word(w))),
+        }
+    }
+
+    /// The ids live in `lo` and not `hi`, ascending.
+    fn fall(&self) -> impl Iterator<Item = RowId> + '_ {
+        match self.listed() {
+            Some((lo, flips)) => {
+                let hi = &self.hi;
+                Either::L(flips.filter(move |&id| lo.is_some_and(|l| l.live(id)) && !hi.live(id)))
+            }
+            None => Either::R(Bits::new(self.lo_end(), move |w| self.lo_word(w) & !self.hi.live_word(w))),
+        }
     }
 
     /// The ids live after and not before, ascending: rows added since, and rows of before resurrected.
     pub fn added(&self) -> impl Iterator<Item = RowId> + '_ {
-        match self.listed() {
-            Some((before, since)) => {
-                let after = &self.after;
-                let back = since.flips.iter().map(|&i| RowId::new(i)).filter(move |&id| !before.live(id) && after.live(id));
-                Either::L(back.chain(bits_from(since.end, after.end(), move |w| after.live_word(w))))
-            }
-            None => Either::R(Bits::new(self.after.end(), move |w| self.after.live_word(w) & !self.before_word(w))),
-        }
+        if self.inverted { Either::R(self.fall()) } else { Either::L(self.rise()) }
     }
 
     /// The ids live before and not after, ascending: rows killed since.
     pub fn gone(&self) -> impl Iterator<Item = RowId> + '_ {
-        match self.listed() {
-            Some((before, since)) => {
-                let after = &self.after;
-                Either::L(since.flips.iter().map(|&i| RowId::new(i)).filter(move |&id| before.live(id) && !after.live(id)))
-            }
-            None => Either::R(Bits::new(self.before_end(), move |w| self.before_word(w) & !self.after.live_word(w))),
+        if self.inverted { Either::L(self.rise()) } else { Either::R(self.fall()) }
+    }
+
+    /// `hi`'s rows that fell and rose since `lo`, counted.
+    fn raw_counts(&self) -> (usize, usize) {
+        if let Some(c) = self.hi.exact_counts_since(self.lo.as_ref()) {
+            return c;
         }
+        if let Some((lo, flips)) = self.listed() {
+            let (mut fell, mut rose) = (0, 0);
+            for id in flips {
+                let (b, a) = (lo.is_some_and(|l| l.live(id)), self.hi.live(id));
+                fell += usize::from(b && !a);
+                rose += usize::from(a && !b);
+            }
+            rose += self.new_ids().count();
+            return (fell, rose);
+        }
+        let (mut fell, mut rose) = (0, 0);
+        for w in WordIndex::upto(self.hi.end()) {
+            let (b, a) = (self.lo_word(w), self.hi.live_word(w));
+            fell += (b & !a).count_ones() as usize;
+            rose += (a & !b).count_ones() as usize;
+        }
+        (fell, rose)
     }
 
     /// Rows gone and rows added, counted.
     pub fn counts(&self) -> (usize, usize) {
-        if let Some((before, since)) = self.listed() {
-            let (mut gone, mut added) = (0, 0);
-            for id in since.flips.iter().map(|&i| RowId::new(i)) {
-                let (b, a) = (before.live(id), self.after.live(id));
-                gone += usize::from(b && !a);
-                added += usize::from(a && !b);
-            }
-            let new = bits_from(since.end, self.after.end(), |w| self.after.live_word(w));
-            let words = new.words.clone();
-            for w in words.map(WordIndex::new) {
-                added += (new.word)(w).count_ones() as usize;
-            }
-            return (gone, added);
-        }
-        let (mut gone, mut added) = (0, 0);
-        for w in WordIndex::upto(self.after.end()) {
-            let (b, a) = (self.before_word(w), self.after.live_word(w));
-            gone += (b & !a).count_ones() as usize;
-            added += (a & !b).count_ones() as usize;
-        }
-        (gone, added)
+        let (fell, rose) = self.raw_counts();
+        if self.inverted { (rose, fell) } else { (fell, rose) }
     }
 
-    /// Whether nothing changed: no row gone or added.
+    /// Whether nothing changed: no row gone or added. A layer's counts say so in O(1) (P§1); a change over several
+    /// layers is read in its size; one not recorded, word by word.
     pub fn is_identity(&self) -> bool {
-        if self.listed().is_some() {
-            return self.counts() == (0, 0);
+        if let Some(c) = self.hi.exact_counts_since(self.lo.as_ref()) {
+            return c == (0, 0);
         }
-        WordIndex::upto(self.after.end()).all(|w| self.before_word(w) == self.after.live_word(w))
+        if let Some((_, flips)) = self.listed() {
+            if flips.is_empty() && self.hi.end() == self.lo_end() {
+                return true;
+            }
+            return self.raw_counts() == (0, 0);
+        }
+        WordIndex::upto(self.hi.end()).all(|w| self.lo_word(w) == self.hi.live_word(w))
+    }
+}
+
+impl<S: States> Bistate<S> {
+    /// The change run backward (P§1): after becomes before, so gone and added swap roles. O(1): nothing is read.
+    pub fn invert(self) -> Self {
+        let lo = self.lo.unwrap_or_else(|| self.hi.empty());
+        Bistate { lo: Some(lo), hi: self.hi, inverted: !self.inverted }
+    }
+
+    /// This change, then `next` (P§1): `next` starts where this ends. Two edits in a burst as one; an edit and its
+    /// undo compose to the identity. O(1): the result reads both states where they lie.
+    pub fn compose(self, next: Bistate<S>) -> Result<Self, String> {
+        let empty = self.hi.empty();
+        let (x, mid) = (self.before().copied().unwrap_or(empty), *self.after());
+        let (mid2, z) = (next.before().copied().unwrap_or(empty), *next.after());
+        if !mid.same(&mid2) {
+            return Err("a composed change starts where the first one ends".into());
+        }
+        Ok(if x.end() <= z.end() { Bistate { lo: Some(x), hi: z, inverted: false } } else { Bistate { lo: Some(z), hi: x, inverted: true } })
+    }
+
+    /// The bistate of partition `p` alone (P§1): each state read through the partition's index, nothing built.
+    pub fn restrict(&self, p: i64) -> Self {
+        Bistate { lo: self.lo.map(|l| l.restrict(p)), hi: self.hi.restrict(p), inverted: self.inverted }
+    }
+
+    /// The partitions whose restriction is not the identity (P§1), by the partitions' digests, in the change's size
+    /// where the states record it by partition; otherwise read from the rows gone and added.
+    pub fn changed_parts(&self, out: &mut dyn FnMut(i64)) {
+        if self.hi.changed_parts_since(self.lo.as_ref(), out) {
+            return;
+        }
+        let c = self.hi.partition().expect("a partitioned relation's changed partitions");
+        let mut last = None;
+        let mut keys: Vec<i64> = self.rise().map(|id| self.hi.get(id, c)).chain(self.fall().map(|id| self.lo.as_ref().expect("a gone row's state").get(id, c))).collect(); // copy: derived (the changed keys, the answer)
+        keys.sort_unstable();
+        for k in keys {
+            if last != Some(k) {
+                out(k);
+                last = Some(k);
+            }
+        }
     }
 }
 
@@ -306,17 +550,17 @@ impl<S: Read> Bistate<S> {
 /// and derived again is gone and added (a level reset, 0364 R4).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn check<S: Read>(s: &Bistate<S>) {
-    let after = &s.after;
+    let after = s.after();
     let (mut gone, mut added) = (s.gone().peekable(), s.added().peekable());
     let (mut gone_n, mut added_n) = (0usize, 0usize);
-    for id in (0..after.end().get()).map(RowId::new) {
-        let b = s.before.as_ref().is_some_and(|b| b.live(id));
+    for id in (0..s.hi.end().get()).map(RowId::new) {
+        let b = s.before().is_some_and(|b| b.live(id));
         let a = after.live(id);
         let is_gone = gone.next_if_eq(&id).is_some();
         let is_added = added.next_if_eq(&id).is_some();
         assert_eq!(is_gone, b && !a, "row {id}: gone exactly when live before only");
         assert_eq!(is_added, a && !b, "row {id}: added exactly when live after only");
-        if let Some(before) = s.before.as_ref().filter(|_| b && a) {
+        if let Some(before) = s.before().filter(|_| b && a) {
             for c in ColumnIndex::all(after.arity()) {
                 assert_eq!(before.get(id, c), after.get(id, c), "row {id} is the same row in both states");
             }
@@ -333,36 +577,42 @@ pub fn check<S: Read>(s: &Bistate<S>) {
 /// pair compared: for tests' small relations only.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn is_least<S: Read>(s: &Bistate<S>) -> bool {
-    let Some(before) = &s.before else { return true };
+    let Some(before) = s.before() else { return true };
     let cols = before.arity();
-    s.gone().all(|g| s.added().all(|a| ColumnIndex::all(cols).any(|c| before.get(g, c) != s.after.get(a, c))))
+    s.gone().all(|g| s.added().all(|a| ColumnIndex::all(cols).any(|c| before.get(g, c) != s.after().get(a, c))))
 }
 
-/// A view's column: the base's and the delta's, each resolved once (`Rows::reader`).
+/// A view's column: the base's and the delta's, each resolved once (`Rows::reader`); a trace's state's, read through
+/// its layers (`View::get`).
 #[derive(Clone, Copy)]
-pub struct ViewColumn {
+pub struct ViewColumn<'s> {
     base: Option<crate::rows::ColRead>,
-    top: crate::rows::ColRead,
+    top: Option<crate::rows::ColRead>,
     base_rows: u32,
+    chain: Option<(&'s View<'s>, usize)>,
 }
 
-impl ColumnRead for ViewColumn {
+impl ColumnRead for ViewColumn<'_> {
     #[inline]
     fn get(&self, id: RowId) -> i64 {
+        if let Some((v, c)) = self.chain {
+            return v.get(id.get(), c);
+        }
         let id = id.get();
-        if id < self.base_rows { self.base.expect("a delta's base").get(id) } else { self.top.get(id - self.base_rows) }
+        if id < self.base_rows { self.base.expect("a delta's base").get(id) } else { self.top.expect("a row of the view").get(id - self.base_rows) }
     }
 }
 
-/// A relation read alone: its own rows, less its dead bits.
+/// A relation's state read where it lies (P§12's `Version`, `relation::View`): a relation alone, its own rows less its
+/// dead bits; a delta and its base; or a trace's state, its layers (`View::chain`).
 impl Read for View<'_> {
     type Column<'s>
-        = ViewColumn
+        = ViewColumn<'s>
     where
         Self: 's;
 
     fn arity(&self) -> usize {
-        self.top.arity as usize
+        View::arity(self)
     }
 
     fn end(&self) -> RowId {
@@ -371,10 +621,14 @@ impl Read for View<'_> {
 
     /// `View::live`, a word at a time: the delta's dead bits name its base's rows and its own, the base's its own.
     fn live_word(&self, w: WordIndex) -> u64 {
-        let dead = |r: &crate::relation::Relation| r.dead.as_slice().get(w.get()).copied().unwrap_or(0);
-        let mut live = below(Read::end(self), w) & !dead(self.top);
+        if self.is_chain() {
+            return self.chain_live_word(w);
+        }
+        let Some(top) = self.top else { return 0 };
+        let dead = |r: &Relation| r.dead.as_slice().get(w.get()).copied().unwrap_or(0);
+        let mut live = below(Read::end(self), w) & !dead(top);
         if let Some(b) = self.base {
-            live &= !(dead(b) & below(RowId::new(self.top.base_rows), w));
+            live &= !(dead(b) & below(RowId::new(top.base_rows), w));
         }
         live
     }
@@ -383,14 +637,96 @@ impl Read for View<'_> {
         View::get(self, id.get(), c.get())
     }
 
-    /// A frozen delta's change: its base's ids it killed (`Relation::changed`), and its own rows after them.
+    /// A frozen delta's change: its base's ids it killed (`Relation::changed`), and its own rows after them. A
+    /// trace's state's: its top layer's kills (its partition's, when restricted).
     fn since(&self) -> Option<Since<'_>> {
+        if self.is_chain() {
+            return self.chain_since();
+        }
         self.base?;
-        self.top.is_frozen().then(|| Since { end: RowId::new(self.top.base_rows), flips: self.top.changed.as_slice() })
+        let top = self.top?;
+        top.is_frozen().then(|| Since { end: RowId::new(top.base_rows), flips: top.changed.as_slice() })
     }
 
-    fn column(&self, c: ColumnIndex) -> ViewColumn {
-        ViewColumn { base: self.base.map(|b| b.rows.reader(c.get())), top: self.top.rows.reader(c.get()), base_rows: self.top.base_rows }
+    /// A trace's state names the layers above `before` itself (two states can end at one id: a layer that only
+    /// kills).
+    fn flips_since(&self, before: Option<&Self>) -> Option<Flips<'_>> {
+        if self.is_chain() {
+            return self.chain_flips_since(before);
+        }
+        self.flips_from(before.map_or(RowId::ZERO, Read::end))
+    }
+
+    fn new_ranges(&self, before: Option<&Self>) -> Option<Vec<(RowId, RowId)>> {
+        if self.is_chain() { self.chain_new_ranges(before) } else { None }
+    }
+
+    fn exact_counts_since(&self, before: Option<&Self>) -> Option<(usize, usize)> {
+        if self.is_chain() { self.chain_exact_counts_since(before) } else { None }
+    }
+
+    fn column(&self, c: ColumnIndex) -> ViewColumn<'_> {
+        ViewColumn {
+            base: self.base.map(|b| b.rows.reader(c.get())),
+            top: self.top.map(|t| t.rows.reader(c.get())),
+            base_rows: self.top.map_or(0, |t| t.base_rows),
+            chain: self.is_chain().then_some((self, c.get())),
+        }
+    }
+
+    /// A trace's state's live rows in its canonical order (its layers' runs merged); a relation's, in id order.
+    fn scan(&self) -> impl Iterator<Item = RowId> + '_ {
+        if self.is_chain() { Either::L(self.chain_scan()) } else { Either::R(self.live_ids()) }
+    }
+
+    /// A trace's state's matches by each layer's indexes (`layer::ProbeIter`); a relation's, by a scan.
+    fn matching<'s>(&'s self, cols: &'s [ColumnIndex], key: &'s [i64]) -> impl Iterator<Item = RowId> + 's {
+        if self.is_chain() {
+            Either::L(self.chain_matching(cols, key))
+        } else {
+            Either::R(self.live_ids().filter(move |&id| cols.iter().zip(key).all(|(&c, &k)| Read::get(self, id, c) == k)))
+        }
+    }
+
+    fn partition(&self) -> Option<ColumnIndex> {
+        if self.is_chain() { self.chain_partition() } else { None }
+    }
+
+    /// A trace's state's partition: its layers' ranges of it (`States::restrict`).
+    fn part(&self, p: i64) -> impl Iterator<Item = RowId> + '_ {
+        if self.is_chain() {
+            Either::L(States::restrict(self, p).chain_scan())
+        } else {
+            let c = Read::partition(self);
+            Either::R(self.live_ids().filter(move |&id| c.is_some_and(|c| Read::get(self, id, c) == p)))
+        }
+    }
+
+    fn stats(&self, c: ColumnIndex) -> ColStats {
+        if self.is_chain() { self.chain_stats(c) } else { stats_of(self, c) }
+    }
+}
+
+/// A trace's states (P§1): the empty state, a partition's, and the partitions a change touches, by the layers'
+/// digests. A relation's view is one state: its empty state is the empty one of its columns.
+impl<'a> States for View<'a> {
+    fn empty(&self) -> Self {
+        View { base: None, top: None, head: None, ..*self }
+    }
+
+    fn same(&self, other: &Self) -> bool {
+        let top = |v: &View<'_>| v.top.map(std::ptr::from_ref);
+        top(self) == top(other) && self.base.map(std::ptr::from_ref) == other.base.map(std::ptr::from_ref) && self.head == other.head && self.part == other.part && self.arity == other.arity
+    }
+
+    fn restrict(&self, p: i64) -> Self {
+        assert!(self.is_chain() || self.top.is_none(), "a restriction of a trace's state");
+        assert!(self.part.is_none_or(|q| q == p), "a restriction of another partition's");
+        View { part: Some(p), ..*self }
+    }
+
+    fn changed_parts_since(&self, before: Option<&Self>, out: &mut dyn FnMut(i64)) -> bool {
+        self.is_chain() && self.chain_changed_parts_since(before, out)
     }
 }
 
@@ -533,7 +869,7 @@ mod tests {
             w.kill(id);
         }
         relation::freeze(&block, d, &spec, Some(b));
-        f(View { base: Some(b), top: d });
+        f(View::new(Some(b), d));
     }
 
     /// A row's two columns, read through `Read`.
@@ -587,7 +923,7 @@ mod tests {
     fn a_delta_records_its_kills_and_brings_back_a_row_pushed_again() {
         let base = [[1, 10], [2, 20], [3, 30], [4, 40]];
         with_delta(&base, &[[5, 50], [3, 30]], &[0, 2, 0], |v| {
-            assert_eq!(v.top.changed.as_slice(), &[0], "id 2 pushed again: its kill cancelled; id 0 once");
+            assert_eq!(v.rel().changed.as_slice(), &[0], "id 2 pushed again: its kill cancelled; id 0 once");
             assert!(View::live(&v, 2), "brought back where it was");
             let s = v.bistate();
             assert!(s.listed().is_some());
@@ -598,7 +934,7 @@ mod tests {
             assert_eq!(s.counts(), (1, 1));
         });
         with_delta(&base, &[[3, 30]], &[2], |v| {
-            assert!(v.top.changed.as_slice().is_empty());
+            assert!(v.rel().changed.as_slice().is_empty());
             let s = v.bistate();
             check(&s);
             assert!(s.is_identity(), "killed and pushed again: no change");

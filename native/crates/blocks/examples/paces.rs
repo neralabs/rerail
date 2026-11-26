@@ -573,9 +573,9 @@ fn join_gpu(cx: &Ctx, stack: Stack<'_>, imp: View, def: View, out_f: &Facts, out
     };
     let args = JoinArgs {
         lbase: off(base, imp.base),
-        ltop: top.offset_of(imp.top) as u64,
+        ltop: top.offset_of(imp.rel()) as u64,
         rbase: off(base, def.base),
-        rtop: top.offset_of(def.top) as u64,
+        rtop: top.offset_of(def.rel()) as u64,
         out: out_f.block.offset_of(out_f.rel(out_r).unwrap()) as u64,
         n: imp.total(),
         idx: 1,

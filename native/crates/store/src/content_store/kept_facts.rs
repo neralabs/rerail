@@ -461,7 +461,7 @@ fn rows_of<'a>(what: &'a KeptWhat) -> (PutRows<'a>, Option<std::borrow::Cow<'a, 
         KeptWhat::Rows(r) => {
             let rel = r.relation();
             let total = rel.len_all() as usize;
-            let view = if rel.continues() { View { base: rel.base(), top: rel } } else { View::full(rel) };
+            let view = if rel.continues() { View::new(rel.base(), rel) } else { View::full(rel) };
             let dead = r.dead();
             let live = |id: usize| view.live(id as u32) && dead.get(id / 64).is_none_or(|w| w >> (id % 64) & 1 == 0);
             let levels = r.levels();

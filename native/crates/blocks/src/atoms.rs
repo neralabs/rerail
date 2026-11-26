@@ -49,6 +49,55 @@ structure! {
     }
 }
 
+/// An atoms structure laid out in an open block another made (a directory's block, decision 0686 B5), its root set
+/// as the block's: the block must reserve `atoms_bytes(cap, bytes_cap)` past what it holds. Its one writer is then the
+/// operation that holds the block to write (`append_in`), and its readers read it where it lies (`find_in`, `name_in`).
+pub fn lay_out_in(block: &Block, first: u32, cap: u32, bytes_cap: u64) {
+    AtomsW::lay_out(block, first, 0, cap, bytes_cap);
+}
+
+/// The bytes an atoms structure of `cap` atoms and `bytes_cap` string bytes takes.
+pub fn atoms_bytes(cap: u32, bytes_cap: u64) -> usize {
+    AtomsW::need(cap, bytes_cap)
+}
+
+/// The atoms root of a block, from its bytes where they lie (a pinned slot's: the block's own mapping).
+fn root_in(bytes: &[u8]) -> &AtomsRoot {
+    let at = crate::gens::word::<u64>(bytes, std::mem::offset_of!(crate::block::Header, root)) as usize;
+    assert!(at != 0 && at + size_of::<AtomsRoot>() <= bytes.len(), "a block holding atoms (`lay_out_in`)");
+    // SAFETY: the root `lay_out_in` set, inside the block's bytes, which are its mapping: its spans' self-relative
+    // offsets reach the block's regions.
+    unsafe { &*(bytes.as_ptr().add(at) as *const AtomsRoot) }
+}
+
+/// The id of `s` (its hash `h`) in the atoms block `bytes`, if it has one.
+pub fn find_in(bytes: &[u8], s: &str, h: u64) -> Option<u32> {
+    let r = root_in(bytes);
+    let raw = Raw::of_root(r);
+    raw.find(s, h, raw.first + r.count.load(Acquire) as u32)
+}
+
+/// The string of `id` in the atoms block `bytes`.
+pub fn name_in(bytes: &[u8], id: u32) -> Option<&str> {
+    let r = root_in(bytes);
+    let raw = Raw::of_root(r);
+    let s: *const str = raw.str(id, raw.first + r.count.load(Acquire) as u32)?;
+    // SAFETY: the string lies in the block `bytes` is, which outlives this borrow of it.
+    Some(unsafe { &*s })
+}
+
+/// How many atoms the block `bytes` holds.
+pub fn count_in(bytes: &[u8]) -> u32 {
+    root_in(bytes).count.load(Acquire) as u32
+}
+
+/// Appends `s` (its hash `h`) to the atoms block `bytes`, held to write by its one writer: its id, or `None` when the
+/// block is full. As `AtomsW::append`.
+pub fn append_in(bytes: &mut [u8], s: &str, h: u64) -> Option<u32> {
+    let r = root_in(bytes);
+    AtomsW::append_raw(r, &Raw::of_root(r), s, h)
+}
+
 /// What reads a run of atoms, wherever it lies: one block, or a store's chain of them.
 pub trait AtomRead {
     /// The ids it holds: from its first to the end it reads up to.
@@ -84,7 +133,10 @@ fn slot(h: u64, id: u32) -> u64 {
 
 impl Raw {
     fn of(b: &Block) -> Raw {
-        let r: &AtomsRoot = b.root();
+        Raw::of_root(b.root())
+    }
+
+    fn of_root(r: &AtomsRoot) -> Raw {
         Raw {
             first: r.first as u32,
             cap: r.cap as u32,
@@ -299,24 +351,29 @@ impl AtomsW {
 
     /// Appends `s` (its hash `h`): its id, or `None` when the block is full (the caller starts the next).
     pub fn append(&mut self, s: &str, h: u64) -> Option<u32> {
-        let r: &AtomsRoot = self.block.root();
+        let raw = self.raw;
+        Self::append_raw(self.block.root(), &raw, s, h)
+    }
+
+    fn append_raw(r: &AtomsRoot, raw: &Raw, s: &str, h: u64) -> Option<u32> {
         let n = r.count.load(Relaxed);
         let at = r.bytes_len.load(Relaxed);
-        if n >= u64::from(self.raw.cap) || at + s.len() as u64 > self.raw.bytes_cap || r.placed.load(Relaxed) >= (self.raw.mask + 1) / 4 * 3 {
+        if n >= u64::from(raw.cap) || at + s.len() as u64 > raw.bytes_cap || r.placed.load(Relaxed) >= (raw.mask + 1) / 4 * 3 {
             return None;
         }
-        let id = self.raw.first + n as u32;
+        let id = raw.first + n as u32;
         let end = at + s.len() as u64;
         // SAFETY: within the regions' room, checked above; this writer is the block's only one, and no reader reads
         // past the end it is told, which this atom is not below yet.
         unsafe {
-            std::ptr::copy_nonoverlapping(s.as_ptr(), self.raw.strings.add(at as usize) as *mut u8, s.len());
-            *(self.raw.ends.add(n as usize) as *mut u64) = end;
-            *(self.raw.hashes.add(n as usize) as *mut u64) = h;
+            // copy: derived (an interned string, written once into the atoms)
+            std::ptr::copy_nonoverlapping(s.as_ptr(), raw.strings.add(at as usize) as *mut u8, s.len());
+            *(raw.ends.add(n as usize) as *mut u64) = end;
+            *(raw.hashes.add(n as usize) as *mut u64) = h;
         }
         fence(Release);
         r.placed.fetch_add(1, Relaxed);
-        Self::place(&self.raw, h, slot(h, id));
+        Self::place(raw, h, slot(h, id));
         r.bytes_len.store(end, Release);
         r.count.store(n + 1, Release);
         Some(id)

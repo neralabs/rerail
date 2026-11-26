@@ -153,7 +153,7 @@ impl Facts {
 
     /// Relation `r` as readers see it: this block's, over its base's.
     pub fn view(&self, r: usize) -> View<'_> {
-        View { base: self.base_rel(r), top: self.rel(r).unwrap_or_else(|| panic!("{} not made", self.schema.rels[r].name)) }
+        View::new(self.base_rel(r), self.rel(r).unwrap_or_else(|| panic!("{} not made", self.schema.rels[r].name)))
     }
 
     pub fn w(&self, r: usize) -> RelW<'_> {
@@ -230,7 +230,7 @@ impl FrozenFacts {
     }
 
     pub fn view(&self, r: usize) -> View<'_> {
-        View { base: self.base.as_ref().map(|b| b.rel(r)), top: self.rel(r) }
+        View::new(self.base.as_ref().map(|b| b.rel(r)), self.rel(r))
     }
 
     pub fn is_delta(&self) -> bool {

@@ -1,0 +1,25 @@
+[package]
+name = "rerail-delta-device"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The delta executor's device (decision 0686, E3): its UKL versions' kernels run on the process's device, any backend, through each launch's device descriptor table."
+
+[features]
+default = []
+test-hooks = ["rerail-blocks/test-hooks", "rerail-delta-exec/test-hooks"]
+
+[dependencies]
+# The blocks a launch pins, their device descriptor tables (E2) and their copies in a device's memory.
+rerail-blocks = { path = "../blocks" }
+# The executor whose `Kernels` this is: it pins the launch and drives the phases; this crate launches the kernels.
+rerail-delta-exec = { path = "../delta_exec" }
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
+# The device layer: a UKL program compiled once for the process's device (or run on the CPU's vector path).
+rerail-gpu = { path = "../../../gpu" }
+
+[dev-dependencies]
+rerail-delta-device = { path = ".", features = ["test-hooks"] }
+# The sample operations' twins: the references the UKL versions are checked against.
+rerail-delta-twins = { path = "../delta_twins", features = ["test-hooks"] }

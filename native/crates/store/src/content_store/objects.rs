@@ -566,6 +566,40 @@ impl ContentStore {
         Ok(stored == Some(key))
     }
 
+    /// The places of the source of `sha256` and of its tape in `grammar` (its id, version and tape format version), as a
+    /// documents' table keeps them (decision 0494, `DocumentPlaces`): read from their rows, an archived object placed
+    /// back first, so a reader keeps them and reads both later where they lie with no SQL (`placed_source`,
+    /// `placed_tape`). `None` where the store has no such source, or no tape of it in that grammar.
+    pub fn document_places(&self, sha256: [u8; 32], grammar: [i64; 3]) -> StoreResult<Option<super::document_places::DocumentPlaces>> {
+        let Some(source) = self.source_by_hash(HashKey::from_sha256_digest(sha256))? else { return Ok(None) };
+        let row = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            connection
+                .query_row_cached(
+                    "SELECT s.seg, s.seg_at, s.seg_len, t.tape_id, t.seg, t.seg_at, t.seg_len, t.raw_length, \
+                     h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3 FROM source_objects s JOIN tape_objects t \
+                     ON t.source_id=s.source_id AND t.grammar_id=?2 AND t.grammar_version=?3 AND t.tape_format_version=?4 \
+                     JOIN hashes h ON h.hash_id=t.canonical_hash_id WHERE s.source_id=?1",
+                    params![source.0, grammar[0], grammar[1], grammar[2]],
+                    |row| {
+                        Ok((
+                            [row.get::<_, i64>(0)?, row.get(1)?, row.get(2)?],
+                            row.get::<_, i64>(3)?,
+                            [row.get::<_, i64>(4)?, row.get(5)?, row.get(6)?],
+                            row.get::<_, i64>(7)?,
+                            [row.get::<_, i64>(8)?, row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?],
+                        ))
+                    },
+                )
+                .optional()?
+        };
+        let Some((source_place, tape, tape_place, tape_length, tape_hash)) = row else { return Ok(None) };
+        if self.placed_again([(OBJECT_SOURCE, source.0, source_place[0]), (OBJECT_TAPE, tape, tape_place[0])])? {
+            return self.document_places(sha256, grammar);
+        }
+        Ok(Some(super::document_places::DocumentPlaces { sha256, source: source_place, tape_hash, tape: tape_place, tape_length }))
+    }
+
     pub fn get_source(&self, source_id: SourceId) -> StoreResult<Vec<u8>> {
         let connection = self
             .connection

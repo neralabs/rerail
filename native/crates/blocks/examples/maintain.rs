@@ -148,7 +148,7 @@ impl Src for VSrc<'_> {
             f(&row[..a])
         };
         // The index whose columns are all bound, the widest.
-        let ixs = v.top.indexes.as_slice();
+        let ixs = v.rel().indexes.as_slice();
         let best = ixs.iter().enumerate().filter(|(_, ix)| ix.key[..ix.ncols as usize].iter().all(|c| cols.contains(&(*c as usize)))).max_by_key(|(_, ix)| ix.ncols);
         match best {
             Some((i, ix)) => {

@@ -129,6 +129,73 @@ pub fn pack(cols: &[&[i64]], split: &[u32], kind: u32) -> Block {
     block
 }
 
+/// Ranged columns written a column at a time, in a block its writer holds open (a trace's layer, decision 0686):
+/// `lay_out` lays the descriptors out, `write_col` each column's ranges, one after another inside (its parallel work
+/// is its caller's items). The rows are read where they lie, in their order; nothing is made of them first.
+pub mod writer {
+    use super::*;
+    use crate::packed::RowsIn;
+
+    /// Lays out `arity` columns of `n` rows, whole (no split), in `block`: the root, a column's descriptor each, and
+    /// each column's range descriptors, empty until written. `None` when the block has no room.
+    pub fn lay_out(block: &Block, arity: usize, n: usize) -> Option<*mut Columns> {
+        let nranges = n.div_ceil(RANGE);
+        let root: *mut Columns = block.try_alloc_t(1)?;
+        let rc: *mut RangedCol = block.try_alloc_t(arity.max(1))?;
+        // SAFETY: just allocated in `block`, open, zero.
+        unsafe {
+            (*root).arity = arity as u32;
+            (*root).n = n as u32;
+            for c in 0..arity {
+                let col = rc.add(c);
+                (*col).n = n as u32;
+                (*col).parts = 1;
+                let ic: *mut IntCol = block.try_alloc_t(nranges.max(1))?;
+                Span::set(&raw mut (*col).ranges, ic, nranges);
+            }
+            Span::set(&raw mut (*root).cols, rc, arity);
+        }
+        Some(root)
+    }
+
+    /// One range of a column, read where its rows lie.
+    struct Range<'r> {
+        rows: &'r dyn RowsIn,
+        c: usize,
+        at: usize,
+        n: usize,
+    }
+
+    impl crate::col::Vals for Range<'_> {
+        fn len(&self) -> usize {
+            self.n
+        }
+        fn at(&self, i: usize) -> i64 {
+            self.rows.get(self.at + i, self.c)
+        }
+    }
+
+    /// Column `c` of `cols` (laid out by `lay_out` in `block`), from `rows`: each range by the smallest encoding of
+    /// its own values. False when the block has no room.
+    ///
+    /// # Safety
+    /// `cols` lies in `block`, open, laid out by `lay_out`; column `c` is written by this call alone.
+    pub unsafe fn write_col(block: &Block, cols: &Columns, c: usize, rows: &dyn RowsIn) -> bool {
+        let n = cols.n as usize;
+        let col = &cols.cols.as_slice()[c];
+        let ranges = col.ranges.as_ptr().cast_mut();
+        for r in 0..n.div_ceil(RANGE) {
+            let v = Range { rows, c, at: r * RANGE, n: RANGE.min(n - r * RANGE) };
+            let ch = crate::col::choose_serial(&v);
+            // SAFETY: range `r`'s descriptor, of column `c`: this call's alone.
+            if !unsafe { crate::packed::writer::put(block, ranges.add(r), &ch, &v) } {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 impl Columns {
     #[inline]
     pub fn len(&self) -> usize {

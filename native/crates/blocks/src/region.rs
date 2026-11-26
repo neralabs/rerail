@@ -16,6 +16,10 @@
 //! What cannot work fails at once, naming the region and where its other use began: two writers, a write while a
 //! read is live (CPU or GPU), a read while a write is, a GPU write of a frozen region, a freeze while it is read or
 //! written, a range past its end. A region's version counts its writes (a CPU write ended, a GPU write completed).
+//!
+//! An operation's slots (decision 0686 B1) are whole blocks, pinned through the block's own region (`whole`) by
+//! `pin_block`, under the same checks. A conflict there is refused, not failed: the caller is starting an operation,
+//! which then does not start, and its `Err` names the operation and what holds the block.
 
 use crate::Block;
 use crate::ledger::Fence;
@@ -24,10 +28,26 @@ use std::panic::Location;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::*};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+/// Who holds a CPU use: a guard, by the source line that took it, or an operation's slot, by the operation's name.
+#[derive(Clone, Copy)]
+enum By {
+    Line(&'static Location<'static>),
+    Op(&'static str),
+}
+
+impl std::fmt::Display for By {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            By::Line(l) => write!(f, "from {l}"),
+            By::Op(op) => write!(f, "by {op}"),
+        }
+    }
+}
+
 #[derive(Default)]
 struct Access {
-    reads: Vec<(u64, &'static Location<'static>)>,
-    write: Option<&'static Location<'static>>,
+    reads: Vec<(u64, By)>,
+    write: Option<By>,
     gpu_reads: Vec<(u64, &'static str)>,
     /// Each with the domain it writes in (0: the host's memory, which a unified GPU reads in place).
     gpu_writes: Vec<(u64, &'static str, std::sync::Weak<Fence>, u32)>,
@@ -67,9 +87,9 @@ impl Access {
     fn says(&self) -> String {
         let mut v = Vec::new();
         if let Some(w) = self.write {
-            v.push(format!("a CPU write from {w}"));
+            v.push(format!("a CPU write {w}"));
         }
-        v.extend(self.reads.iter().map(|(_, l)| format!("a CPU read from {l}")));
+        v.extend(self.reads.iter().map(|(_, by)| format!("a CPU read {by}")));
         v.extend(self.gpu_reads.iter().map(|(_, op)| format!("a GPU read by {op}")));
         v.extend(self.gpu_writes.iter().map(|(_, op, _, _)| format!("a GPU write by {op}")));
         v.join(", ")
@@ -85,6 +105,57 @@ pub trait Mirror: Send + Sync {
     fn upload(&self, host: &[u8], fence: &Fence);
     /// Transfers the device's copy into the host's bytes, now: the GPU's writes to it have completed.
     fn download(&self, host: &mut [u8]);
+    /// Where the copy lies on its device, for a descriptor table there to name (E2); `None` when the device gives
+    /// its buffers no address.
+    fn device_address(&self) -> Option<u64> {
+        None
+    }
+    /// The device's buffer that holds the copy, for a kernel's launch to bind or name as used (`DeviceCopy`'s).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn device_buffer(&self) -> Option<rerail_device::device::Buffer> {
+        None
+    }
+}
+
+/// A block's copy in a device's own memory (a domain of 1 and up, 0440 §7.2): a buffer of the device's, the transfers
+/// the device's queue's (decision 0353: a GPU's own memory is the memory hierarchy, not a copy the engine reads). On
+/// the CPU backend its buffer is memory of its own apart from the block's, as a discrete GPU's is.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub struct DeviceCopy {
+    shared: &'static rerail_device::shared::Shared,
+    buffer: rerail_device::device::Buffer,
+    len: usize,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl DeviceCopy {
+    /// A copy of `len` bytes on `shared`'s device.
+    pub fn new(shared: &'static rerail_device::shared::Shared, len: usize) -> DeviceCopy {
+        let buffer = rerail_device::device::alloc_uninitialized_array_sync::<u8>(&shared.device, len.max(1));
+        DeviceCopy { shared, buffer, len }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl Mirror for DeviceCopy {
+    /// Transferred by the device's queue, and waited for: the work after it on `fence` reads it whole.
+    // copy: load (the block's bytes into its device's own memory: the memory hierarchy, 0353)
+    fn upload(&self, host: &[u8], _fence: &Fence) {
+        assert!(host.len() <= self.len, "a block's copy holds its bytes");
+        let mut q = rerail_device::device::ComputeQueue::new(&self.shared.queue);
+        q.enqueue_copy_from_host(&self.buffer, 0, host);
+        q.flush().await_().unwrap_or_else(|e| panic!("a block's upload to its device copy: {e}"));
+    }
+    fn download(&self, host: &mut [u8]) {
+        let v: Vec<u8> = rerail_device::device::transfer_to_host_sync(&self.buffer, host.len()); // copy: load (the device's bytes back to the block's)
+        host.copy_from_slice(&v);
+    }
+    fn device_address(&self) -> Option<u64> {
+        self.buffer.device_address()
+    }
+    fn device_buffer(&self) -> Option<rerail_device::device::Buffer> {
+        Some(self.buffer.clone())
+    }
 }
 
 /// A run of bytes in a block, and what holds and uses it. A range of another (`root`) shares its root's uses,
@@ -109,7 +180,11 @@ pub struct Region {
 }
 
 fn fail(r: &Region, what: String) -> ! {
-    panic!("region '{}' ({} bytes at {} of its block): {what}", r.top().name, r.len, r.at);
+    panic!("{}", says(r, what));
+}
+
+fn says(r: &Region, what: String) -> String {
+    format!("region '{}' ({} bytes at {} of its block): {what}", r.top().name, r.len, r.at)
 }
 
 impl Region {
@@ -188,6 +263,31 @@ impl Region {
         m.push((domain, Arc::from(mirror)));
     }
 
+    /// Whether it has a copy in memory domain `domain` (0, the host's, always): one placed there (`mirror_in`; a
+    /// block's replica, `Directory::replicate`).
+    pub fn has_copy_in(&self, domain: u32) -> bool {
+        domain == 0 || self.mirror(domain).is_some()
+    }
+
+    /// Its copy's address in memory domain `domain`, as that device names it: `None` for the host's (0), for a
+    /// domain without a copy, or a device that gives its buffers no address.
+    pub fn copy_address(&self, domain: u32) -> Option<u64> {
+        if domain == 0 {
+            return None;
+        }
+        self.mirror(domain).and_then(|m| m.device_address())
+    }
+
+    /// Its copy's buffer in memory domain `domain` (`Mirror::device_buffer`): `None` for the host's (0), or a domain
+    /// without a copy that has one.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub fn copy_buffer(&self, domain: u32) -> Option<rerail_device::device::Buffer> {
+        if domain == 0 {
+            return None;
+        }
+        self.mirror(domain).and_then(|m| m.device_buffer())
+    }
+
     fn mirror(&self, domain: u32) -> Option<Arc<dyn Mirror>> {
         self.top().mirrors.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(d, _)| *d == domain).map(|(_, m)| m.clone())
     }
@@ -204,6 +304,11 @@ impl Region {
                 fail(self, format!("a bind naming no domain of a region in {n} (bind_read_on, bind_write_on)"));
             }
         }
+    }
+
+    /// How many CPU reads of it are open now (E1's tests: what a refused start left pinned).
+    pub fn cpu_reads(&self) -> usize {
+        self.lock().reads.len()
     }
 
     /// The domain whose copy holds its latest version (0: the host's): the one a write may begin in without moving it.
@@ -250,19 +355,20 @@ impl Region {
 
     #[track_caller]
     fn begin_read(&self) -> u64 {
+        self.try_begin_read(By::Line(Location::caller())).unwrap_or_else(|e| fail(self, e))
+    }
+
+    fn try_begin_read(&self, by: By) -> Result<u64, String> {
         let mut a = self.lock();
         if a.write.is_some() {
-            let says = a.says();
-            drop(a);
-            fail(self, format!("a CPU read from {} while {says}", Location::caller()));
+            return Err(format!("a CPU read {by} while {}", a.says()));
         }
         if let Some(why) = self.host_behind(&a) {
-            drop(a);
-            fail(self, format!("a CPU read from {}: {why}", Location::caller()));
+            return Err(format!("a CPU read {by}: {why}"));
         }
         let id = a.id();
-        a.reads.push((id, Location::caller()));
-        id
+        a.reads.push((id, by));
+        Ok(id)
     }
 
     fn end_read(&self, id: u64) {
@@ -271,19 +377,24 @@ impl Region {
 
     #[track_caller]
     fn begin_write(&self) {
-        let mut a = self.lock();
-        if a.write.is_some() || !a.reads.is_empty() || !a.gpu_reads.is_empty() || !a.gpu_writes.is_empty() {
-            let says = a.says();
-            drop(a);
-            fail(self, format!("a CPU write from {} while {says}", Location::caller()));
+        let by = By::Line(Location::caller());
+        if let Err(e) = self.try_begin_write(by) {
+            fail(self, e);
         }
-        if let Some(why) = self.host_behind(&a) {
-            drop(a);
-            fail(self, format!("a CPU write from {}: {why}", Location::caller()));
-        }
-        a.write = Some(Location::caller());
         // SAFETY of the ledger's check too: the chunk's bytes are not the GPU's now (R4 of 0487).
         self.block.ledger().cpu_write(self.at, self.len);
+    }
+
+    fn try_begin_write(&self, by: By) -> Result<(), String> {
+        let mut a = self.lock();
+        if a.write.is_some() || !a.reads.is_empty() || !a.gpu_reads.is_empty() || !a.gpu_writes.is_empty() {
+            return Err(format!("a CPU write {by} while {}", a.says()));
+        }
+        if let Some(why) = self.host_behind(&a) {
+            return Err(format!("a CPU write {by}: {why}"));
+        }
+        a.write = Some(by);
+        Ok(())
     }
 
     fn end_write(&self) {
@@ -305,18 +416,34 @@ impl Region {
     /// does (ownership moves through the host). A write while another domain's write is queued fails: two domains
     /// never write one region.
     fn pin_in(self: &Arc<Region>, fence: &Arc<Fence>, op: &'static str, write: bool, domain: u32) -> usize {
-        let mirror = if domain == 0 { None } else { Some(self.mirror(domain).unwrap_or_else(|| fail(self, format!("a bind in domain {domain}, where it has no copy (mirror_in)")))) };
+        self.try_pin_in(fence, op, write, domain, None).unwrap_or_else(|e| fail(self, e))
+    }
+
+    /// `pin_in`, refused rather than failed. With `handoff` (an operation's slot's CPU use: a write, or a read by its
+    /// id), that use ends as the GPU's begins, under one lock, so nothing else can begin between them (E1: a launch's
+    /// pins held until its fence completes). When the GPU use is refused, the CPU use stays as it was.
+    fn try_pin_in(self: &Arc<Region>, fence: &Arc<Fence>, op: &'static str, write: bool, domain: u32, handoff: Option<(bool, u64)>) -> Result<usize, String> {
+        let mirror = if domain == 0 {
+            None
+        } else {
+            Some(self.mirror(domain).ok_or_else(|| says(self, format!("a bind by {op} in domain {domain}, where it has no copy (mirror_in)")))?)
+        };
         {
             let mut a = self.lock();
+            // The slot's own CPU use is not a conflict: it is the one ending.
+            let mine_w = handoff.is_some_and(|(w, _)| w);
+            let mine_r = handoff.and_then(|(w, id)| (!w).then_some(id));
+            let cpu_write = a.write.is_some() && !mine_w;
+            let cpu_reads = a.reads.iter().any(|(i, _)| Some(*i) != mine_r);
             let bad = if write {
                 if self.is_frozen() {
                     Some("a GPU write of a frozen region".to_string())
-                } else if a.write.is_some() || !a.reads.is_empty() {
+                } else if cpu_write || cpu_reads {
                     Some(format!("a GPU write by {op} while {}", a.says()))
                 } else {
                     None
                 }
-            } else if a.write.is_some() {
+            } else if cpu_write {
                 Some(format!("a GPU read by {op} while {}", a.says()))
             } else {
                 None
@@ -325,7 +452,16 @@ impl Region {
             let bad = bad.or_else(|| elsewhere.map(|(other, d)| format!("a GPU {} by {op} in domain {domain} while {other} writes it in domain {d} (one owner domain: 0440 §7.2)", if write { "write" } else { "read" })));
             if let Some(b) = bad {
                 drop(a);
-                fail(self, b);
+                return Err(says(self, b));
+            }
+            match handoff {
+                // A CPU write's end (`end_write`): the host's bytes are the latest.
+                Some((true, _)) => {
+                    a.write = None;
+                    a.host = self.top().version.fetch_add(1, AcqRel) + 1;
+                }
+                Some((false, rid)) => a.reads.retain(|(i, _)| *i != rid),
+                None => {}
             }
             let id = a.id();
             let top = self.top();
@@ -384,7 +520,7 @@ impl Region {
         } else {
             fence.reads(&self.block);
         }
-        self.at
+        Ok(self.at)
     }
 
     /// The device buffer to bind it with, and its offset in it.
@@ -438,6 +574,144 @@ pub fn bind_address(fence: &Arc<Fence>, addr: usize, write: bool, op: &'static s
         r.pin(fence, op, write);
     }
     true
+}
+
+/// One slot of an operation (decision 0686 B1): `block`, whole, pinned for the CPU by `op`, to read or to write,
+/// through the block's own region (`whole`) and its ledger. Refused, with nothing left held, when it cannot start: a
+/// write of a frozen block, a write while anything else uses the block, a read while something writes it. The `Err`
+/// names the block's region, `op`, and what holds it. The pin ends when it goes; a write's end moves the version.
+pub fn pin_block(block: &Arc<Block>, op: &'static str, write: bool) -> Result<BlockPin, String> {
+    let r = whole(block).r;
+    let by = By::Op(op);
+    if write {
+        if r.is_frozen() {
+            return Err(says(&r, format!("a CPU write by {op} of a frozen block")));
+        }
+        r.try_begin_write(by).map_err(|e| says(&r, e))?;
+        if let Err(e) = block.ledger().try_cpu(0, r.len, true) {
+            r.end_write();
+            return Err(says(&r, format!("a CPU write by {op}: {e}")));
+        }
+        Ok(BlockPin { r, write: true, id: 0, handed: false })
+    } else {
+        let id = r.try_begin_read(by).map_err(|e| says(&r, e))?;
+        if let Err(e) = block.ledger().try_cpu(0, r.len, false) {
+            r.end_read(id);
+            return Err(says(&r, format!("a CPU read by {op}: {e}")));
+        }
+        Ok(BlockPin { r, write: false, id, handed: false })
+    }
+}
+
+/// A block pinned as an operation's slot (`pin_block`): its bytes, all of them, header first, read in place.
+pub struct BlockPin {
+    r: Arc<Region>,
+    write: bool,
+    id: u64,
+    /// Handed to a fence (`to_fence`): its use is the GPU's now, and its drop ends nothing.
+    handed: bool,
+}
+
+impl BlockPin {
+    pub fn block(&self) -> &Arc<Block> {
+        &self.r.block
+    }
+
+    /// Whether it was pinned to write.
+    pub fn writes(&self) -> bool {
+        self.write
+    }
+
+    /// The block's bytes: no write but this pin's can be live while it is.
+    pub fn bytes(&self) -> &[u8] {
+        // SAFETY: the pin's checks hold (`pin_block`): no write but its own is live, and none begins while it lives.
+        unsafe { std::slice::from_raw_parts(self.r.bytes(), self.r.len) }
+    }
+
+    /// The block's bytes, to write: `None` for a read pin.
+    pub fn bytes_mut(&mut self) -> Option<&mut [u8]> {
+        if !self.write {
+            return None;
+        }
+        // SAFETY: a write pin is the block's only use while it lives (`pin_block`).
+        Some(unsafe { std::slice::from_raw_parts_mut(self.r.bytes(), self.r.len) })
+    }
+
+    /// Hands the slot to the device (E1: "every slot pinned from the operation's signature when it starts", a GPU
+    /// use pinned until its fence completes): its CPU use ends and a GPU use by `op` on `fence`, in memory domain
+    /// `domain` (0: the host's, read in place), begins, under one lock. Its copy in `domain` is brought to the latest
+    /// first. Refused, the pin given back as it was, when the GPU use cannot begin: no copy in `domain`, or another
+    /// domain's write queued.
+    pub fn to_fence(mut self, fence: &Arc<Fence>, op: &'static str, domain: u32) -> Result<(), (BlockPin, String)> {
+        match self.r.try_pin_in(fence, op, self.write, domain, Some((self.write, self.id))) {
+            Ok(_) => {
+                self.handed = true;
+                Ok(())
+            }
+            Err(e) => Err((self, e)),
+        }
+    }
+
+    /// Whether the block has a copy in memory domain `domain` (`Region::has_copy_in`).
+    pub fn has_copy_in(&self, domain: u32) -> bool {
+        self.r.has_copy_in(domain)
+    }
+
+    /// Its copy's address in memory domain `domain` (`Region::copy_address`).
+    pub fn copy_address(&self, domain: u32) -> Option<u64> {
+        self.r.copy_address(domain)
+    }
+
+    /// Its copy's buffer in memory domain `domain` (`Region::copy_buffer`).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub fn copy_buffer(&self, domain: u32) -> Option<rerail_device::device::Buffer> {
+        self.r.copy_buffer(domain)
+    }
+
+    /// Where the block lies in the host's memory: a CPU descriptor table's address of it (`gens::Desc`).
+    pub fn addr(&self) -> usize {
+        self.r.bytes() as usize
+    }
+
+    /// The bytes it pins: the block's whole reservation.
+    pub fn len(&self) -> usize {
+        self.r.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.r.len == 0
+    }
+
+    /// The block's version: its writes so far.
+    pub fn version(&self) -> u64 {
+        self.r.version()
+    }
+
+    /// `n` atomic words at byte `at` of a block pinned to write (`None` for a read pin): claims and cells that many
+    /// writers fill at once through one pin (host threads, or a GPU's), as a kernel writes them (P§12 item 5).
+    pub fn atomics<A: crate::gens::Atomic>(&self, at: usize, n: usize) -> Option<&[A]> {
+        if !self.write {
+            return None;
+        }
+        assert!(at + n * size_of::<A>() <= self.r.len, "atomics past the block");
+        // SAFETY: a write pin is the block's only use; atomics are written through shared references by design.
+        let p = unsafe { self.r.bytes().add(at) };
+        assert!((p as usize).is_multiple_of(align_of::<A>()), "atomics at {at}, not aligned");
+        Some(unsafe { std::slice::from_raw_parts(p as *const A, n) })
+    }
+}
+
+impl Drop for BlockPin {
+    fn drop(&mut self) {
+        if self.handed {
+            return;
+        }
+        if self.write {
+            self.r.end_write();
+        } else {
+            self.r.end_read(self.id);
+        }
+    }
 }
 
 impl Drop for Region {
@@ -1016,6 +1290,8 @@ mod tests {
         mem: Mutex<Vec<u8>>,
         ups: AtomicU64,
         downs: AtomicU64,
+        /// Where the copy lies on the device, when it gives one.
+        addr: Option<u64>,
     }
 
     struct OnDiscrete(Arc<Discrete>);
@@ -1028,6 +1304,9 @@ mod tests {
         fn download(&self, host: &mut [u8]) {
             host.copy_from_slice(&self.0.mem.lock().unwrap());
             self.0.downs.fetch_add(1, SeqCst);
+        }
+        fn device_address(&self) -> Option<u64> {
+            self.0.addr
         }
     }
 
@@ -1141,5 +1420,78 @@ mod tests {
         assert_eq!(m.version(), 1, "not until it completes");
         f.complete();
         assert_eq!(m.share().read().version(), 2);
+    }
+
+    /// An operation's slots (decision 0686 B1): a block pinned by one operation refuses another's conflicting pin,
+    /// naming both; reads share; a frozen block refuses a write; a refused pin leaves nothing held.
+    #[test]
+    fn a_slot_pin_refuses_what_conflicts_and_names_the_operations() {
+        let b = block();
+        let w = pin_block(&b, "consolidate", true).unwrap();
+        let e = pin_block(&b, "step", true).err().expect("a second writer is refused");
+        assert!(e.contains("a CPU write by step") && e.contains("a CPU write by consolidate"), "{e}");
+        let e = pin_block(&b, "seed", false).err().expect("a reader beside a writer is refused");
+        assert!(e.contains("a CPU read by seed") && e.contains("by consolidate"), "{e}");
+        drop(w);
+        let r1 = pin_block(&b, "seed", false).unwrap();
+        let r2 = pin_block(&b, "step", false).unwrap();
+        let e = pin_block(&b, "head", true).err().expect("a writer beside readers is refused");
+        assert!(e.contains("by seed") && e.contains("by step"), "{e}");
+        drop((r1, r2));
+        let held = whole(&b);
+        let mut w = pin_block(&b, "head", true).expect("nothing is left held by the refused pins");
+        let v = held.version();
+        w.bytes_mut().unwrap()[64] = 1;
+        drop(w);
+        assert_eq!(held.version(), v + 1, "a write pin's end moves the version");
+        assert!(pin_block(&b, "seed", false).unwrap().bytes_mut().is_none(), "a read pin gives no bytes to write");
+        let f = Block::anon(kind::FACTS, 1 << 20).freeze();
+        let e = pin_block(f.arc(), "head", true).err().expect("a frozen block refuses a write");
+        assert!(e.contains("a CPU write by head of a frozen block"), "{e}");
+        assert!(pin_block(f.arc(), "seed", false).is_ok(), "and is read");
+    }
+
+    /// E1 on a device: a slot's CPU pin handed to a fence (`BlockPin::to_fence`) is a GPU use until the fence completes,
+    /// with nothing open between the two: a writer's excludes every CPU use and moves the version when it completes;
+    /// a reader's lets readers in and keeps writers out. A handoff to a domain where the block has no copy is refused,
+    /// the pin given back as it was; with a replica there (`mirror_in`), it uploads the copy once and names its address.
+    #[test]
+    fn a_slot_handed_to_a_fence_is_the_gpus_until_it_completes() {
+        let b = block();
+        let held = whole(&b);
+        let w = pin_block(&b, "consolidate", true).unwrap();
+        let v = held.version();
+        let f = Fence::new();
+        assert!(w.to_fence(&f, "consolidate", 0).is_ok());
+        assert_eq!(held.version(), v + 1, "the CPU's part of the write ended");
+        let e = pin_block(&b, "seed", false).err().expect("a CPU read while the GPU writes is refused");
+        assert!(e.contains("a GPU write by consolidate"), "{e}");
+        assert!(pin_block(&b, "step", true).is_err(), "and a CPU write");
+        f.mark_committed();
+        f.complete();
+        assert_eq!(held.version(), v + 2, "the GPU's write moved the version when it completed");
+        let r = pin_block(&b, "seed", false).expect("the block is the host's again");
+        let g = Fence::new();
+        assert!(r.to_fence(&g, "seed", 0).is_ok());
+        assert!(pin_block(&b, "probe", false).is_ok(), "a reader beside the GPU's read");
+        let e = pin_block(&b, "head", true).err().expect("a writer while the GPU reads is refused");
+        assert!(e.contains("a GPU read by seed"), "{e}");
+        g.complete();
+        // No copy in domain 1: refused, and the pin is as it was (its drop ends its read).
+        let r = pin_block(&b, "step", false).unwrap();
+        let Err((r, e)) = r.to_fence(&Fence::new(), "step", 1) else { panic!("no copy in domain 1") };
+        assert!(e.contains("domain 1") && !r.has_copy_in(1) && r.has_copy_in(0), "{e}");
+        assert!(pin_block(&b, "head", true).is_err(), "the read given back still holds the block");
+        drop(r);
+        // A replica in domain 1: uploaded when behind, at its device's address.
+        let dev = Arc::new(Discrete { addr: Some(0x7000_0000), ..Discrete::default() });
+        held.region().mirror_in(1, Box::new(OnDiscrete(dev.clone())));
+        let r = pin_block(&b, "step", false).unwrap();
+        assert_eq!((r.has_copy_in(1), r.copy_address(1), r.copy_address(0)), (true, Some(0x7000_0000), None));
+        let h = Fence::new();
+        assert!(r.to_fence(&h, "step", 1).is_ok());
+        assert_eq!(dev.ups.load(SeqCst), 1, "the replica brought to the latest version");
+        h.complete();
+        assert!(pin_block(&b, "head", true).is_ok(), "nothing held once the fence completed");
     }
 }

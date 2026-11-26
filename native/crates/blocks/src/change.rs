@@ -521,7 +521,7 @@ mod tests {
         for (k, ((va, adda, killa), (vb, addb, killb))) in sa.iter().zip(&sb).enumerate() {
             let (ba, bb) = (ca.full(va), cb.full(vb));
             let (da, db) = (ca.delta(ba, adda, killa), cb.delta(bb, addb, killb));
-            let (a, b) = (View { base: Some(ba), top: da }, View { base: Some(bb), top: db });
+            let (a, b) = (View::new(Some(ba), da), View::new(Some(bb), db));
             f(k, &a.bistate(), &b.bistate());
         }
     }
@@ -672,7 +672,7 @@ mod tests {
         /// The state after: `kept` and its delta `d` rolled up into a full relation.
         fn roll<'a>(&'a self, kept: Option<&'a Relation>, d: &'a Relation) -> &'a Relation {
             let Some(k) = kept else { return d };
-            let v = View { base: Some(k), top: d };
+            let v = View::new(Some(k), d);
             let rows: Vec<Vec<i64>> = v.ordered().into_iter().map(|id| v.row(id)).collect();
             self.change(None, |w| rows.iter().for_each(|r| _ = w.push(r)))
         }
@@ -693,7 +693,7 @@ mod tests {
             if k == 0 {
                 f(usize::MAX, &View::full(base).bistate());
             }
-            f(k, &View { base: Some(base), top: d }.bistate());
+            f(k, &View::new(Some(base), d).bistate());
         }
     }
 
