@@ -1083,7 +1083,12 @@ impl KeyRuns {
 
 /// A relation of `k` values a row, 8 bytes each, read in their order.
 fn spec(k: usize) -> Spec {
-    Spec { widths: vec![8; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG }
+    spec_narrow(k, 0)
+}
+
+/// `spec`, the columns `narrow` names (a bit a column) 4 bytes wide: values that fit 32 bits unsigned (atoms).
+fn spec_narrow(k: usize, narrow: u64) -> Spec {
+    Spec { widths: (0..k).map(|c| if c < 64 && narrow >> c & 1 == 1 { 4 } else { 8 }).collect(), order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG }
 }
 
 /// One relation of a block: a segment or a tail, shared by its holders; its chunks given back to the block's free
@@ -1206,6 +1211,8 @@ impl Drop for Lent {
 /// rows are written into.
 pub struct WaveRoom {
     k: usize,
+    /// Its rows' 4-byte columns (`Rows::narrowed`): a region of its own holds them so too.
+    narrow: u64,
     regions: [std::sync::OnceLock<Region>; WAVE_REGIONS],
     cursor: Mutex<WaveCursor>,
 }
@@ -1242,9 +1249,9 @@ impl WaveRoom {
         let first = if own { None } else { rows.tail_room(WAVE_SPAN as usize).or_else(|| rows.tail_moved(WAVE_SPAN as usize)) };
         let region = match first {
             Some(lent) => Region { part: lent.tail.clone(), at: lent.at, first: 0, lent: Some(lent) },
-            None => Region { part: Part::for_writes(k, WAVE_SPAN as usize), at: 0, first: 0, lent: None },
+            None => Region { part: Part::new_narrow(Life::Run, k, rows.narrow, WAVE_SPAN as usize), at: 0, first: 0, lent: None },
         };
-        let room = WaveRoom { k, regions: std::array::from_fn(|_| std::sync::OnceLock::new()), cursor: Mutex::new(WaveCursor { region: 0, used: 0, ends: vec![0] }) };
+        let room = WaveRoom { k, narrow: rows.narrow, regions: std::array::from_fn(|_| std::sync::OnceLock::new()), cursor: Mutex::new(WaveCursor { region: 0, used: 0, ends: vec![0] }) };
         let _ = room.regions[0].set(region);
         room
     }
@@ -1275,7 +1282,7 @@ impl WaveRoom {
         assert!(r + 1 < WAVE_REGIONS, "a wave's rows past {WAVE_REGIONS} regions");
         let before: u32 = cur.ends.iter().sum();
         let rows = (n as usize).max(before as usize);
-        let part = Part::for_writes_with_room(self.k, rows, 8 * self.k.max(1) * rows).unwrap_or_else(|e| panic!("a wave's rows past their block: {e}"));
+        let part = Part::for_writes_with_room_narrow(self.k, self.narrow, rows, 8 * self.k.max(1) * rows).unwrap_or_else(|e| panic!("a wave's rows past their block: {e}"));
         let _ = self.regions[r + 1].set(Region { part, at: 0, first: before, lent: None });
         cur.region = r + 1;
         cur.used = n;
@@ -1602,6 +1609,14 @@ impl Part {
         Part::try_new_with(life, k, rows, 0, false)
     }
 
+    /// `new`, the columns `narrow` names 4 bytes wide (`spec_narrow`).
+    fn new_narrow(life: Life, k: usize, narrow: u64, rows: usize) -> Part {
+        if narrow == 0 {
+            return Part::new(life, k, rows);
+        }
+        Part::try_new_spec(life, spec_narrow(k, narrow), rows, 0, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+    }
+
     /// A relation of `k` columns alone in a block with room for `rows` rows, past them for its rows to double and for
     /// `indexes` indexes of all of them, which its growth keeps (`ix_room`). The block is address space, memory only
     /// as it is written (decision 0342's `Device::No`).
@@ -1863,8 +1878,13 @@ impl Part {
     /// rounds' indexes, and its relation was copied for each next key (ab127: 478.7 MB of 0353 row 9). Few are live at
     /// once (a fixpoint's heads).
     pub fn for_writes_with_room(k: usize, rows: usize, room: usize) -> Result<Part, String> {
+        Part::for_writes_with_room_narrow(k, 0, rows, room)
+    }
+
+    /// `for_writes_with_room`, the columns `narrow` names 4 bytes wide (`spec_narrow`).
+    pub fn for_writes_with_room_narrow(k: usize, narrow: u64, rows: usize, room: usize) -> Result<Part, String> {
         let room = if RESERVES_ADDRESS_SPACE { room.max(BLOCK_RESERVE - room_for(k, rows).min(BLOCK_RESERVE / 2)) } else { room };
-        Part::try_new_with(Life::Run, k, rows, room.max(1), true)
+        Part::try_new_spec(Life::Run, spec_narrow(k, narrow), rows, room.max(1), true)
     }
 
     /// Room for `rows` rows in all (its rows' chunks in its block), not moved: for a writer other than the host
@@ -2205,6 +2225,8 @@ pub struct Rows {
     /// Segments gathered from other relations (`append_segment`): a tail past them is a relation of its own, never a
     /// continuation of theirs in their blocks (which may have no room, and would move every row).
     gathered: bool,
+    /// The columns (a bit a column) whose values fit 32 bits unsigned, atoms: its tails hold them 4 bytes a row.
+    narrow: u64,
 }
 
 /// A frozen relation's writer taken (`Rows::shared`), and the rows its relation held then: given back free at them
@@ -2366,7 +2388,7 @@ impl Clone for Rows {
             segs.push((from, t.prefix()));
             from += t.len();
         }
-        Rows { segs, from, tail: None, k: self.k, hint: self.hint, life: self.life, gathered: self.gathered, ..Rows::default() }
+        Rows { segs, from, tail: None, k: self.k, hint: self.hint, life: self.life, gathered: self.gathered, narrow: self.narrow, ..Rows::default() }
     }
 }
 
@@ -2374,6 +2396,13 @@ impl Rows {
     /// No rows, of `k` values each.
     pub fn new(k: usize) -> Rows {
         Rows { k, ..Rows::default() }
+    }
+
+    /// These rows, the columns `narrow` names (a bit a column) held 4 bytes a row: their values atoms, which fit 32
+    /// bits unsigned (`ColKind::Atom`'s bounds).
+    pub fn narrowed(mut self, narrow: u64) -> Rows {
+        self.narrow = narrow;
+        self
     }
 
     /// No rows, of `k` values each, living `life` long.
@@ -2444,7 +2473,7 @@ impl Rows {
     /// relation of its own holding every row (a growth move, `Part::moved_all`), which `absorbed` makes the only part.
     fn opened(&self, rows: usize) -> Part {
         if self.segs.is_empty() || self.gathered {
-            return Part::new(self.life, self.k, rows);
+            return Part::new_narrow(self.life, self.k, self.narrow, rows);
         }
         let Some(end) = self.chain() else {
             crate::code_rule_dsl::logic::profile::decision("tails opened past rows of many relations (linked when bound)", || format!("{} segments", self.segs.len()));

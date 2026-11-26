@@ -39,6 +39,7 @@
 use rerail_blocks::vector::Vector;
 use rerail_section::{Handle, Section};
 pub mod scalars;
+mod bounds;
 pub mod liveness;
 /// The index-cost spike: column orders as sorted runs of row ids (`RERAIL_INDEX_SPIKE`).
 pub mod ordered;
@@ -1041,6 +1042,13 @@ impl Rel {
     /// already first. A lattice relation's key is its own (it folds by it), and a key it broke is not checked again.
     /// A key of no columns is a relation of one row at most (`doc(d, "a/b.py", _)`'s, a path fixing its document):
     /// every row is of the one key, so a second live row breaks it.
+    /// Its columns `mask` names (a bit a column) held 4 bytes a row from its first row (`Rows::narrowed`): every value
+    /// its rules can write there fits 32 bits unsigned (`bounds::written`).
+    fn set_narrow(&mut self, mask: u64) {
+        debug_assert_eq!(self.n, 0, "narrowed before its first row");
+        let data = std::mem::take(&mut self.data);
+        self.data = data.narrowed(mask);
+    }
     fn set_key(&mut self, cols: Vector<usize>) -> Result<()> {
         if cols.len() > MAX_KEY || cols.iter().any(|&c| c >= self.k) {
             return Err(err(format!("{}: key {cols:?} of {} columns", self.table, self.k)));
@@ -2940,6 +2948,25 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     let mode_joins = maint.removes.iter().chain(&maint.adds).chain(&maint.rechecks).map(|(_, j)| j).chain(maint.drivers.iter().map(|d| &d.2));
     for j in mode_joins {
         for m in j.multi.iter() { rels[m.rel].want(&m.cols); }
+    }
+    // Each relation's columns whose values its rules keep within 32 bits unsigned, held 4 bytes a row (the column
+    // bounds, `bounds::written`). Not where the device writes the heads (its writers' rows are 8 bytes a value).
+    if !device_wanted {
+        let edge_heads: Vec<usize> = edges.iter().map(|e| e.head).collect();
+        let others: Vec<usize> = requests.iter().map(|r| r.0).chain(produced.iter().copied()).collect();
+        let bounds = bounds::written(&rels, &probes, &maint.adds, &edge_heads, &gates, &others);
+        let (mut narrowed, mut cols) = (0usize, 0usize);
+        for (r, b) in rels.iter_mut().zip(&bounds) {
+            let mask = b.as_deref().map_or(0, bounds::narrow_mask);
+            if mask != 0 {
+                r.set_narrow(mask);
+                narrowed += 1;
+                cols += mask.count_ones() as usize;
+            }
+        }
+        if narrowed > 0 {
+            crate::code_rule_dsl::logic::profile::decision("relations whose columns are held 4 bytes a row (their rules' bounds)", || format!("{narrowed} relations, {cols} columns"));
+        }
     }
     syms.check()?;
     drop(syms);
