@@ -756,20 +756,20 @@ fn lines(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             let (rows, _) = env.side_stats(s.src, s.side, 0);
             rows as f64
         };
-        let (status, rows, kept) = match &chain {
-            None => (ONE, 0.0, Vec::new()),
-            Some(ch) if ch.fixed && start(0) == 0.0 => (NONE, 0.0, Vec::new()),
-            Some(ch) if ch.len() - usize::from(ch.fixed) <= 1 => (ONE, 0.0, Vec::new()),
+        let (status, kept) = match &chain {
+            None => (ONE, Vec::new()),
+            Some(ch) if ch.fixed && start(0) == 0.0 => (NONE, Vec::new()),
+            Some(ch) if ch.len() - usize::from(ch.fixed) <= 1 => (ONE, Vec::new()),
             Some(ch) => {
                 let first = note.as_ref().map_or(0, |n| n.order[0]);
                 let rows = start(if ch.fixed { 0 } else { first });
                 match &note {
-                    Some(n) if ch.valid(&n.order) && n.work * (rows.max(1.0) / n.start.max(1.0)) < SEARCH_WORK => (KEPT, rows, n.order.clone()),
-                    _ => (PRICE, rows, Vec::new()),
+                    Some(n) if ch.valid(&n.order) && n.work * (rows.max(1.0) / n.start.max(1.0)) < SEARCH_WORK => (KEPT, n.order.clone()),
+                    _ => (PRICE, Vec::new()),
                 }
             }
         };
-        w.extend([status, fb(rows), kept.len() as i64]);
+        w.extend([status, kept.len() as i64]);
         w.extend(kept.iter().map(|&j| j as i64));
     }
     put_words(out, &w);
@@ -786,7 +786,6 @@ fn lines_of(b: &[u8]) -> Vec<LineInfo> {
     (0..c.n())
         .map(|_| {
             let status = c.next();
-            let _rows = c.f();
             let k = c.n();
             LineInfo { status, kept: c.vec(k) }
         })
@@ -1389,18 +1388,18 @@ impl Round<'_> {
         let ls = read_block(dir, lines, lines_of)?;
         pd.kept += ls.iter().filter(|l| l.status == KEPT).count() as u64;
         let any = ls.iter().any(|l| l.status == PRICE);
-        let (searched, corr) = if any {
+        let searched = if any {
             let prices = self.into(dir, made, self.ops.price, &[rule, atoms, memo, lines, empty], 5, n)?;
             pd.priced += read_block(dir, prices, |b| prices_of(b).iter().flatten().map(|lp| lp.steps.len() as u64).sum::<u64>())?;
             let corr = self.correct(dir, made, prices)?;
             let searched = self.into(dir, made, self.ops.search, &[rule, lines, prices, corr, empty, empty], 6, n)?;
             pd.searched += read_block(dir, searched, |b| searched_of(b).iter().flatten().count() as u64)?;
-            (searched, corr)
+            searched
         } else {
-            (given(dir, &[0])?, empty)
+            let none = given(dir, &[0])?;
+            made.push(none);
+            none
         };
-        made.push(searched);
-        let _ = corr;
         let choice = self.into(dir, made, self.ops.choose, &[rule, lines, searched, memo, empty, empty], 6, n)?;
         pd.explored += read_block(dir, choice, |b| choices_of(b).iter().filter(|c| c.explored).count() as u64)?;
         let planned_b = self.planned(dir, made, rule, choice, searched, n)?;
@@ -1510,19 +1509,14 @@ impl Round<'_> {
         let sblock = given(dir, &sw)?;
         made.push(sblock);
         self.launch(dir, self.ops.stats, &[rule, atoms, sblock, memo])?;
-        pd.pairs += read_block(dir, memo, |b| notes(b).iter().map(|(_, n)| n.pairs.len() as u64).sum::<u64>())?;
-        let empty = given(dir, &[])?;
-        made.push(empty);
-        let lines = given(dir, &[0])?;
-        made.push(lines);
-        let lw = {
-            let p = read_block(dir, rule, |b| plan_and_keys(b).0)?;
-            let mut w = vec![p.terms.len() as i64];
-            for _ in &p.terms {
-                w.extend([PRICE, fb(0.0), 0]);
-            }
-            w
-        };
+        // The pairs measured for the slow lines.
+        let (p, keys) = read_block(dir, rule, plan_and_keys)?;
+        let slow_keys: Vec<u64> = slow.iter().map(|&ti| keys[ti] as u64).collect();
+        pd.pairs += read_block(dir, memo, |b| notes(b).iter().filter(|(k, _)| slow_keys.contains(k)).map(|(_, n)| n.pairs.len() as u64).sum::<u64>())?;
+        let mut lw = vec![p.terms.len() as i64];
+        for _ in &p.terms {
+            lw.extend([PRICE, 0]);
+        }
         let lines = {
             let b = given(dir, &lw)?;
             made.push(b);
@@ -1534,9 +1528,8 @@ impl Round<'_> {
         // The trials: each line's running order and its candidates over a sample of its tuples at depth `d`.
         let ss = read_block(dir, searched, searched_of)?;
         let cs = read_block(dir, choice, choices_of)?;
-        let rp = read_block(dir, rule, plan_and_keys)?;
-        let mut tw = vec![rp.0.terms.len() as i64];
-        for (ti, t) in rp.0.terms.iter().enumerate() {
+        let mut tw = vec![p.terms.len() as i64];
+        for (ti, t) in p.terms.iter().enumerate() {
             let (Some(Some(s)), true) = (ss.get(ti), slow.contains(&ti)) else {
                 tw.push(0);
                 continue;
@@ -1565,7 +1558,7 @@ impl Round<'_> {
                     m.push(m[0]);
                     continue;
                 }
-                let w = self.trial(dir, &rp.0, ti, &ch, o, frames, d, sample, TRIAL_CUTOFF * least * sample as f64)?;
+                let w = self.trial(dir, &p, ti, &ch, o, frames, d, sample, TRIAL_CUTOFF * least * sample as f64)?;
                 pd.trials += 1;
                 let per = w / sample as f64;
                 least = least.min(per);
