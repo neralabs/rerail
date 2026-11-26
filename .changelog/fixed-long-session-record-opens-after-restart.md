@@ -1,0 +1,1 @@
+A coding session open for weeks is checked again after the daemon restarts: once its record passed 512 MB, every hook event of it failed with "Invalid string length", and `rerail support-bundle` found no steers for it. On Windows, a session whose record a crash left mid-line records again; each of its events failed with EPERM.
