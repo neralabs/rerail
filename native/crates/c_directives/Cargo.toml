@@ -11,6 +11,8 @@ test-hooks = ["rerail-c-pp/test-hooks", "rerail-c-lean/test-hooks", "rerail-tape
 # The words' compiled code as Rust (`rerail-pp-aot`), compiled by rustc: the preprocessor's CPU
 # path (decision 0348, t44). On by default; without it the path is the JIT's code of the same IR.
 default = ["generated"]
+# The evaluator on the device (`eval`, t51): parked (the user, 2026-11-25), as in `rerail-metal`.
+device-pp = ["rerail-metal/device-pp"]
 generated = ["rerail-pp-aot/generated"]
 
 [dependencies]

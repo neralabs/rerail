@@ -283,3 +283,10 @@ Open: a CUDA test process's context costs 110 ms alone and queues in the driver 
 each), so the suite runs 2 at a time on CUDA (`-j 2`): 59 of 61 under 1 s. Each grid run of a small unit costs about
 2.4 ms of GPU time on CUDA (270 runs in `every_name_sees_the_spikes_definition`: 652 ms), its phases' barriers; and
 `a_done_calls_exits_are_records_linear_in_the_chain` takes 0.86 s alone.
+
+## 8. Parked (2026-11-25)
+
+The user parked the preprocessor on the device here, to pick it up later. Its evaluator (`rerail_c_directives::eval`)
+and its kernels' modules (`rerail_metal::{pp_arena, pp_eval, pp_expand}`) build only with the `device-pp` feature,
+which no build turns on: `cargo nextest run -p rerail-c-directives --lib --features test-hooks,device-pp --profile
+second` runs its tests. Where it stood: §7's table; open, the per-run barrier cost on CUDA and the 2-at-once suite.

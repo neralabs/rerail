@@ -379,6 +379,7 @@ pub use facts::Facts;
 pub mod expand;
 pub mod tokens;
 pub mod pp;
+#[cfg(feature = "device-pp")]
 pub mod eval;
 
 /// `src`'s mode (a) facts: from the compiled grammar's tape where it reads the file, else (a

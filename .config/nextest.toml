@@ -85,7 +85,8 @@ path = "junit.xml"
 
 # The preprocessor's evaluation tests, each stopped at 1 s and failed (the user, 2026-11-20: "you
 # may not run tests over 1 second; none of these cases should take more than a few milliseconds").
-#   cargo nextest run -p rerail-c-directives --lib --profile second
+#   cargo nextest run -p rerail-c-directives --lib --features test-hooks,device-pp --profile second
+# Parked (the user, 2026-11-25): the evaluator and its tests build only with `device-pp`.
 [profile.second]
 default-filter = "package(rerail-c-directives) & test(/^eval::tests::/)"
 slow-timeout = { period = "1s", terminate-after = 1 }

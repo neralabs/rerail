@@ -19,10 +19,13 @@ pub mod lane;
 pub mod launch;
 pub mod launch_budget;
 /// The preprocessor's evaluation arena and its kernels' one UKL source (decisions 0448, 0468).
+#[cfg(feature = "device-pp")]
 pub mod pp_arena;
 /// The preprocessor's evaluator over tapes (decision 0436).
+#[cfg(feature = "device-pp")]
 pub mod pp_eval;
 /// Macro expansion on the device (decision 0448).
+#[cfg(feature = "device-pp")]
 pub mod pp_expand;
 /// The preprocessing words on the device (decision 0348, stage 5).
 pub mod pp_on;
