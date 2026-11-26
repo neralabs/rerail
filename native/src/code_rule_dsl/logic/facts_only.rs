@@ -298,6 +298,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SINKS"),
     // The stores this process owns or was refused, with their held locks, and the slot it took of each base store
     // (`corpus::owner`): which files are this process's, not results.
     ("code_rule_dsl/logic/plan/corpus/owner.rs", "CLAIMS"),
