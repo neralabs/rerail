@@ -427,5 +427,6 @@ Found on the way and fixed:
 
 ## Open
 
-- The split's gaps still to port: 0652's follow-up (`same_document_ties`: SIM113).
+- 0652's follow-up `same_document_ties` is not ported: it is a tie of `product_demand`'s reader demands, which main
+  lacks, and SIM113, its case here, has not crossed since fix 3.
 - The data layer's entries (not in this pull request's scope, 2026-11-25).
