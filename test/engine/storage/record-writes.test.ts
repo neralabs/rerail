@@ -514,6 +514,41 @@ describe("record writes while another process holds the write lock", () => {
     holder.exec("COMMIT");
   }, 30_000);
 
+  // A claim kept for the lock is made later, where a refusal reaches no caller: the open is refused at once instead, as
+  // the database holds the session's owner now.
+  it("refuse at once a claim on a session a live runtime holds, while the lock is held", async () => {
+    const { path, sessions } = await stores();
+    const controls = new SqliteAuditControlStore(path);
+    closers.push(() => controls.close());
+    sessions.openSession(session, 1_000);
+    controls.registerOwner(session.sessionId, "background");
+    holderHere(path);
+
+    expect(thrown(() => controls.registerOwner(session.sessionId, "background"))).toMatchObject({
+      message: expect.stringContaining("already owned by a live runtime"),
+    });
+  }, 30_000);
+
+  // Another runtime claimed the session after this one's claim was kept and before it was made: made then, the claim
+  // leaves the live runtime's claim as it is and says so, as the refusal at an open does.
+  it("leave a claim on a session another live runtime made while this one's waited, and say so", async () => {
+    const { path, sessions } = await stores();
+    const controls = new SqliteAuditControlStore(path);
+    closers.push(() => controls.close());
+    sessions.openSession(session, 1_000);
+    const holder = holderHere(path);
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+    controls.registerOwner(session.sessionId, "background");
+    holder.prepare("INSERT INTO policy_session_owners (session_id, delivery, active, process_id, token, updated_at) VALUES (?, 'next-event', 1, ?, 'other', 2000)")
+      .run(session.sessionId, process.ppid);
+    holder.exec("COMMIT");
+    await settled(path);
+
+    expect(rows(path, "SELECT process_id, token, active FROM policy_session_owners")).toEqual([[process.ppid, "other", 1]]);
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("already owned by a live runtime"));
+  }, 30_000);
+
   // The lock wait learns that the lock is free by taking it and giving it back on a connection of its thread's own.
   // Before, the owner claim's one try for the session's row, its waiting time spent, met that take as a holder and failed
   // with the lock's error though no other connection held the lock: as the lock was given back, a session's open failed
