@@ -1,4 +1,4 @@
-.policy "typescript-eslint-explicit-member-accessibility" revision 5
+.policy "typescript-eslint-explicit-member-accessibility" revision 6
 .description "Declare public, private or protected on every TypeScript class member and parameter property; #private members are exempt."
 .language typescript
 .mode steer
@@ -40,11 +40,21 @@ member(p, "parameterProperties", "parameter property", x) :- param_property(p), 
 class_member(m) :- (kind(m, "method_definition") ; kind(m, "method_signature")), child(b, m, _), kind(b, "class_body").
 class_member(m) :- kind(m, "abstract_method_signature").
 
-// level(c, l): the override for c, else `accessibility`, else explicit.
+// level(c, l): the override for c, else `accessibility`, else explicit. Per member kind, a fact: joined with
+// member, which reads ts_member_name, a negation here would meet engine gap 1.
 .decl level(c: symbol, l: symbol)
-level(c, l) :- member(_, c, _, _), option(cat("overrides/", c), l).
-level(c, l) :- member(_, c, _, _), !option(cat("overrides/", c), _), option("accessibility", l).
-level(c, "explicit") :- member(_, c, _, _), !option(cat("overrides/", c), _), !option("accessibility", _).
+level(c, l) :- member_kind(c), setting(cat("overrides/", c), l).
+level(c, l) :- member_kind(c), !setting(cat("overrides/", c), _), setting("accessibility", l).
+level(c, "explicit") :- member_kind(c), !setting(cat("overrides/", c), _), !setting("accessibility", _).
+.decl member_kind(c: symbol)
+member_kind("constructors"). member_kind("methods"). member_kind("accessors"). member_kind("properties").
+member_kind("parameterProperties").
+// setting(o, v) and ignored_name(x): the options, which a test gives (`.given setting, ignored_name`), as a test
+// cannot set options.
+.decl setting(o: symbol, v: symbol)
+setting(o, v) :- option(o, v).
+.decl ignored_name(x: symbol)
+ignored_name(x) :- option_item("ignoredMethodNames", _, x).
 .decl modified(m: node)
 modified(m) :- child(m, a, _), kind(a, "accessibility_modifier").
 .decl public(m: node)
@@ -67,7 +77,7 @@ unwanted(m, t, x) :- member(m, c, t, x), level(c, "no-public"), public(m), kept(
     (c != "parameterProperties" ; op(m, "readonly")).
 // ignoredMethodNames covers methods, constructors and accessors, not properties.
 .decl ignored(m: node)
-ignored(m) :- class_member(m), ts_member_name(m, x, _), option_item("ignoredMethodNames", _, x).
+ignored(m) :- class_member(m), ts_member_name(m, x, _), ignored_name(x).
 
 // The fixes. `public` is deleted as a node: a regex over the member could find `public` in a decorator's
 // string (`@Dec('public') public x`). The space after it stays.
@@ -75,3 +85,36 @@ drop_public(a, _) :- unwanted(m, _, _), child(m, a, _), kind(a, "accessibility_m
 add_public(h, _) :- missing(m, _, _), member_head(m, h) => replace(h, `public $h`).
 add_private(h, _) :- missing(m, _, _), member_head(m, h) => replace(h, `private $h`).
 add_protected(h, _) :- missing(m, _, _), member_head(m, h) => replace(h, `protected $h`).
+
+// ---- tests: the review's counterexample (typescript-eslint 8.74.0) --------------------------------------------
+
+// A string key that is an identifier to TypeScript is named without quotes, a non-ASCII letter too, so
+// ignoredMethodNames ["ä"] skips `"ä"()`.
+.test a_non_ascii_key_is_no_quoted_name exactly
+    .given setting, ignored_name
+    setting("accessibility", "no-public").
+    ignored_name("ä").
+    .fixture "p1.ts" ```
+        export class A {
+          public "ä"() {}
+          public "b-c"() {}
+        }
+        ```
+    .expect "@typescript-eslint/explicit-member-accessibility" at "p1.ts":3
+.end
+
+// With no options each is missing its modifier, named as getNameFromMember names it.
+.test the_names_of_string_keys exactly
+    .decl named(x: symbol)
+    named(x) :- missing(_, _, x).
+    .fixture "p2.ts" ```
+        export class A {
+          "ä"() {}
+          "b-c"() {}
+        }
+        ```
+    .expect "@typescript-eslint/explicit-member-accessibility" at "p2.ts":2
+    .expect "@typescript-eslint/explicit-member-accessibility" at "p2.ts":3
+    .expect named("ä")
+    .expect named("\"b-c\"")
+.end

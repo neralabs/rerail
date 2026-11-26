@@ -1,17 +1,20 @@
-.policy "typescript-eslint-class-literal-property-style" revision 8
+.policy "typescript-eslint-class-literal-property-style" revision 9
 .description "Use a readonly field instead of a getter that just returns a literal value, unless a subclass overrides that getter as an accessor."
 .language typescript
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/eslint-a-common.rerail"
-//   deparen, static_string, key_static, static_prop, function_kind
+#include "tsx/ts-b-scope.rerail"
+//   resolves, variable, writes, initialised, declarator_name, unresolved (scopes); through it ts-a (ts_ctor,
+//   property_def) and eslint-a-common (deparen, estree_parent, static_string, key_static, function_kind)
 
 // typescript-eslint's class-literal-property-style: a class exposes a literal one way.
 //   "fields" (the default):  get a() { return "x"; }     → readonly a = "x";
 //   "getters":               readonly a = "x";           → get a() { return "x"; }
 // A getter that a setter of the same name pairs with, or that overrides, is left alone; so is a readonly field
-// that the class's constructor assigns (`this.a = …`, directly in the constructor, not in a nested function).
+// that a constructor assigns (`this.a = …`, directly in the constructor, not in a nested function), where the
+// innermost class around that `this` is the field's. A name is getStaticMemberAccessValue's: a key or `this[k]`
+// with a constant k reads k's value.
 // A literal is a string, number, boolean, null, regex or BigInt, or a template without `${…}`, tagged or not.
 .violation class_literal_property_style(at: node, id: symbol, msg: symbol) code "@typescript-eslint/class-literal-property-style"
     "{msg}"
@@ -20,9 +23,14 @@
     fix to_field "Replace the literals with readonly fields."
     fix to_getter "Replace the literals with getters."
 class_literal_property_style(k, "preferFieldStyle", "Replace this getter with a readonly field set to the literal, unless a subclass overrides it with `override get`.") :-
-    !option("option", "getters"), literal_getter(g, _), key_node(g, k).
+    style("fields"), literal_getter(g, _), key_node(g, k).
 class_literal_property_style(k, "preferGetterStyle", "Literals should be exposed using getters.") :-
-    option("option", "getters"), literal_field(p, _), key_node(p, k).
+    style("getters"), literal_field(p, _), key_node(p, k).
+
+// style(s): the option, "fields" or "getters". A test gives it (`.given style`), as a test cannot set options.
+.decl style(s: symbol)
+style("getters") :- option("option", "getters").
+style("fields") :- !option("option", "getters").
 
 .decl literal(e: node)
 literal(e) :- deparen(e, x), (kind(x, "string") ; kind(x, "number") ; kind(x, "true") ; kind(x, "false") ;
@@ -47,41 +55,80 @@ literal_getter(g, v) :- kind(g, "method_definition"), op(g, "get"), child(c, g, 
 first_stmt(b, s) :- child(b, s, i), !kind(s, "comment"), i = min j : { child(b, c, j), !kind(c, "comment") }.
 .decl kid(m: node, k: symbol)
 kid(m, k) :- child(m, x, _), kind(x, k).
+// has_setter(g): a `set` of the class body has g's name. A key with no static value (`[k]` of a parameter k) has
+// none, so pairs with nothing; nor does "" (the plugin tests the name for truth).
 .decl has_setter(g: node)
-has_setter(g) :- kind(g, "method_definition"), op(g, "get"), member_static(g, x), child(b, g, _), child(b, s, _),
-    kind(s, "method_definition"), op(s, "set"), member_static(s, x).
-// A computed key with no static value pairs by its text (8.70 does; 8.56 reports `get [k]()` beside `set [k](v)`).
-has_setter(g) :- kind(g, "method_definition"), op(g, "get"), field(g, "name", n), kind(n, "computed_property_name"),
-    key_node(g, k), text(k, x), child(b, g, _), child(b, s, _), kind(s, "method_definition"), op(s, "set"),
-    field(s, "name", o), kind(o, "computed_property_name"), key_node(s, y), text(y, x).
-// member_static(m, x): getStaticMemberAccessValue of a class member; a private `#a` reads as "a".
-.decl member_static(m: node, x: symbol)
-member_static(m, x) :- field(m, "name", k), key_static(k, x).
-member_static(m, substr(t, 1, strlen(t) - 1)) :- field(m, "name", k), kind(k, "private_property_identifier"), text(k, t).
+has_setter(g) :- kind(g, "method_definition"), op(g, "get"), member_name(g, x), x != "", child(b, g, _),
+    child(b, s, _), kind(s, "method_definition"), op(s, "set"), member_name(s, x).
 
-// literal_field(p, v): `readonly a = v`, not `declare` or `override`, that no constructor of its class assigns.
+// member_name(m, x): getStaticMemberAccessValue of a class member: a plain or private key as written (`#a` reads
+// "a"), else the key's static value: `"a"`, `1`, `0x10` ("16"), `[k]` with `const k = "a"`.
+.decl member_name(m: node, x: symbol)
+member_name(m, x) :- field(m, "name", k), !kind(k, "computed_property_name"), key_static(k, x).
+member_name(m, substr(t, 1, strlen(t) - 1)) :- field(m, "name", k), kind(k, "private_property_identifier"), text(k, t).
+member_name(m, x) :- field(m, "name", n), kind(n, "computed_property_name"), child(n, e, _), !kind(e, "comment"),
+    key_value(e, x).
+
+// key_value(e, v): getStaticValue of the expressions asked (sv_ask), as a property name: String(value), or a
+// well-known symbol "@@Symbol.x" (getStaticMemberAccessValue keeps a symbol, which equals no string). Followed:
+// literals, plain templates, `Symbol.x`, and a variable getStaticValue counts as constant: its one definition a
+// declarator `x = v` that is `const`, or whose only write is that initialiser. Not followed: operators,
+// templates with `${…}`, other globals' members, object members.
+.decl sv_ask(e: node)
+sv_ask(e) :- kind(n, "computed_property_name"), child(c, m, _), kind(c, "class_body"), field(m, "name", n),
+    child(n, e, _), !kind(e, "comment").
+sv_ask(i) :- kind(s, "subscript_expression"), field(s, "object", w), deparen(w, t), kind(t, "this"),
+    field(s, "index", i).
+.decl sv_need(x: node)
+sv_need(x) :- sv_ask(e), deparen(e, x).
+sv_need(y) :- sv_need(x), const_init(x, i), deparen(i, y).
+.decl sv(x: node, v: symbol)
+sv(x, v) :- sv_need(x), static_string(x, v).
+sv(x, v) :- sv_need(x), const_init(x, i), deparen(i, y), sv(y, v).
+sv(x, cat("@@Symbol.", p)) :- sv_need(x), kind(x, "member_expression"), field(x, "object", o), unresolved(o, "Symbol"),
+    field(x, "property", q), kind(q, "property_identifier"), text(q, p).
+.decl key_value(e: node, v: symbol)
+key_value(e, v) :- sv_ask(e), deparen(e, x), sv(x, v).
+// const_init(r, i): identifier r reads a constant whose initialiser is i (eslint-utils' canBeConsideredConst).
+.decl const_init(r: node, i: node)
+const_init(r, i) :- sv_need(r), kind(r, "identifier"), resolves(r, s, x), count : { variable(s, x, _, _) } = 1,
+    variable(s, x, id, k), (k = "const" ; (k = "let" ; k = "var"), initialised(id), !var_written(s, x)),
+    declarator_name(d, id, x), field(d, "name", id), field(d, "value", i).
+.decl var_written(s: node, x: symbol)  // a use of variable x of scope s writes it: `x = 1`, `x++`, `[x] = a`
+var_written(s, x) :- writes(w), resolves(w, s, x).
+
+// literal_field(p, v): `readonly a = v`, a PropertyDefinition (not an `accessor` field), not `declare` or
+// `override`, whose name no constructor write excludes. tree-sitter cannot read `readonly accessor e = 1` (an
+// AccessorProperty to TypeScript): it takes `accessor` for the name and holds `e` in an ERROR, so a field holding
+// an ERROR is left out.
 .decl literal_field(p: node, v: node)
-literal_field(p, v) :- kind(p, "public_field_definition"), op(p, "readonly"), !op(p, "declare"),
+literal_field(p, v) :- property_def(p), op(p, "readonly"), !op(p, "declare"), !kid(p, "ERROR"),
     !kid(p, "override_modifier"), field(p, "value", v), literal(v), !ctor_assigned(p).
 .decl ctor_assigned(p: node)
-ctor_assigned(p) :- kind(p, "public_field_definition"), op(p, "readonly"), member_static(p, x), child(b, p, _),
+ctor_assigned(p) :- property_def(p), op(p, "readonly"), member_name(p, x), x != "", child(b, p, _),
     ctor_write(b, x).
-// ctor_write(b, x): `this.x = …` (or ++, delete, destructuring) whose own function is a constructor of body b.
+// ctor_write(b, x): `this.x = …` (or ++, delete, `[this.x] = …`) whose nearest function is a constructor (ESTree's
+// kind "constructor": ts_ctor), b the innermost class body around the `this`: the one the plugin is visiting.
+//   class A { readonly a = 1; constructor() { class B { b = (this.a = 2); } } }     excludes B's a, not A's
 .decl ctor_write(b: node, x: symbol)
 ctor_write(b, x) :- kind(t, "this"), estree_parent(t, e), this_access(e, t, x), assignee(e),
-    nearest(t, c, function_kind), field(c, "name", n), text(n, "constructor"), child(b, c, _).
+    nearest(t, c, function_kind), ts_ctor(c), nearest(t, b, "class_body").
 .decl this_access(e: node, t: node, x: symbol)
-this_access(e, t, x) :- static_prop(e, t, x).
-this_access(e, t, substr(y, 1, strlen(y) - 1)) :- kind(e, "member_expression"), field(e, "object", t),
+this_access(e, t, x) :- kind(e, "member_expression"), field(e, "object", w), deparen(w, t),
+    field(e, "property", p), kind(p, "property_identifier"), text(p, x).
+this_access(e, t, substr(y, 1, strlen(y) - 1)) :- kind(e, "member_expression"), field(e, "object", w), deparen(w, t),
     field(e, "property", p), kind(p, "private_property_identifier"), text(p, y).
-// assignee(e): isAssignee. e is written: `e = 1`, `e += 1`, `e++`, `delete e`, `[e] = …`, `({ a: e } = …)`,
-// also through `!`, `as`, `satisfies` and `<T>`.
+this_access(e, t, x) :- kind(e, "subscript_expression"), field(e, "object", w), deparen(w, t), field(e, "index", i),
+    key_value(i, x).
+// assignee(e): isAssignee. e is written: `e = 1`, `e += 1`, `e++`, `delete e`, `[e] = …`, `[...e] = …`, also
+// through `!`, `as`, `satisfies` and `<T>`. Not `({ a: e } = …)`: its Property's parent is an ObjectPattern, and
+// the plugin asks for an ObjectExpression.
 .decl assignee(e: node)
 assignee(e) :- estree_parent(e, a), (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
     field(a, "left", l), deparen(l, e).
 assignee(e) :- estree_parent(e, u), kind(u, "unary_expression"), op(u, "delete").
 assignee(e) :- estree_parent(e, u), kind(u, "update_expression").
-assignee(e) :- estree_parent(e, a), (kind(a, "array_pattern") ; kind(a, "rest_pattern") ; kind(a, "pair_pattern")).
+assignee(e) :- estree_parent(e, a), (kind(a, "array_pattern") ; kind(a, "rest_pattern")).
 assignee(e) :- estree_parent(e, w), (kind(w, "non_null_expression") ; kind(w, "as_expression") ;
     kind(w, "satisfies_expression") ; kind(w, "type_assertion")), assignee(w).
 
@@ -99,3 +146,151 @@ to_field(a, _, _) :- literal_getter(g, v), key_node(g, a), field(g, "name", k), 
 to_getter(a, _, _) :- literal_field(p, v), key_node(p, a), field(p, "name", k), modifiers(p, m), text(k, x), text(v, y),
     z = cat(m, cat("get ", cat(x, cat("() { return ", cat(y, "; }")))))
     => replace(p, `$z`).
+
+// ---- tests: the review's counterexamples (typescript-eslint 8.74.0) -------------------------------------------
+
+// A key with no static value pairs with no setter, whatever its text.
+.test a_computed_key_without_a_value_pairs_with_nothing exactly
+    .fixture "f2.ts" ```
+        export function f(k: string) {
+          return class {
+            get [k]() { return 1; }
+            set [k](v: number) {}
+          };
+        }
+        ```
+    .expect "@typescript-eslint/class-literal-property-style" at "f2.ts":3
+.end
+
+// A constant key has its value: `[k]` is `a`, and pairs with `set a`.
+.test a_constant_key_has_its_value exactly
+    .fixture "f1.ts" ```
+        const k = "a";
+        export class A {
+          get [k]() { return 1; }
+          set a(v: number) {}
+        }
+        ```
+    .fixture "f3.ts" ```
+        let k = "a";
+        export class A {
+          get [k]() { return 1; }
+          set a(v: number) {}
+        }
+        ```
+    .fixture "f4.ts" ```
+        let k = "a";
+        k = "b";
+        export class A {
+          get [k]() { return 1; }
+          set a(v: number) {}
+        }
+        ```
+    .expect "@typescript-eslint/class-literal-property-style" at "f4.ts":4
+.end
+
+// `this[k]` with a constant k assigns the field a.
+.test a_constant_index_in_the_constructor_excludes exactly
+    .given style
+    style("getters").
+    .fixture "g5.ts" ```
+        const k = "a";
+        export class A {
+          readonly a = 1;
+          constructor() { this[k] = 2; }
+        }
+        ```
+.end
+
+// The constructor is ESTree's kind "constructor": not a static method so named, and also the string key.
+.test the_constructor_is_by_kind exactly
+    .given style
+    style("getters").
+    .fixture "g1.ts" ```
+        export class A {
+          readonly a = 1;
+          static constructor() { this.a = 2; }
+        }
+        ```
+    .fixture "g2.ts" ```
+        export class A {
+          readonly a = 1;
+          "constructor"() { this.a = 2; }
+        }
+        ```
+    .expect "@typescript-eslint/class-literal-property-style" at "g1.ts":2
+.end
+
+// A write inside a class nested in the constructor excludes the name in that inner class, not the outer one.
+.test a_nested_class_takes_the_exclusion exactly
+    .given style
+    style("getters").
+    .fixture "g3.ts" ```
+        export class A {
+          readonly a = 1;
+          constructor() {
+            class B { b = (this.a = 2); }
+          }
+        }
+        ```
+    .expect "@typescript-eslint/class-literal-property-style" at "g3.ts":2
+.end
+
+// Object destructuring is no assignee to the plugin; array destructuring is.
+.test object_destructuring_does_not_exclude exactly
+    .given style
+    style("getters").
+    .fixture "g4.ts" ```
+        export class A {
+          readonly a = 1;
+          constructor(o: { a: number }) { ({ a: this.a } = o); }
+        }
+        ```
+    .fixture "g7.ts" ```
+        export class A {
+          readonly a = 1;
+          constructor(o: number[]) { [this.a] = o; }
+        }
+        ```
+    .expect "@typescript-eslint/class-literal-property-style" at "g4.ts":2
+.end
+
+// An `accessor` field is an AccessorProperty, which the plugin does not look at.
+.test an_accessor_field_is_left_alone exactly
+    .given style
+    style("getters").
+    .fixture "g6.ts" ```
+        export abstract class B {
+          readonly accessor e = 1;
+          readonly f = 1;
+        }
+        ```
+    .expect "@typescript-eslint/class-literal-property-style" at "g6.ts":3
+.end
+
+// A well-known symbol pairs with itself; "" is no name (the plugin tests the name for truth).
+.test a_symbol_pairs_and_an_empty_name_does_not exactly
+    .fixture "f5.ts" ```
+        export class A {
+          get [Symbol.iterator]() { return 1; }
+          set [Symbol.iterator](v: number) {}
+          get ""() { return 1; }
+          set ""(v: number) {}
+        }
+        ```
+    .expect "@typescript-eslint/class-literal-property-style" at "f5.ts":4
+.end
+
+// An arrow in the constructor is a function of its own; parentheses around `this` do not matter.
+.test an_arrow_in_the_constructor_does_not_exclude exactly
+    .given style
+    style("getters").
+    .fixture "g8.ts" ```
+        export class A {
+          readonly a = 1;
+          readonly b = 1;
+          constructor() { const f = () => { this.a = 2; }; (this).b = 3; }
+        }
+        ```
+    .expect "@typescript-eslint/class-literal-property-style" at "g8.ts":2
+.end

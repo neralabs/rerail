@@ -1,4 +1,4 @@
-.policy "typescript-eslint-class-methods-use-this" revision 6
+.policy "typescript-eslint-class-methods-use-this" revision 7
 .description "Make TypeScript class methods and function-valued fields that never use this or super static or standalone functions."
 .language typescript
 .mode steer
@@ -9,6 +9,8 @@
 //   this_owner (which function, field value or static block a `this` belongs to)
 #include "tsx/modules.rerail"
 //   fn_region
+#include "tsx/ts-a.rerail"
+//   member_head
 
 // typescript-eslint's class-methods-use-this: an instance method that never uses `this` or `super`.
 //   class A { foo() { return 1; } }          → Expected 'this' to be used by class method 'foo'.
@@ -26,7 +28,17 @@
     suppress oxlint "class-methods-use-this"
     suppress biome "lint/nursery/useThisInClassMethods"
 class_methods_use_this(at, s) :- checked(h, f), !skipped(h), count : { uses_this(h, t) } = 0,
-    fn_words(f, s), fn_head(f, at).
+    fn_words(f, s), head(f, at).
+
+// head(f, at): typescript-eslint's getFunctionHeadLoc, which differs from ESLint's (fn_head) in one place: a
+// field's head starts at its first token after its decorators. A method's decorators are the class body's in
+// tree-sitter, so the method starts after them already.
+//   class A { @dec() bar = () => {}; }        at `bar`, not at `@dec()`
+.decl head(f: node, at: loc)
+head(f, at) :- fn_head(f, at), !decorated_field(f, _).
+head(f, at) :- decorated_field(f, h), member_head(h, at).
+.decl decorated_field(f: node, h: node)
+decorated_field(f, h) :- fn_holder(f, h), h != f, field(h, "decorator", _).
 
 // checked(h, f): instance member h of a class holds function f: a method (not a constructor), or, with
 // enforceForClassFields, a field whose value is a function expression or an arrow.
@@ -61,3 +73,23 @@ except_name(h, x) :- !private_key(h, _), static_key(h, x).
 .decl implementing(h: node)  // h is in a class with an `implements` clause
 implementing(h) :- checked(h, _), child(b, h, _), field(c, "body", b), child(c, ch, _), kind(ch, "class_heritage"),
     child(ch, i, _), kind(i, "implements_clause").
+
+// ---- tests: the review's counterexample (typescript-eslint 8.74.0) --------------------------------------------
+
+// A decorated field is reported at its first token after the decorators; a decorated method at its name.
+.test a_decorated_field_is_reported_after_its_decorators exactly
+    .fixture "cm1.ts" ```
+        declare function dec(...a: any[]): any;
+        export class A {
+          @dec()
+          bar = () => {};
+          @dec() @dec()
+          baz = function () {};
+          @dec()
+          qux() {}
+        }
+        ```
+    .expect "@typescript-eslint/class-methods-use-this" at "cm1.ts":4
+    .expect "@typescript-eslint/class-methods-use-this" at "cm1.ts":6
+    .expect "@typescript-eslint/class-methods-use-this" at "cm1.ts":8
+.end
