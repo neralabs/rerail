@@ -11,8 +11,8 @@
 //!   shares, read in place;
 //! - **output** (B2): P2's bistate in the program trace, a trace a K-form relation (`kform::shape`).
 //!
-//! Its strategy is file grain (B§4: "an edited l0 is read again whole and diffed against its kept rows"): a document
-//! added is read whole by `k0_pass` into the outputs' δ runs; a document gone has its kept rows retracted, read in
+//! Its strategy is file grain (B§4: "an edited l0 is read again whole and diffed against its kept rows"): the
+//! documents added are read whole by one `k0_pass` launch into the outputs' δ runs; a document gone has its kept rows retracted, read in
 //! its output traces where they lie (`drop_parts`, P§3: "the file's last result is its output trace's before, not
 //! cache"), never its old tape; and `consolidate` nets the two, so the δ is the diff against the rows it kept. An
 //! unchanged tape is L4's identity: no operation runs. L1 keeps no cache: P§3's cache holds plans and compiled code,
@@ -54,12 +54,12 @@ fn cell(v: &View<'_>, id: RowId, c: u16) -> i64 {
 }
 
 /// The document of tape row `id` of `tape`, its blobs where `blobs` has them.
-fn doc_at(blobs: &Blobs, tape: &View<'_>, id: RowId) -> Result<(i64, K0Doc), String> {
+fn doc_at(blobs: &Blobs, tape: &View<'_>, id: RowId) -> Result<K0Doc, String> {
     let blob = |at: u16| {
         let w: Vec<i64> = (at..at + 4).map(|c| cell(tape, id, c)).collect();
         blobs.get(&BlobId::of_words(&w)).ok_or("a blob the tape port names, which nothing holds")
     };
-    Ok((cell(tape, id, 0), K0Doc { src: blob(1)?, tape: blob(5)?, syms: blob(9)?.block }))
+    Ok(K0Doc { module: cell(tape, id, 0), src: blob(1)?, tape: blob(5)?, syms: blob(9)?.block })
 }
 
 fn live<'v>(v: &'v View<'_>) -> impl Iterator<Item = RowId> + 'v {
@@ -67,11 +67,12 @@ fn live<'v>(v: &'v View<'_>) -> impl Iterator<Item = RowId> + 'v {
 }
 
 impl L1 {
-    /// `k0_pass` over one document with sign `diff`, into the outputs' runs.
-    fn pass(&self, cx: &mut Cx<'_>, atoms: BlockId, (d, doc): (i64, K0Doc), diff: i32, out: &Out, work: &mut Work) -> Result<(), String> {
+    /// `k0_pass` over the documents of tape rows `ids`, one launch, into the outputs' runs (+1).
+    fn pass(&self, cx: &mut Cx<'_>, atoms: BlockId, tape: &View<'_>, ids: impl Iterator<Item = RowId>, out: &Out, work: &mut Work) -> Result<(), String> {
+        let docs = ids.map(|id| doc_at(cx.blobs, tape, id)).collect::<Result<Vec<_>, _>>()?; // copy: derived (the documents' places, from their blobs)
         let runs: Vec<BlockId> = (0..RELATIONS.len()).map(|k| out.block(k)).collect();
-        work.rows_read += 1;
-        work.rows_written += k0_pass(cx.reg, &self.ops, cx.dir, atoms, doc, d, diff, &runs).map_err(|e| e.to_string())?;
+        work.rows_read += docs.len() as u64;
+        work.rows_written += k0_pass(cx.reg, &self.ops, cx.dir, atoms, &docs, 1, &runs).map_err(|e| e.to_string())?;
         Ok(())
     }
 }
@@ -102,18 +103,14 @@ impl DeltaOp for L1 {
                 }
             }
         }
-        for id in tape.added() {
-            self.pass(cx, atoms, doc_at(cx.blobs, tape.after(), id)?, 1, out, &mut work)?;
-        }
+        self.pass(cx, atoms, tape.after(), tape.added(), out, &mut work)?;
         Ok(work)
     }
 
     fn run(&self, cx: &mut Cx<'_>, ins: &At<'_>, out: &mut Out) -> Result<(), String> {
         let (tape, atoms) = (&ins.ports[TAPE], ins.globals[ATOMS].block);
         let mut work = Work::default();
-        for id in live(tape) {
-            self.pass(cx, atoms, doc_at(cx.blobs, tape, id)?, 1, out, &mut work)?;
-        }
+        self.pass(cx, atoms, tape, live(tape), out, &mut work)?;
         Ok(())
     }
 }

@@ -1,8 +1,8 @@
 //! `intern` (decision 0686, B5; *0686: Operations* §10; B§7's second answerer, Intern: Pure, text ↔ symbol): a
 //! changed document's identifiers and strings written into the atoms block, the one program global every level
-//! shares, with its node → symbol facts. Its slots: the document's tape block (read: its source and its tape, where
-//! the file layer placed them), the atoms block (read-write) and the document's symbols block (read-write: its header
-//! the host's, its facts the operation's).
+//! shares, with its node → symbol facts. Its slots: the blocks of the document's source and of its tape (read, where
+//! the file layer placed them; two blobs, which may lie in one block or two), the atoms block (read-write) and the
+//! document's symbols block (read-write: its header the host's, its facts the operation's).
 //!
 //! The symbols block is the document's node → symbol relation, partitioned by the document (its node ids are its own,
 //! L9) and laid out by node id: for each node, the symbol of its text when it is a leaf (an identifier, a variable, an
@@ -22,7 +22,7 @@ use rerail_blocks::gens::{BODY_AT, set_word, word};
 use rerail_blocks::maps::hash_bytes;
 
 crate::params! {
-    /// Where the document's source and tape lie in its tape block, by offset and length.
+    /// Where the document's source and tape lie in their blocks, by offset and length.
     pub struct InternP {
         pub src_at: u64,
         pub src_len: u64,
@@ -35,9 +35,10 @@ crate::params! {
 pub const STEP_KINDS: [&str; 3] = ["atom", "not", "cmp"];
 
 /// The slots.
-const TAPE: usize = 0;
-const ATOMS: usize = 1;
-const SYMS: usize = 2;
+const SOURCE: usize = 0;
+const TAPE: usize = 1;
+pub const ATOMS: usize = 2;
+const SYMS: usize = 3;
 
 const LEN_AT: usize = BODY_AT;
 const N_AT: usize = BODY_AT + 8;
@@ -106,8 +107,8 @@ fn put(atoms: &mut [u8], s: &str) -> u32 {
 /// `intern`'s one item: the document's names, then every node's, in node order (new ids by that order).
 fn intern(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let p = <InternP as crate::Params>::read(c.params);
-    let ([tape], [atoms, syms]) = c.views([TAPE], [ATOMS, SYMS]);
-    let src = std::str::from_utf8(&tape[p.src_at as usize..(p.src_at + p.src_len) as usize]).expect("a source the file layer checked is UTF-8");
+    let ([source, tape], [atoms, syms]) = c.views([SOURCE, TAPE], [ATOMS, SYMS]);
+    let src = std::str::from_utf8(&source[p.src_at as usize..(p.src_at + p.src_len) as usize]).expect("a source the file layer checked is UTF-8");
     let r = Reads::in_place(&tape[p.tape_at as usize..(p.tape_at + p.tape_len) as usize], src).expect("a tape the parser wrote");
     let language = rerail_rr_syntax::tape::KIND_NAMES.iter().chain(rerail_rr_syntax::tape::FIELD_NAMES).chain(&STEP_KINDS);
     for n in language.filter(|n| !n.is_empty()) {

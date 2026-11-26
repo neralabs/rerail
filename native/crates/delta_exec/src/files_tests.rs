@@ -40,7 +40,7 @@ fn a_document_is_its_path_its_module_and_a_tape_from_nothing() {
     let (s, t) = (blobs.get(&d.after.source).unwrap(), blobs.get(&d.after.tape).unwrap());
     let l = dir.read("t", &[t.block]).unwrap();
     assert_eq!(&l.block(0)[s.at..s.at + s.len], crate::L0.as_bytes());
-    assert!(reads(l.block(0), s, t).len() > 100, "l0's tape");
+    assert!(reads(l.block(0), s, l.block(0), t).len() > 100, "l0's tape");
 }
 
 /// The source lies where the read placed it, and the tape where the parser wrote it: both in the document's tape
@@ -64,6 +64,23 @@ fn the_source_and_the_tape_are_blobs_in_the_documents_frozen_tape_block() {
     let again = doc_of(&mut dir, &mut blobs, crate::L0).unwrap();
     assert_eq!(again, d.after);
     assert_eq!(blobs.len(), 2);
+}
+
+/// Two sources of the same shape have the same tape: the second's tape blob is the first's, where it lies, and its
+/// source a new blob in a block of its own. Both are read through `reads`, from their two blocks.
+#[test]
+fn a_new_source_may_share_an_earlier_tape() {
+    let (mut blobs, mut dir) = (Blobs::default(), Directory::default());
+    let a = doc_of(&mut dir, &mut blobs, "e(1, 2).\n").unwrap();
+    let b = doc_of(&mut dir, &mut blobs, "e(3, 4).\n").unwrap();
+    assert_ne!(a.source, b.source);
+    assert_eq!(a.tape, b.tape, "the tape holds the shape, not the text");
+    let (s, t) = (blobs.get(&b.source).unwrap(), blobs.get(&b.tape).unwrap());
+    assert_ne!(s.block, t.block);
+    assert!(dir.is_frozen(s.block));
+    let l = dir.read("t", &[s.block, t.block]).unwrap();
+    let r = reads(l.block(0), s, l.block(1), t);
+    assert_eq!(r.text(r.len() - 1), "4");
 }
 
 #[test]

@@ -73,9 +73,9 @@ impl Fx {
     /// `f` given document `d`'s reads, its symbols block's bytes and the language's names, each read where it lies.
     pub fn read<R>(&self, d: &D, f: impl FnOnce(Reads<'_>, &[u8], &Names) -> R) -> R {
         let (s, t, y) = (self.place(&d.ids.source), self.place(&d.ids.tape), self.place(&d.syms));
-        let (tl, sl, al) = (self.dir.read("t", &[t.block]).unwrap(), self.dir.read("t", &[y.block]).unwrap(), self.dir.read("t", &[self.atoms.0]).unwrap());
+        let (tl, sl, al) = (self.dir.read("t", &[s.block, t.block]).unwrap(), self.dir.read("t", &[y.block]).unwrap(), self.dir.read("t", &[self.atoms.0]).unwrap());
         let names = Names::new(al.block(0));
-        f(reads(tl.block(0), s, t), sl.block(0), &names)
+        f(reads(tl.block(0), s, tl.block(1), t), sl.block(0), &names)
     }
 
     /// The symbol of `x`, which must be interned.
@@ -366,4 +366,53 @@ fn a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape() {
     for (k, o) in inst.outs.iter().enumerate() {
         assert_eq!(rows_at(&fx.dir, o, o.head()).unwrap(), want[k], "{}", RELATIONS[k].0);
     }
+}
+
+/// Document `d` for `k0_pass` as module `module`.
+fn k0_doc(fx: &Fx, d: &D, module: i64) -> crate::k0::K0Doc {
+    crate::k0::K0Doc { module, src: fx.place(&d.ids.source), tape: fx.place(&d.ids.tape), syms: fx.place(&d.syms).block }
+}
+
+/// `k0_pass`'s rows over `docs`, one call, by relation: each `(row, diff)`, sorted.
+fn k0_rows(fx: &mut Fx, docs: &[crate::k0::K0Doc]) -> Result<Vec<Vec<Vec<i64>>>, crate::kform::Refused> {
+    let runs: Vec<crate::dir::BlockId> = (0..RELATIONS.len()).map(|k| Trace::new(&crate::kform::shape(k)).unwrap().open(&mut fx.dir, 4096)).collect();
+    let ran = crate::k0::k0_pass(&fx.reg, &fx.k0, &mut fx.dir, fx.atoms.0, docs, 1, &runs);
+    let got = runs
+        .iter()
+        .enumerate()
+        .map(|(k, &r)| {
+            let l = fx.dir.read("t", &[r]).unwrap();
+            crate::k0::k0_facts(&l.table(), rerail_delta_twins::k0::RUNS + k, l.block(0))
+        })
+        .collect();
+    runs.into_iter().for_each(|r| fx.dir.release(r));
+    ran.map(|_| got)
+}
+
+/// One `k0_pass` launch over 20 documents (two docs blocks, chained by reference): its rows are those of each
+/// document read alone, its phases launched once each, and a refusal names its own document.
+#[test]
+fn one_k0_pass_launch_reads_every_document() {
+    let mut fx = Fx::new();
+    let docs: Vec<D> = (0..20).map(|i| fx.doc(&format!("e({i}, {}).\np(x) :- e(x, _), !q(x).\n", i + 1), &format!("m{i}.rerail"))).collect();
+    assert!(docs.len() > rerail_delta_twins::k0::DOCS_PER_BLOCK, "past one docs block");
+    let all: Vec<crate::k0::K0Doc> = docs.iter().enumerate().map(|(i, d)| k0_doc(&fx, d, i as i64 + 1)).collect();
+    let one = k0_rows(&mut fx, &all).unwrap();
+    assert_eq!(fx.dir.launches(), 3, "count, scan, place: one launch");
+    let mut each = vec![Vec::new(); RELATIONS.len()];
+    for d in &all {
+        for (k, r) in k0_rows(&mut fx, std::slice::from_ref(d)).unwrap().into_iter().enumerate() {
+            each[k].extend(r);
+        }
+    }
+    each.iter_mut().for_each(|r| r.sort());
+    assert_eq!(one, each);
+    assert!(one[0].len() == 40, "two rules a document");
+    // A refusal names its own document.
+    let bad = fx.doc("n(c) :- c = count : { e(_, _) }.\n", "bad.rerail");
+    let mut with_bad = all.clone();
+    with_bad.insert(17, k0_doc(&fx, &bad, 99));
+    let e = k0_rows(&mut fx, &with_bad).unwrap_err();
+    assert_eq!(e.module, 99, "{e}");
+    assert!(e.why.contains("not K0"), "{e}");
 }

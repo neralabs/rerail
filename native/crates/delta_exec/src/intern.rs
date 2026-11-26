@@ -16,10 +16,12 @@ use rerail_delta_twins::intern::{self as twin, InternP};
 /// One phase, one item: the whole document, its new ids in node order (a hash build, then a scan).
 static INTERN_PHASE: [Phase; 1] = [Phase { name: "intern", found: Found::Fixed, unit: Unit::Threadgroup, inside: Inside::Nothing, across: Across::Nothing, output: Output::InPlace, bounds: &[] }];
 
-/// `intern`: read the document's tape block · rw the atoms · rw the document's symbols block.
+/// `intern`: read the document's source and tape (their blocks, which may be one) · rw the atoms · rw the document's
+/// symbols block.
 pub static INTERN: Signature = Signature::new(
     "intern",
     &[
+        SlotSpec { name: "source", mode: Mode::Read, kind: kind::TAPE },
         SlotSpec { name: "tape", mode: Mode::Read, kind: kind::TAPE },
         SlotSpec { name: "atoms", mode: Mode::ReadWrite, kind: kind::ATOMS },
         SlotSpec { name: "syms", mode: Mode::ReadWrite, kind: kind::FACTS },
@@ -33,7 +35,7 @@ pub static INTERN: Signature = Signature::new(
 /// The written slots' facts by meaning: the atoms' strings by id (by their bytes), and the document's nodes' symbols.
 pub fn intern_facts(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     match slot {
-        1 => (1..1 + count_in(bytes)).map(|id| {
+        twin::ATOMS => (1..1 + count_in(bytes)).map(|id| {
             let mut r = vec![i64::from(id)];
             r.extend(name_in(bytes, id).unwrap_or("").bytes().map(i64::from));
             r
@@ -59,18 +61,12 @@ impl InternOps {
     }
 }
 
-/// Interns the document whose source and tape lie at `src` and `tape` (one tape block), answered at `path` as
+/// Interns the document whose source and tape lie at `src` and `tape`, answered at `path` as
 /// `module`: its symbols block (node → symbol), made here, written by `intern` (which adds its new names to `atoms`),
 /// frozen and housed as a blob.
 #[allow(clippy::too_many_arguments)]
 pub fn intern(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut Blobs, atoms: Atoms, src: Placed, tape: Placed, path: &str, module: &str) -> Result<BlobId, String> {
-    if src.block != tape.block {
-        return Err("a document's source and tape in two blocks".into());
-    }
-    let n = {
-        let l = dir.read("intern", &[tape.block])?;
-        crate::files::reads(l.block(0), src, tape).len()
-    };
+    let n = crate::files::nodes(dir, src, tape)?;
     let body = twin::syms_bytes(n, path, module);
     let id = dir.make(kind::FACTS, body);
     let made = (|| {
@@ -81,7 +77,7 @@ pub fn intern(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut 
         }
         let mut p = vec![0u8; InternP::SIZE];
         InternP { src_at: src.at as u64, src_len: src.len as u64, tape_at: tape.at as u64, tape_len: tape.len as u64 }.write(&mut p);
-        run_cpu(reg, dir, ops.intern, &[tape.block, atoms.0, id], &p, Tiling::WHOLE)?;
+        run_cpu(reg, dir, ops.intern, &[src.block, tape.block, atoms.0, id], &p, Tiling::WHOLE)?;
         dir.freeze(id)?;
         blobs.house(dir, Placed { block: id, at: BODY_AT, len: body })
     })();

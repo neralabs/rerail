@@ -460,6 +460,12 @@ def b6(failures: list) -> None:
     if not re.search(r"drop_parts\([^;]*out\.kept\(|out\.kept\([^;]*drop_parts\(", code, flags=re.S):
         failures.append("l1.rs: a gone document is not retracted from its kept rows (drop_parts over out.kept, P§3)")
     hits(l1, code, r"\bpass\([^;]*,\s*-1\s*,|k0_pass\([^;]*,\s*-1\s*,", "an old tape read again with -1 (retract the kept rows, P§3)", failures)
+    if len(re.findall(r"\bk0_pass\(", code)) != 1:
+        failures.append("l1.rs: k0_pass called at more than one place (one launch reads every changed tape)")
+    if not re.search(r"pub fn k0_pass\([^)]*docs: &\[K0Doc\]", k0):
+        failures.append("k0.rs: k0_pass does not take every document of the run (one launch)")
+    if len(re.findall(r"\brun_cpu\(", strip_rust(k0))) != 1:
+        failures.append("k0.rs: k0_pass launched at more than one place")
     if not re.search(r'DROP_PARTS: &\[TwinPhase\]', (TWINS / "src/drop.rs").read_text()):
         failures.append("delta_twins/src/drop.rs: drop_parts has no twin")
     for path in sorted((CRATE / "src").rglob("*.rs")):

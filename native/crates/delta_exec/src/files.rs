@@ -13,7 +13,9 @@
 //! - the source and the tape are each a blob (P§11.4: "source text, tapes: blobs, by content"), housed from their
 //!   placed bytes (`Blobs::house`, P§12 item 1: `house(bytes: Placed) -> BlobId`, "takes bytes where they lie", as
 //!   the store's objects are), named by the sha256 of their bytes and read where they lie (`Blobs::get`), never
-//!   versioned: changed bytes are a new blob.
+//!   versioned: changed bytes are a new blob. Each is its own blob, so a new source whose tape is the same bytes as
+//!   an earlier document's (the tape holds the shape, not the text) has its tape where that one's lies: a document's
+//!   source and tape may lie in two blocks, and every reader takes the two places (`reads`).
 //!
 //! The tape port's bistate (`Doc`) is ∅ → tape on the first answer, the identity while the digest is unchanged, and
 //! the old tape → the new one when it changed: the file is the grain. A file that does not parse, is not UTF-8, or
@@ -106,10 +108,18 @@ pub struct DocIds {
     pub tape: BlobId,
 }
 
-/// A document's reads, its tape and its source where they lie, in `block`, its tape block's bytes (a launch's).
-pub fn reads<'b>(block: &'b [u8], source: Placed, tape: Placed) -> crate::tape::Reads<'b> {
-    let src = std::str::from_utf8(&block[source.at..source.at + source.len]).expect("a source the file layer checked is UTF-8");
-    crate::tape::Reads::in_place(&block[tape.at..tape.at + tape.len], src).expect("a tape the parser wrote")
+/// A document's reads, its source and its tape where they lie: `src_block` and `tape_block` the bytes of the blocks
+/// they lie in (a launch's). The two are blobs of their own, by content, so they may lie in two blocks: a new
+/// source whose tape is the same bytes as an earlier document's has its tape where that one's lies.
+pub fn reads<'b>(src_block: &'b [u8], source: Placed, tape_block: &'b [u8], tape: Placed) -> crate::tape::Reads<'b> {
+    let src = std::str::from_utf8(&src_block[source.at..source.at + source.len]).expect("a source the file layer checked is UTF-8");
+    crate::tape::Reads::in_place(&tape_block[tape.at..tape.at + tape.len], src).expect("a tape the parser wrote")
+}
+
+/// The nodes of the document whose source and tape lie at `source` and `tape`, read where they lie.
+pub fn nodes(dir: &Directory, source: Placed, tape: Placed) -> Result<usize, String> {
+    let l = dir.read("a document's nodes", &[source.block, tape.block])?;
+    Ok(reads(l.block(0), source, l.block(1), tape).len())
 }
 
 /// A document's tape port: its path relative to the root, the module its answer names, and its bistate, from the

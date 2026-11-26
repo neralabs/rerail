@@ -1136,3 +1136,32 @@ Checks (Relax, local, `rerail-delta-exec --lib` 69 of 69):
 
 The shape script's `B6` section now also holds L1 to its atoms as a global port (no `Atoms` beside its ports), to
 retracting through `drop_parts` over `out.kept`, and to no old tape read again with −1.
+
+**One `k0_pass` launch reads every changed tape**. Its slots are a docs block, the atoms, control and the eight runs
+blocks.
+
+- The docs block refers to each document's source, tape and symbols blocks (`Directory::refer`, each frozen). It
+  lists each document's module and where its source and its tape lie.
+- A block refers to at most `MAX_REFS` (30) others, so past 9 documents the docs blocks are chained: each refers to
+  the next. They are made back to front, because a block refers only to frozen ones. The launch reaches every block
+  by reference and reads each where it lies.
+- An item is a statement of any document, numbered across all the documents in order. A refusal is the first by
+  document and node order, and control names its document.
+- L1 gathers its added documents (in `delta`) or its live ones (in `run`) and calls `k0_pass` once. Its parameters
+  are the first docs block and the sign.
+
+Found on the way, and fixed here: the change that made source and tape two blobs let a new source share an earlier
+document's tape. A tape holds a document's shape, not its text, so two sources of the same shape have one tape blob.
+The new source's tape then lies in the earlier block, and `intern` refused it ("a document's source and tape in two
+blocks"). Every reader now takes the two places, each read in its own block: `files::reads`, `files::nodes`,
+`intern`'s slots (source, tape, atoms, symbols) and the docs block's three references per document.
+
+Checks (Relax, local, 71 of 71):
+
+- `one_k0_pass_launch_reads_every_document`: 20 documents, so two docs blocks, chained. Their rows equal those of
+  each document read alone. The launch is 3 phase launches in all (`Directory::launches`). A refusal at the 18th
+  document names that document.
+- `a_new_source_may_share_an_earlier_tape`: two sources of one shape. The second's tape blob is the first's, in
+  another block, and is read through `reads` from the two blocks.
+
+The shape script holds `l1.rs` to one `k0_pass` call, and `k0.rs` to one launch over `docs: &[K0Doc]`.
