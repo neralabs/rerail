@@ -1,0 +1,1 @@
+A checkout's saved scan settings whose stored text is damaged no longer stop Rerail in that checkout: they read as the defaults, so its sessions start and its rules run, and `rerail settings` can save new ones over them. A damaged scan request is left out of its session's scans rather than failing them. `daemon.log` names the row.
