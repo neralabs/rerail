@@ -89,6 +89,39 @@ a time, not rows of a block. Every index is a derived index in its relation's bl
 
 Each step is measured W against the head on `all`, with the same rows, and its result written here.
 
+### Step 1, as built
+
+- `logic::access` (in `rerail-logic-core`, which setfix and the planner both read; the planner's base sits above
+  setfix): `Access`, `Kind`, `Available`, `Use`, and the price of a membership index (`build_ns`, `saves_ns`,
+  `pays`).
+- `blocks::relation::FILTER`: a relation's membership filter on several columns in its block, in `bloom`'s format
+  (decision 0488), placed by `bloom::key` (`try_add_filter`, `find_filter`, `filter_may_hold`), given back with the
+  block's other indexes. `facts::rows::InBlock::own_filter` finds one, or builds it for the build ahead.
+- setfix `access`: `needs` (a membership step's `Access`: node bits for one column, a filter for several, sorted),
+  `observe` (each stratum's steps' tests and finds, added to the run's `Observed` when `step_counts` takes them),
+  and `prefetch` (the level's build ahead, in parallel: each observed `Access` on a relation the level reads whose
+  use pays, built into its block). `RERAIL_INDEX_AHEAD=off` builds none.
+- The walker and `cands::holds` read node bits, then the filter, before the exact probe. A reader only finds an
+  index: node bits are no longer built at a key's first test (0694 step 1), and a reader that found none looks again
+  only once its relation's builds ahead have moved (`InRel::ahead`).
+- The driver gathers each level's reads (`reads_of`, from the rule bodies) and calls `prefetch_indexes` where the
+  level's count tables are prefetched: a level, a maintained level, and issued components.
+- §3 (the search pricing with `Available`) is not yet wired: the search prices orders in bindings (and the learned
+  model, decision 0354), and a membership test is placed as soon as its columns are bound whatever index it reads,
+  so a filter changes the step's cost, not the order. `Available` enters the search with E5, whose order indexes
+  decide which binding step leads.
+
+Measured on `all` (m1max, load 6–8, the head and this step built from one tree, two runs each, same rows): CPU 128.4
+/ 131.5 s before, 128.7 / 129.1 s after; instructions 1,407 / 1,409 G before, 1,409 / 1,408 G after; peak 2,293 / 2,342
+MB before, 2,342 / 2,333 MB after. No change.
+
+Why (`RERAIL_INDEX_TRACE`): the step's indexes are built and read, but the membership tests that cost time are of
+views, not computed relations. `kind` by two bound columns is 5,541 plans' steps (883 more negated), then `docof`,
+`field` and `child`: E1's. Of the computed relations', most find their row (`rf_def`: 31,480 tests, all found), and
+`nameref`'s misses (6.65 M tests, 22 k found, its filter built) were refused already by 0488's probe screen
+(`join_filter`). So E2's filters save little on `all`, and the catalogue's worth is in the executors that follow,
+E1 first.
+
 ## Consequences
 
 - 0694's node bits are made by the build batch, not at a key's first test.

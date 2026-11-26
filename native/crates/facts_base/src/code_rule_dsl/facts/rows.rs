@@ -2300,6 +2300,27 @@ impl InBlock {
         unsafe { r.try_add_node_bits(&self.facts.block, col, self.rows) }
     }
 
+    /// The relation's membership filter on `cols` over its rows (decision 0706 E2): found, or built now into its
+    /// block when `build`. `None` as `own_node_bits`, or when not built and not `build`.
+    pub fn own_filter(&self, cols: &[u16], build: bool) -> Option<usize> {
+        let r = self.relation();
+        if self.dead != 0 || r.base_rows != 0 || self.far().is_some() {
+            return None;
+        }
+        if let Some(i) = r.find_filter(cols, self.rows) {
+            return Some(i);
+        }
+        if !build {
+            return None;
+        }
+        let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = r.find_filter(cols, self.rows) {
+            return Some(i);
+        }
+        // SAFETY: under the block's index lock; the relation's rows `0..rows` are written.
+        unsafe { r.try_add_filter(&self.facts.block, cols, self.rows) }
+    }
+
     fn own_index_if(&self, cols: &[u16], keys: usize, build: bool) -> Option<usize> {
         let r = self.relation();
         // A chain reaching another block (`far`) is indexed by the device, which binds both; the host reads it by part.

@@ -96,6 +96,13 @@ pub const ORDER_ROWS: u32 = 3;
 /// `Index::ordered`: a node-keyed index of one column (`try_add_node_bits`, decision 0694): `rows` its groups'
 /// directory, `fences` their bits, `mask` the rows it holds. No hashed index's or order's finder finds it.
 pub const NODE_BITS: u32 = 4;
+/// `Index::ordered`: a membership filter on `key` (`try_add_filter`, decision 0706 E2): `fences` its words, in
+/// `bloom`'s format (decision 0488, the reads written once in CLIF), `mask` the rows it holds. A key it answers "no" for is in no row; one it answers
+/// "maybe" for is probed. No hashed index's or order's finder finds it.
+pub const FILTER: u32 = 5;
+/// A membership filter's bits a row (`try_add_filter`): a power of two of `bloom`'s words at least this many bits a
+/// row, so about one absent key in 400 passes (`bloom::K` bits a key).
+pub const FILTER_BITS: usize = 16;
 
 /// A chunk of a relation's block an order is given (`Relation::try_add_order`): its offset, its items, and the bytes
 /// its chunk keeps (0: one it does not own, given back by its owner).
@@ -897,6 +904,83 @@ impl Relation {
         }
     }
 
+    /// Gives this relation a membership filter on `cols` of its rows `0..n` (decision 0706 E2): a blocked Bloom filter
+    /// in `bloom`'s format, `FILTER_BITS` a row at least (its words a power of two), each row's key placed by
+    /// `bloom::key` of its `cols`, in order. A probe whose key it rejects reads no row. Its number; `None` when its
+    /// directory is full or `block` has no room.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s: this relation's descriptor is the caller's to change, its rows `0..n` written.
+    pub unsafe fn try_add_filter(&self, block: &Block, cols: &[u16], n: u32) -> Option<usize> {
+        if n == 0 || cols.is_empty() || cols.len() > MAX_KEY || cols.iter().any(|&c| c as usize >= self.rows.ncols as usize) {
+            return None;
+        }
+        let words = (n as usize * FILTER_BITS).div_ceil(64).next_power_of_two();
+        let (w_at, w_kept) = block.try_alloc_chunk_fit(8 * words, 8)?;
+        let w = block.ptr::<u64>(w_at);
+        // SAFETY: the chunk was just allocated, this index's alone until it is marked built.
+        unsafe {
+            std::ptr::write_bytes(w, 0, words);
+            let mut key = [0i64; MAX_KEY];
+            for id in 0..n {
+                for (k, &c) in key.iter_mut().zip(cols) {
+                    *k = self.get(id, c as usize);
+                }
+                let (i, mask) = crate::bloom::place(crate::bloom::key(&key[..cols.len()]), words);
+                *w.add(i) |= mask;
+            }
+        }
+        // SAFETY: the caller's: this relation's descriptor is ours to change.
+        unsafe {
+            let Some(i) = self.next_entry(block) else {
+                block.free_chunk_fit(w_at, w_kept);
+                return None;
+            };
+            let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
+            (*ix).ncols = 0;
+            (*ix).from = 0;
+            (*ix).state = 0;
+            let mut key = [0u16; MAX_KEY];
+            key[..cols.len()].copy_from_slice(cols);
+            (*ix).key = key;
+            (*ix).ordered = FILTER;
+            (*ix).mask = u64::from(n);
+            (*ix).offs.off.store(0, Relaxed);
+            (*ix).offs.len.store(0, Relaxed);
+            (*ix).tags.off.store(0, Relaxed);
+            (*ix).tags.len.store(0, Relaxed);
+            (*ix).prints.off.store(0, Relaxed);
+            (*ix).prints.len.store(0, Relaxed);
+            Span::set(&raw mut (*ix).rows, w.cast::<u32>(), 0);
+            Span::set(&raw mut (*ix).fences, w.cast::<i64>(), words);
+            (*ix).held = [0, w_kept as u64, 0, 0];
+            self.nindex.fetch_max(i as u32 + 1, Release);
+            std::sync::atomic::fence(Release);
+            std::ptr::write_volatile(&raw mut (*ix).ncols, cols.len() as u32);
+            Some(i)
+        }
+    }
+
+    /// The membership filter on `cols` over its rows `0..rows` (`try_add_filter`), built: its number.
+    pub fn find_filter(&self, cols: &[u16], rows: u32) -> Option<usize> {
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // SAFETY: as `find_index`'s.
+        let built = |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
+        let found = (0..n).find(|&i| ix[i].ordered == FILTER && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].mask == u64::from(rows));
+        std::sync::atomic::fence(Acquire);
+        found
+    }
+
+    /// Whether filter `i` (`find_filter`) may hold the key `bloom::key` places at `h`: `false` is certain (no row has
+    /// it), `true` is to be probed.
+    #[inline]
+    pub fn filter_may_hold(&self, i: usize, h: u64) -> bool {
+        let f = self.index_at(i).fences.as_slice();
+        let (w, mask) = crate::bloom::place(h, f.len());
+        f[w] as u64 & mask == mask
+    }
+
     /// The node-keyed index on `col` over its rows `0..rows` (`try_add_node_bits`), built: its number.
     pub fn find_node_bits(&self, col: u16, rows: u32) -> Option<usize> {
         let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
@@ -1172,7 +1256,7 @@ impl Relation {
                 unsafe { (*std::ptr::from_ref(ix).cast_mut()).state = 0 };
                 continue;
             }
-            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS || ix.ordered == NODE_BITS {
+            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS || ix.ordered == NODE_BITS || ix.ordered == FILTER {
                 // A sorted order's chunks, each as it was given (`try_add_order`), and a node-keyed index's.
                 let spans = [(ix.rows.as_ptr().cast::<u8>(), ix.held[0]), (ix.fences.as_ptr().cast(), ix.held[1]), (ix.tags.as_ptr().cast(), ix.held[2]), (ix.prints.as_ptr().cast(), ix.held[3])];
                 for (p, kept) in spans {

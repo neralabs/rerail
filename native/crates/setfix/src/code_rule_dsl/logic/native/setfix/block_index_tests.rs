@@ -245,6 +245,11 @@ fn a_test_by_one_node_column_reads_the_blocks_node_bits() {
     let rel = InRel::from_flat(flat.clone(), n, vec![b'i'; 2]);
     let ix = rel.index(&[0]);
     let mut hint = 0;
+    // Decision 0706 §5: a reader never builds it; with none built ahead it probes as before.
+    assert_eq!(rel.index(&[0, 1]).node_bits_has(&rel, node(0, 10), &mut hint), None, "none built ahead: none read");
+    assert!(rel.in_block().unwrap().relation().find_node_bits(0, n as u32).is_none(), "and the reader built none");
+    // Built ahead, as the level's batch builds it.
+    rel.in_block().unwrap().own_node_bits(0).expect("room");
     for doc in 0..4 {
         for l in 0..700 {
             let v = node(doc, l);
@@ -254,8 +259,55 @@ fn a_test_by_one_node_column_reads_the_blocks_node_bits() {
     let ib = rel.in_block().unwrap();
     assert!(ib.relation().find_node_bits(0, n as u32).is_some(), "in the relation's block");
     assert_eq!(super::run_counts().node_bits[0].load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(super::run_counts().node_bits[1].load(std::sync::atomic::Ordering::Relaxed), 1, "the index on both columns had none");
     let mut dead = rerail_blocks::vector![0u64; n.div_ceil(64)];
     dead[0] = 1;
     let rel = InRel::held(crate::code_rule_dsl::facts::rows::Rows::frozen(2, flat, n), n, vec![b'i'; 2], dead);
     assert_eq!(rel.index(&[0]).node_bits_has(&rel, node(0, 10), &mut hint), None, "dead rows: probed as before");
+}
+
+/// Decision 0706 step 1 (E2): a membership test by two columns reads the filter its level built ahead, and answers as
+/// its probe; a reader builds none; the run's observed use is keyed by the one `Access` of its columns; and the build
+/// ahead makes a filter only where that use pays for it.
+#[test]
+fn a_test_by_two_columns_reads_the_filter_built_ahead() {
+    use crate::code_rule_dsl::logic::access::{self, Access, Kind, Use};
+    let _run = crate::code_rule_dsl::logic::profile::test_run();
+    let n = 2_000usize;
+    let flat: Vector<i64> = (0..n as i64).flat_map(|id| [id * 7 % 1_000, id % 13]).collect();
+    let rel = InRel::from_flat(flat, n, vec![b'i'; 2]);
+    let _ = rel.name.set("held".into());
+    let ix = rel.index(&[1, 0]);
+    let held: std::collections::BTreeSet<(i64, i64)> = (0..n).map(|r| (rel.at(r).at(0), rel.at(r).at(1))).collect();
+    assert!(!ix.filter_rejects(&rel, &[3, 5]), "none built ahead: nothing rejected");
+    assert!(rel.in_block().unwrap().own_filter(&[0, 1], false).is_none(), "and the reader built none");
+    // A run whose tests mostly missed: the build ahead makes it, for a level reading the relation.
+    let a = Access::membership("held", [1, 0]);
+    assert_eq!(a.kind, Kind::Filter(vec![0, 1]));
+    super::access::seed_observed(a.clone(), Use { tests: 1_000_000, found: 1_000 });
+    assert!(access::pays(&a.kind, n as u64, Use { tests: 1_000_000, found: 1_000 }));
+    let reads = std::iter::once("held".to_owned()).collect();
+    assert_eq!(super::access::prefetch(&reads, |name| (name == "held").then(|| rel.clone())), (1, 1));
+    assert_eq!(super::access::prefetch(&reads, |name| (name == "held").then(|| rel.clone())), (0, 0), "built once");
+    // A fresh index (another plan) finds it; each key it rejects is in no row, and it rejects most absent keys.
+    let ix = rel.index(&[1, 0]);
+    let (mut absent, mut rejected) = (0, 0);
+    for a in 0..1_200i64 {
+        for b in 0..15i64 {
+            let r = ix.filter_rejects(&rel, &[b, a]);
+            if held.contains(&(a, b)) {
+                assert!(!r, "held ({a}, {b}) rejected");
+            } else {
+                absent += 1;
+                rejected += i32::from(r);
+            }
+        }
+    }
+    assert!(rejected * 100 > absent * 95, "{rejected} of {absent} absent keys rejected");
+    // Use that does not pay builds nothing.
+    let other = InRel::from_flat((0..n as i64).flat_map(|id| [id, id]).collect(), n, vec![b'i'; 2]);
+    let _ = other.name.set("hit".into());
+    super::access::seed_observed(Access::membership("hit", [0, 1]), Use { tests: 100, found: 100 });
+    let reads = std::iter::once("hit".to_owned()).collect();
+    assert_eq!(super::access::prefetch(&reads, |name| (name == "hit").then(|| other.clone())), (0, 0));
 }
