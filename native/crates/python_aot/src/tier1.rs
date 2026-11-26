@@ -1874,149 +1874,406 @@ pub fn lex(src: &[u8]) -> Lexed {
             }
         }
     }
-    // mask o_f = ((o_fs1 | o_fd1) | o_fs3) | o_fd3
-    let m_o_f: Vec<u64> = (0..nw).map(|i| (((m_o_fs1[i] | m_o_fd1[i]) | m_o_fs3[i]) | m_o_fd3[i])).collect();
-    // mask o_t = ((o_ts1 | o_td1) | o_ts3) | o_td3
-    let m_o_t: Vec<u64> = (0..nw).map(|i| (((m_o_ts1[i] | m_o_td1[i]) | m_o_ts3[i]) | m_o_td3[i])).collect();
-    // mask f_f = ((f_fs1 | f_fd1) | f_fs3) | f_fd3
-    let m_f_f: Vec<u64> = (0..nw).map(|i| (((m_f_fs1[i] | m_f_fd1[i]) | m_f_fs3[i]) | m_f_fd3[i])).collect();
-    // mask f_t = ((f_ts1 | f_td1) | f_ts3) | f_td3
-    let m_f_t: Vec<u64> = (0..nw).map(|i| (((m_f_ts1[i] | m_f_td1[i]) | m_f_ts3[i]) | m_f_td3[i])).collect();
-    // mask o_str = (((o_s1 | o_d1) | o_s3) | o_d3) | o_f
-    let m_o_str: Vec<u64> = (0..nw).map(|i| ((((m_o_s1[i] | m_o_d1[i]) | m_o_s3[i]) | m_o_d3[i]) | m_o_f[i])).collect();
-    // mask f_str = ((((f_s1 | f_d1) | f_s3) | f_d3) | f_f) | f_t
-    let m_f_str: Vec<u64> = (0..nw).map(|i| (((((m_f_s1[i] | m_f_d1[i]) | m_f_s3[i]) | m_f_d3[i]) | m_f_f[i]) | m_f_t[i])).collect();
-    // mask in_raw = fill(raw_q & o_str, ~f_str) | (f_t & fill(raw_q & o_f, o_f & ~raw_q))
-    let t22: Vec<u64> = (0..nw).map(|i| m_raw_q[i] & m_o_str[i]).collect();
-    let t23: Vec<u64> = (0..nw).map(|i| !m_f_str[i] & lv[i]).collect();
-    let t21 = fill(&t22, &t23);
-    let t25: Vec<u64> = (0..nw).map(|i| m_raw_q[i] & m_o_f[i]).collect();
-    let t26: Vec<u64> = (0..nw).map(|i| m_o_f[i] & (!m_raw_q[i] & lv[i])).collect();
-    let t24 = fill(&t25, &t26);
-    let m_in_raw: Vec<u64> = (0..nw).map(|i| (t21[i] | m_f_t[i] & t24[i])).collect();
-    // mask code = (((~hidden & ~o_cmt) & ~o_str) & ~o_t) & ~o_spec
-    let m_code: Vec<u64> = (0..nw).map(|i| (!m_hidden[i] & lv[i]) & (!m_o_cmt[i] & lv[i]) & (!m_o_str[i] & lv[i]) & (!m_o_t[i] & lv[i]) & (!m_o_spec[i] & lv[i])).collect();
-    // mask t_open = ((o_s3 | o_d3) | o_fs3) | o_fd3
-    let m_t_open: Vec<u64> = (0..nw).map(|i| (((m_o_s3[i] | m_o_d3[i]) | m_o_fs3[i]) | m_o_fd3[i])).collect();
-    // mask t_more = prev(t_open) | prev(t_open, 2)
-    let m_t_more: Vec<u64> = (0..nw).map(|i| (prev(&m_t_open, i, 1) | prev(&m_t_open, i, 2))).collect();
-    // mask s_body = ((f_str & ~o_str) & ~o_t) & ~t_more
-    let m_s_body: Vec<u64> = (0..nw).map(|i| m_f_str[i] & (!m_o_str[i] & lv[i]) & (!m_o_t[i] & lv[i]) & (!m_t_more[i] & lv[i])).collect();
-    // mask body = s_body & ~in_raw
-    let m_body: Vec<u64> = (0..nw).map(|i| m_s_body[i] & (!m_in_raw[i] & lv[i])).collect();
-    // mask r_body = s_body & in_raw
-    let m_r_body: Vec<u64> = (0..nw).map(|i| m_s_body[i] & m_in_raw[i]).collect();
-    // mask esc = (body & bslash) & ~escaped(bslash)
-    let m_esc: Vec<u64> = (0..nw).map(|i| m_body[i] & m_bslash[i] & (!t3[i] & lv[i])).collect();
-    // mask e2 = esc & next(esc_one)
-    let m_e2: Vec<u64> = (0..nw).map(|i| m_esc[i] & next(&m_esc_one, i, 1)).collect();
-    // mask e_x = ((esc & next(x_l)) & next(hex, 2)) & next(hex, 3)
-    let m_e_x: Vec<u64> = (0..nw).map(|i| m_esc[i] & next(&m_x_l, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3)).collect();
-    // mask e_u = ((((esc & next(u_l)) & next(hex, 2)) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)
-    let m_e_u: Vec<u64> = (0..nw).map(|i| m_esc[i] & next(&m_u_l, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3) & next(&m_hex, i, 4) & next(&m_hex, i, 5)).collect();
-    // mask e_uu = ((((((((esc & next(uu_l)) & next(hex, 2)) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)) & next(hex, 6)) & next(hex, 7)) & next(hex, 8)) & next(hex, 9)
-    let m_e_uu: Vec<u64> = (0..nw).map(|i| m_esc[i] & next(&m_uu_l, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3) & next(&m_hex, i, 4) & next(&m_hex, i, 5) & next(&m_hex, i, 6) & next(&m_hex, i, 7) & next(&m_hex, i, 8) & next(&m_hex, i, 9)).collect();
-    // mask e_o3 = ((esc & next(digit)) & next(digit, 2)) & next(digit, 3)
-    let m_e_o3: Vec<u64> = (0..nw).map(|i| m_esc[i] & next(&m_digit, i, 1) & next(&m_digit, i, 2) & next(&m_digit, i, 3)).collect();
-    // mask e_o2 = ((esc & next(digit)) & next(digit, 2)) & ~next(digit, 3)
-    let m_e_o2: Vec<u64> = (0..nw).map(|i| m_esc[i] & next(&m_digit, i, 1) & next(&m_digit, i, 2) & (!next(&m_digit, i, 3) & lv[i])).collect();
-    // mask e_o1 = (esc & next(digit)) & ~next(digit, 2)
-    let m_e_o1: Vec<u64> = (0..nw).map(|i| m_esc[i] & next(&m_digit, i, 1) & (!next(&m_digit, i, 2) & lv[i])).collect();
-    // mask e_any = (((((e2 | e_x) | e_u) | e_uu) | e_o3) | e_o2) | e_o1
-    let m_e_any: Vec<u64> = (0..nw).map(|i| ((((((m_e2[i] | m_e_x[i]) | m_e_u[i]) | m_e_uu[i]) | m_e_o3[i]) | m_e_o2[i]) | m_e_o1[i])).collect();
-    // mask e_last = (((prev(e2 | e_o1) | prev(e_o2, 2)) | prev(e_x | e_o3, 3)) | prev(e_u, 5)) | prev(e_uu, 9)
-    let t30: Vec<u64> = (0..nw).map(|i| (m_e2[i] | m_e_o1[i])).collect();
-    let t31: Vec<u64> = (0..nw).map(|i| (m_e_x[i] | m_e_o3[i])).collect();
-    let m_e_last: Vec<u64> = (0..nw).map(|i| ((((prev(&t30, i, 1) | prev(&m_e_o2, i, 2)) | prev(&t31, i, 3)) | prev(&m_e_u, i, 5)) | prev(&m_e_uu, i, 9))).collect();
-    // mask r_plain = (r_body & ~bslash) & ~(escaped(bslash) & ((quote | bslash) | lf))
-    let m_r_plain: Vec<u64> = (0..nw).map(|i| m_r_body[i] & (!m_bslash[i] & lv[i]) & (!(t3[i] & ((m_quote[i] | m_bslash[i]) | m_lf[i])) & lv[i])).collect();
-    // mask r_none = fill((r_body & ~prev(r_body)) & ~r_plain, r_plain | ~r_body)
-    let t32: Vec<u64> = (0..nw).map(|i| m_r_body[i] & (!prev(&m_r_body, i, 1) & lv[i]) & (!m_r_plain[i] & lv[i])).collect();
-    let t33: Vec<u64> = (0..nw).map(|i| (m_r_plain[i] | !m_r_body[i] & lv[i])).collect();
-    let m_r_none = fill(&t32, &t33);
-    // mask fb = ((f_f & ~o_f) & ~t_more) | (f_t & ~o_t)
-    let m_fb: Vec<u64> = (0..nw).map(|i| (m_f_f[i] & (!m_o_f[i] & lv[i]) & (!m_t_more[i] & lv[i]) | m_f_t[i] & (!m_o_t[i] & lv[i]))).collect();
-    // mask i_at = i_open & prev(f_f | f_t)
-    let t34: Vec<u64> = (0..nw).map(|i| (m_f_f[i] | m_f_t[i])).collect();
-    let m_i_at: Vec<u64> = (0..nw).map(|i| m_i_open[i] & prev(&t34, i, 1)).collect();
-    // mask icode = fill(prev(i_at), o_t | o_spec)
-    let t35: Vec<u64> = (0..nw).map(|i| prev(&m_i_at, i, 1)).collect();
-    let t36: Vec<u64> = (0..nw).map(|i| (m_o_t[i] | m_o_spec[i])).collect();
-    let m_icode = fill(&t35, &t36);
-    // mask lb_t = fb & lbrace
-    let m_lb_t: Vec<u64> = (0..nw).map(|i| m_fb[i] & m_lbrace[i]).collect();
-    // mask rb_t = fb & rbrace
-    let m_rb_t: Vec<u64> = (0..nw).map(|i| m_fb[i] & m_rbrace[i]).collect();
-    // mask esc_ib = ((lb_t & next(lb_t)) & ~escaped(lb_t)) | ((rb_t & next(rb_t)) & ~escaped(rb_t))
-    let t37 = escaped(&m_lb_t);
-    let t38 = escaped(&m_rb_t);
-    let m_esc_ib: Vec<u64> = (0..nw).map(|i| (m_lb_t[i] & next(&m_lb_t, i, 1) & (!t37[i] & lv[i]) | m_rb_t[i] & next(&m_rb_t, i, 1) & (!t38[i] & lv[i]))).collect();
-    // mask conv_at = ((code & bang) & next(conv_l)) & next(o_t | o_spec, 2)
-    let m_conv_at: Vec<u64> = (0..nw).map(|i| m_code[i] & m_bang[i] & next(&m_conv_l, i, 1) & next(&t36, i, 2)).collect();
-    // mask eq_end = (icode & eq) & ~prev((eq | bang) | lt_gt)
-    let m_eq_end: Vec<u64> = (0..nw).map(|i| m_icode[i] & m_eq[i] & (!prev(&t39, i, 1) & lv[i])).collect();
-    // mask w = code & word
-    let m_w: Vec<u64> = (0..nw).map(|i| m_code[i] & m_word[i]).collect();
-    // mask num0 = (w & digit) & ~prev(w)
-    let m_num0: Vec<u64> = (0..nw).map(|i| m_w[i] & m_digit[i] & (!prev(&m_w, i, 1) & lv[i])).collect();
-    // mask e_sign0 = ((code & sign) & prev(exp_l & fill(num0, ~w))) & next(digit)
-    let t42: Vec<u64> = (0..nw).map(|i| !m_w[i] & lv[i]).collect();
-    let t41 = fill(&m_num0, &t42);
-    let t40: Vec<u64> = (0..nw).map(|i| m_exp_l[i] & t41[i]).collect();
-    let m_e_sign0: Vec<u64> = (0..nw).map(|i| m_code[i] & m_sign[i] & prev(&t40, i, 1) & next(&m_digit, i, 1)).collect();
-    // mask int_start = (num0 & ~prev(dot)) & ~prev(e_sign0)
-    let m_int_start: Vec<u64> = (0..nw).map(|i| m_num0[i] & (!prev(&m_dot, i, 1) & lv[i]) & (!prev(&m_e_sign0, i, 1) & lv[i])).collect();
-    // mask n_word = fill(int_start, ~w)
-    let m_n_word = fill(&m_int_start, &t42);
-    // mask hex_n = fill((int_start & zero) & next(x_any), ~w)
-    let t43: Vec<u64> = (0..nw).map(|i| m_int_start[i] & m_zero[i] & next(&m_x_any, i, 1)).collect();
-    let m_hex_n = fill(&t43, &t42);
-    // mask oct_n = fill((int_start & zero) & next(o_any), ~w)
-    let t44: Vec<u64> = (0..nw).map(|i| m_int_start[i] & m_zero[i] & next(&m_o_any, i, 1)).collect();
-    let m_oct_n = fill(&t44, &t42);
-    // mask bin_n = fill((int_start & zero) & next(b_any), ~w)
-    let t45: Vec<u64> = (0..nw).map(|i| m_int_start[i] & m_zero[i] & next(&m_b_any, i, 1)).collect();
-    let m_bin_n = fill(&t45, &t42);
-    // mask ob_n = oct_n | bin_n
-    let m_ob_n: Vec<u64> = (0..nw).map(|i| (m_oct_n[i] | m_bin_n[i])).collect();
-    // mask dot_start = ((code & dot) & next(digit)) & ~prev(w)
-    let m_dot_start: Vec<u64> = (0..nw).map(|i| m_code[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&m_w, i, 1) & lv[i])).collect();
-    // mask n_dot = ((code & dot) & prev((n_word & ~hex_n) & ~ob_n)) | dot_start
-    let t46: Vec<u64> = (0..nw).map(|i| m_n_word[i] & (!m_hex_n[i] & lv[i]) & (!m_ob_n[i] & lv[i])).collect();
-    let m_n_dot: Vec<u64> = (0..nw).map(|i| (m_code[i] & m_dot[i] & prev(&t46, i, 1) | m_dot_start[i])).collect();
-    // mask f_word = fill(prev(n_dot) & w, ~w)
-    let t47: Vec<u64> = (0..nw).map(|i| prev(&m_n_dot, i, 1) & m_w[i]).collect();
-    let m_f_word = fill(&t47, &t42);
-    // mask d_word = ((n_word & ~hex_n) & ~ob_n) | f_word
-    let m_d_word: Vec<u64> = (0..nw).map(|i| (m_n_word[i] & (!m_hex_n[i] & lv[i]) & (!m_ob_n[i] & lv[i]) | m_f_word[i])).collect();
-    // mask n_sign = ((code & sign) & prev(d_word & exp_l)) & next(digit)
-    let t48: Vec<u64> = (0..nw).map(|i| m_d_word[i] & m_exp_l[i]).collect();
-    let m_n_sign: Vec<u64> = (0..nw).map(|i| m_code[i] & m_sign[i] & prev(&t48, i, 1) & next(&m_digit, i, 1)).collect();
-    // mask e_word = fill(prev(n_sign) & w, ~w)
-    let t49: Vec<u64> = (0..nw).map(|i| prev(&m_n_sign, i, 1) & m_w[i]).collect();
-    let m_e_word = fill(&t49, &t42);
-    // mask number = (((n_word | n_dot) | f_word) | n_sign) | e_word
-    let m_number: Vec<u64> = (0..nw).map(|i| ((((m_n_word[i] | m_n_dot[i]) | m_f_word[i]) | m_n_sign[i]) | m_e_word[i])).collect();
-    // mask exp_at = (d_word & exp_l) & (next(digit) | next(n_sign))
-    let m_exp_at: Vec<u64> = (0..nw).map(|i| m_d_word[i] & m_exp_l[i] & (next(&m_digit, i, 1) | next(&m_n_sign, i, 1))).collect();
-    // mask n_letter = (((hex_n & (hex | (x_any & prev(int_start)))) | ((ob_n & (o_any | b_any)) & prev(int_start))) | exp_at) | ((imag_l & (d_word | e_word)) & ~next(number))
-    let m_n_letter: Vec<u64> = (0..nw).map(|i| (((m_hex_n[i] & (m_hex[i] | m_x_any[i] & prev(&m_int_start, i, 1)) | m_ob_n[i] & (m_o_any[i] | m_b_any[i]) & prev(&m_int_start, i, 1)) | m_exp_at[i]) | m_imag_l[i] & (m_d_word[i] | m_e_word[i]) & (!next(&m_number, i, 1) & lv[i]))).collect();
-    // mask word_start = (((((w & alpha) & ~prev(w)) & ~p1) & ~p2) & ~number) & ~prev(conv_at)
-    let m_word_start: Vec<u64> = (0..nw).map(|i| m_w[i] & m_alpha[i] & (!prev(&m_w, i, 1) & lv[i]) & (!m_p1[i] & lv[i]) & (!m_p2[i] & lv[i]) & (!m_number[i] & lv[i]) & (!prev(&m_conv_at, i, 1) & lv[i])).collect();
-    // mask name_more = fill(word_start, ~w) & ~word_start
-    let t50 = fill(&m_word_start, &t42);
-    let m_name_more: Vec<u64> = (0..nw).map(|i| t50[i] & (!m_word_start[i] & lv[i])).collect();
-    // mask second = (prev(two_start) | prev(two_start_three, 2)) & code
-    let m_second: Vec<u64> = (0..nw).map(|i| (prev(&m_two_start, i, 1) | prev(&m_two_start_three, i, 2)) & m_code[i]).collect();
-    // mask ell_at = (((code & dot) & next(dot)) & next(dot, 2)) & ~prev(dot)
-    let m_ell_at: Vec<u64> = (0..nw).map(|i| m_code[i] & m_dot[i] & next(&m_dot, i, 1) & next(&m_dot, i, 2) & (!prev(&m_dot, i, 1) & lv[i])).collect();
-    // mask ell = (ell_at | prev(ell_at)) | prev(ell_at, 2)
-    let m_ell: Vec<u64> = (0..nw).map(|i| ((m_ell_at[i] | prev(&m_ell_at, i, 1)) | prev(&m_ell_at, i, 2))).collect();
-    // mask p_start = ((((code & punct) & ~second) & ~number) & ~conv_at) & ~ell
-    let m_p_start: Vec<u64> = (0..nw).map(|i| m_code[i] & m_punct[i] & (!m_second[i] & lv[i]) & (!m_number[i] & lv[i]) & (!m_conv_at[i] & lv[i]) & (!m_ell[i] & lv[i])).collect();
-    // mask in_br = depth.frame(…)
-    let t53: Vec<u64> = (0..nw).map(|i| (m_code[i] & m_opens[i] | m_i_at[i])).collect();
-    let t54: Vec<u64> = (0..nw).map(|i| ((m_code[i] & m_opens[i] | m_i_at[i]) | (m_code[i] & m_closes[i] | m_o_t[i]))).collect();
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (m_o_t, t23, m_code, m_body, m_r_body, m_esc, m_e_any, m_e_last, m_r_plain, m_r_none, m_fb, m_i_at, t36, m_icode, m_lb_t, m_rb_t, t37, t38).
+    let mut m_o_t = vec![0u64; nw];
+    let mut t23 = vec![0u64; nw];
+    let mut m_code = vec![0u64; nw];
+    let mut m_body = vec![0u64; nw];
+    let mut m_r_body = vec![0u64; nw];
+    let mut m_esc = vec![0u64; nw];
+    let mut m_e_any = vec![0u64; nw];
+    let mut m_e_last = vec![0u64; nw];
+    let mut m_r_plain = vec![0u64; nw];
+    let mut m_r_none = vec![0u64; nw];
+    let mut m_fb = vec![0u64; nw];
+    let mut m_i_at = vec![0u64; nw];
+    let mut t36 = vec![0u64; nw];
+    let mut m_icode = vec![0u64; nw];
+    let mut m_lb_t = vec![0u64; nw];
+    let mut m_rb_t = vec![0u64; nw];
+    let mut t37 = vec![0u64; nw];
+    let mut t38 = vec![0u64; nw];
+    {
+        let mut c_t21 = 0u64;
+        let mut c_t24 = 0u64;
+        let mut p_m_t_open = 0u64;
+        let mut p_m_r_body = 0u64;
+        let mut p_m_e_u = 0u64;
+        let mut p_m_e_uu = 0u64;
+        let mut p_m_e_o2 = 0u64;
+        let mut p_t30 = 0u64;
+        let mut p_t31 = 0u64;
+        let mut c_m_r_none = 0u64;
+        let mut p_t34 = 0u64;
+        let mut p_m_i_at = 0u64;
+        let mut c_m_icode = 0u64;
+        let mut c_t37 = 0u64;
+        let mut c_t38 = 0u64;
+        for i in 0..nw {
+            // mask o_f = ((o_fs1 | o_fd1) | o_fs3) | o_fd3
+            let w_m_o_f = (((m_o_fs1[i] | m_o_fd1[i]) | m_o_fs3[i]) | m_o_fd3[i]);
+            // mask o_t = ((o_ts1 | o_td1) | o_ts3) | o_td3
+            let w_m_o_t = (((m_o_ts1[i] | m_o_td1[i]) | m_o_ts3[i]) | m_o_td3[i]);
+            m_o_t[i] = w_m_o_t;
+            // mask f_f = ((f_fs1 | f_fd1) | f_fs3) | f_fd3
+            let w_m_f_f = (((m_f_fs1[i] | m_f_fd1[i]) | m_f_fs3[i]) | m_f_fd3[i]);
+            // mask f_t = ((f_ts1 | f_td1) | f_ts3) | f_td3
+            let w_m_f_t = (((m_f_ts1[i] | m_f_td1[i]) | m_f_ts3[i]) | m_f_td3[i]);
+            // mask o_str = (((o_s1 | o_d1) | o_s3) | o_d3) | o_f
+            let w_m_o_str = ((((m_o_s1[i] | m_o_d1[i]) | m_o_s3[i]) | m_o_d3[i]) | w_m_o_f);
+            // mask f_str = ((((f_s1 | f_d1) | f_s3) | f_d3) | f_f) | f_t
+            let w_m_f_str = (((((m_f_s1[i] | m_f_d1[i]) | m_f_s3[i]) | m_f_d3[i]) | w_m_f_f) | w_m_f_t);
+            // mask in_raw = fill(raw_q & o_str, ~f_str) | (f_t & fill(raw_q & o_f, o_f & ~raw_q))
+            let w_t22 = m_raw_q[i] & w_m_o_str;
+            let w_t23 = !w_m_f_str & lv[i];
+            t23[i] = w_t23;
+            let w_t21 = {
+                let (s, e) = (w_t22, w_t23);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_t21) ^ s ^ b;
+                let f = s | (!e & into);
+                c_t21 = f >> 63;
+                f
+            };
+            let w_t25 = m_raw_q[i] & w_m_o_f;
+            let w_t26 = w_m_o_f & (!m_raw_q[i] & lv[i]);
+            let w_t24 = {
+                let (s, e) = (w_t25, w_t26);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_t24) ^ s ^ b;
+                let f = s | (!e & into);
+                c_t24 = f >> 63;
+                f
+            };
+            let w_m_in_raw = (w_t21 | w_m_f_t & w_t24);
+            // mask code = (((~hidden & ~o_cmt) & ~o_str) & ~o_t) & ~o_spec
+            let w_m_code = (!m_hidden[i] & lv[i]) & (!m_o_cmt[i] & lv[i]) & (!w_m_o_str & lv[i]) & (!w_m_o_t & lv[i]) & (!m_o_spec[i] & lv[i]);
+            m_code[i] = w_m_code;
+            // mask t_open = ((o_s3 | o_d3) | o_fs3) | o_fd3
+            let w_m_t_open = (((m_o_s3[i] | m_o_d3[i]) | m_o_fs3[i]) | m_o_fd3[i]);
+            // mask t_more = prev(t_open) | prev(t_open, 2)
+            let w_m_t_more = ((w_m_t_open << 1 | p_m_t_open >> 63) | (w_m_t_open << 2 | p_m_t_open >> 62));
+            // mask s_body = ((f_str & ~o_str) & ~o_t) & ~t_more
+            let w_m_s_body = w_m_f_str & (!w_m_o_str & lv[i]) & (!w_m_o_t & lv[i]) & (!w_m_t_more & lv[i]);
+            // mask body = s_body & ~in_raw
+            let w_m_body = w_m_s_body & (!w_m_in_raw & lv[i]);
+            m_body[i] = w_m_body;
+            // mask r_body = s_body & in_raw
+            let w_m_r_body = w_m_s_body & w_m_in_raw;
+            m_r_body[i] = w_m_r_body;
+            // mask esc = (body & bslash) & ~escaped(bslash)
+            let w_m_esc = w_m_body & m_bslash[i] & (!t3[i] & lv[i]);
+            m_esc[i] = w_m_esc;
+            // mask e2 = esc & next(esc_one)
+            let w_m_e2 = w_m_esc & next(&m_esc_one, i, 1);
+            // mask e_x = ((esc & next(x_l)) & next(hex, 2)) & next(hex, 3)
+            let w_m_e_x = w_m_esc & next(&m_x_l, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3);
+            // mask e_u = ((((esc & next(u_l)) & next(hex, 2)) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)
+            let w_m_e_u = w_m_esc & next(&m_u_l, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3) & next(&m_hex, i, 4) & next(&m_hex, i, 5);
+            // mask e_uu = ((((((((esc & next(uu_l)) & next(hex, 2)) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)) & next(hex, 6)) & next(hex, 7)) & next(hex, 8)) & next(hex, 9)
+            let w_m_e_uu = w_m_esc & next(&m_uu_l, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3) & next(&m_hex, i, 4) & next(&m_hex, i, 5) & next(&m_hex, i, 6) & next(&m_hex, i, 7) & next(&m_hex, i, 8) & next(&m_hex, i, 9);
+            // mask e_o3 = ((esc & next(digit)) & next(digit, 2)) & next(digit, 3)
+            let w_m_e_o3 = w_m_esc & next(&m_digit, i, 1) & next(&m_digit, i, 2) & next(&m_digit, i, 3);
+            // mask e_o2 = ((esc & next(digit)) & next(digit, 2)) & ~next(digit, 3)
+            let w_m_e_o2 = w_m_esc & next(&m_digit, i, 1) & next(&m_digit, i, 2) & (!next(&m_digit, i, 3) & lv[i]);
+            // mask e_o1 = (esc & next(digit)) & ~next(digit, 2)
+            let w_m_e_o1 = w_m_esc & next(&m_digit, i, 1) & (!next(&m_digit, i, 2) & lv[i]);
+            // mask e_any = (((((e2 | e_x) | e_u) | e_uu) | e_o3) | e_o2) | e_o1
+            let w_m_e_any = ((((((w_m_e2 | w_m_e_x) | w_m_e_u) | w_m_e_uu) | w_m_e_o3) | w_m_e_o2) | w_m_e_o1);
+            m_e_any[i] = w_m_e_any;
+            // mask e_last = (((prev(e2 | e_o1) | prev(e_o2, 2)) | prev(e_x | e_o3, 3)) | prev(e_u, 5)) | prev(e_uu, 9)
+            let w_t30 = (w_m_e2 | w_m_e_o1);
+            let w_t31 = (w_m_e_x | w_m_e_o3);
+            let w_m_e_last = (((((w_t30 << 1 | p_t30 >> 63) | (w_m_e_o2 << 2 | p_m_e_o2 >> 62)) | (w_t31 << 3 | p_t31 >> 61)) | (w_m_e_u << 5 | p_m_e_u >> 59)) | (w_m_e_uu << 9 | p_m_e_uu >> 55));
+            m_e_last[i] = w_m_e_last;
+            // mask r_plain = (r_body & ~bslash) & ~(escaped(bslash) & ((quote | bslash) | lf))
+            let w_m_r_plain = w_m_r_body & (!m_bslash[i] & lv[i]) & (!(t3[i] & ((m_quote[i] | m_bslash[i]) | m_lf[i])) & lv[i]);
+            m_r_plain[i] = w_m_r_plain;
+            // mask r_none = fill((r_body & ~prev(r_body)) & ~r_plain, r_plain | ~r_body)
+            let w_t32 = w_m_r_body & (!(w_m_r_body << 1 | p_m_r_body >> 63) & lv[i]) & (!w_m_r_plain & lv[i]);
+            let w_t33 = (w_m_r_plain | !w_m_r_body & lv[i]);
+            let w_m_r_none = {
+                let (s, e) = (w_t32, w_t33);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_m_r_none) ^ s ^ b;
+                let f = s | (!e & into);
+                c_m_r_none = f >> 63;
+                f
+            };
+            m_r_none[i] = w_m_r_none;
+            // mask fb = ((f_f & ~o_f) & ~t_more) | (f_t & ~o_t)
+            let w_m_fb = (w_m_f_f & (!w_m_o_f & lv[i]) & (!w_m_t_more & lv[i]) | w_m_f_t & (!w_m_o_t & lv[i]));
+            m_fb[i] = w_m_fb;
+            // mask i_at = i_open & prev(f_f | f_t)
+            let w_t34 = (w_m_f_f | w_m_f_t);
+            let w_m_i_at = m_i_open[i] & (w_t34 << 1 | p_t34 >> 63);
+            m_i_at[i] = w_m_i_at;
+            // mask icode = fill(prev(i_at), o_t | o_spec)
+            let w_t35 = (w_m_i_at << 1 | p_m_i_at >> 63);
+            let w_t36 = (w_m_o_t | m_o_spec[i]);
+            t36[i] = w_t36;
+            let w_m_icode = {
+                let (s, e) = (w_t35, w_t36);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_m_icode) ^ s ^ b;
+                let f = s | (!e & into);
+                c_m_icode = f >> 63;
+                f
+            };
+            m_icode[i] = w_m_icode;
+            // mask lb_t = fb & lbrace
+            let w_m_lb_t = w_m_fb & m_lbrace[i];
+            m_lb_t[i] = w_m_lb_t;
+            // mask rb_t = fb & rbrace
+            let w_m_rb_t = w_m_fb & m_rbrace[i];
+            m_rb_t[i] = w_m_rb_t;
+            // mask esc_ib = ((lb_t & next(lb_t)) & ~escaped(lb_t)) | ((rb_t & next(rb_t)) & ~escaped(rb_t))
+            let w_t37 = {
+                const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
+                let bs = w_m_lb_t;
+                let potential = bs & !c_t37;
+                let series = ((potential << 1) | ODD).wrapping_sub(potential);
+                let escape_and_terminal = series ^ ODD;
+                let escaped = escape_and_terminal ^ (bs | c_t37);
+                c_t37 = (escape_and_terminal & bs) >> 63;
+                escaped
+            };
+            t37[i] = w_t37;
+            let w_t38 = {
+                const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
+                let bs = w_m_rb_t;
+                let potential = bs & !c_t38;
+                let series = ((potential << 1) | ODD).wrapping_sub(potential);
+                let escape_and_terminal = series ^ ODD;
+                let escaped = escape_and_terminal ^ (bs | c_t38);
+                c_t38 = (escape_and_terminal & bs) >> 63;
+                escaped
+            };
+            t38[i] = w_t38;
+            p_m_t_open = w_m_t_open;
+            p_m_r_body = w_m_r_body;
+            p_m_e_u = w_m_e_u;
+            p_m_e_uu = w_m_e_uu;
+            p_m_e_o2 = w_m_e_o2;
+            p_t30 = w_t30;
+            p_t31 = w_t31;
+            p_t34 = w_t34;
+            p_m_i_at = w_m_i_at;
+        }
+    }
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (m_esc_ib, m_conv_at, m_eq_end, m_w, t42, m_int_start, m_hex_n, m_ob_n, m_dot_start, m_n_dot, m_d_word, m_n_sign, m_e_word, m_number).
+    let mut m_esc_ib = vec![0u64; nw];
+    let mut m_conv_at = vec![0u64; nw];
+    let mut m_eq_end = vec![0u64; nw];
+    let mut m_w = vec![0u64; nw];
+    let mut t42 = vec![0u64; nw];
+    let mut m_int_start = vec![0u64; nw];
+    let mut m_hex_n = vec![0u64; nw];
+    let mut m_ob_n = vec![0u64; nw];
+    let mut m_dot_start = vec![0u64; nw];
+    let mut m_n_dot = vec![0u64; nw];
+    let mut m_d_word = vec![0u64; nw];
+    let mut m_n_sign = vec![0u64; nw];
+    let mut m_e_word = vec![0u64; nw];
+    let mut m_number = vec![0u64; nw];
+    {
+        let mut p_m_w = 0u64;
+        let mut c_t41 = 0u64;
+        let mut p_t40 = 0u64;
+        let mut p_m_e_sign0 = 0u64;
+        let mut c_m_n_word = 0u64;
+        let mut c_m_hex_n = 0u64;
+        let mut c_m_oct_n = 0u64;
+        let mut c_m_bin_n = 0u64;
+        let mut p_t46 = 0u64;
+        let mut p_m_n_dot = 0u64;
+        let mut c_m_f_word = 0u64;
+        let mut p_t48 = 0u64;
+        let mut p_m_n_sign = 0u64;
+        let mut c_m_e_word = 0u64;
+        for i in 0..nw {
+            let w_m_esc_ib = (m_lb_t[i] & next(&m_lb_t, i, 1) & (!t37[i] & lv[i]) | m_rb_t[i] & next(&m_rb_t, i, 1) & (!t38[i] & lv[i]));
+            m_esc_ib[i] = w_m_esc_ib;
+            // mask conv_at = ((code & bang) & next(conv_l)) & next(o_t | o_spec, 2)
+            let w_m_conv_at = m_code[i] & m_bang[i] & next(&m_conv_l, i, 1) & next(&t36, i, 2);
+            m_conv_at[i] = w_m_conv_at;
+            // mask eq_end = (icode & eq) & ~prev((eq | bang) | lt_gt)
+            let w_m_eq_end = m_icode[i] & m_eq[i] & (!prev(&t39, i, 1) & lv[i]);
+            m_eq_end[i] = w_m_eq_end;
+            // mask w = code & word
+            let w_m_w = m_code[i] & m_word[i];
+            m_w[i] = w_m_w;
+            // mask num0 = (w & digit) & ~prev(w)
+            let w_m_num0 = w_m_w & m_digit[i] & (!(w_m_w << 1 | p_m_w >> 63) & lv[i]);
+            // mask e_sign0 = ((code & sign) & prev(exp_l & fill(num0, ~w))) & next(digit)
+            let w_t42 = !w_m_w & lv[i];
+            t42[i] = w_t42;
+            let w_t41 = {
+                let (s, e) = (w_m_num0, w_t42);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_t41) ^ s ^ b;
+                let f = s | (!e & into);
+                c_t41 = f >> 63;
+                f
+            };
+            let w_t40 = m_exp_l[i] & w_t41;
+            let w_m_e_sign0 = m_code[i] & m_sign[i] & (w_t40 << 1 | p_t40 >> 63) & next(&m_digit, i, 1);
+            // mask int_start = (num0 & ~prev(dot)) & ~prev(e_sign0)
+            let w_m_int_start = w_m_num0 & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_m_e_sign0 << 1 | p_m_e_sign0 >> 63) & lv[i]);
+            m_int_start[i] = w_m_int_start;
+            // mask n_word = fill(int_start, ~w)
+            let w_m_n_word = {
+                let (s, e) = (w_m_int_start, w_t42);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_m_n_word) ^ s ^ b;
+                let f = s | (!e & into);
+                c_m_n_word = f >> 63;
+                f
+            };
+            // mask hex_n = fill((int_start & zero) & next(x_any), ~w)
+            let w_t43 = w_m_int_start & m_zero[i] & next(&m_x_any, i, 1);
+            let w_m_hex_n = {
+                let (s, e) = (w_t43, w_t42);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_m_hex_n) ^ s ^ b;
+                let f = s | (!e & into);
+                c_m_hex_n = f >> 63;
+                f
+            };
+            m_hex_n[i] = w_m_hex_n;
+            // mask oct_n = fill((int_start & zero) & next(o_any), ~w)
+            let w_t44 = w_m_int_start & m_zero[i] & next(&m_o_any, i, 1);
+            let w_m_oct_n = {
+                let (s, e) = (w_t44, w_t42);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_m_oct_n) ^ s ^ b;
+                let f = s | (!e & into);
+                c_m_oct_n = f >> 63;
+                f
+            };
+            // mask bin_n = fill((int_start & zero) & next(b_any), ~w)
+            let w_t45 = w_m_int_start & m_zero[i] & next(&m_b_any, i, 1);
+            let w_m_bin_n = {
+                let (s, e) = (w_t45, w_t42);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_m_bin_n) ^ s ^ b;
+                let f = s | (!e & into);
+                c_m_bin_n = f >> 63;
+                f
+            };
+            // mask ob_n = oct_n | bin_n
+            let w_m_ob_n = (w_m_oct_n | w_m_bin_n);
+            m_ob_n[i] = w_m_ob_n;
+            // mask dot_start = ((code & dot) & next(digit)) & ~prev(w)
+            let w_m_dot_start = m_code[i] & m_dot[i] & next(&m_digit, i, 1) & (!(w_m_w << 1 | p_m_w >> 63) & lv[i]);
+            m_dot_start[i] = w_m_dot_start;
+            // mask n_dot = ((code & dot) & prev((n_word & ~hex_n) & ~ob_n)) | dot_start
+            let w_t46 = w_m_n_word & (!w_m_hex_n & lv[i]) & (!w_m_ob_n & lv[i]);
+            let w_m_n_dot = (m_code[i] & m_dot[i] & (w_t46 << 1 | p_t46 >> 63) | w_m_dot_start);
+            m_n_dot[i] = w_m_n_dot;
+            // mask f_word = fill(prev(n_dot) & w, ~w)
+            let w_t47 = (w_m_n_dot << 1 | p_m_n_dot >> 63) & w_m_w;
+            let w_m_f_word = {
+                let (s, e) = (w_t47, w_t42);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_m_f_word) ^ s ^ b;
+                let f = s | (!e & into);
+                c_m_f_word = f >> 63;
+                f
+            };
+            // mask d_word = ((n_word & ~hex_n) & ~ob_n) | f_word
+            let w_m_d_word = (w_m_n_word & (!w_m_hex_n & lv[i]) & (!w_m_ob_n & lv[i]) | w_m_f_word);
+            m_d_word[i] = w_m_d_word;
+            // mask n_sign = ((code & sign) & prev(d_word & exp_l)) & next(digit)
+            let w_t48 = w_m_d_word & m_exp_l[i];
+            let w_m_n_sign = m_code[i] & m_sign[i] & (w_t48 << 1 | p_t48 >> 63) & next(&m_digit, i, 1);
+            m_n_sign[i] = w_m_n_sign;
+            // mask e_word = fill(prev(n_sign) & w, ~w)
+            let w_t49 = (w_m_n_sign << 1 | p_m_n_sign >> 63) & w_m_w;
+            let w_m_e_word = {
+                let (s, e) = (w_t49, w_t42);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_m_e_word) ^ s ^ b;
+                let f = s | (!e & into);
+                c_m_e_word = f >> 63;
+                f
+            };
+            m_e_word[i] = w_m_e_word;
+            // mask number = (((n_word | n_dot) | f_word) | n_sign) | e_word
+            let w_m_number = ((((w_m_n_word | w_m_n_dot) | w_m_f_word) | w_m_n_sign) | w_m_e_word);
+            m_number[i] = w_m_number;
+            p_m_w = w_m_w;
+            p_t40 = w_t40;
+            p_m_e_sign0 = w_m_e_sign0;
+            p_t46 = w_t46;
+            p_m_n_dot = w_m_n_dot;
+            p_t48 = w_t48;
+            p_m_n_sign = w_m_n_sign;
+        }
+    }
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (m_exp_at, m_ell, m_p_start, t53, t54, t71, t72, t73, t75, t76, t77, t78, t80).
+    let mut m_exp_at = vec![0u64; nw];
+    let mut m_ell = vec![0u64; nw];
+    let mut m_p_start = vec![0u64; nw];
+    let mut t53 = vec![0u64; nw];
+    let mut t54 = vec![0u64; nw];
+    let mut t71 = vec![0u64; nw];
+    let mut t72 = vec![0u64; nw];
+    let mut t73 = vec![0u64; nw];
+    let mut t75 = vec![0u64; nw];
+    let mut t76 = vec![0u64; nw];
+    let mut t77 = vec![0u64; nw];
+    let mut t78 = vec![0u64; nw];
+    let mut t80 = vec![0u64; nw];
+    {
+        let mut p_m_ell_at = 0u64;
+        let mut c_t74 = 0u64;
+        for i in 0..nw {
+            // mask exp_at = (d_word & exp_l) & (next(digit) | next(n_sign))
+            let w_m_exp_at = m_d_word[i] & m_exp_l[i] & (next(&m_digit, i, 1) | next(&m_n_sign, i, 1));
+            m_exp_at[i] = w_m_exp_at;
+            // mask second = (prev(two_start) | prev(two_start_three, 2)) & code
+            let w_m_second = (prev(&m_two_start, i, 1) | prev(&m_two_start_three, i, 2)) & m_code[i];
+            // mask ell_at = (((code & dot) & next(dot)) & next(dot, 2)) & ~prev(dot)
+            let w_m_ell_at = m_code[i] & m_dot[i] & next(&m_dot, i, 1) & next(&m_dot, i, 2) & (!prev(&m_dot, i, 1) & lv[i]);
+            // mask ell = (ell_at | prev(ell_at)) | prev(ell_at, 2)
+            let w_m_ell = ((w_m_ell_at | (w_m_ell_at << 1 | p_m_ell_at >> 63)) | (w_m_ell_at << 2 | p_m_ell_at >> 62));
+            m_ell[i] = w_m_ell;
+            // mask p_start = ((((code & punct) & ~second) & ~number) & ~conv_at) & ~ell
+            let w_m_p_start = m_code[i] & m_punct[i] & (!w_m_second & lv[i]) & (!m_number[i] & lv[i]) & (!m_conv_at[i] & lv[i]) & (!w_m_ell & lv[i]);
+            m_p_start[i] = w_m_p_start;
+            // mask in_br = depth.frame(…)
+            let w_t53 = (m_code[i] & m_opens[i] | m_i_at[i]);
+            t53[i] = w_t53;
+            let w_t54 = ((m_code[i] & m_opens[i] | m_i_at[i]) | (m_code[i] & m_closes[i] | m_o_t[i]));
+            t54[i] = w_t54;
+            let w_t71 = (m_body[i] | m_r_body[i]) & (!t3[i] & lv[i]) & (((m_f_s3[i] & m_sq[i] & next(&m_sq3_c, i, 1) | m_f_d3[i] & m_dq[i] & next(&m_dq3_c, i, 1)) | (m_f_fs3[i] | m_f_ts3[i]) & m_sq[i] & next(&m_sq3_c, i, 1)) | (m_f_fd3[i] | m_f_td3[i]) & m_dq[i] & next(&m_dq3_c, i, 1));
+            t71[i] = w_t71;
+            let w_t72 = m_esc[i] & next(&m_nn_l, i, 1);
+            t72[i] = w_t72;
+            let w_t74 = {
+                let (s, e) = (m_b_open[i], t23[i]);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_t74) ^ s ^ b;
+                let f = s | (!e & into);
+                c_t74 = f >> 63;
+                f
+            };
+            let w_t73 = m_esc[i] & next(&m_bytes_esc, i, 1) & w_t74;
+            t73[i] = w_t73;
+            let w_t75 = m_r_none[i] & m_r_body[i] & (!next(&m_r_body, i, 1) & lv[i]) & (!m_r_plain[i] & lv[i]);
+            t75[i] = w_t75;
+            let w_t76 = (m_o_t[i] | m_o_spec[i]) & prev(&m_i_at, i, 1);
+            t76[i] = w_t76;
+            let w_t77 = m_fb[i] & m_rbrace[i] & (!m_esc_ib[i] & lv[i]) & (!prev(&m_esc_ib, i, 1) & lv[i]);
+            t77[i] = w_t77;
+            let w_t78 = m_icode[i] & m_hash[i];
+            t78[i] = w_t78;
+            let w_t80 = ((m_o_t[i] | m_o_spec[i]) | m_conv_at[i]) & (prev(&m_eq_end, i, 1) | prev(&m_blank, i, 1) & prev(&m_eq_end, i, 2));
+            t80[i] = w_t80;
+            p_m_ell_at = w_m_ell_at;
+        }
+    }
     // `depth.frame((code & opens) | i_at)`: the frame open before each byte opened by a byte of it.
     let mut m_in_br = vec![0u64; nw];
     {
@@ -2045,23 +2302,6 @@ pub fn lex(src: &[u8]) -> Lexed {
             set(&mut m_in_br, from, n);
         }
     }
-    let t56: Vec<u64> = (0..nw).map(|i| (((m_f_s3[i] | m_f_d3[i]) | m_f_fs3[i]) | m_f_fd3[i])).collect();
-    let t55: Vec<u64> = (0..nw).map(|i| prev(&t56, i, 1) & m_quote[i]).collect();
-    let t58: Vec<u64> = (0..nw).map(|i| (((m_f_s1[i] | m_f_d1[i]) | m_f_fs1[i]) | m_f_fd1[i])).collect();
-    let t57: Vec<u64> = (0..nw).map(|i| prev(&t58, i, 1) & m_quote[i]).collect();
-    let t60: Vec<u64> = (0..nw).map(|i| (m_f_ts3[i] | m_f_td3[i])).collect();
-    let t59: Vec<u64> = (0..nw).map(|i| prev(&t60, i, 1) & m_quote[i]).collect();
-    let t62: Vec<u64> = (0..nw).map(|i| (m_f_ts1[i] | m_f_td1[i])).collect();
-    let t61: Vec<u64> = (0..nw).map(|i| prev(&t62, i, 1) & m_quote[i]).collect();
-    let t71: Vec<u64> = (0..nw).map(|i| (m_body[i] | m_r_body[i]) & (!t3[i] & lv[i]) & (((m_f_s3[i] & m_sq[i] & next(&m_sq3_c, i, 1) | m_f_d3[i] & m_dq[i] & next(&m_dq3_c, i, 1)) | (m_f_fs3[i] | m_f_ts3[i]) & m_sq[i] & next(&m_sq3_c, i, 1)) | (m_f_fd3[i] | m_f_td3[i]) & m_dq[i] & next(&m_dq3_c, i, 1))).collect();
-    let t72: Vec<u64> = (0..nw).map(|i| m_esc[i] & next(&m_nn_l, i, 1)).collect();
-    let t74 = fill(&m_b_open, &t23);
-    let t73: Vec<u64> = (0..nw).map(|i| m_esc[i] & next(&m_bytes_esc, i, 1) & t74[i]).collect();
-    let t75: Vec<u64> = (0..nw).map(|i| m_r_none[i] & m_r_body[i] & (!next(&m_r_body, i, 1) & lv[i]) & (!m_r_plain[i] & lv[i])).collect();
-    let t76: Vec<u64> = (0..nw).map(|i| (m_o_t[i] | m_o_spec[i]) & prev(&m_i_at, i, 1)).collect();
-    let t77: Vec<u64> = (0..nw).map(|i| m_fb[i] & m_rbrace[i] & (!m_esc_ib[i] & lv[i]) & (!prev(&m_esc_ib, i, 1) & lv[i])).collect();
-    let t78: Vec<u64> = (0..nw).map(|i| m_icode[i] & m_hash[i]).collect();
-    let t80: Vec<u64> = (0..nw).map(|i| ((m_o_t[i] | m_o_spec[i]) | m_conv_at[i]) & (prev(&m_eq_end, i, 1) | prev(&m_blank, i, 1) & prev(&m_eq_end, i, 2))).collect();
     let mut refused = escapes;
     // a triple-quoted string closed by four quotes or more
     refused |= any(&t71);
@@ -2081,12 +2321,29 @@ pub fn lex(src: &[u8]) -> Lexed {
     refused |= any(&m_i_deep);
     // an interpolation's `=`
     refused |= any(&t80);
-    let t127: Vec<u64> = (0..nw).map(|i| m_lf[i] & m_code[i] & (!m_in_br[i] & lv[i])).collect();
-    let t128: Vec<u64> = (0..nw).map(|i| m_code[i] & (m_blank[i] | m_lf[i])).collect();
-    let t130: Vec<u64> = (0..nw).map(|i| m_esc[i] & (!m_e_any[i] & lv[i])).collect();
-    let t137: Vec<u64> = (0..nw).map(|i| (m_int_start[i] | m_dot_start[i])).collect();
-    let t160: Vec<u64> = (0..nw).map(|i| (m_n_dot[i] | m_exp_at[i])).collect();
-    let t167: Vec<u64> = (0..nw).map(|i| prev(&m_conv_at, i, 1)).collect();
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t127, t128, t130, t137, t160, t167).
+    let mut t127 = vec![0u64; nw];
+    let mut t128 = vec![0u64; nw];
+    let mut t130 = vec![0u64; nw];
+    let mut t137 = vec![0u64; nw];
+    let mut t160 = vec![0u64; nw];
+    let mut t167 = vec![0u64; nw];
+    {
+        for i in 0..nw {
+            let w_t127 = m_lf[i] & m_code[i] & (!m_in_br[i] & lv[i]);
+            t127[i] = w_t127;
+            let w_t128 = m_code[i] & (m_blank[i] | m_lf[i]);
+            t128[i] = w_t128;
+            let w_t130 = m_esc[i] & (!m_e_any[i] & lv[i]);
+            t130[i] = w_t130;
+            let w_t137 = (m_int_start[i] | m_dot_start[i]);
+            t137[i] = w_t137;
+            let w_t160 = (m_n_dot[i] | m_exp_at[i]);
+            t160[i] = w_t160;
+            let w_t167 = prev(&m_conv_at, i, 1);
+            t167[i] = w_t167;
+        }
+    }
     // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.
     // Room for a record a byte, as the lean lexer's: each token's first byte is after the last's, so the writes need no check.
     let mut recs: Vec<Rec> = Vec::with_capacity(n + 1);
@@ -3236,49 +3493,200 @@ pub fn lex(src: &[u8]) -> Lexed {
     if !refused {
         assert!(code_l == m_code, "code_l is the regions' code");
     }
-    let t89: Vec<u64> = (0..nw).map(|i| code_l[i] & m_word[i]).collect();
-    let t93: Vec<u64> = (0..nw).map(|i| code_l[i] & m_word[i] & m_digit[i] & (!prev(&t89, i, 1) & lv[i])).collect();
-    let t94: Vec<u64> = (0..nw).map(|i| !(code_l[i] & m_word[i]) & lv[i]).collect();
-    let t92 = fill(&t93, &t94);
-    let t91: Vec<u64> = (0..nw).map(|i| m_exp_l[i] & t92[i]).collect();
-    let t90: Vec<u64> = (0..nw).map(|i| code_l[i] & m_sign[i] & prev(&t91, i, 1) & next(&m_digit, i, 1)).collect();
-    let t88: Vec<u64> = (0..nw).map(|i| code_l[i] & m_word[i] & m_digit[i] & (!prev(&t89, i, 1) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!prev(&t90, i, 1) & lv[i])).collect();
-    let t87 = fill(&t88, &t94);
-    let t97: Vec<u64> = (0..nw).map(|i| code_l[i] & m_word[i] & m_digit[i] & (!prev(&t89, i, 1) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!prev(&t90, i, 1) & lv[i]) & m_zero[i] & next(&m_x_any, i, 1)).collect();
-    let t96 = fill(&t97, &t94);
-    let t99: Vec<u64> = (0..nw).map(|i| code_l[i] & m_word[i] & m_digit[i] & (!prev(&t89, i, 1) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!prev(&t90, i, 1) & lv[i]) & m_zero[i] & next(&m_o_any, i, 1)).collect();
-    let t98 = fill(&t99, &t94);
-    let t101: Vec<u64> = (0..nw).map(|i| code_l[i] & m_word[i] & m_digit[i] & (!prev(&t89, i, 1) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!prev(&t90, i, 1) & lv[i]) & m_zero[i] & next(&m_b_any, i, 1)).collect();
-    let t100 = fill(&t101, &t94);
-    let t95: Vec<u64> = (0..nw).map(|i| t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i])).collect();
-    let t104: Vec<u64> = (0..nw).map(|i| (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))).collect();
-    let t103: Vec<u64> = (0..nw).map(|i| prev(&t104, i, 1) & code_l[i] & m_word[i]).collect();
-    let t102 = fill(&t103, &t94);
-    let t105: Vec<u64> = (0..nw).map(|i| (t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i]).collect();
-    let t108: Vec<u64> = (0..nw).map(|i| code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)).collect();
-    let t107: Vec<u64> = (0..nw).map(|i| prev(&t108, i, 1) & code_l[i] & m_word[i]).collect();
-    let t106 = fill(&t107, &t94);
-    let t109: Vec<u64> = (0..nw).map(|i| ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i])).collect();
-    let t86: Vec<u64> = (0..nw).map(|i| ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & m_letter[i] & (!(((t96[i] & (m_hex[i] | m_x_any[i] & prev(&t88, i, 1)) | (t98[i] | t100[i]) & (m_o_any[i] | m_b_any[i]) & prev(&t88, i, 1)) | (t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1))) | m_imag_l[i] & ((t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) | t106[i]) & (!next(&t109, i, 1) & lv[i])) & lv[i])).collect();
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t89, t88, t87, t96, t98, t100, t95, t102, t105, t108, t106, t109).
+    let mut t89 = vec![0u64; nw];
+    let mut t88 = vec![0u64; nw];
+    let mut t87 = vec![0u64; nw];
+    let mut t96 = vec![0u64; nw];
+    let mut t98 = vec![0u64; nw];
+    let mut t100 = vec![0u64; nw];
+    let mut t95 = vec![0u64; nw];
+    let mut t102 = vec![0u64; nw];
+    let mut t105 = vec![0u64; nw];
+    let mut t108 = vec![0u64; nw];
+    let mut t106 = vec![0u64; nw];
+    let mut t109 = vec![0u64; nw];
+    {
+        let mut p_t89 = 0u64;
+        let mut c_t92 = 0u64;
+        let mut p_t91 = 0u64;
+        let mut p_t90 = 0u64;
+        let mut c_t87 = 0u64;
+        let mut c_t96 = 0u64;
+        let mut c_t98 = 0u64;
+        let mut c_t100 = 0u64;
+        let mut p_t95 = 0u64;
+        let mut p_t104 = 0u64;
+        let mut c_t102 = 0u64;
+        let mut p_t105 = 0u64;
+        let mut p_t108 = 0u64;
+        let mut c_t106 = 0u64;
+        for i in 0..nw {
+            let w_t89 = code_l[i] & m_word[i];
+            t89[i] = w_t89;
+            let w_t93 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]);
+            let w_t94 = !(code_l[i] & m_word[i]) & lv[i];
+            let w_t92 = {
+                let (s, e) = (w_t93, w_t94);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_t92) ^ s ^ b;
+                let f = s | (!e & into);
+                c_t92 = f >> 63;
+                f
+            };
+            let w_t91 = m_exp_l[i] & w_t92;
+            let w_t90 = code_l[i] & m_sign[i] & (w_t91 << 1 | p_t91 >> 63) & next(&m_digit, i, 1);
+            let w_t88 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]);
+            t88[i] = w_t88;
+            let w_t87 = {
+                let (s, e) = (w_t88, w_t94);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_t87) ^ s ^ b;
+                let f = s | (!e & into);
+                c_t87 = f >> 63;
+                f
+            };
+            t87[i] = w_t87;
+            let w_t97 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]) & m_zero[i] & next(&m_x_any, i, 1);
+            let w_t96 = {
+                let (s, e) = (w_t97, w_t94);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_t96) ^ s ^ b;
+                let f = s | (!e & into);
+                c_t96 = f >> 63;
+                f
+            };
+            t96[i] = w_t96;
+            let w_t99 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]) & m_zero[i] & next(&m_o_any, i, 1);
+            let w_t98 = {
+                let (s, e) = (w_t99, w_t94);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_t98) ^ s ^ b;
+                let f = s | (!e & into);
+                c_t98 = f >> 63;
+                f
+            };
+            t98[i] = w_t98;
+            let w_t101 = code_l[i] & m_word[i] & m_digit[i] & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_t90 << 1 | p_t90 >> 63) & lv[i]) & m_zero[i] & next(&m_b_any, i, 1);
+            let w_t100 = {
+                let (s, e) = (w_t101, w_t94);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_t100) ^ s ^ b;
+                let f = s | (!e & into);
+                c_t100 = f >> 63;
+                f
+            };
+            t100[i] = w_t100;
+            let w_t95 = w_t87 & (!w_t96 & lv[i]) & (!(w_t98 | w_t100) & lv[i]);
+            t95[i] = w_t95;
+            let w_t104 = (code_l[i] & m_dot[i] & (w_t95 << 1 | p_t95 >> 63) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]));
+            let w_t103 = (w_t104 << 1 | p_t104 >> 63) & code_l[i] & m_word[i];
+            let w_t102 = {
+                let (s, e) = (w_t103, w_t94);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_t102) ^ s ^ b;
+                let f = s | (!e & into);
+                c_t102 = f >> 63;
+                f
+            };
+            t102[i] = w_t102;
+            let w_t105 = (w_t87 & (!w_t96 & lv[i]) & (!(w_t98 | w_t100) & lv[i]) | w_t102) & m_exp_l[i];
+            t105[i] = w_t105;
+            let w_t108 = code_l[i] & m_sign[i] & (w_t105 << 1 | p_t105 >> 63) & next(&m_digit, i, 1);
+            t108[i] = w_t108;
+            let w_t107 = (w_t108 << 1 | p_t108 >> 63) & code_l[i] & m_word[i];
+            let w_t106 = {
+                let (s, e) = (w_t107, w_t94);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_t106) ^ s ^ b;
+                let f = s | (!e & into);
+                c_t106 = f >> 63;
+                f
+            };
+            t106[i] = w_t106;
+            let w_t109 = ((((w_t87 | (code_l[i] & m_dot[i] & (w_t95 << 1 | p_t95 >> 63) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!(w_t89 << 1 | p_t89 >> 63) & lv[i]))) | w_t102) | code_l[i] & m_sign[i] & (w_t105 << 1 | p_t105 >> 63) & next(&m_digit, i, 1)) | w_t106);
+            t109[i] = w_t109;
+            p_t89 = w_t89;
+            p_t91 = w_t91;
+            p_t90 = w_t90;
+            p_t95 = w_t95;
+            p_t104 = w_t104;
+            p_t105 = w_t105;
+            p_t108 = w_t108;
+        }
+    }
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t86).
+    let mut t86 = vec![0u64; nw];
+    {
+        for i in 0..nw {
+            let w_t86 = ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & m_letter[i] & (!(((t96[i] & (m_hex[i] | m_x_any[i] & prev(&t88, i, 1)) | (t98[i] | t100[i]) & (m_o_any[i] | m_b_any[i]) & prev(&t88, i, 1)) | (t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1))) | m_imag_l[i] & ((t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) | t106[i]) & (!next(&t109, i, 1) & lv[i])) & lv[i]);
+            t86[i] = w_t86;
+        }
+    }
     // a number with a letter it does not take
     refused |= any(&t86);
-    let t110: Vec<u64> = (0..nw).map(|i| ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & m_us[i] & (!((prev(&m_digit, i, 1) & next(&m_digit, i, 1) & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t96[i] & prev(&t111, i, 1) & next(&m_hex, i, 1)) | (t98[i] | t100[i]) & prev(&t112, i, 1) & next(&m_digit, i, 1)) & lv[i])).collect();
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t110).
+    let mut t110 = vec![0u64; nw];
+    {
+        for i in 0..nw {
+            let w_t110 = ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & m_us[i] & (!((prev(&m_digit, i, 1) & next(&m_digit, i, 1) & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t96[i] & prev(&t111, i, 1) & next(&m_hex, i, 1)) | (t98[i] | t100[i]) & prev(&t112, i, 1) & next(&m_digit, i, 1)) & lv[i]);
+            t110[i] = w_t110;
+        }
+    }
     // a number with an `_` not between digits
     refused |= any(&t110);
-    let t113: Vec<u64> = (0..nw).map(|i| (t98[i] & m_not_oct[i] | t100[i] & m_not_bin[i])).collect();
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t113).
+    let mut t113 = vec![0u64; nw];
+    {
+        for i in 0..nw {
+            let w_t113 = (t98[i] & m_not_oct[i] | t100[i] & m_not_bin[i]);
+            t113[i] = w_t113;
+        }
+    }
     // an octal or a binary number with a digit past its base
     refused |= any(&t113);
-    let t114: Vec<u64> = (0..nw).map(|i| (t98[i] | t100[i]) & (m_o_any[i] | m_b_any[i]) & prev(&t88, i, 1) & (!next(&t115, i, 1) & lv[i])).collect();
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t114).
+    let mut t114 = vec![0u64; nw];
+    {
+        for i in 0..nw {
+            let w_t114 = (t98[i] | t100[i]) & (m_o_any[i] | m_b_any[i]) & prev(&t88, i, 1) & (!next(&t115, i, 1) & lv[i]);
+            t114[i] = w_t114;
+        }
+    }
     // an octal or a binary number with no digits
     refused |= any(&t114);
-    let t119: Vec<u64> = (0..nw).map(|i| (t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1))).collect();
-    let t118: Vec<u64> = (0..nw).map(|i| prev(&t119, i, 1) & ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i])).collect();
-    let t120: Vec<u64> = (0..nw).map(|i| !((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & lv[i]).collect();
-    let t117 = fill(&t118, &t120);
-    let t116: Vec<u64> = (0..nw).map(|i| ((t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1)) | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) & t117[i]).collect();
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t116).
+    let mut t116 = vec![0u64; nw];
+    {
+        let mut p_t119 = 0u64;
+        let mut c_t117 = 0u64;
+        for i in 0..nw {
+            let w_t119 = (t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1));
+            let w_t118 = (w_t119 << 1 | p_t119 >> 63) & ((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]);
+            let w_t120 = !((((t87[i] | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) | t102[i]) | code_l[i] & m_sign[i] & prev(&t105, i, 1) & next(&m_digit, i, 1)) | t106[i]) & lv[i];
+            let w_t117 = {
+                let (s, e) = (w_t118, w_t120);
+                let b = !e | s;
+                let into = s.wrapping_add(b).wrapping_add(c_t117) ^ s ^ b;
+                let f = s | (!e & into);
+                c_t117 = f >> 63;
+                f
+            };
+            let w_t116 = ((t87[i] & (!t96[i] & lv[i]) & (!(t98[i] | t100[i]) & lv[i]) | t102[i]) & m_exp_l[i] & (next(&m_digit, i, 1) | next(&t108, i, 1)) | (code_l[i] & m_dot[i] & prev(&t95, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t89, i, 1) & lv[i]))) & w_t117;
+            t116[i] = w_t116;
+            p_t119 = w_t119;
+        }
+    }
     // a number with more after its exponent
     refused |= any(&t116);
-    let t121: Vec<u64> = (0..nw).map(|i| t96[i] & m_x_any[i] & prev(&t88, i, 1) & (!next(&t122, i, 1) & lv[i])).collect();
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t121).
+    let mut t121 = vec![0u64; nw];
+    {
+        for i in 0..nw {
+            let w_t121 = t96[i] & m_x_any[i] & prev(&t88, i, 1) & (!next(&t122, i, 1) & lv[i]);
+            t121[i] = w_t121;
+        }
+    }
     // a hex number with no digits
     refused |= any(&t121);
     // SAFETY: `len` records written.

@@ -332,3 +332,13 @@ statements and blocks end.
     The corpus test checks the AOT where the interpreter matches the lean parser: tier 1's records, then the tape. It
     matches on all 1642 posthog files. The comparison with the lean parser is python_lean's example `compare_aot`, which
     builds the AOT without its checks.
+64. **Tier 1 makes the masks of its regions in passes over the words, as stage 1 makes the rest.** Each mask made
+    of the regions had been a pass of its own over the file, into a vector of its own: 142 of them in Python's tier 1,
+    84 in Kotlin's. The lean lexer reads each byte once. The masks now go into the pass written last (`Gen::fuse`):
+    each word of a mask is a local of the pass's step (`w_NAME`), a `prev` reads the word before it (`p_NAME`), and
+    `fill`, `escaped` and `toggle` keep their carries (`c_NAME`) from step to step, as stage 1's nodes do. A vector is
+    kept only for a mask that code outside the pass reads. A mask starts a new pass where it would read words not yet
+    made: a `next` of a mask in the same pass, or a mask that the code after the pass's start writes or makes, such as
+    the walk's masks, the token loop's `code_l` or another pass's masks. Python's tier 1 now has 11 passes and
+    Kotlin's 4. JSON's and rr's had no masks of regions. A pass is one statement of the walk (`gate_walk`), and makes
+    each of its masks.

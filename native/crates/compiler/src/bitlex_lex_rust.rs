@@ -850,15 +850,23 @@ fn body2(q: i64, t: i64) -> u8 {
 /// The masks made after stage 1 (`body`): its escapes' tests as they are, and the regions' walk and
 /// the masks of it in a block only a test build makes, which gives out those `rest` reads (the test
 /// build's checks).
-fn gate_walk(body: &str, rest: &str) -> String {
+fn gate_walk(body: &str, rest: &str, passes: &[(String, Vec<String>)]) -> String {
     // Its statements, each with the comments before it.
     let mut stmts: Vec<String> = Vec::new();
     let mut cur = String::new();
     let mut depth = 0i64;
     for line in body.lines() {
+        let t = line.trim();
+        // A pass's marker (`Gen::fuse`): a statement of its own, the masks it makes, in the walk's order.
+        if t.starts_with("//~pass") && depth == 0 {
+            if !cur.trim().is_empty() {
+                stmts.push(std::mem::take(&mut cur));
+            }
+            stmts.push(format!("{line}\n"));
+            continue;
+        }
         cur.push_str(line);
         cur.push('\n');
-        let t = line.trim();
         if t.starts_with("//") {
             continue;
         }
@@ -877,13 +885,17 @@ fn gate_walk(body: &str, rest: &str) -> String {
     });
     // An escape tested over the file that reads a mask the walk makes (Python's, of its regions): the walk is the
     // product's too, in its order, not a test build's alone.
-    let made = |st: &String| {
+    // The names a statement makes: its `let`'s, and every mask of a pass whose marker it holds (`Gen::fuse`).
+    let made = |st: &String| -> Vec<String> {
         let c = code_of(st);
-        let r = c.strip_prefix("let ")?;
-        let r = r.strip_prefix("mut ").unwrap_or(r);
-        Some(r.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect::<String>())
+        let mut out: Vec<String> = passes.iter().filter(|(m, _)| st.contains(m.as_str())).flat_map(|(_, ns)| ns.iter().cloned()).collect();
+        if let Some(r) = c.strip_prefix("let ") {
+            let r = r.strip_prefix("mut ").unwrap_or(r);
+            out.push(r.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect::<String>());
+        }
+        out
     };
-    if walk.iter().filter_map(made).any(|name| !name.is_empty() && keep.iter().any(|k| code_of(k).starts_with("refused |=") && uses(k, &name))) {
+    if walk.iter().flat_map(made).any(|name| !name.is_empty() && keep.iter().any(|k| code_of(k).starts_with("refused |=") && uses(k, &name))) {
         return body.to_owned();
     }
     let mut out = keep.concat();
@@ -893,10 +905,7 @@ fn gate_walk(body: &str, rest: &str) -> String {
     // The names the walk makes that the rest reads.
     let mut names: Vec<String> = Vec::new();
     for st in &walk {
-        let c = code_of(st);
-        if let Some(r) = c.strip_prefix("let ") {
-            let r = r.strip_prefix("mut ").unwrap_or(r);
-            let name: String = r.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+        for name in made(st) {
             if !name.is_empty() && (uses(rest, &name) || uses(&out, &name)) && !names.contains(&name) {
                 names.push(name);
             }
@@ -1114,6 +1123,50 @@ struct Gen<'a> {
     /// tokens (`code_l`, `code_escape`): their masks' lines, then their tests.
     code_after: String,
     end_checks: Vec<(String, usize)>,
+    /// The passes over the file's words the masks made of the regions are made in (`fuse`), as stage 1 makes the rest
+    /// in one pass over the blocks: each in the code where its marker is (`pass_marker`), the pass open last too.
+    passes: Vec<Vec<PassNode>>,
+    open_pass: Option<usize>,
+}
+
+/// A mask of a pass over the file's words (`Gen::fuse`): its word at word `i` a local of the step (`w_NAME`), the word
+/// before kept where a `prev` reads it (`p_NAME`), its words in a vector only where code outside the pass reads them.
+struct PassNode {
+    name: String,
+    /// The statement it is, as the body's comment had it.
+    comment: String,
+    /// Its word at `i`: another pass's mask or the walk's at `X[i]`, this pass's at `w_X`.
+    code: String,
+    /// A carry from word to word of its own (`fill`, `escaped`, `toggle`): `c_NAME`.
+    carry: bool,
+    /// A later mask of the pass reads its word before (`prev`).
+    prev: bool,
+}
+
+/// The line that stands for pass `k` in the code until it is written (`Gen::render_passes`).
+fn pass_marker(k: usize) -> String {
+    format!("    //~pass {k}\n")
+}
+
+/// The masks a word's code reads, each with how: `X[i]`, `prev(&X, i, K)`, `next(&X, i, K)`.
+fn pass_operands(code: &str) -> Vec<(String, u8, u32)> {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = Vec::new();
+    for (i, _) in code.match_indices("[i]") {
+        let start = code[..i].rfind(|c: char| !ident(c)).map_or(0, |j| j + 1);
+        if start < i {
+            out.push((code[start..i].to_owned(), 0, 0));
+        }
+    }
+    for (how, f) in [(1u8, "prev(&"), (2u8, "next(&")] {
+        for (i, _) in code.match_indices(f) {
+            let r = &code[i + f.len()..];
+            let name: String = r.chars().take_while(|&c| ident(c)).collect();
+            let k: String = r[name.len()..].trim_start_matches(", i, ").chars().take_while(|c| c.is_ascii_digit()).collect();
+            out.push((name, how, k.parse().unwrap_or(1)));
+        }
+    }
+    out
 }
 
 /// What a name means where a statement reads it: made of the regions or not, its local after stage 1,
@@ -1856,27 +1909,142 @@ impl Gen<'_> {
                 _ => Err(format!("tier 1 as Rust: `{f}`'s argument {i} is no mask")),
             };
             match f.as_str() {
+                // The carried operations, a word at a time with a carry of their own, as stage 1's (`make_node`).
                 "fill" => {
                     let (s, x) = (self.val(ea(0)?)?, self.val(ea(1)?)?);
-                    let _ = writeln!(self.body, "    let {name} = fill(&{s}, &{x});");
+                    let code = format!("{{\n            let (s, e) = ({s}[i], {x}[i]);\n            let b = !e | s;\n            let into = s.wrapping_add(b).wrapping_add(c_{name}) ^ s ^ b;\n            let f = s | (!e & into);\n            c_{name} = f >> 63;\n            f\n        }}");
+                    self.fuse(name, code, true);
                     return Ok(());
                 }
                 "escaped" => {
                     let a = self.val(ea(0)?)?;
-                    let _ = writeln!(self.body, "    let {name} = escaped(&{a});");
+                    let code = format!("{{\n            const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;\n            let bs = {a}[i];\n            let potential = bs & !c_{name};\n            let series = ((potential << 1) | ODD).wrapping_sub(potential);\n            let escape_and_terminal = series ^ ODD;\n            let escaped = escape_and_terminal ^ (bs | c_{name});\n            c_{name} = (escape_and_terminal & bs) >> 63;\n            escaped\n        }}");
+                    self.fuse(name, code, true);
                     return Ok(());
                 }
                 "toggle" => {
                     let a = self.val(ea(0)?)?;
-                    let _ = writeln!(self.body, "    let {name} = toggle(&{a});");
+                    let code = format!("{{\n            let mut v = {a}[i];\n            v ^= v << 1;\n            v ^= v << 2;\n            v ^= v << 4;\n            v ^= v << 8;\n            v ^= v << 16;\n            v ^= v << 32;\n            let v = v ^ 0u64.wrapping_sub(c_{name});\n            c_{name} = v >> 63;\n            v\n        }}");
+                    self.fuse(name, code, true);
                     return Ok(());
                 }
                 _ => {}
             }
         }
         let w = self.word(e)?;
-        let _ = writeln!(self.body, "    let {name}: Vec<u64> = (0..nw).map(|i| {w}).collect();");
+        self.fuse(name, w, false);
         Ok(())
+    }
+
+    /// Mask `name`, its word at `i` `code`, in the pass open last where it may be: one more step of it, as stage 1 makes
+    /// a mask a block at a time. Else in a new pass, here: where it reads a word after its own of the pass's (`next`),
+    /// or a mask the code after the pass's start reads or writes (the walk's, the token loop's `code_l`), whose words
+    /// the pass, where it is, would read before they are made.
+    fn fuse(&mut self, name: &str, code: String, carry: bool) {
+        // The statement's comment, written just before: the mask's own.
+        let mut comment = String::new();
+        if self.body.ends_with('\n') {
+            let last = self.body[..self.body.len() - 1].rfind('\n').map_or(0, |i| i + 1);
+            if self.body[last..].trim_start().starts_with("// ") && !self.body[last..].contains("//~pass") {
+                comment = self.body[last..].to_owned();
+                self.body.truncate(last);
+            }
+        }
+        let ops = pass_operands(&code);
+        let open = self.open_pass.filter(|&k| {
+            let Some(at) = self.body.find(&pass_marker(k)) else { return false };
+            let after = &self.body[at + pass_marker(k).len()..];
+            let mine = |n: &str| self.passes[k].iter().any(|x| x.name == n);
+            // A mask of a pass after it: made after its marker too.
+            let later = |n: &str| self.passes[k + 1..].iter().any(|p| p.iter().any(|x| x.name == n));
+            ops.iter().all(|(n, how, _)| if mine(n) { *how != 2 } else { !uses(after, n) && !later(n) })
+        });
+        let k = match open {
+            Some(k) => k,
+            None => {
+                self.passes.push(Vec::new());
+                let k = self.passes.len() - 1;
+                self.body.push_str(&pass_marker(k));
+                self.open_pass = Some(k);
+                k
+            }
+        };
+        let mut code = code;
+        for (n, how, by) in &ops {
+            let Some(j) = self.passes[k].iter().position(|x| x.name == *n) else { continue };
+            if *how == 1 {
+                code = code.replace(&format!("prev(&{n}, i, {by})"), &format!("(w_{n} << {by} | p_{n} >> {})", 64 - by));
+                self.passes[k][j].prev = true;
+            } else {
+                code = replace_word(&code, &format!("{n}[i]"), &format!("w_{n}"));
+            }
+        }
+        self.passes[k].push(PassNode { name: name.to_owned(), comment, code, carry, prev: false });
+    }
+
+    /// `text` with each pass's marker its code: one loop over the file's words, each mask a local of the step, its words
+    /// kept in a vector where `readers`, `text` outside the pass or another pass reads them.
+    fn render_passes(&self, text: &str, readers: &str) -> String {
+        let mut text = text.to_owned();
+        for (k, nodes) in self.passes.iter().enumerate() {
+            let marker = pass_marker(k);
+            let Some(at) = text.find(&marker) else { continue };
+            let others: Vec<&str> = self.passes.iter().enumerate().filter(|(j, _)| *j != k).flat_map(|(_, p)| p.iter().map(|x| x.code.as_str())).collect();
+            let stored: Vec<bool> = nodes.iter().map(|x| uses(&text, &x.name) || uses(readers, &x.name) || others.iter().any(|c| uses(c, &x.name))).collect();
+            // Live: kept, or read by a live mask of the pass.
+            let mut live = stored.clone();
+            for i in (0..nodes.len()).rev() {
+                if live[i] {
+                    for j in 0..i {
+                        if uses(&nodes[i].code, &format!("w_{}", nodes[j].name)) || uses(&nodes[i].code, &format!("p_{}", nodes[j].name)) {
+                            live[j] = true;
+                        }
+                    }
+                }
+            }
+            let mut out = String::new();
+            if live.iter().any(|l| *l) {
+                let names: Vec<&str> = nodes.iter().zip(&stored).filter(|(_, s)| **s).map(|(x, _)| x.name.as_str()).collect();
+                let _ = writeln!(out, "    // A pass over the file's words: the masks below, each word a local of its step{}.", if names.is_empty() { String::new() } else { format!(", kept for what reads them later ({})", names.join(", ")) });
+                for n in &names {
+                    let _ = writeln!(out, "    let mut {n} = vec![0u64; nw];");
+                }
+                out.push_str("    {
+");
+                for (x, l) in nodes.iter().zip(&live) {
+                    if *l && x.carry {
+                        let _ = writeln!(out, "        let mut c_{} = 0u64;", x.name);
+                    }
+                    if *l && x.prev {
+                        let _ = writeln!(out, "        let mut p_{} = 0u64;", x.name);
+                    }
+                }
+                out.push_str("        for i in 0..nw {
+");
+                for ((x, l), st) in nodes.iter().zip(&live).zip(&stored) {
+                    if !*l {
+                        continue;
+                    }
+                    if !x.comment.is_empty() {
+                        out.push_str(&indent(&x.comment, "        "));
+                    }
+                    let _ = writeln!(out, "            let w_{} = {};", x.name, x.code.replace("\n", "\n    "));
+                    if *st {
+                        let _ = writeln!(out, "            {}[i] = w_{};", x.name, x.name);
+                    }
+                }
+                for (x, l) in nodes.iter().zip(&live) {
+                    if *l && x.prev {
+                        let _ = writeln!(out, "            p_{} = w_{};", x.name, x.name);
+                    }
+                }
+                out.push_str("        }
+    }
+");
+            }
+            text.replace_range(at..at + marker.len(), &out);
+        }
+        text
     }
 
     /// `e`'s word `i`, as code.
@@ -4759,6 +4927,8 @@ impl Gen<'_> {
             out,
             "    // The tokens: each bit of a row's start, in order, its kind its row's.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    for (q, &word) in {all}.iter().enumerate() {{\n        let mut bits = word;\n        while bits != 0 {{\n            let s = 64 * q + bits.trailing_zeros() as usize;\n            bits &= bits - 1;\n            let kind: u32 = {chain}else {{\n                0\n            }};\n            starts.push(s as u32);\n            codes.push(kind);\n        }}\n    }}\n    Lexed {{\n        starts,\n        codes,\n        masks: Masks {{\n{fields_init}        }},\n        refused,\n    }}\n}}\n"
         );
+        // The passes over the file's words, in place: what reads their masks is all written now.
+        let mut out = self.render_passes(&out, "");
         out.push_str(HELPERS);
         if self.body.contains("toggle(&") {
             out.push_str(TOGGLE);
@@ -6320,7 +6490,9 @@ impl Gen<'_> {
             Some((p, ..)) => (p[0].clone(), p[1].clone(), p[2].clone(), p[3].clone(), p[4].clone(), p[5].clone()),
             None => (open_code, branches, token_code, own_code, gap_code, acc_after),
         };
-        let walk = gate_walk(&self.body, &rest);
+        // A pass's marker makes every mask of the pass, for the walk's statements.
+        let made: Vec<(String, Vec<String>)> = self.passes.iter().enumerate().map(|(k, p)| (pass_marker(k), p.iter().map(|x| x.name.clone()).collect())).collect();
+        let walk = gate_walk(&self.body, &rest, &made);
         // The counts' words over the tokens.
         // No count where the loop reads the bytes (`strip_scans`).
         let scan_decl: String = if from_bytes.is_some() { String::new() } else { token_scans.iter().map(|(name, ..)| format!("    let mut c_{} = 0u32;\n", ident(name))).collect() };
@@ -6583,6 +6755,8 @@ impl Gen<'_> {
             }
             out.push_str("        _ => false,\n    }\n}\n");
         }
+        // The passes over the file's words, in place: what reads their masks is all written now.
+        out = self.render_passes(&out, "");
         out.push_str(HELPERS);
         if self.body.contains("toggle(&") {
             out.push_str(TOGGLE);
@@ -7219,6 +7393,23 @@ fn if_chain(chain: &[(String, String)], none: &str, at: &str) -> String {
     out
 }
 
+/// `text` with each `from` that is no part of a longer name (`uses`) `to`.
+fn replace_word(text: &str, from: &str, to: &str) -> String {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = String::new();
+    let mut last = 0;
+    for (i, _) in text.match_indices(from) {
+        if i < last || text[..i].chars().next_back().is_some_and(ident) {
+            continue;
+        }
+        out.push_str(&text[last..i]);
+        out.push_str(to);
+        last = i + from.len();
+    }
+    out.push_str(&text[last..]);
+    out
+}
+
 fn indent(s: &str, p: &str) -> String {
     s.lines().map(|l| if l.is_empty() { "\n".to_owned() } else { format!("{p}{l}\n") }).collect()
 }
@@ -7514,7 +7705,7 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), level: None, deep: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new() }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), level: None, deep: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), passes: Vec::new(), open_pass: None }.source()
 }
 
 /// `code` with no test build's checks (decision 0655 step 3): each `#[cfg(feature = "test-hooks")]` assert and the
