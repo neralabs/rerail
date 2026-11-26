@@ -573,6 +573,10 @@ impl Docs {
         if p.defs.is_some() && u64::from(p.locs() - p.len()) > granules::POSITIONS {
             self.fail(format!("{} has more than {} positions (tokens and lines: core.rerail's span ids)", d.path, granules::POSITIONS));
         }
+        // Ids that are tape positions: the tape below the slots of the spans, and the spans within theirs.
+        if p.tape_ids() && (p.f().len() as u64 > granules::TAPE_POSITIONS || u64::from(p.locs() - p.len() - p.ranks().count(super::Item::Token)) > granules::POSITIONS) {
+            self.fail(format!("{} has more than {} tape nodes or {} spans (ids as tape positions)", d.path, granules::TAPE_POSITIONS, granules::POSITIONS));
+        }
         // A file's lines, for its guests a later round or an admitted value places in it.
         if core && guest.is_none() && let Some(x) = &p.extra {
             self.context.lines_of.write().insert(d.key, Arc::clone(&x.lines));

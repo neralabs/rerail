@@ -473,8 +473,16 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose columns hold every `(column, value)` of `eqs`, ascending: a scan, which a source may do faster
     /// than a `value` call per row.
+    /// Read in row order (`for_rows`): a view of the tape walks each document once, not a point read a row.
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vector<u32> {
-        (0..self.len()).filter(|&r| eqs.iter().all(|&(c, v)| self.value(r, c) == v)).map(|r| r as u32).collect()
+        let columns: Vec<usize> = eqs.iter().map(|&(c, _)| c).collect();
+        let mut out = Vector::new();
+        self.for_rows(&columns, &mut |r, vals| {
+            if eqs.iter().zip(vals).all(|(&(_, v), &x)| x == v) {
+                out.push(r as u32);
+            }
+        });
+        out
     }
     /// A `has` axis the device reads off the tape (decision 0353 step 5): a stage probes it by one column, each
     /// binding's rows walked there (`metal_join::Batch::by_has`). `None` for any other source.

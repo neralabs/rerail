@@ -7297,12 +7297,24 @@ impl InRel {
         let home = crate::code_rule_dsl::facts::rows::Part::for_host(0, n).unwrap_or_else(|e| panic!("a view's index home of {n} rows: {e}"));
         let ib = home.in_block(n as u32);
         let key: Vector<u16> = cols.iter().map(|&c| c as u16).collect();
-        let hash = |i: u32| {
-            let row = self.at(i as usize);
-            cols.iter().fold(rerail_blocks::SEED, |h, &c| rerail_blocks::mix(h, row.at(c)))
-        };
         charge(Unit::IndexEntry, n as u64);
-        let i = ib.own_index_hashed(&key, &hash).expect("room for its one index");
+        let v = self.view.as_ref().expect("a view");
+        let i = if v.whole() {
+            // Every row of the source, its keys' hashes read in row order (`Source::for_rows`: a view of the tape walks
+            // each document once), as the index's build takes them.
+            let src_cols: Vec<usize> = cols.iter().map(|&c| v.column(c)).collect();
+            let mut hashes: Vector<u64> = Vector::with_capacity(n);
+            v.src.for_rows(&src_cols, &mut |_, vals| hashes.push(vals.iter().fold(rerail_blocks::SEED, |h, &x| rerail_blocks::mix(h, x))));
+            debug_assert_eq!(hashes.len(), n);
+            ib.own_index_hashed(&key, &|i: u32| hashes[i as usize])
+        } else {
+            let hash = |i: u32| {
+                let row = self.at(i as usize);
+                cols.iter().fold(rerail_blocks::SEED, |h, &c| rerail_blocks::mix(h, row.at(c)))
+            };
+            ib.own_index_hashed(&key, &hash)
+        }
+        .expect("room for its one index");
         Some((ib, i))
     }
     fn index(&self, cols: &[usize]) -> Arc<Csr> {
