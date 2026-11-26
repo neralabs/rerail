@@ -98,3 +98,18 @@ statements and blocks end.
     trailing comma is a token mark before the closer (`trail`), as Kotlin's: the lean parser keeps that comma and the
     closer. In a type, a name before `[` (a token mark, `generic`) starts a `generic_type`; anything else is an
     expression.
+14. **`retag K inner G A`: the open wrap's first node takes a field.** On entering `A`, the innermost open node, a
+    wrap, becomes a `K`, and the node it holds first (the one it moved) takes field `G` (`NODE_FIELD m=5`). A
+    parameter `a: int` is a `typed_parameter` whose name has no field; `a: int = 1` a `typed_default_parameter` whose
+    name is `name:`, and only the `=` past the type says which. The moved node is the open node's first row in the
+    JIT (the head marks refuse a wrap of a wrap, as `inner` does), the open frame's base in the interpreter; the
+    "moved" state can not serve, since the type's own wraps (`a.B`) move other nodes first. The Rust tier 2 refuses
+    it. A wrap's heads in the supertype table include the kinds its body retags it to.
+15. **An indented level's node keeps the comment lines as deep as its indent** (`CLOSE m=2`). tree-sitter's scanner
+    gives no DEDENT before a comment line at least as deep as the block (`first_comment_indent_length`): the block
+    holds it, and the dedent comes at the first line less deep, comment or code. The dedent mark's bit is at the
+    first line break, so those comments are pending after it when the block closes: its node's close settles the
+    leading ones with a column at least the level's indent, and leaves the rest to its caller, which asks again
+    with its own. It is the indented level's own node only: a statement it closes on the way out (an inner `if`)
+    takes none. `newline` and `dedent` settle (`, settles`), so a comment before a statement's line break is the
+    statement's block's. Whether a dedent comes at all stays the next code line's column, as the scanner's.

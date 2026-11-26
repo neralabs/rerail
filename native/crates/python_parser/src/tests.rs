@@ -51,6 +51,12 @@ fn blocks_are_the_lean_parsers() {
     same(&["if a:\n  if b:\n    c\nd\n", "if a:\n  if b:\n    c\n  d\ne\n", "if a:\n    b\n  c\n", "if a:\n  b\n      c\n"]);
     // The file ends in a block.
     same(&["if a:\n  b", "if a:\n  if b:\n    c"]);
+    // A comment before a statement's line break: the block's, where the line ends it or the file does.
+    same(&["if a:\n  b  # c\n", "if a:\n  b  # c\nd\n", "if a:\n  b  # c\n  d\n", "if a:\n  b  # c", "if a:\n  if b:\n    c  # d\n", "if a:\n  if b:\n    c  # d\n  e\n"]);
+    // A comment line before a dedent: each block's as deep as it, up to the first one less deep
+    // (tree-sitter's scanner dedents past them); one less deep than the next line is the block's.
+    same(&["if a:\n  b\n  # c\nd\n", "if a:\n  b\n# c\nd\n", "if a:\n  b\n  # c\n", "if a:\n  if b:\n    c\n  # d\ne\n", "if a:\n  b\n  # c\n# d\ne\n"]);
+    same(&["if a:\n  b\n# c\n  d\n", "if a:\n  b\n      # c\nd\n"]);
 }
 
 #[test]
@@ -86,6 +92,20 @@ fn primaries_are_the_lean_parsers() {
     same(&["a.b.c\n", "f(x, y=1, *a, **k)\n", "a[1]\n", "a.b(c)[d]\n", "f(x=1)\n", "print(a)\n", "f()\n"]);
     // A trailing comma and its closer are leaves.
     same(&["f(a,)\n", "f(a, b,)\n", "x = [a, b,]\n", "x = (a, b,)\n", "x = (a,)\n", "x = ()\n", "x = (a)\n", "x = []\n", "x = True, False, None\n"]);
+}
+
+#[test]
+fn definitions_are_the_lean_parsers() {
+    same(&["class A:\n    pass\n", "class A(B, metaclass=M):\n    x = 1\n", "class A():\n    pass\n", "class A(B,):\n    pass\n", "def f():\n    pass\n", "async def f():\n    pass\n"]);
+    // Parameters: a name, a default, a type, both, splats, separators; a typed splat.
+    same(&["def f(a, b=1, *args, c: int = 2, **kw) -> int:\n    return a\n", "def f(a, /, b, *, c):\n    pass\n", "def f(a: int, b,):\n    pass\n"]);
+    same(&["def f(*a: int, **k: str):\n    pass\n", "def f(*, a):\n    pass\n", "def f(a=1, b: int = 2):\n    pass\n"]);
+    same(&["@d\ndef f():\n    pass\n", "@a.b(c)\nclass A:\n    pass\n", "@a\n@b\ndef f():\n    pass\n"]);
+}
+
+#[test]
+fn dictionaries_are_the_lean_parsers() {
+    same(&["x = {}\n", "x = {\"a\": 1, \"b\": 2,}\n", "x = {**a}\n", "x = {a, b}\n", "x = {a,}\n", "x = {\"a\": 1}\n", "x = {*a, b}\n"]);
 }
 
 #[test]

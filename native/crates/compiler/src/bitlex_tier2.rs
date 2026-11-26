@@ -430,7 +430,9 @@ impl Emit<'_> {
         }
         self.endings(st);
         if own {
-            self.push("CLOSE", mode, Arg::None);
+            // An indented level's node: the comment lines pending at least as deep as its
+            // indent are its own (`CLOSE m=2`), as tree-sitter's scanner dedents after them.
+            self.push("CLOSE", if st.indented && mode == 0 { 2 } else { mode }, Arg::None);
         }
     }
 
@@ -620,6 +622,11 @@ impl Emit<'_> {
                 }
                 Act::Retag { kind } => {
                     self.push("RETAG", 0, Arg::Kind(kind));
+                    continue;
+                }
+                // Mode 5: the node the open node, a wrap, holds first.
+                Act::Inner { field } => {
+                    self.push("NODE_FIELD", 5, Arg::Field(field));
                     continue;
                 }
                 Act::Merge { kind } => {

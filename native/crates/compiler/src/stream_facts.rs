@@ -534,7 +534,7 @@ pub fn plain_succ(x: &StreamFacts<'_>, pc: usize) -> Vec<usize> {
 /// Whether rows carry marks (`head`): where a field is set on a wrap's inner node, or a reread
 /// may meet a dropped row's place (`native_cpu_stream::TableFns` keeps the same).
 pub fn marks(n: &Structure) -> bool {
-    n.structural.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. } | Op::Reread { .. }))
+    n.structural.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner | On::OpenFirst, .. } | Op::Reread { .. }))
 }
 
 /// The field the word after a node's sets on it (`NODE_FIELD` on the node just made), stored

@@ -291,7 +291,7 @@ impl<'a> G<'a> {
                 Gram::Leaf { rule, .. } if leaves => out.push(rule.clone()),
                 Gram::Sym(n) if !leaves => out.push(n.clone()),
                 Gram::Seq(v) | Gram::Alt(v) => v.iter().for_each(|x| syms(x, leaves, out)),
-                Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => syms(a, leaves, out),
+                Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) => syms(a, leaves, out),
                 Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => syms(body, leaves, out),
                 _ => {}
             }
@@ -452,7 +452,7 @@ impl<'a> G<'a> {
                 (out, empty)
             }
             Gram::Opt(a) | Gram::Star(a) => (self.first(a)?.0, true),
-            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.first(a)?,
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) => self.first(a)?,
             Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.first(body)?,
             Gram::Unless { flag, body } => {
                 let (f, e) = self.first(body)?;
@@ -1154,7 +1154,7 @@ impl<'a> G<'a> {
                 r.extend_from_slice(rest);
                 self.sites(a, &r, caller, out)?;
             }
-            Gram::Opt(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.sites(a, rest, caller, out)?,
+            Gram::Opt(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) => self.sites(a, rest, caller, out)?,
             Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => self.sites(body, rest, caller, out)?,
             Gram::Leaf { rule, .. } => self.sites(&Gram::Sym(rule.clone()), rest, caller, out)?,
             _ => {}
@@ -1423,6 +1423,7 @@ impl<'a> G<'a> {
                 out.push(Op::Field(self.field_const(f)?));
                 out
             }
+            Gram::Inner { .. } => return Err("`retag K inner G`: not in the Rust tier 2".into()),
             Gram::Retag(k, a) => {
                 let mut out = vec![line(format!("self.retag({});", self.kind_const(k)?))];
                 out.extend(self.code(a, rest, rule)?);
@@ -2228,7 +2229,7 @@ impl<'a> G<'a> {
                 let again = self.first_asks(a, &mut HashSet::new()).0 | after;
                 self.walk_asks(a, again, peeks, follow, read);
             }
-            Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.walk_asks(a, after, peeks, follow, read),
+            Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) => self.walk_asks(a, after, peeks, follow, read),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => {
                 self.walk_asks(body, after, peeks, follow, read)
             }
@@ -2274,7 +2275,7 @@ impl<'a> G<'a> {
                 (acc | a, e || empty)
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.first_asks(a, seen).0, true),
-            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.first_asks(a, seen),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) => self.first_asks(a, seen),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => self.first_asks(body, seen),
             Gram::Leaf { rule, .. } => self.first_asks(&Gram::Sym(rule.clone()), seen),
             Gram::Lit(_) | Gram::Balanced { .. } | Gram::Any(_) => (0, false),
@@ -3495,7 +3496,7 @@ fn called(g: &Gram, out: &mut Vec<String>) {
     match g {
         Gram::Sym(n) | Gram::Leaf { rule: n, .. } => out.push(n.clone()),
         Gram::Seq(v) | Gram::Alt(v) => v.iter().for_each(|x| called(x, out)),
-        Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => called(a, out),
+        Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) => called(a, out),
         Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => called(body, out),
         _ => {}
     }

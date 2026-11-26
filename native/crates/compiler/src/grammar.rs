@@ -49,6 +49,9 @@ pub struct StateRow {
     /// `self.term()?; self.field(Field::Value)`: a call of a nested choice, which opens no node,
     /// with a field.
     pub returned_field: u16,
+    /// Its level holds an indent of its own (`indented`, decision 0698): its node, closed, keeps
+    /// the extras pending at least as deep as its indent (`CLOSE m=2`).
+    pub indented: bool,
     /// What its level does where it ends, after the closes inside it, by the kind of the node
     /// it made last (`ending R K …`): `(K, M, G)`, the node relabeled `M` (its field none, the
     /// caller's set at return) with its first child's field `G` (0: none); `M` 0, the level
@@ -81,6 +84,8 @@ pub enum Act {
     ExtraNow,
     /// The innermost open node becomes a `kind` (`retag K A`).
     Retag { kind: u16 },
+    /// The node the innermost open node, a wrap, holds first takes `field` (`retag K inner G`).
+    Inner { field: u16 },
     /// A node of `kind` around the node just made at this level, open (`wrap K F [as M] [in S]`):
     /// it takes that node's field and slot; that node takes `field`, when `moved` is not 0 kind
     /// `moved`, and slot `slot` (0: none; decision 0698).
@@ -183,6 +188,9 @@ pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                 Act::Retag { kind } => {
                     let _ = write!(acts, " retag {kind}");
                 }
+                Act::Inner { field } => {
+                    let _ = write!(acts, " inner {field}");
+                }
                 Act::Merge { kind } => {
                     let _ = write!(acts, " merge {kind}");
                 }
@@ -226,6 +234,9 @@ enum Wrap {
     Super(u16),
     /// `retag K`: entered, the innermost open node becomes a `K`.
     Retag(u16),
+    /// `retag K inner G`: entered, the node the innermost open node, a wrap, holds first takes
+    /// field `G`.
+    Inner(u16),
     /// `wrap K F [as M] [in S]`: entered, a node around the node just made at this level; left,
     /// it closes.
     Wrapped { kind: u16, field: u16, moved: u16, slot: u16 },
@@ -360,9 +371,16 @@ pub fn super_classes(stmts: &[Stmt], ids: &Ids<'_>) -> Result<Vec<(u16, u16, Vec
                     heads(a, choices, retagged, through, out)?;
                 }
             }
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) => heads(a, choices, retagged, through, out)?,
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } => heads(a, choices, retagged, through, out)?,
             Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => heads(body, choices, retagged, through, out)?,
-            Gram::Lit(k) | Gram::Merge(k, _) | Gram::As(k, _) | Gram::Leaf { kind: k, .. } | Gram::Balanced { kind: k, .. } | Gram::Wrap { kind: k, .. } => out.push((k.clone(), vec![])),
+            // A wrap, and the kinds its body retags it to.
+            Gram::Wrap { kind, body, .. } => {
+                out.push((kind.clone(), vec![]));
+                let mut to = Vec::new();
+                retags(body, &mut to);
+                out.extend(to.into_iter().map(|k| (k, vec![])));
+            }
+            Gram::Lit(k) | Gram::Merge(k, _) | Gram::As(k, _) | Gram::Leaf { kind: k, .. } | Gram::Balanced { kind: k, .. } => out.push((k.clone(), vec![])),
             _ => {}
         }
         Ok(())
@@ -420,6 +438,7 @@ fn desugar(g: &Gram, levels: &mut Vec<(String, String, String)>, tokens: &[Strin
         Gram::Plus(a) => Gram::Plus(Box::new(d(a))),
         Gram::Field(f, a) => Gram::Field(f.clone(), Box::new(d(a))),
         Gram::Retag(k, a) => Gram::Retag(k.clone(), Box::new(d(a))),
+        Gram::Inner { field, body } => Gram::Inner { field: field.clone(), body: Box::new(d(body)) },
         Gram::Merge(k, a) if matches!(**a, Gram::Any(_)) => each(d(a), &|x| Gram::Merge(k.clone(), Box::new(x))),
         Gram::As(k, a) if matches!(**a, Gram::Any(_)) => each(d(a), &|x| Gram::As(k.clone(), Box::new(x))),
         Gram::Merge(k, a) => Gram::Merge(k.clone(), Box::new(d(a))),
@@ -535,6 +554,7 @@ impl Builder<'_> {
             Gram::Plus(a) => E::Seq(vec![self.expand(level, a, inlining)?, E::Star(Box::new(self.expand(level, a, inlining)?))]),
             Gram::Field(f, a) => E::Wrap(Wrap::Field((self.ids.field)(f)?), Box::new(self.expand(level, a, inlining)?)),
             Gram::Retag(k, a) => E::Wrap(Wrap::Retag((self.ids.kind)(k)?), Box::new(self.expand(level, a, inlining)?)),
+            Gram::Inner { field, body } => E::Wrap(Wrap::Inner((self.ids.field)(field)?), Box::new(self.expand(level, body, inlining)?)),
             Gram::Wrap { kind, field, moved, slot, body } => {
                 let w = Wrap::Wrapped {
                     kind: (self.ids.kind)(kind)?,
@@ -740,6 +760,7 @@ impl Pending {
                 Wrap::Field(f) => self.field = f,
                 Wrap::Super(s) => self.supers.push(s),
                 Wrap::Retag(kind) => acts.push(Act::Retag { kind }),
+                Wrap::Inner(field) => acts.push(Act::Inner { field }),
                 Wrap::Wrapped { kind, field, moved, slot } => acts.push(Act::Wrap { kind, field, moved, slot }),
                 Wrap::Relabel { field, moved, inner } => acts.push(Act::Relabel { field, moved, inner }),
                 Wrap::Fold(kind) => acts.push(Act::Fold { kind }),
@@ -857,7 +878,7 @@ fn level_ways(levels: &[Level], positions: &[(usize, Pos)], level_of_rule: &Hash
                         Wrap::Relabel { field: 0, moved, inner: 0 } if *moved != 0 && *moved != crate::stream_ir::DEAD && c > 0 => {}
                         Wrap::Reread(_) if d > 0 || c > 0 => {}
                         Wrap::Fold(_) if d > 0 => {}
-                        Wrap::Field(_) | Wrap::Super(_) | Wrap::Retag(_) | Wrap::Flag { .. } | Wrap::Unless(_) => {}
+                        Wrap::Field(_) | Wrap::Super(_) | Wrap::Retag(_) | Wrap::Inner(_) | Wrap::Flag { .. } | Wrap::Unless(_) => {}
                         _ => break 'all false,
                     }
                 }
@@ -1031,7 +1052,7 @@ fn follow_contexts(rules: &[Rule], choices: &[(String, Option<String>, Gram)], l
                 (a, e || x)
             }),
             Gram::Opt(a) | Gram::Star(a) => (first(a, named, hidden).0, true),
-            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => first(a, named, hidden),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => first(a, named, hidden),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => first(body, named, hidden),
         }
     }
@@ -1070,7 +1091,7 @@ fn follow_contexts(rules: &[Rule], choices: &[(String, Option<String>, Gram)], l
                 }
             }
             Gram::Alt(gs) => gs.iter().for_each(|g| walk(g, after, named, hidden, uses)),
-            Gram::Opt(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => walk(a, after, named, hidden, uses),
+            Gram::Opt(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => walk(a, after, named, hidden, uses),
             Gram::Star(a) | Gram::Plus(a) => {
                 let mut again = first(a, named, hidden).0;
                 again.extend(after.iter().cloned());
@@ -1125,7 +1146,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
             Gram::Sym(n) => *uses.entry(n.clone()).or_default() += times,
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().for_each(|g| count(g, times, uses)),
             Gram::Plus(a) => count(a, 2 * times, uses),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => count(a, times, uses),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => count(a, times, uses),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => count(body, times, uses),
             Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } | Gram::Leaf { .. } => {}
         }
@@ -1158,7 +1179,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
             },
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().map(|g| size(g, f, ctx, stack)).sum(),
             Gram::Plus(a) => 2 * size(a, f, ctx, stack),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => size(a, f, ctx, stack),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => size(a, f, ctx, stack),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => size(body, f, ctx, stack),
         }
     }
@@ -1178,7 +1199,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
             Gram::Seq(gs) => gs.iter().all(|g| empty(g, ctx, called, stack)),
             Gram::Alt(gs) => gs.iter().any(|g| empty(g, ctx, called, stack)),
             Gram::Opt(_) | Gram::Star(_) => true,
-            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => empty(a, ctx, called, stack),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => empty(a, ctx, called, stack),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => empty(body, ctx, called, stack),
         }
     }
@@ -1207,7 +1228,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
                 false
             }
             Gram::Alt(gs) => gs.iter().any(|g| merges_first(g, ctx, called, stack)),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => merges_first(a, ctx, called, stack),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => merges_first(a, ctx, called, stack),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => merges_first(body, ctx, called, stack),
         }
     }
@@ -1235,7 +1256,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
                 k
             }
             Gram::Alt(gs) => gs.iter().map(|g| lasts(g, ctx, called, stack)).sum(),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => lasts(a, ctx, called, stack),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => lasts(a, ctx, called, stack),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => lasts(body, ctx, called, stack),
         }
     }
@@ -1268,7 +1289,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
                 }
             }
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().for_each(|g| reach(g, ctx, out)),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => reach(a, ctx, out),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => reach(a, ctx, out),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => reach(body, ctx, out),
             Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } | Gram::Leaf { .. } => {}
         }
@@ -1746,7 +1767,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
     for (s, &i) in order.iter().enumerate() {
         let r = &raw[i];
         let level = find(&mut joined, r.level);
-        states.push(StateRow { level: levels[level].kind, own: levels[r.level].own, end: r.end, refuses: levels[r.level].refuses.clone(), follows: levels[r.level].follows.clone(), split: levels[r.level].split.clone(), rule: level as u16, returned_field: r.returned_field, endings: levels[r.level].endings.clone() });
+        states.push(StateRow { level: levels[level].kind, own: levels[r.level].own, end: r.end, refuses: levels[r.level].refuses.clone(), follows: levels[r.level].follows.clone(), split: levels[r.level].split.clone(), rule: level as u16, returned_field: r.returned_field, indented: levels[r.level].indented, endings: levels[r.level].endings.clone() });
         for (token, acts, q, p, call) in &r.arms {
             arms.push(ArmRow { from: s as u16, token: *token, acts: acts.clone(), to: number[&class[*q]], push: p.iter().map(|&p| number[&class[p]]).collect(), call: *call });
         }
@@ -1934,7 +1955,7 @@ pub fn with_extras(
                 *copies.entry((s, m)).or_insert_with(|| {
                     let c = states.len() as u16;
                     let st = &states[usize::from(s)];
-                    states.push(StateRow { level: st.level, own: st.own, end: end.map(|e| e - m as u8), refuses: st.refuses.clone(), follows: st.follows.clone(), split: st.split.clone(), rule: st.rule, returned_field: 0, endings: st.endings.clone() });
+                    states.push(StateRow { level: st.level, own: st.own, end: end.map(|e| e - m as u8), refuses: st.refuses.clone(), follows: st.follows.clone(), split: st.split.clone(), rule: st.rule, returned_field: 0, indented: st.indented, endings: st.endings.clone() });
                     for a in &mine {
                         arms.push(ArmRow { from: c, acts: a.acts[m..].to_vec(), ..a.clone() });
                     }
@@ -2007,7 +2028,7 @@ pub fn byte_check(g: &Gram, classes: &HashMap<String, Vec<(u32, u32)>>) -> Resul
             Gram::Opt(a) => E::Opt(Box::new(expand(a, classes, sets)?)),
             Gram::Star(a) => E::Star(Box::new(expand(a, classes, sets)?)),
             Gram::Plus(a) => E::Seq(vec![expand(a, classes, sets)?, E::Star(Box::new(expand(a, classes, sets)?))]),
-            Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) | Gram::Flag { .. } | Gram::Unless { .. } | Gram::Leaf { .. } => return Err("check: a tree's notation in a byte grammar".into()),
+            Gram::Field(..) | Gram::Retag(..) | Gram::Inner { .. } | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) | Gram::Flag { .. } | Gram::Unless { .. } | Gram::Leaf { .. } => return Err("check: a tree's notation in a byte grammar".into()),
         })
     }
     let mut sets = Vec::new();

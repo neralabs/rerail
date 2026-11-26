@@ -658,6 +658,10 @@ pub enum Gram {
     /// `retag K A`: on entering `A`, the innermost open node becomes a `K` (its kind decided by
     /// the token `A` starts with).
     Retag(String, Box<Gram>),
+    /// `retag K inner G A`: on entering `A`, the node the innermost open node, a wrap, holds
+    /// first (the node it moved) takes field `G` (`a: int` a `typed_parameter`, its name of no
+    /// field; `a: int = 1` a `typed_default_parameter`, its name `name`).
+    Inner { field: String, body: Box<Gram> },
     /// `merge 'K' A`, `A` a token: its leaf and the leaf just before it become one leaf of kind
     /// `K`, from the first's start to its end (`.` and `decl`, `.decl`).
     Merge(String, Box<Gram>),
@@ -969,7 +973,7 @@ fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
             // A token given a kind of its own, or merged, is a node's: not implied.
             Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter_mut().for_each(|g| mark(g, tokens, found)),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) => mark(a, tokens, found),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } => mark(a, tokens, found),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => mark(body, tokens, found),
         }
     }
@@ -1591,6 +1595,10 @@ impl P {
             }
             "retag" => {
                 let kind = self.ident()?;
+                if self.eat_kw("inner") {
+                    let field = self.ident()?;
+                    return Ok(Gram::Retag(kind, Box::new(Gram::Inner { field, body: Box::new(self.gram_atom()?) })));
+                }
                 Ok(Gram::Retag(kind, Box::new(self.gram_atom()?)))
             }
             "merge" => {
@@ -2770,7 +2778,7 @@ pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
         f(g);
         match g {
             Gram::Seq(v) | Gram::Alt(v) => v.iter().for_each(|x| walk(x, f)),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => walk(a, f),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) => walk(a, f),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => walk(body, f),
             Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
         }
@@ -2859,6 +2867,7 @@ pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
             Gram::Plus(a) => Gram::Plus(Box::new(d(a)?)),
             Gram::Field(f, a) => Gram::Field(f.clone(), Box::new(d(a)?)),
             Gram::Retag(k, a) => Gram::Retag(k.clone(), Box::new(d(a)?)),
+            Gram::Inner { field, body } => Gram::Inner { field: field.clone(), body: Box::new(d(body)?) },
             Gram::Merge(k, a) => Gram::Merge(k.clone(), Box::new(d(a)?)),
             Gram::As(k, a) => Gram::As(k.clone(), Box::new(d(a)?)),
             Gram::Wrap { kind, field, moved, slot, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), slot: slot.clone(), body: Box::new(d(body)?) },

@@ -65,7 +65,8 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // not of kind `operand` (`ending`).
         RETAG => (mode <= 2 && (mode != 0 || operand != REMEMBERED)) || (mode == 3 && usize::from(operand) < program.readings.maps.len()) || (mode == 4 && operand != REMEMBERED),
         // `m=2` with none: `decide`, the node made last has no field of its own (its call's, where it returns).
-        NODE_FIELD => mode <= 4 && (operand != 0 || mode == 2),
+        // `m=5`: the node the innermost open node, a wrap, holds first (`retag K inner G`).
+        NODE_FIELD => mode <= 5 && (operand != 0 || mode == 2),
         // `m=1`: the open node's two leaves, one (`fold`).
         MERGE => mode <= 1 && operand != REMEMBERED,
         WRAP => mode == 0 && operand != REMEMBERED,
@@ -80,7 +81,9 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // A settle's mask, or a `drops`'s or `loses`'s gap pattern (`Words::gap_patterns`).
         SETTLE if mode == 0 => operand < 32 && program.block_programs.first().and_then(|b| b.records.as_ref()).is_some_and(|r| r.own >> operand & 1 == 1),
         SETTLE => mode < SETTLE_MOVE + 1 + 16 && program.gap_patterns.get(usize::from(operand)).is_some_and(|m| usize::from(operand) == 0 || program.gap_patterns[usize::from(operand) - 1].order != m.order),
-        CLOSE => mode <= 1 && operand == 0,
+        // `m=1`: at the token's end; `m=2`: an indented level's node, which keeps the extras
+        // pending at least as deep as the level's indent.
+        CLOSE => mode <= 2 && operand == 0,
         // `m`: the flag the call runs with (`push_flag`), of 16.
         PUSH => mode <= 32 && usize::from(operand) < words,
         RETURN => mode <= 1 && operand == 0,
@@ -855,6 +858,13 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
                 nodes[base].field = operand;
             }
+            NODE_FIELD if mode == 5 => {
+                let (Some(&at), Some(&base)) = (open.last(), bases.last()) else { refuse!('step, pc - 1, "an inner field with no open node") };
+                if !wraps.contains(&at) || link.contains_key(&at) {
+                    refuse!('step, pc - 1, "an inner field on an open node that is no wrap of a plain node");
+                }
+                nodes[base].field = operand;
+            }
             // A call's field where it returns: on the node it made, where that has none.
             NODE_FIELD if mode == 4 => {
                 let Some(Some((r, _))) = lasts_made.last().copied() else { refuse!('step, pc - 1, "a call's field with no node before it") };
@@ -939,6 +949,16 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 lasts_made.pop();
                 if let Some(l) = lasts_made.last_mut() {
                     *l = Some((at, base));
+                }
+                if mode == 2 {
+                    // The leading extras pending at least as deep as the indent: the node's own
+                    // (tree-sitter's scanner dedents only past the comments as deep as the block).
+                    let first = nodes.len() - pending;
+                    let settled = (0..pending).take_while(|&i| column(bytes, nodes[first + i].start) >= indent).count();
+                    if settled > 0 {
+                        keep = nodes[first + settled - 1].end;
+                        pending -= settled;
+                    }
                 }
                 nodes[at].end = if mode == 1 { end } else if pending > 0 { keep } else { last_end };
                 nodes[at].size = (nodes.len() - pending - base) as u32;

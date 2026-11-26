@@ -65,6 +65,8 @@ pub enum On {
     /// A field's only: the node made last at the level, where it has none (a call's field, set
     /// where it returns: the callee's own field, or its relabel's, is kept).
     MadeUnset = 4,
+    /// A field's only: the node the innermost open node, a wrap, holds first (`retag K inner G`).
+    OpenFirst = 5,
 }
 
 impl On {
@@ -74,6 +76,7 @@ impl On {
             1 => On::Moved,
             2 => On::Made,
             4 => On::MadeUnset,
+            5 => On::OpenFirst,
             _ => On::Inner,
         }
     }
@@ -121,7 +124,9 @@ pub enum StructuralOperation {
     Word { string: u16, test: bool },
     Open { kind: u16 },
     /// At the end of this token (`this`), or of the one before.
-    Close { this: bool },
+    /// `deep`: an indented level's node, which keeps the extras pending at least as deep as the
+    /// level's indent (`CLOSE m=2`).
+    Close { this: bool, deep: bool },
     /// A token's leaf; `deferred`: an extra's, left out of the nodes closed before the next
     /// node (docs/parser-generators/24-rr-and-bitlex-plan.md §2.3).
     /// `extra`: an extra's leaf placed now, never the node made last at its level.
@@ -246,7 +251,7 @@ impl StructuralOperation {
             Self::Span { last, len } => (SPAN, u8::from(last), len),
             Self::Word { string, test } => (WORD_IS, u8::from(test), string),
             Self::Open { kind } => (OPEN, 0, kind),
-            Self::Close { this } => (CLOSE, u8::from(this), 0),
+            Self::Close { this, deep } => (CLOSE, u8::from(this) | u8::from(deep) << 1, 0),
             Self::Leaf { kind, deferred, extra } => (LEAF, if extra { 2 } else { u8::from(deferred) }, kind),
             Self::Settle { kind } => (LEAF, 3, kind),
             Self::Mark { mask, order, end, keep, .. } => (MARK, order | if end { crate::program::MARK_END } else { 0 } | if keep { MARK_KEEP } else { 0 }, mask),
@@ -513,7 +518,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             SPAN => StructuralOperation::Span { last: mode != 0, len: operand },
             WORD_IS => StructuralOperation::Word { string: operand, test: mode != 0 },
             OPEN => StructuralOperation::Open { kind: operand },
-            CLOSE => StructuralOperation::Close { this: mode != 0 },
+            CLOSE => StructuralOperation::Close { this: mode & 1 != 0, deep: mode & 2 != 0 },
             LEAF if mode == 3 => StructuralOperation::Settle { kind: operand },
             LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode == 1, extra: mode == 2 },
             MARK => StructuralOperation::Mark {

@@ -85,7 +85,7 @@ fn names<'g>(g: &'g Gram, out: &mut Vec<&'g str>) {
     match g {
         Gram::Sym(n) | Gram::Leaf { rule: n, .. } => out.push(n),
         Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().for_each(|g| names(g, out)),
-        Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => names(a, out),
+        Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) => names(a, out),
         Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => names(body, out),
         _ => {}
     }
@@ -174,7 +174,7 @@ impl Rl<'_, '_> {
                 }
                 any
             }
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.holds_call(a)?,
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) => self.holds_call(a)?,
             Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.holds_call(body)?,
             Gram::Leaf { rule, .. } => self.holds_call(&Gram::Sym(rule.clone()))?,
             _ => false,
@@ -286,6 +286,7 @@ impl Rl<'_, '_> {
                 self.decision(arms, rest, rule, &none, &none, empty.is_some())?
             }
             Gram::Field(f, a) => self.walk(a, rest, rule, then(vec![Op::Field(self.g.field_const(f)?)], k))?,
+            Gram::Inner { .. } => return Err("`retag K inner G`: not in the Rust tier 2".into()),
             Gram::Retag(kind, a) => then(vec![line(format!("self.retag({});", self.g.kind_const(kind)?))], self.walk(a, rest, rule, k)?),
             Gram::Wrap { kind, field, moved, body, .. } => {
                 let f = match field {
