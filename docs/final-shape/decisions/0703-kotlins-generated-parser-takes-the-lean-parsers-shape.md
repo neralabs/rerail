@@ -278,6 +278,16 @@ them.
    number's end. The other numbers' masks (a hex fill in a decimal number's test, `nb` in a hex number's) stay, read
    after the bytes' tests. The token loop's reads of a fill back: 111, against 223 after 32. Measured (same run,
    m1max, best of 15): tier 1 15.7 to 15.9 ms against 16.3 ms.
+34. **A number's end tests read one kind of number, as the grammar's assumptions say**: a test at a run's end (33)
+   reads its masks as the token's kind's assumptions (`assume … in KIND m = e`) read them, as its run does: each
+   assumed mask, made of the masks in place as the test is (`in_region`), is replaced where it is a part of the test,
+   and each term of a union assumed empty is empty too. A test build checks the test so read against the rule's at
+   that byte where an assumption is not proved. A fill whose start holds nowhere holds nowhere (`simplify`). The
+   grammar says a number of one kind holds no other kind's mask (`in integer_literal hx = empty`, `in hex_literal
+   nb = empty`, ...), as the lean lexer reads one kind of number at a time. Every test at a number's end is then the
+   terms its run ended in and the bytes there: `a number that ends in _` is `(end_last >> 0 & 1 == 1 || …) && src[l]
+   == b'_'`, a hex number's `end_last >> 1 & 1 == 1 && src[l] == b'_'`. The token loop's reads of a fill back: 29,
+   against 111 after 33.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`

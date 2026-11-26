@@ -384,6 +384,16 @@ assume "a number's bytes are code" in integer_literal code = ~empty
 assume "a number's bytes are code" in real_literal code = ~empty
 assume "a number's bytes are code" in hex_literal code = ~empty
 assume "a number's bytes are code" in bin_literal code = ~empty
+# A byte is one token's: a number of one kind holds no other kind's number at its bytes, nor at the
+# byte after (a number's end tests read there, as the lean lexer reads one kind of number at a time).
+assume "a decimal number is no hex number" in integer_literal hx = empty
+assume "a decimal number is no binary number" in integer_literal bx = empty
+assume "a decimal number is no hex number" in real_literal hx = empty
+assume "a decimal number is no binary number" in real_literal bx = empty
+assume "a hex number is no decimal number" in hex_literal nb = empty
+assume "a hex number is no binary number" in hex_literal bx = empty
+assume "a binary number is no decimal number" in bin_literal nb = empty
+assume "a binary number is no hex number" in bin_literal hx = empty
 token simple_identifier = start word_start run name_more
 token integer_literal = start int_at run nb
 token real_literal = start dot_at run nb

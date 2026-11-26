@@ -6556,11 +6556,42 @@ impl Gen<'_> {
                     }
                     if let Some((ys, off)) = at {
                         if ys.iter().any(|y| run_terms.contains(y)) {
-                            let at = match off {
-                                0 => format!("bit(&{v}, l)"),
-                                k if *k > 0 => format!("l + {k} < n && bit(&{v}, l + {k})"),
-                                k => format!("l >= {0} && bit(&{v}, l - {0})", -k),
+                            // Its masks as the token's kind's assumptions read them (`in KIND`, as its run): a test build
+                            // checks the test so read against the rule's where an assumption is not proved.
+                            // The check is made of the masks in place (`in_region`): each assumed mask so made is
+                            // replaced where it is a part of it.
+                            let these: Vec<(String, Expr)> = self.x.assumed.iter().filter(|a| a.0.as_deref() == Some(kind)).map(|a| (a.1.clone(), a.2.clone())).collect();
+                            let mut read = e.clone();
+                            for (m, to) in &these {
+                                if let (Some(from), Some(to)) = (self.in_region(&Expr::Name(m.clone()), None, 0), self.in_region(to, None, 0)) {
+                                    read = replace_sub(&read, &from, &to);
+                                    // A union assumed empty: each of its terms is.
+                                    if to == Expr::Empty {
+                                        let mut ts = Vec::new();
+                                        or_terms(&from, &mut ts);
+                                        for t in ts.iter().filter(|_| ts.len() > 1) {
+                                            read = replace_sub(&read, t, &Expr::Empty);
+                                        }
+                                    }
+                                }
+                            }
+                            let read = simplify_all(read);
+                            let proved = self.x.assumed.iter().filter(|a| a.0.as_deref() == Some(kind)).all(|a| a.3);
+                            let w = if read == *e { v.clone() } else { self.row_val(&read, rule)? };
+                            let byte = match off {
+                                0 => "l".to_owned(),
+                                k if *k > 0 => format!("l + {k}"),
+                                k => format!("l - {}", -k),
                             };
+                            let guard = match off {
+                                0 => String::new(),
+                                k if *k > 0 => format!("l + {k} < n && "),
+                                k => format!("l >= {} && ", -k),
+                            };
+                            if w != *v && !proved {
+                                let _ = write!(hits, "            // {why}, as `{kind}`'s assumptions read it: not proved, a test build checks it.\n            #[cfg(feature = \"test-hooks\")]\n            assert!(!({guard}true) || ({v}[({byte}) / 64] >> (({byte}) % 64) & 1 == 1) == bit(&{w}, {byte}), \"assume in {kind}: {} at byte {{l}}\");\n", why.replace('"', "'").replace('\\', ""));
+                            }
+                            let at = format!("{guard}bit(&{w}, {byte})");
                             let _ = write!(hits, "            // {why}: at the token's end, where it may hold\n            if {at} {{\n                refused = true;\n                break;\n            }}\n");
                         } else if let Some(t) = test {
                             let _ = write!(hits, "            // {why}: at no byte of this token (it holds at a run's end), not proved: a test build checks it.\n            #[cfg(feature = \"test-hooks\")]\n            assert!(!({t}), \"escape at a token not its anchor's: {}\");\n", why.replace('"', "'").replace('\\', ""));
@@ -8321,6 +8352,8 @@ fn simplify(e: Expr) -> Expr {
             a => Expr::Not(Box::new(a)),
         },
         Expr::Call(f, args) if (f == "prev" || f == "next") && matches!(args.first(), Some(Arg::E(Expr::Empty))) => Expr::Empty,
+        // A fill whose start holds nowhere holds nowhere.
+        Expr::Call(f, args) if f == "fill" && matches!(args.first(), Some(Arg::E(Expr::Empty))) => Expr::Empty,
         Expr::And(a, b) if a == b => *a,
         Expr::Or(a, b) if a == b => *a,
         Expr::And(a, b) => {
@@ -9961,3 +9994,38 @@ fn win_clear(v: &mut u64, p: usize, a: usize, b: usize) {
 }
 
 "#;
+
+/// `e` with each part equal to `from` made `to`.
+fn replace_sub(e: &Expr, from: &Expr, to: &Expr) -> Expr {
+    if e == from {
+        return to.clone();
+    }
+    let r = |x: &Expr| Box::new(replace_sub(x, from, to));
+    match e {
+        Expr::Not(a) => Expr::Not(r(a)),
+        Expr::And(a, b) => Expr::And(r(a), r(b)),
+        Expr::Or(a, b) => Expr::Or(r(a), r(b)),
+        Expr::Xor(a, b) => Expr::Xor(r(a), r(b)),
+        Expr::Call(f, args) => Expr::Call(
+            f.clone(),
+            args.iter()
+                .map(|a| match a {
+                    Arg::E(x) => Arg::E(replace_sub(x, from, to)),
+                    a => a.clone(),
+                })
+                .collect(),
+        ),
+        _ => e.clone(),
+    }
+}
+
+/// The terms of a union, each in `out`.
+fn or_terms(e: &Expr, out: &mut Vec<Expr>) {
+    match e {
+        Expr::Or(a, b) => {
+            or_terms(a, out);
+            or_terms(b, out);
+        }
+        e => out.push(e.clone()),
+    }
+}
