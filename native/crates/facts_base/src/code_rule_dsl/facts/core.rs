@@ -1008,9 +1008,15 @@ impl<'a> FactsIn<'a> {
     /// language's (decision 0336 §7). The document's index (`index`) answers whether it holds one, and lists the nodes
     /// of a code few nodes have; else a scan of the codes, 64 nodes at a time.
     fn matching(&self, codes: Codes) -> Vector<u32> {
+        let mut out = rerail_blocks::vector::Vector::new();
+        self.each_matching(codes, &mut |x| out.push(x));
+        out
+    }
+    /// `matching`'s nodes, ascending, each given to `each`: none collected.
+    fn each_matching(&self, codes: Codes, each: &mut dyn FnMut(u32)) {
         use rerail_tape_format::tape::CodeSet;
         if self.is_empty() {
-            return rerail_blocks::vector::Vector::new();
+            return;
         }
         let index = self.index();
         on_tape!(self, |t| {
@@ -1034,7 +1040,7 @@ impl<'a> FactsIn<'a> {
                 Codes::Faults => table.faults(),
             };
             if set.is_empty() {
-                return rerail_blocks::vector::Vector::new();
+                return;
             }
             // Whether the document holds one, from the smaller side: the set's numbers searched among the codes it
             // holds, or each code it holds tested.
@@ -1044,24 +1050,25 @@ impl<'a> FactsIn<'a> {
                 _ => index.counts().any(|(c, _)| set.contains(c)),
             };
             if !meets {
-                return rerail_blocks::vector::Vector::new();
+                return;
             }
-            // Codes few nodes have: their nodes as the index lists them, no scan.
+            // Codes few nodes have: their nodes as the index lists them, no scan; several codes' lists, each in
+            // preorder, merged.
             if let Some(numbers) = numbers
                 && numbers.iter().all(|&n| index.listed(n).is_some())
             {
-                let mut out: Vector<u32> = numbers.iter().flat_map(|&n| index.listed(n).into_iter().flatten()).collect();
-                out.sort_unstable();
-                return out;
+                let mut lists: Vec<_> = numbers.iter().filter_map(|&n| index.listed(n)).map(Iterator::peekable).collect();
+                while let Some(i) = (0..lists.len()).filter_map(|i| lists[i].peek().map(|&x| (x, i))).min().map(|(_, i)| i) {
+                    each(lists[i].next().expect("the list peeked"));
+                }
+                return;
             }
-            let mut out = rerail_blocks::vector::Vector::new();
             t.match_groups(&set, |base, mut m| {
                 while m != 0 {
-                    out.push((base + m.trailing_zeros() as usize) as u32);
+                    each((base + m.trailing_zeros() as usize) as u32);
                     m &= m - 1;
                 }
             });
-            out
         })
     }
     /// The nodes of kind `kind` (an atom), by id.
@@ -1072,6 +1079,12 @@ impl<'a> FactsIn<'a> {
         // `atom`'s inverse: the codes of the kind with no ERROR flag; for slot 0 (ERROR's atom, which kind 0's shares)
         // also every ERROR code and kind 0's.
         self.matching(Codes::Kind(kind_code(kind)))
+    }
+    /// `of_kind`'s nodes, ascending, each given to `each`: none collected.
+    pub fn each_of_kind(&self, kind: u32, each: &mut dyn FnMut(u32)) {
+        if kind_tag(kind) == self.tag {
+            self.each_matching(Codes::Kind(kind_code(kind)), each);
+        }
     }
     /// Nodes of the abstract class `class` (a supertype's kind atom), by id.
     pub fn of_class(&self, class: u32) -> Vector<u32> {

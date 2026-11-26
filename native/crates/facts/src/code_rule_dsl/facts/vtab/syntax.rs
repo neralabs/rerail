@@ -2498,10 +2498,10 @@ pub struct Batch {
     /// by index (`by_tag`), and where each tag's start, and one past the last (`tag_at`, 257 of them).
     by_tag: Cells<u32>,
     tag_at: Cells<u32>,
-    /// The `node` view's rows by kind, one index for each tape tag the batch has documents of (`of_tag`), made at the
-    /// first lookup of one of its kinds over that tag's documents alone (Q183; decision 0494: a program's language
-    /// stays unmade).
-    kinds: Vec<(u8, OnceLock<KindRows>)>,
+    /// The `node` view's rows by kind (`KindRows`), for each tape tag the batch has documents of (`of_tag`): a place
+    /// for each of its dialect's kinds, made at the first lookup of one of them, and each kind's rows made at its own
+    /// first lookup, over that tag's documents alone (Q183; decision 0494: a program's language stays unmade).
+    kinds: Vec<(u8, OnceLock<Box<[OnceLock<KindRows>]>>)>,
     shape: Shape,
     /// The registered lazy families (`Families`, Python's `py.*`: list step 25), by registration; `None` for one
     /// whose dialect has no document in the batch.
@@ -2621,44 +2621,42 @@ pub struct Growth {
     wave: Option<(Matchers, crate::code_rule_dsl::facts::nearest::Binding)>,
 }
 
-/// The `node` view's rows by kind: an index of the view (decision 0353: an index in its relation's place, not a copy of
-/// its rows), made in one walk of each document's numbered nodes (`Projected::nodes`, no select) at the batch's first
-/// lookup by kind. Each match keeps its document, local id and tape node, so a lookup reads no rank and no select.
-/// Q220: a probe `kind($m, $k)` scanned every document's tape for the kind's codes (`Facts::of_kind`), 55 k probes
-/// of a cold run at 39 µs each, where t41's `kind`, a relation of its own, had an index.
+/// The `node` view's rows of one kind: an index of the view (decision 0353: an index in its relation's place, not a copy
+/// of its rows), made at the batch's first lookup of that kind. Each match is its row (`Batch::nodes`' first row of its
+/// document plus its local id), ascending: a row is all three readers need. A lookup's rows are these; one that reads
+/// columns finds each row's document by advancing through the documents' first rows (`Batch::kind_matches`), and a
+/// column that reads the tape node selects it then (`read_matches`' `NEED_X`).
+///
+/// Only the kinds the rules look up are made, from the documents that hold them: each document's index of the codes it
+/// holds (decision 0656) skips one with none of the kind's codes, a rare code's nodes are the index's list, and the
+/// rest are the tape's code match (`FactsIn::each_of_kind`, none collected). PostHog's run looks up 43 kinds, whose matches are 14% of the
+/// nodes: an index of every node by kind (`[document, local id, tape node]`, sorted on the host) held 490 MB.
+/// Q220: a probe `kind($m, $k)` scanned every document's tape for the kind's codes, 55 k probes of a cold run at 39 µs
+/// each; a kind's rows are made once a batch.
 ///
 /// In the batch's block (decision 0353 step 4: an index in its relation's block, not a host structure).
 struct KindRows {
-    /// The kinds, ascending.
-    keys: Cells<i64>,
-    /// Where each kind's matches start in `at`, and one past the last.
-    starts: Cells<u32>,
-    /// Each kind's nodes in row order: `[document, local id, tape node]`.
-    at: Cells<[u32; 3]>,
+    rows: Cells<u32>,
 }
 
 impl KindRows {
-    /// Over the documents of tape tag `tag` alone (`Batch::of_tag`).
-    fn new(b: &Batch, tag: u8) -> Self {
-        // The scratch the index is sorted in: the index itself is the block's.
-        let mut all: Vec<(i64, u32, u32, u32)> = Vec::new();
-        if let Some(dialect) = b.dialects.get(tag) {
-            for &doc in b.of_tag(tag) {
-                let p = &b.docs[doc as usize];
-                all.extend(p.nodes().map(|(l, x)| (dialect.kind(p.f(), x), doc, l, x)));
-            }
+    /// Kind atom `kind`'s rows, over the documents of tape tag `tag` alone (`Batch::of_tag`), in row order: the
+    /// documents ascending, each one's nodes in preorder.
+    fn new(b: &Batch, tag: u8, kind: u32) -> Self {
+        let nodes = b.nodes();
+        // The scratch the rows are found in: the index itself is the block's.
+        let mut rows: Vec<u32> = Vec::new();
+        for &doc in b.of_tag(tag) {
+            let p = &b.docs[doc as usize];
+            let first = nodes.at(doc as usize);
+            // A match a token is (no `node` row) has no number.
+            p.f().each_of_kind(kind, &mut |x| {
+                if let Some(local) = p.ranks().local(Item::Node, x) {
+                    rows.push((first + local as usize) as u32);
+                }
+            });
         }
-        // Stable: within a kind, the rows stay in order.
-        all.sort_by_key(|e| e.0);
-        let (mut keys, mut starts) = (Vec::new(), Vec::new());
-        for (i, e) in all.iter().enumerate() {
-            if keys.last() != Some(&e.0) {
-                keys.push(e.0);
-                starts.push(i as u32);
-            }
-        }
-        starts.push(all.len() as u32);
-        KindRows { keys: in_block(&b.block, &keys), starts: in_block(&b.block, &starts), at: in_block(&b.block, &all.iter().map(|&(_, d, l, x)| [d, l, x]).collect::<Vec<_>>()) }
+        KindRows { rows: in_block(&b.block, &rows) }
     }
 }
 
@@ -4591,12 +4589,35 @@ impl Batch {
         }
         x
     }
-    /// The nodes whose `kind` (the `node` view's column 2) is `kind`, in row order: `(document, local id, tape node)`.
-    fn by_kind(&self, kind: i64) -> &[[u32; 3]] {
-        let (Ok(tag), true) = (u8::try_from(kind / i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE)), kind >= 0) else { return &[] };
+    /// The `node` view's rows whose `kind` (column 2) is `kind`, ascending (`KindRows`).
+    fn by_kind(&self, kind: i64) -> &[u32] {
+        let stride = i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE);
+        let (Ok(tag), true) = (u8::try_from(kind / stride), kind >= 0) else { return &[] };
         let Ok(at) = self.kinds.binary_search_by_key(&tag, |e| e.0) else { return &[] };
-        let k = self.kinds[at].1.get_or_init(|| KindRows::new(self, tag));
-        k.keys.binary_search(&kind).map_or(&[][..], |i| &k.at[k.starts[i] as usize..k.starts[i + 1] as usize])
+        let Some(dialect) = self.dialects.get(tag) else { return &[] };
+        let places = self.kinds[at].1.get_or_init(|| (0..dialect.canonical.len()).map(|_| OnceLock::new()).collect());
+        let Some(place) = places.get((kind % stride) as usize) else { return &[] };
+        &place.get_or_init(|| KindRows::new(self, tag, kind as u32)).rows
+    }
+    /// `by_kind`'s rows, each with its document and local id.
+    fn kind_matches(&self, kind: i64) -> impl Iterator<Item = (usize, u32)> + '_ {
+        let (rows, nodes) = (self.by_kind(kind), self.nodes());
+        // The first row's document by search, then each next row's by advancing: the rows ascend.
+        let first = rows.first().map_or(0, |&r| {
+            let (mut lo, mut hi) = (0, self.docs.len());
+            while lo + 1 < hi {
+                let mid = (lo + hi) / 2;
+                if nodes.at(mid) <= r as usize { lo = mid } else { hi = mid }
+            }
+            lo
+        });
+        let mut doc = first;
+        rows.iter().map(move |&r| {
+            while nodes.at(doc + 1) <= r as usize {
+                doc += 1;
+            }
+            (doc, (r as usize - nodes.at(doc)) as u32)
+        })
     }
     /// The document index and node or span of id `n`.
     fn loc(&self, n: i64, memo: &mut u32) -> Option<(usize, u32)> {
@@ -4921,8 +4942,8 @@ impl Source for Viewed {
         use crate::code_rule_dsl::facts::vtab::Seq;
         let b = &*self.batch;
         if matches!(self.view, View::Node) && column == 2 {
-            let (list, nodes) = (b.by_kind(value), b.nodes());
-            return Some(Seq::new(list.len(), move |i| nodes.at(list[i][0] as usize) + list[i][1] as usize));
+            let rows = b.by_kind(value);
+            return Some(Seq::new(rows.len(), move |i| rows[i] as usize));
         }
         let (mut runs, mut memo) = (Vec::new(), crate::code_rule_dsl::facts::vtab::NO_MEMO);
         self.lookup_runs(column, value, None, &mut memo, &mut |r| runs.push(r)).then(|| Seq::runs(runs))
@@ -5318,7 +5339,11 @@ impl Viewed {
                 }
             }
         } else if matches!(self.view, View::Node) && column == 2 {
-            b.by_kind(v).iter().filter(|&&[doc, _, _]| kept(&(doc as usize))).for_each(|&[doc, local, _]| one(Some(b.nodes().at(doc as usize) + local as usize)));
+            if only.is_none() {
+                b.by_kind(v).iter().for_each(|&r| one(Some(r as usize)));
+            } else {
+                b.kind_matches(v).filter(|(doc, _)| kept(doc)).for_each(|(doc, local)| one(Some(b.nodes().at(doc) + local as usize)));
+            }
         } else {
             return false;
         }
@@ -5530,9 +5555,10 @@ impl Viewed {
                 p.each_of_unit(&b.dialects[p.tag()], local, |l| emit(doc, l, NONE, None, None, Known::default()));
             }
         } else if matches!(self.view, View::Node) && column == 2 {
-            // The batch's index by kind (`Batch::by_kind`): each match with its local id and tape node.
-            for &[doc, local, x] in b.by_kind(value) {
-                emit(doc as usize, local, x, None, None, Known::default());
+            // The batch's index by kind (`Batch::by_kind`): each match's document and local id; its tape node selected
+            // where a column reads it.
+            for (doc, local) in b.kind_matches(value) {
+                emit(doc, local, NONE, None, None, Known::default());
             }
         } else {
             return false;
