@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
-import { type Dirent, existsSync, readdirSync, writeFileSync } from "node:fs";
+import { type BigIntStats, type Dirent, existsSync, readdirSync, type Stats, writeFileSync } from "node:fs";
 import { appendFile, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -33,6 +33,7 @@ import type * as Git from "../../../src/engine/git.js";
 import type * as CrlfReader from "../../../src/engine/git-crlf-reader.js";
 import type * as HeadReader from "../../../src/engine/git-head-reader.js";
 import { readGitHead } from "../../../src/engine/git-head-reader.js";
+import { fileStamp } from "../../../src/engine/file-stamp.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 import type * as WalkReads from "../../../src/engine/code-rule/walk-read-buffers.js";
 import { WorktreeWalks } from "../../../src/engine/code-rule/worktree-walks.js";
@@ -60,6 +61,11 @@ const discovery = vi.hoisted(() => ({
   opens: new Map<string, Array<() => Promise<void>>>(),
   /** The modified and change time `lstat` gives a file, as a copy that keeps its source's times leaves where no change time is kept. */
   stamps: new Map<string, number>(),
+  /**
+   * The device and file ids each `lstat` of the path gives in turn, the last for every `lstat` after it (`standIn`): two
+   * NTFS file ids past 2^53 that give one number.
+   */
+  ids: new Map<string, Array<{ dev: bigint; ino: bigint }>>(),
 }));
 /**
  * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, a Git
@@ -227,16 +233,13 @@ vi.mock("node:fs/promises", async importOriginal => {
     // the earlier `lstat`'s times whole; one in `discovery.stamps` reports its stamp as both its modified and change
     // time. A path in both keeps its held times: a stamp sets only the two numbers, so it would leave `mtime` and
     // `ctime` disagreeing with them. No case sets both: each case sets one map, and the clean-up after each case empties
-    // both.
+    // both. A path in `discovery.ids` gives its next ids (`standIn`).
     lstat: (async (...args: Parameters<typeof actual.lstat>) => {
       if (basename(String(args[0])) !== ".git" || !gitFileReads.reading.includes(dirname(String(args[0])))) {
         discovery.calls.lstat += 1;
         await discovery.lstats.get(String(args[0]))?.shift()?.();
       }
-      const info = await actual.lstat(...args);
-      const at = discovery.stamps.get(String(args[0]));
-      const times = heldTimes.get(String(args[0])) ?? (at === undefined ? undefined : { mtimeMs: at, ctimeMs: at });
-      return times === undefined ? info : Object.assign(Object.create(Object.getPrototypeOf(info) as object) as typeof info, info, times);
+      return standIn(String(args[0]), await actual.lstat(...args));
     }) as typeof actual.lstat,
     // A test can make Windows hold a folder for a moment (holdRemovals).
     rm: vi.fn(actual.rm),
@@ -378,6 +381,37 @@ function holdTimes(path: string, earlier: { mtimeMs: number; ctimeMs: number; mt
   return { release };
 }
 
+/**
+ * `info`, what `lstat` gave for `path`, with what a case set there: the times `heldTimes` holds, else the stamp
+ * `discovery.stamps` holds as both times, and the next ids `discovery.ids` holds. A read with `bigint` gets each time as
+ * the nanoseconds that a read without it gives as those milliseconds, and the ids whole; any other read gets each id as
+ * the number Node gives for it, which rounds an id past 2^53.
+ */
+function standIn<Info extends Stats | BigIntStats>(path: string, info: Info): Info {
+  const at = discovery.stamps.get(path);
+  const times = heldTimes.get(path) ?? (at === undefined ? undefined : { mtimeMs: at, ctimeMs: at });
+  const ids = discovery.ids.get(path);
+  const id = ids !== undefined && ids.length > 1 ? ids.shift() : ids?.[0];
+  if (times === undefined && id === undefined) return info;
+  const exact = typeof info.ino === "bigint";
+  const standing = Object.create(Object.getPrototypeOf(info) as object) as Info;
+  return Object.assign(standing, info, times === undefined ? {} : timesAs(times, exact), id === undefined ? {} : idsAs(id, exact));
+}
+function timesAs(times: { mtimeMs: number; ctimeMs: number }, exact: boolean): object {
+  if (!exact) return times;
+  const mtimeNs = nanosecondsOf(times.mtimeMs);
+  const ctimeNs = nanosecondsOf(times.ctimeMs);
+  return { ...times, mtimeNs, ctimeNs, mtimeMs: mtimeNs / 1_000_000n, ctimeMs: ctimeNs / 1_000_000n };
+}
+/** The nanoseconds `lstat` with `bigint` gives for a time it gives without as `ms`: its whole seconds, then the rest. */
+function nanosecondsOf(ms: number): bigint {
+  const seconds = Math.floor(ms / 1_000);
+  return BigInt(seconds) * 1_000_000_000n + BigInt(Math.round((ms - seconds * 1_000) * 1e6));
+}
+function idsAs(id: { dev: bigint; ino: bigint }, exact: boolean): object {
+  return exact ? id : { dev: Number(id.dev), ino: Number(id.ino) };
+}
+
 /** Resolves once the next file handle opened at `path` is closed: a read of the file has ended. */
 function readEnded(path: string): Promise<void> {
   const ended = Promise.withResolvers<void>();
@@ -439,6 +473,7 @@ afterEach(async () => {
   discovery.inNameOrder = false;
   discovery.opens.clear();
   discovery.stamps.clear();
+  discovery.ids.clear();
   heldGit.reads = 0;
   heldGit.started = undefined;
   asyncGitCalls.before = undefined;
@@ -1506,6 +1541,27 @@ describe("CodeRuleBridge", () => {
     }
   });
 
+  // The walk reads each entry's ids whole and makes its other numbers as `lstat` without `bigint` gives them: a stamp
+  // that differed would make the walk read again every file a tool read stamped.
+  it.each([
+    ["it was written", undefined],
+    ["before 1970", -86_400.123_456],
+  ])("stamps a file it walks as lstat gives its numbers, with its modified time as %s", async (_name, at) => {
+    const root = await workspace();
+    const file = join(root, "src", "a.py");
+    await writeFile(file, "a = 1\n");
+    if (at !== undefined) await utimes(file, at, at);
+    const observations: SourceObservationCache = new Map();
+    const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
+      discoveryWaitMs: Number.POSITIVE_INFINITY, observations,
+    });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    const info = await lstat(file);
+    expect(info.mtimeMs < 0).toBe(at !== undefined);
+    expect(observations.get(root)?.get("src/a.py")?.stamp).toBe(fileStamp(info));
+  });
+
   describe("a walk that cannot read part of the folder", () => {
     /**
      * A bridge whose boundaries wait for their walk however long this machine takes, unless `options` set another wait:
@@ -2563,6 +2619,39 @@ describe("CodeRuleBridge", () => {
       await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
       await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
       expect(onDiscoveryGaps).not.toHaveBeenCalled();
+    });
+
+    // NTFS gives file ids past 2^53, where a number holds only some of the values: a Windows 11 machine gave the first two
+    // ids to two files made one after the other, and Node gives both as 103582791429957568. Each order is a row, so a
+    // walk that reads either look's id as a number reads one file as the other.
+    it.each([
+      ["whose id rounds to the number of the first", { dev: 7n, ino: 103582791429957566n }, { dev: 7n, ino: 103582791429957568n }],
+      ["whose id is the number the first rounds to", { dev: 7n, ino: 103582791429957568n }, { dev: 7n, ino: 103582791429957566n }],
+      ["with the same file id on another device", { dev: 7n, ino: 5n }, { dev: 8n, ino: 5n }],
+    ])("says nothing of a file that refused it with EPERM and was another file %s, as one removed and made again", async (_name, found, made) => {
+      expect(Number(found.ino)).toBe(Number(made.ino));
+      expect(found).not.toEqual(made);
+      const root = await workspace();
+      const elsewhere = await workspace();
+      const onDiscoveryGaps = vi.fn();
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      const file = join(root, "src", "x.py");
+      const next = join(elsewhere, "x.py");
+      await writeFile(file, "x = 1\n");
+      await writeFile(next, "x = 2\n");
+      // The walk's lstat finds the first file's ids, and every lstat after it the second's.
+      discovery.ids.set(file, [found, made]);
+      discovery.reads.set(file, [async () => {
+        await rename(next, file);
+        throw refusal("open", file);
+      }]);
+
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
+      expect(onDiscoveryGaps).not.toHaveBeenCalled();
+      expect(discovery.ids.get(file)).toEqual([made]);
     });
 
     it("ends a walk that met an EPERM in its usual time when the wall clock steps back 10 minutes during it", async () => {
