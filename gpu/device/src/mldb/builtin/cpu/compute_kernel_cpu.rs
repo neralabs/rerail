@@ -238,8 +238,6 @@ pub struct CpuComputeFunctionLibrary {
     code: Code,
     name: String,
     host: Vec<(&'static str, rerail_ukl_rust::Kernel)>,
-    /// The compiled reads `host`'s kernels call (`rerail_ukl_rust::Launch::reads`), where one does.
-    reads: Option<Arc<rerail_ukl_rust::Reads>>,
 }
 
 enum Code {
@@ -298,7 +296,7 @@ impl CpuComputeFunctionLibrary {
             && let Ok(opened) = open_library(&shipped)
         {
             crate::store::count(true);
-            return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new(), reads: None });
+            return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new() });
         }
         let lib = match crate::store::path("cpu", &k, LIB_EXTENSION) {
             Some(p) => p,
@@ -315,7 +313,7 @@ impl CpuComputeFunctionLibrary {
                 Ok(opened) => {
                     crate::store::count(true);
                     crate::store::used(&lib);
-                    return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new(), reads: None });
+                    return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new() });
                 }
                 // Damaged, or another build's: compiled again, and replaced.
                 Err(_) => _ = std::fs::remove_file(&lib),
@@ -365,19 +363,18 @@ impl CpuComputeFunctionLibrary {
             }
         }
         let opened = open_library(&lib)?;
-        Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new(), reads: None })
+        Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new() })
     }
 
     /// The kernels `interpreter` runs, named `name` in errors.
     pub fn interpreted(interpreter: Arc<dyn CpuInterpreter>, name: &str) -> Self {
-        CpuComputeFunctionLibrary { code: Code::Interpreted(interpreter), name: name.to_string(), host: Vec::new(), reads: None }
+        CpuComputeFunctionLibrary { code: Code::Interpreted(interpreter), name: name.to_string(), host: Vec::new() }
     }
 
     /// This library, its kernels `host` names run as their Rust (`rerail_ukl_rust::kernels` of its source and
-    /// defines), their arguments its rows (a compiled library's, or the interpreter's). `reads`: the compiled reads they call.
-    pub fn with_host(mut self, host: Vec<(&'static str, rerail_ukl_rust::Kernel)>, reads: Option<Arc<rerail_ukl_rust::Reads>>) -> Self {
+    /// defines), their arguments its rows (a compiled library's, or the interpreter's).
+    pub fn with_host(mut self, host: Vec<(&'static str, rerail_ukl_rust::Kernel)>) -> Self {
         self.host = host;
-        self.reads = reads;
         self
     }
 
@@ -422,7 +419,7 @@ impl CpuComputeFunctionLibrary {
             let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
             // Its Rust where it has it (`host`), its rows the interpreter's: no compiler's build at all.
             let entry = match self.host.iter().find(|(n, _)| *n == function_name) {
-                Some(&(_, k)) => Run::Host(k, self.reads.clone()),
+                Some(&(_, k)) => Run::Host(k),
                 None => Run::Interpreted(i.clone()),
             };
             return Ok(CpuComputeFunction { entry, name: function_name.to_string(), arguments, param_sizes });
@@ -437,7 +434,7 @@ impl CpuComputeFunctionLibrary {
         // SAFETY: the shim's entry has this signature.
         let entry: Entry = unsafe { std::mem::transmute(entry) };
         let entry = match self.host.iter().find(|(n, _)| *n == function_name) {
-            Some(&(_, k)) => Run::Host(k, self.reads.clone()),
+            Some(&(_, k)) => Run::Host(k),
             None => Run::Compiled(entry),
         };
         Ok(CpuComputeFunction { entry, name: function_name.to_string(), arguments, param_sizes })
@@ -515,7 +512,7 @@ enum Run {
     Compiled(Entry),
     Interpreted(Arc<dyn CpuInterpreter>),
     /// Its source's Rust (`rerail_ukl_rust`): a group at a time, each its threads in lanes.
-    Host(rerail_ukl_rust::Kernel, Option<Arc<rerail_ukl_rust::Reads>>),
+    Host(rerail_ukl_rust::Kernel),
 }
 
 /// A kernel's entry: a pointer to each argument's bytes, and the launch; 0, or 1 with the launch's error written.
@@ -832,7 +829,7 @@ impl CpuBindContext<'_> {
             let entry = match entry {
                 Run::Compiled(e) => e,
                 Run::Interpreted(i) => return i.launch(&name, &params, grid, block, shared).map_err(|e| format!("{name} on the CPU: {e}")),
-                Run::Host(k, reads) => {
+                Run::Host(k) => {
                     // Its threadgroup memory is its own (`tg`, its `SHARED` rows'): a row of the launch's has no place.
                     if shared != 0 {
                         return Err(format!("{name} on the CPU: its Rust takes no threadgroup row of the launch's"));
@@ -847,7 +844,7 @@ impl CpuBindContext<'_> {
                         for z in 0..grid[2] {
                             for y in 0..grid[1] {
                                 for x in 0..grid[0] {
-                                    let l = rerail_ukl_rust::Launch { group: [x, y, z], block, groups: grid, reads: reads.as_ref().map_or(std::ptr::null(), |r| r.table()) };
+                                    let l = rerail_ukl_rust::Launch { group: [x, y, z], block, groups: grid };
                                     // SAFETY: `argv` holds the kernel's arguments as its rows bound them (each buffer's
                                     // address, each value's bytes), and the shim's two.
                                     unsafe { k(argv.as_ptr(), &l) };
@@ -991,7 +988,7 @@ DEFINE_KERNEL2(t, t_divergent,
             }
         }
         let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
-        let lib = lib.with_host(vec![("t_ends_after", host)], None);
+        let lib = lib.with_host(vec![("t_ends_after", host)]);
         let f = lib.get_function(&device, "t_ends_after").unwrap();
         let out = alloc_uninitialized_array_sync::<u32>(&device, 64);
         run(&device, &f, &out, None, 2, 32).unwrap();
@@ -1006,7 +1003,7 @@ DEFINE_KERNEL2(t, t_divergent,
     fn a_kernel_with_rust_takes_no_threadgroup_row() {
         unsafe fn host(_: *const *const u8, _: &rerail_ukl_rust::Launch) {}
         let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
-        let lib = lib.with_host(vec![("t_group", host)], None);
+        let lib = lib.with_host(vec![("t_group", host)]);
         let f = lib.get_function(&device, "t_group").unwrap();
         let out = alloc_uninitialized_array_sync::<u32>(&device, 64);
         let e = run(&device, &f, &out, Some(64), 1, 64).unwrap_err();

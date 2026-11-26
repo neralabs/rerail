@@ -349,8 +349,6 @@ struct Em<'a> {
     /// The group is one chunk, one SIMD group (`kernel_group`): its threads run in step, so a barrier is met where
     /// it is written, and a SIMD group's operation is one across the chunk's lanes.
     one: bool,
-    /// Each function (by its number in the program) called as compiled code of its own (`Read`), not written here.
-    compiled: HashMap<u32, Read>,
     /// The structures (by context and variable) copied into whole where the copy cannot read them where they lie (its
     /// source's bytes a write of the kernel reaches): fields, though only read after (`fields`).
     unaliased: HashSet<(u32, u32)>,
@@ -362,40 +360,21 @@ struct Em<'a> {
     wide: HashSet<String>,
 }
 
-/// A function of the program that a kernel's Rust calls as compiled code of its own, through the launch's table of
-/// them (`Launch::reads`, by `index`), not written as its vector code: a read written once in CLIF (decision 0310),
-/// whose UKL the kernel's source includes (`<ukl/reads/*.h>`) and which the CPU has compiled (`rerail_clif::jit`).
-/// Its UKL takes a base `t` and the offset `a0` of its first pointer from it, and computes every address as an
-/// offset from `t`; its compiled code takes that pointer (`t + a0`), its other arguments as the UKL's, and computes
-/// addresses.
-#[derive(Clone, Debug)]
-pub struct Read {
-    /// Its name in the program (the UKL's, `clif_rows_at`).
-    pub name: String,
-    /// Its place in the launch's table.
-    pub index: u32,
-    /// Its result is an address from `t` (the UKL's: the compiled code's less `t`).
-    pub result: bool,
-    /// Each of its UKL arguments past `t` and `a0`: an offset from `t` (passed to the compiled code plus `t`).
-    pub offsets: Vec<bool>,
-}
-
 /// Kernel `name`'s vector tape `k` (of program `prog`, whose constant memory it reads) as Rust at `w` lanes (4, 8, 16
 /// or 32): a module's text, its entry
 /// `pub unsafe fn {name}_w{w}(argv: *const *const u8, l: &Launch)`.
 pub fn kernel(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32) -> R<String> {
-    emit(prog, k, w, false, &[])
+    emit(prog, k, w, false)
 }
 
 /// The Rust of kernel `k` for groups of one SIMD group (`UKL_SIMD_WIDTH`, 32 threads), each group one chunk of 32
 /// lanes: its barriers, anywhere (in a loop, a branch every thread takes, a called function), are met in step, and
-/// its SIMD groups' operations are the chunk's. A launch of other groups is refused where it runs. The functions
-/// `reads` names are calls of their compiled code (`Read`).
-pub fn kernel_group(prog: &crate::lower::Program, k: &crate::vector::Kernel, reads: &[Read]) -> R<String> {
-    emit(prog, k, 32, true, reads)
+/// its SIMD groups' operations are the chunk's. A launch of other groups is refused where it runs.
+pub fn kernel_group(prog: &crate::lower::Program, k: &crate::vector::Kernel) -> R<String> {
+    emit(prog, k, 32, true)
 }
 
-fn emit(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32, one: bool, reads: &[Read]) -> R<String> {
+fn emit(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32, one: bool) -> R<String> {
     if !matches!(w, 4 | 8 | 16 | 32) {
         return err(format!("{w} lanes: 4, 8, 16 or 32"));
     }
@@ -406,12 +385,7 @@ fn emit(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32, one: bo
             bodies.insert(v.w(i, 0), i);
         }
     }
-    let mut e = Em { data: prog.data(), called: prog.funcs.iter().map(|f| f.called).collect(), names: prog.funcs.iter().map(|f| f.name.clone()).collect(), v, w, p: w / 4, bodies, lanes: HashMap::new(), iotas: Default::default(), refs: HashMap::new(), structs: HashMap::new(), mems: HashMap::new(), runs: HashMap::new(), lane_conds: Default::default(), shadows: Default::default(), shadow_fail: false, iota_params: HashMap::new(), wants: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), written: Some(Default::default()), aliases: Default::default(), arrays: HashMap::new(), risky: false, risky_insts: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new(), shared: None, sub: None, pending: None, one, compiled: HashMap::new(), unaliased: HashSet::new(), joined: HashMap::new(), wide: HashSet::new() };
-    for r in reads {
-        if let Some(f) = prog.funcs.iter().position(|f| f.name == r.name) {
-            e.compiled.insert(f as u32, r.clone());
-        }
-    }
+    let mut e = Em { data: prog.data(), called: prog.funcs.iter().map(|f| f.called).collect(), names: prog.funcs.iter().map(|f| f.name.clone()).collect(), v, w, p: w / 4, bodies, lanes: HashMap::new(), iotas: Default::default(), refs: HashMap::new(), structs: HashMap::new(), mems: HashMap::new(), runs: HashMap::new(), lane_conds: Default::default(), shadows: Default::default(), shadow_fail: false, iota_params: HashMap::new(), wants: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), written: Some(Default::default()), aliases: Default::default(), arrays: HashMap::new(), risky: false, risky_insts: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new(), shared: None, sub: None, pending: None, one, unaliased: HashSet::new(), joined: HashMap::new(), wide: HashSet::new() };
     if !e.v.is_empty() && e.v.kind(0) == Kind::Func && e.v.w(0, 2) > 0 {
         e.shared = Some(e.v.w(0, 4));
     }
@@ -1411,69 +1385,6 @@ impl Em<'_> {
             self.out.replace_range(attr..body, &format!("{}#[inline]\n", "    ".repeat(self.ind)));
         }
         Ok(())
-    }
-
-    /// A call of read `r` (its body `b`), compiled code of its own, through the launch's table: one call where its
-    /// arguments are each one value (as a function's instance of one value's arguments runs once), else one for each
-    /// running lane, its results gathered into the lanes.
-    fn call_compiled(&mut self, r: &Read, b: usize, vals: Vec<V>, cx: &Cx) -> R<V> {
-        let ret = M(self.v.w(b, 4));
-        let ms: Vec<M> = (0..vals.len()).map(|k| M(self.v.w(b, 8 + 2 * k))).collect();
-        if vals.len() < 2 || r.offsets.len() != vals.len() - 2 || ms.iter().chain([&ret]).any(|m| m.is_agg() || m.float()) {
-            return err(format!("{}: not a read's arguments and result", r.name));
-        }
-        let ty = |m: M| if m.bytes() == 8 { "u64" } else { "u32" };
-        let (w, p) = (self.w, self.p);
-        // Each argument as an expression of lane `j`, or its one value.
-        let mut each = Vec::new();
-        for (k, v) in vals.iter().enumerate() {
-            let m = ms[k];
-            let t = self.tmp();
-            match v {
-                V::S(s, am) => {
-                    let x = if *am == M::PTR { format!("(({s}) as usize as u64)") } else { conv(s, *am, if m == M::PTR { M::U64 } else { m }) };
-                    self.line(format!("let {t}: {} = {x} as {};", ty(m), ty(m)));
-                    each.push(t);
-                }
-                v => {
-                    let l = self.lanes(v, m)?;
-                    let n = if wide(m) || m == M::PTR { 2 * p } else { p };
-                    self.line(format!("let {t} = core::mem::transmute::<[uint32x4_t; {n}], [u32; {}]>({l});", 4 * n));
-                    each.push(if n == 2 * p { format!("(({t}[{w} + j] as u64) << 32 | {t}[j] as u64)") } else { format!("{t}[j]") });
-                }
-            }
-        }
-        let base = each[0].clone();
-        let mut args = vec![format!("{base}.wrapping_add({})", each[1])];
-        for (k, a) in each[2..].iter().enumerate() {
-            args.push(if r.offsets[k] { format!("{base}.wrapping_add({a})") } else { a.clone() });
-        }
-        let f = self.tmp();
-        let sig = std::iter::once("u64").chain(ms[2..].iter().map(|&m| ty(m))).collect::<Vec<_>>().join(", ");
-        self.line(format!("let {f}: unsafe extern \"C\" fn({sig}) -> {} = core::mem::transmute(*l.reads.add({}));", ty(ret), r.index));
-        let call = format!("{f}({})", args.join(", "));
-        let call = if r.result { format!("{call}.wrapping_sub({base})") } else { call };
-        let t = self.tmp();
-        if vals.iter().all(|v| matches!(v, V::S(..))) {
-            self.line(format!("let {t}: {} = {call};", ty(ret)));
-            return Ok(V::S(t, ret));
-        }
-        // Each running lane's call, its result in its lane.
-        let n = if wide(ret) { 2 * p } else { p };
-        let g = self.tmp();
-        self.line(format!("let mut {g} = [0u32; {}];", 4 * n));
-        let on = if cx.full {
-            String::new()
-        } else {
-            let k = self.tmp();
-            let cur = cx.cur.clone();
-            self.line(format!("let {k} = bits(&{cur});"));
-            format!("if {k} >> j & 1 != 0 ")
-        };
-        let put = if n == 2 * p { format!("{g}[j] = v as u32; {g}[{w} + j] = (v >> 32) as u32;") } else { format!("{g}[j] = v;") };
-        self.line(format!("for j in 0..{w} {{ {on}{{ let v = {call}; {put} }} }}"));
-        self.line(format!("let {t} = core::mem::transmute::<[u32; {}], [uint32x4_t; {n}]>({g});", 4 * n));
-        Ok(V::L(t, ret))
     }
 
     /// Whether function body `b` is written once for its calls, their arguments' shapes joined (`Em::joined`): a
@@ -3590,9 +3501,6 @@ impl Em<'_> {
     /// A call of function `id` with its arguments' values `vals`: the instance of their shapes, its result.
     fn call(&mut self, id: u32, vals: Vec<V>, cx: &Cx) -> R<V> {
         let Some(&b) = self.bodies.get(&id) else { return err(format!("a call of function {id}, which has no body")) };
-        if let Some(r) = self.compiled.get(&self.v.w(b, 1)).cloned() {
-            return self.call_compiled(&r, b, vals, cx);
-        }
         let ret = M(self.v.w(b, 4));
         let mut args = vec!["l".to_string(), "lid0".to_string()];
         // A function with barriers: the kernel's phase of it, and the chunk's state.

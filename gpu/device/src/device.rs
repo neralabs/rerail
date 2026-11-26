@@ -586,14 +586,12 @@ impl ComputeFunctionLibrary {
 
     /// This library of the UKL `text` specialized by `defines`, its kernels that are Rust of that very text and those
     /// defines (`rerail_ukl_rust::kernels`, decision 0567 step 3) run as their Rust on the CPU; on another device,
-    /// or of another text, the same library. A kernel that calls the compiled reads gets them from `reads`, made for
-    /// this library alone.
-    pub fn with_rust(self, text: &str, defines: &[(&str, &str)], reads: impl FnOnce() -> rerail_ukl_rust::Reads) -> Self {
+    /// or of another text, the same library.
+    pub fn with_rust(self, text: &str, defines: &[(&str, &str)]) -> Self {
         match self {
             ComputeFunctionLibrary::Cpu(l) => {
                 let host = rerail_ukl_rust::kernels(text, defines);
-                let reads = rerail_ukl_rust::calls_reads(&host).then(|| std::sync::Arc::new(reads()));
-                ComputeFunctionLibrary::Cpu(l.with_host(host, reads))
+                ComputeFunctionLibrary::Cpu(l.with_host(host))
             }
             other => other,
         }

@@ -830,6 +830,9 @@ and the c++ build's results, then the CPU joins on it.
 
 ### The reads called, not written again (the user's: "under 200kb ... substantially smaller than 1MB", 2026-11-23)
 
+Superseded by decision 0704: the table was my choice, not the size bar's; the join program's reads are Rust written
+directly, and `Launch::reads` is gone.
+
 The reads written once in CLIF (decision 0310) are compiled code on the CPU already (`rerail_clif::jit::Reads`). A
 kernel's Rust now calls them through the launch's table (`Launch::reads`, `READS`' order: `Reads::table`), not as 32
 lanes' vector code of their UKL (`rs::Read`, `call_compiled`): once where the arguments are each one value, else once

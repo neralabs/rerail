@@ -136,6 +136,38 @@ pub struct Doc<'a> {
     pub lines: Lines,
 }
 
+/// A view row found (`Doc::at`): its document, its view (`view_reads::VIEWS`), its row in the document and the tape
+/// node its columns read (0 where they read none, or where a column finds its own: the `Loc` views').
+#[derive(Clone, Copy)]
+pub struct At<'a> {
+    d: Doc<'a>,
+    k: u32,
+    r: u32,
+    x: u32,
+}
+
+impl At<'_> {
+    /// Its column `col`.
+    #[inline]
+    pub unsafe fn col(&self, col: u32) -> u64 {
+        let (d, r, x) = (&self.d, self.r, self.x);
+        match self.k {
+            0 => d.node(r, x, col),
+            1 => d.child(r, x, col),
+            2 => d.field(x, col),
+            3 => d.core(r, x, col),
+            4 => d.line(r, x, col),
+            5 => d.loc(Place::Line, r, col),
+            6 => d.loc(Place::EndLine, r, col),
+            7 => d.loc(Place::Col, r, col),
+            8 => d.loc(Place::Docof, r, col),
+            9 => d.tape(r, x, col),
+            10 => d.depth(r, x, col),
+            _ => d.order(r, col),
+        }
+    }
+}
+
 /// Which place a `Loc` view's second column holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Place {
@@ -197,36 +229,32 @@ impl<'a> Doc<'a> {
         self.node_id(if self.n.is(0, q) { self.n.rank(0, q) } else { 0 })
     }
 
-    /// `node`'s row of numbered node `l`: the document (its file), the id, the kind atom, the start, the end.
-    pub unsafe fn node(&self, l: u32, col: u32) -> u64 {
+    /// `node`'s row of numbered node `l`, its tape node `x`: the document (its file), the id, the kind atom, the
+    /// start, the end.
+    unsafe fn node(&self, l: u32, x: u32, col: u32) -> u64 {
         match col {
             0 => u64::from(self.e.file),
             1 => self.node_id(l),
-            _ => {
-                let x = self.tape_node(l);
-                match col {
-                    2 => Self::item(&self.e.kinds, self.tape.number(x)),
-                    3 => u64::from(self.tape.start(x)),
-                    _ => u64::from(self.tape.end(x)),
-                }
-            }
+            2 => Self::item(&self.e.kinds, self.tape.number(x)),
+            3 => u64::from(self.tape.start(x)),
+            _ => u64::from(self.tape.end(x)),
         }
     }
 
-    /// `child` row `i`, of numbered node `i + 1`: the parent's id, the child's id, its place among the parent's
-    /// children.
-    pub unsafe fn child(&self, i: u32, col: u32) -> u64 {
+    /// `child` row `i`, of numbered node `i + 1`, its tape node `x`: the parent's id, the child's id, its place among
+    /// the parent's children.
+    unsafe fn child(&self, i: u32, x: u32, col: u32) -> u64 {
         let l = i.wrapping_add(1);
         match col {
-            0 => self.parent_id(l, self.tape_node(l)),
+            0 => self.parent_id(l, x),
             1 => self.node_id(l),
             _ => Self::item(&self.e.places, l),
         }
     }
 
-    /// `field` row `i`, of the document's `i`-th node under a field: the parent's id, the field atom, the child's id.
-    pub unsafe fn field(&self, i: u32, col: u32) -> u64 {
-        let x = self.n.select(2, i);
+    /// `field` row `i`, of the document's `i`-th node under a field, its tape node `x`: the parent's id, the field
+    /// atom, the child's id.
+    unsafe fn field(&self, x: u32, col: u32) -> u64 {
         match col {
             0 => self.parent_id(self.n.rank(0, x), x),
             1 => Self::item(&self.e.fields, self.tape.number(x)),
@@ -234,20 +262,20 @@ impl<'a> Doc<'a> {
         }
     }
 
-    /// `core_node`'s row of numbered node `l`: the document, its tape node, its id.
-    pub unsafe fn core(&self, l: u32, col: u32) -> u64 {
+    /// `core_node`'s row of numbered node `l`, its tape node `x`: the document, its tape node, its id.
+    unsafe fn core(&self, l: u32, x: u32, col: u32) -> u64 {
         match col {
             0 => u64::from(self.e.key),
-            1 => u64::from(self.tape_node(l)),
+            1 => u64::from(x),
             _ => self.node_id(l),
         }
     }
 
-    /// `line`'s row of numbered node `l`: its id, the line its start is on.
-    pub unsafe fn line(&self, l: u32, col: u32) -> u64 {
+    /// `line`'s row of numbered node `l`, its tape node `x`: its id, the line its start is on.
+    unsafe fn line(&self, l: u32, x: u32, col: u32) -> u64 {
         match col {
             0 => self.node_id(l),
-            _ => u64::from(self.lines.line(self.tape.start(self.tape_node(l)))),
+            _ => u64::from(self.lines.line(self.tape.start(x))),
         }
     }
 
@@ -330,23 +358,9 @@ impl<'a> Doc<'a> {
         })
     }
 
-    /// core.rerail's `line`, `end_line`, `col` and `docof` rows of position `l`.
-    pub unsafe fn loc_line(&self, l: u32, col: u32) -> u64 {
-        self.loc(Place::Line, l, col)
-    }
-    pub unsafe fn loc_end(&self, l: u32, col: u32) -> u64 {
-        self.loc(Place::EndLine, l, col)
-    }
-    pub unsafe fn loc_col(&self, l: u32, col: u32) -> u64 {
-        self.loc(Place::Col, l, col)
-    }
-    pub unsafe fn loc_docof(&self, l: u32, col: u32) -> u64 {
-        self.loc(Place::Docof, l, col)
-    }
-
-    /// Numbered node `l`'s depth, the root's 0: its numbered strict tape ancestors.
-    unsafe fn depth_of(&self, l: u32) -> u64 {
-        let (mut p, mut d) = (self.tape.parent(self.tape_node(l)), 0u32);
+    /// Numbered node `l`'s depth (its tape node `x`), the root's 0: its numbered strict tape ancestors.
+    unsafe fn depth_of(&self, x: u32) -> u64 {
+        let (mut p, mut d) = (self.tape.parent(x), 0u32);
         while p != NO_ROW {
             d = d.wrapping_add(u32::from(self.n.is(0, p)));
             p = self.tape.parent(p);
@@ -354,24 +368,24 @@ impl<'a> Doc<'a> {
         u64::from(d)
     }
 
-    /// `tape`'s row of numbered node `l`: its id, its parent's id (-1 for the root), the numbered nodes under it,
-    /// its depth.
-    pub unsafe fn tape(&self, l: u32, col: u32) -> u64 {
+    /// `tape`'s row of numbered node `l`, its tape node `x`: its id, its parent's id (-1 for the root), the
+    /// numbered nodes under it, its depth.
+    unsafe fn tape(&self, l: u32, x: u32, col: u32) -> u64 {
         match col {
             0 => self.node_id(l),
-            1 => self.parent_id(l, self.tape_node(l)),
-            2 => u64::from(self.n.rank(0, self.tape.end_of(self.tape_node(l))).wrapping_sub(l).wrapping_sub(1)),
-            _ => self.depth_of(l),
+            1 => self.parent_id(l, x),
+            2 => u64::from(self.n.rank(0, self.tape.end_of(x)).wrapping_sub(l).wrapping_sub(1)),
+            _ => self.depth_of(x),
         }
     }
 
-    /// `ast_depth`'s row of numbered node `l`: its id, its depth.
-    pub unsafe fn depth(&self, l: u32, col: u32) -> u64 {
-        if col == 0 { self.node_id(l) } else { self.depth_of(l) }
+    /// `ast_depth`'s row of numbered node `l`, its tape node `x`: its id, its depth.
+    unsafe fn depth(&self, l: u32, x: u32, col: u32) -> u64 {
+        if col == 0 { self.node_id(l) } else { self.depth_of(x) }
     }
 
     /// `node_order`'s row of numbered node `l`: its id, its order key under the document's key.
-    pub unsafe fn order(&self, l: u32, col: u32) -> u64 {
+    unsafe fn order(&self, l: u32, col: u32) -> u64 {
         if col == 0 {
             return self.node_id(l);
         }
@@ -382,20 +396,20 @@ impl<'a> Doc<'a> {
     /// View `k`'s (`view_reads::VIEWS`) row `r`, column `col`.
     #[inline]
     pub unsafe fn view(&self, k: u32, r: u32, col: u32) -> u64 {
-        match k {
-            0 => self.node(r, col),
-            1 => self.child(r, col),
-            2 => self.field(r, col),
-            3 => self.core(r, col),
-            4 => self.line(r, col),
-            5 => self.loc_line(r, col),
-            6 => self.loc_end(r, col),
-            7 => self.loc_col(r, col),
-            8 => self.loc_docof(r, col),
-            9 => self.tape(r, col),
-            10 => self.depth(r, col),
-            _ => self.order(r, col),
-        }
+        self.at(k, r).col(col)
+    }
+
+    /// View `k`'s (`view_reads::VIEWS`) row `r`, found once: its tape node, where its columns read one, selected
+    /// here, so a row's columns read it once.
+    #[inline]
+    pub unsafe fn at(self, k: u32, r: u32) -> At<'a> {
+        let x = match k {
+            0 | 3 | 4 | 9 | 10 => self.tape_node(r),
+            1 => self.tape_node(r.wrapping_add(1)),
+            2 => self.n.select(2, r),
+            _ => 0,
+        };
+        At { d: self, k, r, x }
     }
 
     /// The `child` row of the first numbered node from tape node `c` on, `c` and each sibling after it within

@@ -76,7 +76,7 @@ fn program_on(host: bool, name: &str, text: &str, defines: &[(&str, &str)]) -> R
         let (library, preprocessed, bytes) = if host || crate::vec::on(&shared.device) {
             // Its rows the interpreter's, its kernels that are Rust of this text and these defines that Rust.
             let library = crate::vec::library(name, &format!("/<kernels>/{name}"), text, defines)?;
-            let library = if rust { library.with_rust(text, defines, compiled_reads) } else { library };
+            let library = if rust { library.with_rust(text, defines) } else { library };
             (library, started.elapsed(), text.len())
         } else {
             let source = preprocess_with(name, text, defines)?;
@@ -84,7 +84,7 @@ fn program_on(host: bool, name: &str, text: &str, defines: &[(&str, &str)]) -> R
             let library = ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?;
             // On the CPU, a kernel that is Rust of this very text and these defines runs as that Rust (decision 0567
             // step 3). `RERAIL_CPU_RUST=0`, a measurement aid: every kernel the compiler's build.
-            let library = if std::env::var("RERAIL_CPU_RUST").is_ok_and(|v| v == "0") { library } else { library.with_rust(text, defines, compiled_reads) };
+            let library = if std::env::var("RERAIL_CPU_RUST").is_ok_and(|v| v == "0") { library } else { library.with_rust(text, defines) };
             (library, preprocessed, source.len())
         };
         // `RERAIL_GPU_TIMES`, a measurement aid: each program's preprocessing and compile (or load), on stderr.
@@ -330,12 +330,4 @@ pub fn buffer_of<T: Pod>(data: &[T]) -> Result<Buffer, String> {
 /// The first `n` values of a buffer.
 pub fn read<T: Pod + Clone>(buffer: &BufferRef, n: usize) -> Vec<T> {
     transfer_to_host_sync::<T>(buffer, n)
-}
-
-/// The reads written once in CLIF, compiled for the CPU: what a kernel's Rust calls (`rerail_ukl_rust::Launch::reads`),
-/// made for the library whose kernel calls them.
-fn compiled_reads() -> rerail_ukl_rust::Reads {
-    let reads = rerail_clif::jit::Reads::new();
-    // SAFETY: the table is the JIT's code, which `reads` holds unchanged while it lives.
-    unsafe { rerail_ukl_rust::Reads::new(reads.table(), Box::new(reads)) }
 }

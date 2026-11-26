@@ -4230,7 +4230,6 @@ dependencies = [
  "metal",
  "objc",
  "rerail-blocks",
- "rerail-clif",
  "rerail-device",
  "rerail-ukl",
  "rerail-ukl-rust",

@@ -17,48 +17,13 @@ mod sort_merge_spike;
 pub use sources::*;
 
 /// A group's launch, as a kernel's Rust reads it: its group's position, its threads' (each dimension's), and the
-/// groups'; and the reads written once in CLIF as the CPU compiled them, each by its place in `rerail_clif::reads::READS`
-/// (`rerail_clif::jit::Reads::table`), which a kernel's Rust calls (rerail-ukl-vec's `rs::Read`); null for a kernel
-/// that calls none.
+/// groups'.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct Launch {
     pub group: [u32; 3],
     pub block: [u32; 3],
     pub groups: [u32; 3],
-    pub reads: *const *const u8,
-}
-
-/// The reads written once in CLIF, compiled for the CPU (`rerail_clif::jit::Reads`): their table in
-/// `rerail_clif::reads::READS`' order, which a kernel's Rust calls through (`Launch::reads`), and the code it points
-/// into, held as long as the table.
-pub struct Reads {
-    table: Vec<*const u8>,
-    _code: Box<dyn std::any::Any>,
-}
-
-// SAFETY: the table and the code are written once, before `new`, and only read after: each read a function of its
-// arguments, callable from any thread.
-unsafe impl Send for Reads {}
-unsafe impl Sync for Reads {}
-
-impl Reads {
-    /// # Safety
-    ///
-    /// `table` holds every compiled read in `READS`' order, its code `code`'s, unchanged while `code` lives.
-    pub unsafe fn new(table: Vec<*const u8>, code: Box<dyn std::any::Any>) -> Self {
-        Reads { table, _code: code }
-    }
-
-    /// The table, as `Launch::reads`.
-    pub fn table(&self) -> *const *const u8 {
-        self.table.as_ptr()
-    }
-}
-
-/// Whether any of `host`'s kernels calls the compiled reads (and so needs `Launch::reads`).
-pub fn calls_reads(host: &[(&'static str, Kernel)]) -> bool {
-    host.iter().any(|(name, _)| *name == "join_run")
 }
 
 /// A kernel's Rust: one group's threads. `argv` holds the address of each argument's bytes (a buffer's: of its
@@ -72,7 +37,7 @@ pub type Kernel = unsafe fn(*const *const u8, &Launch);
 /// `argv` holds `k`'s arguments, its buffers as large as the launch reads and writes.
 pub unsafe fn launch(k: Kernel, argv: &[*const u8], groups: u32, block: u32) {
     for g in 0..groups {
-        let l = Launch { group: [g, 0, 0], block: [block, 1, 1], groups: [groups, 1, 1], reads: std::ptr::null() };
+        let l = Launch { group: [g, 0, 0], block: [block, 1, 1], groups: [groups, 1, 1] };
         unsafe { k(argv.as_ptr(), &l) };
     }
 }
