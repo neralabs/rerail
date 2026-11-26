@@ -1705,36 +1705,36 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
     expect([gits.map(({ args }) => args.at(-1)), answer]).toEqual([["version", "--list"], { ended: "timed-out" }]);
   }, 60_000);
 
-  it.each([["config listing", "--list"], ["listing of changed files", "--modified"]])("and the walk's %s gets only what is left of the read's 10 s", async (_name, hangs) => {
+  it.for([
+    { name: "config listing", before: ["version"], stays: "config", left: 6_000 },
+    { name: "listing of changed files", before: ["version", "config"], stays: "ls-files", left: 2_000 },
+  ] as const)("and the walk's $name gets only what is left of the read's 10 s", { timeout: 60_000 }, async ({ before, stays, left }, { signal }) => {
     const root = await folder();
     const work = withDriver(await repository(root, "work", { "top.txt": "top\n" }));
+    // A Rerail loaded afresh asks Git's version within this read, as the read's first Git.
     vi.resetModules();
     const fresh = await import("../../../src/engine/git.js");
-    const started = await import("node:child_process");
-    const now = performance.now.bind(performance);
-    let used = 0;
-    const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + used);
-    // Each Git before the one that hangs as if it took 4 s; in that one's place, a program that prints nothing and
-    // stays: the read ends it at its first look past what was left (6 s for the config listing, 2 s for the other).
-    vi.mocked(started.spawn).mockImplementation(((file: string, args: readonly string[], options: childProcess.SpawnOptions) => {
-      const stays = args.at(-1) === hangs || args.includes(hangs);
-      used += stays ? 0 : 4_000;
-      return stays ? actualChildProcess.spawn(process.execPath, ["-e", "process.stdin.resume()"], options) : actualChildProcess.spawn(file, args, options);
-    }) as unknown as typeof childProcess.spawn);
-    const began = now();
-    try {
-      const read = fresh.gitModifiedOrUntrackedListing(work);
-      await new Promise(settle => setTimeout(settle, 500));
-      // Past what was left on the clock, and 4 s short of a limit of 10 s from the start of the Git that stays.
-      used += 6_000;
+    const turns: string[][] = [];
 
-      expect(await read).toEqual({ ended: "timed-out" });
-      expect(now() - began).toBeLessThan(3_000);
-    } finally {
-      vi.mocked(started.spawn).mockImplementation(actualChildProcess.spawn);
-      clock.mockRestore();
-    }
-  }, 60_000);
+    const answer = await heldBy(root, async () => await fresh.gitModifiedOrUntrackedListing(work), async holds => {
+      // Each Git before the one that stays as if it took 4 s of the read's 10 s.
+      for (let turn = 0; turn < before.length; turn += 1) {
+        const gits = await holds.next(1);
+        turns.push(gits.map(({ args }) => gitVerb(args) ?? ""));
+        await holds.pass(4_000);
+        for (const git of gits) git.go();
+      }
+      // The one that stays is never let go, and the clock moves on by what was left at its start and no further: short of
+      // a limit of 10 s from that start (4 s short for the config listing, 8 s for the other). Only the read ends that Git,
+      // and it answers once that Git has exited: a read that gave it a fresh 10 s never answers, and the case fails at its
+      // time limit naming the Gits the call started.
+      const stay = await holds.next(1);
+      turns.push(stay.map(({ args }) => gitVerb(args) ?? ""));
+      await holds.pass(left);
+    }, signal);
+
+    expect([answer, turns]).toEqual([{ ended: "timed-out" }, [...before, stays].map(verb => [verb])]);
+  });
 
   it.each([["status", "--porcelain=2", "-z"], ["ls-files", "-z", "--modified"]])("and so does a guarded `git %s`", async (...args: string[]) => {
     const root = await folder();
