@@ -471,5 +471,101 @@ where
     RowAt { one: core::ptr::null(), each: cols, seg, within, i, uniform: false }
 }
 
+// ---- One row a read: the scalar reads a join step makes outside its lanes, and the rows' write. ----
+
+/// The seed a key's hash starts from (`rerail_blocks::SEED`; `tests` holds it to it).
+pub const KEY_SEED: u64 = 0x243F_6A88_85A3_08D3;
+
+/// A relation's rows' descriptor (`rerail_blocks::rows::Rows`, at `d + 40` of a relation's): its rows claimed, the
+/// rows its chunks hold, its rows' overflow count and its columns (`tests` holds them to it).
+pub(crate) const ROWS_LEN: u64 = 0;
+pub(crate) const ROWS_RESERVED: u64 = 4;
+pub(crate) const ROWS_NEEDED: u64 = 16;
+pub(crate) const ROWS_NCOLS: u64 = 20;
+/// An index's marks (`Index::marks`, decision 0671).
+pub(crate) const INDEX_MARKS: u64 = 64;
+
+#[inline(always)]
+unsafe fn atomic32<'a>(p: *const u8, o: u64) -> &'a core::sync::atomic::AtomicU32 {
+    &*p.wrapping_add(o as usize).cast::<core::sync::atomic::AtomicU32>()
+}
+
+/// `clif_rows_len` of rows `rows`: the rows claimed, read while a writer claims them.
+#[inline(always)]
+pub unsafe fn rows_len(rows: *const u8) -> u32 {
+    atomic32(rows, ROWS_LEN).load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// `clif_rows_put` of rows `rows`: `v` written as row `i`'s value in column `c`, at the column's width; 1. Where the
+/// row is not below the rows the chunks hold, or the column not below the columns, nothing is written and the rows'
+/// `needed` is counted (the overflow protocol, decision 0463); 0.
+#[inline(always)]
+pub unsafe fn rows_put(rows: *const u8, i: u32, c: u32, v: u64) -> u32 {
+    let reserved = atomic32(rows, ROWS_RESERVED).load(core::sync::atomic::Ordering::Relaxed);
+    if i >= reserved || c >= r32(rows, ROWS_NCOLS) {
+        atomic32(rows, ROWS_NEEDED).fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        return 0;
+    }
+    let dir = rows_col(rows, c);
+    let width = r32(dir, 0);
+    let (seg, within) = chunk::<1>(s32(i), s32(r32(rows, 8)));
+    let p = dir.wrapping_add(r64(dir, 8 + 8 * u64::from(seg[0])) as usize + within[0] as usize * width as usize).cast_mut();
+    if width == 4 {
+        p.cast::<u32>().write_unaligned(v as u32);
+    } else {
+        p.cast::<u64>().write_unaligned(v);
+    }
+    1
+}
+
+/// `clif_rel_group_mark` of relation `d`'s index `index`: entry `q` of its marks.
+#[inline(always)]
+pub unsafe fn rel_group_mark(d: *const u8, index: u32, q: u32) -> u32 {
+    r32(follow(index_of(d, index), INDEX_MARKS), 4 * u64::from(q))
+}
+
+/// The lanes' reads at one lane: a scalar caller's.
+pub mod one {
+    use super::*;
+
+    #[inline(always)]
+    pub unsafe fn rel_get(d: *const u8, r: u32, c: u32) -> u64 {
+        super::rel_get::<1>(d, s32(r), c)[0]
+    }
+    #[inline(always)]
+    pub unsafe fn rel_dead(d: *const u8, r: u32) -> bool {
+        super::rel_dead::<1>(d, s32(r)).test(0)
+    }
+    /// The group's first place in the index's rows and its length.
+    #[inline(always)]
+    pub unsafe fn rel_group(d: *const u8, index: u32, h: u64) -> (u32, u32) {
+        let (start, len) = super::rel_group::<1>(d, index, s64(h));
+        (start[0], len[0])
+    }
+    #[inline(always)]
+    pub unsafe fn rel_group_row(d: *const u8, index: u32, q: u32) -> u32 {
+        super::rel_group_row::<1>(d, index, s32(q))[0]
+    }
+    #[inline(always)]
+    pub fn key_mix(h: u64, v: u64) -> u64 {
+        super::key_mix::<1>(s64(h), s64(v))[0]
+    }
+    /// A key's hash: its values mixed in order into the seed (`rerail_blocks::key_hash`).
+    #[inline(always)]
+    pub fn key_hash(kv: &[i64]) -> u64 {
+        kv.iter().fold(super::KEY_SEED, |h, &v| key_mix(h, v as u64))
+    }
+    #[inline(always)]
+    pub fn bloom_hash(key: u64) -> u64 {
+        let (lo, hi) = super::bloom_hash::<1>(s64(key));
+        super::joined(lo, hi)[0]
+    }
+    /// Whether filter `d` may hold the key of hash `h` (`bloom_hash`'s).
+    #[inline(always)]
+    pub unsafe fn bloom_may(d: *const u8, h: u64) -> bool {
+        super::bloom_may::<1>(d, s32(h as u32), s32((h >> 32) as u32)).test(0)
+    }
+}
+
 #[cfg(test)]
 mod tests;

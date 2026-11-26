@@ -29,7 +29,7 @@ const JOIN_INLINE_GROUPS: u32 = 4;
 const TG: u32 = 256;
 /// A text row's SIMD group (`SGW`): its rows and their counts are laid out by it.
 const SGW: u32 = 32;
-const KEY_SEED: u64 = 0x243F_6A88_85A3_08D3;
+use crate::lanes::KEY_SEED;
 /// A scan's tile: `UKL_SCAN_ITEMS` values a thread of the group.
 const SCAN_ITEMS: u32 = 4;
 /// A sort's tile (`UKL_RADIX_TILE`) and its digits.
@@ -1412,6 +1412,7 @@ unsafe fn text_range(f: u32, x: &Txt, n0: i64, n1: i64) -> (u32, u32, bool) {
 
 /// The buffers an item's job reaches (`Job`, its words placed in the arena where its size script placed them).
 mod dedup_lanes;
+pub mod reads;
 mod stage_lanes;
 
 struct Bufs {
@@ -2794,8 +2795,9 @@ unsafe fn radix_hist_tile64(keys: *const u64, hist: *mut u32, n: u32, shift: u32
         h[0][dg(r)] += 1;
         r += 1;
     }
-    for d in 0..RADIX_DIGITS {
-        *hist.add(d * tiles as usize + tile as usize) = h[0][d] + h[1][d] + h[2][d] + h[3][d];
+    let [h0, h1, h2, h3] = &h;
+    for (d, (((a, b), c), e)) in h0.iter().zip(h1).zip(h2).zip(h3).enumerate() {
+        *hist.add(d * tiles as usize + tile as usize) = a + b + c + e;
     }
 }
 

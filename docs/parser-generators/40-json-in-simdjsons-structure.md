@@ -923,7 +923,7 @@ its language (`LANG`, the table's fingerprint), and its runs take that language:
 |---|---|---|---|
 | D7. A kind's code | a constant (`'['`, `'t'`) | `number16`: `numbers[k]` loaded every node, from the language given at run time | a literal at the word; a keyword's by a `match` of its word |
 
-**The tape's reads** (`tape_format/src/reads.rs`, 0534) are a hand-written reader of format 16 and 15. They are no
+**The tape's reads** (`reads/src/tape.rs`, 0534) are a hand-written reader of format 16 and 15. They are no
 longer the reads' CLIF translated, and a test holds them equal to the JIT's. The relations' and the numbering's Rust
 reads are still translated, and are next.
 

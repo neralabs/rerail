@@ -233,6 +233,8 @@ rerail-metal = { path = "../metal" }
 # The device layer's targets (macOS, Linux and Windows): the GPU lane (decision 0440 step E).
 
 [dev-dependencies]
+# The join program's reads in Rust, held to the JIT's over a batch's directory (`the_join_programs_view_reads_are_the_jits`).
+rerail-ukl-rust = { path = "../ukl_rust" }
 # JSON's parser, measured directly (`tape::tests::json_parse_costs`).
 rerail-simdjson = { path = "../simdjson" }
 # Python's lean parser, measured directly (`tape::tests::python_parse_costs`).

@@ -7,7 +7,7 @@
 //! slice's: a load past the bytes is a corrupt tape, and panics. Every value read is held where a reader's next
 //! step needs it held (decision 0463): a size is at least 1, a span lies in the source, a parent's step moves back.
 
-use rerail_clif::view::TapeView;
+use crate::view::TapeView;
 
 /// No node.
 pub const NONE: u32 = u32::MAX;
@@ -117,7 +117,7 @@ fn width(v: &TapeView, k: u32) -> u32 {
 /// The reads of a format 16 tape.
 pub mod f16 {
     use super::{NONE, Src, TapeView, mask, u8_at, u16_at, u32_at, width, word_at};
-    use rerail_clif::view::{F16_BLOCK as BLOCK, F16_K as K, F16_PART as PART, F16_SUB as SUB};
+    use crate::view::{F16_BLOCK as BLOCK, F16_K as K, F16_PART as PART, F16_SUB as SUB};
 
     /// Column `r` (0 codes, 1 slots, 2 gaps, 3 lengths, 4 checkpoints) of block `b`: blocks are `PART` nodes at the
     /// view's stride, each its columns end to end at its rows (the last block's are fewer), column `r` at `rows *
@@ -433,7 +433,7 @@ pub mod f16 {
 /// The reads of a format 15 tape.
 pub mod f15 {
     use super::{NONE, Src, TapeView, u16_at, u32_at, width};
-    use rerail_clif::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START};
+    use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START};
 
     /// Row `i`'s cell of a column of width 2 or 4.
     #[inline(always)]

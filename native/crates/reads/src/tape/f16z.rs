@@ -1,6 +1,6 @@
 //! The reads of a 16z tape where it lies (decision 0353 step 4b), written directly: format 16 cut into blocks of
 //! `F16Z_BLOCK` nodes, each stored compressed; a read finds its node's block decoded in the rolling cache its view
-//! names (`rerail_clif::view::cache`), decoding it into the cache on a miss, and reads it there with format 16's reads
+//! names (`crate::view::cache`), decoding it into the cache on a miss, and reads it there with format 16's reads
 //! (`super::f16`) over the entry. The cache is the one the kernels and the JIT read and write: its lookup is the
 //! host's (`cache::lookup`, held to theirs by tests), the decode the kernels' (`clif_tz_decode`), so every reader of a
 //! batch shares its entries.
@@ -10,8 +10,8 @@
 //! 0, and a failure is counted, so the run that shares the cache is refused (decision 0463).
 
 use super::{InPlace, NONE, Src, f16, lz4};
-use rerail_clif::view::cache as c;
-use rerail_clif::view::{F16_K as K, F16Z_BLOCK as BLOCK, F16Z_PIECES as PIECES, TapeView, z};
+use crate::view::cache as c;
+use crate::view::{F16_K as K, F16Z_BLOCK as BLOCK, F16Z_PIECES as PIECES, TapeView, z};
 use std::sync::atomic::{AtomicU32, Ordering::SeqCst, fence};
 
 /// The bytes at `p`, any address: the tape's, the cache's.
@@ -86,7 +86,7 @@ unsafe fn decode(t: InPlace, v: &TapeView, block: u32, e: u64, size: u64) -> boo
     for q in 0..4 {
         let w = if q == 0 { 1 } else { (widths >> (4 * (q as u32 - 1))) & 15 };
         ends[q] = nb * col[q] + nb * w;
-        col[q + 1] = (ends[q] + side[q] + 16 + nb - 1) / nb;
+        col[q + 1] = (ends[q] + side[q] + 16).div_ceil(nb);
     }
     let ckpt_at = nb * col[4];
     let ckpt_len = ((nb + K - 1) >> 3) * cw;

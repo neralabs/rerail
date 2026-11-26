@@ -22,7 +22,8 @@ pub mod f16;
 pub mod home;
 pub mod newlines;
 /// The tape's reads in Rust, written directly (decision 0534): this crate's readers'.
-pub mod reads;
+// The reads (decision 0534), in the crate below every reader of a tape (`rerail_reads::tape`), where they were.
+pub use rerail_reads::tape as reads;
 /// The tape's writer in Rust, written directly (decision 0532): the host's, and a generated tier 2's `ops` module.
 pub mod writer16;
 

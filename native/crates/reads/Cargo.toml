@@ -1,0 +1,8 @@
+[package]
+name = "rerail-reads"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The layouts every reader of the engine's data reads where it lies, and their reads written directly in Rust (decisions 0353, 0534, 0536): a tape's view and reads (formats 16, 15 and 16z, through its batch's rolling cache), a projection's numbering, and a batch's views' entries and directory. Below every crate that reads them, the CPU's join program included; the CLIF of the same reads is rerail-clif's."
+
+[dependencies]

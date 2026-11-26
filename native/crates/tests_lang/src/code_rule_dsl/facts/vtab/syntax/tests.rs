@@ -2945,7 +2945,7 @@ fn a_span_reader_s_places_are_the_view_s_then_the_spans() {
 /// Decision 0353, step 3 on the CPU (step 1): a batch's views' directory is made with or without a device, and
 /// self-relative. Read from its offset in the batch's block, at the host's bases of its homes, each document's row
 /// names that document's entry, its tape's bytes and its lines' words where they lie. The device's address of it is
-/// given only where the device reads every home.
+/// given only where the device reads every home; with no device, the host's, which its join programs read it by.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_views_directory_is_the_hosts_too() {
@@ -2971,8 +2971,14 @@ fn the_views_directory_is_the_hosts_too() {
         assert_eq!((row.view.format, row.view.nodes), (view.format, view.nodes));
         assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.index().as_ptr() as u64, "document {}'s line index, in its tape or its own", p.key);
     }
-    let all_on_device = crate::code_rule_dsl::tape::placed::device().is_some() && homes.iter().all(|h| h.gpu != 0);
-    assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every home");
+    if crate::code_rule_dsl::tape::placed::device().is_some() {
+        let all_on_device = homes.iter().all(|h| h.gpu != 0);
+        assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every home");
+    } else {
+        // No process device: the join programs run on the host (53a8c256c2), which reads every home where it lies,
+        // the directory at its own address in the block.
+        assert_eq!(views.dir, Some(block.base_ptr() as u64 + views.at as u64), "the host's address of the directory, with no device");
+    }
 }
 
 /// Decision 0353, step 3 on the CPU (step 2): the directory's searches written directly in Rust (`ViewDir::doc_of_row`,
@@ -3026,6 +3032,81 @@ fn the_directorys_searches_are_the_jits() {
         }
     }
     assert!(tried > 100);
+}
+
+/// The join program's reads of the views, written directly in Rust (`rerail_ukl_rust::join_run::reads`, decisions
+/// 0534, 0536), answer what their CLIF answers by the JIT, over a batch's directory where it lies, in each format a
+/// tape is made in (16z's read through the directory's shared cache, by both): every column of every row of every
+/// view of each document, and each walk (`view_child_first`, `child_next`, `up`, `end`, `number`) from every node.
+/// The documents include a docstring alone (no rows in some views), a broken one and a TypeScript one; the last
+/// document's rows are not bounded by a next one's, so a small one comes last and is not read.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[test]
+fn the_join_programs_view_reads_are_the_jits() {
+    use crate::code_rule_dsl::tape::formats::{Format, as_run};
+    use rerail_clif::view::TapeView;
+    use rerail_clif::view_reads::{VIEWS, ViewDir};
+    use rerail_ukl_rust::join_run::reads::Doc;
+    type Row = extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> u64;
+    type Walk = extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32) -> u32;
+    let jit = rerail_clif::jit::Reads::new();
+    // SAFETY: each read's signature: the entry, the tape's base, its view, the lines' base, then its arguments.
+    let rows: Vec<Row> = VIEWS.iter().map(|name| unsafe { std::mem::transmute::<*const u8, Row>(jit.function(name)) }).collect();
+    let walks: [Walk; 5] = ["view_child_first", "view_child_next", "view_up", "view_end", "view_number"].map(|name| unsafe { std::mem::transmute::<*const u8, Walk>(jit.function(name)) });
+    let python = |k: u32| format!("import os\n@dec\ndef f{k}(a, b=2):\n    '''doc'''\n    return [x for x in a if g(x, {k})]\n\nclass C(B):\n    def m(self):\n        return self.x\n");
+    let mut tried = 0usize;
+    for format in Format::ALL {
+        as_run(format, || {
+            let store = ContentStore::open(&temp(&format!("join-reads-{}", format.name()))).unwrap();
+            let mut docs: Vec<Document> = (1..=3).map(|k| document(k * 3, &format!("m{k}.py"), "python", &python(k))).collect();
+            docs.push(document(20, "only.py", "python", "\"\"\"only a docstring\"\"\"\n"));
+            docs.push(document(21, "broken.py", "python", "def f(a, b:\n    return [a for\n"));
+            docs.push(document(22, "k.ts", "typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\n"));
+            docs.push(document(40, "last.py", "python", "x = 1\n"));
+            let batch = Batch::new(&store, docs, &Projection::core(), &[], &[], false, None, &HashMap::new()).unwrap();
+            let chunk = batch.chunk();
+            let views = device_chunk::views_in_place(&batch, chunk).expect("a directory");
+            let d = chunk.block.ptr::<u8>(views.at).cast_const().cast::<ViewDir>();
+            // SAFETY: the directory in the batch's block, which the batch holds; its documents' tapes and lines.
+            let dir = unsafe { &*d };
+            let firsts = unsafe { dir.rows() };
+            for m in 0..dir.ndocs - 1 {
+                let doc = unsafe { Doc::of(d, m) };
+                let (e, t, v, l) = (std::ptr::from_ref(doc.e).cast::<u8>(), doc.tape.t.base(), &raw const doc.tape.v, doc.lines.0.base());
+                let at = format!("{} document {m}", format.name());
+                for k in 0..VIEWS.len() {
+                    let n = firsts[m as usize + 1].rows[k] - firsts[m as usize].rows[k];
+                    let cols = [5, 3, 3, 3, 2, 2, 2, 2, 2, 4, 2, 2][k];
+                    for r in 0..n {
+                        for c in 0..cols {
+                            // SAFETY: a row of the document's, of the view's.
+                            let rust = unsafe { doc.view(k as u32, r, c) };
+                            assert_eq!(rust, rows[k](e, t, v, l, r, c), "{at}: {} row {r} column {c}", VIEWS[k]);
+                            tried += 1;
+                        }
+                    }
+                }
+                let nodes = doc.e.nodes;
+                for x in 0..nodes {
+                    // SAFETY: a node of the document's (a `child` row for each but the last).
+                    unsafe {
+                        assert_eq!(doc.child_first(x), walks[0](e, t, v, l, x), "{at}: child_first {x}");
+                        if x + 1 < nodes {
+                            assert_eq!(doc.child_next(x), walks[1](e, t, v, l, x), "{at}: child_next {x}");
+                        }
+                        assert_eq!(doc.up(x), walks[2](e, t, v, l, x), "{at}: up {x}");
+                        assert_eq!(doc.end(x), walks[3](e, t, v, l, x), "{at}: end {x}");
+                        let low = doc.node_id(x) as u32;
+                        for q in [low, low ^ 1, low.wrapping_add(nodes), u32::MAX - 1] {
+                            assert_eq!(doc.number(q), walks[4](e, t, v, l, q), "{at}: number {q:#x}");
+                        }
+                    }
+                    tried += 1;
+                }
+            }
+        });
+    }
+    assert!(tried > 1000, "{tried} reads");
 }
 
 /// Decision 0353, step 3 on the CPU (step 2): the directory's searches in the kernels (`clif_dir_doc_of_row`,
