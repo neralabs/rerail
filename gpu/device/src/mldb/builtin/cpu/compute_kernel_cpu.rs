@@ -557,6 +557,8 @@ struct Done {
 /// The root's thread's own: the threads' stacks, kept across launches.
 struct Worker {
     stacks: Option<crate::os::Stacks>,
+    /// Its threads for a Rust launch's groups (`Helpers`), made at its first launch of many.
+    helpers: Option<Helpers>,
     page: usize,
     sched: Vec<u64>,
     /// Its work runs in its flush (`CpuQueueRoot::inline`): a host signal it waits for must have come.
@@ -564,6 +566,10 @@ struct Worker {
 }
 
 impl Worker {
+    fn helpers(&mut self) -> &Helpers {
+        self.helpers.get_or_insert_with(Helpers::new)
+    }
+
     /// Stacks for `n` threads, each `STACK_BYTES` with a guard page below it; their base and stride.
     fn stacks(&mut self, n: usize) -> (*mut u8, usize) {
         let stride = STACK_BYTES + self.page;
@@ -591,7 +597,7 @@ enum Root {
 
 impl Worker {
     fn new() -> Worker {
-        Worker { stacks: None, page: crate::os::page_bytes(), sched: vec![0; SCHED_BYTES / 8], inline: false }
+        Worker { stacks: None, helpers: None, page: crate::os::page_bytes(), sched: vec![0; SCHED_BYTES / 8], inline: false }
     }
 
     /// The ops of a batch in order, the first error stopping them, and the seconds they took.
@@ -769,6 +775,156 @@ enum Grid {
 
 /// The bind context of one launch: each parameter's bytes, the threadgroup memory its rows take, and the buffers it
 /// binds (kept until it has run).
+/// The groups a Rust launch has at least for the pool's threads to run them (`Run::Host`), and the groups a task of
+/// theirs takes at least.
+const POOL_GROUPS: u64 = 32;
+const POOL_TASK_GROUPS: u64 = 4;
+
+/// Threads that run a Rust launch's groups beside its queue's thread (`Run::Host`, a root's thread's `Worker`):
+/// parked until a launch has tasks for them, one woken a task, parked again once its groups are all handed out. A
+/// pool whose threads spin between jobs spun through a recursive stratum's thousands of launches (the closure's
+/// profile: 12,055 samples of `swtch_pri` against about 3,000 of its kernels').
+struct Helpers {
+    shared: Arc<HelpShared>,
+    threads: Vec<std::thread::JoinHandle<()>>,
+}
+
+struct HelpShared {
+    state: Mutex<HelpState>,
+    wake: Condvar,
+    idle: Condvar,
+}
+
+struct HelpState {
+    /// The launch its threads help with, and its number (a thread takes each one once).
+    job: Option<HelpJob>,
+    seq: u64,
+    /// The threads in the job now: it ends when they are none.
+    active: usize,
+    panic: Option<String>,
+    quit: bool,
+}
+
+#[derive(Clone, Copy)]
+struct HelpJob {
+    /// The launch's group, by number; its groups, and the next one not handed out.
+    run: *const (dyn Fn(u64) + Sync),
+    groups: u64,
+    next: *const AtomicU64,
+}
+
+// SAFETY: the job's closure is `Sync`, and the launch outlives it: `Helpers::run` returns once no thread is in it.
+unsafe impl Send for HelpJob {}
+
+impl HelpJob {
+    /// Its groups' tasks, until none is left to hand out.
+    fn take(&self) {
+        // SAFETY: as `HelpJob`'s: alive while a thread is in the job.
+        let (run, next) = unsafe { (&*self.run, &*self.next) };
+        loop {
+            let i = next.fetch_add(POOL_TASK_GROUPS, Ordering::Relaxed);
+            if i >= self.groups {
+                return;
+            }
+            for g in i..(i + POOL_TASK_GROUPS).min(self.groups) {
+                run(g);
+            }
+        }
+    }
+}
+
+fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
+    p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()
+}
+
+impl Helpers {
+    /// As many threads as the engine's pool has, less the queue's own.
+    fn new() -> Helpers {
+        let shared = Arc::new(HelpShared { state: Mutex::new(HelpState { job: None, seq: 0, active: 0, panic: None, quit: false }), wake: Condvar::new(), idle: Condvar::new() });
+        let threads = (1..rayon::current_num_threads().max(1))
+            .map(|_| {
+                let sh = Arc::clone(&shared);
+                std::thread::Builder::new()
+                    .name("rerail-cpu-groups".into())
+                    .stack_size(8 << 20)
+                    .spawn(move || Helpers::serve(&sh))
+                    .expect("the CPU queue's group threads")
+            })
+            .collect();
+        Helpers { shared, threads }
+    }
+
+    fn serve(sh: &HelpShared) {
+        let mut seen = 0;
+        let mut s = sh.state.lock().unwrap();
+        loop {
+            if s.quit {
+                return;
+            }
+            match s.job {
+                Some(job) if s.seq != seen => {
+                    seen = s.seq;
+                    s.active += 1;
+                    drop(s);
+                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.take()));
+                    s = sh.state.lock().unwrap();
+                    if let Err(p) = r {
+                        s.panic.get_or_insert_with(|| panic_text(&*p));
+                    }
+                    s.active -= 1;
+                    if s.active == 0 {
+                        sh.idle.notify_all();
+                    }
+                }
+                _ => s = sh.wake.wait(s).unwrap(),
+            }
+        }
+    }
+
+    /// `run` of each of `groups` groups, on this thread and as many of its threads as its tasks keep busy; once
+    /// every group has run. A group's panic is resumed here.
+    fn run(&self, groups: u64, run: &(dyn Fn(u64) + Sync)) {
+        let next = AtomicU64::new(0);
+        // SAFETY: the job is gone and no thread is in it before this returns, so `run` and `next` outlive it.
+        let run: &'static (dyn Fn(u64) + Sync) = unsafe { std::mem::transmute::<&(dyn Fn(u64) + Sync), &'static (dyn Fn(u64) + Sync)>(run) };
+        let job = HelpJob { run, groups, next: &next };
+        {
+            let mut s = self.shared.state.lock().unwrap();
+            s.job = Some(job);
+            s.seq += 1;
+        }
+        let wake = (groups.div_ceil(POOL_TASK_GROUPS) - 1).min(self.threads.len() as u64);
+        for _ in 0..wake {
+            self.shared.wake.notify_one();
+        }
+        let mine = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.take()));
+        let theirs = {
+            let mut s = self.shared.state.lock().unwrap();
+            s.job = None;
+            while s.active > 0 {
+                s = self.shared.idle.wait(s).unwrap();
+            }
+            s.panic.take()
+        };
+        if let Err(p) = mine {
+            std::panic::resume_unwind(p);
+        }
+        if let Some(why) = theirs {
+            panic!("{why}");
+        }
+    }
+}
+
+impl Drop for Helpers {
+    fn drop(&mut self) {
+        self.shared.state.lock().unwrap().quit = true;
+        self.shared.wake.notify_all();
+        for t in self.threads.drain(..) {
+            let _ = t.join();
+        }
+    }
+}
+
 /// A Rust launch's arguments (`Run::Host`), read by its groups on the pool's threads: the addresses of the launch's
 /// bound rows and of the shim's two words, which the launch keeps until its last group has run.
 struct Argv(Vec<*const u8>);
@@ -884,11 +1040,17 @@ impl CpuBindContext<'_> {
                         unsafe { k(argv.0.as_ptr(), &l) };
                     };
                     let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        if groups == 1 {
-                            one(0);
-                        } else {
+                        // A launch of few groups on this thread: waking the pool's threads for it costs more than its
+                        // groups (a recursive stratum's rounds are thousands of launches of a few groups each).
+                        if groups < POOL_GROUPS {
+                            (0..groups).for_each(one);
+                        } else if w.inline {
+                            // On the flushing thread, one of the engine's pool's (its CPU joins'): the pool's other
+                            // threads take its tasks as they are free.
                             use rayon::prelude::*;
-                            (0..groups).into_par_iter().for_each(one);
+                            (0..groups as usize).into_par_iter().with_min_len(POOL_TASK_GROUPS as usize).for_each(|i| one(i as u64));
+                        } else {
+                            w.helpers().run(groups, &one);
                         }
                     }));
                     return ran.map_err(|p| {
