@@ -144,6 +144,13 @@ fn octal_and_binary_numbers_and_quotes_in_strings_are_the_lean_parsers() {
 }
 
 #[test]
+fn f_strings_in_an_interpolation_are_the_lean_parsers() {
+    same(&["x = f\"{', '.join(f'{a}' for a in b)}\"\n", "x = f\"a{f'b{c}d'}e{g}\"\n", "x = f\"{f'{f\"{a}\"}'}\"\n", "x = f\"{f\"{a}\"}\"\n"]);
+    same(&["x = f\"\"\"{f'{a}'}\n\"\"\"\n", "x = f\"{a}\" + f'{f\"{b}\"}{c}'\n", "def f():\n    return f\"{g(f'{x}', y)}\"\n    z\n"]);
+    refused(&["x = f\"{f'{f\"{f'{f\"{a}\"}'}\"}'}\"\n"]);
+}
+
+#[test]
 fn brackets_in_an_interpolation_are_the_lean_parsers() {
     same(&["x = f\"{a[1:2]}\"\n", "x = f\"{a[b[1]:2]:>4}\"\n", "x = f\"{(lambda y: y)(1)}\"\n", "x = f\"{a[:]} {b}\"\n"]);
     same(&["x = f\"{ {'k': v} }\"\n", "x = f\"{g({'a': 1})}?q\"\n", "x = f\"{d['k']:x}\"\n", "x = f\"\"\"{\n  {1: 2}\n}\"\"\"\n", "x = f\"{ {a} }\"\n"]);
@@ -224,8 +231,7 @@ fn f_strings_are_the_lean_parsers() {
     same(&["x = f\"a{b}c\"\n", "x = f\"{b}\"\n", "x = f\"a{b!r}\"\n", "x = f\"{b:>10}\"\n", "x = f\"{a.b(c)}\"\n", "x = f'{a[\"k\"]}'\n"]);
     same(&["x = f\"{{x}}\"\n", "x = f\"\"\"a\n{b}\n\"\"\"\n", "x = f\"{a + 1}\"\n", "x = F'{a}{b}' + f\"{c:%Y-%m-%d} {d!s:>3}\"\n", "x = f\"\"\n", "x = f\"{a[1]}:{b}\"\n"]);
     same(&["def f():\n    return f\"{a}\"\n", "x = {'a': f'{b}'}\n"]);
-    // Not read yet: a nested spec, a raw f-string, `=`, a `:` in brackets, braces in code, an
-    // empty interpolation or spec, a `}` alone.
+    // Not read yet: a nested spec, `=`, an empty interpolation or spec, a `}` alone.
     refused(&["x = f\"{x:}\"\n", "x = f\"{b:{w}}\"\n", "x = f\"{b=}\"\n", "x = f\"{}\"\n", "x = f\"a}\"\n"]);
 }
 

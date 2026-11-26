@@ -347,6 +347,9 @@ pub struct Lowering {
     pub token_templates: HashMap<String, Val>,
     /// The tokens reading in parts regions that `resume` (decision 0600).
     pub token_resumes: HashSet<String>,
+    /// The regions' depth bits' names (`regions H level … nest M depth A B`): the records of
+    /// strings open over a template's code are kept by them (`records::Records::nest`).
+    pub nest_depths: Option<(String, String, u8)>,
     /// The regions' kinds, as `regions H { … }` declares them.
     pub region_kinds: Vec<::bitlex::syntax::Region>,
     /// A kind read in parts (`read K parts { … }`): each part's start mask and bytes, in order.
@@ -565,6 +568,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         token_closer_last: HashMap::default(),
         token_templates: HashMap::default(),
         token_resumes: HashSet::default(),
+        nest_depths: None,
         region_kinds: Vec::new(),
         token_parts: HashMap::default(),
         token_part_names: HashMap::default(),
@@ -788,6 +792,12 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                 for k in [&mut a.opener, &mut a.closer].into_iter().chain(a.last.as_mut()).chain(a.template.as_mut()) {
                     let v = low.program.masks[usize::from(*k)];
                     *k = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's mask not an output")? as u16;
+                }
+            }
+            for (d0, d1, _) in r.readers.iter_mut().filter_map(|rd| rd.nest.as_mut()) {
+                for k in [d0, d1] {
+                    let v = low.program.masks[usize::from(*k)];
+                    *k = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's depth bits not an output")? as u16;
                 }
             }
             for p in r.readers.iter_mut().flat_map(|rd| rd.parts.iter_mut()) {
@@ -1560,7 +1570,20 @@ impl Lowering {
                 let deep = self.op(BlockOp::And(code, zero));
                 named(self, l.deep.clone(), deep);
                 hide.push(self.op(BlockOp::Prev(deep, 1)));
-                Some(crate::block::Level { opens, closes, max: l.max, deep })
+                // The depth bits: two more such members, each its own operation.
+                let depths = match &l.nest {
+                    Some((m, a, b)) => {
+                        let (x, y) = (self.op(BlockOp::And(zero, code)), self.op(BlockOp::AndNot(zero, code)));
+                        named(self, a.clone(), x);
+                        named(self, b.clone(), y);
+                        hide.push(self.op(BlockOp::Prev(x, 1)));
+                        hide.push(self.op(BlockOp::Prev(y, 1)));
+                        self.nest_depths = Some((a.clone(), b.clone(), *m));
+                        Some((x, y))
+                    }
+                    None => None,
+                };
+                Some(crate::block::Level { opens, closes, max: l.max, deep, nest: l.nest.as_ref().map_or(1, |x| x.0), depths })
             }
             _ => None,
         };
@@ -3174,7 +3197,7 @@ pub fn live_of(program: &BlockProgram, keep: &[bool]) -> BlockProgram {
         .filter_map(|w| {
             let group = kept_groups.iter().position(|&g| g == usize::from(w.group))? as u16;
             let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: n(k.opener), closer: n(k.closer), open: n(k.open), fill: n(k.fill), empty: k.empty.map(|(e, m)| (n(e), m)), or: k.or.map(|(c, m)| (n(c), m)), ..*k }).collect();
-            let level = w.level.map(|l| crate::block::Level { opens: n(l.opens), closes: n(l.closes), deep: n(l.deep), ..l });
+            let level = w.level.map(|l| crate::block::Level { opens: n(l.opens), closes: n(l.closes), deep: n(l.deep), depths: l.depths.map(|(a, b)| (n(a), n(b))), ..l });
             Some(crate::block::Walk { group, hidden: n(w.hidden), kinds, level })
         })
         .collect();
@@ -5218,7 +5241,15 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 let mut closers: Vec<(u8, u8)> = closer_rows.iter().filter(|c| c.0 == kind).flat_map(|&(_, r, f)| { let first = real_first[r]; (0..=255u8).filter(move |&b| first[usize::from(b >> 6)] >> (b & 63) & 1 == 1).map(move |b| (b, f)) }).map(|(b, f)| (b, kinds[usize::from(f)])).collect();
                 closers.sort_unstable();
                 closers.dedup();
-                let reader = crate::records::Reader { arms, other, retag, parts, content, closers, split, quiet: false, resumes };
+                // Templates that nest: a template's or a resuming reader's records by its depth.
+                let nest = match low.nest_depths.clone() {
+                    Some((a, b, m)) if resumes || arms.iter().any(|x| x.template.is_some()) => {
+                        let (va, vb) = (low.names.get(&a).copied().ok_or("the depth bits, named")?, low.names.get(&b).copied().ok_or("the depth bits, named")?);
+                        Some((mask_of(low, va, &mut mark_masks), mask_of(low, vb, &mut mark_masks), m))
+                    }
+                    _ => None,
+                };
+                let reader = crate::records::Reader { arms, other, retag, parts, content, closers, split, quiet: false, resumes, nest };
                 let at = match readers.iter().position(|x| *x == reader) {
                     Some(at) => at,
                     None => {

@@ -260,3 +260,15 @@ statements and blocks end.
     The evaluator walks such regions (`Eval::walk_regions`), as the interpreter's walk and the JIT's do.
     The JIT keeps the level in four bits above the last template's kind in the walk's state. The lowering
     to Rust refuses a level, as it refuses an `attached` node.
+59. **Templates nest, at most four deep** (`regions … level … nest M depth A B`, `Level::nest`). The user asked
+    for a bound of 1, 2 or 4, to keep the state small; it is 4. A plain kind's region in a template's code
+    that closes at its `or` opens a template inside it: `f"{', '.join(f'{a}' for a in b)}"`. The outer
+    template's kind and level wait, and go on when the inner string ends. One past `M` is `D` at its closer,
+    the same escape as a level past `max`.
+    - The JIT keeps a frame of eight bits a template, the open one's lowest; a push shifts it up.
+    - `A` and `B` are each region's depth at its opener, two bits: the templates around it, or for a tail,
+      around its string.
+    - The token loop keeps the record a template left open by that depth (`Reader::nest`). The JIT's
+      `open_slot` holds a word a depth, chosen by the depth bits in the read's flags (`DEPTH_SHIFT`). A
+      token read again finds its own depth's word, as one slot did before. Tier 1's interpreter already
+      kept a stack, now bounded by `M`. Tier 2 counts open strings, so it nests as it is.

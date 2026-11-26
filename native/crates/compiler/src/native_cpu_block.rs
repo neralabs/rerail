@@ -595,9 +595,10 @@ impl WalkState {
     pub const SKIP: u8 = 4;
     pub const NONE: u8 = 8;
     /// The field's width for a walk of `kinds` kinds: with `after`, the last template's kind;
-    /// with a level (`block::Level`), its four bits too.
-    pub fn width(kinds: usize, after: bool, level: bool) -> u8 {
-        Self::NONE + kinds as u8 + if after { 4 } else { 0 } + if level { 4 } else { 0 }
+    /// with a level (`block::Level`), its four bits too, and the templates around it where they
+    /// nest (`Level::frame_bits`).
+    pub fn width(kinds: usize, after: bool, level: Option<crate::block::Level>) -> u8 {
+        Self::NONE + kinds as u8 + if after { 4 } else { 0 } + level.map_or(0, |l| l.frame_bits() - 4)
     }
 }
 
@@ -643,7 +644,7 @@ impl State {
             }
         }
         for (w, walk) in native.walks.iter().enumerate().filter(|(_, w)| !w.kinds.is_empty()) {
-            wanted.push((usize::from(walk.hidden), WalkState::width(walk.kinds.len(), walk.kinds.iter().any(|k| k.after != 0), walk.level.is_some()), 2 + w, false));
+            wanted.push((usize::from(walk.hidden), WalkState::width(walk.kinds.len(), walk.kinds.iter().any(|k| k.after != 0), walk.level), 2 + w, false));
         }
         let mut used: Vec<u8> = Vec::new();
         let (mut fields, mut top, mut flag, mut walk) = (Vec::new(), vec![None; n], vec![None; n], vec![None; native.walks.len()]);
@@ -3122,14 +3123,18 @@ fn gap_last(
 }
 
 /// The record a template left open (`RecPart::open`, decision 0600): a word of its own, zero,
-/// where a reader resumes a string's record; none else.
+/// where a reader resumes a string's record; none else. Where templates nest (`Reader::nest`),
+/// a word a depth (`OPEN_SLOTS`): a string's record at its depth.
 fn open_slot(f: &mut FunctionBuilder<'_>, r: &crate::records::Records) -> Option<cranelift_codegen::ir::StackSlot> {
     if !r.readers.iter().any(|x| x.resumes) {
         return None;
     }
-    let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8, 3));
+    let words = if r.readers.iter().any(|x| x.nest.is_some()) { OPEN_SLOTS } else { 1 };
+    let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * words as u32, 3));
     let zero = f.ins().iconst(types::I64, 0);
-    f.ins().stack_store(zero, slot, 0);
+    for k in 0..words {
+        f.ins().stack_store(zero, slot, 8 * k as i32);
+    }
     Some(slot)
 }
 
@@ -5324,7 +5329,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     // (`Reader::resumes`), in the refusal's value, which only its sign refuses.
                     let flags = if flagged {
                         let resumes = f.ins().iconst(types::I64, if reader.resumes { RESUME_FLAG } else { 0 });
-                        match a.template {
+                        let flags = match a.template {
                             Some(t) => {
                                 let q = f.ins().ushr_imm(at, 6);
                                 let x = word_at(f, q, t, heads);
@@ -5335,6 +5340,24 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                 f.ins().bor(b, resumes)
                             }
                             None => resumes,
+                        };
+                        // Templates that nest: the string's depth at its first byte
+                        // (`Reader::nest`), the open record's slot.
+                        match reader.nest {
+                            Some((d0, d1, _)) => {
+                                let q = f.ins().ushr_imm(s, 6);
+                                let sh = f.ins().band_imm(s, 63);
+                                let mut flags = flags;
+                                for (j, d) in [d0, d1].into_iter().enumerate() {
+                                    let x = word_at(f, q, d, heads);
+                                    let b = f.ins().ushr(x, sh);
+                                    let b = f.ins().band_imm(b, 1);
+                                    let b = f.ins().ishl_imm(b, DEPTH_SHIFT + j as i64);
+                                    flags = f.ins().bor(flags, b);
+                                }
+                                flags
+                            }
+                            None => flags,
                         }
                     } else {
                         nohits
@@ -6298,6 +6321,13 @@ const TEMPLATE_FLAG: i64 = 2;
 /// In a token's refusal: its read resumes a string's record (`Reader::resumes`): it makes no
 /// record, and ends the open one.
 const RESUME_FLAG: i64 = 4;
+
+/// In a token's refusal, from this bit: its string's depth (`Reader::nest`), two bits, which
+/// open record's slot its template's close or its resume takes (`open_slot`).
+const DEPTH_SHIFT: i64 = 3;
+
+/// The open records' slots (`open_slot`): one a depth, where templates nest.
+const OPEN_SLOTS: usize = 4;
 
 /// In the open record's slot (`open_slot`): its string ended, its cursor kept for a read of
 /// its tail again (decision 0600).
@@ -7670,6 +7700,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         _ => (0..r.rules.len()).any(flaggable),
     };
     if let (true, Some(slot), Some(flags)) = (may_flag, open_slot, refused) {
+        let fl_mem = MemFlags::trusted();
         let fl = f.ins().band_imm(flags, TEMPLATE_FLAG | RESUME_FLAG);
         let (cold, resume, opens, patch, set, nested, join) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
         for _ in 0..4 {
@@ -7678,7 +7709,17 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         f.ins().brif(fl, cold, &[], join, &[k1.into(), pending.into(), from.into(), word_before.into()]);
         f.switch_to_block(cold);
         f.set_cold_block(cold);
-        let open = f.ins().stack_load(types::I64, slot, 0);
+        // The open record's word: the string's depth's, where templates nest (`OPEN_SLOTS`).
+        let base = f.ins().stack_addr(types::I64, slot, 0);
+        let word = if r.readers.iter().any(|x| x.nest.is_some()) {
+            let d = f.ins().ushr_imm(flags, DEPTH_SHIFT);
+            let d = f.ins().band_imm(d, OPEN_SLOTS as i64 - 1);
+            let d = f.ins().ishl_imm(d, 3);
+            f.ins().iadd(base, d)
+        } else {
+            base
+        };
+        let open = f.ins().load(types::I64, fl_mem, word, 0);
         let res = f.ins().band_imm(fl, RESUME_FLAG);
         f.ins().brif(res, resume, &[], opens, &[]);
         // The loop may read a token again (a wait, a refill's block read again): each read
@@ -7694,7 +7735,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let again = f.ins().band_imm(fl, TEMPLATE_FLAG);
         let ended = f.ins().bor_imm(rec, STRING_ENDED);
         let keep = f.ins().select(again, rec, ended);
-        f.ins().stack_store(keep, slot, 0);
+        f.ins().store(fl_mem, keep, word, 0);
         f.ins().jump(join, &[cv[0].into(), cv[3].into(), cv[4].into(), cv[5].into()]);
         // A template's close: its cursor, where no string is open or this token's is (read
         // again); a template in a template's code refuses.
@@ -7714,7 +7755,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let free = f.ins().bor(free, later);
         f.ins().brif(free, set, &[], nested, &[]);
         f.switch_to_block(set);
-        f.ins().stack_store(cur1, slot, 0);
+        f.ins().store(fl_mem, cur1, word, 0);
         f.ins().jump(join, &[k1.into(), pending.into(), from.into(), word_before.into()]);
         f.switch_to_block(nested);
         let all = f.ins().iconst(types::I64, -1);

@@ -91,8 +91,10 @@ mask i_open     = lbrace & ~next(lbrace) & ~escaped(lbrace)
 # as the kind of f-string the interpolation is in (`resumes`): the string's text to its quote or
 # the next interpolation. A format spec is a region of its own, from its `:` to the byte before
 # the `}`, in an interpolation's code only (`after`), and there at its bracket level zero
-# (`level`): `{a[1:2]}` has no spec, and `{ {k: v} }`'s first `}` is the dict's.
-regions hidden level opens to closes max 15 else i_deep {
+# (`level`): `{a[1:2]}` has no spec, and `{ {k: v} }`'s first `}` is the dict's. An f-string in
+# an interpolation's code opens a template of its own (`nest`, four deep), as the lean lexer's
+# stack of strings does; the outer one goes on after its string ends.
+regions hidden level opens to closes max 15 nest 4 depth i_d0 i_d1 else i_deep {
   cmt = hash .. lf outside
   s1  = sq & ~sq3 & ~fq .. sq_c
   d1  = dq & ~dq3 & ~fq .. dq_c
@@ -178,7 +180,7 @@ escape "an empty interpolation" when (o_t | o_spec) & prev(i_at)
 escape "an empty format spec" when o_spec & next(rbrace)
 escape "a `}` alone in an f-string's text" when fb & rbrace & ~esc_ib & ~prev(esc_ib)
 escape "a comment in an interpolation" when icode & hash
-escape "brackets nested past 15 in an interpolation" when i_deep
+escape "brackets past 15 or f-strings past 4 deep in an interpolation" when i_deep
 escape "a `{` or a line break in a format spec" when f_spec & (lbrace | lf)
 # `{x=}`: the lean parser keeps the `=` and the `}`. Not read yet.
 mask eq_end     = icode & eq & ~prev(eq | bang | lt_gt)

@@ -553,6 +553,12 @@ pub struct Walk {
 /// one, and those where `closes` has one take one away (none at zero). A kind with `after`
 /// opens only at level zero, as the lean lexer's string reader takes back only the `}` its
 /// template's own `{` opened. An open past `max` is `deep` (the level stays `max`).
+///
+/// With `nest` above 1, templates nest: a plain kind's region in a template's code that closes
+/// at its second closer opens a template inside it, and the outer one's kind and level wait
+/// until the inner string ends (a kind that resumes closes at its own closer). A template past
+/// `nest` deep is `deep` at its closer. `depths` (two bits, low first) are each region's at its
+/// opener: the templates around it (a kind that resumes: around its string).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Level {
     pub opens: u16,
@@ -561,6 +567,17 @@ pub struct Level {
     pub max: u8,
     /// A group member the walk makes.
     pub deep: u16,
+    /// 1 to 4.
+    pub nest: u8,
+    /// With `nest` above 1: group members the walk makes.
+    pub depths: Option<(u16, u16)>,
+}
+
+impl Level {
+    /// The walk's state bits of its templates: each one's kind and level, `nest` of them.
+    pub fn frame_bits(&self) -> u8 {
+        8 * self.nest
+    }
 }
 
 /// A kind of region (`Walk`). `opener` and `closer` are outside the group; `open`, `fill` and
@@ -597,6 +614,7 @@ impl Walk {
             out.extend(k.empty.map(|e| e.0));
         }
         out.extend(self.level.map(|l| l.deep));
+        out.extend(self.level.and_then(|l| l.depths).into_iter().flat_map(|(a, b)| [a, b]));
         out
     }
 
@@ -846,6 +864,7 @@ impl BlockProgram {
                 && !self.totals.is_empty()
                 && crate::records::WordTable::new(&r.words).is_ok()
                 && r.marks.len() <= crate::records::MARKS
+                && r.readers.iter().all(|rd| rd.nest.is_none_or(|(a, b, m)| usize::from(a) < self.outputs.len() && usize::from(b) < self.outputs.len() && (2..=4).contains(&m)))
                 && r.marks.iter().all(|&(o, w)| (usize::from(o) < self.outputs.len() || (o == crate::records::WORD_ALONE && w != 0)) && usize::from(w) <= r.words.len())
         });
         if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !records {
@@ -883,8 +902,8 @@ impl BlockProgram {
             if walk.kinds.iter().any(|k| k.after != 0) && (walk.kinds.len() > 15 || walk.kinds.iter().any(|k| k.after & !(plain & ors) != 0 || k.after != 0 && (k.empty.is_some() || k.outside))) {
                 return Err(format!("walk {w}: an `after` naming a kind with one or with no `or`, on a kind with an `else` or `outside`, or past 15 kinds"));
             }
-            if walk.level.is_some_and(|l| l.max == 0 || l.max > 15 || !walk.kinds.iter().any(|k| k.after != 0)) {
-                return Err(format!("walk {w}: a level of no `after` kind, or a max not from 1 to 15"));
+            if walk.level.is_some_and(|l| l.max == 0 || l.max > 15 || !walk.kinds.iter().any(|k| k.after != 0) || !(1..=4).contains(&l.nest) || (l.nest > 1) != l.depths.is_some()) {
+                return Err(format!("walk {w}: a level of no `after` kind, a max not from 1 to 15, or a nest not from 1 to 4 (above 1 with its depths)"));
             }
             for k in &walk.kinds {
                 let fits = (1..=3).contains(&k.bytes) && (!k.outside || k.bytes == 1 && k.or.is_none()) && k.empty.is_none_or(|e| (1..=3).contains(&e.1)) && k.or.is_none_or(|o| (1..=3).contains(&o.1));
@@ -1022,6 +1041,11 @@ impl BlockProgram {
                     out.extend_from_slice(&v.to_le_bytes());
                 }
                 out.push(l.max);
+                out.push(l.nest);
+                if let Some((a, b)) = l.depths {
+                    out.extend_from_slice(&a.to_le_bytes());
+                    out.extend_from_slice(&b.to_le_bytes());
+                }
             }
         }
         out
@@ -1345,6 +1369,9 @@ impl BlockProgram {
             // (none: 16, which no `after` names), and the level in its code (`Level`).
             let mut last = 16u32;
             let mut level = 0u8;
+            // The templates around the one open, each its kind and level (`Level::nest`).
+            let mut around: Vec<(u32, u8)> = Vec::new();
+            let nest = walk.level.map_or(1, |l| usize::from(l.nest));
             loop {
                 let mut best: Option<(usize, usize)> = None;
                 for (k, kind) in walk.kinds.iter().enumerate() {
@@ -1387,6 +1414,16 @@ impl BlockProgram {
                     continue;
                 }
                 set(&mut values[usize::from(kind.open)], t, t + 1);
+                // Its depth: the templates around it (a kind that resumes: around its string).
+                if let Some((d0, d1)) = walk.level.and_then(|l| l.depths) {
+                    let depth = if kind.resumes { around.len() } else if last < 16 { around.len() + 1 } else { 0 };
+                    if depth & 1 != 0 {
+                        set(&mut values[usize::from(d0)], t, t + 1);
+                    }
+                    if depth & 2 != 0 {
+                        set(&mut values[usize::from(d1)], t, t + 1);
+                    }
+                }
                 let Some(c) = closer else {
                     set(&mut values[usize::from(kind.fill)], t, end);
                     set(&mut values[hidden], t + 1, end);
@@ -1395,11 +1432,20 @@ impl BlockProgram {
                 set(&mut values[usize::from(kind.fill)], t, c);
                 let wide = kind.or.filter(|&(c2, _)| (values[usize::from(c2)][c / 64] >> (c % 64)) & 1 != 0);
                 if kind.after == 0 && wide.is_some() {
+                    // A template in a template's code: the outer one waits, to `nest` deep.
+                    if last < 16 && nest > 1 {
+                        if around.len() + 1 < nest {
+                            around.push((last, level));
+                        } else if let Some(l) = walk.level {
+                            set(&mut values[usize::from(l.deep)], c, c + 1);
+                        }
+                    }
                     (last, level) = (k as u32, 0);
                 }
-                // A kind that resumes, closed at its own closer: the string ended.
+                // A kind that resumes, closed at its own closer: the string ended, and the
+                // template around it, if one is, goes on.
                 if kind.resumes && wide.is_none() {
-                    (last, level) = (16, 0);
+                    (last, level) = around.pop().unwrap_or((16, 0));
                 }
                 let to = if kind.outside { c } else { c + usize::from(wide.map_or(kind.bytes, |o| o.1)) };
                 set(&mut values[hidden], t + 1, to.min(end));
@@ -1875,9 +1921,11 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
             let after = if k.after != 0 { format!(" after {}{}", k.after, if k.resumes { " resumes" } else { "" }) } else { String::new() };
             let _ = writeln!(out, "  block {at} region {} %{} %{} %{} %{} {}{outside}{empty}{or}{after}", walk.group, k.opener, k.closer, k.open, k.fill, k.bytes);
         }
-        // `block N level G %opens %closes MAX %deep`: its level (`Level`), after its kinds.
+        // `block N level G %opens %closes MAX %deep [nest N %d0 %d1]`: its level (`Level`), after
+        // its kinds.
         if let Some(l) = walk.level {
-            let _ = writeln!(out, "  block {at} level {} %{} %{} {} %{}", walk.group, l.opens, l.closes, l.max, l.deep);
+            let nest = l.depths.map_or(String::new(), |(a, b)| format!(" nest {} %{a} %{b}", l.nest));
+            let _ = writeln!(out, "  block {at} level {} %{} %{} {} %{}{nest}", walk.group, l.opens, l.closes, l.max, l.deep);
         }
     }
     for (k, value) in block.outputs.iter().enumerate() {
@@ -1987,6 +2035,9 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 }
                 if rd.resumes {
                     let _ = writeln!(out, "  block {at} recresumes {k}");
+                }
+                if let Some((a, b, m)) = rd.nest {
+                    let _ = writeln!(out, "  block {at} recnest {k} {a} {b} {m}");
                 }
                 if rd.split == crate::records::Split::Tier2 {
                     let _ = writeln!(out, "  block {at} recsplit {k} tier2");

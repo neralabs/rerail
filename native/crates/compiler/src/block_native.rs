@@ -201,7 +201,7 @@ impl BlockNative {
     /// A walk with its values renamed by `m`.
     fn walk_renamed(w: &crate::block::Walk, m: impl Fn(u16) -> u16) -> crate::block::Walk {
         let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: m(k.opener), closer: m(k.closer), open: m(k.open), fill: m(k.fill), empty: k.empty.map(|(e, n)| (m(e), n)), or: k.or.map(|(c, n)| (m(c), n)), ..*k }).collect();
-        let level = w.level.map(|l| crate::block::Level { opens: m(l.opens), closes: m(l.closes), deep: m(l.deep), ..l });
+        let level = w.level.map(|l| crate::block::Level { opens: m(l.opens), closes: m(l.closes), deep: m(l.deep), depths: l.depths.map(|(a, b)| (m(a), m(b))), ..l });
         crate::block::Walk { group: w.group, hidden: m(w.hidden), kinds, level }
     }
 

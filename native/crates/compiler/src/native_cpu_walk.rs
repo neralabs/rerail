@@ -168,12 +168,13 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
         let skip = f.ins().band_imm(skip, 3);
         // The last kind with no `after` whose region closed at its second closer (a template's
         // `$`), plus one (0: none), past the kinds' flags; with a level, the level in its four
-        // bits above (`block::Level`).
+        // bits above (`block::Level`), a frame of eight; where templates nest, the frames of the
+        // templates around it above that, the nearest first (`Level::nest`).
         let last_at = i64::from(WalkState::NONE) + kinds as i64;
         let conditioned = walk.kinds.iter().any(|k| k.after != 0);
         let last0 = if conditioned {
             let l = f.ins().ushr_imm(state, last_at);
-            f.ins().band_imm(l, if walk.level.is_some() { 255 } else { 15 })
+            f.ins().band_imm(l, walk.level.map_or(15, |lv| (1i64 << lv.frame_bits()) - 1))
         } else {
             zero
         };
@@ -202,12 +203,12 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
                 let is = f.ins().icmp_imm(IntCC::Equal, open, k as i64 + 1);
                 f.ins().brif(is, this, &[], next, &[]);
                 f.switch_to_block(this);
-                emit_cont(&mut f, kind, (closers[k], seconds[k]), &or, walk.hidden, head, exit, k, last0);
+                emit_cont(&mut f, kind, (closers[k], seconds[k]), &or, (walk.hidden, walk.level), head, exit, k, last0);
                 f.switch_to_block(next);
             } else {
                 f.ins().jump(this, &[]);
                 f.switch_to_block(this);
-                emit_cont(&mut f, kind, (closers[k], seconds[k]), &or, walk.hidden, head, exit, k, last0);
+                emit_cont(&mut f, kind, (closers[k], seconds[k]), &or, (walk.hidden, walk.level), head, exit, k, last0);
             }
         }
 
@@ -220,7 +221,8 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
         // A kind with `after`: its openers only where the last plain kind is one it names.
         // With a level: only at level zero (`last` below 16).
         let flat = if walk.level.is_some() {
-            let lo = f.ins().icmp_imm(IntCC::UnsignedLessThan, last, 16);
+            let frame = f.ins().band_imm(last, 255);
+            let lo = f.ins().icmp_imm(IntCC::UnsignedLessThan, frame, 16);
             Some(f.ins().uextend(types::I64, lo))
         } else {
             None
@@ -273,6 +275,7 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
             let is_open = f.ins().ushr(opens, tb);
             let is_open = f.ins().band_imm(is_open, 1);
             let depth = f.ins().ushr_imm(last, 4);
+            let depth = f.ins().band_imm(depth, 15);
             let full = f.ins().icmp_imm(IntCC::Equal, depth, i64::from(level.max));
             let full = f.ins().uextend(types::I64, full);
             let over = f.ins().band(is_open, full);
@@ -289,6 +292,8 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
             let depth = f.ins().isub(depth, down);
             let depth = f.ins().ishl_imm(depth, 4);
             let now = f.ins().bor(kind_of, depth);
+            let around = f.ins().band_imm(last, !255);
+            let now = f.ins().bor(now, around);
             let past = f.ins().iadd_imm(tb, 1);
             f.ins().jump(head, &[past.into(), now.into()]);
             f.switch_to_block(on);
@@ -307,12 +312,12 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
                 let has = f.ins().band(openers[k], bit);
                 f.ins().brif(has, this, &[], next, &[]);
                 f.switch_to_block(this);
-                emit_kind(&mut f, kind, &scans[k], (closers[k], seconds[k]), &or, walk.hidden, (head, exit, last), k, (t, bit), (base, i, len), &mut heads);
+                emit_kind(&mut f, kind, &scans[k], (closers[k], seconds[k]), &or, (walk.hidden, walk.level), (head, exit, last), k, (t, bit), (base, i, len), &mut heads);
                 f.switch_to_block(next);
             } else {
                 f.ins().jump(this, &[]);
                 f.switch_to_block(this);
-                emit_kind(&mut f, kind, &scans[k], (closers[k], seconds[k]), &or, walk.hidden, (head, exit, last), k, (t, bit), (base, i, len), &mut heads);
+                emit_kind(&mut f, kind, &scans[k], (closers[k], seconds[k]), &or, (walk.hidden, walk.level), (head, exit, last), k, (t, bit), (base, i, len), &mut heads);
             }
         }
 
@@ -345,7 +350,7 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
 /// A region of kind `k` open at the block's start: closed at its closer's first bit, or open
 /// through the block.
 #[allow(clippy::too_many_arguments)]
-fn emit_cont(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, (closer, second): (Value, Value), or: &dyn Fn(&mut FunctionBuilder<'_>, u16, Value), hidden: u16, head: Block, exit: Block, k: usize, last: Value) {
+fn emit_cont(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, (closer, second): (Value, Value), or: &dyn Fn(&mut FunctionBuilder<'_>, u16, Value), (hidden, level): (u16, Option<crate::block::Level>), head: Block, exit: Block, k: usize, last: Value) {
     let (through, close) = (f.create_block(), f.create_block());
     f.ins().brif(closer, close, &[], through, &[]);
     f.switch_to_block(through);
@@ -362,19 +367,26 @@ fn emit_cont(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, (closer
     let to = closer_end(&mut *f, kind, c, second);
     let h = low(&mut *f, to);
     or(&mut *f, hidden, h);
-    let last = template_last(&mut *f, kind, k, c, second, last);
+    let last = template_last(&mut *f, kind, k, (c, second), last, level, or);
     f.ins().jump(head, &[to.into(), last.into()]);
 }
 
 /// The last plain kind with a template from a close at `c`: this kind, where it has no `after`
 /// and its second closer holds at `c` (a template's `$`); none where it resumes and closes at
-/// its own closer; else as before.
-fn template_last(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, k: usize, c: Value, second: Value, last: Value) -> Value {
-    // A kind that resumes, closed at its own closer: the string ended, none (decision 0600).
+/// its own closer; else as before. Where templates nest (`block::Level::nest`), a template in
+/// a template's code puts the outer one's frame above it (one past `nest`: `deep` at `c`), and
+/// a string's end takes it back.
+fn template_last(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, k: usize, (c, second): (Value, Value), last: Value, level: Option<crate::block::Level>, or: &dyn Fn(&mut FunctionBuilder<'_>, u16, Value)) -> Value {
+    let nest = level.filter(|l| l.nest > 1);
+    // A kind that resumes, closed at its own closer: the string ended, none (decision 0600), or
+    // the template around it.
     if kind.resumes {
         let at = f.ins().ushr(second, c);
         let at = f.ins().band_imm(at, 1);
-        let none = f.ins().iconst(types::I64, 0);
+        let none = match nest {
+            Some(_) => f.ins().ushr_imm(last, 8),
+            None => f.ins().iconst(types::I64, 0),
+        };
         return f.ins().select(at, last, none);
     }
     if kind.after != 0 || kind.or.is_none() {
@@ -383,7 +395,49 @@ fn template_last(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, k: 
     let at = f.ins().ushr(second, c);
     let at = f.ins().band_imm(at, 1);
     let me = f.ins().iconst(types::I64, k as i64 + 1);
-    f.ins().select(at, me, last)
+    let Some(l) = nest else { return f.ins().select(at, me, last) };
+    // The frames above: none where no template is open, so the shift is the frame alone.
+    let top = f.ins().ushr_imm(last, 8 * i64::from(l.nest - 1));
+    let full = f.ins().icmp_imm(IntCC::NotEqual, top, 0);
+    let full = f.ins().uextend(types::I64, full);
+    let full = f.ins().band(full, at);
+    let one = f.ins().iconst(types::I64, 1);
+    let bit = f.ins().ishl(one, c);
+    let all = f.ins().ineg(full);
+    let deep = f.ins().band(bit, all);
+    or(&mut *f, l.deep, deep);
+    let pushed = f.ins().ishl_imm(last, 8);
+    let pushed = f.ins().bor(pushed, me);
+    let pushed = f.ins().band_imm(pushed, (1i64 << l.frame_bits()) - 1);
+    let kept = f.ins().band_imm(last, !255);
+    let kept = f.ins().bor(kept, me);
+    let now = f.ins().select(full, kept, pushed);
+    f.ins().select(at, now, last)
+}
+
+/// Where templates nest, the depth bits at an opener `bit` (`block::Level::depths`): the frames
+/// open in `last`, less one for a kind that resumes (its own string's).
+fn depth_bits(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, level: Option<crate::block::Level>, last: Value, bit: Value, or: &dyn Fn(&mut FunctionBuilder<'_>, u16, Value)) {
+    let Some((l, (d0, d1))) = level.and_then(|l| l.depths.map(|d| (l, d))) else { return };
+    if !(kind.resumes || kind.after == 0 && kind.or.is_some()) {
+        return;
+    }
+    let mut count = f.ins().iconst(types::I64, 0);
+    for j in 0..l.nest {
+        let b = f.ins().ushr_imm(last, 8 * i64::from(j));
+        let b = f.ins().band_imm(b, 255);
+        let b = f.ins().icmp_imm(IntCC::NotEqual, b, 0);
+        let b = f.ins().uextend(types::I64, b);
+        count = f.ins().iadd(count, b);
+    }
+    let count = if kind.resumes { f.ins().iadd_imm(count, -1) } else { count };
+    for (j, d) in [d0, d1].into_iter().enumerate() {
+        let b = f.ins().ushr_imm(count, j as i64);
+        let b = f.ins().band_imm(b, 1);
+        let all = f.ins().ineg(b);
+        let m = f.ins().band(bit, all);
+        or(&mut *f, d, m);
+    }
 }
 
 /// The place after a closer at `c`: its bytes on (`outside`: `c`), or the second closer's
@@ -410,13 +464,14 @@ fn emit_kind(
     scan: &Option<Vec<(u8, ByteTest)>>,
     (closer, second): (Value, Value),
     or: &dyn Fn(&mut FunctionBuilder<'_>, u16, Value),
-    hidden: u16,
+    (hidden, level): (u16, Option<crate::block::Level>),
     (head, exit, last): (Block, Block, Value),
     k: usize,
     (t, bit): (Value, Value),
     (base, i, len): (Value, Value, Value),
     heads: &mut Vec<(Block, Step)>,
 ) {
+    depth_bits(&mut *f, kind, level, last, bit, or);
     let past = after(&mut *f, t);
     let cm = f.ins().band(closer, past);
     let (close, through) = (f.create_block(), f.create_block());
@@ -436,7 +491,7 @@ fn emit_kind(
     let upto = low(&mut *f, to);
     let h = f.ins().band(upto, past);
     or(&mut *f, hidden, h);
-    let now = template_last(&mut *f, kind, k, c, second, last);
+    let now = template_last(&mut *f, kind, k, (c, second), last, level, or);
     f.ins().jump(head, &[to.into(), now.into()]);
 
     f.switch_to_block(through);

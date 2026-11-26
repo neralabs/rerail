@@ -439,12 +439,21 @@ pub struct Regions {
 /// format spec, `{ {k: v} }` one template). An `O` past `N` (1 to 15) is `D`: the level stays
 /// `N`. Not a fixed point of masks: the evaluator and the backends walk such regions (the
 /// rounds' body makes `D` empty and counts no level).
+///
+/// `nest M depth A B` (after `max N`): templates nest, `M` (2 to 4) deep, as the lean lexer's
+/// string stack does (`f"{f'{a}'}"`). A plain kind's region in a template's code closed at its
+/// `or` opens a template inside it; the outer one's kind and level wait until the inner string
+/// ends. One past `M` is `D` at its closer. `A` and `B` are the bits, low first, of each
+/// region's depth at its opener: the templates around it (a kind that resumes: around its
+/// string), which the token loop's records of strings open over a template's code are kept by.
 #[derive(Clone, Debug)]
 pub struct RegionLevel {
     pub opens: Expr,
     pub closes: Expr,
     pub max: u8,
     pub deep: String,
+    /// `nest M depth A B`: `M`, and the depth bits' names.
+    pub nest: Option<(u8, String, String)>,
 }
 
 /// A kind of region (`Regions`).
@@ -508,7 +517,7 @@ impl Regions {
     /// (`prev(c & ~C2)`, the string ended), from the round before, among the `B`s and no opener.
     pub fn body(&self) -> Vec<Stmt> {
         let name = |s: &str| Expr::Name(s.to_string());
-        let deep = self.level.iter().map(|l| Stmt::Mask(l.deep.clone(), Expr::Empty));
+        let deep = self.level.iter().flat_map(|l| std::iter::once(l.deep.clone()).chain(l.nest.iter().flat_map(|n| [n.1.clone(), n.2.clone()]))).map(|d| Stmt::Mask(d, Expr::Empty));
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
         let not = |a: Expr| Expr::Not(Box::new(a));
         let call = |f: &str, args: Vec<Arg>| Expr::Call(f.to_string(), args);
@@ -1804,8 +1813,18 @@ impl P {
             if !(1..=15).contains(&max) {
                 return self.err("a level's max from 1 to 15");
             }
+            let nest = if self.eat_kw("nest") {
+                let m = self.int()?;
+                if !(2..=4).contains(&m) {
+                    return self.err("a nest from 2 to 4");
+                }
+                self.want_kw("depth")?;
+                Some((m as u8, self.ident()?, self.ident()?))
+            } else {
+                None
+            };
             self.want_kw("else")?;
-            Some(RegionLevel { opens, closes, max: max as u8, deep: self.ident()? })
+            Some(RegionLevel { opens, closes, max: max as u8, deep: self.ident()?, nest })
         } else {
             None
         };
