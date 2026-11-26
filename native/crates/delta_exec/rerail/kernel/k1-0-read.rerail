@@ -1,16 +1,25 @@
-// K1's reader (decision 0686; Bootstrap from one tape, §6, L3; B§10 step 7): l0's reader, its rows under the names
-// read_*, for the lowering after it. A level's K-form relations are its export, the next program, so what a file says
-// as read is kept apart from what the lowering emits (k1-4-emit). A step is at key (k, -1) as read.
-
-read_rule(d, c, h) :- kind(d, c, "clause"), field(d, c, "head", hd), field(d, hd, "relation", n), text(d, n, h).
-read_arg(d, c, -1, -1, i, a) :- kind(d, c, "clause"), field(d, c, "head", hd), field(d, hd, "arguments", l), child(d, l, a, i).
-read_step(d, c, k, -1, "atom", r) :- kind(d, c, "clause"), field(d, c, "body", b), child(d, b, l, k), kind(d, l, "atom"), field(d, l, "relation", n), text(d, n, r).
-read_arg(d, c, k, -1, i, a) :- kind(d, c, "clause"), field(d, c, "body", b), child(d, b, l, k), kind(d, l, "atom"), field(d, l, "arguments", al), child(d, al, a, i).
-read_step(d, c, k, -1, "not", r) :- kind(d, c, "clause"), field(d, c, "body", b), child(d, b, l, k), kind(d, l, "negation"), field(d, l, "operand", o), field(d, o, "relation", n), text(d, n, r).
-read_arg(d, c, k, -1, i, a) :- kind(d, c, "clause"), field(d, c, "body", b), child(d, b, l, k), kind(d, l, "negation"), field(d, l, "operand", o), field(d, o, "arguments", al), child(d, al, a, i).
-read_step(d, c, k, -1, "cmp", op) :- kind(d, c, "clause"), field(d, c, "body", b), child(d, b, l, k), kind(d, l, "comparison"), field(d, l, "operator", o), text(d, o, op).
-read_arg(d, c, k, -1, 0, a) :- kind(d, c, "clause"), field(d, c, "body", b), child(d, b, l, k), kind(d, l, "comparison"), field(d, l, "left", a).
-read_arg(d, c, k, -1, 1, a) :- kind(d, c, "clause"), field(d, c, "body", b), child(d, b, l, k), kind(d, l, "comparison"), field(d, l, "right", a).
+// K1's reader (decision 0686; Bootstrap from one tape, §6, L3; B§10 steps 7 and 8): what a file says, read from its
+// tape, for the lowering after it. A level's K-form relations are its export, the next program, so what a file says
+// as read is kept apart from what the lowering emits (k1-5-emit).
+//
+// A clause's heads (several heads: one rule each), and its body's one disjunction (split into rules, one an
+// alternative): at the top of the body, or a group among its literals.
+head_of(d, c, h) :- kind(d, c, "clause"), field(d, c, "head", h).
+several(d, c) :- head_of(d, c, h), head_of(d, c, g), h < g.
+alt(d, c, a) :- kind(d, c, "clause"), field(d, c, "body", b), kind(d, b, "disjunction"), field(d, b, "alternative", a).
+group_alt(d, c, g, a) :- kind(d, c, "clause"), field(d, c, "body", b), kind(d, b, "conjunction"), field(d, b, "literal", g), kind(d, g, "group"), field(d, g, "body", x), kind(d, x, "disjunction"), field(d, x, "alternative", a).
+split(d, c) :- alt(d, c, _).
+split(d, c) :- group_alt(d, c, _, _).
+groups(d, c) :- group_alt(d, c, g, _), group_alt(d, c, h, _), g < h.
+// A literal, wherever it is: its step (kind and relation, or a comparison's operator) and its arguments.
+lit_step(d, l, "atom", r) :- kind(d, l, "atom"), field(d, l, "relation", n), text(d, n, r).
+lit_arg(d, l, i, a) :- kind(d, l, "atom"), field(d, l, "arguments", al), child(d, al, a, i).
+lit_step(d, l, "not", r) :- kind(d, l, "negation"), field(d, l, "operand", o), field(d, o, "relation", n), text(d, n, r).
+lit_arg(d, l, i, a) :- kind(d, l, "negation"), field(d, l, "operand", o), field(d, o, "arguments", al), child(d, al, a, i).
+lit_step(d, l, "cmp", op) :- kind(d, l, "comparison"), field(d, l, "operator", o), text(d, o, op).
+lit_arg(d, l, 0, a) :- kind(d, l, "comparison"), field(d, l, "left", a).
+lit_arg(d, l, 1, a) :- kind(d, l, "comparison"), field(d, l, "right", a).
+// What a term is.
 read_var(d, t, v) :- kind(d, t, "variable"), text(d, t, v).
 read_str(d, t, s) :- kind(d, t, "string"), value(d, t, s).
 read_num(d, t, n) :- kind(d, t, "number"), value(d, t, n).

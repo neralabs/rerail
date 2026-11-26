@@ -2152,3 +2152,35 @@ the run's layer of the world's leaves (`LeavesW`). The trace's layers and `View:
 and `delta_exec::Trace` is the host's handle on them. The operation signature, the registry and `DeltaOp` stay in
 `delta_exec::op` and `contract`, where the rebuild plan's B1 and B3 place them. The shape script refuses a P§12
 abstraction defined in `delta_exec`. Relax, local: 130 of 130.
+
+### K1: several heads, disjunction split into rules, constants (B§6, L3; B§10 step 8; 2026-11-26)
+
+B§6's L3 row: "K1 lowering: body order (bind before test), several heads, constants and arithmetic in heads,
+disjunction split into rules, `.decl`, and strata computed". The first three are built here, in rules. The kernel's
+files are now six, one a stratum:
+- `k1-0-read`, K1's reader:
+  - a clause's heads (`head_of`, `several`);
+  - its body's one disjunction, either at the top (`alt`) or a group among its literals (`group_alt`), and `split`;
+  - a literal's step and arguments wherever it is (`lit_step`, `lit_arg`);
+  - what a term is.
+- `k1-1-rules` (negates the reader's) gives a clause its rules (`inst`):
+  - one rule for each head, named by its head node;
+  - or, for a clause with one disjunction and one head, one rule for each alternative, named by the alternative node.
+  - A rule's steps are its literals (`in_rule`): its body's, or its alternative's, with a group's clause's other
+    literals. Each stands at its node, `(k, -1)`.
+  - Nodes number a tape in source order, so a group's steps stand where the group was written, with no arithmetic (O2).
+- `k1-2-steps`, `k1-3-binds`, `k1-4-place` and `k1-5-emit`: the binding lowerer, as before, renumbered.
+
+Constants in heads were already read: K0's arguments are variables, strings, numbers or `_`.
+
+Checks (Relax, local, 131 of 131):
+- `k1s_heads_disjunctions_and_constants_lower_to_their_hand_written_rules` covers six programs: several heads, a
+  top-level disjunction, a group, constants in a head, alternatives whose filters come before their bindings, and a
+  filter outside a group written before the group's atoms.
+  - Each program, lowered by P3, gives the hand-written rows and its hand-lowered K0 form's rows, and a cold run gives
+    the same.
+  - Without the rule that brings a group's other literals into each alternative, it fails: the executor refuses a
+    filter whose variable no step binds.
+- `a_k1_rule_lowered_by_p3_gives_the_rows_of_its_hand_ordered_k0_form` now checks each lowered rule's steps in key
+  order against the hand-ordered form, since step keys are now nodes.
+- The shape script's K1 section names the six files and their heads.

@@ -861,9 +861,11 @@ def k1(failures: list) -> None:
     """B§10 step 7, the first K1 feature in rules: the binding lowerer in K0, one file a stratum (O4), K1's reader
     before it; no lowering in Rust; a level's documents the `load` facts of its facts in and of its program."""
     kernel = CRATE / "rerail" / "kernel"
-    files = ("k1-0-read", "k1-1-steps", "k1-2-binds", "k1-3-place", "k1-4-emit")
-    heads = {"k1-1-steps": ("in_atom", "filter", "in_filter", "bound_before"), "k1-2-binds": ("binds", "waits"),
-             "k1-3-place": ("place", "moved"), "k1-4-emit": ("k_rule", "k_step", "k_arg", "k_var", "k_order")}
+    files = ("k1-0-read", "k1-1-rules", "k1-2-steps", "k1-3-binds", "k1-4-place", "k1-5-emit")
+    heads = {"k1-0-read": ("head_of", "several", "alt", "group_alt", "split", "lit_step", "lit_arg"),
+             "k1-1-rules": ("inst", "read_rule", "read_arg", "in_rule", "read_step"),
+             "k1-2-steps": ("in_atom", "filter", "in_filter", "bound_before"), "k1-3-binds": ("binds", "waits"),
+             "k1-4-place": ("place", "moved"), "k1-5-emit": ("k_rule", "k_step", "k_arg", "k_var", "k_order")}
     for f in files:
         path = kernel / f"{f}.rerail"
         if not path.exists():

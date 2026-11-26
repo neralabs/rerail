@@ -358,6 +358,10 @@ impl Run {
         self.atoms.find(&self.bench.dir, x).unwrap_or_else(|| panic!("{x:?} not interned"))
     }
 
+    fn name(&self, id: i64) -> String {
+        self.atoms.name(&self.bench.dir, id)
+    }
+
     /// The run's fact `rel`'s rows moved to `rows` (a layer of their change).
     fn fact(&mut self, rel: &str, rows: &[Vec<i64>]) {
         let r = self.s(rel);
@@ -543,12 +547,13 @@ fn a_later_process_resumes_the_levels_where_the_last_run_left_them() {
 
 /// The kernel's files (B§10 step 7), by path relative to the bootstrap's root, in stratum order: K1's reader, then
 /// the binding lowerer, one file a stratum (O4).
-const KERNEL: [(&str, &str); 5] = [
+const KERNEL: [(&str, &str); 6] = [
     ("kernel/k1-0-read.rerail", include_str!("../rerail/kernel/k1-0-read.rerail")),
-    ("kernel/k1-1-steps.rerail", include_str!("../rerail/kernel/k1-1-steps.rerail")),
-    ("kernel/k1-2-binds.rerail", include_str!("../rerail/kernel/k1-2-binds.rerail")),
-    ("kernel/k1-3-place.rerail", include_str!("../rerail/kernel/k1-3-place.rerail")),
-    ("kernel/k1-4-emit.rerail", include_str!("../rerail/kernel/k1-4-emit.rerail")),
+    ("kernel/k1-1-rules.rerail", include_str!("../rerail/kernel/k1-1-rules.rerail")),
+    ("kernel/k1-2-steps.rerail", include_str!("../rerail/kernel/k1-2-steps.rerail")),
+    ("kernel/k1-3-binds.rerail", include_str!("../rerail/kernel/k1-3-binds.rerail")),
+    ("kernel/k1-4-place.rerail", include_str!("../rerail/kernel/k1-4-place.rerail")),
+    ("kernel/k1-5-emit.rerail", include_str!("../rerail/kernel/k1-5-emit.rerail")),
 ];
 
 /// What L3 reads: the stand-in for the compiler's files (Bootstrap §6: "P3 loads the full compiler"), a K0 file of
@@ -596,6 +601,48 @@ fn hand_run(name: &str, rules: &str) -> Run {
     r
 }
 
+/// K1's several heads, disjunctions and constants (B§6, L3; B§10 step 8): each program lowered by P3 and run gives the
+/// rows written by hand and those of its hand-lowered K0 form, and a cold run the same. A clause is a rule a head, or
+/// one an alternative of its one disjunction, at the top of its body or a group among its literals; a filter written
+/// before its binding, in an alternative or outside a group, is placed after it as in any rule.
+#[test]
+fn k1s_heads_disjunctions_and_constants_lower_to_their_hand_written_rules() {
+    type Want = &'static [(&'static str, &'static [&'static [i64]])];
+    let cases: [(&str, &str, &str, Want); 6] = [
+        ("heads", "a(x), c(x) :- e(x, _).\n", "a(x) :- e(x, _).\nc(x) :- e(x, _).\n", &[("a", &[&[1], &[2], &[3]]), ("c", &[&[1], &[2], &[3]])]),
+        ("or", "h(x) :- e(x, _) ; e(_, x).\n", "h(x) :- e(x, _).\nh(x) :- e(_, x).\n", &[("h", &[&[1], &[2], &[3], &[4]])]),
+        ("group", "h(x) :- e(x, y), (y = 1 ; y = 4).\n", "h(x) :- e(x, y), y = 1.\nh(x) :- e(x, y), y = 4.\n", &[("h", &[&[2], &[3]])]),
+        ("consts", "c(7, x, 0) :- e(x, 1).\n", "c(7, x, 0) :- e(x, 1).\n", &[("c", &[&[7, 3, 0]])]),
+        ("or-bind", "h(x) :- x > 2, e(x, _) ; x < 3, !b(x), e(_, x).\n", "h(x) :- e(x, _), x > 2.\nh(x) :- e(_, x), x < 3, !b(x).\n", &[("h", &[&[1], &[2], &[3]])]),
+        ("group-bind", "h(x, y) :- y != x, (e(x, y) ; e(y, x)).\n", "h(x, y) :- e(x, y), y != x.\nh(x, y) :- e(y, x), y != x.\n",
+            &[("h", &[&[1, 2], &[2, 3], &[3, 1], &[2, 4], &[2, 1], &[3, 2], &[1, 3], &[4, 2]])]),
+    ];
+    for (name, k1, k0, want) in cases {
+        let mut r = kernel_run(&format!("phase-k1-{name}"), k1);
+        r.run();
+        let mut h = hand_run(&format!("phase-k1-{name}-hand"), k0);
+        h.run();
+        for &(rel, rows) in want {
+            let want: BTreeSet<Vec<i64>> = rows.iter().map(|x| x.to_vec()).collect();
+            assert_eq!(h.rows(1, rel), want, "{name}: {rel}, the hand-lowered form's rows");
+            assert_eq!(r.rows(2, rel), want, "{name}: {rel}, lowered by P3");
+        }
+        let warm: Vec<_> = want.iter().map(|&(rel, _)| r.rows(2, rel)).collect();
+        r.last = None;
+        r.run();
+        assert_eq!(want.iter().map(|&(rel, _)| r.rows(2, rel)).collect::<Vec<_>>(), warm, "{name}: cold");
+    }
+}
+
+/// The steps of the rule level `k`'s K-form writes `head` (one rule), in their key order: (kind, relation or operator).
+fn steps_in_order(r: &Run, k: usize, head: &str) -> Vec<(String, String)> {
+    let rules: Vec<i64> = r.rows(k, "k_rule").into_iter().filter(|x| x[2] == r.s(head)).map(|x| x[1]).collect();
+    assert_eq!(rules.len(), 1, "one rule writes {head}");
+    let mut steps: Vec<Vec<i64>> = r.rows(k, "k_step").into_iter().filter(|x| x[1] == rules[0]).collect();
+    steps.sort_by_key(|x| (x[2], x[3]));
+    steps.into_iter().map(|x| (r.name(x[4]), r.name(x[5]))).collect()
+}
+
 /// The first K1 feature, in rules (B§10 step 7; the rebuild plan, O2 and O4): `kernel/`'s binding lowerer, in K0, one
 /// file a stratum, places a body's filters after their variables are bound, at keys (p, f) with no arithmetic. A K1
 /// rule lowered by P3 and run gives the same rows as its hand-ordered K0 form, through edits, unchanged and cold;
@@ -611,16 +658,14 @@ fn a_k1_rule_lowered_by_p3_gives_the_rows_of_its_hand_ordered_k0_form() {
     let want = (BTreeSet::from([vec![1, 3], vec![1, 4], vec![3, 2]]), BTreeSet::from([vec![2]]));
     assert_eq!(rows(&h, 1), want, "the hand-ordered form's rows");
     assert_eq!(rows(&r, 2), want, "the lowered form's rows");
-    // The filters' keys: `x != z` after the atom binding z (written at 0, now at (3, 0)), `!b(y)` after the one binding
-    // y ((2, 1)), `y > 2` where it was bound ((0, 1)); the atoms where they were read.
-    let keys = |kind: &str, rel: &str| -> BTreeSet<(i64, i64)> {
-        let (kind, rel) = (r.s(kind), r.s(rel));
-        r.rows(1, "k_step").into_iter().filter(|x| x[4] == kind && x[5] == rel).map(|x| (x[2], x[3])).collect()
-    };
-    assert_eq!(keys("cmp", "!="), BTreeSet::from([(3, 0)]));
-    assert_eq!(keys("not", "b"), BTreeSet::from([(2, 1)]));
-    assert_eq!(keys("cmp", ">"), BTreeSet::from([(0, 1)]));
-    assert_eq!(keys("atom", "e"), BTreeSet::from([(0, -1), (2, -1), (3, -1)]), "e's steps at (k, -1)");
+    // Each lowered rule's steps, in their key order, are the hand-ordered form's: `x != z` after the atom binding z,
+    // `!b(y)` after the one binding y, `y > 2` after its own; a placed filter at (p, f), every atom at its node
+    // (k, -1).
+    let order = |head: &str| steps_in_order(&r, 1, head);
+    assert_eq!(order("h"), [("atom", "e"), ("not", "b"), ("atom", "e"), ("cmp", "!=")].map(|(k, x)| (k.to_string(), x.to_string())));
+    assert_eq!(order("g"), [("atom", "e"), ("cmp", ">"), ("atom", "e")].map(|(k, x)| (k.to_string(), x.to_string())));
+    let moved: BTreeSet<String> = r.rows(1, "k_step").into_iter().filter(|x| x[3] != -1).map(|x| r.name(x[5])).collect();
+    assert_eq!(moved, BTreeSet::from(["!=".to_string(), ">".to_string(), "b".to_string()]), "every filter placed, at (p, f)");
     // Unchanged: the identity at every level.
     let work = r.run();
     assert!(work.is_checks_only(), "{work:?}");
