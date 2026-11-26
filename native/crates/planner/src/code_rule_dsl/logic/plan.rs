@@ -47,6 +47,9 @@ use super::sql::sql_ast::{SqlBinaryOperator as Op, SqlExpression as Expr, SqlUna
 pub use rerail_plan_search::code_rule_dsl::logic::plan::*;
 // cratify: `corpus` is rerail-logic's (it mounts it: the corpus runner reads the language, above the planner)
 pub mod join_spec;
+pub(crate) mod join_shapes;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use join_shapes::shape_names;
 pub mod compose;
 pub mod emit;
 pub mod issue;
@@ -3241,9 +3244,12 @@ impl<'a> Run<'a, '_> {
             eprintln!("RERAIL_STRATA_LIVE start {scc:?} ({} rules)", rules.len());
             std::time::Instant::now()
         });
-        let solving = solving_of(&self.versions, scc, rules);
-        let sources = if solving.is_some() { column_sources(&self.versions, scc, rules) } else { Sources::new() };
-        let out = self.lent(solving, sources, |this, native_rels| this.native_stratum_(scc, rules, native_rels));
+        // `RERAIL_JOIN_FRAMES`: the stratum runs under frames naming it, for a profiler's samples (setfix's `framed`).
+        let out = super::native::setfix::stratum_framed(&|| stratum_label(scc), &mut || {
+            let solving = solving_of(&self.versions, scc, rules);
+            let sources = if solving.is_some() { column_sources(&self.versions, scc, rules) } else { Sources::new() };
+            self.lent(solving, sources, |this, native_rels| this.native_stratum_(scc, rules, native_rels))
+        });
         if let Some(t0) = t0 {
             eprintln!("RERAIL_STRATA_LIVE end {scc:?} {:.3} s", t0.elapsed().as_secs_f64());
         }
@@ -8480,49 +8486,47 @@ fn off_thread(e: &Error) -> bool {
 /// The strata in order of their levels (stable; with `sort`), and each one's level: one more than the deepest level of a stratum
 /// it depends on (`deps`: reads, requests answered, a native operator's inputs). A level's strata do not depend on
 /// each other, so it is a device wave (decision 0095 §5).
-/// The climb's ends (decision 0561): a stratum whose rules each read a keyed walk's rows once, positively, and
+/// The strata with each registered shape's matches joined (`join_shapes::regroup`, `join_shapes::SHAPES`). The first shape is
+/// the climb's ends (decision 0561): a stratum whose rules each read a keyed walk's rows once, positively, and
 /// otherwise only relations made before the walk (`look` and `miss` over `walk`) joins the walk's stratum, where the
 /// walk's run answers it at each row as the climb makes it (`closure::keyed`), so the walk's rows are not read again
 /// by a join of their own. `RERAIL_CLIMB_ENDS=off` keeps the strata apart.
 /// `None`: the strata as they are.
 fn climb_ends(p: &body::Placed, sccs: &super::front::Components, deps: &super::front::Edges) -> Option<super::front::Components> {
-    if std::env::var("RERAIL_CLIMB_ENDS").is_ok_and(|v| v == "off") {
-        return None;
-    }
+    join_shapes::regroup(p, sccs, deps)
+}
+
+/// The climb's ends as matches (`join_shapes::ClimbEnds`): each keyed walk's relation, then the ends that join its stratum.
+fn climb_end_matches(p: &body::Placed, sccs: &super::front::Components, deps: &super::front::Edges) -> Vec<Vec<String>> {
     let mut rules: HashMap<&str, Vec<usize>> = HashMap::new();
     for k in 0..p.len() {
         rules.entry(p.v.rel_name(p.rule(k).head().rel())).or_default().push(k);
     }
     let at: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r, j))).collect();
     let only = |scc: &super::front::Comp| (scc.len() == 1).then(|| scc.first().expect("one").to_owned());
-    let mut into: Vec<Option<usize>> = vec![None; sccs.len()];
+    let mut taken: Vec<bool> = vec![false; sccs.len()];
+    let mut out = Vec::new();
     for j in 0..sccs.len() {
         let Some(w) = only(&sccs[j]) else { continue };
-        if into[j].is_some() || !rules.get(w.as_str()).is_some_and(|ks| keyed_walk(p, &w, ks)) {
+        if taken[j] || !rules.get(w.as_str()).is_some_and(|ks| keyed_walk(p, &w, ks)) {
             continue;
         }
+        let mut m = vec![w.clone()];
         for i in j + 1..sccs.len() {
             let Some(t) = only(&sccs[i]) else { continue };
             let Some(d) = deps.get(&t) else { continue };
             let reads = d.contains(&(w.clone(), false)) && !d.contains(&(w.clone(), true)) && !d.iter().any(|(r, _)| *r == t);
             let before = d.iter().all(|(r, _)| *r == w || at.get(r.as_str()).is_none_or(|&s| s < j));
-            if into[i].is_none() && reads && before && rules.get(t.as_str()).is_some_and(|ks| ks.iter().all(|&k| reads_once(p, k, &w) && of_the_row(p, k, &w))) {
-                into[i] = Some(j);
+            if !taken[i] && reads && before && rules.get(t.as_str()).is_some_and(|ks| ks.iter().all(|&k| reads_once(p, k, &w) && of_the_row(p, k, &w))) {
+                taken[i] = true;
+                m.push(t);
             }
         }
-    }
-    if into.iter().all(Option::is_none) {
-        return None;
-    }
-    // Each stratum kept, with the ends moved into it; `Components::of` sorts each one's members.
-    let mut out: Vec<Vec<&str>> = sccs.iter().map(|c| c.iter().collect()).collect();
-    for (i, to) in into.iter().enumerate() {
-        if let Some(j) = *to {
-            let moved: Vec<&str> = sccs[i].iter().collect();
-            out[j].extend(moved);
+        if m.len() > 1 {
+            out.push(m);
         }
     }
-    Some(super::front::Components::of_names(out.into_iter().enumerate().filter(|(i, _)| into[*i].is_none()).map(|(_, s)| s)))
+    out
 }
 
 /// Whether rule `k` reads relation `w` once, as a positive atom of its own (not an aggregate's).

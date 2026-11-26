@@ -4347,10 +4347,15 @@ impl Model {
                     // Where both columns' keys are kept (decision 0488), the bindings that hit are the share of the
                     // domain's keys this column holds too, whichever has more: two columns of disjoint values
                     // (a node's ids against another kind's) hit nothing, which distinct counts cannot tell.
+                    // The bindings are the domain's values as its constant filters leave them (`from`), not every key
+                    // of its column: of those, at most the keys both columns hold hit. Against the whole column, a
+                    // probe of each node's nearest function by `$g`, a function (`kind($g, function_definition)`),
+                    // hit the 2,000 functions among 300,000 nodes' keys (0.7%), where every one hits: `rf_in` read
+                    // every node of every function's body, 12.7 M rows for 1.2 M.
                     let kept = at.and_then(|(d, c2)| {
                         let (mine, theirs) = (self.stats.keys.at(rel, c)?, self.keys_or_source(b.rel(b.atom(d)?), c2)?);
-                        let of = theirs.distinct();
-                        (of >= 1.0).then(|| Some((mine.shared(theirs)? / of).clamp(0.5 / of, 1.0))).flatten()
+                        let of = theirs.distinct().min(from);
+                        (of >= 1.0).then(|| Some((mine.shared(theirs)?.min(of) / of).clamp(0.5 / of, 1.0))).flatten()
                     });
                     if let Some(share) = kept {
                         hit = hit.min(share);

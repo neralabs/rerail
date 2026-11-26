@@ -331,6 +331,20 @@ cost more than the whole difference, each now removed:
 corpus0 x B-now, one thread, profiling build, the M1 Max at load 1.7: `off` 953.3 G, `auto` 955.9 G (+0.27%),
 findings 463 `d067ec2ebf6f` in both.
 
+## The share against the binding's domain (2026-11-26)
+
+The share was taken of every key of the domain atom's column. The bindings are fewer: the values its constant
+filters leave (`binding_domains`, `from`). `references.rerail`'s `rf_in` probed each node's nearest function by `$g`
+after `kind($g, function_definition)`: the column's keys are every node's, 300,000 against 2,000 functions, and every
+probe was priced at 0.7% of its rows where all hit. The share is now `min(shared, from) / from`: without a constant
+filter `from` is the column's keys and nothing changes, and keys two columns do not share still miss. It is what
+containment's `here / from` gives where no keys are kept. Test:
+`kept_keys_price_a_probe_against_the_binding_its_constant_filters_leave`, which also checks that join shape
+directives (decision 0137) hold an order where the statistics miss a correlation the filters carry (a function's
+having a body, a body's nodes against an average subtree's). On the corpus `rf_in` costs the same either way (1.6 s;
+its rows go through cheap tests), so it has no directive; `names.rerail`'s `cls_early` and `cls_late` have them
+(`O-class-scope-names`).
+
 ## Open
 
 - **The device's fused small sorts (at most 2,048 rows) make no screen of their own**: their probes test one where

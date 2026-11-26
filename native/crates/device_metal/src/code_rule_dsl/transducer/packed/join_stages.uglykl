@@ -1955,8 +1955,8 @@ UKL_INLINE void dedup_mark_one(Longs T, JSPACE const uint32_t* totals, JSPACE co
 }
 
 // A head's rows made distinct in its first order (t58 increment A, `Dedup::sorted`), so the host takes them as they
-// lie and sorts nothing: each row's key (`HeadKeyP`: the order's leading column's 16-bit tag where it is tagged, then
-// each column of the order less its least, in the bits its bounds need, most significant first; the job's rank in
+// lie and sorts nothing: each row's key (`HeadKeyP`: an order is by value, decision 0187 P1; its first word reserved,
+// 0, for the layout; each column of the order less its least, in the bits its bounds need, most significant first; the job's rank in
 // its level above them), with its place, sorted by the level's wide sort (every sorted dedup's keys end to end, each
 // one's from its first, `eb`); a row kept where its key is not the one before it's. The key holds every column, so
 // equal keys are equal rows. Its kept rows come out in the key's order. `part`: column (of `cols`), bits, least's low
@@ -1964,7 +1964,7 @@ UKL_INLINE void dedup_mark_one(Longs T, JSPACE const uint32_t* totals, JSPACE co
 // `total`: the level's wide sort's keys (its size script's); `odd`: its passes are odd, its sorted keys in its region's
 // second half. Its region (`h_at`, claimed by its size script): keys A and B, then its histograms. A key holds its
 // whole row, so the sort moves keys alone, and the kept rows are decoded from them (`head_row`).
-typedef struct HeadKeyP { uint32_t tagged; uint32_t nparts; uint32_t rank_shift; uint32_t rank; uint32_t part[16][4]; uint32_t total; uint32_t odd; uint32_t pad[2]; } HeadKeyP;
+typedef struct HeadKeyP { uint32_t reserved; uint32_t nparts; uint32_t rank_shift; uint32_t rank; uint32_t part[16][4]; uint32_t total; uint32_t odd; uint32_t pad[2]; } HeadKeyP;
 UKL_STATIC_ASSERT(sizeof(HeadKeyP) == 288, "HeadKeyP: size");
 #define WIDE_KEYS(base, n, i) ((JSPACE uint64_t*)(base) + (uint64_t)(i) * (n))
 #define WIDE_HIST(base, n) ((base) + 4ul * (n))
@@ -1972,7 +1972,6 @@ UKL_STATIC_ASSERT(sizeof(HeadKeyP) == 288, "HeadKeyP: size");
 UKL_INLINE uint64_t head_key(Longs T, DedupP d, JSPACE const HeadKeyP* p, uint32_t x)
 {
     uint64_t k = 0ul;
-    if (p->tagged != 0u) k = ((uint64_t)T[(uint64_t)d->cols[p->part[0][0]] * d->cap + x] * 0x9E3779B97F4A7C15ul) >> 48;
     for (uint32_t i = 0u; i < p->nparts && i < 16u; i++) {
         uint32_t w = p->part[i][1];
         if (w == 0u) continue;

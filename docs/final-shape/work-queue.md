@@ -11742,3 +11742,25 @@ Tests:
 - tests-corpus `a_kind_test_of_a_node_the_atom_bound_is_read_in_its_row_program` passes: the view's chunk path runs, and its rows are the unfused rules'.
 
 Still red: `cut_tests::a_step_clocks_switches_are_no_steps_time` (f9d7157b90's), alone too. The test builds a `StepClock` directly, and this merge touches nothing it calls. It sets the best of eight 4,096-switch batches against the average over a 200,000-switch loop. At load 30, under Relax, the average is about 60% above the best (6.6 against 4.0 ticks a switch), so 30–40% of the empty steps' ticks are kept, where the test allows 20%. It passed at roll-up 130.
+
+### Q568. Roll-up 140 (Typing-support-final-shape 9c23950339 onto Pulling-it-all-together): what the merge chose
+
+Typing-support-final-shape's four commits:
+- orders carry no hash tags (decision 0187 P1);
+- kept keys price a probe against the binding its constant filters leave;
+- joins and strata under frames that name them (`RERAIL_JOIN_FRAMES`);
+- specialized executors for join shapes on one interface.
+
+- **The head's sort key has no tag.** Native's t58 A (f760cdbcba, in the hub) gave the device's head sort key the order's leading tag (`Rel::first_order`'s bool from `runs::tagged`). Typing's 0187 P1 removes tags from every order, `runs::tagged` included, so a head's rows are noted in value order, and the device must write them in it.
+  - `Rel::first_order` returns the columns alone.
+  - `HeadKey` and `SortKey` lose `tagged`; `index_bits` is the parts' bits.
+  - The tag branch of `head_key` is gone from the CPU kernel (`ukl_rust/join_program.rs`) and the device's (`join_stages.uglykl`).
+  - `HeadKeyP`'s first word stays, reserved and 0, so its 288-byte layout is unchanged. Typing kept the index descriptor's tags span for kept files' layout in the same way.
+- **The class rules' plan: final-rerail-shape's `cls_read`, not Typing's directives.** Typing's 7943532887 adds `.shape bound_in after wstart` and `.shape defn|asg after wstart` to `names.rerail`'s `cls_late` / `cls_early`, for the same plan problem `cls_read` solved (0db3de5c5c: a class's every name listed for each (class, name); 1.36 s to 0.60 s). In the hub those rules live in `scopes.rerail`, and their bodies start from `cls_read` (no_inline, keyed by class and name), not from `wstart`. The directives would name an atom the rules no longer read, so they are not taken. `names.rerail` stays the hub's.
+
+Checked with Relax: blocks, facts-base, plan-search, planner, rr, setfix, tests-logic, facts, the device crate, tests-corpus and ukl-rust check with 0 errors. The device kernel source (`join_stages.uglykl`) is compiled only on a device, so it was not compiled here.
+
+Tests:
+- setfix 141/142, blocks 116/116, planner 6/6, ukl-rust 6/6, store kept_facts 23/23.
+- tests-logic: `kept_keys_price_a_probe_against_the_binding_its_constant_filters_leave` and `every_executor_and_shape_has_an_oracle_case` pass.
+- Red, as at roll-up 139: `a_step_clocks_switches_are_no_steps_time`. It compares the best of eight short batches with a long loop's average at load 30, and this merge leaves the clock alone.

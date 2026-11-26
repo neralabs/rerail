@@ -1,10 +1,9 @@
 //! A sorted order's search, written once (t56 step 3): the ids of a relation sorted by some of its columns, and beside
 //! them, in the relation's block (`relation::Relation::try_add_order`, decision 0478 step 5b), the leading value of
-//! every `FENCE`th id (`fences`), or each id's 16-bit tag of it (`tags`, an order sorted by its lead's hash), and each
-//! id's 8-bit print of its whole key (`prints`, an order probed by whole keys). The set engine's runs
+//! every `FENCE`th id (`fences`), and each id's 8-bit print of its whole key (`prints`, an order probed by whole keys). The set engine's runs
 //! (`setfix::runs::Run`) and the batch's relations (`facts::vtab::Relation`) both search their orders here.
 //!
-//! A probe by a whole key reads the fences (or tags), then the span's prints, eight a word, and then only the rows
+//! A probe by a whole key reads the fences, then the span's prints, eight a word, and then only the rows
 //! whose print is the key's: about one row read a probe, where a bisection read about eight, each a decode of the
 //! row's sealed chunk.
 
@@ -13,14 +12,7 @@ use std::cmp::Ordering;
 /// Ids between fences.
 pub const FENCE: usize = 64;
 
-/// 16 bits of a value's hash (Fibonacci hashing: the product's high bits).
-#[inline]
-pub fn tag(v: i64) -> u16 {
-    ((v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 48) as u16
-}
-
-/// A key's print: 8 bits of a hash of its values in order (another multiplier than `tag`'s, so a tagged order's span
-/// of one tag still spreads over the prints).
+/// A key's print: 8 bits of a hash of its values in order.
 #[inline]
 pub fn print_vals(vals: impl Iterator<Item = i64>) -> u8 {
     let h = vals.fold(0x2545_F491_4F6C_DD1Du64, |h, v| (h ^ v as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93));
@@ -119,21 +111,6 @@ pub fn gallop<T>(v: &[T], start: usize, less: impl Fn(&T) -> bool) -> usize {
     }
 }
 
-/// The span of `tags` (sorted) equal to `t`, at or past `from`: its start by a galloping search from `from`, or (with
-/// `place`) from where an even spread of tags would put it, back or forward; its end by a galloping search from its
-/// start. A span costs reads logarithmic in its length: its end was walked, so a tag thousands of rows share (a leading
-/// value most rows hold) was read to its end once per row a sorted batch searched. Generic so a test counts the reads.
-#[inline]
-pub fn tag_span<T: Copy + Ord + Into<u64>>(tags: &[T], t: T, from: usize, place: bool) -> (usize, usize) {
-    let n = tags.len();
-    if from >= n {
-        return (n, n);
-    }
-    let at = if place { from.max(((t.into() as usize) * n) >> 16) } else { from };
-    let s = from + gallop(&tags[from..], at - from, |&x| x < t);
-    (s, s + gallop(&tags[s..], 0, |&x| x == t))
-}
-
 /// The first position in `lo..hi` where `less` stops holding (it holds before it, not from it).
 #[inline]
 pub fn split_at_pos(mut lo: usize, mut hi: usize, less: impl Fn(usize) -> bool) -> usize {
@@ -155,20 +132,18 @@ pub fn fence_span(fences: &[i64], n: usize, lead: i64) -> (usize, usize) {
 
 /// The positions of an order of `n` ids whose rows hold `key` on the order's first `key.len()` columns (`key` not
 /// empty): `cmp(i, m)` compares position `i`'s row on the order's first `m` columns with `key[..m]`. The span by the
-/// tags (a tagged order) or the fences; within it, `within`'s.
+/// fences; within it, `within`'s.
 #[inline]
-pub fn find(n: usize, fences: &[i64], tags: &[u16], prints: &[u8], printed: usize, key: &[i64], cmp: impl Fn(usize, usize) -> Ordering) -> (usize, usize) {
-    let lead = key[0];
-    let (lo, hi) = if !tags.is_empty() { tag_span(tags, tag(lead), 0, true) } else { fence_span(fences, n, lead) };
+pub fn find(n: usize, fences: &[i64], prints: &[u8], printed: usize, key: &[i64], cmp: impl Fn(usize, usize) -> Ordering) -> (usize, usize) {
+    let (lo, hi) = fence_span(fences, n, key[0]);
     within(lo, hi, prints, printed, key, cmp)
 }
 
 /// The positions in `lo..hi` (a span the key's rows lie in) whose rows hold `key`. Where the order prints its first
 /// `printed` columns (`prints`, a print a position) and the key holds them, the span of their print is found by the
 /// prints, eight a word, reading only the rows whose print is the key's (`print_span`); a longer key is then bisected
-/// within that span alone. Else the span is bisected. Bisection reads a row a step, a sealed chunk's decode, and a
-/// span of a tagged order holds every key sharing the lead's tag (about 15 at a million keys): the prints leave one
-/// row read where there were about seven (t56 step 7 C).
+/// within that span alone. Else the span is bisected. Bisection reads a row a step, a sealed chunk's decode: the prints
+/// leave one row read where there were about seven (t56 step 7 C).
 #[inline]
 pub fn within(lo: usize, hi: usize, prints: &[u8], printed: usize, key: &[i64], cmp: impl Fn(usize, usize) -> Ordering) -> (usize, usize) {
     let m = key.len();
@@ -214,14 +189,14 @@ mod tests {
         };
         for lead_key in -2..1210i64 {
             let key = [lead_key];
-            assert_eq!(find(n, &fences, &[], &[], 0, &key, cmp(&key)), span(&key), "fences, key {key:?}");
-            same(find(n, &fences, &[], &lead, 1, &key, cmp(&key)), span(&key), &format!("printed on the lead, key {key:?}"));
-            same(find(n, &fences, &[], &both, 2, &key, cmp(&key)), span(&key), &format!("printed on both, a lead key {key:?} (bisected)"));
+            assert_eq!(find(n, &fences, &[], 0, &key, cmp(&key)), span(&key), "fences, key {key:?}");
+            same(find(n, &fences, &lead, 1, &key, cmp(&key)), span(&key), &format!("printed on the lead, key {key:?}"));
+            same(find(n, &fences, &both, 2, &key, cmp(&key)), span(&key), &format!("printed on both, a lead key {key:?} (bisected)"));
             for j in [-1, 0, 2, 7, 160] {
                 let key = [lead_key, j];
-                assert_eq!(find(n, &fences, &[], &[], 0, &key, cmp(&key)), span(&key), "fences, key {key:?}");
-                same(find(n, &fences, &[], &lead, 1, &key, cmp(&key)), span(&key), &format!("printed on the lead, key {key:?}"));
-                same(find(n, &fences, &[], &both, 2, &key, cmp(&key)), span(&key), &format!("printed on both, key {key:?}"));
+                assert_eq!(find(n, &fences, &[], 0, &key, cmp(&key)), span(&key), "fences, key {key:?}");
+                same(find(n, &fences, &lead, 1, &key, cmp(&key)), span(&key), &format!("printed on the lead, key {key:?}"));
+                same(find(n, &fences, &both, 2, &key, cmp(&key)), span(&key), &format!("printed on both, key {key:?}"));
             }
         }
     }

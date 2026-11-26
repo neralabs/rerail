@@ -157,7 +157,7 @@ fn a_frozen_relations_known_sorted_ranges_are_in_its_block() {
     let ib = directory(&rel);
     let known = ib.relation().known();
     assert_eq!(known.iter().map(|kn| (kn.lo, kn.hi)).collect::<Vec<_>>(), vec![(0, (n / 2) as u32)]);
-    assert_eq!(rel.sorted.within(&cols, 2, 100, 200), vec![(100, 200)], "read from the block");
+    assert_eq!(rel.sorted.within(&cols, 100, 200), vec![(100, 200)], "read from the block");
 }
 
 /// Decision 0478 step 5d: a frozen relation's dead rows are its block relation's (`own_dead`), read there by the CPU,

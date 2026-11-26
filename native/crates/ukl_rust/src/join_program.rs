@@ -2562,7 +2562,8 @@ unsafe fn scan_scatter_range(st: &St, j: &Job, b: &Bufs, r0: u32, r1: u32) {
 /// A sorted dedup's key (`HeadKeyP`, t58 increment A): the head's first order packed to its columns' bounds.
 #[repr(C)]
 struct HeadKeyP {
-    tagged: u32,
+    /// Reserved, 0: where a tag's flag was (no order carries a tag, decision 0187 P1), kept for the layout.
+    _reserved: u32,
     nparts: u32,
     rank_shift: u32,
     rank: u32,
@@ -2598,9 +2599,6 @@ unsafe fn wide_at(base: *mut u32, n: u32) -> WideAt {
 unsafe fn head_key(t: *const i64, d: &Dedup, p: &HeadKeyP, x: u32) -> u64 {
     let val = |c: u32| *colp(t, d.cols[c as usize], d.cap, x) as u64;
     let mut k = 0u64;
-    if p.tagged != 0 {
-        k = val(p.part[0][0]).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 48;
-    }
     for part in &p.part[..p.nparts.min(16) as usize] {
         let w = part[1];
         if w == 0 {

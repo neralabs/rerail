@@ -107,6 +107,9 @@ mod verdict_tests;
 mod block_index_tests;
 use spec::{ArchivedArg as Arg, ArchivedJoinItem as JoinItem, ArchivedJoinSpec, ArchivedLine as Line, ArchivedSource as Source, ArchivedStart as Start, ArchivedTok as Tok, ComponentSpec, Join, JoinSpec, Reprobe, Spec};
 pub mod closure;
+mod forms;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use forms::executor_names;
 mod cands;
 mod sorted_hash;
 pub mod table;
@@ -761,11 +764,10 @@ impl Rel {
               sketches: vec![Sketch::default(); k], ranges: vec![[i64::MAX, i64::MIN]; k], dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), sorted: Default::default(), from: None,
               level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), lbase: 0, leveled: true, stats: None, stats_dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), lat: None, cap: u32::MAX, ordered: false, keyed: Vec::new(), broke: Vec::new(), room: std::sync::OnceLock::new() }
     }
-    /// Its first order's columns and whether it leads with the leading column's tag (`runs::tagged`): the order its
-    /// rows are noted sorted in (`Sorted::note`), which a device writes a head's rows in.
-    pub fn first_order(&self) -> (&[usize], bool) {
-        let cols = &self.idx[0].cols[..];
-        (cols, runs::tagged(cols, self.k))
+    /// Its first order's columns: the order its rows are noted sorted in (`Sorted::note`), by value (no order carries
+    /// a tag, decision 0187 P1), which a device writes a head's rows in.
+    pub fn first_order(&self) -> &[usize] {
+        &self.idx[0].cols[..]
     }
     /// Makes this relation a lattice's (its `lattice` line): the rows it holds so far fold by key, as a wave's do.
     fn set_lattice(&mut self, name: &str, keys: usize, lattice: Arc<dyn super::Lattice>, widen: Option<u32>) -> Result<()> {
@@ -898,7 +900,7 @@ impl Rel {
         let held = old.chains.first().is_some_and(|o| o.cols.len() == k && o.rows() == old.n) && old.sketches.len() == k;
         let made: Option<(Index, Vec<Sketch>)> = (!held).then(|| {
             let mut ix = Index::led((0..k).collect());
-            ix.add_run_in(&old.rows, k, 0, old.n, 0, &old.sorted.within(&ix.cols, k, 0, old.n as u32));
+            ix.add_run_in(&old.rows, k, 0, old.n, 0, &old.sorted.within(&ix.cols, 0, old.n as u32));
             let mut sketches = vec![Sketch::default(); k];
             for id in (0..old.n as u32).filter(|&id| !is_dead(&old.dead, id)) {
                 for (c, sk) in sketches.iter_mut().enumerate() {
@@ -1022,7 +1024,7 @@ impl Rel {
             // The rows already in runs: those before the delta as of wave 0, the delta's as of its wave; the rest are
             // indexed with the others' at the next `set_delta`.
             let lo = self.lo.min(self.indexed);
-            let known = |a: usize, b: usize| self.sorted.within(&ix.cols, k, a as u32, b as u32);
+            let known = |a: usize, b: usize| self.sorted.within(&ix.cols, a as u32, b as u32);
             let (first, second) = (known(0, lo), known(lo, self.indexed));
             ix.add_run_in(data, k, 0, lo, 0, &first);
             ix.add_run_in(data, k, lo, self.indexed, self.wave, &second);
@@ -1219,17 +1221,16 @@ impl Rel {
         if !keep.is_empty() && !placed.is_empty() {
             let slots = f.slots().expect("rows in a room");
             let cols = &self.idx[0].cols;
-            let tagged = runs::tagged(cols, k);
             let mut dev: Vec<(u32, u32)> = placed.iter().enumerate().flat_map(|(l, (p, _))| (0..p.len()).map(move |i| (l as u32, i))).collect();
             let row_of = |&(l, i): &(u32, u32)| placed[l as usize].0.row(i, k);
-            dev.sort_unstable_by(|a, b| runs::cmp_vals(cols, tagged, &row_of(a), &row_of(b)));
+            dev.sort_unstable_by(|a, b| runs::cmp_vals(cols, &row_of(a), &row_of(b)));
             let mut d = 0;
             keep.retain(|&q| {
                 let row = slots.row(q, k);
-                while d < dev.len() && runs::cmp_vals(cols, tagged, &row_of(&dev[d]), &row).is_lt() {
+                while d < dev.len() && runs::cmp_vals(cols, &row_of(&dev[d]), &row).is_lt() {
                     d += 1;
                 }
-                !(d < dev.len() && runs::cmp_vals(cols, tagged, &row_of(&dev[d]), &row).is_eq())
+                !(d < dev.len() && runs::cmp_vals(cols, &row_of(&dev[d]), &row).is_eq())
             });
         }
         let cpu = keep.len();
@@ -1375,7 +1376,7 @@ impl Rel {
         let split = lo.clamp(from, n);
         for ix in &mut self.idx {
             ix.settle(&self.data, k, w);
-            let known = |a: usize, b: usize| self.sorted.within(&ix.cols, k, a as u32, b as u32);
+            let known = |a: usize, b: usize| self.sorted.within(&ix.cols, a as u32, b as u32);
             let (first, second) = (known(from, split), known(split, n));
             ix.add_run_in(&self.data, k, from, split, self.wave, &first);
             ix.add_run_in(&self.data, k, split, n, w, &second);
@@ -1394,7 +1395,7 @@ impl Rel {
             return;
         }
         for ix in &mut self.idx {
-            let known = self.sorted.within(&ix.cols, k, from as u32, n as u32);
+            let known = self.sorted.within(&ix.cols, from as u32, n as u32);
             ix.add_run_in(&self.data, k, from, n, self.wave, &known);
         }
         self.indexed_to_n();
@@ -1405,7 +1406,7 @@ impl Rel {
         let (from, n, k) = (self.indexed, self.n, self.k);
         for ix in &mut self.idx {
             ix.settle(&self.data, k, u32::MAX);
-            let known = self.sorted.within(&ix.cols, k, from as u32, n as u32);
+            let known = self.sorted.within(&ix.cols, from as u32, n as u32);
             ix.add_run_in(&self.data, k, from, n, 0, &known);
             ix.tier(&self.data, k, FROZEN_RUNS);
         }
@@ -1939,7 +1940,7 @@ impl Fresh {
         if !self.lost && self.n > self.settled && runs::known_beyond_runs() {
             let cols = &rel.idx[0].cols;
             let last = self.slots().expect("its rows").row(self.end as u32 - 1, k);
-            if runs::cmp_vals(cols, runs::tagged(cols, k), &last, row).is_gt() {
+            if runs::cmp_vals(cols, &last, row).is_gt() {
                 self.breaks.push(self.end as u32);
                 // Out of order throughout: sorted whole, the breaks no longer kept.
                 if self.breaks.len() * IN_ORDER > self.n - self.settled + IN_ORDER * IN_ORDER {
@@ -1986,16 +1987,15 @@ impl Fresh {
         }
         let room = Arc::clone(self.room.as_ref().expect("rows in a room"));
         let data = Slots { room: &room, spans: &self.spans }.resolved(k);
-        // The first order's sort (`runs::cmp_vals`: tagged, by the leading value's tag first, then the columns).
+        // The first order's sort (`runs::cmp_vals`: the columns in turn).
         let cols = &rel.idx[0].cols;
-        let tagged = runs::tagged(cols, k);
         let cmp = |a: u32, b: u32| -> std::cmp::Ordering {
-            runs::cmp_ids(&data, k, cols, tagged, a, b)
+            runs::cmp_ids(&data, k, cols, a, b)
         };
         let mut order = self.live_from(settled);
         runs::presorted::site(runs::presorted::FRESH, order.len(), |i| cmp(order[i - 1], order[i]).is_gt());
         let sort = |v: &mut [u32]| {
-            runs::sort_keyed(v, tagged, cols.len(), |q, i| data.value(q, k, cols[i]), cmp, &mut runs::NoTags);
+            runs::sort_keyed(v, cols.len(), |q, i| data.value(q, k, cols[i]), cmp);
         };
         if self.lost || !runs::known_beyond_runs() {
             sort(&mut order);
@@ -2138,14 +2138,14 @@ pub struct Store { pub rels: Vec<Rel>, syms: Arc<Symbols> }
 /// (`device::compile`); `seed_specs`, their specs, to parse them again with the CPU's indexes when the device refuses
 /// one at run time.
 struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool, done: bool,
-                   requests: Vec<(usize, usize)>, produced: Vector<usize>, closure: Option<closure::Closure>,
+                   requests: Vec<(usize, usize)>, produced: Vector<usize>, form: Option<Box<dyn forms::Form>>,
                    /// Request rows the caller held back (`defer`): asked again once the run is otherwise quiet. Until
                    /// then they are as rows not yet asked (they keep no gate shut).
                    deferred: Vec<(usize, Vec<Vector<i64>>)>,
                    /// The run paused quiet with rows held back: `pending` gives them again.
                    presenting: bool,
                    /// A closure whose launches wait in this thread's device wave (`lanes::wave`), with their tickets.
-                   waiting: Option<(closure::Closure, closure::Prepared, Vector<u64>)>,
+                   waiting: Option<(Box<dyn forms::Form>, Vector<u64>)>,
                    device: Option<Vec<(usize, JoinPlan)>>,
                    /// Device joins waiting in this thread's wave (`submit`): their ticket.
                    device_wait: Option<u64>,
@@ -3107,12 +3107,19 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     }
     syms.check()?;
     drop(syms);
+    if join_frames() {
+        for (i, p) in probes.iter().enumerate() {
+            if let Body::Join(j) = &p.body {
+                join_frame_line(format!("join-frame {:016x} {name} {i} {}", j.spec, rels.get(p.head).map_or("?", |r| r.table.as_str())));
+            }
+        }
+    }
     let store = Arc::new(RwLock::new(Store { rels, syms: symbols }));
     forgotten_on_close();
     let on = on(conn);
     let mut reg = on.components.lock();
     let key = name.clone();
-    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, waiting: None, device_wait: None,
+    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, form: None, waiting: None, device_wait: None,
                                device: device_plans, seed_specs, deferred: Vec::new(), presenting: false, cut: None, last_cut: None, trial_rows: None, maint };
     // A stratum placed on the device runs there whole: a recursive one as the device's rounds (`fixpoint`), not as
     // a closure (decision 0098 §1's form, for a stratum on the CPU).
@@ -3122,9 +3129,9 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     };
     // The maintain mode's component neither: its first wave's delta is the rows its removals put back.
     if !on_device_rounds && comp.maint.drivers.is_empty() {
-        comp.closure = {
+        comp.form = {
             let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "plan: recognize the form");
-            closure::recognize(&comp)
+            forms::open(&comp)
         };
     }
     reg.insert(key, Arc::new(Mutex::new(comp)));
@@ -3214,7 +3221,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     // its launches. When the caller can wait (`lanes::wave::can_wait`: the stratum driver, which runs a level's
     // strata to their launches first), the launches join this thread's device wave and the run returns `3`; the run
     // after the wave ran finishes it. Otherwise they run here, as a batch of their own.
-    let mut closure_ran: Option<Option<closure::Ran>> = None;
+    let mut closure_ran: Option<Option<forms::Ran>> = None;
+    let mut form_name = "";
+    let (mut form_rows, mut form_visits) = (0u64, 0u64);
     // The maintain mode's removals and checked adds (decision 0364 stage 3), before the seeds add the rest.
     if !seeded && comp.cut.is_none() && !comp.maint.done && !(comp.maint.removes.is_empty() && comp.maint.adds.is_empty()) {
         let _m = crate::code_rule_dsl::logic::profile::span(|| "maintain mode: removals and rechecks".into());
@@ -3228,13 +3237,14 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         ran?;
     }
     let tp = Instant::now();
-    if let Some((cl, prep, tickets)) = comp.waiting.take() {
-        let outs = crate::code_rule_dsl::logic::lanes::wave::take(&tickets).map_err(|e| err(format!("{name}: {e}")))?;
+    if let Some((mut cl, tickets)) = comp.waiting.take() {
+        let mut outs = Some(crate::code_rule_dsl::logic::lanes::wave::take(&tickets).map_err(|e| err(format!("{name}: {e}")))?);
         let mut guard = comp.store.write().unwrap();
-        closure_ran = Some(closure::finish(&cl, prep, outs, &mut guard));
+        form_name = cl.name();
+        closure_ran = Some(forms::framed(form_name, &name, &mut || cl.finish(outs.take().expect("one finish"), &mut guard)));
         drop(guard);
-        comp.closure = Some(cl);
-    } else if !seeded && let Some(cl) = comp.closure.take() {
+        comp.form = Some(cl);
+    } else if !seeded && let Some(mut cl) = comp.form.take() {
         // Its seeds first, each under its budget as any seed is (decision 0206): one that spends it is cut, and the
         // run returns `5`; the next goes on from the rows it left, then runs the closure. Run unlimited, a seed that
         // read 41 M rows a stratum (corpus0's `open_tuple`, 2026-11-21) was never checked against its price.
@@ -3265,7 +3275,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             comp.cut = Some(Cut { fresh, next, left, step: Some(0), on_device: false, whole: false });
             comp.last_cut = Some(report);
             comp.trial_rows = None;
-            comp.closure = Some(cl);
+            comp.form = Some(cl);
             let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
             let ms = t0.elapsed().as_secs_f64() * 1e3;
             return Ok(format!("0 0 {visits} {runs} {skips} {ms:.1} {ms:.1} {} 5", per.join(",")));
@@ -3279,32 +3289,32 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             let pend = rel.lat.is_none();
             rel.push_fresh(std::mem::take(f), pend);
         }
-        let prep = closure::prepare(&cl, store, syms);
+        form_name = cl.name();
+        let prep = forms::framed(form_name, &name, &mut || cl.prepare(store, syms));
         match prep {
             None => closure_ran = Some(None),
-            Some(mut prep) if !prep.launches.is_empty() && crate::code_rule_dsl::logic::lanes::wave::can_wait() => {
-                let tickets = crate::code_rule_dsl::logic::lanes::wave::queue("closure", std::mem::take(&mut prep.launches));
+            Some(launches) if !launches.is_empty() && crate::code_rule_dsl::logic::lanes::wave::can_wait() => {
+                let tickets = crate::code_rule_dsl::logic::lanes::wave::queue("closure", launches);
                 drop(guard);
-                comp.waiting = Some((cl, prep, tickets));
+                comp.waiting = Some((cl, tickets));
                 comp.seeded = true;
                 let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
                 let ms = t0.elapsed().as_secs_f64() * 1e3;
                 return Ok(format!("0 1 {visits} {runs} {skips} {ms:.1} {ms:.1} {} 3", per.join(",")));
             }
-            Some(mut prep) => {
-                let launches = std::mem::take(&mut prep.launches);
-                let outs = if launches.is_empty() {
+            Some(launches) => {
+                let mut outs = Some(if launches.is_empty() {
                     Vec::new()
                 } else {
                     let batch = rerail_accel::Batch(launches.into_iter().map(rerail_accel::Launch::new).collect());
                     let (done, _) = crate::code_rule_dsl::logic::lanes::prof::run("closure", batch).map_err(|e| err(format!("{name}: {e}")))?;
                     done.into_iter().map(|d| d.out).collect()
-                };
-                closure_ran = Some(closure::finish(&cl, prep, outs, store));
+                });
+                closure_ran = Some(forms::framed(form_name, &name, &mut || cl.finish(outs.take().expect("one finish"), store)));
             }
         }
         drop(guard);
-        comp.closure = Some(cl);
+        comp.form = Some(cl);
     }
     if let Some(ran) = closure_ran {
         seeded = true;
@@ -3315,6 +3325,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         match ran {
             Some(r) => {
                 visits += r.nodes as u64 + r.rows as u64;
+                form_visits += r.nodes as u64 + r.rows as u64;
+                form_rows += r.rows as u64;
                 crate::code_rule_dsl::logic::profile::decision("closure (decision 0098 §1)", || format!("a walk along an edge run as its closure, by {}", r.how));
                 if wave_trace { eprintln!("      {name}: closure over {} nodes by {}, {} rows, {:.1} ms", r.nodes, r.how, r.rows, tp.elapsed().as_secs_f64() * 1e3); }
                 for (rel, &n) in store.rels.iter_mut().zip(&ns) {
@@ -3715,6 +3727,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     if !done {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 0", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
     }
+    forms::account(form_name, &name, form_rows, form_visits, visits - form_visits);
     comp.done = true;
     let mut new_rows = 0usize;
     if comp.write {
@@ -5509,7 +5522,7 @@ impl Csr {
                 // which every probe gives.
                 let cols: Vector<usize> = self.cols.iter().copied().chain(self.then).collect();
                 let mut order = Index::printed_on(cols.clone(), if printed { self.cols.len() } else { 0 });
-                order.add_run_in(&rel.rows, rel.k, 0, rel.n, 0, &rel.sorted.within(&cols, rel.k, 0, rel.n as u32));
+                order.add_run_in(&rel.rows, rel.k, 0, rel.n, 0, &rel.sorted.within(&cols, 0, rel.n as u32));
                 run_counts().orders_made.fetch_add(1, AtomicOrdering::Relaxed);
                 loaded(1, thread_cpu() - c0, 0);
                 if env_set!("RERAIL_SPIKE_INDEX") {
@@ -7438,7 +7451,7 @@ impl InRel {
         let k = types.len();
         // Rows that lie in an order (a kept relation's canonical one) are known sorted: a scan of them for the next
         // step's probes is not sorted again (decision 0187).
-        let sorted = src.order().map_or_else(runs::Sorted::default, |cols| runs::Sorted::whole(src.len() as u32, k, &cols));
+        let sorted = src.order().map_or_else(runs::Sorted::default, |cols| runs::Sorted::whole(src.len() as u32, &cols));
         let view = View { src, cols: (0..k).collect(), ids: None, eqs: Vec::new() };
         Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted, sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), ranges: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
     }
@@ -9040,8 +9053,82 @@ pub fn reads_empty_input(j: &JoinRule) -> bool {
     j.steps.iter().any(|s| matches!(s, Step::Atom { src: Src::In(r, _), neg: false, .. } if { let r = j.bound(r); r.view.as_ref().map_or(r.n == 0, View::known_empty) }))
 }
 
+/// Measurement: whether each join runs under frames that name it (`RERAIL_JOIN_FRAMES`, a file), so a profiler's
+/// samples split by rule: `framed`, and the `join-frame` lines `open_spec_within` writes to that file.
+pub(crate) fn join_frames() -> bool {
+    env_set!("RERAIL_JOIN_FRAMES")
+}
+
+/// Appends a `join-frame` line to the file `RERAIL_JOIN_FRAMES` names (a profiler's launch may drop the run's stderr).
+pub(crate) fn join_frame_line(line: String) {
+    use std::io::Write;
+    let Some(path) = std::env::var_os("RERAIL_JOIN_FRAMES") else { return };
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) { let _ = f.write_all(format!("{line}\n").as_bytes()); }
+}
+
+/// Runs `f` under four frames, `frame_z::<Z>`, `frame_a::<A>`, `frame_b::<B>` and `frame_c::<C>`, whose numbers are
+/// `spec`'s low 20 bits, 5 apiece: a profiler's stacks then show which join a sample is in (the `join-frame` lines map a digest to
+/// its component, probe and head). Measurement only.
+pub(crate) fn framed<K: FrameKind, R>(spec: u64, f: &mut dyn FnMut() -> R) -> R {
+    macro_rules! pick {
+        ($k:expr, $g:ident, $($a:expr),*) => { match $k {
+            0 => $g::<0, K, R>($($a),*), 1 => $g::<1, K, R>($($a),*), 2 => $g::<2, K, R>($($a),*), 3 => $g::<3, K, R>($($a),*),
+            4 => $g::<4, K, R>($($a),*), 5 => $g::<5, K, R>($($a),*), 6 => $g::<6, K, R>($($a),*), 7 => $g::<7, K, R>($($a),*),
+            8 => $g::<8, K, R>($($a),*), 9 => $g::<9, K, R>($($a),*), 10 => $g::<10, K, R>($($a),*), 11 => $g::<11, K, R>($($a),*),
+            12 => $g::<12, K, R>($($a),*), 13 => $g::<13, K, R>($($a),*), 14 => $g::<14, K, R>($($a),*), 15 => $g::<15, K, R>($($a),*),
+            16 => $g::<16, K, R>($($a),*), 17 => $g::<17, K, R>($($a),*), 18 => $g::<18, K, R>($($a),*), 19 => $g::<19, K, R>($($a),*),
+            20 => $g::<20, K, R>($($a),*), 21 => $g::<21, K, R>($($a),*), 22 => $g::<22, K, R>($($a),*), 23 => $g::<23, K, R>($($a),*),
+            24 => $g::<24, K, R>($($a),*), 25 => $g::<25, K, R>($($a),*), 26 => $g::<26, K, R>($($a),*), 27 => $g::<27, K, R>($($a),*),
+            28 => $g::<28, K, R>($($a),*), 29 => $g::<29, K, R>($($a),*), 30 => $g::<30, K, R>($($a),*), _ => $g::<31, K, R>($($a),*),
+        } };
+    }
+    #[inline(never)]
+    fn frame_c<const C: u64, K: FrameKind, R>(f: &mut dyn FnMut() -> R) -> R { std::hint::black_box((C, K::ID)); std::hint::black_box(f()) }
+    #[inline(never)]
+    fn frame_b<const B: u64, K: FrameKind, R>(c: u64, f: &mut dyn FnMut() -> R) -> R { std::hint::black_box((B, K::ID)); std::hint::black_box(pick!(c, frame_c, f)) }
+    #[inline(never)]
+    fn frame_a<const A: u64, K: FrameKind, R>(b: u64, c: u64, f: &mut dyn FnMut() -> R) -> R { std::hint::black_box((A, K::ID)); std::hint::black_box(pick!(b, frame_b, c, f)) }
+    #[inline(never)]
+    fn frame_z<const Z: u64, K: FrameKind, R>(a: u64, b: u64, c: u64, f: &mut dyn FnMut() -> R) -> R { std::hint::black_box((Z, K::ID)); std::hint::black_box(pick!(a, frame_a, b, c, f)) }
+    pick!((spec >> 15) & 31, frame_z, spec & 31, (spec >> 5) & 31, (spec >> 10) & 31, f)
+}
+
+/// Which frames `framed` puts a run under: a join's (`JoinFrames`) or a stratum's (`StratumFrames`), told apart by the
+/// frames' type in a profiler's symbols.
+pub trait FrameKind { const ID: u8; }
+pub struct JoinFrames;
+impl FrameKind for JoinFrames { const ID: u8 = 0; }
+pub struct StratumFrames;
+impl FrameKind for StratumFrames { const ID: u8 = 1; }
+/// A specialized executor's form (`forms::framed`).
+pub struct FormFrames;
+impl FrameKind for FormFrames { const ID: u8 = 2; }
+
+/// Measurement (`RERAIL_JOIN_FRAMES`): runs stratum `key`'s `f` under frames that name it, as `framed` does a join's,
+/// and writes a `stratum-frame` line mapping the frames' number to the key.
+pub fn stratum_framed<R>(key: &dyn Fn() -> String, f: &mut dyn FnMut() -> R) -> R {
+    if !join_frames() { return f() }
+    let key = key();
+    let h = { use std::hash::{Hash, Hasher}; let mut h = rustc_hash::FxHasher::default(); key.hash(&mut h); h.finish() };
+    join_frame_line(format!("stratum-frame {h:016x} {key}"));
+    framed::<StratumFrames, R>(h, f)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vector<i64>>,
+                    paired: Option<&level::Paired>, each: Option<(&[usize], &mut dyn FnMut(&mut Vector<i64>, &mut [i64]) -> bool)>, limited: Option<&mut Limited>) -> Result<u64> {
+    if join_frames() {
+        let mut args = Some((syms, fresh, collect, each, limited));
+        return framed::<JoinFrames, _>(j.spec, &mut || {
+            let (syms, fresh, collect, each, limited) = args.take().expect("a join runs once");
+            run_join_in_each_unframed(j, head, store, syms, fresh, preset, collect, paired, each, limited)
+        });
+    }
+    run_join_in_each_unframed(j, head, store, syms, fresh, preset, collect, paired, each, limited)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vector<i64>>,
                     paired: Option<&level::Paired>, each: Option<(&[usize], &mut dyn FnMut(&mut Vector<i64>, &mut [i64]) -> bool)>, mut limited: Option<&mut Limited>) -> Result<u64> {
     // The limit `run` handed this walk (decision 0206). A walk for each value, or from a level's pairs, runs
     // unlimited.
@@ -9162,19 +9249,17 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 Key::Slot(s) => From::Col(binds.iter().find(|&&(_, b)| b == s)?.0),
             });
         }
-        let tagged = index.is_tagged(k);
         // The scan's rows known sorted by the probes' key (decision 0187): its columns in turn (constants hold no
-        // order), tagged by the first when the next order is.
+        // order).
         let mut by: Vector<usize> = rerail_blocks::vector::Vector::new();
         for f in &from {
             if let From::Col(c) = *f && !by.contains(&c) {
                 by.push(c);
             }
         }
-        let tag = if tagged && let From::Col(c) = from[0] { Some(c) } else { None };
         let known: Vec<(usize, usize)> = if left.is_some() || !runs::known_beyond_runs() { Vec::new() } else { match rows {
-            Rows::In(r) => r.sorted.within_key(r.k, tag, &by, lo, hi),
-            Rows::Comp(r) => r.sorted.within_key(r.k, tag, &by, lo, hi),
+            Rows::In(r) => r.sorted.within(&by, lo, hi),
+            Rows::Comp(r) => r.sorted.within(&by, lo, hi),
             Rows::Source(_) => Vec::new(),
         }.into_iter().map(|(a, b)| ((a - lo) as usize, (b - lo) as usize)).collect() };
         if known == [(0, n)] {
@@ -9204,7 +9289,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             read(&mut vals, 0);
         }
         let cmp = |a: u32, b: u32| vals[a as usize * m..][..m].cmp(&vals[b as usize * m..][..m]);
-        let key_cmp = |a: u32, b: u32| (if tagged { runs::tag(vals[a as usize * m]).cmp(&runs::tag(vals[b as usize * m])) } else { std::cmp::Ordering::Equal }).then_with(|| cmp(a, b));
+        let key_cmp = cmp;
         // Rows a cut left come in the order their walk read them: in this key's order where the walk's order was
         // the same (one pass tells), and then they are read as they are.
         let known: Vec<(usize, usize)> = match left {
@@ -9219,7 +9304,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         runs::presorted::site(runs::presorted::SCAN, n, |i| key_cmp(i as u32 - 1, i as u32).is_gt());
         // The stretches not known sorted are sorted, then every piece merged (several in-order ranges are merged,
         // not sorted again).
-        let taken = runs::sort_pieces(&mut order, &known, |v| { runs::sort_keyed(v, tagged, m, |q, i| vals[q as usize * m + i], cmp, &mut runs::NoTags); }, |a, b| key_cmp(a, b).is_le());
+        let taken = runs::sort_pieces(&mut order, &known, |v| { runs::sort_keyed(v, m, |q, i| vals[q as usize * m + i], cmp); }, |a, b| key_cmp(a, b).is_le());
         runs::presorted::site_known(runs::presorted::SCAN, taken as u64);
         Some(order.into_iter().map(|q| id_at(q as usize)).collect())
     }
@@ -10441,10 +10526,8 @@ pub mod posted_tests {
         let old = InRel::moved(rel);
         assert!(old.chains.iter().all(|ix| ix.runs() <= FROZEN_RUNS), "a frozen order holds a few runs");
         for ix in &old.chains {
-            // The full-row order keeps a 16-bit tag an id instead of fences (`runs::tagged`); each order a print of
-            // its lead an id (`Index::led`, t56 step 7 C).
-            let most = if runs::tagged(&ix.cols, old.k) { 7.5 } else { 5.5 };
-            assert!((ix.bytes() as f64) < most * old.n as f64, "{:?}: {} bytes a row", ix.cols, ix.bytes() as f64 / old.n as f64);
+            // Each order an id and a print of its lead an id (`Index::led`, t56 step 7 C), and its fences.
+            assert!((ix.bytes() as f64) < 5.5 * old.n as f64, "{:?}: {} bytes a row", ix.cols, ix.bytes() as f64 / old.n as f64);
         }
         let based = Rel::based("t", b"iii", &old, None).expect("a kept relation to start from");
         for (ix, kept) in based.idx.iter().zip(&old.chains) {
@@ -10474,11 +10557,11 @@ pub mod posted_tests {
             let rows = if w == 2 { 2 * FRESH_BATCH + 999 } else { 6000 };
             let mut made = 0;
             while made < rows {
-                // A stretch in the first order (tagged: the leading value's tag, then the columns), then a few rows
+                // A stretch in the first order (the columns in turn), then a few rows
                 // as they come.
                 let mut stretch: Vec<Vector<i64>> = (0..100 + next(400)).map(|_| rerail_blocks::vector![next(60), next(30), next(25)]).collect();
                 let first = known.idx[0].cols.clone();
-                stretch.sort_by(|a, b| runs::cmp_vals(&first, true, a, b));
+                stretch.sort_by(|a, b| runs::cmp_vals(&first, a, b));
                 stretch.extend((0..next(4)).map(|_| rerail_blocks::vector![next(60), next(30), next(25)]));
                 for row in stretch.into_iter().take(rows - made) {
                     f.offer(&row, &known);
@@ -10741,7 +10824,7 @@ pub mod posted_tests {
         let r = InRel::moved(rel);
         let rows: Vector<[i64; 2]> = (0..r.n).map(|i| [r.at(i).at(0), r.at(i).at(1)]).collect();
         assert_eq!(rows, [[1, 1], [2, 3], [5, 0], [5, 1]]);
-        assert_eq!((r.ndead, r.sorted.within(&[0], 2, 0, r.n as u32)), (0, vec![(0, 4)]));
+        assert_eq!((r.ndead, r.sorted.within(&[0], 0, r.n as u32)), (0, vec![(0, 4)]));
     }
 
     /// Decision 0456 K7: a source whose rows lie in an order (`Source::order`, a kept relation read in place) is known
@@ -10762,11 +10845,10 @@ pub mod posted_tests {
         let cols = vec![Some(rerail_blocks::vector![1, 1, 2, 5]), Some(rerail_blocks::vector![3, 4, 0, 9])];
         let src = super::columns_source(vec!["a".into(), "b".into()], cols);
         let r = InRel::over_source(Arc::new(InOrder(src.clone())), b"ii".to_vec());
-        assert_eq!(r.sorted.within_key(2, None, &[0], 0, 4), vec![(0, 4)], "a scan by its first column");
-        // Not in the dedup order on both columns, which leads with a hash (`runs::tagged`).
-        assert!(r.sorted.within_key(2, Some(0), &[0, 1], 0, 4).is_empty(), "not in the dedup order");
-        assert!(r.sorted.within_key(2, None, &[1], 0, 4).is_empty(), "not by its second alone");
-        assert!(InRel::over_source(src, b"ii".to_vec()).sorted.within_key(2, None, &[0], 0, 4).is_empty(), "a source with no order");
+        assert_eq!(r.sorted.within(&[0], 0, 4), vec![(0, 4)], "a scan by its first column");
+        assert_eq!(r.sorted.within(&[0, 1], 0, 4), vec![(0, 4)], "in the order on both columns");
+        assert!(r.sorted.within(&[1], 0, 4).is_empty(), "not by its second alone");
+        assert!(InRel::over_source(src, b"ii".to_vec()).sorted.within(&[0], 0, 4).is_empty(), "a source with no order");
     }
 
 
@@ -11318,7 +11400,7 @@ pub mod fresh_tests {
             let mut rel = Rel::new("t", b"iiii");
             let old = rel.idx[0].cols.clone();
             let mut rows: Vector<[i64; 4]> = (0..500i64).map(|i| [i, (i * 7919) % 211, i % 3, 0]).collect();
-            rows.sort_by(|a, b| runs::cmp_vals(&old, runs::tagged(&old, 4), a, b));
+            rows.sort_by(|a, b| runs::cmp_vals(&old, a, b));
             let mut f = Fresh::default();
             for (i, r) in rows.iter().enumerate() {
                 f.offer(r, &rel);
@@ -11331,9 +11413,8 @@ pub mod fresh_tests {
             assert_ne!(cols, old, "the first order changed");
             assert!(rel.push_fresh(f, false));
             assert_eq!(rel.n, 500);
-            let t = runs::tagged(&cols, 4);
             for id in 1..rel.n as u32 {
-                assert!(runs::cmp_ids(&rel.data, 4, &cols, t, id - 1, id).is_le(), "settle first {settle_first}: rows {} and {id}", id - 1);
+                assert!(runs::cmp_ids(&rel.data, 4, &cols, id - 1, id).is_le(), "settle first {settle_first}: rows {} and {id}", id - 1);
             }
         }
     }

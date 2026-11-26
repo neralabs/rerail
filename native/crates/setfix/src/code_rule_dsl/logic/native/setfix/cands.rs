@@ -326,7 +326,7 @@ pub(super) fn scan_within<'a>(rows: Rows<'a>, lo: u32, hi: u32, within: Within) 
     if hi <= lo {
         return (rows, Cands::Range(lo, hi));
     }
-    if r.sorted.within(&[c], r.k, lo, hi) == [(lo, hi)] {
+    if r.sorted.within(&[c], lo, hi) == [(lo, hi)] {
         let at = |p: usize| rows.row(p as u32).at(c);
         let s = a.map_or(lo as usize, |(x, eq)| rerail_blocks::order::split_at_pos(lo as usize, hi as usize, |p| if eq { at(p) < x } else { at(p) <= x }));
         let e = b.map_or(hi as usize, |(x, eq)| rerail_blocks::order::split_at_pos(s, hi as usize, |p| if eq { at(p) <= x } else { at(p) < x }));

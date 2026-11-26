@@ -605,7 +605,7 @@ fn a_closures_seed_is_cut_at_its_budget_and_goes_on_from_its_rows_left() {
     let db = connection();
     setup(&db);
     open(&db, &spec).unwrap();
-    assert!(component(&db, "cutc").unwrap().lock().unwrap().closure.is_some(), "the component runs as its closure");
+    assert!(component(&db, "cutc").unwrap().lock().unwrap().form.as_ref().is_some_and(|f| f.name() == "reach" || f.name() == "keyed walk"), "the component runs as its closure");
     let (mut cuts, mut done, mut last) = (0, false, String::new());
     for _ in 0..1_000 {
         set_budgets(&db, "cutc", &[(0, Some(300))]).unwrap();
