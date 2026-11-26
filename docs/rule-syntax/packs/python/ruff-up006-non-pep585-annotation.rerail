@@ -10,11 +10,18 @@
 // The table: List, Dict, Set, FrozenSet, Tuple, Type, and Deque and DefaultDict (to collections).
 //   def f(x: List[str]): ...         ← UP006 at List (3.9+)
 //   x: typing.DefaultDict[str, int]  ← UP006 at typing.DefaultDict
-//   def f(x: "List[str]"): ...       ← UP006 inside the string, through `parsed`
-#include "python/upgrade-typing.rerail"
-//   typing_ref(e, x), rewritable(n, m), pep585(x, b)
+//   def f(x: "List[str]"): ...       ← UP006 inside the string, and in strings Ruff reads as types elsewhere:
+//   T = TypeVar("T", bound="List")   ← UP006 (python/python-10: names in parsed strings)
+//   class C[Tuple](Tuple): ...       not reported: the base reads the type parameter (sym_at does not see those)
+#include "python/python-10.rerail"
+//   typing_ref(e, x), rewritable(n, m), pep585(x, b) (python/upgrade-typing);
+//   str_typing_ref(e, x), str_rewritable(e, m): the same inside a string; tparam_named(o, x, k) (python/ast)
 
 .violation UP006(at: node, b: symbol) code "UP006"
     "Replace `{at}` with the builtin generic `{b}`, and drop the typing import if unused."
     suppress ruff "UP006"
-UP006(e, b) :- typing_ref(e, x), pep585(x, b), (ast_name(e, _) ; kind(e, "attribute")), rewritable(e, 9).
+UP006(e, b) :- typing_ref(e, x), pep585(x, b), (ast_name(e, _) ; kind(e, "attribute")), rewritable(e, 9),
+    !type_param_ref(e).
+UP006(e, b) :- str_typing_ref(e, x), pep585(x, b), str_rewritable(e, 9).
+.decl type_param_ref(e: node)  // e is the name of a PEP 695 type parameter, read inside its definition
+type_param_ref(e) :- ast_name(e, x), tparam_named(o, x, _), within(e, o).

@@ -7,20 +7,33 @@
 // Ruff UP010 (pyupgrade): a `from __future__ import` of a feature every Python 3 has: nested_scopes, generators,
 // with_statement, division, absolute_import, print_function, unicode_literals, generator_stop. The statement is
 // reported once when one of those names is imported without `as` and nothing reads it (a load of the name that no
-// other binding in the file catches); `__all__` does not count as a read.
+// other binding in the file catches); `__all__` does not count as a read. Ruff takes a relative `from .__future__
+// import` (any number of dots, the module `__future__` alone) for one too; there the import binds the name like
+// any import, so a read is a load that lands on the import's scope, or the module's `__all__` listing it.
 //   from __future__ import print_function, generators     ← UP010
 //   from __future__ import with_statement                 not reported when `print(with_statement)` follows
 //   from __future__ import annotations                    not reported: still has an effect
-#include "python/ast.rerail"
-//   ast_name(n, x), expr_ctx(n, c), look(n, x, s)
+//   from ..__future__ import division                     ← UP010
+//   from .pkg.__future__ import division                  not reported
+#include "python/pyflakes.rerail"
+//   ast_name(n, x), expr_ctx(n, c), look(n, x, s), scope_node(n, s) (python/ast, python/names);
+//   all_entry(s, x): string s in the module's `__all__` names x
 
 .violation UP010(at: node) code "UP010"
     "Remove the unused obsolete names from this `__future__` import, and the whole statement if none remain; Python 3.7 and later always enable them."
     suppress ruff "UP010"
 UP010(i) :- kind(i, "future_import_statement"), field(i, "name", n), kind(n, "dotted_name"), text(n, x),
     obsolete(x), docof(i, d), !read(d, x).
+UP010(i) :- kind(i, "import_from_statement"), field(i, "module_name", r), kind(r, "relative_import"),
+    child(r, m, _), kind(m, "dotted_name"), text(m, "__future__"), field(i, "name", n), kind(n, "dotted_name"),
+    text(n, x), obsolete(x), !rel_read(i, x).
 .decl read(d: number, x: symbol)  // x is read in d, and no binding in the file is what it reads
 read(d, x) :- ast_name(n, x), obsolete(x), expr_ctx(n, "load"), !look(n, x, _), docof(n, d).
+.decl rel_read(i: node, x: symbol)  // what relative import i binds as x is read
+rel_read(i, x) :- kind(i, "import_from_statement"), scope_node(i, s), ast_name(n, x), obsolete(x),
+    expr_ctx(n, "load"), look(n, x, s).
+rel_read(i, x) :- kind(i, "import_from_statement"), scope_node(i, s), kind(s, "module"), obsolete(x),
+    all_entry(e, x), docof(e, d), docof(i, d).
 .decl obsolete(x: symbol)
 obsolete("nested_scopes"). obsolete("generators"). obsolete("with_statement"). obsolete("division").
 obsolete("absolute_import"). obsolete("print_function"). obsolete("unicode_literals"). obsolete("generator_stop").
