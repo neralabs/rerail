@@ -473,8 +473,9 @@ keywords simple_identifier {
   "get" "set" "field" "property" "receiver" "param" "setparam" "delegate" "reified" "dynamic" "where" "catch" "finally" "init" "companion" "constructor" "enum"
 }
 keywords interpolated_identifier { } soft { "sealed" "annotation" "data" "inner" "value" "override" "lateinit" "public" "private" "internal" "protected" "tailrec" "operator" "infix" "inline" "external" "suspend" "const" "abstract" "final" "open" "vararg" "noinline" "crossinline" "expect" "actual" "get" "set" "field" "property" "receiver" "param" "setparam" "delegate" "reified" "dynamic" "where" "catch" "finally" "init" "companion" "constructor" "enum" "out" }
-# By class too: the equality operators together, and last the tokens that may start an expression.
-keywords punct { "." "," ":" ")" "}" "]" ";" "/" "%" "=" "?" "->" "<" ">" "<=" ">=" "&" "&&" "||" "+=" "-=" "*=" "/=" "%=" "?." "?:" ".." "..<" "!!" "==" "!=" "===" "!==" "*" "(" "{" "[" "+" "-" "!" "++" "--" "::" "@" } required
+# By class too: `*` `/` `%` together, the equality operators together, and last a postfix's tokens, then a prefix's,
+# then the others that may start an expression: each set a run.
+keywords punct { "," ":" ")" "}" "]" ";" "*" "/" "%" "=" "?" "->" "<" ">" "<=" ">=" "&" "&&" "||" "+=" "-=" "*=" "/=" "%=" "?." "?:" ".." "..<" "==" "!=" "===" "!==" "." "!!" "(" "[" "::" "++" "--" "+" "-" "!" "{" "@" } required
 
 skip ws
 

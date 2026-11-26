@@ -204,6 +204,10 @@ them.
    `when_expression`, and an `if`'s or a loop's), `class_body`, `enum_class_body` and the file's statements: the lean
    parser's six body starts, the block and the lambda one method here. The callees ignored their callers' value: the
    parse is the same.
+23. **Kotlin's punctuation by class, a postfix's and a prefix's tokens runs**: `*` `/` `%` together, then the equality
+   operators, then a postfix's tokens (`.` `!!` `(` `[` `::` `++` `--`), a prefix's (`++` `--` `+` `-` `!`), and the
+   others an expression may start with (`{` `@`), each set one run. One word test lists four words, of three classes
+   (`IN | AT | LPAREN | FILE`: a hard keyword, two punctuation's and a soft one), which no order of classes makes one.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
