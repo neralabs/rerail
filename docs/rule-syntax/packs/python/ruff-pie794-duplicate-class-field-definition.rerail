@@ -1,4 +1,4 @@
-.policy "ruff-pie794-duplicate-class-field-definition" revision 2
+.policy "ruff-pie794-duplicate-class-field-definition" revision 3
 .description "Define each class field once; a later definition silently replaces the earlier one."
 .language python
 .mode steer
@@ -18,11 +18,17 @@
 .violation PIE794(at: node, x: symbol) code "PIE794" "Class field `{x}` is defined multiple times"
     suppress ruff "PIE794"
 PIE794(st, x) :- field_def(c, st, x), field_def(c, o, x), o < st.
-// field_def(c, st, x): statement st of class c's own body defines field x.
+// field_def(c, st, x): statement st of class c's own body defines field x. A parenthesized assignment target is
+// a comma-less one-element tuple_pattern in tree-sitter and a Name in Ruff's AST.
 .decl field_def(c: node, st: node, x: symbol)
 field_def(c, st, x) :- kind(c, "class_definition"), field(c, "body", b), child(b, st, _), asgstmt(a, st),
-    count : { assign_target(a, _) } = 1, assign_target(a, t), kind(t, "identifier"), text(t, x),
+    count : { assign_target(a, _) } = 1, assign_target(a, t0), pie_bare_target(t0, t), text(t, x),
     !reads_self(a, x).
+.stored pie_bare_target "a one-element tuple_pattern's comma is its trailing comma, which the tape stores"
+.decl pie_bare_target(t0: node, t: node)
+pie_bare_target(t, t) :- kind(t, "identifier").
+pie_bare_target(t0, t) :- kind(t0, "tuple_pattern"), !op(t0, ","), child(t0, x, 0), !child(t0, _, 1),
+    pie_bare_target(x, t).
+pie_bare_target(t0, t) :- kind(t0, "parenthesized_expression"), child(t0, x, 0), pie_bare_target(x, t).
 .decl reads_self(a: node, x: symbol)
-reads_self(a, x) :- assign_value(a, v), assign_target(a, t), text(t, x), (n = v ; within(n, v)),
-    ast_name(n, x).
+reads_self(a, x) :- assign_value(a, v), (n = v ; within(n, v)), ast_name(n, x).
