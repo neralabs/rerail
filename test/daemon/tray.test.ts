@@ -195,6 +195,13 @@ describe("trayMenuState", () => {
     expect(menu({ newer: "0.2.3" })).toMatchObject({ update: { label: "Update to 0.2.3", enabled: true }, attention: true });
   });
 
+  it("a release newer than the one an update installed is offered again", () => {
+    expect(menu({ newer: "0.2.4", update: { state: "done", version: "0.2.3" } })).toMatchObject({
+      update: { label: "Update to 0.2.4", enabled: true },
+      attention: true,
+    });
+  });
+
   it("an update's run reads as it goes", () => {
     expect(menu({ newer: "0.2.3", update: { state: "running", version: "0.2.3" } })).toMatchObject({
       update: { label: "Updating to 0.2.3…", enabled: false },
@@ -372,6 +379,28 @@ describe("startTray", () => {
       attention: false,
     });
     expect(calls.updates).toBe(1);
+  });
+
+  it("a daemon that outlived its update offers the next release, and runs it", async () => {
+    let latest = "0.2.3";
+    const calls = start({
+      current: () => health({ update: { latest, checkedAt: 0 } }),
+      // A click on the done line is no update; the one on the next release's is.
+      replies: ['{"action":"update"}\n', null, '{"action":"update"}\n', '{"action":"update"}\n'],
+    });
+    await until(() => received().length === 3, 10_000, "the done state");
+    expect(updateLabels().at(-1)).toBe("Updated to 0.2.3. New sessions use it.");
+    latest = "0.2.4";
+    await until(() => received().length === 6, 10_000, "the next update");
+    expect(calls.updates).toBe(2);
+    expect(updateLabels()).toEqual([
+      "Update to 0.2.3",
+      "Updating to 0.2.3…",
+      "Updated to 0.2.3. New sessions use it.",
+      "Update to 0.2.4",
+      "Updating to 0.2.4…",
+      "Updated to 0.2.4. New sessions use it.",
+    ]);
   });
 
   it("failed update can be retried", async () => {

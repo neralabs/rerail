@@ -94,7 +94,8 @@ export interface TrayMenuState {
  * carries its "!" badge only while the daemon is unhealthy or an update is there to click. The update's refresh
  * replaces this daemon with the new version's, whose icon no longer offers it, so the item says it is done only where
  * this daemon outlives the update: when the refresh keeps it running or could not replace it. The icon then drops its
- * badge, though `health.update.latest` stays newer until the new version replaces this daemon.
+ * badge, though `health.update.latest` stays newer until the new version replaces this daemon; a later release than
+ * the one installed is offered again.
  */
 export function trayMenuState(input: {
   health: DaemonHealth;
@@ -110,8 +111,25 @@ export function trayMenuState(input: {
     version: `Version ${health.version}`,
     dashboard: `Home path: ${input.homePath}`,
     update,
-    attention: !health.healthy || (update !== null && (run.state === "idle" || run.state === "failed")),
+    attention: !health.healthy || updateOffered(newer, run) !== null,
   };
+}
+
+/**
+ * The version a click on the menu's update line updates to, or null where the line offers none: nothing newer, an
+ * update under way, or one done to the newest release found. A failed update is retried at the newest release found.
+ */
+function updateOffered(newer: string | null, run: TrayUpdateRun): string | null {
+  switch (run.state) {
+    case "idle":
+      return newer;
+    case "running":
+      return null;
+    case "done":
+      return newer === run.version ? null : newer;
+    case "failed":
+      return newer ?? run.version;
+  }
 }
 
 /** Why an unhealthy daemon cannot serve sessions, as the menu's status line says it. */
@@ -128,6 +146,7 @@ function updateItem(newer: string | null, run: TrayUpdateRun): TrayMenuState["up
     case "running":
       return { label: `Updating to ${run.version}…`, enabled: false };
     case "done":
+      if (newer !== null && newer !== run.version) return { label: `Update to ${newer}`, enabled: true };
       return { label: `Updated to ${run.version}. New sessions use it.`, enabled: false };
     case "failed":
       return { label: "Update failed, see daemon.log", enabled: true };
@@ -252,8 +271,7 @@ export function startTray(options: TrayOptions): TrayHandle {
 
   const update = (): void => {
     // Only what the menu offers: an update to a newer Rerail, or a retry of one that failed. One runs at a time.
-    if (run.state === "running" || run.state === "done") return;
-    const version = newer(daemon.health()) ?? (run.state === "failed" ? run.version : null);
+    const version = updateOffered(newer(daemon.health()), run);
     if (version === null) return;
     run = { state: "running", version };
     send();
