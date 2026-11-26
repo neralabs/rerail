@@ -749,8 +749,10 @@ const INDEXED: usize = 8;
 /// the group's rows are in the column's order, else its rows in that order (stable: equal values in row order). A
 /// probe is a binary search. A hash map of a row list a value was most of a made relation's first probes' time.
 /// A made relation's node ids in one group as bits: each document's ids, by the key in their high half, a bit an id
-/// from the document's least (`Group::holds`). Built only where the words are at most twice the rows: a document's
-/// rows are a few of its nodes, near each other.
+/// from the document's least (`Group::holds`). Built only where the words are at most 4 bytes a row (`2 * words <=
+/// rows`): a document's rows are a few of its nodes, near each other. Made from the rows read twice where they lie
+/// (each document's range, then its bits), no copy of them: a copy of the ids, sorted, and words up to 16 bytes a row
+/// held 1.5 GB of the heap at the peak of a run on `all` (`import_item`'s and `rf_site`'s groups).
 pub(super) struct NodeBits {
     /// Each document's key, its least low half, and its words' start in `words`, by key.
     docs: Vec<(u32, u32, u32)>,
@@ -758,31 +760,52 @@ pub(super) struct NodeBits {
 }
 
 impl NodeBits {
-    fn new(values: impl Iterator<Item = i64>) -> Option<Self> {
-        let mut ids: Vec<i64> = values.collect();
-        if ids.iter().any(|&v| v < 0) {
-            return None;
-        }
-        ids.sort_unstable();
-        ids.dedup();
-        let (mut docs, mut words) = (Vec::new(), Vec::new());
-        let mut i = 0;
-        while i < ids.len() {
-            let key = (ids[i] >> 32) as u32;
-            let base = ids[i] as u32;
-            let start = words.len();
-            docs.push((key, base, start as u32));
-            while i < ids.len() && (ids[i] >> 32) as u32 == key {
-                let at = (ids[i] as u32 - base) as usize;
-                if start + at / 64 >= words.len() {
-                    words.resize(start + at / 64 + 1, 0);
-                }
-                words[start + at / 64] |= 1 << (at % 64);
-                i += 1;
-            }
-            if words.len() > 2 * ids.len() + 8 {
+    /// The bits of rows `0..rows`, row `i`'s id `at(i)`; `None` where an id is negative or the bits outweigh the rows.
+    fn new(rows: usize, at: impl Fn(usize) -> i64) -> Option<Self> {
+        // Each run of rows of one document: its key, least and most low half (a document's rows mostly lie together).
+        let mut spans: Vec<(u32, u32, u32)> = Vec::new();
+        for i in 0..rows {
+            let v = at(i);
+            if v < 0 {
                 return None;
             }
+            let (key, low) = ((v >> 32) as u32, v as u32);
+            match spans.last_mut() {
+                Some(s) if s.0 == key => (s.1, s.2) = (s.1.min(low), s.2.max(low)),
+                _ => spans.push((key, low, low)),
+            }
+        }
+        // A document's runs as one, by key.
+        spans.sort_unstable_by_key(|s| s.0);
+        spans.dedup_by(|b, a| {
+            let same = a.0 == b.0;
+            if same {
+                (a.1, a.2) = (a.1.min(b.1), a.2.max(b.2));
+            }
+            same
+        });
+        let mut docs = Vec::with_capacity(spans.len());
+        let mut n = 0usize;
+        for &(key, least, most) in &spans {
+            docs.push((key, least, n as u32));
+            n += (most - least) as usize / 64 + 1;
+            if 2 * n > rows {
+                return None;
+            }
+        }
+        drop(spans);
+        let mut words = vec![0u64; n];
+        // The document of the row before: the next row's most often.
+        let mut d = 0;
+        for i in 0..rows {
+            let v = at(i);
+            let key = (v >> 32) as u32;
+            if docs[d].0 != key {
+                d = docs.partition_point(|e| e.0 < key);
+            }
+            let (_, base, start) = docs[d];
+            let at = (v as u32 - base) as usize;
+            words[start as usize + at / 64] |= 1 << (at % 64);
         }
         Some(NodeBits { docs, words })
     }
@@ -874,25 +897,34 @@ fn partition_near(lo: usize, hi: usize, near: usize, below: impl Fn(usize) -> bo
 mod node_bits_tests {
     use super::NodeBits;
 
-    /// A membership by bits answers as the rows do: each document's ids, none of another document's, none outside.
+    fn bits(rows: &[i64]) -> Option<NodeBits> {
+        NodeBits::new(rows.len(), |i| rows[i])
+    }
+
+    /// A membership by bits answers as the rows do: each document's ids, none of another document's, none outside,
+    /// a document's rows apart from each other (another's between) too.
     #[test]
     fn bits_hold_exactly_the_rows_ids() {
         let id = |doc: i64, low: i64| doc << 32 | low;
-        let rows = [id(7, 1000), id(7, 1003), id(7, 1130), id(7, 1003), id(9, 5), id(9, 70)];
-        let bits = NodeBits::new(rows.iter().copied()).expect("dense ids take bits");
+        let rows = [id(9, 5), id(7, 1000), id(7, 1003), id(7, 1050), id(9, 70), id(7, 1003), id(7, 1063), id(9, 6), id(9, 40), id(7, 1001)];
+        let bits = bits(&rows).expect("dense ids take bits");
         for &v in &rows {
             assert!(bits.has(v), "{v:#x}");
         }
-        for v in [id(7, 999), id(7, 1001), id(7, 1131), id(7, 1 << 20), id(8, 1000), id(9, 4), id(9, 71), id(10, 5)] {
+        for v in [id(7, 999), id(7, 1002), id(7, 1064), id(7, 1 << 20), id(8, 1000), id(9, 4), id(9, 71), id(10, 5)] {
             assert!(!bits.has(v), "{v:#x}");
         }
     }
 
-    /// Ids too sparse for their words, or negative, take no bits: the probe reads the rows.
+    /// Ids whose words would be past 4 bytes a row, or negative, take no bits: the probe reads the rows.
     #[test]
     fn sparse_or_negative_ids_take_no_bits() {
-        assert!(NodeBits::new([1i64 << 32, (1i64 << 32) | 1 << 20].into_iter()).is_none());
-        assert!(NodeBits::new([-1i64].into_iter()).is_none());
+        assert!(bits(&[1i64 << 32, (1i64 << 32) | 1 << 20]).is_none());
+        assert!(bits(&[-1i64]).is_none());
+        // Two rows a word is 4 bytes a row: bits; three words for four rows is 6: none.
+        let id = |doc: i64, low: i64| doc << 32 | low;
+        assert!(bits(&[id(1, 0), id(1, 63), id(2, 0), id(2, 63)]).is_some());
+        assert!(bits(&[id(1, 0), id(1, 200), id(2, 0), id(2, 1)]).is_none());
     }
 }
 
@@ -1016,7 +1048,11 @@ impl Group {
         let bits = self.bits[rel].get_or_init(|| {
             let range = self.ranges[rel].clone();
             let read = r.range_reader(range.clone(), column);
-            NodeBits::new(range.map(|row| read.as_ref().map_or_else(|| Source::value(r, row, column), |c| c.get(row as u32)))).map(Box::new)
+            let at = |i: usize| {
+                let row = range.start + i;
+                read.as_ref().map_or_else(|| Source::value(r, row, column), |c| c.get(row as u32))
+            };
+            NodeBits::new(range.len(), at).map(Box::new)
         });
         bits.as_ref().map(|b| b.has(value))
     }
