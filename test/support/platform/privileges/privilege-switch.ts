@@ -71,8 +71,9 @@ interface Owed {
 }
 
 /**
- * One Windows PowerShell kept open, which sets privileges in this process's token when asked. Its replies come in the
- * order of the requests, so each line it prints answers the oldest request still owed.
+ * One Windows PowerShell kept open, which sets privileges in the token of process `pid`, this one unless a test names
+ * another, when asked. Its replies come in the order of the requests, so each line it prints answers the oldest request
+ * still owed.
  */
 export class PrivilegeSwitch {
   readonly #program: string;
@@ -83,11 +84,11 @@ export class PrivilegeSwitch {
   #ended: Error | undefined;
   #ready = false;
 
-  constructor(program: Program) {
+  constructor(program: Program, pid = process.pid) {
     const [file, ...before] = program;
     this.#program = file;
     this.#child = spawn(file, [...before, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(SWITCH, "utf16le").toString("base64")], {
-      env: { ...process.env, RERAIL_TEST_PID: String(process.pid) },
+      env: { ...process.env, RERAIL_TEST_PID: String(pid) },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -154,11 +155,12 @@ export class PrivilegeSwitch {
 }
 
 /**
- * Starts a {@link PrivilegeSwitch} on `program` and resolves once it is ready, with no bound of its own: the caller's
- * hook bounds the wait. When it ends first, it rejects with PowerShell's own words; either way no process is left.
+ * Starts a {@link PrivilegeSwitch} on `program` for process `pid` and resolves once it is ready, with no bound of its
+ * own: the caller's hook bounds the wait. When it ends first, it rejects with PowerShell's own words; either way no
+ * process is left.
  */
-export async function startPrivilegeSwitch(program: Program = WINDOWS_POWERSHELL): Promise<PrivilegeSwitch> {
-  const started = new PrivilegeSwitch(program);
+export async function startPrivilegeSwitch(program: Program = WINDOWS_POWERSHELL, pid = process.pid): Promise<PrivilegeSwitch> {
+  const started = new PrivilegeSwitch(program, pid);
   try {
     await started.ready();
   } catch (error) {

@@ -97,14 +97,14 @@ describe.runIf(process.platform === "win32")("a privilege switch's PowerShell", 
   describe("when it ends before it is ready", () => {
     let failure: unknown;
     beforeAll(async () => {
-      // PowerShell takes every argument after -Command as the command's text: the switch's own arguments follow the #.
-      const failing = startPrivilegeSwitch([...WINDOWS_POWERSHELL, "-NoProfile", "-Command", "throw 'no start here'; #"]);
-      failure = await failing.then(kept => kept.end(), (error: unknown) => error);
+      // Windows opens no process by id 0, so the switch's own script throws before it says it is ready.
+      failure = await startPrivilegeSwitch(WINDOWS_POWERSHELL, 0).then(kept => kept.end(), (error: unknown) => error);
     }, PRIVILEGE_SWITCH_START_BOUND_MS);
 
-    it("ends the switch's start in PowerShell's own words", () => {
+    it("ends the switch's start in PowerShell's own words, read out of the CLIXML it writes them in", () => {
       expect(failure).toBeInstanceOf(Error);
-      expect((failure as Error).message).toMatch(/ended \(exit code 1\): no start here/u);
+      expect((failure as Error).message).toMatch(/ended \(exit code 1\): OpenProcessToken failed: \d+/u);
+      expect((failure as Error).message).not.toContain("CLIXML");
     });
   });
 });
