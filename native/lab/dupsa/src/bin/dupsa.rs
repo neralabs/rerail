@@ -1,6 +1,8 @@
 //! ```text
 //! dupsa lines <root> [--include <prefix>]... [--ext <ext>]... [--min 30] [--out <file.tsv>]
 //!     Jeff's rule on a suffix array: blocks of at least `min` counted lines repeated anywhere in the scope.
+//! dupsa tlines <capture> [--key text|shape] [--include <prefix>]... [--ext <ext>]... [--min 30] [--out <file.tsv>]
+//!     The hybrid: Jeff's counted lines and blocks, each line keyed by the tape leaves that start on it.
 //! dupsa nodes <capture> [--min 200] [--min-lines 0] [--cells row|code-slot|indent|local] [--out <file.tsv>]
 //!     The same over format 16 tape nodes, one suffix array a language (`rerail-engine capture-tapes`).
 //! ```
@@ -48,11 +50,12 @@ struct Opts {
     min: Option<u32>,
     min_lines: u32,
     cells: Cells,
+    key: rerail_dupsa_lab::nodes::LineKey,
     out: Option<String>,
 }
 
 fn opts(args: &[String]) -> Result<Opts, String> {
-    let mut o = Opts { pos: Vec::new(), include: Vec::new(), ext: Vec::new(), min: None, min_lines: 0, cells: Cells::Row, out: None };
+    let mut o = Opts { pos: Vec::new(), include: Vec::new(), ext: Vec::new(), min: None, min_lines: 0, cells: Cells::Row, key: rerail_dupsa_lab::nodes::LineKey::Text, out: None };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().cloned().ok_or_else(|| format!("{a} needs a value"));
@@ -68,6 +71,13 @@ fn opts(args: &[String]) -> Result<Opts, String> {
                     "indent" => Cells::Indent,
                     "local" => Cells::Local,
                     c => return Err(format!("--cells {c}: row, code-slot, indent or local")),
+                }
+            }
+            "--key" => {
+                o.key = match val()?.as_str() {
+                    "text" => rerail_dupsa_lab::nodes::LineKey::Text,
+                    "shape" => rerail_dupsa_lab::nodes::LineKey::Shape,
+                    k => return Err(format!("--key {k}: text or shape")),
                 }
             }
             "--out" => o.out = Some(val()?),
@@ -99,10 +109,27 @@ fn write(rows: &mut [Row], out: Option<&str>) -> Result<(), String> {
 
 fn lines_command(o: Opts) -> Result<(), String> {
     let [root] = &o.pos[..] else { return Err("usage: dupsa lines <root> [--include <prefix>]... [--min 30]".into()) };
-    let min = o.min.unwrap_or(30);
     let (t0, c0) = (Instant::now(), cpu());
     let docs = lines::read(Path::new(root), &o.include, &o.ext);
-    let read = (t0.elapsed().as_secs_f64(), cpu() - c0);
+    report_lines("lines", docs, (t0.elapsed().as_secs_f64(), cpu() - c0), &o)
+}
+
+/// `tlines <capture> [--key text|shape] …`: the hybrid, Jeff's counted lines keyed by their tape leaves.
+fn tlines_command(o: Opts) -> Result<(), String> {
+    let [cap] = &o.pos[..] else { return Err("usage: dupsa tlines <capture> [--key text|shape] [--min 30]".into()) };
+    let mut capture = Capture::load(Path::new(cap))?;
+    capture.files.retain(|f| {
+        (o.include.is_empty() || o.include.iter().any(|i| f.path.starts_with(i.as_str())))
+            && !lines::excluded(&f.path)
+            && (o.ext.is_empty() || f.path.rsplit_once('.').is_some_and(|(_, e)| o.ext.iter().any(|x| x == e)))
+    });
+    let (t0, c0) = (Instant::now(), cpu());
+    let docs = rerail_dupsa_lab::nodes::tape_lines(&capture, o.key);
+    report_lines("tlines", docs, (t0.elapsed().as_secs_f64(), cpu() - c0), &o)
+}
+
+fn report_lines(what: &str, docs: lines::LineDocs, read: (f64, f64), o: &Opts) -> Result<(), String> {
+    let min = o.min.unwrap_or(30);
     let symbols: usize = docs.ids.iter().map(Vec::len).sum();
     let (t1, c1) = (Instant::now(), cpu());
     let sa = MultiSuffixArray::new(&docs);
@@ -120,7 +147,7 @@ fn lines_command(o: Opts) -> Result<(), String> {
         .collect();
     write(&mut rows, o.out.as_deref())?;
     eprintln!(
-        "lines: {} files, {} counted lines, {} distinct; read {:.2} s ({:.2} s CPU), suffix array + LCP {:.2} s ({:.2} s CPU); {} blocks at {min} lines; peak {:.0} MB",
+        "{what}: {} files, {} counted lines, {} distinct; read {:.2} s ({:.2} s CPU), suffix array + LCP {:.2} s ({:.2} s CPU); {} blocks at {min} lines; peak {:.0} MB",
         docs.count(), symbols, docs.distinct, read.0, read.1, built.0, built.1, rows.len(), peak_mb()
     );
     Ok(())
@@ -228,6 +255,7 @@ fn main() {
     let r = match args.first().map(String::as_str) {
         Some("lines") => opts(&args[1..]).and_then(lines_command),
         Some("nodes") => opts(&args[1..]).and_then(nodes_command),
+        Some("tlines") => opts(&args[1..]).and_then(tlines_command),
         Some("probe") => opts(&args[1..]).and_then(probe_command),
         _ => Err("usage: dupsa lines <root> … | dupsa nodes <capture> …".into()),
     };

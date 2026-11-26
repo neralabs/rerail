@@ -203,3 +203,72 @@ impl Docs for NodeDocs<'_> {
         self.rank.len().saturating_sub(1) as u32
     }
 }
+
+/// What a line of tape leaves is keyed by (`tape_lines`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LineKey {
+    /// Each leaf's code and its token's text: Jeff's normalisation done by tokens.
+    Text,
+    /// Each leaf's code and length: renamed identifiers and changed literals of the same length still match.
+    Shape,
+}
+
+/// The hybrid: Jeff's units (the lines that count, numbered by an interned key), each line's key made from the tape
+/// instead of its text: the leaves that start on it, in order, comments (any kind whose name ends in `comment`, with
+/// its subtree) left out. A line with no leaf left does not count, so blank and comment lines drop as in Jeff's rule,
+/// and so do the lines inside a block comment.
+pub fn tape_lines(capture: &Capture, key: LineKey) -> crate::lines::LineDocs {
+    use crate::lines::LineDocs;
+    let mut ids_of: HashMap<Vec<u8>, u32> = HashMap::new();
+    let mut docs = LineDocs { paths: Vec::new(), ids: Vec::new(), lines: Vec::new(), distinct: 0 };
+    for f in &capture.files {
+        let Some(lang) = f16::lang(f.tag) else { continue };
+        let t = &capture.bytes[f.image.clone()];
+        let src = &capture.bytes[f.source.clone()];
+        let Ok(v) = f16::placement(t).and_then(|p| p.view(lang, 0)) else { continue };
+        let comment = |num: u32| {
+            let kind = lang.table().entry(num).kind;
+            lang.names().kind_name(kind).is_some_and(|n| n.ends_with("comment"))
+        };
+        let (mut ids, mut lines) = (Vec::new(), Vec::new());
+        let mut cur: Vec<u8> = Vec::new();
+        let mut cur_line = 0u32;
+        let mut flush = |cur: &mut Vec<u8>, line: u32, ids: &mut Vec<u32>, lines: &mut Vec<u32>| {
+            if !cur.is_empty() {
+                let next = ids_of.len() as u32;
+                ids.push(*ids_of.entry(std::mem::take(cur)).or_insert(next));
+                lines.push(line);
+            }
+        };
+        let mut j = 0u32;
+        while j < v.nodes {
+            let num = reads::number(t, &v, j);
+            if comment(num) {
+                j += reads::size(t, &v, j).max(1);
+                continue;
+            }
+            if reads::slot(t, &v, j) & 1 == 1 {
+                let (s, e) = (reads::start(t, &v, j), reads::end(t, &v, j));
+                if e > s {
+                    let line = reads::line(t, &v, s) + 1;
+                    if line != cur_line {
+                        flush(&mut cur, cur_line, &mut ids, &mut lines);
+                        cur_line = line;
+                    }
+                    cur.extend_from_slice(&num.to_le_bytes());
+                    cur.extend_from_slice(&(e - s).to_le_bytes());
+                    if key == LineKey::Text {
+                        cur.extend_from_slice(&src[s as usize..e as usize]);
+                    }
+                }
+            }
+            j += 1;
+        }
+        flush(&mut cur, cur_line, &mut ids, &mut lines);
+        docs.paths.push(f.path.clone());
+        docs.ids.push(ids);
+        docs.lines.push(lines);
+    }
+    docs.distinct = ids_of.len() as u32;
+    docs
+}
