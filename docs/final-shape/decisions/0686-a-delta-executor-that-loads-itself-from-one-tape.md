@@ -2310,3 +2310,23 @@ refused.
   one row a module in a map and missed this; it compares the set of rows now.
 - Without `!cycle`, the cycle's modules get strata, and the executor refuses the cycle with another refusal, which the
   test's message check catches.
+
+### B§10 step 8's test (2026-11-26)
+
+`a_dozen_plain_datalog_programs_lowered_by_k1_give_their_hand_lowered_rows` (Relax, local, 137 of 137) runs twelve
+programs:
+- transitive closure, written as two rules and as one disjunction;
+- same generation, with its filter written first;
+- a negation written first;
+- symmetry by disjunction;
+- reachability from a constant;
+- triangles;
+- a group with a negation in one alternative;
+- several heads;
+- mutual recursion between two heads;
+- sinks, by negation with wildcards;
+- a comparison written first.
+
+Each one is lowered by P3 and run, against its hand-written rows and its hand-lowered K0 form's, warm and cold.
+Together with the K1-a to K1-e tests above, this is step 8's K1: several heads, constants and arithmetic in heads,
+disjunctions, `.decl` and strata computed.

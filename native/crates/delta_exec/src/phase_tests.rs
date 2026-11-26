@@ -655,6 +655,48 @@ fn k1s_heads_disjunctions_and_constants_lower_to_their_hand_written_rules() {
     }
 }
 
+/// B§10 step 8's test: a dozen plain-Datalog programs, each lowered by P3 and run against its hand-written rows and its
+/// hand-lowered K0 form's (run at L2's place), warm and cold: recursion, mutual recursion, joins, negation, filters
+/// written before their bindings, disjunctions, groups, several heads, wildcards and constants.
+#[test]
+fn a_dozen_plain_datalog_programs_lowered_by_k1_give_their_hand_lowered_rows() {
+    type Want = &'static [(&'static str, &'static [&'static [i64]])];
+    const T: &[&[i64]] = &[&[1, 1], &[1, 2], &[1, 3], &[1, 4], &[2, 1], &[2, 2], &[2, 3], &[2, 4], &[3, 1], &[3, 2], &[3, 3], &[3, 4]];
+    let cases: [(&str, &str, &str, Want); 12] = [
+        ("tc", "t(x, y) :- e(x, y).\nt(x, z) :- t(x, y), e(y, z).\n", "t(x, y) :- e(x, y).\nt(x, z) :- t(x, y), e(y, z).\n", &[("t", T)]),
+        ("tc-or", "t(x, y) :- e(x, y) ; t(x, z), e(z, y).\n", "t(x, y) :- e(x, y).\nt(x, y) :- t(x, z), e(z, y).\n", &[("t", T)]),
+        ("sg", "sg(x, y) :- x != y, e(p, x), e(p, y).\n", "sg(x, y) :- e(p, x), e(p, y), x != y.\n", &[("sg", &[&[3, 4], &[4, 3]])]),
+        ("not-b", "nb(x, y) :- !b(y), e(x, y).\n", "nb(x, y) :- e(x, y), !b(y).\n", &[("nb", &[&[1, 2], &[3, 1], &[2, 4]])]),
+        ("sym", "s(x, y) :- e(x, y) ; e(y, x).\n", "s(x, y) :- e(x, y).\ns(x, y) :- e(y, x).\n",
+            &[("s", &[&[1, 2], &[2, 1], &[2, 3], &[3, 2], &[3, 1], &[1, 3], &[2, 4], &[4, 2]])]),
+        ("reach", "r(y) :- e(1, y).\nr(y) :- r(x), e(x, y).\n", "r(y) :- e(1, y).\nr(y) :- r(x), e(x, y).\n", &[("r", &[&[1], &[2], &[3], &[4]])]),
+        ("triangle", "tri(x, y, z) :- e(x, y), e(y, z), e(z, x).\n", "tri(x, y, z) :- e(x, y), e(y, z), e(z, x).\n", &[("tri", &[&[1, 2, 3], &[2, 3, 1], &[3, 1, 2]])]),
+        ("group-not", "h(x) :- e(x, y), (y = 3 ; !b(y)).\n", "h(x) :- e(x, y), y = 3.\nh(x) :- e(x, y), !b(y).\n", &[("h", &[&[1], &[2], &[3]])]),
+        ("heads", "a(x, y), c(y, x) :- e(x, y).\n", "a(x, y) :- e(x, y).\nc(y, x) :- e(x, y).\n",
+            &[("a", &[&[1, 2], &[2, 3], &[3, 1], &[2, 4]]), ("c", &[&[2, 1], &[3, 2], &[1, 3], &[4, 2]])]),
+        ("odd-even", "odd(x, y) :- e(x, y).\nodd(x, z) :- e(y, z), even(x, y).\neven(x, z) :- odd(x, y), e(y, z).\n",
+            "odd(x, y) :- e(x, y).\nodd(x, z) :- even(x, y), e(y, z).\neven(x, z) :- odd(x, y), e(y, z).\n", &[("odd", T), ("even", T)]),
+        ("sink", "sink(y) :- e(_, y), !e(y, _).\n", "sink(y) :- e(_, y), !e(y, _).\n", &[("sink", &[&[4]])]),
+        ("lt", "lt(x, y) :- x < y, e(x, y).\n", "lt(x, y) :- e(x, y), x < y.\n", &[("lt", &[&[1, 2], &[2, 3], &[2, 4]])]),
+    ];
+    for (name, k1, k0, want) in cases {
+        let mut r = kernel_run(&format!("phase-dozen-{name}"), k1);
+        r.run();
+        let mut h = hand_run(&format!("phase-dozen-{name}-hand"), k0);
+        h.run();
+        for &(rel, rows) in want {
+            let want: BTreeSet<Vec<i64>> = rows.iter().map(|x| x.to_vec()).collect();
+            assert_eq!(h.rows(1, rel), want, "{name}: {rel}, the hand-lowered form's rows");
+            assert_eq!(r.rows(2, rel), want, "{name}: {rel}, lowered by P3");
+        }
+        r.last = None;
+        r.run();
+        for &(rel, rows) in want {
+            assert_eq!(r.rows(2, rel), rows.iter().map(|x| x.to_vec()).collect::<BTreeSet<_>>(), "{name}: {rel}, cold");
+        }
+    }
+}
+
 /// K1's arithmetic (B§6, L3; B§10 step 8; K1-a): each expression a step of an operator (a Pure answer, B§3 sentence 3),
 /// its answer a variable named by its node, placed after the atom that binds the last variable under it and run in
 /// postorder there (an operand before its operator, an operator before its filter), one of constants alone first. Each
