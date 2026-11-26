@@ -222,6 +222,9 @@ pub const INTERN: i64 = 2;
 /// The answerers (P§12 item 7), the abstraction in the blocks crate; the engine's three below.
 pub use rerail_blocks::answer::{Answer, AnswerKind, Answerer};
 
+/// A path that names a text, not a file (`World::answer`).
+pub const TEXT: &str = "text:";
+
 /// What an answerer reaches: the world, the registry, the trace's operations, the directory and the blobs.
 pub struct Reach<'a> {
     pub world: &'a mut World,
@@ -500,11 +503,20 @@ impl World {
     /// identity while its digest is unchanged. A file the observer answers by its stat is not read; one whose content
     /// a home holds (the residency, else the store's objects) is not parsed (a hit skips the parse, §6.2); only a new
     /// content is parsed, its source and tape then put in the store's objects. An ask's refusal names its path.
+    ///
+    /// A path `text:<bytes>` (`bootstrap.rerail`'s program texts, and a rule's code pattern: 0686, L4-h) is no file:
+    /// its bytes are its key's, so its answer is pure, and no leaf is written. They are put where a source read from
+    /// a file goes, then answered as one is, by their content.
     pub fn answer(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, blobs: &mut BlobRows, asks: &[Load1], leaves: &mut LeavesW) -> Result<Vec<Result<Option<Doc>, String>>, String> {
         let doc = |a: &Load1, after| Some(Doc { path: a.path.clone(), module: a.module.clone(), before: a.before, after });
         let mut out: Vec<Option<Result<Option<Doc>, String>>> = vec![None; asks.len()];
+        for (k, a) in asks.iter().enumerate() {
+            if let Some(text) = a.path.strip_prefix(TEXT) {
+                out[k] = Some(self.text(reg, ops, dir, blobs, text.as_bytes()).map(|ids| doc(a, ids)).map_err(|e| format!("{}: {e}", a.path)));
+            }
+        }
         // (ask, its flags), and the room the next pass's slab needs.
-        let mut pending: Vec<(usize, i64)> = (0..asks.len()).map(|k| (k, 0)).collect(); // copy: derived (the asks left)
+        let mut pending: Vec<(usize, i64)> = (0..asks.len()).filter(|&k| out[k].is_none()).map(|k| (k, 0)).collect(); // copy: derived (the asks left)
         let mut need = room(0);
         let observer = self.store.observer();
         while !pending.is_empty() {
@@ -632,6 +644,30 @@ impl World {
         }
         let key = parse_key(ids.source, self.grammar_word());
         put_row(reg, ops, dir, &mut self.answers, &key, Some(answer_row(&key, ids.tape)))
+    }
+
+    /// A text's document (`answer`'s `text:` paths): its bytes put in a room of a slab, the residency's home for a source
+    /// (as a file's read puts them: the source's one home, 0353), then answered by their content (a home's, else
+    /// parsed, its source and tape put in the store's objects).
+    fn text(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, blobs: &mut BlobRows, bytes: &[u8]) -> Result<DocIds, String> {
+        let g = BlobId::of(bytes);
+        if let Some(ids) = self.by_content(reg, ops, dir, blobs, g)? {
+            return Ok(ids);
+        }
+        let (block, b) = dir.slab_room(kind::TAPE, room(bytes.len()))?;
+        let src = {
+            let mut m = Mutable::<u8>::alloc_aligned(&b, bytes.len().max(1) + 16, 64, "a text's source").ok_or("a slab's room")?;
+            m.write()[..bytes.len()].copy_from_slice(bytes); // copy: load (a text's bytes, its key's, to its source's one home in the residency's slab)
+            let at = m.region().at();
+            drop(m.freeze());
+            Placed { block, at, len: bytes.len() }
+        };
+        drop(b);
+        dir.seal(block)?;
+        let tape = parse_sources(reg, &self.ops, dir, block, &[(src.at, src.len)])?.pop().expect("one");
+        dir.seal(block)?;
+        self.asked.parses += 1;
+        self.parsed(reg, ops, dir, blobs, block, g, src, tape)
     }
 
     /// Document `d`'s places, as the store's objects hold its source `source` and its tape: kept, so a later process

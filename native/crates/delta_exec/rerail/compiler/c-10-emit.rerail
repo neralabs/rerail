@@ -6,8 +6,17 @@ k_step(d, r, p, n, s, x) :- at(d, r, f, p), turn(d, r, f, n), read_step(d, r, f,
 k_step(d, r, k, -1, s, x) :- read_step(d, r, k, -1, s, x), !placed(d, r, k).
 k_arg(d, r, p, n, i, t) :- at(d, r, f, p), turn(d, r, f, n), read_arg(d, r, f, -1, i, t).
 k_arg(d, r, k, j, i, t) :- read_arg(d, r, k, j, i, t), !placed(d, r, k).
-k_var(d, t, v) :- read_var(d, t, v).
-k_str(d, t, s) :- read_str(d, t, s) ; agg_rel(d, t, s).
-k_num(d, t, n) :- read_num(d, t, n).
-k_wild(d, t) :- read_wild(d, t).
-k_decl(d, r, i, t) :- read_decl(d, r, i, t).
+k_var(d, t, v) :- read_var(d, t, v), !is_text(d).
+k_str(d, t, s) :- read_str(d, t, s), !is_text(d).
+k_str(d, t, s) :- agg_rel(d, t, s), !is_text(d).
+k_num(d, t, n) :- read_num(d, t, n), !is_text(d).
+k_wild(d, t) :- read_wild(d, t), !is_text(d).
+k_decl(d, r, i, t) :- read_decl(d, r, i, t), !is_text(d).
+// Each pattern's rule (L4-h, c-20), in its code's module.
+k_rule(pd, r, s) :- p_rule(pd, r, s).
+k_step(pd, r, k, j, s, x) :- p_step(pd, r, k, j, s, x).
+k_arg(pd, r, k, j, i, t) :- p_arg(pd, r, k, j, i, t).
+k_var(pd, t, v) :- p_kvar(pd, t, v).
+k_str(pd, t, s) :- p_kstr(pd, t, s).
+k_num(pd, t, n) :- p_knum(pd, t, n).
+k_wild(pd, t) :- p_kwild(pd, t).

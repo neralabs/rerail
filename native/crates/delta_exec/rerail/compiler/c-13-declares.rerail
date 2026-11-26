@@ -2,3 +2,5 @@
 // points' L4-g, option 1): what a document declares, read before its includes are resolved. A document that declares
 // `doc` is in T's shape, and is read without `core.rerail`.
 p0_declares_doc(d) :- kind(d, x, "declaration"), field(d, x, "name", n), text(d, n, "doc").
+// A pattern's code (L4-h, c-16): a document whose path is `text:` and its text, read for its tree, not its rules.
+is_text(d) :- doc(d, p, _), @substr(p, 0, 5) = "text:".

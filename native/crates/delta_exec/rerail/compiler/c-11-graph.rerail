@@ -2,6 +2,7 @@
 // each other module whose head it reads, an atom's, a negation's or an aggregate's; its depth is each chain's length
 // below it, up to 64; a module that reaches itself is in a cycle.
 writes(d, h) :- read_rule(d, _, h).
+writes(pd, h) :- p_rule(pd, _, h).
 reads(d, x) :- read_step(d, _, _, -1, "atom", x) ; read_step(d, _, _, -1, "not", x) ; agg_rel(d, _, x).
 dep(d, w) :- reads(d, x), writes(w, x), d != w.
 reach(d, w) :- dep(d, w).

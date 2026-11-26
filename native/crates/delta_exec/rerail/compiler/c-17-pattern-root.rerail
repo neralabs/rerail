@@ -1,0 +1,12 @@
+// A pattern's code, its document (another file's, so these rules are cross-file), and where its root is looked for:
+// at its selector's kind, or down the chain of only children from the code's root.
+pat_doc(d, m, pd) :- pat(d, m, t), doc(pd, t, _).
+sel(pd, k) :- pat_doc(d, m, pd), pat_sel(d, m, k).
+plain(pd) :- pat_doc(d, m, pd), !pat_sel(d, m, _).
+chain(pd, p) :- plain(pd), kind(pd, p, "source_file").
+chain(pd, c) :- chain(pd, p), p_one(pd, p), child(pd, p, c, 0).
+sel_later(pd, k, q) :- sel(pd, k), kind(pd, p, k), kind(pd, q, k), p < q.
+// The subject's document's term (its first view's; none: a wildcard), and a list's `$$$`.
+pat_dterm(d, m, t) :- dview(d, m, t), !dview_later(d, m, t).
+pat_dwild(d, m) :- kind(d, m, "pattern_match"), !dview(d, m, _).
+p_many_at(pd, p, i) :- p_many(pd, c), child(pd, p, c, i).

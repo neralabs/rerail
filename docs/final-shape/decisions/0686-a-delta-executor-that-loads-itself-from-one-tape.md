@@ -2523,3 +2523,66 @@ Checks (Relax, local, 142 of 142):
 - Mutation caught: loading every second candidate whatever the first did.
 
 Still to build in step 9: patterns (`~`), lattices, the passes, as the compiler's rules.
+
+### L4: patterns, lowered into view joins by the compiler's rules (B§6's L4 row, B§11; L4-h; 2026-11-26)
+
+B§11 left patterns to L4, between "lowering them into view joins in rules" and "a native match step taking a
+compiled pattern as rows". B§1 lists pattern lowering among the rules, so it is the first. Five files, c-16 to c-20.
+
+A literal `n ~ `code`` (`at "kind"`: the first node of that kind in the code) is an atom of a relation of its own.
+- **The code is a document of its own.** Its path is `text:` and the code, `bootstrap.rerail`'s program texts' form.
+  - Its metavariables are named so rr's lexer reads them: `$X` as `__mv_X`, `$$$X` as `__mvs_X`, by `replace`, a
+    plain-text function new in `funcs` (core.rerail has only the regex `replace_all`).
+  - It is loaded as an include is. The load answer takes a `text:` path's bytes from the path, puts them where a
+    file's would go (a room of a slab, the source's one home) and answers them by their content: a home's, else
+    parsed and put in the store's objects. The answer is pure, so it writes no leaf.
+  - The code's literal is a `value`. `Reads::string` gives a code literal's contents between its backticks, which
+    intern interns.
+  - A code that does not parse is refused, naming its `text:` path.
+- **The pattern's rule is in the code's module.** Its terms are numbered from the code's nodes, `p * 16 + slot`,
+  since K-form's ids are 32 bits and a module's own.
+  - Two literals of one code and selector share one relation, named `~` + path + `@` + root.
+  - Its root is the selector's node, or the first node down the chain of only children from `source_file` that has
+    not one child.
+  - Its head is the document variable `~d`, the root, then each metavariable by its column.
+  - Its steps, at node p, at (p, j), in the tree's order (a node's id is after its parent's):
+    - p from its parent: `child` at its place, or at its place from the end after a `$$$` (an operator step `-`);
+      `field` for a field's token, such as a comparison's operator;
+    - its kind (the root's, any kind when it is a metavariable);
+    - its text or value;
+    - a metavariable's later node: the same text as its first;
+    - no more children than the code's (`not child` at that count), unless they hold a `$$$`;
+    - for a list with children after its `$$$`: its last place (no child after it), at least the fewest it matches.
+  - The root's module comes before its readers by the module graph (`writes(pd, …)` in c-11).
+- **The literal is an atom** over the subject's document, the subject, then each metavariable by its column:
+  - the document is the first term of a view in its clause that reads the subject second;
+  - each metavariable is the first term of its clause that names it;
+  - either may be a wildcard (the literal's own node) where nothing names it.
+- **A code's document is read for its tree, not its rules** (`is_text`, c-13): no clause, group or term of it is
+  lowered.
+- A list of two `$$$` has no rule. Its head's document is a variable that nothing binds, named "a list of two $$$",
+  which the executor refuses.
+
+Checks (Relax, local, 143 of 143): `patterns_lower_into_view_joins_by_the_compilers_rules`.
+- Each form against hand-written rows:
+  - a root down a chain;
+  - a selector;
+  - leaves' texts;
+  - `$$$` alone, before and after others;
+  - a metavariable named twice;
+  - an operator's token;
+  - `$_`;
+  - a literal whose clause names no document.
+- An edit of the documents read, and back; a cold run.
+- A code that does not parse, then edited, then read.
+- The two-`$$$` refusal.
+- The self-hosting check covers the twenty files.
+- Mutations caught: the "no more children" step dropped (a head of three arguments matched one of two), and the place
+  from the end off by one.
+
+What it covers and what not:
+- A metavariable named twice matches names, by `text`. Two strings or numbers of one value are not matched, since
+  `value` and `text` are two views and a rule body has no "either".
+- The suite's time doubled (63 s to 129 s): each compiler run reads twenty files.
+
+Still to build in step 9: lattices and the passes, as the compiler's rules.

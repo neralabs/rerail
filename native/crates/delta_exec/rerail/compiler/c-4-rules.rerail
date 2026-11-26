@@ -29,3 +29,11 @@ read_step(d, r, e, -1, "call", f) :- in_rule(d, r, l), in_term(d, l, e), call_fn
 read_step(d, r, e, -1, "call", f) :- inst(d, _, r, h), in_term(d, h, e), call_fn(d, e, f).
 read_arg(d, r, l, -1, i, a) :- in_rule(d, r, l), lit_arg(d, l, i, a), kind(d, a, _).
 read_arg(d, r, x, -1, i, t) :- in_rule(d, r, x), scope(d, x), rank(d, x, v, i), rep(d, x, v, t), kind(d, t, _).
+// A pattern literal (L4-h): an atom of its pattern's relation, over the subject's document, the subject, then each
+// metavariable by its column.
+read_step(d, r, m, -1, "atom", s) :- in_rule(d, r, m), pat_rel(d, m, s).
+read_arg(d, r, m, -1, 0, t) :- in_rule(d, r, m), pat_dterm(d, m, t), kind(d, m, _).
+read_arg(d, r, m, -1, 0, m) :- in_rule(d, r, m), pat_dwild(d, m), kind(d, m, _).
+read_arg(d, r, m, -1, 1, s) :- in_rule(d, r, m), pat_subj(d, m, s), kind(d, s, _).
+read_arg(d, r, m, -1, k, u) :- in_rule(d, r, m), pat_mvterm(d, m, n, u), kind(d, m, _), k = n + 2.
+read_arg(d, r, m, -1, k, m) :- in_rule(d, r, m), pat_mvwild(d, m, n), kind(d, m, _), k = n + 2.

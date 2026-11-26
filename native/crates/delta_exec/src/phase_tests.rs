@@ -566,7 +566,7 @@ const KERNEL: [(&str, &str); 13] = [
 
 /// The compiler (B§6, L4; B§10 step 9): the full lowerer, written in the language the kernel lowers. L3 reads it into
 /// P4, which reads the user's files at L4.
-const COMPILER: [(&str, &str); 15] = [
+const COMPILER: [(&str, &str); 20] = [
     ("compiler/c-1-read.rerail", include_str!("../rerail/compiler/c-1-read.rerail")),
     ("compiler/c-2-shared.rerail", include_str!("../rerail/compiler/c-2-shared.rerail")),
     ("compiler/c-3-rank.rerail", include_str!("../rerail/compiler/c-3-rank.rerail")),
@@ -582,6 +582,11 @@ const COMPILER: [(&str, &str); 15] = [
     ("compiler/c-13-declares.rerail", include_str!("../rerail/compiler/c-13-declares.rerail")),
     ("compiler/c-14-includes.rerail", include_str!("../rerail/compiler/c-14-includes.rerail")),
     ("compiler/c-15-plan.rerail", include_str!("../rerail/compiler/c-15-plan.rerail")),
+    ("compiler/c-16-patterns.rerail", include_str!("../rerail/compiler/c-16-patterns.rerail")),
+    ("compiler/c-17-pattern-root.rerail", include_str!("../rerail/compiler/c-17-pattern-root.rerail")),
+    ("compiler/c-18-pattern-tree.rerail", include_str!("../rerail/compiler/c-18-pattern-tree.rerail")),
+    ("compiler/c-19-pattern-rank.rerail", include_str!("../rerail/compiler/c-19-pattern-rank.rerail")),
+    ("compiler/c-20-pattern-rule.rerail", include_str!("../rerail/compiler/c-20-pattern-rule.rerail")),
 ];
 
 /// What L3 reads: the stand-in for the compiler's files (Bootstrap §6: "P3 loads the full compiler"), a K0 file of
@@ -865,6 +870,66 @@ fn includes_resolve_by_the_compilers_rules_into_the_program() {
     assert!(c.rows(2, "p0_missing").is_empty(), "nothing missing once the file is there");
     assert!(c.rows(2, "p0_include").contains(&s(&c, &["src/a.rerail", "42", "nowhere.rerail", "src/nowhere.rerail"])), "the include resolves to the new file");
     assert_eq!(c.rows(3, "here"), [vec![5]].into_iter().collect(), "and its rules are the program's");
+}
+
+/// Patterns (B§6, L4; B§11: lowered "into view joins in rules"; L4-h), as the compiler's rules: `n ~ `code``, the code
+/// a document of its own (`text:`), its rule a chain of views over the code's tree in that document's module, and the
+/// literal an atom of it. Each form against hand-written rows: a root down a chain of only children, a selector, a
+/// leaf's text, `$$$` alone, before and after others, a metavariable named twice (the same name), an operator (a
+/// field's token), `$_`, and a literal whose clause names no document. An edit of the documents it reads and one of
+/// its code are maintained as a cold run gives them; a list of two `$$$` is refused, naming it.
+#[test]
+fn patterns_lower_into_view_joins_by_the_compilers_rules() {
+    const T: &str = "edge(a, b).\nedge(c, d) :- x(c).\nedge(e).\nedge(z, z).\nedge(p, q, w).\nother(f, g).\nr(x, y) :- edge(x, y), x < y, y > x.\n";
+    const U: &str = "load(\"t.rerail\", \"t\", \"rr\").\n\
+heads(a, b) :- node(d, n, _, _, _), n ~ `edge($A, $B).`, text(d, A, a), text(d, B, b).\n\
+bodies(x) :- node(d, n, _, _, _), n ~ `q(1) :- edge($X, $Y).` at \"atom\", text(d, X, x).\n\
+any(n) :- node(_, n, _, _, _), n ~ `edge($$$).`.\n\
+last(b) :- node(d, n, _, _, _), n ~ `edge($$$, $L).`, text(d, L, b).\n\
+ends(a, b) :- node(d, n, _, _, _), n ~ `edge($F, $$$, $L).`, text(d, F, a), text(d, L, b).\n\
+same(a) :- node(d, n, _, _, _), n ~ `edge($X, $X).`, text(d, X, a).\n\
+lt(a) :- node(d, n, _, _, _), n ~ `q(1) :- $A < $B.` at \"comparison\", text(d, A, a).\n\
+first(a) :- node(d, n, _, _, _), n ~ `other($A, $_).`, text(d, A, a).\n\
+loose(1) :- n ~ `other($A, $B).`.\n";
+    let roots = "root(\"u.rerail\", \"u\").\np0_lib(\"lib\").\n";
+    let mut r = compiler_files("phase-patterns", roots, &[("u.rerail", U), ("t.rerail", T)]);
+    r.run();
+    let texts = |r: &Run, rows: &[&[&str]]| -> BTreeSet<Vec<i64>> { rows.iter().map(|row| row.iter().map(|x| x.parse::<i64>().unwrap_or_else(|_| r.s(x))).collect()).collect() };
+    let check = |r: &Run, what: &str| {
+        assert_eq!(r.rows(3, "heads"), texts(r, &[&["a", "b"], &["c", "d"], &["z", "z"]]), "{what}: heads of two arguments");
+        assert_eq!(r.rows(3, "bodies"), texts(r, &[&["x"]]), "{what}: a selector's atom");
+        assert_eq!(r.rows(3, "any").len(), 5, "{what}: `$$$` alone: every edge head");
+        assert_eq!(r.rows(3, "last"), texts(r, &[&["b"], &["d"], &["e"], &["z"], &["w"]]), "{what}: after `$$$`, from the end");
+        assert_eq!(r.rows(3, "ends"), texts(r, &[&["a", "b"], &["c", "d"], &["z", "z"], &["p", "w"]]), "{what}: around `$$$`");
+        assert_eq!(r.rows(3, "same"), texts(r, &[&["z"]]), "{what}: a metavariable named twice");
+        assert_eq!(r.rows(3, "lt"), texts(r, &[&["x"]]), "{what}: an operator's token");
+        assert_eq!(r.rows(3, "first"), texts(r, &[&["f"]]), "{what}: `$_`");
+        assert_eq!(r.rows(3, "loose"), texts(r, &[&["1"]]), "{what}: no document named");
+    };
+    check(&r, "cold");
+    // An edit of the documents the patterns read: a head more, a comparison turned.
+    r.write("t.rerail", &format!("{T}edge(k, l).\ns(u, v) :- v > u.\n"), 40);
+    r.run();
+    assert!(r.rows(3, "heads").contains(&texts(&r, &[&["k", "l"]]).pop_first().unwrap()), "the new head");
+    r.write("t.rerail", T, 30);
+    r.run();
+    check(&r, "edited back");
+    r.last = None;
+    r.run();
+    check(&r, "cold again");
+    // An edit of a pattern's code: another text, another document.
+    r.write("u.rerail", &U.replace("`edge($X, $X).`", "`edge($X, z)`"), 20);
+    let e = r.try_run().expect_err("a code that does not parse");
+    assert!(e.contains("text:edge(__mv_X, z)"), "{e}");
+    r.write("u.rerail", &U.replace("`edge($X, $X).`", "`edge($X, z).`"), 10);
+    r.last = None;
+    r.run();
+    assert_eq!(r.rows(3, "same"), texts(&r, &[&["z"]]), "the edited code");
+    // A list of two `$$$`.
+    r.write("u.rerail", "load(\"t.rerail\", \"t\", \"rr\").\ntwo(n) :- node(_, n, _, _, _), n ~ `edge($$$, $$$).`.\n", 5);
+    r.last = None;
+    let e = r.try_run().expect_err("two $$$");
+    assert!(e.contains("a list of two $$$"), "{e}");
 }
 
 /// L4's aggregates (B§10 step 9; L4-f): `count`, `sum`, `min`, `max` and `mean` as delta operators the executor knows

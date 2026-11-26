@@ -8,7 +8,8 @@
 //! - `child(d, p, c, i)`: `c` is `p`'s `i`-th child, counting named children that are no comment;
 //! - `text(d, n, s)`: a name's text (an identifier's, a variable's, an operator's), a symbol; a literal is read by
 //!   `value`;
-//! - `value(d, n, v)`: a literal's value: a string's unescaped contents (a symbol), a number's value;
+//! - `value(d, n, v)`: a literal's value: a string's unescaped contents (a symbol), a number's value, a code
+//!   literal's contents between its backticks (a symbol: a pattern's text, 0686 L4-h);
 //! - `name(d, n, s)`: a named node's own name (a clause, a disjunction, a group, an expression: 0686, K1-c), so a
 //!   lowering in rules names a relation or a variable it makes: `-(d·2³² + n)`, read from the node where it lies.
 //!   It is no atom: a symbol is positive, so a name never meets one, and naming makes nothing, so an edit leaves the

@@ -1,0 +1,25 @@
+// Patterns (B§6, L4: "patterns (~)"; B§1: pattern lowering is rules; B§11: "lowering them into view joins in rules";
+// 0686, L4-h). A literal `n ~ `code`` (`at "kind"`: the node of that kind in the code) is an atom of a relation of its
+// own, which the pattern's rule writes: a chain of the views over the code's tree, in the module of the code's
+// document. The code is a document of its own: its path `text:` and the code, its metavariables named so the
+// language's parser reads them (`$X` as `__mv_X`, `$$$X` as `__mvs_X`), loaded as an include is (the load answer
+// parses a text where it would a file's bytes).
+pat(d, m, t) :- kind(d, m, "pattern_match"), field(d, m, "pattern", c), value(d, c, s), t = @cat("text:", @replace(@replace(s, "$$$", "__mvs_"), "$", "__mv_")).
+pat_sel(d, m, k) :- kind(d, m, "pattern_match"), field(d, m, "selector", x), value(d, x, k).
+pat_subj(d, m, s) :- kind(d, m, "pattern_match"), field(d, m, "subject", s).
+// The subject's document: the first term of a view of its clause that reads the subject second.
+view_rel("node").
+view_rel("kind").
+view_rel("field").
+view_rel("child").
+view_rel("text").
+view_rel("value").
+view_rel("name").
+dview(d, m, t) :- pat_subj(d, m, s), read_var(d, s, v), in_clause(d, c, m), in_clause(d, c, l), lit_step(d, l, "atom", x), view_rel(x), lit_arg(d, l, 1, u), read_var(d, u, v), lit_arg(d, l, 0, t).
+dview_later(d, m, t) :- dview(d, m, t), dview(d, m, u), u < t.
+// In a code's tree: a node of one child, its last child's place, a leaf, and each metavariable by its name.
+p_one(pd, p) :- child(pd, p, _, 0), !child(pd, p, _, 1).
+p_last(pd, p, i) :- child(pd, p, _, i), j = i + 1, !child(pd, p, _, j).
+p_leaf(pd, p) :- kind(pd, p, _), !child(pd, p, _, 0).
+p_mv(pd, p, x) :- text(pd, p, s), @substr(s, 0, 5) = "__mv_", x = @substr(s, 5, @strlen(s) - 5).
+p_many(pd, p) :- text(pd, p, s), @substr(s, 0, 6) = "__mvs_".

@@ -69,8 +69,14 @@ impl<'t> Reads<'t> {
         &self.src[self.start(i) as usize..self.end(i) as usize]
     }
 
-    /// A string's unescaped contents, when node `i` is one.
+    /// A string's unescaped contents, when node `i` is one; a code literal's (a pattern's, a template's: 0686, L4-h),
+    /// between its fences of backticks, as written.
     pub fn string(&self, i: usize) -> Option<String> {
+        if self.node(i).0 == Kind::CodeLiteral as u16 {
+            let t = self.text(i);
+            let fence = t.len() - t.trim_start_matches('`').len();
+            return (t.len() >= 2 * fence).then(|| t[fence..t.len() - fence].to_string());
+        }
         if self.node(i).0 != Kind::String as u16 {
             return None;
         }

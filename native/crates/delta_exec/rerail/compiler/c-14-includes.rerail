@@ -5,6 +5,8 @@
 // candidate is asked only once the first missed, so no file loads that its include does not resolve to.
 load(p, m, "rr") :- root(p, m).
 load(c, c, "rr") :- p0_cand(_, _, _, 1, c).
+// A pattern's code (L4-h, c-16), a text the load answer parses.
+load(t, t, "rr") :- pat(_, _, t).
 load(c, c, "rr") :- p0_cand(f, at, n, 2, c), p0_cand(f, at, n, 1, l), missing(l).
 // What each loaded file names: its includes, at their offsets, and `core.rerail` first for a root not in T's shape.
 p0_names(f, at, n) :- kind(d, i, "include"), field(d, i, "path", p), value(d, p, n), doc(d, f, _), node(d, i, _, at, _).
