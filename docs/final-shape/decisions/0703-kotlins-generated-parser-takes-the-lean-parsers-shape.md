@@ -64,3 +64,12 @@ file, and tier 1 computes the token's marks into its code (its line breaks, the 
 strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or t_dollar resumes str`),
 a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in parts, from tier 1's
 masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state (`next_*`).
+5. **The gap marks of one mask are one bit** (`DERIVED`, `derived`, `carried`). Gap marks whose tests in tier 1 are
+   one (one accumulator, mask or record test) have one carrier, the one of the lowest bit with no `unless after`, and
+   tier 1 writes its bit alone. Tier 2 asks the others where a rule reads one: the carrier's bit at the token, and the
+   word of the grammar token before for an `unless after` (`bit_at`, `marks_hold`). An extra keeps a derived mark of
+   its own gap only where it keeps the carrier, so an extra's is its carrier's bit (`carried`, in `rec_marks_hold` and
+   where the pending extras settle at a mark). A mark with token tests, an `else escape`, or one asked of the bytes is
+   not derived. Kotlin's `head_ctor`, `by_lf`, `ann_lf` and `semi` (`lf & code`) are one bit, `head_ctor`'s: the lean
+   lexer's `nl`, of which the lean parser asks `asi`. Kotlin's test of tier 1's records against the interpreter's
+   checks each derived bit as tier 2 asks it. rr's marks are each their own (`DERIVED` 0), and JSON has none.

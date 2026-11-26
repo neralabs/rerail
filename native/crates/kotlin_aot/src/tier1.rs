@@ -4727,15 +4727,6 @@ pub fn lex(src: &[u8]) -> Lexed {
                 if rec_0 {
                     marks |= 1 << 0;
                 }
-                if rec_0 {
-                    marks |= 1 << 1;
-                }
-                if rec_0 {
-                    marks |= 1 << 2;
-                }
-                if rec_0 {
-                    marks |= 1 << 3;
-                }
                 if rec_1 || here_1 {
                     marks |= 1 << 4;
                 }
@@ -4746,18 +4737,9 @@ pub fn lex(src: &[u8]) -> Lexed {
                 if (tested >> 0 & 1 == 1 || acc_0) {
                     marks |= 1 << 0;
                 }
-                // `by_lf`
-                if (tested >> 1 & 1 == 1 || acc_0) {
-                    marks |= 1 << 1;
-                }
-                // `ann_lf`
-                if (tested >> 2 & 1 == 1 || acc_0) && !matches!(before, 41) {
-                    marks |= 1 << 2;
-                }
-                // `semi`
-                if (tested >> 3 & 1 == 1 || acc_0) && !matches!(before, 41) {
-                    marks |= 1 << 3;
-                }
+                // `by_lf`: its carrier's bit (`DERIVED`)
+                // `ann_lf`: its carrier's bit (`DERIVED`)
+                // `semi`: its carrier's bit (`DERIVED`)
                 // `semi_close`
                 if (tested >> 4 & 1 == 1 || acc_1 || here_1) && !matches!(before, 41) {
                     marks |= 1 << 4;
@@ -5094,7 +5076,7 @@ fn load8_at_end(src: &[u8], i: usize) -> u64 {
 
 /// The marks tier 1's records leave to tier 2 (decisions 0623, 0655): those it asks of the bytes (`ASKED`), those whose
 /// token tests it asks (`TESTED`), and the token marks its code reads no bit of (it asks them of the tokens).
-pub const UNRECORDED: u32 = 0x0;
+pub const UNRECORDED: u32 = 0xe;
 
 /// The marks whose token tests tier 2 asks (decision 0655 step 6): none, the records hold them.
 pub const TESTED: u32 = 0;
@@ -5103,6 +5085,37 @@ pub const TESTED: u32 = 0;
 pub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {
     let _ = (src, recs, xs, j, b);
     false
+}
+
+/// The gap marks tier 1 writes one bit for, the carrier's, the others of its mask asked of it where a rule reads one
+/// (decision 0703), as the lean parser asks `asi` of a token's `nl`.
+pub const DERIVED: u32 = 0xe;
+
+/// Whether derived mark `b` holds at a token whose marks are `marks`, after a token of word `before`.
+#[inline(always)]
+pub fn derived(b: u32, marks: u32, before: u32) -> bool {
+    match b {
+        1 => marks >> 0 & 1 == 1,
+        2 => marks >> 0 & 1 == 1 && !matches!(before, 41),
+        3 => marks >> 0 & 1 == 1 && !matches!(before, 41),
+        _ => false,
+    }
+}
+
+/// Marks `bits` with the carriers of the derived ones (`DERIVED`): an extra's own, read of its code.
+#[inline(always)]
+pub const fn carried(bits: u32) -> u32 {
+    let mut r = bits;
+    if bits >> 1 & 1 == 1 {
+        r |= 1 << 0;
+    }
+    if bits >> 2 & 1 == 1 {
+        r |= 1 << 0;
+    }
+    if bits >> 3 & 1 == 1 {
+        r |= 1 << 0;
+    }
+    r
 }
 
 /// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's

@@ -470,7 +470,14 @@ impl<'a, L: Layout> P<'a, L> {
     /// for a mark whose token tests it leaves (`tier1::TESTED`, decision 0655 step 6), the tokens.
     #[inline(always)]
     fn bit_at(&self, j: usize, b: u32) -> bool {
-        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b) || crate::tier1::TESTED >> b & 1 == 1 && crate::tier1::tested(self.src, self.recs, self.xs, j, b))
+        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::DERIVED >> b & 1 == 1 && self.derived(j, b) || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b) || crate::tier1::TESTED >> b & 1 == 1 && crate::tier1::tested(self.src, self.recs, self.xs, j, b))
+    }
+
+    /// Derived mark `b` at token `j` (`tier1::DERIVED`): its carrier's bit there, and the word of the grammar token before.
+    #[inline(always)]
+    fn derived(&self, j: usize, b: u32) -> bool {
+        let p = self.prev_tok(j);
+        crate::tier1::derived(b, self.code_at(j) >> 16, if p < self.n { self.word_at(p) } else { 0 })
     }
 
     /// Gap mark `b` at token `j`, asked of the bytes since the grammar token before's first byte, as tier 1 reads a
@@ -487,7 +494,7 @@ impl<'a, L: Layout> P<'a, L> {
         if self.recs[j].code >> 16 & bits != 0 {
             return true;
         }
-        let mut ask = (crate::tier1::ASKED | crate::tier1::TESTED) & bits;
+        let mut ask = (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED) & bits;
         while ask != 0 {
             if self.bit_at(j, ask.trailing_zeros()) {
                 return true;

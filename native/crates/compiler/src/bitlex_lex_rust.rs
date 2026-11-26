@@ -6382,7 +6382,29 @@ impl Gen<'_> {
         // The same where tier 2 asks the token tests too (`tested`): no hits; and each gap mark's `unless`, by its bit.
         let mut gap_tested = String::new();
         let mut unless_of: HashMap<u8, String> = HashMap::new();
+        // The gap marks of one mask (one accumulator, one mask, one record test): tier 1 writes the bit of one with no
+        // `unless after`, its carrier, and tier 2 asks the others of it and the word before where a rule reads one
+        // (`DERIVED`, decision 0703), as the lean lexer gives a token one line-break flag (`nl`) and the lean parser
+        // asks `asi` of it. Not a mark with token tests, an `else escape`, an extra's own bits, or one asked of the bytes.
+        // An extra keeps a mark of its own gap where its carrier is an extra's too: there it is the carrier's bit (an extra's
+        // own bits have no `unless after`), as `carried` reads them.
+        let plain = |g: &Gap| !tests.iter().any(|t| t.5 == g.bit) && !unplaced_asks.iter().any(|u| u.0 == g.bit) && g.byte.is_none() && (g.acc.is_some() || g.mask.is_some() || g.rec.is_some());
+        let key = |g: &Gap| format!("{:?} {:?} {:?}", g.mask, g.acc, g.rec);
+        let mut derived: Vec<(u8, u8, String)> = Vec::new();
+        // Each mask's carrier: its mark of the lowest bit with no `unless after`.
+        let carrier = |g: &Gap| gaps.iter().filter(|c| plain(c) && c.unless.is_empty() && key(c) == key(g) && x.own >> c.bit & 1 == x.own >> g.bit & 1).map(|c| c.bit).min();
+        for g in gaps.iter().filter(|g| plain(g)) {
+            if let Some(c) = carrier(g).filter(|&c| c != g.bit) {
+                derived.push((g.bit, c, if g.unless.is_empty() { String::new() } else { format!(" && !matches!(before, {})", g.unless.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(" | ")) }));
+            }
+        }
         for g in &gaps {
+            if derived.iter().any(|d| d.0 == g.bit) {
+                let _ = write!(gap_code, "                // `{}`: its carrier's bit (`DERIVED`)\n", g.name);
+                let _ = write!(gap_asked, "                // `{}`: its carrier's bit (`DERIVED`)\n", g.name);
+                let _ = write!(gap_tested, "                // `{}`: its carrier's bit (`DERIVED`)\n", g.name);
+                continue;
+            }
             let since = match (&g.mask, g.acc) {
                 _ if let Some((j, a)) = &g.rec => match a {
                     None => format!("tested >> {} & 1 == 1 || rec_{j}", g.bit),
@@ -7339,7 +7361,7 @@ impl Gen<'_> {
             Some((p, ..)) if !p[6].is_empty() => test_asks.iter().fold(0u32, |m, a| m | 1 << a.0),
             _ => 0,
         };
-        let _ = write!(out, "\n/// The marks tier 1's records leave to tier 2 (decisions 0623, 0655): those it asks of the bytes (`ASKED`), those whose\n/// token tests it asks (`TESTED`), and the token marks its code reads no bit of (it asks them of the tokens).\npub const UNRECORDED: u32 = {:#x};\n", bits | tested_bits | unread);
+        let _ = write!(out, "\n/// The marks tier 1's records leave to tier 2 (decisions 0623, 0655): those it asks of the bytes (`ASKED`), those whose\n/// token tests it asks (`TESTED`), and the token marks its code reads no bit of (it asks them of the tokens).\npub const UNRECORDED: u32 = {:#x};\n", bits | tested_bits | unread | derived.iter().fold(0u32, |m, d| m | 1 << d.0));
         match &from_bytes {
             Some((p, ..)) if !p[6].is_empty() => {
                 let unless: String = (0..32u8).filter(|b| tested_bits >> b & 1 == 1).filter_map(|b| unless_of.get(&b).map(|u| format!("        {b} => {},\n", u.trim_start_matches(" && ")))).collect();
@@ -7352,6 +7374,25 @@ impl Gen<'_> {
             }
             _ => out.push_str("\n/// The marks whose token tests tier 2 asks (decision 0655 step 6): none, the records hold them.\npub const TESTED: u32 = 0;\n\n/// Whether a token test of mark `b` holds at grammar token `j`: never asked.\npub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {\n    let _ = (src, recs, xs, j, b);\n    false\n}\n"),
         }
+        let dbits = derived.iter().fold(0u32, |m, d| m | 1 << d.0);
+        let _ = write!(out, "\n/// The gap marks tier 1 writes one bit for, the carrier's, the others of its mask asked of it where a rule reads one\n/// (decision 0703), as the lean parser asks `asi` of a token's `nl`.\npub const DERIVED: u32 = {dbits:#x};\n\n/// Whether derived mark `b` holds at a token whose marks are `marks`, after a token of word `before`.\n#[inline(always)]\npub fn derived(b: u32, marks: u32, before: u32) -> bool {{\n");
+        if derived.is_empty() {
+            out.push_str("    let _ = (b, marks, before);\n    false\n}\n");
+        } else {
+            if derived.iter().all(|d| d.2.is_empty()) {
+                out.push_str("    let _ = before;\n");
+            }
+            out.push_str("    match b {\n");
+            for (b, c, u) in &derived {
+                let _ = writeln!(out, "        {b} => marks >> {c} & 1 == 1{u},");
+            }
+            out.push_str("        _ => false,\n    }\n}\n");
+        }
+        let _ = write!(out, "\n/// Marks `bits` with the carriers of the derived ones (`DERIVED`): an extra's own, read of its code.\n#[inline(always)]\npub const fn carried(bits: u32) -> u32 {{\n    let mut r = bits;\n");
+        for (b, c, _) in &derived {
+            let _ = writeln!(out, "    if bits >> {b} & 1 == 1 {{\n        r |= 1 << {c};\n    }}");
+        }
+        out.push_str("    r\n}\n");
         let _ = write!(out, "\n/// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's\n/// records hold only its token tests' hits of them.\npub const ASKED: u32 = {bits:#x};\n\n/// Whether gap mark `b` holds over `src[from..to]`, the bytes since the grammar token before's first byte (`before` its\n/// word), as the lean parser asks whether a token is on a line.\n#[inline]\npub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {{\n");
         if asked.is_empty() {
             out.push_str("    let _ = (src, from, to, before, b);\n    false\n}\n");

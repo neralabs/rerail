@@ -162,8 +162,17 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     let (starts, lasts) = (&run.positions[0], &run.positions[1]);
     // Tier 1 as Rust keeps the comments apart from the tokens (as the lean lexer); the interpreter's records hold both,
     // by where they start.
-    let mut recs: Vec<_> = lx.recs.iter().chain(&lx.extras).copied().collect();
-    recs.sort_by_key(|r| r.start);
+    // A derived mark (`tier1::DERIVED`, decision 0703) is in no record: its bit is what tier 2 asks of the record's
+    // carrier and the word of the grammar token before (an extra's, its carrier's, `carried`).
+    use rerail_kotlin_aot::{DERIVED, carried, derived};
+    let mut recs: Vec<(rerail_kotlin_aot::Rec, bool, u32)> = lx.recs.iter().enumerate().map(|(j, r)| (*r, false, j.checked_sub(1).map_or(0, |p| lx.recs[p].code >> 8 & 0xff))).chain(lx.extras.iter().map(|r| (*r, true, 0))).collect();
+    recs.sort_by_key(|r| r.0.start);
+    let asked = |(r, extra, before): &(rerail_kotlin_aot::Rec, bool, u32)| -> u32 {
+        let marks = r.code >> 16;
+        let d = (0..32).filter(|&b| DERIVED >> b & 1 == 1).fold(0u32, |m, b| m | u32::from(if *extra { carried(1 << b) & !(1 << b) & marks != 0 } else { derived(b, marks, *before) }) << b);
+        r.code | d << 16
+    };
+    let recs: Vec<rerail_kotlin_aot::Rec> = recs.iter().map(|x| rerail_kotlin_aot::Rec { code: asked(x), ..x.0 }).collect();
     let n = starts.len().max(recs.len());
     for k in 0..n {
         let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));

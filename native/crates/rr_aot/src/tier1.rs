@@ -561,6 +561,24 @@ pub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {
         || xs[k..].iter().take_while(|x| x.start < to).any(|x| token_test(src, n, x, true, b, false) || token_test(src, n, x, true, b, true))
 }
 
+/// The gap marks tier 1 writes one bit for, the carrier's, the others of its mask asked of it where a rule reads one
+/// (decision 0703), as the lean parser asks `asi` of a token's `nl`.
+pub const DERIVED: u32 = 0x0;
+
+/// Whether derived mark `b` holds at a token whose marks are `marks`, after a token of word `before`.
+#[inline(always)]
+pub fn derived(b: u32, marks: u32, before: u32) -> bool {
+    let _ = (b, marks, before);
+    false
+}
+
+/// Marks `bits` with the carriers of the derived ones (`DERIVED`): an extra's own, read of its code.
+#[inline(always)]
+pub const fn carried(bits: u32) -> u32 {
+    let mut r = bits;
+    r
+}
+
 /// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's
 /// records hold only its token tests' hits of them.
 pub const ASKED: u32 = 0x806;
