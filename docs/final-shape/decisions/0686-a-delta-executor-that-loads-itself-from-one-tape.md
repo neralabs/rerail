@@ -1342,9 +1342,7 @@ through read_placed and a placer" is still not built.
   next slab.
 - **No more per-document blocks.** The 80-times sparse reservation is gone.
 
-Not built yet: retiring a slab. Rooms whose bytes were housed already, and a re-read with no change, stay in their
-slab, as the residency's rooms do until it retires the slab whole. The directory keeps its slabs while it lives,
-which no block did differently before.
+(Superseded by "Slabs retired whole", below: a run now retires the slabs no document names.)
 
 Checks (Relax, local, 76 of 76):
 - `documents_share_a_slab_their_rooms_sealed_as_written`:
@@ -1378,3 +1376,31 @@ found ports passed as values and an untyped `CacheW`. Now:
 Checks (Relax, local): `a_port_set_whose_ports_are_not_its_counts_is_refused`. The toy's and L1's harnesses pass
 over the typed contract. The shape script holds the trait to P§12's associated types and typed signatures, and
 refuses a port read by a bare index.
+
+**Slabs retired whole** (B4, the residency's retirement). A run starts by retiring what the document set's
+committed state (the run's before) does not name (`DocSet::retire`). It does this once the set or the current slab
+has moved since it last retired.
+
+- **Live.** The live blobs are the source, tape and symbols of each row at the set's head.
+- **Retired.** A block is retired when it holds none of them and is not the slab rooms go to now
+  (`Blobs::retire`). The candidates are the blocks the blobs' rows name (slabs, and symbols blocks) and the
+  directory's slabs (`Directory::slabs`). The second set includes a slab whose rooms were all housed already, which
+  happens when a re-read in the racy window places the same bytes again.
+- **Letting go.** A retired block's blob rows go (−1), and the directory lets go of its own handle, so the block
+  goes once no reference or reader holds it. The observer's answers and the interned symbols that name a retired
+  blob are forgotten (`Files::forget`, `Interned::forget`), so the path is read again when next asked.
+- **When.** Retiring at the start of a run, rather than its end, keeps the last run's two states readable until the
+  next run starts.
+- **For tests.** `Directory::with_slab_bytes` sets a slab's size, so a test can give each document a slab of its
+  own.
+
+Checks (Relax, local, 78 of 78):
+
+- `a_run_retires_the_slabs_no_document_names`:
+  - each edit of l0 lies in a slab of its own, and after each run two slabs and six blobs are held (the run's
+    before and after);
+  - an unchanged run then retires the last edit's before, leaving the live document's three blobs, and over four
+    more unchanged runs the slabs never exceed three (the live document's, the one a racy re-read emptied, and the
+    current one);
+  - going back to l0, whose blobs were retired, reads it again, and its 14 rules are the cold run's.
+- The shape script refuses a run that does not retire.

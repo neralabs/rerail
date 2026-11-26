@@ -116,6 +116,8 @@ pub struct Directory {
     entries: Vec<Entry>,
     /// The slab documents' rooms go to now (`slab_room`).
     slab: Option<BlockId>,
+    /// A documents' slab's bytes (0: `SLAB_BYTES`).
+    slab_bytes: usize,
     kept: Option<PathBuf>,
     slabs: Option<Slabs>,
     ledger: Ledger,
@@ -328,7 +330,8 @@ impl Directory {
             return Ok((id, b));
         }
         self.sweep();
-        let bytes = SLAB_BYTES.max(BODY_AT + 8 + need + rerail_blocks::block::PAGE).next_multiple_of(rerail_blocks::block::PAGE);
+        let least = if self.slab_bytes == 0 { SLAB_BYTES } else { self.slab_bytes };
+        let bytes = least.max(BODY_AT + 8 + need + rerail_blocks::block::PAGE).next_multiple_of(rerail_blocks::block::PAGE);
         let need = rerail_blocks::alloc::Need { kind, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::May, ..rerail_blocks::alloc::Need::SLAB };
         let b = rerail_blocks::alloc::block(&need)?;
         let id = self.adopt_new(b, 8, None);
@@ -336,6 +339,26 @@ impl Directory {
         self.entries[id.0 as usize].sealed.set(b.used());
         self.slab = Some(id);
         Ok((id, b))
+    }
+
+    /// The directory with documents' slabs of `bytes` (a test's, to fill one in a few documents).
+    pub fn with_slab_bytes(self, bytes: usize) -> Directory {
+        Directory { slab_bytes: bytes, ..self }
+    }
+
+    /// The slabs alive: made by `slab_room`, and held by anything.
+    pub fn slabs(&self) -> Vec<BlockId> {
+        (0..self.entries.len() as u32).map(BlockId).filter(|&id| self.entries[id.0 as usize].sealed.get() > 0 && self.alive(id)).collect()
+    }
+
+    /// The slab documents' rooms go to now: never retired.
+    pub fn current_slab(&self) -> Option<BlockId> {
+        self.slab
+    }
+
+    /// Whether `id` is the slab documents' rooms go to now.
+    pub fn is_current_slab(&self, id: BlockId) -> bool {
+        self.slab == Some(id)
     }
 
     /// Seals slab `id`'s rooms written so far: fixed from now on.

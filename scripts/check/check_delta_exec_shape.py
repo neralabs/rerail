@@ -486,6 +486,9 @@ def b6(failures: list) -> None:
         failures.append("files.rs: a document's source and tape not rooms of a shared slab (the residency's, rerail_slabs)")
     if not re.search(r"alloc::block\(&need\)", dirs) or "Device::May" not in dirs:
         failures.append("dir.rs: a documents' slab not made by the block policy, as the device may read it (Need::SLAB, Device::May)")
+    boot = (CRATE / "src/boot.rs").read_text()
+    if "pub fn retire(" not in files or "dir.slabs()" not in files or "docs.retire(bench)?" not in boot:
+        failures.append("files.rs/boot.rs: a run does not retire the slabs and blocks no document names (the residency retires slabs whole)")
     interned = (TWINS / "src/intern.rs").read_text()
     if re.search(r"is_leaf\(n\)\s*\{\s*put\(", interned):
         failures.append("delta_twins/src/intern.rs: every leaf interned (intern names only identifiers and strings)")

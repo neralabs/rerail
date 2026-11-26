@@ -15,7 +15,10 @@
 //! the run's open layer on it (0686, "B2's trace: two states"), so `Pins` are where the last run left each trace,
 //! and hold nothing back: a cold run (`last = None`) has every bistate from ∅ (L2), its outputs emptied first; a
 //! later run is given the last run's pins (L3), and pins of any other state are refused. The instance's cache is
-//! read as ∅ unless it names the run's before (L5). The rest of B§8's run (the loop, loads, the program's δ) comes
+//! read as ∅ unless it names the run's before (L5). A run starts by retiring what the document set no longer names
+//! (`DocSet::retire`), once the set moved since it last did: the slabs and symbols blocks that hold no blob of its
+//! committed state, the run's before, as the residency retires its slabs whole after an execution. The last run's two
+//! states stay readable until the next run starts. The rest of B§8's run (the loop, loads, the program's δ) comes
 //! after the target.
 //!
 //! As agreed in B4, l0 is named by its path, which the file layer reads, not by a blob id the caller already holds.
@@ -23,7 +26,7 @@
 use crate::contract::{Bench, Global, GlobalIn, Instance, Work};
 use crate::dir::BlockId;
 use crate::drop::{DropOps, drop_parts};
-use crate::files::{Doc, Files};
+use crate::files::{BlobId, Doc, Files};
 use crate::intern::{InternOps, Interned};
 use crate::l1::{L1, tape_row, tape_shape};
 use crate::op::Tiling;
@@ -38,11 +41,30 @@ pub struct DocSet {
     pub drops: DropOps,
     /// A row a document (`l1::tape_shape`), its layers kept (no roll-up): a run's before is a layer in its chain.
     pub tape: Trace,
+    /// The set's state and the current slab when it last retired (`retire`).
+    retired: Option<(Option<BlockId>, Option<BlockId>)>,
 }
 
 impl DocSet {
     pub fn new(files: Files, iops: InternOps, drops: DropOps) -> Result<DocSet, String> {
-        Ok(DocSet { files, interned: Interned::default(), iops, drops, tape: Trace::new(&tape_shape())?.with_roll_up(RollUp::Never) })
+        Ok(DocSet { files, interned: Interned::default(), iops, drops, tape: Trace::new(&tape_shape())?.with_roll_up(RollUp::Never), retired: None })
+    }
+
+    /// Retires what the set's committed state does not name, once the set or the current slab moved since it last
+    /// did (as the residency retires slabs whole): the blocks that hold none of its live rows' blobs
+    /// (`Blobs::retire`), and the answers that name what they held. The blobs retired.
+    pub fn retire(&mut self, bench: &mut Bench) -> Result<usize, String> {
+        let at = (self.tape.head(), bench.dir.current_slab());
+        if self.retired == Some(at) {
+            return Ok(0);
+        }
+        self.retired = Some(at);
+        let rows = crate::contract::rows_at(&bench.dir, &self.tape, self.tape.head())?;
+        let live: Vec<BlobId> = rows.iter().flat_map(|r| [1, 5, 9].map(|c| BlobId::of_words(&r[c..c + 4]))).collect(); // copy: derived (the live documents' blobs)
+        let gone = bench.blobs.retire(&bench.reg, &mut bench.dir, &live)?;
+        self.files.forget(&gone);
+        self.interned.forget(&gone);
+        Ok(gone.len())
     }
 
     /// Reads document `path` (B§8's first line): its answer; when it changed, its tape interned into `atoms`, and the
@@ -96,6 +118,7 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, globals: Atoms, docs: &mut Do
         Some(_) => {}
         None => inst.outs.iter_mut().for_each(|t| t.clear(&mut bench.dir)),
     }
+    docs.retire(bench)?;
     let doc = docs.read(bench, globals, l0)?;
     let count = u64::from(globals.count(&bench.dir));
     let ins = [(&docs.tape, last.and_then(|p| p.tape), docs.tape.head())];

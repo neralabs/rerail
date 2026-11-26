@@ -105,6 +105,11 @@ pub struct Interned {
 }
 
 impl Interned {
+    /// Forgets the symbols blobs of `gone` (retired), and those of tapes in it.
+    pub fn forget(&mut self, gone: &[BlobId]) {
+        self.syms.retain(|(_, tape), syms| !gone.contains(tape) && !gone.contains(syms));
+    }
+
     /// Document `doc`'s symbols blob: kept when its tape was interned at its path, else `intern`'s.
     #[allow(clippy::too_many_arguments)]
     pub fn of(&mut self, reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut Blobs, atoms: Atoms, doc: &Doc) -> Result<BlobId, String> {

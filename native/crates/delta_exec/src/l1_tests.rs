@@ -240,3 +240,45 @@ fn l1s_cache_sizes_its_runs_and_dropped_costs_an_attempt_not_an_answer() {
         assert_eq!((&got.0, &got.1), (&want[k].added, &want[k].gone), "{}", RELATIONS[k].0);
     }
 }
+
+/// A run retires what the document set no longer names (as the residency retires slabs whole): edit after edit, the
+/// slabs and symbols blocks of the tapes before the last run's are let go and their blobs forgotten, so what is held
+/// stays the last run's two states; the live document still reads, and an unchanged run retires nothing.
+#[test]
+fn a_run_retires_the_slabs_no_document_names() {
+    let mut bench = Bench::new().unwrap();
+    // Slabs of no more than a document's need, and each version of l0 64 KB longer than the last (a comment): its
+    // room, at the tape's bound, is past what the last one's slab has left, so each lies in a slab of its own.
+    bench.dir = Directory::default().with_slab_bytes(1);
+    let mut disk = Disk::new(&mut bench, "b6-retire");
+    disk.run(&mut bench).unwrap();
+    let [added, changed, removed] = edits();
+    let pad = |k: usize| format!("// {}\n", "x".repeat(64 << 10)).repeat(k + 1);
+    for (k, text) in [added, changed, removed].iter().enumerate() {
+        disk.edit(&format!("{text}{}", pad(k)), 40 - 10 * k as u64);
+        disk.run(&mut bench).unwrap();
+        // The run's before and after: two documents, each its slab and its source, tape and symbols.
+        assert_eq!(bench.dir.slabs().len(), 2, "edit {k}: {:?}", bench.dir.slabs());
+        assert_eq!(bench.blobs.len(&bench.dir).unwrap(), 6, "edit {k}");
+    }
+    let before = (bench.dir.slabs(), bench.blobs.len(&bench.dir).unwrap());
+    let (_, work) = disk.run(&mut bench).unwrap();
+    assert!(work.is_checks_only());
+    // Its start retired the before of the last edit: the live document's blobs alone. A re-read in the racy window
+    // places the file again in a slab of its own, the same bytes housed already: that slab holds no blob, and goes
+    // at the next run's start, once it is no longer the one rooms go to. So unchanged runs hold at most the live
+    // document's slab, the one the last re-read emptied and the current one: the count does not grow.
+    for k in 0..4 {
+        let (_, work) = disk.run(&mut bench).unwrap();
+        assert!(work.is_checks_only());
+        let slabs = bench.dir.slabs();
+        assert_eq!(bench.blobs.len(&bench.dir).unwrap(), 3, "unchanged run {k}: the live document's blobs alone ({before:?})");
+        assert!(slabs.len() <= 3, "unchanged run {k}: {before:?} → {slabs:?}");
+    }
+    let rules = |disk: &Disk, bench: &Bench| rows_at(&bench.dir, &disk.inst.outs[0], disk.inst.outs[0].head()).unwrap().len();
+    assert_eq!(rules(&disk, &bench), 14, "the live document's 14 rules");
+    // Back to l0, whose blobs were retired: read again, its rows the cold run's.
+    disk.edit(L0, 5);
+    disk.run(&mut bench).unwrap();
+    assert_eq!(rules(&disk, &bench), 14);
+}

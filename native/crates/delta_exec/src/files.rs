@@ -120,6 +120,29 @@ impl Blobs {
         Ok((id, true))
     }
 
+    /// Retires the blocks that hold no blob of `live` (the residency's retirement, whole slabs): the blocks its rows
+    /// name and the directory's slabs, a slab whose rooms were all housed already (a re-read of the same bytes) among
+    /// them. Their blobs' rows go (−1), and the directory's own handle is let go, so each goes once no reference or
+    /// reader holds it. The slab rooms go to now is kept. The blobs forgotten.
+    pub fn retire(&mut self, reg: &Registry, dir: &mut Directory, live: &[BlobId]) -> Result<Vec<BlobId>, String> {
+        let rows = rows_at(dir, &self.rows, self.rows.head())?;
+        let mut blocks: Vec<(u32, bool)> = rows.iter().map(|r| (r[4] as u32, live.contains(&BlobId::of_words(&r[..4])))).collect(); // copy: derived (each blob's block, and whether it is live)
+        blocks.sort_unstable();
+        let held: Vec<u32> = blocks.iter().filter(|b| b.1).map(|b| b.0).collect(); // copy: derived (the blocks a live blob lies in)
+        let retired = |b: u32| !held.contains(&b) && !dir.is_current_slab(BlockId(b));
+        let gone: Vec<(Vec<i64>, i32)> = rows.iter().filter(|r| retired(r[4] as u32)).map(|r| (r.clone(), -1)).collect(); // copy: derived (the retired blobs' rows, killed)
+        let mut freed: Vec<u32> = gone.iter().map(|(r, _)| r[4] as u32).chain(dir.slabs().into_iter().map(|s| s.0).filter(|&s| retired(s))).collect(); // copy: derived (the blocks retired)
+        freed.sort_unstable();
+        freed.dedup();
+        if !gone.is_empty() {
+            push_layer(reg, &self.ops, dir, &mut self.rows, &gone)?;
+        }
+        for b in freed {
+            dir.release(BlockId(b));
+        }
+        Ok(gone.iter().map(|(r, _)| BlobId::of_words(&r[..4])).collect())
+    }
+
     /// How many it holds.
     pub fn len(&self, dir: &Directory) -> Result<usize, String> {
         Ok(rows_at(dir, &self.rows, self.rows.head())?.len())
@@ -182,6 +205,11 @@ pub struct Files {
 impl Files {
     pub fn new(root: PathBuf, store: PathBuf) -> Files {
         Files { root, store, kept: HashMap::new(), reads: 0 }
+    }
+
+    /// Forgets its answers that name a blob of `gone` (retired): their paths are read again when next asked.
+    pub fn forget(&mut self, gone: &[BlobId]) {
+        self.kept.retain(|_, (_, d)| !gone.contains(&d.source) && !gone.contains(&d.tape));
     }
 
     /// The observer's counts (its stats, reuses, files read and hashed).
