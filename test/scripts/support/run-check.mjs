@@ -50,4 +50,4 @@ export function runCheck(script, files) {
 }
 
 /** The `path:line` of each problem a check printed to standard error (`path:line: [rule] message`). */
-export const places = stderr => stderr.split("\n").filter(Boolean).map(line => line.slice(0, line.indexOf(": ")));
+export const printedPlaces = stderr => stderr.split("\n").filter(Boolean).map(line => line.slice(0, line.indexOf(": ")));

@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import { ownedBuiltinProblems, RULES } from "../../../scripts/check/check-owned-builtins.mjs";
-import { places, runCheck } from "../support/run-check.mjs";
+import { printedPlaces, runCheck } from "../support/run-check.mjs";
 
 const rules = (problems) => problems.map(({ path, line, rule }) => `${path}:${line}:${rule}`);
 const rule = (id) => RULES.find(row => row.id === id);
@@ -188,7 +188,7 @@ describe("check-owned-builtins", () => {
 
   it("exits 1 as a process, naming the file and line of each built-in reached past its owner", () => {
     const run = runCheck("check-owned-builtins.mjs", { ...OWNED, "src/b.ts": 'import { execFile } from "node:child_process";\n' });
-    expect(places(run.stderr)).toEqual(["src/b.ts:1"]);
+    expect(printedPlaces(run.stderr)).toEqual(["src/b.ts:1"]);
     expect(run.status).toBe(1);
   });
 });

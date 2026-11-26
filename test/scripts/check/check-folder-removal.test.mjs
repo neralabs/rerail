@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { EXEMPT, folderRemovalProblems, HELPER } from "../../../scripts/check/check-folder-removal.mjs";
-import { places, runCheck } from "../support/run-check.mjs";
+import { printedPlaces, runCheck } from "../support/run-check.mjs";
 
 const rules = (problems) => problems.map(({ path, line, rule }) => `${path}:${line}:${rule}`);
 
@@ -60,7 +60,7 @@ describe("check-folder-removal", () => {
       ...CLEAN,
       "test/c.test.ts": 'import { rmSync } from "node:fs";\nrmSync(root, { recursive: true, force: true });\n',
     });
-    expect(places(run.stderr)).toEqual(["test/c.test.ts:2"]);
+    expect(printedPlaces(run.stderr)).toEqual(["test/c.test.ts:2"]);
     expect(run.status).toBe(1);
   });
 });
