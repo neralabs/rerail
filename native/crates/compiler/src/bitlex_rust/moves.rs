@@ -529,35 +529,6 @@ pub(crate) fn no_refusing(b: &mut Block) {
     takes_in(b, &mut |_, nf, _| *nf = true);
 }
 
-/// `b` with each test of words that lists four or more alone (no run of their numbers), of classes apart (`table`
-/// says, and names it), one table's read, as the lean parser's `modifier(code)` reads one `match`.
-pub(crate) fn word_tables(b: &mut Block, table: &dyn Fn(&[String]) -> Option<String>) {
-    let cond = |c: &mut Cond| {
-        c.each(&mut |c| {
-            if let Cond::Word { at, ws } = c
-                && word_pattern(ws).split(" | ").filter(|p| !p.contains("..=")).count() >= 4
-                && let Some(t) = table(ws)
-            {
-                *c = Cond::Class { at: *at, table: t };
-            }
-        })
-    };
-    blocks(b, &mut |x| {
-        for op in x.iter_mut() {
-            match op {
-                Op::If { arms, .. } => arms.iter_mut().for_each(|(c, _)| cond(c)),
-                Op::While(c, _) => cond(c),
-                Op::Take { take, .. } => {
-                    if let Some(c) = take.test_mut() {
-                        cond(c);
-                    }
-                }
-                _ => {}
-            }
-        }
-    });
-}
-
 /// `b` with each test of every word of a choice of tokens (`anon`: each one's table and words) that choice's test,
 /// the other words after it: one test where the grammar lists the choice's words (decision 0685 step 3).
 pub(crate) fn classes(b: &mut Block, anon: &[(String, HashSet<String>)]) {
