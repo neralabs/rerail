@@ -1,4 +1,4 @@
-.policy "ruff-com818-trailing-comma-on-bare-tuple" revision 2
+.policy "ruff-com818-trailing-comma-on-bare-tuple" revision 4
 .description "Remove a stray comma at the end of a statement, or parenthesize the tuple; a trailing comma silently turns the value into a tuple."
 .language python
 .mode steer
@@ -15,14 +15,14 @@
 //   foo = 1,; bar = 2            not reported: a `;` follows
 #include "python/ast.rerail"
 
-.violation COM818(at: node) code "COM818"
+.violation COM818(at: span) code "COM818"
     "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`."
     suppress ruff "COM818"
-// The bare tuple is an expression_list of one element, ending where the statement does; the tape stores no
-// comma there, as the grammar implies it (decision 0161), so the finding is on the tuple, and a `;` after it is the
-// statement's next stored token.
-COM818(x) :- (kind(p, "module") ; kind(p, "block")), child(p, s, _), node(_, s, _, _, e), kind(x, "expression_list"),
-    node(_, x, _, _, e), (x = s ; within(x, s)), count : { child(x, c, _), !kind(c, "comment") } = 1,
-    !semicolon_after(s).
+// A simple statement is a bare tuple exactly when its source ends at a comma (allowing comments and explicit line
+// continuations). Capture the final comma from the statement span so multiline findings keep Ruff's line. A later
+// semicolon means the comma did not end the logical line.
+COM818(c) :- (kind(p, "module") ; kind(p, "block")), child(p, s, _),
+    (kind(s, "expression_statement") ; kind(s, "return_statement")),
+    match("[\\s\\S]*(?<c>,)[ \\t]*(?:#[^\\r\\n]*)?[\\s\\\\]*", s), !semicolon_after(s).
 .decl semicolon_after(s: node)
 semicolon_after(s) :- token_after(s, u), text(u, ";").

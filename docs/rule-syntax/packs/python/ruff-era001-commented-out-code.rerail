@@ -1,4 +1,4 @@
-.policy "ruff-era001-commented-out-code" revision 2
+.policy "ruff-era001-commented-out-code" revision 3
 .description "Remove commented-out code; version control keeps the history, and dead code left in comments goes stale."
 .language python
 .mode steer
@@ -67,6 +67,9 @@ era_header(l) :- era_line(_, l), (match("(?:elif\\s+.*\\s*:.*|else\\s*:.*|try\\s
 .decl era_parses(l: symbol)
 era_parses(l) :- era_line(_, l), strlen(l) <= 200, era_bal(4, b), match(cat(b, "(?:#.*)?"), l), era_re("STMT", r),
     match(r, l), !era_bad(l).
+// PEP 701 permits the quote that delimits an f-string inside its replacement field. The small string balancer
+// cannot model that nesting, but this common assignment form still has a closed replacement field and outer quote.
+era_parses(l) :- era_line(_, l), match("[A-Za-z_][A-Za-z0-9_]*\\s*=\\s*[fF](?:\"\\{[^\\n]+\\}\"|'\\{[^\\n]+\\}')", l).
 // era_bad(l): before any string or `#`, two operands in a row (a number or a closing bracket, then a name or
 // number: `OK (88 characters)`, `foo() bar`), or an operator before a keyword that cannot start an operand
 // (`[useless-else-on-loop]`, `(and x)`).
@@ -92,10 +95,10 @@ era_re("BIN", "(?:[-+*/%&|^@<>]|//|\\*\\*|<<|>>|==|!=|<=|>=|not\\s+in\\b|in\\b|i
 era_re("EXPR", cat("(?:(?:lambda\\b[^:]*:\\s*)?", r_opd, "(?:\\s*", r_bin, "\\s*(?:lambda\\b[^:]*:\\s*)?", r_opd, ")*)")) :- era_re("OPD", r_opd), era_re("BIN", r_bin).
 era_re("LIST", cat("(?:\\*?", r_expr, "(?:\\s*,\\s*\\*?", r_expr, ")*(?:\\s*,)?)")) :- era_re("EXPR", r_expr).
 era_re("TGTS", cat("(?:", r_tgt, "(?:\\s*,\\s*", r_tgt, ")*(?:\\s*,)?)")) :- era_re("TGT", r_tgt).
-era_re("IMP", cat("(?:import\\s+[\\w.]+(?:\\s+as\\s+", r_n, ")?(?:\\s*,\\s*[\\w.]+(?:\\s+as\\s+", r_n, ")?)*|from\\s+\\.*[\\w.]*\\s+import\\s+(?:\\*|\\(?\\s*", r_n, "(?:\\s+as\\s+", r_n, ")?(?:\\s*,\\s*", r_n, "(?:\\s+as\\s+", r_n, ")?)*\\s*,?\\s*\\)?))")) :- era_re("N", r_n).
+era_re("IMP", cat("(?:(?:lazy\\s+)?import\\s+[\\w.]+(?:\\s+as\\s+", r_n, ")?(?:\\s*,\\s*[\\w.]+(?:\\s+as\\s+", r_n, ")?)*|(?:lazy\\s+)?from\\s+\\.*[\\w.]*\\s+import\\s+(?:\\*|\\(?\\s*", r_n, "(?:\\s+as\\s+", r_n, ")?(?:\\s*,\\s*", r_n, "(?:\\s+as\\s+", r_n, ")?)*\\s*,?\\s*\\)?))")) :- era_re("N", r_n).
 era_re("KW", cat("(?:return(?:\\s+", r_list, ")?|pass|break|continue|raise(?:\\s+", r_expr, "(?:\\s+from\\s+", r_expr, ")?)?|del\\s+", r_list, "|(?:global|nonlocal)\\s+", r_n, "(?:\\s*,\\s*", r_n, ")*|assert\\s+", r_expr, "(?:\\s*,\\s*", r_expr, ")?|yield(?:\\s+from)?(?:\\s+", r_list, ")?)")) :- era_re("LIST", r_list), era_re("EXPR", r_expr), era_re("N", r_n).
 era_re("SIMPLE", cat("(?:", r_list, "|(?:", r_tgts, "\\s*=\\s*)+(?:", r_list, "|yield\\b.*)|", r_tgt, "\\s*(?:[-+*/%&|^@]|//|\\*\\*|<<|>>)=\\s*", r_list, "|", r_tgt, "\\s*:\\s*", r_expr, "(?:\\s*=\\s*", r_list, ")?|", r_kw, "|", r_imp, ")")) :- era_re("LIST", r_list), era_re("TGTS", r_tgts), era_re("TGT", r_tgt), era_re("EXPR", r_expr), era_re("KW", r_kw), era_re("IMP", r_imp).
-era_re("HEAD", cat("(?:(?:if|elif|while)\\s+", r_expr, "|(?:async\\s+)?for\\s+", r_tgts, "\\s+in\\s+", r_list, "|(?:async\\s+)?with\\s+", r_expr, "(?:\\s+as\\s+", r_tgt, ")?(?:\\s*,\\s*", r_expr, "(?:\\s+as\\s+", r_tgt, ")?)*|(?:async\\s+)?def\\s+", r_n, "\\s*\\(.*\\)(?:\\s*->\\s*", r_expr, ")?|class\\s+", r_n, "(?:\\s*\\[.*\\])?(?:\\s*\\(.*\\))?)\\s*:\\s*", r_simple)) :- era_re("EXPR", r_expr), era_re("TGTS", r_tgts), era_re("LIST", r_list), era_re("TGT", r_tgt), era_re("N", r_n), era_re("SIMPLE", r_simple).
+era_re("HEAD", cat("(?:(?:if|elif|while)\\s+", r_expr, "|(?:async\\s+)?for\\s+", r_tgts, "\\s+in\\s+", r_list, "|(?:async\\s+)?with\\s+", r_expr, "(?:\\s+as\\s+", r_tgt, ")?(?:\\s*,\\s*", r_expr, "(?:\\s+as\\s+", r_tgt, ")?)*|(?:async\\s+)?def\\s+", r_n, "(?:\\s*\\[.*\\])?\\s*\\(.*\\)(?:\\s*->\\s*", r_expr, ")?|class\\s+", r_n, "(?:\\s*\\[.*\\])?(?:\\s*\\(.*\\))?)\\s*:\\s*", r_simple)) :- era_re("EXPR", r_expr), era_re("TGTS", r_tgts), era_re("LIST", r_list), era_re("TGT", r_tgt), era_re("N", r_n), era_re("SIMPLE", r_simple).
 era_re("STMT", cat("(?:", r_head, "|", r_simple, "(?:\\s*;\\s*", r_simple, ")*\\s*;?)\\s*(?:#.*)?")) :- era_re("HEAD", r_head), era_re("SIMPLE", r_simple).
 
 // era_script(c): c lies in a PEP 723 block: a line `# /// script`, then lines `#` or `# …` (from column 0) up to the

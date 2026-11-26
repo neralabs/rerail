@@ -1,4 +1,4 @@
-.policy "ruff-fast001-fast-api-redundant-response-model" revision 2
+.policy "ruff-fast001-fast-api-redundant-response-model" revision 3
 .description "Remove a FastAPI route's response_model argument when it repeats the return annotation; FastAPI already infers the response model from it."
 .language python
 .mode steer
@@ -20,8 +20,8 @@
 .violation FAST001(at: node) code "FAST001"
     "Remove `{at}`: FastAPI 0.89 and newer already use the route's return annotation, which names the same type. Keep it on older versions."
     suppress ruff "FAST001"
-FAST001(k) :- fast_route(f, dc), call_kwarg(dc, "response_model", v), ast_up(v, k), kind(k, "keyword_argument"),
-    field(f, "return_type", r0), fast_strip(r0, r),
+FAST001(k) :- fast_route(f, dc), call_kwarg(dc, "response_model", v0), ast_up(v0, k), kind(k, "keyword_argument"),
+    fast_strip(v0, v), field(f, "return_type", r0), fast_strip(r0, r),
     plain_type(v), plain_type(r), flat(v, x), flat(r, x), docof(f, d), !future_annotations(d), !targets(14).
 // plain_type(e): e is a name, or a subscript of names, each resolving to a binding made before it (or a
 // builtin), as Ruff's is_identical_types compares them: an undefined `Foo` matches nothing.
@@ -36,6 +36,9 @@ resolved(n) :- perf_latest_site(n, _).
 resolved(n) :- builtin_ref(n, _).
 .decl type_part(n: node)
 type_part(n) :- kind(n, k), (k = "subscript" ; k = "generic_type" ; k = "type_parameter" ; k = "type" ; k = "tuple" ;
-    k = "comment").
-.decl flat(e: node, x: symbol)  // the text without whitespace: `Dict[str, Item]` and `Dict[str,Item]` agree
-flat(e, @replace_all(@replace_all(y, "#[^\\n]*", ""), "\\s", "")) :- plain_type(e), text(e, y).
+    k = "parenthesized_expression" ; k = "comment").
+.decl flat(e: node, x: symbol)  // comparison ignores whitespace, comments, grouping parentheses and trailing commas
+flat(e, x) :- plain_type(e), text(e, y), a = @replace_all(@replace_all(y, "#[^\\n]*", ""), "\\s", ""),
+    b = @replace_all(a, "\\(([A-Za-z_][A-Za-z0-9_.]*)\\)", "$1"),
+    c = @replace_all(b, "\\(([A-Za-z_][A-Za-z0-9_.]*)\\)", "$1"),
+    d = @replace_all(c, "\\(([A-Za-z_][A-Za-z0-9_.]*)\\)", "$1"), x = @replace_all(d, ",]", "]").

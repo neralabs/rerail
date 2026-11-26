@@ -1,0 +1,82 @@
+[
+  {
+    "id": "ruff-com818-trailing-comma-on-bare-tuple",
+    "status": "same"
+  },
+  {
+    "id": "ruff-era001-commented-out-code",
+    "status": "different",
+    "reason": "Ruff and the JSON do not report prose comments such as `# SIM103 (but not fixable)` or `# (See: http://example.test/revision)`. The translation's bounded regex grammar accepts 22 such fixture lines and 24 sample lines as Python. Exact parity needs a demand-driven native `py_parses(symbol)` relation using Ruff's Python parser.",
+    "right": "original",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 22
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 24
+      }
+    }
+  },
+  {
+    "id": "ruff-fast001-fast-api-redundant-response-model",
+    "status": "different",
+    "reason": "For `response_model=List[Item,]` versus `-> List[Item]`, Ruff reports FAST001 and so does the translation; the JSON original does not. Ruff treats the trailing subscript comma as insignificant when comparing these types.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-fix002-line-contains-todo",
+    "status": "same"
+  },
+  {
+    "id": "ruff-fly002-static-join-to-f-string",
+    "status": "different",
+    "reason": "Ruff and the JSON inspect expressions parsed from string annotations, including `x: \"''.join([a, b])\"`. The translation's ordinary tree relations do not receive those guest calls; explicitly demanding `parsed_in` and replacing child aggregates with an index walk still yielded no guest findings.",
+    "right": "original",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 4,
+        "translationOnly": 0
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-icn001-unconventional-import-alias",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pgh005-invalid-mock-access",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pie794-duplicate-class-field-definition",
+    "status": "same"
+  }
+]

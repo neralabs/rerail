@@ -1,4 +1,4 @@
-.policy "ruff-pgh005-invalid-mock-access" revision 2
+.policy "ruff-pgh005-invalid-mock-access" revision 3
 .description "Call mock assertion methods instead of only referencing them, and use their real assert-prefixed names; a bare attribute or an invented method name verifies nothing."
 .language python
 .mode steer
@@ -19,10 +19,14 @@ PGH005(e, cat(cat("Call `", m), "(...)` with the expected arguments; written as 
     kind(st, "expression_statement"), child(st, v, 0), !child(st, _, 1), unparen(v, e), attr_of(e, _, m),
     pgh005_assert_method(m).
 PGH005(t, cat(cat(cat(cat("`", m), "` is not a mock method, so on a mock this assert always passes; call `assert_"), m), "(...)` as a plain statement. Leave it if the object is not a mock and defines it.")) :-
-    kind(a, "assert_statement"), child(a, x, 0), unparen(x, t), pgh005_attr(t, m), pgh005_missing(m).
+    pgh005_assert_value(a, x), unparen(x, t), pgh005_attr(t, m), pgh005_missing(m).
+.decl pgh005_assert_value(a: node, x: node)
+pgh005_assert_value(a, x) :- kind(a, "assert_statement"), child(a, x, i), !kind(x, "comment"),
+    !kind(x, "line_continuation"), count : { child(a, y, j), j < i, !kind(y, "comment"),
+    !kind(y, "line_continuation") } = 0.
 .decl pgh005_attr(t: node, m: symbol)
 pgh005_attr(t, m) :- attr_of(t, _, m).
-pgh005_attr(t, m) :- kind(t, "call"), field(t, "function", f), attr_of(f, _, m).
+pgh005_attr(t, m) :- kind(t, "call"), field(t, "function", f0), unparen(f0, f), attr_of(f, _, m).
 // The real assertion methods of Mock and AsyncMock, and the names people write for them without `assert_`.
 .decl pgh005_assert_method(m: symbol)
 pgh005_assert_method(cat("assert_", m)) :- pgh005_missing(m).
