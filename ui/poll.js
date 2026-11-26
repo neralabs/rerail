@@ -13,7 +13,7 @@
  * sheet's, from `views/index.js`). Long lists are paged with a cursor: a poll refreshes their first page and keeps the
  * further pages the person loaded.
  */
-import { ACCESS_KEY, follow, get, send } from "./api.js";
+import { ACCESS_KEY, follow, get, madeButUnconfirmed, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { toStoredRules } from "./derive.js";
 import { historyRuleId } from "./history-model.js";
@@ -150,24 +150,25 @@ export async function sendInScope(scope, method, path, body) {
 
 /**
  * The last attachment write queued on this page: the scope `token` it was clicked in, whether it is still
- * `pending`, whether it was sent and answered OK (`clear`), and `settled` once those are known.
+ * `pending`, whether it was sent and its change made (`clear`: answered OK or `madeButUnconfirmed`), and `settled`
+ * once those are known.
  */
 let lastAttachmentWrite = { token: generation, pending: false, clear: true, settled: Promise.resolve() };
 
 /**
  * `sendInScope` for attachment writes, in click order. The place is taken at the call, while `body` (the body, or a
  * promise of it, `null` to send nothing) may still be loading. A write called while an earlier one in the same
- * scope is still pending is sent once that one is answered OK, and dropped (resolves `false`, nothing sent) when it
- * failed or was dropped. Each was clicked against the state the earlier ones would make: a pack added behind a
- * set-up that failed would set the repository up with that pack alone. Rejects when its own body fails to load, as
- * when its send fails, and like a send only while the page still shows the scope: a failure after a switch resolves
- * `false`, so no rollback lands on the other repository's page. A scope switch starts a new queue.
+ * scope is still pending is sent once that one's change is made (`clear`), and dropped (resolves `false`, nothing
+ * sent) when it failed or was dropped. Each was clicked against the state the earlier ones would make: a pack added
+ * behind a set-up that failed would set the repository up with that pack alone. Rejects when its own body fails to
+ * load, as when its send fails, and like a send only while the page still shows the scope: a failure after a switch
+ * resolves `false`, so no rollback lands on the other repository's page. A scope switch starts a new queue.
  */
 export function queueInScope(scope, method, path, body) {
   const before = lastAttachmentWrite;
   const waits = before.pending && before.token === scope.token;
   const ready = Promise.resolve(body);
-  // Read only once the writes before it went out OK; a dropped write's failing body is nobody's error.
+  // Read only once the writes before it made their change (`clear`); a dropped write's failing body is nobody's error.
   ready.catch(() => {});
   const sending = (async () => {
     if (waits) {
@@ -186,7 +187,7 @@ export function queueInScope(scope, method, path, body) {
   const write = { token: scope.token, pending: true, clear: false, settled: null };
   write.settled = sending.then(
     sent => { write.pending = false; write.clear = sent; },
-    () => { write.pending = false; },
+    error => { write.pending = false; write.clear = madeButUnconfirmed(error); },
   );
   lastAttachmentWrite = write;
   return sending;
@@ -278,7 +279,8 @@ export async function loadFollowGitignore() {
 
 /**
  * Settings: turn the scoped repository's Follow .gitignore on or off. The page shows it at once and puts it back, with
- * a toast, when the write fails; nothing of the answer lands once the page shows another repository.
+ * a toast, when the write fails (a change made but not confirmed on the disk stays, with the daemon's words); nothing
+ * of the answer lands once the page shows another repository.
  */
 export async function saveFollowGitignore(follow, { toast, invalidate }) {
   const scope = captureScope(), was = data.followGitignore;
@@ -287,7 +289,7 @@ export async function saveFollowGitignore(follow, { toast, invalidate }) {
     if (!(await sendInScope(scope, "PUT", "/api/repository/follow-gitignore", { followGitignore: follow }))) return;
     toast(follow ? "New sessions skip Git-ignored files." : "New sessions include Git-ignored files.");
   } catch (error) {
-    data.followGitignore = was;
+    if (!madeButUnconfirmed(error)) data.followGitignore = was;
     toast(failed("Couldn’t change Follow .gitignore", error));
   }
   invalidate();
@@ -306,6 +308,21 @@ export async function recommendationsFor(scope) {
   const { body } = await get(`/api/rule-packs/recommendations?${new URLSearchParams(scope.target)}`);
   if (inScope(scope)) data.recommendations = body.recommendations;
   return body.recommendations;
+}
+
+/**
+ * The rule packs published on npm for a captured scope's target, kept for the page only while it still shows that
+ * scope. A daemon that reads no npm has none to list, which is no failure; any other failed read is kept as why.
+ */
+export async function publishedPacksFor(scope) {
+  let published;
+  try {
+    const { body } = await get(`/api/rule-packs/published?${new URLSearchParams(scope.target)}`);
+    published = { packs: body.packs, unread: body.unread ?? null };
+  } catch (error) {
+    published = { packs: [], unread: error.code === "published-packs-unavailable" ? null : error.apiMessage ?? error.message };
+  }
+  if (inScope(scope)) data.publishedPacks = published;
 }
 
 async function loadActivity(since, target) {
@@ -1158,7 +1175,7 @@ export function changeScope(scope) {
   Object.assign(data, {
     repository: null, checkout: null, rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
     activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),
-    sessionFindings: pagedList(), recentSessions: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
+    sessionFindings: pagedList(), recentSessions: null, recommendations: null, publishedPacks: null, followGitignore: null, loaded: false, missing: false,
     mergeAssist: null, mergeAssistError: null, behindSince: 0,
   });
   mergeAssistRead = { at: 0, loading: null, generation: -1 };

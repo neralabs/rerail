@@ -302,11 +302,14 @@ async function checkoutWithSubmodules(root: string, count: number): Promise<stri
   return work;
 }
 
-/** `rerail scan --scope git-diff --json` in `cwd` with no daemon: its exit code, and the paths its report lists. */
-async function scannedPaths(cwd: string, env: NodeJS.ProcessEnv): Promise<[number, unknown]> {
+/**
+ * `rerail scan --scope git-diff --json` in `cwd` with no daemon: its exit code, the paths its report lists, and what it
+ * printed to stderr where it exited with another code than 0, so a scan that failed says why in the case's failure.
+ */
+async function scannedPaths(cwd: string, env: NodeJS.ProcessEnv): Promise<[number, unknown, string]> {
   const ended = await run(process.execPath, [cli, "scan", "--scope", "git-diff", "--json"], { cwd, env }).then(
-    ({ stdout }) => ({ code: 0, stdout }),
-    (error: { code?: number; stdout?: string }) => ({ code: error.code ?? -1, stdout: error.stdout ?? "" }),
+    ({ stdout }) => ({ code: 0, stdout, stderr: "" }),
+    (error: { code?: number; stdout?: string; stderr?: string }) => ({ code: error.code ?? -1, stdout: error.stdout ?? "", stderr: error.stderr ?? "" }),
   );
   const report = ((): { paths?: unknown } => {
     try {
@@ -315,7 +318,7 @@ async function scannedPaths(cwd: string, env: NodeJS.ProcessEnv): Promise<[numbe
       return {};
     }
   })();
-  return [ended.code, report.paths];
+  return [ended.code, report.paths, ended.stderr];
 }
 
 describe("rerail scan with no daemon", () => {
@@ -326,8 +329,8 @@ describe("rerail scan with no daemon", () => {
 
     const scans = [await scannedPaths(await checkoutWithSubmodule(root, "whole"), env), await scannedPaths(await checkoutWithSubmodule(root, "empty"), env)];
 
-    expect(scans[1]).toEqual(scans[0]);
-    expect(scans[1]?.[1]).toEqual(["sub", "top.txt"]);
+    // Each scan against the answer, so a failure names the checkout whose scan failed and what that scan said.
+    expect(scans).toEqual([[0, ["sub", "top.txt"], ""], [0, ["sub", "top.txt"], ""]]);
   }, 60_000);
 
   test("answers in a checkout with 150 checked-out submodules, as Git's own diff does there within Git's time limit", async () => {
@@ -337,6 +340,6 @@ describe("rerail scan with no daemon", () => {
 
     const scanned = await scannedPaths(await checkoutWithSubmodules(root, 150), env);
 
-    expect(scanned).toEqual([0, ["f0.txt", "sub000"]]);
+    expect(scanned).toEqual([0, ["f0.txt", "sub000"], ""]);
   }, 240_000);
 });

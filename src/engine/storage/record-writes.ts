@@ -76,6 +76,31 @@ interface WaitingWrite {
 /** Every writer of this process by database file, with how many stores use it. */
 const writers = new Map<string, FileRecordWriter>();
 
+/** Who hears this process's record writes commit, by database file (`onRecordsWritten`). */
+const written = new Map<string, Set<() => void>>();
+
+/**
+ * Calls `listener` each time a record write of this process commits to the database at `path`, made at once or after a
+ * wait for the lock, once its transaction has committed; returns the call that stops it. The daemon's change feed hears
+ * its own records this way (`DatabaseApiStores.changes`): a fact, where a watch of the database's folder hears nothing
+ * of such a commit on Windows, since a commit that does not wait for the disk leaves the log's directory entry as it was.
+ */
+export function onRecordsWritten(path: string, listener: () => void): () => void {
+  const key = resolve(path);
+  const listeners = written.get(key) ?? new Set<() => void>();
+  written.set(key, listeners);
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0 && written.get(key) === listeners) written.delete(key);
+  };
+}
+
+function tellWritten(path: string): void {
+  const listeners = written.get(path);
+  if (listeners !== undefined) for (const listener of [...listeners]) listener();
+}
+
 /** The record writer for the database at `path`, shared by every store of this process that writes there. */
 export function openRecordWriter(path: string): RecordWriter {
   const key = resolve(path);
@@ -175,9 +200,10 @@ class FileRecordWriter {
   }
 
   /**
-   * True once `write` is made in one immediate transaction; false when the lock was held, before any statement ran.
-   * Other failures roll it back and throw. The transaction's statements are prepared once per connection. The begin
-   * never meets this writer's own lock wait taking the lock to learn it is free (`apartFromLockWaits`).
+   * True once `write` is made in one immediate transaction, and its listeners told (`onRecordsWritten`); false when the
+   * lock was held, before any statement ran. Other failures roll it back and throw. The transaction's statements are
+   * prepared once per connection. The begin never meets this writer's own lock wait taking the lock to learn it is free
+   * (`apartFromLockWaits`).
    */
   #makeNow(write: RecordWrite): boolean {
     const database = this.#connection();
@@ -195,6 +221,7 @@ class FileRecordWriter {
       if (database.$client.inTransaction) transaction.rollback.run();
       throw error;
     }
+    tellWritten(this.#path);
     return true;
   }
 

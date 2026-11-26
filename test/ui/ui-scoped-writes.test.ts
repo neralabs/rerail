@@ -36,6 +36,8 @@ afterEach(() => {
 /** The writes sent so far; `send` calls fetch before its first await, so a write is here as soon as it starts. */
 const writes = () => requests.filter(r => r.method === "PUT");
 const switchToB = () => changeScope({ repository: "B" });
+/** The daemon's words for a change it made but could not confirm on the disk (`503 not-on-disk`). */
+const NOT_ON_DISK = "the change was made, but Rerail could not confirm it is on the disk (EIO)";
 
 describe("a write started in one repository", () => {
   it("takes its folders from that repository's recommendations when the person switches while they load", async () => {
@@ -121,6 +123,20 @@ describe("attachment writes clicked in quick succession", () => {
     await expect(first).rejects.toThrow(/answered 503/u);
     await expect(second).resolves.toBe(false);
     expect(writes()).toHaveLength(1);
+  });
+
+  it("sends a pack added behind a set-up the daemon made but could not confirm on the disk", async () => {
+    const scope = captureScope();
+    const first = queueInScope(scope, "PUT", attachments, setUp);
+    const second = queueInScope(scope, "PUT", attachments, addZod);
+    await vi.waitFor(() => expect(writes()).toHaveLength(1));
+    writes()[0]!.answer(503, { error: "not-on-disk", message: NOT_ON_DISK });
+
+    await expect(first).rejects.toMatchObject({ name: "NotOnDisk" });
+    await vi.waitFor(() => expect(writes()).toHaveLength(2));
+    expect(writes()[1]!.body).toEqual({ repository: "A", ...addZod });
+    writes()[1]!.answer(200, {});
+    await expect(second).resolves.toBe(true);
   });
 
   it("keeps an add's place while its folders load, so a remove clicked after it goes out after it", async () => {
@@ -257,5 +273,23 @@ describe("the page's rule pack writes", () => {
     await vi.waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]!.body).toEqual({ repository: "A", add: [pack("tslint", "web"), pack("zod", ""), pack("eslint", "")], configure: true });
     expect(keptPacks()).toEqual(["tslint", "zod", "eslint"]);
+  });
+
+  it.each([
+    ["keeps a pack added whose change the daemon made but could not confirm on the disk", { error: "not-on-disk", message: NOT_ON_DISK },
+      ["eslint", "zod"], /^The change was made, but Rerail could not confirm it is on the disk \(EIO\)\.$/u],
+    ["takes a pack added back when its write fails", { error: "daemon restarting" },
+      ["eslint"], /^Couldn’t add Zod\. PUT \/api\/repository\/attachments answered 503/u],
+  ])("%s", async (_what, answer, shown, said) => {
+    data.recommendations = recommended;
+    data.attachedPacks = new Map([["eslint", [""]]]);
+    void page().addPacks(["zod"], "Zod added.", "Couldn’t add Zod");
+    await vi.waitFor(() => expect(writes()).toHaveLength(1));
+    writes()[0]!.answer(503, answer);
+
+    // The toast comes before the page reads the packs again, which this page's unanswered reads never finish.
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledOnce());
+    expect([...data.attachedPacks.keys()]).toEqual(shown);
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(said));
   });
 });

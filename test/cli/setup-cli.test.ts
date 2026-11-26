@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const daemonStop = vi.hoisted(() => ({
   beforeStopped: undefined as undefined | ((home: string) => Promise<void>),
   result: "stopped" as "stopped" | "not-running" | "not-daemon" | "record-changed",
@@ -8,6 +8,11 @@ const daemonStop = vi.hoisted(() => ({
   lookup: undefined as undefined | FoundDaemon,
   /** The port each start asked for, where a case stands in for the start; undefined starts a real daemon. */
   starts: undefined as undefined | Array<number | undefined>,
+}));
+/** The daemon a lookup finds, when a test names one, and the start that replaces a daemon from another package. */
+const daemonRun = vi.hoisted(() => ({
+  found: undefined as undefined | DaemonLookup | Error,
+  replace: undefined as undefined | ((control: { packageRoot: string }, options: DaemonLaunchOptions) => Promise<{ started: boolean; daemon: { state: DaemonState; health: DaemonHealth } }>),
 }));
 vi.mock("../../src/runtime/daemon-control.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
@@ -20,7 +25,12 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
       await daemonStop.beforeStopped(home);
       return daemonStop.result;
     },
-    lookupDaemon: async (...args: Parameters<typeof actual.lookupDaemon>) => daemonStop.lookup ?? await actual.lookupDaemon(...args),
+    lookupDaemon: async (...args: Parameters<typeof actual.lookupDaemon>) => {
+      if (daemonRun.found instanceof Error) throw daemonRun.found;
+      return daemonRun.found ?? daemonStop.lookup ?? await actual.lookupDaemon(...args);
+    },
+    startDaemonForPackage: async (...args: Parameters<typeof actual.startDaemonForPackage>) =>
+      daemonRun.replace === undefined ? await actual.startDaemonForPackage(...args) : await daemonRun.replace(args[0], args[1]),
     // A started daemon of the start's package, on the port it asked for, else the found daemon's.
     startDaemon: async (...args: Parameters<typeof actual.startDaemon>) => {
       if (daemonStop.starts === undefined) return await actual.startDaemon(...args);
@@ -62,6 +72,8 @@ import {
   DAEMON_STATE_FILE,
   START_LOCK_DIR,
   type DaemonHealth,
+  type DaemonLaunchOptions,
+  type DaemonLookup,
   type DaemonState,
 } from "../../src/runtime/index.js";
 import { POSIX_MODES } from "../support/platform/file-mode.js";
@@ -82,6 +94,8 @@ const contentCache = (home: string): string =>
 afterEach(async () => {
   daemonStop.beforeStopped = undefined;
   daemonStop.result = "stopped";
+  daemonRun.found = undefined;
+  daemonRun.replace = undefined;
   daemonStop.machines.length = 0;
   daemonStop.lookup = undefined;
   daemonStop.starts = undefined;
@@ -940,6 +954,184 @@ describe("rerail install --refresh", () => {
   it.each([[["--agents", "claude-code"]], [["--root", "."]], [["--remove"]], [["--dry-run"]]])("refuses --refresh with %j", async flag => {
     const { context } = await fixture();
     await expect(runInstallCommand(["--refresh", ...flag], context)).rejects.toThrow("--refresh");
+  });
+
+  describe("the daemon", () => {
+    const ACCESS_TOKEN = "kept-access-token";
+    // The suite keeps hooks and set-up from starting daemons (`RERAIL_AUTOSTART=0`); a refresh replaces one only with
+    // autostart on, as it is for everyone else.
+    beforeEach(() => {
+      vi.stubEnv("RERAIL_AUTOSTART", "1");
+    });
+
+    /**
+     * A daemon `version` started as hooks and set-up start it, from `packageRoot`: the packaged dashboard over http on
+     * loopback, its capability kept in the home.
+     */
+    function daemonOf(packageRoot: string, version: string, overrides: Partial<DaemonState> = {}): DaemonState {
+      return {
+        pid: 4242, host: "127.0.0.1", port: 4799, url: "http://127.0.0.1:4799/", version, databasePath: "/nowhere/rerail.sqlite",
+        kernelSocketPath: "/nowhere/engine.sock", ui: "bundled", startedAt: 0, packageRoot, accessToken: ACCESS_TOKEN, ...overrides,
+      };
+    }
+
+    /** Keeps {@link ACCESS_TOKEN} in `home`, as a loopback daemon keeps its capability across restarts. */
+    async function keepAccessToken(home: string): Promise<void> {
+      await mkdir(home, { recursive: true });
+      await writeFile(join(home, DAEMON_ACCESS_TOKEN_FILE), `${ACCESS_TOKEN}\n`);
+    }
+
+    /** `state` running and answering, its capability kept in `home` as a loopback daemon keeps it. */
+    async function running(home: string, state: DaemonState): Promise<DaemonLookup> {
+      await keepAccessToken(home);
+      return { status: "running", state, health: { version: state.version, pid: state.pid, ui: state.ui } as DaemonHealth };
+    }
+
+    /** Records each replacing start, answering with a daemon of `version` from the package it was given. */
+    function recordReplacements(version: string): Array<{ packageRoot: string; options: DaemonLaunchOptions }> {
+      const starts: Array<{ packageRoot: string; options: DaemonLaunchOptions }> = [];
+      daemonRun.replace = async (control, options) => {
+        starts.push({ packageRoot: control.packageRoot, options });
+        const state = daemonOf(control.packageRoot, version, { pid: 4343 });
+        return { started: true, daemon: { state, health: { version, pid: state.pid, ui: state.ui } as DaemonHealth } };
+      };
+      return starts;
+    }
+
+    // `rerail update` ends with this refresh, run by the version it activated: the daemon of the version it replaced
+    // would otherwise serve that version's dashboard and engine until a coding agent's hook replaced it.
+    // A daemon started with `--host ::1` or `--host localhost` records the loopback address it bound, which needs no
+    // other option, so its dashboard link stays the same.
+    it.each(["127.0.0.1", "::1"])("replaces a daemon running from another package with this one's, on the address (%s) and port it had", async host => {
+      const { context, packageRoot } = await fixture();
+      daemonRun.found = await running(context.home, daemonOf(join(context.home, "versions", "0.9.0"), "0.9.0", { host }));
+      const starts = recordReplacements("1.0.0");
+      const output = captureOutput();
+
+      expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+      expect(starts).toEqual([{ packageRoot: await realpath(packageRoot), options: { dev: false, host, port: 4799 } }]);
+      expect(output.stdout()).toContain("Restarted the Rerail daemon on Rerail 1.0.0 (it ran 0.9.0); reload an open dashboard to see it.\n");
+    });
+
+    // Under the start lock, the start finds the daemon a coding agent's hook launched since the refresh looked.
+    it("says the daemon already runs this version when a hook replaced it first", async () => {
+      const { context, packageRoot } = await fixture();
+      daemonRun.found = await running(context.home, daemonOf(join(context.home, "versions", "0.9.0"), "0.9.0"));
+      daemonRun.replace = async () => {
+        const state = daemonOf(await realpath(packageRoot), "1.0.0", { pid: 4343 });
+        return { started: false, daemon: { state, health: { version: "1.0.0", pid: state.pid, ui: state.ui } as DaemonHealth } };
+      };
+      const output = captureOutput();
+
+      expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+      expect(output.stdout()).toContain("The Rerail daemon already runs Rerail 1.0.0; reload an open dashboard to see it.\n");
+      expect(output.stdout()).not.toContain("Restarted");
+    });
+
+    // Before this refresh replaced daemons it never read daemon.json; one it cannot read must not cost the update its
+    // pack step, which runs only after a refresh that exited 0.
+    it("says on stderr that it could not check the daemon, and still succeeds", async () => {
+      const { context } = await fixture();
+      daemonRun.found = Object.assign(new Error("EACCES: permission denied, open 'daemon.json'"), { code: "EACCES" });
+      const starts = recordReplacements("1.0.0");
+      const output = captureOutput();
+
+      expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+      expect(starts).toEqual([]);
+      expect(output.stderr()).toContain("rerail: Rerail could not check which version the daemon runs (EACCES: permission denied, open 'daemon.json'); to restart it, run rerail daemon stop, then rerail daemon start.\n");
+    });
+
+    it("leaves a daemon running from this package alone, and starts none where none runs", async () => {
+      const { context, packageRoot } = await fixture();
+      const starts = recordReplacements("1.0.0");
+      const output = captureOutput();
+
+      daemonRun.found = await running(context.home, daemonOf(packageRoot, "1.0.0"));
+      expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+      daemonRun.found = { status: "absent" };
+      expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+      expect(starts).toEqual([]);
+      expect(output.stdout()).not.toContain("daemon");
+    });
+
+    it.each([
+      ["it does not answer", (state: DaemonState): DaemonLookup => ({ status: "unresponsive", state }), "it does not answer; run rerail daemon stop, then rerail daemon start."],
+      ["it refuses the capability", (state: DaemonState): DaemonLookup => ({ status: "refused", state }), "it refuses the access capability daemon.json records; run rerail daemon stop"],
+      ["it serves the dev dashboard", (state: DaemonState): DaemonLookup => ({ status: "running", state: { ...state, ui: "dev" }, health: {} as DaemonHealth }), "with the options you gave it."],
+      ["it serves https", (state: DaemonState): DaemonLookup => ({ status: "running", state: { ...state, tlsFingerprint256: "AA:BB" }, health: {} as DaemonHealth }), "with the options you gave it."],
+      // Started with a TLS key other accounts can read, it serves loopback over http and says why.
+      ["it refused to serve off loopback", (state: DaemonState): DaemonLookup => ({ status: "running", state: { ...state, remoteRefused: "the key is readable by others" }, health: {} as DaemonHealth }), "with the options you gave it."],
+      // Off loopback, or behind a --public-host, a daemon mints its capability on every start instead of keeping it.
+      ["it serves off loopback", (state: DaemonState): DaemonLookup => ({ status: "running", state: { ...state, accessToken: "minted" }, health: {} as DaemonHealth }), "with the options you gave it."],
+      // Rerail 0.1.4 or earlier, which a lookup tells on Windows: its record keeps no capability, so whether it was started
+      // with a --public-host cannot be told.
+      ["it is a release before the engine's proof", ({ accessToken: _token, ...state }: DaemonState): DaemonLookup => ({ status: "older", state }), "it is a release before 0.1.5, whose record does not say which options it was started with; run rerail daemon start with the options you gave it, which ends it first.\n"],
+    ])("leaves a daemon from another package running, saying how to restart it, when %s", async (_case, found, restart) => {
+      const { context } = await fixture();
+      await keepAccessToken(context.home);
+      daemonRun.found = found(daemonOf(join(context.home, "versions", "0.9.0"), "0.9.0"));
+      const starts = recordReplacements("1.0.0");
+      const output = captureOutput();
+
+      expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+      expect(starts).toEqual([]);
+      expect(output.stdout()).toContain("The Rerail daemon still runs Rerail 0.9.0: ");
+      expect(output.stdout()).toContain(restart);
+    });
+
+    // An upgrade in place leaves the daemon's record naming this package's folder.
+    it("names a daemon of a release before the engine's proof that ran from this package's folder", async () => {
+      const { context, packageRoot } = await fixture();
+      const { accessToken: _token, ...state } = daemonOf(await realpath(packageRoot), "0.1.4");
+      daemonRun.found = { status: "older", state };
+      const starts = recordReplacements("1.0.0");
+      const output = captureOutput();
+
+      expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+      expect(starts).toEqual([]);
+      expect(output.stdout()).toContain("The Rerail daemon still runs Rerail 0.1.4: it is a release before 0.1.5");
+    });
+
+    it("leaves a daemon from another package running under RERAIL_AUTOSTART=0, naming the setting", async () => {
+      const { context } = await fixture();
+      daemonRun.found = await running(context.home, daemonOf(join(context.home, "versions", "0.9.0"), "0.9.0"));
+      vi.stubEnv("RERAIL_AUTOSTART", "0");
+      const starts = recordReplacements("1.0.0");
+      const output = captureOutput();
+
+      expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+      expect(starts).toEqual([]);
+      expect(output.stdout()).toContain("The Rerail daemon still runs Rerail 0.9.0: RERAIL_AUTOSTART=0 keeps Rerail from replacing it; run rerail daemon stop, then rerail daemon start.\n");
+    });
+
+    // The coding agents are refreshed either way, and an update goes on to the rule packs. The replacing start stops the
+    // old daemon before it launches the new one, so a second look says which the failure left.
+    it.each([
+      ["the old daemon still runs", "still", "rerail: Rerail could not replace the daemon (Rerail daemon exited with code 3 before it was ready), which still runs Rerail 0.9.0; run rerail daemon stop, then rerail daemon start.\n"],
+      ["no daemon runs", "gone", "rerail: Rerail could not replace the daemon (Rerail daemon exited with code 3 before it was ready), and none is running now; run rerail daemon start.\n"],
+      // A launch that has not answered within the start's wait is left running, and may still come up.
+      ["this version's daemon is coming up", "new", "rerail: Rerail could not replace the daemon (Rerail daemon exited with code 3 before it was ready), but one of Rerail 1.0.0 is coming up or running now; rerail status shows which.\n"],
+    ] as const)("says on stderr why a replacement failed, and that %s, and still succeeds", async (_case, left, said) => {
+      const { context, packageRoot } = await fixture();
+      daemonRun.found = await running(context.home, daemonOf(join(context.home, "versions", "0.9.0"), "0.9.0"));
+      daemonRun.replace = async () => {
+        if (left === "gone") daemonRun.found = { status: "absent" };
+        if (left === "new") daemonRun.found = { status: "unresponsive", state: daemonOf(await realpath(packageRoot), "1.0.0", { pid: 4343 }) };
+        throw new Error("Rerail daemon exited with code 3 before it was ready");
+      };
+      const output = captureOutput();
+
+      expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+      expect(output.stderr()).toContain(said);
+    });
   });
 });
 

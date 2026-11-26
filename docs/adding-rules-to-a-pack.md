@@ -94,7 +94,8 @@ A rule with no upstream needs no test data; its examples are the proof.
 1. Write `packs/<id>/rules/<rule>.json` ([writing-rules.md](writing-rules.md),
    [text criteria](pack-format.md#description), check 8), or `packs/<id>/rules/<rule>.rerail`
    ([Rules written in .rerail](pack-format.md#rules-written-in-rerail)).
-2. List it in `pack.json` with a caught and a passing example in the rule's scope (check 3).
+2. List it in `pack.json` with a caught and a passing example in the rule's scope (check 3), and its `dimensions`
+   ([rule dimensions](rule-dimensions.md)) where the pack's rules give them.
 3. In a pack with a `conformance.json`, add its id to `own` there, so the gates know it has no upstream and judge it on `loads` and `compact` alone
    ([conformance.json](pack-format.md#conformancejson)). Where a generator writes `conformance.json`, add it to the
    generator's input instead (React: `OWN` in `scripts/generate/packs/react-specs.mjs`).

@@ -18,7 +18,8 @@ import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
 import { auditViolations, checkouts, events, ruleViolationRollup, sessions, sessionsOfRepository, steerFeedback, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
-import type { DroppedEvents } from "./session-state.js";
+import type { DroppedEvents, LostEvent, LostEvents } from "./session-state.js";
+import { eventNumbersBehindRemotes, keepEventNumbersPastRemotes } from "./remote-cursors.js";
 import { SteerReceiptSchema, type SteerReceipt } from "./event-protocol.js";
 import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
 import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
@@ -77,6 +78,8 @@ export interface SessionEventQuery {
 /** What a session's whole transcript says it missed (`SqliteSessionReader.gaps`). */
 export interface SessionGaps {
   droppedEvents: number;
+  /** Events Rerail recorded whose rows a power cut or an operating system crash took (`events-lost` counts). */
+  lostEvents: number;
   uncheckedBoundaries: number;
   codeRulesPendingBoundaries: number;
   /** Tool edits of files no rule checked because Git ignores them (`ignored-edit`). */
@@ -97,9 +100,12 @@ export type DiscoveryGapRecord = z.infer<typeof discoveryGapPayloadSchema> & { r
 
 /** The id of the one record that says the walks met more places than the record takes (`DiscoveryGap.more`): no place. */
 const MORE_DISCOVERY_GAPS_EVENT = "source-discovery-gap:more";
+/** A record of lost events (`recordLostEvents`): its kind, and its id, the start of one before its stretch's last event. */
+const LOST_EVENTS_KIND = "events-lost";
+const LOST_EVENTS_ID = `${LOST_EVENTS_KIND}:`;
 
 const NO_GAPS: SessionGaps = {
-  droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
+  droppedEvents: 0, lostEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
 };
 
 /** A coding agent's note on a steer it declined (`rerail feedback`), with the audit whose steer it was. */
@@ -414,6 +420,8 @@ export class SqliteSessionStore {
    */
   readonly #sessionRepositories = new Map<string, string | null>();
   readonly #onRowPutBack: ((sessionId: string) => void) | undefined;
+  /** Whether a session opened here yet: its first open moves the event numbers past a remote's (`openSession`). */
+  #opened = false;
 
   /**
    * `onRowPutBack` is told the session's id each time a write finds the session's row gone and writes it again
@@ -430,7 +438,18 @@ export class SqliteSessionStore {
     this.#records = openRecordWriter(path);
   }
 
+  /**
+   * The first session open here moves the store's event numbers past those a remote has taken
+   * (`keepEventNumbersPastRemotes`), which a power cut can have taken back, before that session's first event: a writer
+   * that opens no session, as a hook's steer receipt, reads no outbox. It is a record write, so it never waits for
+   * another process's lock on this thread and commits ahead of the session's row and events, which wait behind it; and
+   * one of no effect, as when the home has no remote, takes no write lock (`writeUnless`).
+   */
   openSession(session: AdapterSession, startedAt = Date.now(), repositoryKey: string | null = this.#repositoryId): void {
+    if (!this.#opened) {
+      this.#records.writeUnless(() => !eventNumbersBehindRemotes(this.#database, this.path), database => keepEventNumbersPastRemotes(database, this.path));
+    }
+    this.#opened = true;
     this.#sessionRepositories.set(session.sessionId, repositoryKey);
     this.#records.write(database => database
       .insert(sessions)
@@ -477,6 +496,50 @@ export class SqliteSessionStore {
     }, session, attribution);
   }
 
+  /**
+   * Where a walk back over the session's ledger for lost events ends (`lostEvents`): the id of the newest event of
+   * `kinds` the session's history holds, or, when a record of lost events (`recordLostEvents`) is newer, the last event
+   * of the stretch it looked over. One read: the session's rows newest first, to the first of those kinds, after this
+   * process's waiting record writes are made (`#recorded`). A row whose write the lock still keeps waiting past the bound
+   * of that wait reads as not recorded; `recordLostEvents` looks for it again once its own write is made, behind it.
+   */
+  lastRecordedEvent(sessionId: string, kinds: ReadonlySet<string>): string | undefined {
+    const wanted = [...kinds, LOST_EVENTS_KIND].map(kind => sql`${kind}`);
+    // `+kind` keeps SQLite on `events_session_sequence`, newest first, stopping at the first row of those kinds; on
+    // `events_session_kind_sequence` it would read every row of each kind and sort them.
+    const row = this.#recorded().get<{ kind: string; eventId: string } | undefined>(sql`
+      SELECT ${events.kind} AS kind, ${events.eventId} AS eventId FROM ${events}
+      WHERE ${events.sessionId} = ${sessionId} AND +${events.kind} IN (${sql.join(wanted, sql`, `)})
+      ORDER BY ${events.sequence} DESC LIMIT 1
+    `);
+    return row?.kind === LOST_EVENTS_KIND ? row.eventId.slice(LOST_EVENTS_ID.length) : row?.eventId;
+  }
+
+  /**
+   * Marks the session's history incomplete over `lost`, the ledger's events after the last recorded one, oldest first:
+   * events it recorded whose rows a power cut or an operating system crash took (`LostEvents`). One record for the
+   * stretch. Its id names the stretch's last event and it takes that event's time, whether that event's row is there
+   * or not: the record commits after every row of the stretch that was made, so the next open's walk
+   * (`lastRecordedEvent`) starts after the whole stretch, and what reads when the newest event was recorded
+   * (`lastObservedEventAt`, `rerail status`) reads the newest event's time.
+   * The record counts only the events whose rows the history lacks when its write is made, after the last event an
+   * earlier record of the session named (`uncountedLostEvents`). The write is made behind every record write this
+   * process asked for before it: an event whose row waited for another process's lock past the bound of
+   * `lastRecordedEvent`'s wait is on disk by then and is not counted, and an event whose row never came is counted by
+   * one record, however often the session opened while rows waited. When it would count none it writes nothing, and,
+   * when no write waits, takes no write lock (`writeUnless`).
+   */
+  recordLostEvents(session: AdapterSession, lost: readonly LostEvent[]): void {
+    const whole = lostEventsRow(session.sessionId, lost);
+    if (whole === undefined) return;
+    const uncounted = (database: RerailDatabase): LostEvent[] => uncountedLostEvents(database, session.sessionId, lost);
+    const restore = this.#sessionRestore(session);
+    this.#records.writeUnless(() => uncounted(this.#database).length === 0, database => {
+      const row = lostEventsRow(session.sessionId, lost, uncounted(database));
+      if (row !== undefined) this.#eventWrite([row], restore)(database);
+    }, rowBytes(whole));
+  }
+
   /** Marks a boundary answered before its shell-write check finished: what that check finds reaches a later boundary. */
   recordDiscoveryPending(session: AdapterSession, boundary: DiscoveryPendingBoundary, attribution?: SessionAttribution): void {
     this.append({
@@ -499,11 +562,12 @@ export class SqliteSessionStore {
   }
 
   /**
-   * `recordDiscoveryGap` for each of `gaps`, in one record write, so one transaction: a write each would wait for the
-   * disk once per place, 4 ms a place on Linux, and a turn end that first meets 1,000 places would answer 4 s late. All
-   * of them or none. A write that finds the session's row gone puts it back inside the transaction, and `onRowPutBack`
-   * is told once it has committed (`#eventWrite`): its claim write goes through another connection, which would wait out
-   * the busy timeout (5 s) behind this one's write lock and fail, holding the turn end that long.
+   * `recordDiscoveryGap` for each of `gaps`, in one record write, so one transaction: a write each would commit once per
+   * place, and a commit that runs a checkpoint waits for the disk (`database.ts`), so a turn end that first meets 1,000
+   * places would pay up to 1,000 of them. All of them or none. A write that finds the session's row gone puts it back
+   * inside the transaction, and `onRowPutBack` is told once it has committed (`#eventWrite`): its claim write goes
+   * through another connection, which would wait out the busy timeout (5 s) behind this one's write lock and fail,
+   * holding the turn end that long.
    */
   recordDiscoveryGaps(session: AdapterSession, gaps: readonly DiscoveryGap[], attribution?: SessionAttribution): void {
     const rows = gaps.map(gap => eventRow(discoveryGapEvent(session.sessionId, gap), attribution?.observedAt));
@@ -672,6 +736,54 @@ function eventRow(event: SessionEvent, happenedAt?: number): EventRow {
   };
 }
 
+/**
+ * The record of lost events (`recordLostEvents`) over the stretch `stretch`, oldest first, counting `counted`, the
+ * events of it whose rows are gone: its id names the stretch's last event and it takes that event's time. Undefined
+ * when it counts none.
+ */
+function lostEventsRow(sessionId: string, stretch: readonly LostEvent[], counted: readonly LostEvent[] = stretch): EventRow | undefined {
+  const [end, first, last] = [stretch.at(-1), counted[0], counted.at(-1)];
+  if (end === undefined || first === undefined || last === undefined) return undefined;
+  const payload: LostEvents = {
+    count: counted.length, kinds: kindCounts(counted), firstEventId: first.eventId, lastEventId: last.eventId,
+    firstObservedAt: first.observedAt, lastObservedAt: last.observedAt,
+  };
+  return eventRow({ sessionId, eventId: `${LOST_EVENTS_ID}${end.eventId}`, kind: LOST_EVENTS_KIND, observedAt: end.observedAt, payload });
+}
+
+/** How many of `lost` there are of each kind. */
+function kindCounts(lost: readonly LostEvent[]): Record<string, number> {
+  const kinds: Record<string, number> = {};
+  for (const event of lost) kinds[event.kind] = (kinds[event.kind] ?? 0) + 1;
+  return kinds;
+}
+
+/**
+ * The events of `lost`, a stretch of the session's ledger oldest first, that no record of lost events has counted and
+ * whose rows the history lacks. A record names the last event of the stretch it looked over, and an open's stretch
+ * ends at the ledger's end, so the session's newest record names the furthest: its write looked at every event up to
+ * that one, and only those after it are left.
+ */
+function uncountedLostEvents(database: RerailDatabase, sessionId: string, lost: readonly LostEvent[]): LostEvent[] {
+  const countedThrough = newestLostEventsEnd(database, sessionId);
+  const from = lost.findIndex(event => event.eventId === countedThrough) + 1;
+  return lost.slice(from).filter(event => !holdsEvent(database, sessionId, event.eventId));
+}
+
+/** The event the session's newest record of lost events names (one read on `events_session_kind_sequence`). */
+function newestLostEventsEnd(database: RerailDatabase, sessionId: string): string | undefined {
+  const row = database.select({ eventId: events.eventId }).from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.kind, LOST_EVENTS_KIND)))
+    .orderBy(desc(events.sequence)).limit(1).get();
+  return row?.eventId.slice(LOST_EVENTS_ID.length);
+}
+
+/** Whether the session's history holds the row of `eventId` (one lookup on `events_session_event`). */
+function holdsEvent(database: RerailDatabase, sessionId: string, eventId: string): boolean {
+  return database.select({ eventId: events.eventId }).from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.eventId, eventId))).get() !== undefined;
+}
+
 /** The payload of the session's latest rule coverage event, as stored. */
 function latestCoverage(database: RerailDatabase, sessionId: string): string | undefined {
   return database.select({ payloadJson: events.payloadJson }).from(events)
@@ -814,10 +926,10 @@ export class SqliteSessionReader {
 
   /**
    * What the session's whole transcript says it missed, however much of it a reader has loaded: events its host
-   * never delivered (`events-dropped` counts), boundaries that answered before the shell-write check finished or
-   * before code rules were running, tool edits of files Git ignores, changes to Git's ignore rules, and what the
-   * shell-write check could not check, the record that says it met more of those than the record takes counted apart
-   * (`MORE_DISCOVERY_GAPS_EVENT`). Indexed by session and kind.
+   * never delivered (`events-dropped` counts), events whose rows a power cut took (`events-lost` counts), boundaries
+   * that answered before the shell-write check finished or before code rules were running, tool edits of files Git
+   * ignores, changes to Git's ignore rules, and what the shell-write check could not check, the record that says it
+   * met more of those than the record takes counted apart (`MORE_DISCOVERY_GAPS_EVENT`). Indexed by session and kind.
    */
   gaps(sessionId: string): SessionGaps {
     const database = this.#database.open();
@@ -825,6 +937,7 @@ export class SqliteSessionReader {
     const row = database.all<Omit<SessionGaps, "discoveryGapsMore"> & { discoveryGapsMore: number }>(sql`
       SELECT
         coalesce(sum(CASE WHEN ${events.kind} = 'events-dropped' THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS droppedEvents,
+        coalesce(sum(CASE WHEN ${events.kind} = 'events-lost' THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS lostEvents,
         count(*) FILTER (WHERE ${events.kind} = 'source-discovery-pending') AS uncheckedBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'ignored-edit') AS ignoredEdits,
@@ -833,7 +946,7 @@ export class SqliteSessionReader {
         count(*) FILTER (WHERE ${events.kind} = 'source-discovery-gap' AND ${events.eventId} = ${MORE_DISCOVERY_GAPS_EVENT}) AS discoveryGapsMore
       FROM ${events}
       WHERE ${events.sessionId} = ${sessionId}
-        AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed', 'source-discovery-gap')
+        AND ${events.kind} IN ('events-dropped', 'events-lost', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed', 'source-discovery-gap')
     `)[0];
     return row === undefined ? { ...NO_GAPS } : { ...row, discoveryGapsMore: row.discoveryGapsMore > 0 };
   }

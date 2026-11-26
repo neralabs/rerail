@@ -27,9 +27,9 @@ database.$client.close();
 `;
 
 /**
- * Starts a {@link DatabaseWriter} on the database at `databasePath`. Its commits run `synchronous = FULL`, as every
- * commit through `openRerailDatabase` does: the writer syncs the write-ahead log between writing the commit and
- * publishing it to readers, which a commit made in this process never shows to its own event loop.
+ * Starts a {@link DatabaseWriter} on the database at `databasePath`. Its commits run `synchronous = NORMAL`, as every
+ * commit through `openRerailDatabase` does: each writes the write-ahead log and publishes it to readers without waiting
+ * for the disk, and on Windows no watch of the folder hears it until the writer closes the log (`databaseChangeFeed`).
  */
 export async function startDatabaseWriter(databasePath: string): Promise<DatabaseWriter> {
   const child: ChildProcess = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program, databasePath], {

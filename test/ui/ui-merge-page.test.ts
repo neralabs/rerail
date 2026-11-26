@@ -1,6 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { patchProblem, stripSignature } from "../../ui/views/merge.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { changeScope } from "../../ui/poll.js";
+import { actions, patchProblem, stripSignature } from "../../ui/views/merge.js";
 import { sampleStatus } from "../support/merge-assist/status.js";
+import type * as Shell from "../../ui/shell.js";
+
+const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
+// The page's toast, and no drawing: the writes are driven without a page.
+vi.mock("../../ui/shell.js", async importOriginal => ({
+  ...(await importOriginal<typeof Shell>()), invalidate: () => {}, renderNow: () => {}, toast,
+}));
 
 /** An element as `patchProblem` patches it, noting each text change made while it was hidden. */
 class StubElement {
@@ -65,5 +73,38 @@ describe("the status strip", () => {
     expect(stripSignature(github({ state: "signed-out" }))).not.toBe(shown);
     expect(stripSignature(github({ login: "jdoe" }))).not.toBe(shown);
     expect(stripSignature(github({ readAt: null }))).not.toBe(shown);
+  });
+});
+
+describe("a Merge Assist write's toast", () => {
+  let answer: { status: number; body: unknown };
+
+  beforeEach(() => {
+    toast.mockReset();
+    vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
+    vi.stubGlobal("document", { activeElement: null, body: null });
+    // The page's own reads, which `changeScope` starts, are not under test: they stay unanswered.
+    vi.stubGlobal("fetch", async (_input: URL, init: { method?: string } = {}) => (init.method === "PUT"
+      ? new Response(JSON.stringify(answer.body), { status: answer.status })
+      : await new Promise<Response>(() => {})));
+    changeScope({ repository: "A", checkout: "/work/a" });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("is the daemon's words alone for a change it made but could not confirm on the disk", async () => {
+    answer = { status: 503, body: { error: "not-on-disk", message: "the change was made, but Rerail could not confirm it is on the disk (EIO)" } };
+    await actions.maon();
+
+    expect(toast).toHaveBeenCalledExactlyOnceWith("The change was made, but Rerail could not confirm it is on the disk (EIO).");
+  });
+
+  it("says what could not be done, then the API's reason, for a refused write", async () => {
+    answer = { status: 409, body: { error: "conflict", message: "Merge Assist is already on" } };
+    await actions.maon();
+
+    expect(toast).toHaveBeenCalledExactlyOnceWith("Couldn’t turn on Merge Assist. Merge Assist is already on.");
   });
 });

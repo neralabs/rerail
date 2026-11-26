@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { linkSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -794,5 +794,161 @@ describe("machineId", () => {
     machineId(home);
 
     expect(real.readdirSync(home).filter(name => name.startsWith("machine-id"))).toEqual(["machine-id"]);
+  });
+});
+
+describe("event numbers a remote has taken", () => {
+  const sent = () => sink.requests.flatMap(request => request.records).filter(record => record.type === "event").map(record => record.eventId);
+  const session = { host: "claude-code" as const, sessionId: "fresh", cwd: "/work/app" };
+  const sequenceOf = (path: string, eventId: string): number => {
+    const database = new Database(path, { readonly: true });
+    try {
+      return (database.prepare("SELECT sequence FROM events WHERE event_id = ?").get(eventId) as { sequence: number }).sequence;
+    } finally {
+      database.close();
+    }
+  };
+  /** Moves the home's database aside, as Rerail's refusal of an unreadable file tells a person to: the outbox stays. */
+  const moveAside = (): void => {
+    for (const suffix of ["", "-wal", "-shm"]) if (real.existsSync(`${databasePath()}${suffix}`)) real.renameSync(`${databasePath()}${suffix}`, `${databasePath()}.aside${suffix}`);
+  };
+  /** The store as a power cut that took the commits of every event leaves it: their rows gone, the counter back. */
+  const cutEvents = (): void => {
+    const database = new Database(databasePath());
+    try {
+      database.prepare("DELETE FROM events").run();
+      database.prepare("UPDATE sqlite_sequence SET seq = 0 WHERE name = 'events'").run();
+    } finally {
+      database.close();
+    }
+  };
+
+  // Its first events took the numbers the remote's cursor had passed, and were never sent.
+  it("numbers the first event of a database started fresh past the remote's cursor, so the outbox sends it", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    moveAside();
+    const store = new SqliteSessionStore(databasePath());
+    store.openSession(session);
+    store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "again" } }, session);
+    store.close();
+    await outbox().sync({ force: true });
+    expect(sent()).toContain("first");
+  });
+
+  // The remote took the batch while `rerail remote remove` ran, and the removal deleted the batch's record with the rest:
+  // the event after the cut took number 1 and went to the remote added again under the id of the event it held as 1.
+  it("keeps a batch's event numbers taken when its remote is removed while the batch is out", async () => {
+    seed();
+    const quiet = { stdout: { write: () => true } };
+    addRemote({ url: sink.url, token: "test-token", content: true, name: "team" }, home);
+    sink.duringNextRequest(() => void runRemoteCommand(["remove", "team"], { home, ...quiet }));
+    await outbox().sync({ force: true });
+    const held = storedRecords(sink).filter(record => record.type === "event").map(record => record.id);
+    cutEvents();
+    addRemote({ url: sink.url, token: "test-token", content: true, name: "team" }, home);
+    const store = new SqliteSessionStore(databasePath());
+    store.openSession(session);
+    store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "again" } }, session);
+    store.close();
+    await outbox().sync({ force: true });
+    const first = storedRecords(sink).find(record => record.type === "event" && record.eventId === "first");
+    expect(held).toHaveLength(4);
+    expect(first?.id).toEqual(expect.any(String));
+    expect(held).not.toContain(first?.id);
+  });
+
+  // An audit sent marked, its stored paths unreadable, in a batch out while its remote is removed and added again: the
+  // removal forgets the hash the audit is held under, as it forgets every sent record's, and keeps the batch's numbers.
+  it("sends a remote added again while a batch was out an audit whose stored paths do not read once marked, whole once mended, and later events past the batch's numbers", async () => {
+    const { auditId } = seed();
+    setPathsText(auditId, '["a.ts"');
+    const quiet = { stdout: { write: () => true } };
+    addRemote({ url: sink.url, token: "test-token", content: true, name: "team" }, home);
+    sink.duringNextRequest(() => {
+      void runRemoteCommand(["remove", "team"], { home, ...quiet });
+      addRemote({ url: sink.url, token: "test-token", content: true, name: "team" }, home);
+    });
+    await outbox().sync({ force: true });
+    const held = storedRecords(sink).filter(record => record.type === "event").map(record => record.id);
+    cutEvents();
+    const store = new SqliteSessionStore(databasePath());
+    store.openSession(session);
+    store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "again" } }, session);
+    store.close();
+    await outbox().sync({ force: true });
+    await outbox().sync({ force: true });
+    setPathsText(auditId, '["a.ts"]');
+    await outbox().sync({ force: true });
+    const audits = sink.requests.map(request => request.records.filter(item => item.type === "audit").map(item => item.paths));
+    expect(audits).toEqual([[[]], [[]], [["a.ts"]]]);
+    const first = storedRecords(sink).find(record => record.type === "event" && record.eventId === "first");
+    expect(held).toHaveLength(4);
+    expect(first?.id).toEqual(expect.any(String));
+    expect(held).not.toContain(first?.id);
+  });
+
+  // A hook's steer receipt opens a writer of its own and no session (`hook-host.ts`), and its session opened in the
+  // daemon first, which moved the numbers: the receipt's writer opened the outbox at every receipt all the same.
+  it("reads no outbox for a writer that opens no session, as a hook's steer receipt", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    moveAside();
+    vi.mocked(existsSync).mockClear();
+    const store = new SqliteSessionStore(databasePath());
+    store.recordSteer(session, "r1", ["a-rule"]);
+    store.close();
+    expect(vi.mocked(existsSync).mock.calls.filter(([path]) => String(path).endsWith("remote-outbox.sqlite"))).toEqual([]);
+    expect(sequenceOf(databasePath(), "steering-delivered:r1")).toBe(1);
+  });
+
+  it("reads the outbox at a store's first session open only", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const store = new SqliteSessionStore(databasePath());
+    store.openSession(session);
+    vi.mocked(existsSync).mockClear();
+    store.openSession({ ...session, sessionId: "second" });
+    store.close();
+    expect(vi.mocked(existsSync).mock.calls.filter(([path]) => String(path).endsWith("remote-outbox.sqlite"))).toEqual([]);
+  });
+
+  // A batch with no event (a queued scan) has no number to keep taken: its sync makes no commit that waits for the disk.
+  it("records no event number for a batch that carries no event", async () => {
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    const report = { schema: "rerail.scan/1", scanId: "scan-1", repository: { key: REPOSITORY, displayName: "app" }, checkout: { path: home }, rules: [], violations: [] };
+    expect(outbox().queueScan(report)).toBe(true);
+    await outbox().sync({ force: true });
+    expect(storedRecords(sink)).toEqual([expect.objectContaining({ type: "scan", id: "scan-1" })]);
+    const state = new Database(join(home, "remote-outbox.sqlite"), { readonly: true });
+    try {
+      expect(state.prepare("SELECT value FROM cursors WHERE stream = 'event-posted'").all()).toEqual([]);
+    } finally {
+      state.close();
+    }
+  });
+
+  it("leaves the numbering of a database the outbox does not read as it is", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const other = join(home, "other.sqlite");
+    const store = new SqliteSessionStore(other);
+    store.openSession(session);
+    store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "elsewhere" } }, session);
+    store.close();
+    expect(sequenceOf(other, "first")).toBe(1);
+  });
+
+  it("numbers events as before beside an outbox it cannot read", () => {
+    real.writeFileSync(join(home, "remote-outbox.sqlite"), "not a database");
+    const store = new SqliteSessionStore(databasePath());
+    store.openSession(session);
+    store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "hello" } }, session);
+    store.close();
+    expect(sequenceOf(databasePath(), "first")).toBe(1);
   });
 });

@@ -12,6 +12,7 @@ export {
   daemonFetch,
   daemonLeftEventUntaken,
   type DaemonHealth,
+  type DaemonLookup,
   type DaemonMachine,
   type DaemonLaunchOptions,
   type EngineEndpoint,
@@ -59,6 +60,7 @@ export { resolveModelPath } from "./session-paths.js";
 export { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE, type DroppedEvents } from "./session-state.js";
 export {
   SESSION_EVENT_PAGE_LIMIT,
+  lastObservedEventAt,
   type SessionEventRecord,
   SqliteSessionReader,
   SqliteSessionStore,

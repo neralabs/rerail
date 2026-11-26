@@ -17,7 +17,8 @@ import { SqliteAuditControlStore, type PolicyOwnerClaim } from "../../../src/eng
 import type { AuditInput } from "../../../src/engine/audit/audit.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { BUSY_TIMEOUT_MS, failWhileWriteLocked, type RerailDatabase } from "../../../src/engine/storage/database.js";
-import { SqliteSessionStore } from "../../../src/runtime/index.js";
+import { hookFailureLines } from "../../../src/harness/index.js";
+import { lastObservedEventAt, SqliteSessionStore } from "../../../src/runtime/index.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const session = { sessionId: "held-session", host: "claude-code" as const, cwd: "/work" };
@@ -163,6 +164,86 @@ function thrown(run: () => void): unknown {
   return undefined;
 }
 
+/**
+ * A remote outbox beside the database at `path` whose cursor says a remote holds every event numbered up to `taken`, as
+ * a power cut that took the store's last commits leaves it. Only the table a session's first open reads
+ * (`remote-cursors.ts`).
+ */
+function remoteHolds(path: string, taken: number): void {
+  const outbox = new Database(join(dirname(path), "remote-outbox.sqlite"));
+  try {
+    outbox.exec("CREATE TABLE cursors (stream TEXT PRIMARY KEY, value INTEGER NOT NULL)");
+    outbox.prepare("INSERT INTO cursors (stream, value) VALUES ('event', ?)").run(taken);
+  } finally {
+    outbox.close();
+  }
+}
+
+/** A tool call event of the test's session, observed at `observedAt`, and its line in the session's ledger. */
+function callEvent(eventId: string, observedAt: number) {
+  return {
+    event: { sessionId: session.sessionId, eventId, kind: "call", observedAt, payload: {} },
+    line: { eventId, kind: "call", observedAt },
+  };
+}
+
+/**
+ * The ledger's lines after `recorded`, as the daemon walks them for lost events at a session's open (`lostEvents` in
+ * `runtime.ts`): none when the ledger does not hold it.
+ */
+function linesAfter<Line extends { eventId: string }>(ledger: readonly Line[], recorded: string | undefined): Line[] {
+  const from = ledger.findIndex(line => line.eventId === recorded);
+  return from < 0 ? [] : ledger.slice(from + 1);
+}
+
+type CallEvent = ReturnType<typeof callEvent>;
+
+/**
+ * The daemon's reopen of the test's session over its ledger `ledger`, oldest first: its open, then a record of the
+ * ledger's events after the last recorded one (`lostEvents` in `runtime.ts`).
+ */
+function reopen(sessions: SqliteSessionStore, ledger: readonly CallEvent[]): void {
+  sessions.openSession(session, 9_000);
+  const recorded = sessions.lastRecordedEvent(session.sessionId, new Set(["call"]));
+  sessions.recordLostEvents(session, linesAfter(ledger.map(({ line }) => line), recorded));
+}
+
+/**
+ * The test's session, its ledger `ledger`, reopened while another connection holds the write lock past the bound,
+ * then every write made once the lock is given back. The row of the ledger's first event is made; those of `waiting`
+ * are asked for behind the holder; an event in neither never had its row asked for.
+ */
+async function reopenedPastTheBound(ledger: readonly CallEvent[], waiting: readonly CallEvent[]): Promise<{ path: string; sessions: SqliteSessionStore }> {
+  const { path, sessions } = await stores();
+  sessions.openSession(session, 1_000);
+  sessions.append(ledger[0]!.event, session);
+  const holder = holderHere(path);
+  const clock = boundClock();
+  for (const { event } of waiting) sessions.append(event, session);
+  clock.pastTheBound();
+  reopen(sessions, ledger);
+  holder.exec("COMMIT");
+  await settled(path);
+  return { path, sessions };
+}
+
+/** The session's records of lost events, oldest first: id, time and what each counts. */
+function lostRecords(path: string): unknown[] {
+  const records = rows(path, "SELECT event_id, observed_at, payload_json FROM events WHERE kind = 'events-lost' ORDER BY sequence") as Array<[string, number, string]>;
+  return records.map(([eventId, observedAt, payload]) => [eventId, observedAt, JSON.parse(payload) as unknown]);
+}
+
+/** Counts from now the record writes of this process that commit to `path`, and the write lock takes of any connection. */
+async function writesSeen(path: string): Promise<() => { notices: number; lockTakes: number }> {
+  let notices = 0;
+  closers.push((await recordWrites()).onRecordsWritten(path, () => { notices += 1; }));
+  const probe = new Database(":memory:");
+  const statement = Object.getPrototypeOf(probe.prepare("SELECT 1")) as Database.Statement;
+  probe.close();
+  const run = vi.spyOn(statement, "run");
+  return () => ({ notices, lockTakes: run.mock.contexts.filter(ran => (ran as Database.Statement).source === "BEGIN IMMEDIATE").length });
+}
+
 function rows(path: string, sql: string): unknown[] {
   const database = new Database(path, { readonly: true });
   try {
@@ -195,6 +276,28 @@ describe("record writes while another process holds the write lock", () => {
     expect(rows(path, "SELECT session_id, started_at FROM sessions")).toEqual([[session.sessionId, 1_000]]);
     expect(rows(path, "SELECT event_id FROM events WHERE session_id = 'held-session'")).toEqual([["edit-call"]]);
     expect(rows(path, "SELECT status FROM audits")).toEqual([["completed"]]);
+  }, 30_000);
+
+  it("tell who listens for this process's record writes as each commits, at once or once the lock is given back", async () => {
+    const { path, sessions } = await stores();
+    const { onRecordsWritten } = await recordWrites();
+    const told: string[] = [];
+    const stop = onRecordsWritten(path, () => { told.push(rows(path, "SELECT session_id FROM sessions").length === 0 ? "before" : "committed"); });
+    closers.push(stop);
+    sessions.openSession(session, 1_000);
+    expect(told).toEqual(["committed"]);
+
+    const holder = await lockHolder(path);
+    await holder.hold();
+    sessions.append({ sessionId: session.sessionId, eventId: "edit-call", kind: "call", payload: {} }, session);
+    expect(told).toEqual(["committed"]);
+    await holder.release();
+    await settled(path);
+    expect(told).toEqual(["committed", "committed"]);
+
+    stop();
+    sessions.append({ sessionId: session.sessionId, eventId: "edit-result", kind: "result", payload: {} }, session);
+    expect(told).toHaveLength(2);
   }, 30_000);
 
   it("keep each write's own time, not the time the lock was given back", async () => {
@@ -528,6 +631,132 @@ describe("record writes while another process holds the write lock", () => {
 
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("1 records not written"));
     holder.exec("COMMIT");
+  }, 30_000);
+
+  // The move of the event numbers past a remote's ran on the store's own connection, on the thread answering hooks: it
+  // slept the 5 s bound in SQLite's busy handler, then the session's open failed with the lock's error.
+  it("move the event numbers past a remote's at a session's first open without waiting, ahead of its row and events", async () => {
+    const { path, sessions } = await stores();
+    remoteHolds(path, 40);
+    const holder = await lockHolder(path);
+    await holder.hold();
+
+    let error: unknown;
+    const ms = msOf(() => {
+      error = thrown(() => {
+        sessions.openSession(session, 1_000);
+        sessions.append(callEvent("first-call", 1_000).event, session);
+      });
+    });
+    expect(error).toBeUndefined();
+    expect(ms).toBeLessThan(1_000);
+
+    await holder.release();
+    await settled(path);
+    expect(rows(path, "SELECT session_id FROM sessions")).toEqual([[session.sessionId]]);
+    expect(rows(path, "SELECT sequence, event_id FROM events")).toEqual([[41, "first-call"]]);
+  }, 30_000);
+
+  // A session reopened while its earlier rows still waited read an older event as the last recorded, and its open
+  // counted the rows after it as lost.
+  it("are made before the last recorded event is read, when the holder gave the lock back", async () => {
+    const { path, sessions } = await stores();
+    sessions.openSession(session, 1_000);
+    sessions.append(callEvent("one", 1).event, session);
+    const holder = holderHere(path);
+    sessions.append(callEvent("two", 2).event, session);
+    sessions.append(callEvent("three", 3).event, session);
+    holder.exec("COMMIT");
+
+    expect(sessions.lastRecordedEvent(session.sessionId, new Set(["call"]))).toBe("three");
+  }, 30_000);
+
+  // A newer Rerail's migration or `rerail scrub` holds the lock past the read's bound while the session reopens in the
+  // same daemon: the read sees the disk without the waiting rows. The record of lost events counted them, and the
+  // history then held both the events and a record saying they were lost.
+  it("count no event lost at a session's reopen whose row still waits for the lock past the bound", async () => {
+    const [one, two, three] = [callEvent("one", 1), callEvent("two", 2), callEvent("three", 3)];
+    const { path } = await reopenedPastTheBound([one, two, three], [two, three]);
+
+    expect(rows(path, "SELECT event_id FROM events WHERE kind = 'call' ORDER BY sequence")).toEqual([["one"], ["two"], ["three"]]);
+    expect(lostRecords(path)).toEqual([]);
+  }, 30_000);
+
+  // The record took the time and id of the last event whose row was missing, and committed after the rows that waited:
+  // the newest row read an older time than the newest event's, and the next open walked those rows again.
+  it("still count the events whose rows the history lacks once the waiting rows are made, at the stretch's end", async () => {
+    const [one, two, gone, three] = [callEvent("one", 1), callEvent("two", 2), callEvent("gone", 3), callEvent("three", 4)];
+    const { path, sessions } = await reopenedPastTheBound([one, two, gone, three], [two, three]);
+
+    expect(lastObservedEventAt(path)).toBe(4);
+    expect(lostRecords(path)).toEqual([[
+      "events-lost:three", 4, { count: 1, kinds: { call: 1 }, firstEventId: "gone", lastEventId: "gone", firstObservedAt: 3, lastObservedAt: 3 },
+    ]]);
+    expect(sessions.lastRecordedEvent(session.sessionId, new Set(["call"]))).toBe("three");
+  }, 30_000);
+
+  // `rerail status` reads the newest row's time (`lastObservedEventAt`) and says nothing was recorded after a hook
+  // failure later than it (`hookFailureLines`).
+  it("leave `rerail status` counting no hook failure as one after which nothing was recorded, once the waiting rows are made", async () => {
+    const [one, two, gone, three] = [callEvent("one", 1_000), callEvent("two", 2_000), callEvent("gone", 3_000), callEvent("three", 4_000)];
+    const { path } = await reopenedPastTheBound([one, two, gone, three], [two, three]);
+    const failure = { at: 3_500, host: "claude-code", event: "PostToolUse", agent: null, rerail: "0.1.3", reason: "the daemon did not answer" };
+
+    expect(hookFailureLines({ failures: [failure], keptSince: null }, lastObservedEventAt(path))).toEqual([
+      "Hooks: 1 hook event could not be recorded in the last 24 hours; the last, PostToolUse from claude-code with Rerail 0.1.3 at 1970-01-01T00:00:03.500Z: the daemon did not answer.",
+    ]);
+  }, 30_000);
+
+  // The record named the last missing event, so each later open walked the rows after it, which were there, and its
+  // write took the lock and told every open dashboard of a commit that changed nothing.
+  it("take no write lock and tell no commit at a later reopen, whose walk starts after the counted stretch", async () => {
+    const [one, two, gone, three] = [callEvent("one", 1), callEvent("two", 2), callEvent("gone", 3), callEvent("three", 4)];
+    const { path, sessions } = await reopenedPastTheBound([one, two, gone, three], [two, three]);
+    sessions.openSession(session, 9_000);
+    const recorded = sessions.lastRecordedEvent(session.sessionId, new Set(["call"]));
+    const seen = await writesSeen(path);
+
+    sessions.recordLostEvents(session, linesAfter([one, two, gone, three].map(({ line }) => line), recorded));
+
+    expect(seen()).toEqual({ notices: 0, lockTakes: 0 });
+    expect(recorded).toBe("three");
+  }, 30_000);
+
+  it("take no write lock and tell no commit for lost events whose rows are all there", async () => {
+    const { path, sessions } = await stores();
+    const [one, two] = [callEvent("one", 1), callEvent("two", 2)];
+    sessions.openSession(session, 1_000);
+    for (const { event } of [one, two]) sessions.append(event, session);
+    const seen = await writesSeen(path);
+
+    sessions.recordLostEvents(session, [one.line, two.line]);
+
+    expect(seen()).toEqual({ notices: 0, lockTakes: 0 });
+    expect(lostRecords(path)).toEqual([]);
+  }, 30_000);
+
+  // Each open that still read the disk without the waiting rows walked from the same older event: a record whose id
+  // names the stretch's end would count the missing event again at the second, whose stretch ends later.
+  it("count an event whose row never came once, however often the session reopens while rows wait past the bound", async () => {
+    const { path, sessions } = await stores();
+    const [one, two, gone, three, four] = [callEvent("one", 1), callEvent("two", 2), callEvent("gone", 3), callEvent("three", 4), callEvent("four", 5)];
+    sessions.openSession(session, 1_000);
+    sessions.append(one.event, session);
+    const holder = holderHere(path);
+    const clock = boundClock();
+    for (const { event } of [two, three]) sessions.append(event, session);
+    clock.pastTheBound();
+    reopen(sessions, [one, two, gone, three]);
+    sessions.append(four.event, session);
+    reopen(sessions, [one, two, gone, three, four]);
+    holder.exec("COMMIT");
+    await settled(path);
+    reopen(sessions, [one, two, gone, three, four]);
+
+    expect(lostRecords(path)).toEqual([[
+      "events-lost:three", 4, { count: 1, kinds: { call: 1 }, firstEventId: "gone", lastEventId: "gone", firstObservedAt: 3, lastObservedAt: 3 },
+    ]]);
+    expect(lastObservedEventAt(path)).toBe(5);
   }, 30_000);
 
   it("throw at once a failure that is not the lock, as a write made at once did before", async () => {

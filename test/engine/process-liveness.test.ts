@@ -1,5 +1,6 @@
 import * as childProcess from "node:child_process";
 import { readFileSync } from "node:fs";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
@@ -8,15 +9,23 @@ import { describe, expect, it, vi } from "vitest";
 import * as native from "../../src/engine/native/native.js";
 import {
   endProcessStartedBy,
+  endProcessStartedByInChild,
   endProcessStartedByPowerShell,
+  ENGINE_READER_ANSWER_MS,
+  type EngineReader,
+  engineReaderAnswer,
   exitedEveryThread,
+  type ProcessEnd,
   processStartedAt,
+  processStartedAtInChild,
   processStartedAtThroughEngine,
   processState,
   type ProcessSignal,
+  START_UNANSWERED,
+  type StartRead,
 } from "../../src/engine/process-liveness.js";
 import { cmdletsWithoutModule, commandScript, MODULE_QUALIFIED_ONLY, withCommandPrefix } from "../support/platform/powershell-commands.js";
-import { exitedEveryThread as removalExitedEveryThread } from "../support/platform/remove-folder.js";
+import { exitedEveryThread as removalExitedEveryThread, removeFolder } from "../support/platform/remove-folder.js";
 
 // Spies that call through, so a test can stand a program in for Windows PowerShell, and see whether the engine loads.
 vi.mock("node:child_process", { spy: true });
@@ -24,6 +33,13 @@ vi.mock("../../src/engine/native/native.js", { spy: true });
 
 /** A pid no live process can hold on the platforms Rerail supports. */
 const DEAD_PID = 2 ** 22 - 1;
+
+/**
+ * A case's own guard against a real Windows PowerShell that never answers, as one held by a prompt or a locked module
+ * cache: `spawnSync` blocks the worker, so the case's 60 s limit cannot end the run. It is not the product's bound,
+ * which the case asserts apart, and below it how fast this machine starts PowerShell decides nothing.
+ */
+const POWERSHELL_GUARD_MS = 50_000;
 
 const refusing = (code: string): ProcessSignal => () => {
   throw Object.assign(new Error(`kill ${code}`), { code });
@@ -245,17 +261,27 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
   });
 
   // PowerShell's own setting that loads only the modules a command names stands in for a computer with many modules: a
-  // cmdlet named alone is not found under it. The bound is the uninstall's, the stop's wait and its kill wait. The case
-  // gives that bound and the engine's first load in its worker room: on a loaded machine that load took 27 s.
-  it.runIf(process.platform === "win32")("ends a process through PowerShell within the uninstall's bound while PowerShell loads only the modules a command names", async () => {
+  // cmdlet named alone is not found under it. PowerShell runs to its answer, so how fast this machine starts it decides
+  // nothing; the bound it was given, the uninstall's 15 s (its stop's wait and its kill wait), goes to `bounds`. The
+  // case that ends a PowerShell that does not answer covers that bound; {@link POWERSHELL_GUARD_MS} ends one that never
+  // answers here. The case's time gives the engine's first load in its worker room: on a loaded machine that load took
+  // 27 s.
+  it.runIf(process.platform === "win32")("ends a process through PowerShell, given the uninstall's bound, while PowerShell loads only the modules a command names", async () => {
+    const bounds: unknown[] = [];
     const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
-    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) =>
-      runSync(program, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), options)) as unknown as typeof childProcess.spawnSync);
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      bounds.push(options.timeout);
+      const result = runSync(program, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), { ...options, timeout: POWERSHELL_GUARD_MS });
+      const failed: NodeJS.ErrnoException | undefined = result.error;
+      if (failed?.code === "ETIMEDOUT") throw new Error(`Windows PowerShell did not answer within the case's own ${POWERSHELL_GUARD_MS / 1_000} s guard`);
+      return result;
+    }) as unknown as typeof childProcess.spawnSync);
     const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
     const closed = once(child, "close");
     try {
       const started = processStartedAtThroughEngine(child.pid!)!;
       expect(endProcessStartedByPowerShell(child.pid!, started, 15_000)).toBe("ended");
+      expect(bounds).toEqual([15_000]);
     } finally {
       child.kill();
       await closed;
@@ -446,5 +472,85 @@ describe("processStartedAtThroughEngine", () => {
     }
     expect(processStartedAtThroughEngine(DEAD_PID)).toBeUndefined();
     expect(vi.mocked(childProcess.spawnSync).mock.calls.length).toBe(spawned);
+  });
+});
+
+describe("the process reader a process that must not load the engine reads through", () => {
+  const engine = (startedAt: number | null, end = "ended") => () => ({ processStartedAt: () => startedAt, endProcessStartedBy: () => end });
+
+  it("prints the engine's start, or its end, as one line, and exits 0", () => {
+    expect(engineReaderAnswer(["start", "7"], engine(1_700_000_000_000))).toEqual({ stdout: "{\"startedAt\":1700000000000}\n", stderr: "", exitCode: 0 });
+    expect(engineReaderAnswer(["start", "7"], engine(null))).toEqual({ stdout: "{\"startedAt\":null}\n", stderr: "", exitCode: 0 });
+    expect(engineReaderAnswer(["end", "7", "1700000000000", "5000"], engine(null, "later"))).toEqual({ stdout: "{\"end\":\"later\"}\n", stderr: "", exitCode: 0 });
+    expect(engineReaderAnswer(["end", "7", "1700000000000", "5000"], engine(null, "gone"))).toEqual({ stdout: "{\"end\":\"unread\"}\n", stderr: "", exitCode: 0 });
+  });
+
+  // Its caller then reads another way: an install whose engine is missing or broken must still be removable.
+  it("answers nothing and exits 3, saying why, where the engine does not load or was built before the call", () => {
+    const missing = engineReaderAnswer(["start", "7"], () => {
+      throw new Error("Unsupported platform or missing native addon");
+    });
+    expect(missing).toEqual({ stdout: "", stderr: "rerail: the engine could not read or end a process: Unsupported platform or missing native addon\n", exitCode: 3 });
+    expect(engineReaderAnswer(["end", "7", "1700000000000", "5000"], () => ({}))).toMatchObject({ stdout: "", exitCode: 3 });
+    expect(engineReaderAnswer(["stop", "7"], engine(1))).toMatchObject({ stdout: "", exitCode: 2 });
+  });
+
+  /** A process reader that is a script printing `line`, in a folder of its own, and the folder. */
+  async function readerPrinting(line: string): Promise<{ reader: EngineReader; folder: string }> {
+    const folder = await mkdtemp(join(tmpdir(), "rerail-reader-"));
+    const entry = join(folder, "reader.mjs");
+    await writeFile(entry, `process.stdout.write(${JSON.stringify(`${line}\n`)});`);
+    return { reader: { node: process.execPath, entry }, folder };
+  }
+
+  it("reads a Windows start from the line its child prints, and reads another way only when the child gives no answer", async () => {
+    const { reader, folder } = await readerPrinting("{\"startedAt\":1700000000000}");
+    try {
+      const fallback = vi.fn((): StartRead => 5);
+      expect(processStartedAtInChild(7, reader, fallback, "win32")).toBe(1_700_000_000_000);
+      expect(processStartedAtInChild(7, { ...reader, entry: join(folder, "missing.mjs") }, fallback, "win32")).toBe(5);
+      expect(fallback).toHaveBeenCalledTimes(1);
+      expect(processStartedAtInChild(7, reader, fallback, "darwin")).toBeUndefined();
+    } finally {
+      await removeFolder(folder);
+    }
+  });
+
+  it("reads another way when its child exits 0 with no answer it can read", async () => {
+    for (const line of ["not an answer", "42", "{}"]) {
+      const { reader, folder } = await readerPrinting(line);
+      try {
+        expect(processStartedAtInChild(7, reader, () => 5, "win32"), line).toBe(5);
+      } finally {
+        await removeFolder(folder);
+      }
+    }
+  });
+
+  it("reads no start, and starts no PowerShell, when its child is still running at the bound", () => {
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce((() => ({
+      pid: 0, output: [null, "", ""], stdout: "", stderr: "", status: null, signal: "SIGTERM",
+      error: Object.assign(new Error("spawnSync node ETIMEDOUT"), { code: "ETIMEDOUT" }),
+    })) as unknown as typeof childProcess.spawnSync);
+    const fallback = vi.fn((): StartRead => 5);
+    expect(processStartedAtInChild(7, { node: process.execPath, entry: "reader.mjs" }, fallback, "win32")).toBe(START_UNANSWERED);
+    expect(fallback).not.toHaveBeenCalled();
+    expect(vi.mocked(childProcess.spawnSync).mock.lastCall?.[2]).toMatchObject({ timeout: ENGINE_READER_ANSWER_MS });
+  });
+
+  it("ends a process through its child, which has the engine's wait on top of its bound, and reads another way without an answer", async () => {
+    const { reader, folder } = await readerPrinting("{\"end\":\"ended\"}");
+    try {
+      const fallback = vi.fn((): ProcessEnd => "running");
+      const target = { pid: 7, startedAt: 1_700_000_000_000, waitMs: 5_000 };
+      expect(endProcessStartedByInChild(target, reader, fallback)).toBe("ended");
+      expect(vi.mocked(childProcess.spawnSync).mock.lastCall?.[2]).toMatchObject({ timeout: ENGINE_READER_ANSWER_MS + 5_000 });
+      expect(endProcessStartedByInChild(target, { ...reader, entry: join(folder, "missing.mjs") }, fallback)).toBe("running");
+      // A start that names no time a process started ends nothing, and starts no child.
+      expect(endProcessStartedByInChild({ ...target, startedAt: Number.POSITIVE_INFINITY }, reader, fallback)).toBe("unread");
+      expect(fallback).toHaveBeenCalledTimes(1);
+    } finally {
+      await removeFolder(folder);
+    }
   });
 });

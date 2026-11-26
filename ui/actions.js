@@ -9,6 +9,7 @@ import { data, ui, titleOf, packOfRule, packById, rulesArray, reviewing } from "
 import { refreshNow } from "./poll.js";
 import { failed } from "./format.js";
 import { packName } from "./attachments.js";
+import { addedRulesText } from "./pack-model.js";
 import { parseRoute } from "./routes.js";
 import { closePanel, copyText, go, invalidate, openPack, openRule, showRepository, toast, writes } from "./shell.js";
 import { restoreRule } from "./rule-remove.js";
@@ -19,19 +20,6 @@ function toggleRule(id) {
   const enabled = !stored.enabled, title = titleOf(stored), state = enabled ? "on" : "off";
   writes.setEnabled([id], enabled, enabled ? `${title} is on from the coding agent’s next turn.` : `${title} is off.`,
     `Couldn’t turn ${title} ${state}`);
-}
-
-/**
- * What an added pack turns on: its rules, but not the opt-in ones the pack starts off; and of those it starts on, how
- * many this Rerail no longer runs as the pack writes them (`reads-left-out-token`), which its next version runs again.
- */
-function addedRulesText(id) {
-  const pack = packById(id);
-  const off = pack ? pack.rules.filter(r => !r.on).length : 0;
-  const notRun = pack ? pack.rules.filter(r => r.on && r.inactive?.code === "reads-left-out-token").length : 0;
-  const start = off === 0 ? "Its rules are on." : `${off} of its rules start off; turn them on from its page.`;
-  if (notRun === 0) return start;
-  return `${start} ${notRun === 1 ? "One it starts on doesn’t" : `${notRun} it starts on don’t`} run on this Rerail until the pack’s next version.`;
 }
 
 /** After a switch in the review. */
@@ -88,7 +76,7 @@ export const commonActions = {
   close: () => closePanel(),
   toggle: id => toggleRule(id),
   // During the review of a repository not set up yet, Add and Remove are the review's switch.
-  addpack: id => (reviewing() ? keepPack(id, true) : writes.addPacks([id], `${packName(id)} added. ${addedRulesText(id)}`, `Couldn’t add ${packName(id)}`)),
+  addpack: id => (reviewing() ? keepPack(id, true) : writes.addPacks([id], `${packName(id)} added. ${addedRulesText(packById(id))}`, `Couldn’t add ${packName(id)}`)),
   removepack: id => {
     if (ui.removeAsk !== id) { ui.removeAsk = id; invalidate(); return; }
     if (reviewing()) { keepPack(id, false); return; }

@@ -6,8 +6,8 @@ and names each package never published.
 
 npm only allows a trusted publisher on an existing package, so you publish each name's first version by hand: a
 placeholder `0.0.0` that holds no engine. The release workflow publishes every real version
-([release.md, "Engine packages"](release.md#engine-packages)). Allow about 45 minutes for the six, an estimate,
-mostly 2FA prompts.
+([release.md, "Engine packages"](release.md#engine-packages)). The first run, on 2026-11-24, took about 20 minutes for
+the six.
 
 **Do this at most 2 days before that release is merged.** A trusted publisher setting expires unless a publish uses it
 within 2 days ([step 4](#4-let-a-release-use-it-within-2-days)).
@@ -59,7 +59,7 @@ git fetch origin main
 git worktree add --detach /tmp/rerail-engine-first-publish origin/main
 cd /tmp/rerail-engine-first-publish
 node --input-type=module <<'EOF'
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ENGINE_PACKAGES, enginePackageJson } from "./scripts/release/engine/packages.mjs";
 
@@ -70,6 +70,7 @@ for (const enginePackage of ENGINE_PACKAGES) {
   mkdirSync(folder, { recursive: true });
   writeFileSync(join(folder, "package.json"), `${JSON.stringify({ ...enginePackageJson(enginePackage, core), description: "A placeholder that reserves this name: it holds no engine." }, null, 2)}\n`);
   writeFileSync(join(folder, "README.md"), `# ${enginePackage.name}\n\nA placeholder that reserves this name: it holds no engine. Install [\`${core.name}\`](https://www.npmjs.com/package/${core.name}), which depends on the engine package of its own version.\n`);
+  copyFileSync("LICENSE", join(folder, "LICENSE"));
 }
 writeFileSync(join(out, "names.txt"), `${ENGINE_PACKAGES.map(({ name }) => name).join("\n")}\n`);
 EOF
@@ -81,15 +82,18 @@ on the two Linux packages, and `repository` naming `neralabs/rerail`.
 <details>
 <summary>What the placeholder holds</summary>
 
-`/tmp/rerail-engine-placeholders/<suffix>/` holds a `package.json` and a `README.md`, and `names.txt` lists the six
-names for the later steps. The `package.json` is the one a real version gets (`enginePackageJson`), at version
-`0.0.0` and with its own description: no scripts, no dependencies, and `publishConfig.access` set to `public`.
+`/tmp/rerail-engine-placeholders/<suffix>/` holds a `package.json`, a `README.md` and the repository's `LICENSE`, and
+`names.txt` lists the six names for the later steps. The `package.json` is the one a real version gets
+(`enginePackageJson`), at version `0.0.0` and with its own description: no scripts, no dependencies, and
+`publishConfig.access` set to `public`. A real version also carries `NOTICE` and `THIRD_PARTY_NOTICES`, for the
+third-party code the engine links; the placeholder holds no engine, so it carries only the license its `package.json`
+names.
 
 </details>
 
 ## 2. Publish each placeholder
 
-Publish the six folders; npm asks for 2FA.
+Publish the six folders; npm asks for 2FA once.
 
 ```sh
 for folder in /tmp/rerail-engine-placeholders/*/; do
@@ -97,25 +101,31 @@ for folder in /tmp/rerail-engine-placeholders/*/; do
 done
 ```
 
-Approve each "Authenticate your account at: <url>" link in the browser. Do not pass `--provenance`: only a publish from
-CI can carry one. A rerun after a failure is safe: npm refuses a name it already has at `0.0.0`, and the loop goes on
-to the next.
+Approve the "Authenticate your account at: <url>" link in the browser; on the first run one approval covered all six
+publishes. Run the loop in a terminal, not piped or redirected: as with `npm trust list` in step 3, npm otherwise fails
+with `EOTP` instead of waiting for the approval. Do not pass `--provenance`: only a publish from CI can carry one. A rerun after a failure is safe: npm
+refuses a name it already has at `0.0.0`, and the loop goes on to the next.
+
+Each publish ends with "Your package is being processed and may take a few minutes to become available." Until it is,
+`npm dist-tag ls` shows `latest: 0.0.0-stage`; on the first run one package took several minutes longer than the
+rest.
 
 ## 3. Check the result, and set up each trusted publisher
 
-Confirm each publish, give each package the access core has, then let the release workflow publish to it.
+Confirm each publish and that each package has the access core has, then let the release workflow publish to it.
 
 ```sh
-for name in $(cat /tmp/rerail-engine-placeholders/names.txt); do
-  npm dist-tag ls "$name"                                    # latest: 0.0.0
-  npm access get status "$name"                              # public
-  npm access grant read-write neralabs:developers "$name"    # core's team and permission
-done
 npm access list collaborators @neralabs/rerail
-npm access list collaborators @neralabs/rerail-engine-<suffix>   # the same list, for each of the six
+for name in $(cat /tmp/rerail-engine-placeholders/names.txt); do
+  npm dist-tag ls "$name"                       # latest: 0.0.0, once npm has processed it
+  npm access get status "$name"                 # public
+  npm access list collaborators "$name"         # the same list as core's
+done
 ```
 
-`npm view` can 404 for several minutes after a first publish; `npm dist-tag ls` sees the package at once.
+npm gives the organization's `developers` team read-write on every package created under `@neralabs`, which is the
+access core has, so the lists match with no grant. `npm view` can 404 for several minutes after a first publish;
+`npm dist-tag ls` sees the package at once.
 
 ### Set up the trusted publisher
 
@@ -133,21 +143,23 @@ UI. Under **Trusted Publisher**, choose **GitHub Actions**:
 Save. Under **Publishing access**, choose **Require two-factor authentication and disallow tokens**, then **Update
 Package Settings**. Each save asks for 2FA.
 
-Verify (each run asks for browser approval). Every engine package's entry must equal core's:
+Verify; npm asks for one browser approval. Every engine package's entry must equal core's. Run it in a terminal,
+without `--json` and not piped: `--json`, or output that is not a terminal, makes npm fail with `EOTP` instead of
+waiting for the approval.
 
 ```sh
-npx -y npm@latest trust list @neralabs/rerail --json
-for name in $(cat /tmp/rerail-engine-placeholders/names.txt); do
-  npx -y npm@latest trust list "$name" --json
+for name in @neralabs/rerail $(cat /tmp/rerail-engine-placeholders/names.txt); do
+  echo "== $name"
+  npx -y npm@latest trust list "$name"
 done
 ```
 
 <details>
 <summary>What to expect, why six entries, and why not the CLI</summary>
 
-- The output must show `"repository": "neralabs/rerail"`, `"file": "release.yml"` and `"environment": "release"`, with
-  permissions including `createPackage` and `manageDistTags`. No npm command reads the Publishing access setting, so
-  check that on the web page.
+- Each entry must show `type: github`, `file: release.yml`, `repository: neralabs/rerail`, `environment: release` and
+  `permissions: publish, stage publish, manageDistTags`, as core's does; only its `id` differs. No npm command reads
+  the Publishing access setting, so check that on the web page.
 - **The workflow is `release.yml`,** core's, not the packs' `release-packs.yml`: one release run publishes the six
   engine packages and then core, and its promotion moves all seven `latest` dist-tags.
 - **Six entries, not one.** A run has one identity, and npm checks it against each package's own entry. A package
@@ -196,7 +208,10 @@ Find the message you see in the table; the fix is beside it.
 
 | Symptom | Cause and fix |
 |---|---|
-| `EOTP` or an "Authenticate your account" URL | npm needs 2FA. Approve the URL in the browser; the command carries on. |
+| An "Authenticate your account" URL | npm needs 2FA. Approve the URL in the browser; the command carries on. |
+| `EOTP`, "This operation requires a one-time password" | npm could not wait for the approval: the command ran with `--json`, or its output was piped or redirected. Run it again in a terminal without either. |
+| `npm dist-tag ls` shows `latest: 0.0.0-stage` | npm is still processing the publish. Wait a few minutes and check again. |
+| An engine package's collaborators differ from core's | The `developers` team lacks read-write on it. An owner of the organization runs `npm access grant read-write neralabs:developers <name>`; for anyone else npm answers `E403`. |
 | `npm publish` is refused with a permission error (`E403`) | Your npm account cannot publish under `@neralabs`. Ask an owner of the organization for publish rights, then rerun the loop. |
 | `npm publish` says it cannot publish over `0.0.0` | That name already has its placeholder. Nothing to do. |
 | `npm access get status` in step 3 prints `private` | npm keeps the package private. Run `npm access set status=public <name>`, then check again. |
@@ -210,21 +225,20 @@ Find the message you see in the table; the fix is beside it.
 
 ## Not confirmed yet
 
-This runbook has not been run: the six packages did not exist when it was written. Correct it after the first run.
+Steps 1 to 3 and 5 were run for the six packages on 2026-11-24, with npm 11.16, and corrected from that run. Step 4
+waits on the first release that publishes them.
 
 <details>
 <summary>What rests on the pack runbook, and what on nothing yet</summary>
 
-Steps 2 to 4 follow [publishing-a-new-pack.md](publishing-a-new-pack.md), which has been run for packs. Taken from it
-and not checked again for these packages:
+Taken from [publishing-a-new-pack.md](publishing-a-new-pack.md), which has been run for packs, and not checked again
+for these packages:
 
 - that a trusted publisher setting expires after 2 days without a publish;
-- the fields `npm trust list` prints, and that `npm trust github` cannot grant the dist-tag permission;
-- that `developers`, read-write, is the access core has.
+- that `npm trust github` cannot grant the dist-tag permission.
 
 Not known:
 
-- whether one browser approval covers the six publishes of step 2, or npm asks for each;
 - that npmjs accepts an engine package's 35 to 42 MB tarball from the release workflow, and that its provenance and
   `npm audit signatures` pass for these names: only the first release run shows it. Publish a preview first
   (step 4) to find out before a plain version is tagged.

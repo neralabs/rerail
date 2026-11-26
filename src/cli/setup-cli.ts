@@ -29,6 +29,7 @@ import { LOCKS_DIR } from "../engine/native/file-lock.js";
 import { UNTAKEN_EVENTS_DIR } from "../engine/storage/untaken-events.js";
 import { contentStoreFiles, contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
+  accessTokenKept,
   AUTOSTART_CLAIM_FILE,
   autostartOff,
   browserOff,
@@ -36,6 +37,7 @@ import {
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
   daemonServesPackage,
+  daemonUsesPackageRoot,
   foundRunning,
   lookupDaemon,
   MACHINE_WITHOUT_ENGINE,
@@ -43,12 +45,16 @@ import {
   openDashboard,
   START_LOCK_DIR,
   startDaemon,
+  startDaemonForPackage,
   startingDaemonNoticeTo,
   STOP_ANSWERS,
   stopDaemon,
   type DaemonLookup,
   type DaemonMachine,
   type DaemonState,
+  type FoundDaemon,
+  type FoundRunning,
+  type OlderDaemon,
   type StopDaemonResult,
 } from "../runtime/daemon-control.js";
 import { DAEMON_PORT_FILE, DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
@@ -820,27 +826,48 @@ function installedRulesNotRun(home: string): string | undefined {
  * `rerail install --refresh`: register this version again with every coding agent already connected to the managed
  * install, so commands it added arrive and ones it retired go, and write the launcher again; `rerail update` runs it
  * from the version it activated. Both then name the node it runs on. Coding agents never connected stay untouched, and
- * one whose configuration cannot be read to tell is named and left alone. Exits 1 only when a connected coding agent
- * could not be refreshed.
+ * one whose configuration cannot be read to tell is named and left alone. A daemon running from another package is
+ * replaced by this one's ({@link replaceOtherPackageDaemon}). Exits 1 only when a connected coding agent could not be
+ * refreshed.
  */
 async function runRefresh(context: SetupContext): Promise<number> {
   const root = registrationRoot(context);
   const result = await refreshCodingAgents(root, codingAgentHome());
+  printRefreshedAgents(root, result);
+  await refreshActiveVersion(context);
+  for (const { agent, message } of result.failures) {
+    process.stderr.write(`rerail: could not refresh ${CODING_AGENT_NAMES[agent]}: ${message}\n`);
+  }
+  if (result.failures.length === 0) return 0;
+  process.stderr.write("rerail: fix that, then run rerail install --refresh\n");
+  return 1;
+}
+
+/** What the refresh did in each coding agent connected to `root`, and which it could not read; failures are said last. */
+function printRefreshedAgents(root: string, result: Awaited<ReturnType<typeof refreshCodingAgents>>): void {
   if (result.agents.length === 0 && result.failures.length === 0 && result.unchecked.length === 0) {
     process.stdout.write(`No coding agents are connected to ${root}; nothing to refresh.\n`);
   }
-  if (result.agents.length > 0) {
-    const changed = result.changes.filter(change => change.action === "created" || change.action === "updated");
-    const names = result.agents.map(id => CODING_AGENT_NAMES[id]).join(", ");
-    process.stdout.write(changed.length === 0 ? `Coding agents up to date: ${names}\n` : `Refreshed Rerail in ${names}:\n`);
-    // Notes about a change come only with one; a note about the agent's state (OMP's plugin install loading Rerail
-    // too) holds whether or not this refresh changed anything, so every note is printed.
-    printReport({ changes: changed, notes: result.notes }, false);
-  }
+  printAgentChanges(result);
   for (const { agent, message } of result.unchecked) {
     process.stdout.write(`  note: left ${CODING_AGENT_NAMES[agent]} alone: its configuration could not be read to tell whether Rerail is connected (${message})\n`);
   }
-  // The hooks above now name the node this runs on; the launcher names it too, or it would keep the one an earlier
+}
+
+/** The coding agents the refresh registered again, and what it created or updated in them; nothing when there are none. */
+function printAgentChanges(result: Awaited<ReturnType<typeof refreshCodingAgents>>): void {
+  if (result.agents.length === 0) return;
+  const changed = result.changes.filter(change => change.action === "created" || change.action === "updated");
+  const names = result.agents.map(id => CODING_AGENT_NAMES[id]).join(", ");
+  process.stdout.write(changed.length === 0 ? `Coding agents up to date: ${names}\n` : `Refreshed Rerail in ${names}:\n`);
+  // Notes about a change come only with one; a note about the agent's state (OMP's plugin install loading Rerail
+  // too) holds whether or not this refresh changed anything, so every note is printed.
+  printReport({ changes: changed, notes: result.notes }, false);
+}
+
+/** The rest of what the refresh brings over to this version, beside the coding agents' hooks, each said as it changes. */
+async function refreshActiveVersion(context: SetupContext): Promise<void> {
+  // The hooks now name the node this runs on; the launcher names it too, or it would keep the one an earlier
   // set-up recorded and, once that is upgraded or removed, fall back to whichever `node` PATH has.
   if (await context.updater.refreshLauncher()) {
     process.stdout.write(`Launcher: ${context.updater.launcherPath} now runs ${pinnedNodePath()}\n`);
@@ -848,21 +875,21 @@ async function runRefresh(context: SetupContext): Promise<number> {
   // An install made by a version whose set-up never wrote PATH keeps the launcher off it until something puts it
   // on: the refresh every update ends with is that something, once. A set-up that handled PATH leaves a record, and
   // from then on PATH is the person's: a block they took out stays out.
-  const pathLine = await repairLauncherPath(context);
-  if (pathLine !== undefined) process.stdout.write(`${pathLine}\n`);
+  printLine(await repairLauncherPath(context));
   // After an update to a version that scrubs what it stores: once, the hint to scrub what earlier versions stored.
   const scrubHint = scrubHintOnce(context.home);
   if (scrubHint !== undefined) process.stdout.write(scrubHint);
   // Every update ends with this refresh, run by the version it activated: the one place an update hears what that
   // version's engine says of the packs it keeps at their installed versions.
-  const notRun = installedRulesNotRun(context.home);
-  if (notRun !== undefined) process.stdout.write(`${notRun}\n`);
-  for (const { agent, message } of result.failures) {
-    process.stderr.write(`rerail: could not refresh ${CODING_AGENT_NAMES[agent]}: ${message}\n`);
-  }
-  if (result.failures.length === 0) return 0;
-  process.stderr.write("rerail: fix that, then run rerail install --refresh\n");
-  return 1;
+  printLine(installedRulesNotRun(context.home));
+  // The version it activated takes over the daemon too, so the dashboard and engine are that version's from now on,
+  // not from a coding agent's next hook. The daemon is not the refresh's to fail on: an update goes on to the packs.
+  printLine(await replaceOtherPackageDaemon(context).catch(daemonCheckFailed));
+}
+
+/** Prints `line` on stdout, when there is one. */
+function printLine(line: string | undefined): void {
+  if (line !== undefined) process.stdout.write(`${line}\n`);
 }
 
 /**
@@ -1018,14 +1045,125 @@ const DASHBOARD_ROUTES: Record<DashboardPage, string> = { rules: "rules" };
  * daemon already running from this install, and starts or replaces none.
  */
 async function activeDaemon(context: SetupContext, port: number | undefined): Promise<DaemonState> {
-  // The version directory, not the current link: the daemon and its SQLite binding belong to this install.
-  const packageRoot = await realpath(registrationRoot(context));
+  const packageRoot = await activePackageRoot(context);
   const lookup = await lookupDaemon(context.home);
   const kept = await keptDaemon(lookup, packageRoot, port);
   if (kept !== undefined) return kept;
   if (autostartOff()) throw new Error(`RERAIL_AUTOSTART=${process.env.RERAIL_AUTOSTART} keeps set-up from starting it`);
   const stopped = await stoppedPort(context.home, lookup);
   return await startActiveDaemon(context.home, packageRoot, port ?? stopped);
+}
+
+/** The version directory of the active install, not the current link: the daemon and its SQLite binding belong to it. */
+async function activePackageRoot(context: SetupContext): Promise<string> {
+  return await realpath(registrationRoot(context));
+}
+
+/** What to run to replace a daemon by hand: a stop, then a start from the active install. */
+const RESTART_DAEMON = "run rerail daemon stop, then rerail daemon start";
+
+/** Why a daemon from another package keeps running, and what replaces it by hand. */
+interface KeptDaemonReason {
+  why: string;
+  restart: string;
+}
+
+/**
+ * After `rerail update`, the daemon still running from the version it replaced serves that version's dashboard and
+ * engine until a coding agent's hook replaces it. The refresh every update ends with replaces it now, as a hook would,
+ * on the port it had ({@link restartOnActivePackage}); the line to print says so. It starts no daemon where none runs,
+ * and leaves alone, saying why and how to restart it, one {@link keptReason} names. Undefined when no daemon runs, it
+ * runs from the active install, or replacing it failed, which is said on stderr. Throws when the daemon cannot be
+ * looked up, as when daemon.json cannot be read ({@link daemonCheckFailed}).
+ */
+async function replaceOtherPackageDaemon(context: SetupContext): Promise<string | undefined> {
+  const packageRoot = await activePackageRoot(context);
+  const lookup = await lookupDaemon(context.home);
+  if (lookup.status === "absent" || (lookup.status !== "older" && await daemonUsesPackageRoot(lookup.state, packageRoot))) return undefined;
+  const kept = keptReason(context.home, lookup);
+  if (kept !== undefined) return stillRunsLine(lookup.state, kept);
+  return await restartOnActivePackage(context.home, packageRoot, lookup.state);
+}
+
+/** Says on stderr that the refresh could not tell which version the daemon runs, and how to restart it; undefined. */
+function daemonCheckFailed(error: unknown): undefined {
+  process.stderr.write(`rerail: Rerail could not check which version the daemon runs (${errorText(error)}); to restart it, ${RESTART_DAEMON}.\n`);
+  return undefined;
+}
+
+/** An error's message, or what was thrown as text. */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Why a start leaves alone a daemon that is alive but not running as it should ({@link DaemonLookup}). */
+const NOT_ANSWERING: Readonly<Record<Exclude<FoundDaemon["status"], FoundRunning["status"]>, string>> = {
+  unresponsive: "it does not answer",
+  refused: "it refuses the access capability daemon.json records",
+};
+
+/**
+ * Why the refresh leaves running the daemon `found`, from another package: `RERAIL_AUTOSTART=0` or `false`, under which
+ * nothing replaces it; it does not answer, or refuses the capability, so a start would only refuse it too; it runs a
+ * release before the engine's proof ({@link OlderDaemon}), whose record cannot say whether it was started with a
+ * `--public-host`, which a start would drop; or a start on its address and port alone would not bring it back as it was
+ * ({@link startedWithDefaults}). Undefined when the refresh replaces it.
+ */
+function keptReason(home: string, found: FoundDaemon): KeptDaemonReason | undefined {
+  if (autostartOff()) return { why: `RERAIL_AUTOSTART=${process.env.RERAIL_AUTOSTART} keeps Rerail from replacing it`, restart: RESTART_DAEMON };
+  if (!foundRunning(found)) return { why: NOT_ANSWERING[found.status], restart: RESTART_DAEMON };
+  if (found.status === "older") return { why: "it is a release before 0.1.5, whose record does not say which options it was started with", restart: `run rerail daemon start with the options you gave it, which ends it first` };
+  if (startedWithDefaults(home, found.state)) return undefined;
+  return { why: "it was started with options a restart here would drop", restart: `${RESTART_DAEMON} with the options you gave it` };
+}
+
+/** The line saying the daemon `old` still runs its version, why, and how to restart it. */
+function stillRunsLine(old: DaemonState, { why, restart }: KeptDaemonReason): string {
+  return `The Rerail daemon still runs Rerail ${old.version}: ${why}; ${restart}.`;
+}
+
+/**
+ * Replaces the daemon `old`, from another package, with one from `packageRoot` on the address and port it had, as a hook
+ * does (`startDaemonForPackage`, under the start lock), and returns the line saying so; a hook that replaced it first
+ * leaves the start nothing to do. The address is a loopback one ({@link startedWithDefaults}), which needs no other
+ * option. A replacement that fails is said on stderr ({@link failedRestartLine}) and fails nothing: the coding agents
+ * are refreshed all the same.
+ */
+async function restartOnActivePackage(home: string, packageRoot: string, old: DaemonState): Promise<string | undefined> {
+  try {
+    const { started, daemon } = await startDaemonForPackage(
+      { home, packageRoot, onWaiting: startingDaemonNoticeTo(home) },
+      { dev: false, host: old.host, port: old.port },
+    );
+    const now = started ? `Restarted the Rerail daemon on Rerail ${daemon.state.version} (it ran ${old.version})` : `The Rerail daemon already runs Rerail ${daemon.state.version}`;
+    return `${now}; reload an open dashboard to see it.`;
+  } catch (error) {
+    process.stderr.write(`rerail: ${await failedRestartLine(home, packageRoot, error)}\n`);
+    return undefined;
+  }
+}
+
+/**
+ * What a failed replacement left, by a second look: the stop may have ended the old daemon before the start failed, and
+ * then none runs, which a coding agent's hook does not start again; the start may have left the daemon it launched from
+ * `packageRoot` running, still coming up; the old daemon may still run; or the look failed too.
+ */
+async function failedRestartLine(home: string, packageRoot: string, error: unknown): Promise<string> {
+  const failed = `Rerail could not replace the daemon (${errorText(error)})`;
+  const after = await lookupDaemon(home).catch(() => undefined);
+  if (after === undefined) return `${failed}; ${RESTART_DAEMON}.`;
+  if (after.status === "absent") return `${failed}, and none is running now; run rerail daemon start.`;
+  if (after.status !== "older" && await daemonUsesPackageRoot(after.state, packageRoot)) return `${failed}, but one of Rerail ${after.state.version} is coming up or running now; rerail status shows which.`;
+  return `${failed}, which still runs Rerail ${after.state.version}; ${RESTART_DAEMON}.`;
+}
+
+/**
+ * Whether the daemon `state` records serves what a start with only its address and port would: the packaged dashboard,
+ * over http, on loopback with its capability kept in `home`. A daemon started with `--dev`, TLS, `--allow-remote` or a
+ * `--public-host` is none of these, and its record keeps too little of those options to start it with them again.
+ */
+function startedWithDefaults(home: string, state: DaemonState): boolean {
+  return state.ui === "bundled" && state.tlsFingerprint256 === undefined && state.remoteRefused === undefined && accessTokenKept(home, state);
 }
 
 /**

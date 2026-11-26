@@ -29,9 +29,9 @@ pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
 pub use rerail_store::content_store;
-/// Every in-process Git read (`native/src/git_access`): the opener, its setup and its pool are the store's
-/// (`rerail-store`), which the workspace discovery and the ignore matcher open through; the Node-API object that
-/// installs the setup is the engine's.
+/// The Git opener the workspace discovery and the ignore matcher read through (`native/src/git_access`): the opener,
+/// its setup and its pool are the store's (`rerail-store`); the Node-API object that installs the setup is the
+/// engine's.
 pub mod git_access {
     pub use rerail_store::git_access::*;
     pub mod owner;

@@ -40,7 +40,7 @@ import {
   parsePublicHosts,
   type ParsedArguments,
 } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
+import { commitEveryWriteDurably, defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
   accessTokenKept,
   BROWSER_OFF_NOTE,
@@ -382,11 +382,14 @@ function workspaceStatus(workspace: string): string {
   return `Rerail is on in ${name}.\n`;
 }
 
-/** What `rerail status` says outside a repo: that there is none, or that it found no Git to tell. */
+/**
+ * What `rerail status` says outside a Git repository: that Rerail works in one, and how to start it in one from here;
+ * or that it found no Git to tell.
+ */
 function noRepoStatus(workspace: string): string {
   const git = gitLookup();
   return git.found
-    ? `No repo found here (${workspace}). Run rerail status inside your project.\n`
+    ? `No Git repository here (${workspace}). Rerail works in a Git repository: run rerail status inside one, or start Rerail in one with rerail start --repo <folder>.\n`
     : `Rerail needs Git to tell whether this is a repo, and found none where it looks: ${git.looked.join(", ")}. Install Git, then run rerail status again.\n`;
 }
 
@@ -1026,6 +1029,9 @@ function failed(error: unknown): number {
   return 1;
 }
 
+// Every write this command makes is a change a person asked for, and no hook waits on it: each commit is on the disk
+// before the command says it is made, so a power cut right after cannot roll it back.
+commitEveryWriteDurably();
 try {
   process.exitCode = await main();
 } catch (error) {

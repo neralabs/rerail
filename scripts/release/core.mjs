@@ -283,6 +283,17 @@ export function heldOffRules(packJson) {
   return (packJson?.rules ?? []).filter((rule) => rule.heldOff !== undefined).map((rule) => rule.id);
 }
 
+/**
+ * The first core release that reads a rule's `dimensions` in `pack.json` (risk, layer, severity, hazard): an older core
+ * refuses a `pack.json` naming it. 0.2.1 is released and reads none, so the first is the release after it.
+ */
+export const DIMENSIONS_SINCE = "0.2.2";
+
+/** The ids of the rules a parsed `pack.json` gives dimensions. */
+export function dimensionedRules(packJson) {
+  return (packJson?.rules ?? []).filter((rule) => rule.dimensions !== undefined).map((rule) => rule.id);
+}
+
 /** Every rule document under `<directory>/rules`, parsed. A document that is not JSON is left out: check 1 reports it. */
 function ruleDocuments(directory) {
   const rules = join(directory, "rules");
@@ -372,13 +383,14 @@ export function shippedRuleKeys(directory) {
 
 /**
  * The oldest core release that loads a pack holding the rules `heldOff` off, shipping rules in `languages` whose ast
- * rules use `ruleKeys`, and shipping the rules `rerail` written in `.rerail`: the newest of the releases that first
- * read each. Undefined when every core loads it.
+ * rules use `ruleKeys`, shipping the rules `rerail` written in `.rerail`, and giving the rules `dimensioned`
+ * dimensions: the newest of the releases that first read each. Undefined when every core loads it.
  */
-export function coreFloor(heldOff, languages, ruleKeys, rerail) {
+export function coreFloor(heldOff, languages, ruleKeys, rerail, dimensioned) {
   const since = [
     ...(heldOff.length > 0 ? [HELD_OFF_SINCE] : []),
     ...(rerail.length > 0 ? [RERAIL_DOCUMENTS_SINCE] : []),
+    ...(dimensioned.length > 0 ? [DIMENSIONS_SINCE] : []),
     ...languages.flatMap((language) => LANGUAGE_SINCE.get(language) ?? []),
     ...ruleKeys.flatMap((key) => RULE_KEY_SINCE.get(key) ?? []),
   ];

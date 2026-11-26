@@ -159,8 +159,10 @@ a secret token sent as `x-rerail-access`, on every request.
     `RERAIL_ENGINE_SOCKET`, they use the home's `daemon.json` if it names the same socket (`engineEndpointAt`). On
     Windows they send neither the capability nor the event until Windows names the process holding the pipe's server
     end as the daemon `daemon.json` records (its pid, started no later than it recorded itself), which wrote that
-    capability itself, or else the engine on that pipe gives the proof T2 describes for the capability `daemon.json`
-    records.
+    capability itself, or else, only where Windows says no pipe of that name exists or cannot be asked, the engine on
+    that pipe gives the proof T2 describes for the capability `daemon.json` records. Their lookup sends nothing, not
+    even the proof's challenge, to a pipe Windows names as another process's, or to one that refuses to let Windows
+    say which process serves it; the start check's proof is under "What remains" (T14).
 - **Cross-site requests.** The capability is a header, not a cookie, so a browser cannot send it cross-origin without
   a preflight, which the daemon never answers. Defence in depth: a foreign `Origin` on an `/api` write gets `403`;
   `/native/session` and `/native/shutdown` refuse any `Origin`.
@@ -271,10 +273,19 @@ without hooks or network.
     `git blame --contents` of a working file. The listing and the call are two Git processes (T11).
   - No network commands; `cat-file --batch` runs no textconv, and a `--name-only` diff runs no textconv or external
     diff.
-- **Git read in process** (`native/src/git_access/`): the engine opens every repository it reads through one opener.
-  It starts no Git process and runs no filter driver a repository or user configures: the config files outside the
+- **Git read in process** (`native/src/git_access/`): the ignore matcher and the workspace discovery open every
+  repository they read through one opener. Three reads of the code rules open gix directly instead, with its own
+  defaults (`@git_tracked`, `@git_commit`, `@git_has` and `git_rev`, a base revision's files, a `HEAD` tree's committed
+  sources): they read the index and objects, not ignore rules, and their opens take none of this paragraph's checks.
+  The first two open a repository another user owns outside `safe.directory`, which gix's defaults allow with reduced
+  trust; the third runs after the workspace discovery, which refuses one. On Windows the first of them in a process can
+  start the first `git.exe` on `PATH` to find the system config file. The
+  opener starts no Git process and runs no filter driver a repository or user configures: the config files outside the
   repository are the ones Rerail's Git names, and the reads drop every `filter.*` section before they convert a file.
-  It refuses a repository Git refuses (another user's outside `safe.directory`, a config file Git cannot parse). Before
+  It refuses a repository Git refuses (another user's outside `safe.directory`, a config file Git cannot parse). In a
+  linked worktree it reads the includes Git reads there; where gix's own open fails on an include that only the main
+  checkout's condition selects, it opens that worktree again with includes off only in a repository the user owns,
+  since in another user's such an open would skip an included `safe.directory`. Before
   gix reads them it refuses the top-level config files (system, installation, global, the repository's `config` and
   `config.worktree`), `info/exclude`, `info/attributes` and the global exclude and attribute files when one holds more
   than 100 MiB or is neither a regular file nor a folder (a FIFO or a device, which a read would wait on for ever); the
@@ -292,9 +303,17 @@ without hooks or network.
   repository Git refused stays refused until the process's owner of Git reads changes: where Rerail's Git did not
   answer its asks, the process asks again after a minute, and only an answer that differs makes a new owner, under
   which lanes open their rules again. The store's walk and status after the open, and an ignore question, run on the
-  caller's thread with no limit of their own: a walk asks one or two ignore questions per file, and a question's disk
-  reads are a stat of the index and the `.gitignore` of a folder the walk has just listed. The repository index walk
-  opens its rules under the same 10 s limit.
+  caller's thread with no limit of their own: a question's disk reads are a stat of the index and the `.gitignore` of a
+  folder the walk has just listed. A walk asks the engine about a path only where no answer is kept for its checkout
+  (`GitIgnoreAnswers`), and reads on the same thread, once per walk, the end of each checkout's index (all of it where
+  Git writes no checksum there, until a walk reads it 2 s or more after it last changed) and the `.gitignore` of each
+  folder it asks about. Those 2 s take the index file's times to come from the clock the daemon reads, within a tick.
+  Where a server sets them (a network file system, some shared folders), a time ahead of the daemon's clock has the
+  next walk read the index whole again; a server clock more than about 2 s behind the daemon's can let a walk keep the
+  file's stamp right after a write, and a later write of the same size, with the same times on a reused inode, then
+  keeps the answers learnt under the old index (a file `git add --force` added still read as ignored) until the index
+  next changes. An index with Git's checksum is told by its bytes, whatever its times. The repository index walk opens
+  its rules under the same 10 s limit.
 - **SQL** uses bound parameters (Drizzle, `better-sqlite3`, `rusqlite`); raw SQL is only constants and quoted
   migration DDL.
 - **Embedding model** SHA-256 is checked against `model/manifest.json` before loading (`native/src/model.rs`).
@@ -364,6 +383,10 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600 (ex
 - A steer's receipt the daemon took while another process held the database waits in `rerail.sqlite-receipts/`
   beside it, 0700 with files 0600, until its record is made; the next daemon records what is left
   (`keepReceipt` in `src/runtime/session-store.ts`).
+- An event a hook left while the daemon ran but did not read (a prompt, a reply or a tool's input, its recognized
+  secrets redacted and a tool's output left out) waits in `untaken-events/` in the home, 0700 with files 0600, until
+  the daemon takes it (`src/engine/storage/untaken-events.ts`). A process that can write there can already read
+  `daemon.json`'s capability and send events itself.
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch, and a
@@ -1050,6 +1073,17 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
   as long). If the daemon ends in that time and another user creates a pipe of that name, that user gets the event and
   the capability. The other user cannot end the daemon to open that window. What would close it: the same check on
   the connection that carries the event.
+- On Windows a hook still writes the proof's challenge (T2) to a pipe no one has shown to be the home's daemon in two
+  places: its start check asks the pipe `daemon.json` names, as every reader of `daemon.json` does before it sends the
+  capability (`windowsRecordedDaemon`), and the lookup of the pipe `RERAIL_ENGINE_SOCKET` names asks it where Windows
+  cannot be asked, as when the native engine does not load in the hook's process or predates that question, or where
+  no pipe of that name was there when Windows was asked and one is there by the proof. Node opens a pipe without
+  `SECURITY_SQOS_PRESENT`, so a process serving that pipe that holds `SeImpersonatePrivilege`, as a service account
+  does, can act as the person's account once it reads that write. The challenge carries no secret. The lookup sends
+  nothing, not even the challenge, to a pipe Windows names as another process's, or to one that refuses to let Windows
+  say which process serves it; it opens the pipe asking only to read its attributes, which every open of Node's client
+  asks too, so no pipe a hook could write to refuses it. What would close the start check's part: asking Windows first
+  there too, as the lookup does.
 - `/native/session` still returns `error.message` in its `400`s.
 - A `.git` gitlink in an archive (not a clone) can point at another repository's common directory and inherit its
   `rerail-repository-id`, rules and start state when a session starts in that folder. A path a tool call names gets no

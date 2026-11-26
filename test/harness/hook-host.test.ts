@@ -75,8 +75,9 @@ const HELD_CAPABILITY = "held-engine-capability";
 
 /**
  * A daemon's engine socket that answers the first event only once `answerFirst` is called, as a busy daemon checking an
- * edit does, and every later event at once. daemon.json records it with its capability until it closes, and it proves
- * it holds that capability, which a hook on Windows asks before it sends an event.
+ * edit does, and every later event at once. daemon.json records it with its capability until it closes, as the daemon
+ * records itself: this process's pid and a start stamped after the process began, so Windows names the recorded daemon
+ * as the pipe's holder. It proves it holds that capability, as a hook's start check asks.
  */
 async function heldEngine(root: string): Promise<HeldEngine> {
   const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-held-engine-${randomUUID()}` : join(root, "engine.sock");
@@ -103,7 +104,7 @@ async function heldEngine(root: string): Promise<HeldEngine> {
   const stateFile = join(process.env.RERAIL_HOME!, "daemon.json");
   await mkdir(process.env.RERAIL_HOME!, { recursive: true });
   await writeFile(stateFile, JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "test",
-    databasePath: join(root, "rerail.sqlite"), kernelSocketPath: socketPath, ui: "bundled", startedAt: 1, packageRoot: root, accessToken: HELD_CAPABILITY }));
+    databasePath: join(root, "rerail.sqlite"), kernelSocketPath: socketPath, ui: "bundled", startedAt: Date.now(), packageRoot: root, accessToken: HELD_CAPABILITY }));
   return {
     socketPath,
     received,

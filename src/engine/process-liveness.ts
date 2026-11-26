@@ -111,7 +111,7 @@ export function startNamesProcess(startedAt: number): boolean {
 }
 
 /** Linux's start of `pid`, `windows` on Windows, and none elsewhere. */
-function startedAt(pid: number, platform: NodeJS.Platform, windows: () => number | undefined): number | undefined {
+function startedAt<Read>(pid: number, platform: NodeJS.Platform, windows: () => Read): number | undefined | Read {
   if (platform === "linux") return linuxStartedAt(pid);
   return platform === "win32" ? windows() : undefined;
 }
@@ -119,13 +119,18 @@ function startedAt(pid: number, platform: NodeJS.Platform, windows: () => number
 /** What the engine reads of when `pid` started; nothing when it does not load or has no such read. */
 function engineStartedAt(pid: number, engine: () => Pick<NativeBinding, "processStartedAt">): number | undefined {
   try {
-    const read = engine().processStartedAt;
-    if (read === undefined) throw new Error("the engine was built before it could read a process's start");
-    return read(pid) ?? undefined;
+    return engineStartRead(engine(), pid) ?? undefined;
   } catch (error) {
     reportEngineReadFailure(error);
     return undefined;
   }
+}
+
+/** What the loaded engine `binding` reads of when `pid` started; it throws when the engine was built before that read. */
+function engineStartRead(binding: Pick<NativeBinding, "processStartedAt">, pid: number): number | null {
+  const read = binding.processStartedAt;
+  if (read === undefined) throw new Error("the engine was built before it could read a process's start");
+  return read(pid);
 }
 
 /** Whether a failure of the engine's process reads was reported in this process. */
@@ -148,9 +153,11 @@ function reportEngineReadFailure(error: unknown): void {
  * it exited (`ended`), it was ended and still runs after the wait (`running`), the process holding the pid started
  * after the record's `startedAt` and was let alone (`later`), or the process could not be opened, its start read or
  * waited on, as when no process holds the pid, or `startedAt` names no time a process started ({@link startNamesProcess})
- * (`unread`). A wait that failed came after the end was asked, so an `unread` process may have been ended.
+ * (`unread`), or the child process that asked the engine was ended at its bound before it answered, so whether the end
+ * was asked is not known (`unanswered`, {@link endProcessStartedByInChild}). A wait that failed came after the end was
+ * asked, so an `unread` process may have been ended.
  */
-export type ProcessEnd = "ended" | "running" | "later" | "unread";
+export type ProcessEnd = "ended" | "running" | "later" | "unread" | "unanswered";
 
 const PROCESS_ENDS: ReadonlySet<string> = new Set(["ended", "running", "later"]);
 
@@ -167,13 +174,25 @@ export function endProcessStartedBy(
   engine: () => Pick<NativeBinding, "endProcessStartedBy"> = loadNativeBinding,
 ): ProcessEnd {
   try {
-    const end = engine().endProcessStartedBy;
-    if (end === undefined) throw new Error("the engine was built before it could end a process by its start");
-    return processEnd(end(pid, startedAt, waitMs));
+    return engineEnd(engine(), { pid, startedAt, waitMs });
   } catch (error) {
     reportEngineReadFailure(error);
     return "unread";
   }
+}
+
+/** A process to end when it started no later than `startedAt` (epoch ms), with how long to wait for its exit. */
+export interface EndTarget {
+  readonly pid: number;
+  readonly startedAt: number;
+  readonly waitMs: number;
+}
+
+/** What the loaded engine `binding` answers to its end of `target`; it throws when the engine was built before that end. */
+function engineEnd(binding: Pick<NativeBinding, "endProcessStartedBy">, { pid, startedAt, waitMs }: EndTarget): ProcessEnd {
+  const end = binding.endProcessStartedBy;
+  if (end === undefined) throw new Error("the engine was built before it could end a process by its start");
+  return processEnd(end(pid, startedAt, waitMs));
 }
 
 /**
@@ -195,6 +214,101 @@ export function endProcessStartedByPowerShell(pid: number, startedAt: number, wa
     + `'${END_ASKED}'; ${PROCESS_CMDLETS}\\Wait-Process -InputObject $p; 'ended' }`;
   const run = spawnSync(windowsPowerShell(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: waitMs });
   return powerShellEnd(run.status, String(run.stdout ?? ""));
+}
+
+/**
+ * A read of a process's start that was ended at its bound before it answered: unlike a read that answered with no start,
+ * it says nothing of the process, and a stop that meets it says so.
+ */
+export const START_UNANSWERED = "unanswered";
+
+/** What a read of when a process started gives: the start in epoch ms, none, or {@link START_UNANSWERED}. */
+export type StartRead = number | undefined | typeof START_UNANSWERED;
+
+/** The Node binary and the entry file of the child process that reads through the engine ({@link engineReaderAnswer}). */
+export interface EngineReader {
+  readonly node: string;
+  readonly entry: string;
+}
+
+/**
+ * How long a child that reads through the engine has to answer, its Node's start and the engine's load included. The
+ * read is a system call, so on a machine that runs the child this bound decides nothing: it only ends a child that never
+ * answers, as one a debugger holds, so that it cannot hold the uninstall for good.
+ */
+export const ENGINE_READER_ANSWER_MS = 30_000;
+
+/**
+ * {@link processStartedAt} for a process that must not load the engine, as the uninstall must not before it deletes
+ * `versions/`: Windows reads the start through the engine in a child Node process (`reader`), which has exited when
+ * this returns, so no process of the command holds the engine's file afterwards. A child that gives no answer, as when
+ * the engine does not load or the entry file is missing, leaves the read to `fallback`; one still running at
+ * {@link ENGINE_READER_ANSWER_MS} is ended there and reads {@link START_UNANSWERED}.
+ */
+export function processStartedAtInChild(pid: number, reader: EngineReader, fallback: () => StartRead, platform: NodeJS.Platform = process.platform): StartRead {
+  return startedAt(pid, platform, () => {
+    const answer = askEngineReader(reader, ["start", String(pid)], ENGINE_READER_ANSWER_MS);
+    if (answer === START_UNANSWERED) return START_UNANSWERED;
+    if (answer === undefined || !("startedAt" in answer)) return fallback();
+    return typeof answer.startedAt === "number" ? answer.startedAt : undefined;
+  });
+}
+
+/**
+ * {@link endProcessStartedBy} for a process that must not load the engine, through the engine in a child Node process
+ * (`reader`), as {@link processStartedAtInChild} reads. The child has the engine's wait for the exit on top of
+ * {@link ENGINE_READER_ANSWER_MS}; one still running then is ended and its end reads `unanswered`. A child that gives no
+ * answer leaves the end to `fallback`.
+ */
+export function endProcessStartedByInChild(target: EndTarget, reader: EngineReader, fallback: () => ProcessEnd): ProcessEnd {
+  // A start that names no time a process started ends nothing, as the engine's end answers.
+  if (!startNamesProcess(target.startedAt)) return "unread";
+  const args = ["end", String(target.pid), String(target.startedAt), String(target.waitMs)];
+  const answer = askEngineReader(reader, args, ENGINE_READER_ANSWER_MS + target.waitMs);
+  if (answer === START_UNANSWERED) return "unanswered";
+  return answer === undefined || !("end" in answer) ? fallback() : processEnd(String(answer.end));
+}
+
+/**
+ * What the child `reader` printed for `args` as its last line, parsed: undefined when it exited otherwise than with 0
+ * and an object, and {@link START_UNANSWERED} when it was still running at `timeoutMs` and ended there. Its stderr is
+ * this process's, so a person sees why an engine did not load.
+ */
+function askEngineReader(reader: EngineReader, args: readonly string[], timeoutMs: number): Record<string, unknown> | typeof START_UNANSWERED | undefined {
+  const run = spawnSync(reader.node, [reader.entry, ...args], { encoding: "utf8", timeout: timeoutMs, stdio: ["ignore", "pipe", "inherit"] });
+  if ((run.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") return START_UNANSWERED;
+  if (run.status !== 0) return undefined;
+  try {
+    const answer: unknown = JSON.parse(String(run.stdout ?? "").trim().split(/\r?\n/u).at(-1) ?? "");
+    return typeof answer === "object" && answer !== null ? answer as Record<string, unknown> : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** What the process reader prints and its exit code ({@link engineReaderAnswer}). */
+export interface EngineReaderAnswer {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number;
+}
+
+/**
+ * What the process reader (`src/engine/process-reader.ts`) answers to `args` through `engine`: `start <pid>` prints
+ * `{"startedAt":<epoch ms or null>}`, `end <pid> <startedAt> <waitMs>` prints `{"end":"<ProcessEnd>"}`, each with exit
+ * code 0. An engine that does not load, or was built before the call, answers nothing and exits 3, its reason on
+ * stderr, so the reader's caller reads another way.
+ */
+export function engineReaderAnswer(args: readonly string[], engine: () => Pick<NativeBinding, "processStartedAt" | "endProcessStartedBy">): EngineReaderAnswer {
+  const [kind, ...numbers] = args;
+  const [pid = Number.NaN, startedAt = Number.NaN, waitMs = Number.NaN] = numbers.map(Number);
+  if (kind !== "start" && kind !== "end") return { stdout: "", stderr: `rerail: the process reader takes start or end, not ${kind}\n`, exitCode: 2 };
+  try {
+    const answer = kind === "start" ? { startedAt: engineStartRead(engine(), pid) } : { end: engineEnd(engine(), { pid, startedAt, waitMs }) };
+    return { stdout: `${JSON.stringify(answer)}\n`, stderr: "", exitCode: 0 };
+  } catch (error) {
+    return { stdout: "", stderr: `rerail: the engine could not read or end a process: ${error instanceof Error ? error.message : String(error)}\n`, exitCode: 3 };
+  }
 }
 
 /** What {@link endProcessStartedByPowerShell} prints once it has ended the process, before it waits for the exit. */

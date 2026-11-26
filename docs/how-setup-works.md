@@ -573,7 +573,10 @@ until you delete it; the managed installation's goes when `rerail install --remo
 - **Any build from a Git checkout** (source, `dist/`, tests, benchmarks, every worktree):
   `<checkout>/.rerail/content-v5.sqlite` (`.rerail/` is gitignored), so a checkout on a newer store schema never
   changes the store the installed version reads.
-- **Neither** (say, an `npx` copy): no store, reported on its first scan.
+- **Neither** (say, an `npx` copy, or a package `npm install` put in a folder of its own): no store, so no code rule
+  runs. The daemon reports its engine unavailable with the reason: `rerail status` prints it and exits 5, the session
+  footer says `engine unavailable`, and `daemon.log` and the support bundle name it
+  ([troubleshooting](troubleshooting.md#engine-unavailable-no-code-rule-can-run-)).
 
 The file name follows the store's compatibility floor (`v5` today) and changes when the floor rises.
 
@@ -632,10 +635,15 @@ Development builds never take the main-instance lock and never open that store.
 <details>
 <summary>How updates hand over</summary>
 
-Updates hand over without overlap. `rerail update` only activates the new version. The next hook or session from it
-stops the old daemon, waits until that process has exited and the OS has released its lock, then starts the new
-daemon, which takes the lock. `rerail setup` replaces a stale daemon the same way. A `rerail events` stream (in
-internal testing) that outlives an update sends to whichever daemon is running and never brings its own version back.
+Updates hand over without overlap. `rerail update` activates the new version and ends with a step the new version
+runs (`rerail install --refresh`), which stops a daemon still running the old one, waits until that process has exited
+and the OS has released its lock, then starts the new daemon on the same address and port, which takes the lock. It leaves the old
+daemon running, and says how to restart it, under `RERAIL_AUTOSTART=0`, when it does not answer or refuses its
+capability, when it was started with `--dev`, TLS, `--allow-remote` or `--public-host`, which it cannot start the
+new one with, or when it runs Rerail 0.1.4 or earlier on Windows, whose record does not say which of those it was
+started with. A coding agent's next hook or session from the new version replaces a daemon still running the old one,
+and `rerail setup` replaces a stale daemon, the same way. A `rerail events` stream (in internal testing) that outlives an update sends to
+whichever daemon is running and never brings its own version back.
 
 </details>
 

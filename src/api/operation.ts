@@ -10,6 +10,7 @@ import type { AuditReader } from "../engine/audit/audit-store.js";
 import type { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
 import type { ApiCaller, RuleCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
+import type { PublishedRulePackReader } from "../engine/catalog/rule-packs.js";
 import type { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import type { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
@@ -42,6 +43,11 @@ export interface RerailApiStores {
   /** Count a write made through these stores, for {@link dataVersion}; it is a `data` notice of {@link changes} too. */
   markChanged(): void;
   /**
+   * Puts every commit made so far on the disk (`syncHistoryLog`), off the caller's thread: the store's commits do not
+   * wait for the disk, and a change an operation made must be there before its caller hears it succeeded.
+   */
+  syncToDisk(): Promise<void>;
+  /**
    * When what the stores answer may have changed, for the dashboard's change stream; stores without one serve no
    * stream, and the dashboard then reads every 5 s, as it did before the stream.
    */
@@ -56,6 +62,8 @@ export interface RerailApiStores {
   health(): z.infer<typeof presentationDaemonSchema>;
   /** Every coding agent and whether Rerail is connected to it; undefined when this process cannot check. */
   codingAgents(): Promise<CodingAgentState[]> | undefined;
+  /** The rule packs published on npm that fit this Rerail; undefined when this process does not read npm. */
+  publishedRulePacks(): PublishedRulePackReader | undefined;
   /**
    * Starts opening again a session this daemon suspended while it was quiet, so a scan just queued for it runs now;
    * nothing for any other session. Returns at once and never throws: a failure goes to the daemon's log, and the scan
@@ -130,14 +138,37 @@ export function experimentalSummary(feature: ExperimentalFeature, description: s
   return `Experimental: answers 404 experimental-off unless the daemon runs with ${experimentVariable(feature)}=1. ${description}`;
 }
 
-/** Run one operation for one caller; a write that returns counts toward the stores' change token. */
+/**
+ * The handler's answer, given once a write it made is on the disk (`syncToDisk`). A sync that fails comes after the
+ * write committed, so the caller hears `503 not-on-disk`, that the change was made and not confirmed on the disk, and
+ * never that it failed: a caller told so could make a change such as an alias or an audit request twice.
+ */
+async function answerOnDisk(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
+  const result = await operation.handler(stores, input as never, caller);
+  if (operation.method === "GET") return result;
+  try {
+    await stores.syncToDisk();
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new ApiError(503, "not-on-disk", `the change was made, but Rerail could not confirm it is on the disk: a power cut may still undo it, and trying it again may make it twice (${cause})`);
+  }
+  return result;
+}
+
+/**
+ * Run one operation for one caller; a write that returns counts toward the stores' change token, and is answered only
+ * once the log holding it is on the disk: a rule or setting change a person made must not roll back after a power cut
+ * once its caller heard it succeeded. A history write that waits in the record writer while another process holds the
+ * lock (`openRecordWriter`) commits after the answer, and the background sync takes it to the disk
+ * (`startHistorySync`). The sync runs off the daemon's thread, so no hook waits for it.
+ */
 export async function invokeOperation(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
   // Refused before anything runs, and before a write could count toward the change token.
   if (operation.experiment !== undefined && !operationAvailable(operation)) {
     throw new ApiError(404, "experimental-off", experimentOffMessage(operation.experiment, "start the Rerail daemon with"));
   }
   try {
-    return await operation.handler(stores, input as never, caller);
+    return await answerOnDisk(operation, stores, input, caller);
   } catch (error) {
     if (error instanceof InvalidCursorError) throw new ApiError(400, "invalid-cursor", error.message);
     throw error;

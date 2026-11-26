@@ -36,6 +36,8 @@ How rule packs are built, ported, checked and extended.
 
 - [rule-packs.md](rule-packs.md): packs, matching and recommendation, the shipped packs, and a worktree's own rules
 - [pack-format.md](pack-format.md): pack layout, pack data, provenance records and the validation contract
+- [rule-dimensions.md](rule-dimensions.md): slicing rules across packs by risk, layer, severity and hazard, the values,
+  and the side packs they lead to
 - [upstream.md](upstream.md): upstream snapshots and pack data, samples and their licences, new snapshots, the
   publish workflow, upstream releases and bumps, and CI
 - [conformance/README.md](../conformance/README.md): the conformance check every shipped ported rule passes, its pull

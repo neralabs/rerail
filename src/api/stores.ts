@@ -3,6 +3,8 @@ import { join } from "node:path";
 import type { z } from "zod";
 import { installedPacksPrefix, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { databaseInstalledAt, openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { syncHistoryLog } from "../engine/storage/log-sync.js";
+import { onRecordsWritten } from "../engine/storage/record-writes.js";
 import { SqliteAuditReader } from "../engine/audit/audit-store.js";
 import { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
 import type { RuleCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
@@ -13,6 +15,7 @@ import { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-stor
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { createMergeAssistService, type MergeAssistRuntime, type MergeAssistService } from "../runtime/merge-assist/service.js";
 import type { RerailApiStores } from "./operation.js";
+import type { PublishedRulePackReader } from "../engine/catalog/rule-packs.js";
 import { databaseChangeFeed, type ChangeFeed, type ChangeFeedOptions } from "./change-feed.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
 
@@ -22,6 +25,8 @@ export interface DatabaseApiStoresOptions {
   readonly origin: () => string;
   /** The coding agent check set-up provides (`codingAgentStates`); the API answers 503 without it. */
   readonly codingAgents?: () => Promise<CodingAgentState[]>;
+  /** The published rule packs set-up reads from npm (`publishedPackReader`); the API answers 503 without them. */
+  readonly publishedRulePacks?: PublishedRulePackReader | undefined;
   /** The daemon's engine service, which starts opening again a session it suspended (`RerailApiStores.resumeSession`). */
   readonly resumeSession?: (sessionId: string) => void;
   /**
@@ -58,9 +63,13 @@ export class DatabaseApiStores implements RerailApiStores {
   #localRevision = 0;
   /** {@link installedAt} once known; it never changes. */
   #installedAt: number | null = null;
-  /** {@link changes} once asked for, and how it stops hearing Merge Assist's conflict events; both end with the stores. */
+  /**
+   * {@link changes} once asked for, and how it stops hearing Merge Assist's conflict events and this process's record
+   * writes; all end with the stores.
+   */
   #changes: ChangeFeed | undefined;
   #stopConflicts: (() => void) | undefined;
+  #stopRecords: (() => void) | undefined;
 
   constructor(path: string, options: DatabaseApiStoresOptions) {
     this.#path = path;
@@ -77,6 +86,10 @@ export class DatabaseApiStores implements RerailApiStores {
 
   codingAgents(): Promise<CodingAgentState[]> | undefined {
     return this.#options.codingAgents?.();
+  }
+
+  publishedRulePacks(): PublishedRulePackReader | undefined {
+    return this.#options.publishedRulePacks;
   }
 
   resumeSession(sessionId: string): void {
@@ -172,8 +185,15 @@ export class DatabaseApiStores implements RerailApiStores {
     const feed = databaseChangeFeed(this.#path, () => this.historyVersion(), { files: [packs, join(packs, "node_modules")], ...this.#options.changeFeed });
     // A conflict event of the Merge Assist these stores answer with reaches the stream as it happens.
     this.#stopConflicts = this.#options.mergeAssist?.onConflictsChanged?.(() => feed.notify("conflicts"));
+    // So does each commit of this process's record writer (a hook's records, the checks' audits), which its writer tells:
+    // on Windows the folder's watch hears none of them (`databaseChangeFeed`).
+    this.#stopRecords = onRecordsWritten(this.#path, () => feed.notify("data"));
     this.#changes = feed;
     return feed;
+  }
+
+  async syncToDisk(): Promise<void> {
+    await syncHistoryLog(this.#path);
   }
 
   repositoryState(workspace: string, spelling?: string): RepositoryStartState {
@@ -188,6 +208,7 @@ export class DatabaseApiStores implements RerailApiStores {
     // the database closes under them: a stop with no wait does all that in its call.
     void this.#ownMergeAssist?.stop(0);
     this.#stopConflicts?.();
+    this.#stopRecords?.();
     this.#changes?.close();
     this.reader.close();
     this.#sessionStore?.close();

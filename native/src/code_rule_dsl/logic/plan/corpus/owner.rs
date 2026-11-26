@@ -522,7 +522,11 @@ mod tests {
         let atoms = store.atoms_handle();
         atoms.ready_for_run().unwrap();
         store.intern_atoms(&[&format!("{name}'s own")]).unwrap();
-        std::fs::write(dir.join(format!("{name}.ready")), path.to_string_lossy().as_bytes()).unwrap();
+        // The parent takes the `.ready` file's text the first time it reads it (`ready`) and reads its being there as
+        // this run having its store: written beside it and renamed into place, it is whole from the moment it appears.
+        let part = dir.join(format!("{name}.ready.part"));
+        std::fs::write(&part, path.to_string_lossy().as_bytes()).unwrap();
+        std::fs::rename(&part, dir.join(format!("{name}.ready"))).unwrap();
         let deadline = Instant::now() + Duration::from_secs(120);
         while !dir.join("release").exists() {
             assert!(Instant::now() < deadline, "never released");

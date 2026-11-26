@@ -105,12 +105,12 @@ export async function storedPathAsync(path: string): Promise<string> {
 
 /**
  * `path` resolved from its deepest ancestor `realpath` resolves, with the names below that ancestor as `path` spells
- * them: a part not yet created, and a part the system refuses to resolve. On Windows the native realpath refuses a file
- * or folder the user is denied, and one whose delete is pending (`EPERM`), where `lstat` and Node's JS realpath answer,
- * and a path can go between `existsSync` and the realpath (`ENOENT`). Such a part is no link (an `lstat` says so), so
- * the realpath of its folder is its own folder's, and every lookup a walk makes answers for it as on Linux and macOS: the
- * walk then reports that path alone, from its own read, and checks the rest. A link the system refuses keeps the
- * refusal, since where it leads is not known.
+ * them: a part not yet created, a part gone since `existsSync` found it, and a part the system refuses to resolve. On
+ * Windows the native realpath refuses a file or folder the user is denied, and one whose delete is pending (`EPERM`),
+ * where `lstat` and Node's JS realpath answer. A refused part is no link (an `lstat` says so), so the realpath of its
+ * folder is its own folder's, and every lookup a walk makes answers for it as on Linux and macOS: the walk then reports
+ * that path alone, from its own read, and checks the rest. A link the system refuses keeps the refusal, since where it
+ * leads is not known.
  */
 function resolvedThrough(path: string, realpath: (existing: string) => string): string {
   let existing = resolve(path);
@@ -127,12 +127,18 @@ function resolvedThrough(path: string, realpath: (existing: string) => string): 
 /** The codes a realpath of a path `existsSync` found gives when the system refuses the path, or it has gone since. */
 const REFUSED_OR_GONE = new Set(["EPERM", "EACCES", "ENOENT"]);
 
-/** `realpath(path)`, or undefined when it refuses a path that is no link, or one gone since; any other failure is thrown. */
+/**
+ * `realpath(path)`, or undefined when the path is gone once its realpath failed, whatever the failure's code, or when it
+ * refuses a path that is no link; any other failure is thrown. Gone is what a look after the failure finds: on Windows
+ * the native realpath of a folder removed as it reads answers ENOENT, or EBADF when the removal comes between its open
+ * of the folder and its read of the folder's final path. A path still there that fails otherwise keeps its failure.
+ */
 function resolvedUnlessRefused(path: string, realpath: (existing: string) => string): string | undefined {
   try {
     return realpath(path);
   } catch (error) {
-    if (refusedOrGone(error) && !isLink(path)) return undefined;
+    const now = entryNow(path);
+    if (now === "gone" || (now === "entry" && refusedOrGone(error))) return undefined;
     throw error;
   }
 }
@@ -141,11 +147,16 @@ function refusedOrGone(error: unknown): boolean {
   return error instanceof Error && "code" in error && REFUSED_OR_GONE.has(String(error.code));
 }
 
-/** Whether `path` is a link, or cannot be told from one: an `lstat` that fails for any reason but its absence. */
-function isLink(path: string): boolean {
+/**
+ * What an `lstat` of `path` finds now: nothing, a link, another entry; a link too when it fails for any reason but the
+ * path's absence, since such a path cannot be told from one.
+ */
+function entryNow(path: string): "gone" | "link" | "entry" {
   try {
-    return lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink() === true;
+    const info = lstatSync(path, { throwIfNoEntry: false });
+    if (info === undefined) return "gone";
+    return info.isSymbolicLink() ? "link" : "entry";
   } catch {
-    return true;
+    return "link";
   }
 }
