@@ -364,7 +364,14 @@ fn a_shape_the_plan_puts_elsewhere_is_refused_saying_where() {
         let e = Trace::new(&s).err().unwrap();
         assert!(e.contains(why), "{e}");
     };
-    refused(&|s| s.levels = true, "Δfix");
+    // A level column is the last, 32 bits, last in the order (`levels_are_a_column_one_live_a_key`).
+    refused(
+        &|s| {
+            s.levels = true;
+            s.columns[2] = ColType::I64;
+        },
+        "level column",
+    );
     refused(&|s| s.encoding = Encoding::Packed, "leaves its run");
     refused(&|s| s.placement = Placement::KeptFile, "kept stores");
     refused(&|s| s.placement = Placement::PinnedSlab, "device executor");
@@ -760,4 +767,44 @@ fn a_geometric_trace_keeps_log_layers() {
         max = max.max(n);
     }
     eprintln!("geometric: {rounds} commits, {size} pushes, {} layers now ({most} at most) {layers:?}; a key's kill search: mean {}, max {max}, bound {bound}", layers.len(), sum / set.len().max(1) as u64);
+}
+
+/// 0364 in a trace: a recursive relation's level is its last column, kept with its rows. A rewrite (a row's level
+/// changed) is a kill and an add; a run that leaves a key live at two levels is refused, whether the other level is
+/// below or in the same run; a probe of the key (a prefix) finds its one live level.
+#[test]
+fn levels_are_a_column_one_live_a_key() {
+    let mut s = shape();
+    s.levels = true;
+    let mut reg = Registry::default();
+    let ops = TraceOps::declare(&mut reg).unwrap();
+    let mut dir = Directory::default();
+    let mut t = Trace::new(&s).unwrap();
+    assert_eq!(t.shape().level_col(), Some(2));
+    let commit = |t: &mut Trace, dir: &mut Directory, pairs: &[(Vec<i64>, i32)], tile: u32| {
+        let id = runs(dir, t, pairs);
+        t.commit(&reg, &ops, dir, id, Tiling { tile, seed: 3 })
+    };
+    let first: Vec<(Vec<i64>, i32)> = (0..300).map(|k| (vec![k % 5, k, 0], 1)).collect();
+    commit(&mut t, &mut dir, &first, 7).unwrap();
+    // Rewrites: rows 0..100 to level 2, a kill and an add each.
+    let rewrite: Vec<(Vec<i64>, i32)> = (0..100).flat_map(|k| [(vec![k % 5, k, 0], -1), (vec![k % 5, k, 2], 1)]).collect();
+    commit(&mut t, &mut dir, &rewrite, 3).unwrap();
+    // A second level of a live key, the old not killed: refused.
+    let e = commit(&mut t, &mut dir, &[(vec![1, 101, 4], 1)], 1).err().unwrap();
+    assert!(e.contains("two levels"), "{e}");
+    // Two levels of a new key in one run: refused.
+    let e = commit(&mut t, &mut dir, &[(vec![2, 900, 1], 1), (vec![2, 900, 3], 1)], 1).err().unwrap();
+    assert!(e.contains("two levels"), "{e}");
+    // A new key, one level: taken.
+    commit(&mut t, &mut dir, &[(vec![2, 900, 1], 1)], 1).unwrap();
+    let l = t.read(&dir, &[t.head()]).unwrap();
+    let table = l.table();
+    let st = t.state(&table, t.head()).unwrap();
+    let keys: Vec<ColumnIndex> = t.shape().key_order().iter().map(|&c| ColumnIndex::new(u16::from(c))).collect();
+    for k in 0..300i64 {
+        let found: Vec<Vec<i64>> = st.matching(&keys, &[k % 5, k]).map(|id| row(&st, id)).collect();
+        assert_eq!(found, vec![vec![k % 5, k, if k < 100 { 2 } else { 0 }]], "key {k}: its one live level");
+    }
+    assert_eq!(rows_of(&st).len(), 301);
 }

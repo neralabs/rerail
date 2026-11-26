@@ -235,6 +235,7 @@ impl Trace {
                 1 => "a row's diffs sum past ±1",
                 2 => "a row gone is not live in the trace",
                 3 => "a row added is already live in the trace",
+                4 => "a key is live at two levels (0364: a rewrite kills the old level's row)",
                 _ => "an unknown refusal",
             }));
         }

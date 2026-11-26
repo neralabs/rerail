@@ -64,6 +64,8 @@ const CTL: usize = 2;
 pub const REFUSED_SUM: u64 = 1;
 pub const REFUSED_GONE: u64 = 2;
 pub const REFUSED_ADDED: u64 = 3;
+/// A recursive relation's key live at two levels after the change (0364: a rewrite kills the old level's row).
+pub const REFUSED_LEVELS: u64 = 4;
 
 /// Control's words: the refusal, the new layer's rows, its rows added and gone, and the newest layers due to merge.
 pub const CONTROL_BYTES: usize = 48;
@@ -578,12 +580,44 @@ fn kills<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
             }
             (false, None) => NONE,
         });
+        if sign > 0 && O::CONTROL && shape.level_col().is_some() && !one_level::<O>(&v, &chain, o) {
+            refusal = REFUSED_LEVELS;
+        }
     }
     let kid = v.w.kid;
     words_mut::<u32>(v.work, kid, v.n_out().max(1))[t.items()].copy_from_slice(&found);
     if refusal != 0 && v.word(W_REFUSED) == 0 {
         set_word::<u64>(v.work, W_REFUSED, refusal);
     }
+}
+
+/// Whether row out `o`, added, leaves its key live at one level (0364): no other row of the run adds the key, and
+/// the key's live row below, if any, is one this run kills. The run's rows of a key lie together in the rows out (the
+/// level is last in the canonical order), so they are `o`'s neighbours; the rows below, a probe of the key's prefix.
+fn one_level<O: Op>(v: &View<'_>, chain: &relation::View<'_>, o: usize) -> bool {
+    let shape = v.src.shape();
+    let keys: Vec<ColumnIndex> = shape.key_order().iter().map(|&c| ColumnIndex::new(u16::from(c))).collect(); // copy: not block data (the key's columns)
+    let level = shape.level_col().expect("levels");
+    let net: &[u32] = words(v.work, v.w.net, v.n_out().max(1));
+    let sgn: &[i32] = words(v.work, v.w.sgn, v.n_out().max(1));
+    let key_of = |p: usize| -> Vec<i64> { keys.iter().map(|c| v.src.get(net[p] as usize, c.get())).collect() }; // copy: not block data (a key)
+    let key = key_of(o);
+    let mut same = Vec::new(); // copy: not block data (the run's rows of the key)
+    let mut p = o;
+    while p > 0 && key_of(p - 1) == key {
+        p -= 1;
+    }
+    while p < v.n_out() && key_of(p) == key {
+        same.push(p);
+        p += 1;
+    }
+    if same.iter().any(|&q| q != o && sgn[q] > 0) {
+        return false;
+    }
+    chain.matching(&keys, &key).all(|id| {
+        let lv = chain.get(id.get(), level);
+        same.iter().any(|&q| sgn[q] < 0 && v.src.get(net[q] as usize, level) == lv)
+    })
 }
 
 /// The kills' sort, first phase: each chunk of the rows out's kill ids (none for a row added: `NONE`, sorted last)

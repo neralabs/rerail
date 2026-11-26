@@ -151,11 +151,18 @@ impl Shape {
         {
             return Err(format!("the partition column {p} is a module's or a document's id: 32 bits"));
         }
-        // What a run block's trace is not, each where the plan puts it.
+        // A recursive relation's level (0364): "a level per row, as a column of its relations", its last, 32 bits, and
+        // last in the canonical order, so a key's rows lie together and its probe is a prefix. A rewrite is a kill and
+        // an add (0364 §4); consolidate refuses a key live at two levels.
         if self.levels {
-            return Err("a level column (0364) is a recursive stratum's, run by Δfix after L1 (the rebuild plan, \
-                        after the target): not in B2"
-                .into());
+            let l = a - 1;
+            if a < 2 || self.columns[l] != ColType::I32 || self.order[l] as usize != l || self.partition == Some(l as u16) {
+                return Err(format!(
+                    "a level column (0364) is the relation's last, 32 bits, last in the canonical order, and not its \
+                     partition: column {l} of {:?}, order {:?}",
+                    self.columns, self.order
+                ));
+            }
         }
         if self.encoding != Encoding::Open {
             return Err(format!(
@@ -186,7 +193,7 @@ impl Shape {
         let mut w = ShapeW {
             arity: a as u32,
             partition: self.partition.map_or(NONE, u32::from),
-            levels: 0,
+            levels: u32::from(self.levels),
             encoding: 0,
             placement: 0,
             retention: 0,
@@ -282,6 +289,16 @@ impl ShapeW {
 
     pub fn order(&self) -> &[u8] {
         &self.order[..self.arity()]
+    }
+
+    /// A recursive relation's level column (0364): its last.
+    pub fn level_col(&self) -> Option<usize> {
+        (self.levels != 0).then(|| self.arity() - 1)
+    }
+
+    /// The columns that name a row apart from its level: the canonical order less a level column.
+    pub fn key_order(&self) -> &[u8] {
+        &self.order()[..self.arity() - usize::from(self.levels != 0)]
     }
 
     /// Index `i`'s key (`i < nidx`).
