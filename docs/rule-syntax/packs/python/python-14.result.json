@@ -1,0 +1,10 @@
+[
+  { "id": "ruff-c400-unnecessary-generator-list", "status": "same" },
+  { "id": "ruff-c401-unnecessary-generator-set", "status": "same" },
+  { "id": "ruff-c402-unnecessary-generator-dict", "status": "same" },
+  { "id": "ruff-c403-unnecessary-list-comprehension-set", "status": "same" },
+  { "id": "ruff-c404-unnecessary-list-comprehension-dict", "status": "same" },
+  { "id": "ruff-c405-unnecessary-literal-set", "status": "same" },
+  { "id": "ruff-c406-unnecessary-literal-dict", "status": "same" },
+  { "id": "ruff-c408-unnecessary-collection-call", "status": "same" }
+]
