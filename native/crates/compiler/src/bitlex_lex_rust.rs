@@ -4787,6 +4787,7 @@ impl Gen<'_> {
                     self.region_values.get_mut().clear();
                     self.bind(name, v);
                 }
+                Stmt::Rounds { regions: Some(rg), .. } if rg.level.is_some() => return Err(format!("regions `{}` with a level, not lowered to Rust yet", rg.hidden)),
                 Stmt::Rounds { regions: Some(rg), .. } => self.regions(rg)?,
                 // Its names as they are here: a name defined again after it is not its.
                 Stmt::Escape(why, e) | Stmt::Error(why, e) => escapes.push((why, e, self.scope())),

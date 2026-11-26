@@ -13,7 +13,7 @@ pub use crate::stream_ir::{ByteSwitch, DEAD, ERROR_LEAF, GONE, KEEP, REFUSE, REM
 
 /// Whether a word is one of tier 2's.
 pub fn is_stream(opcode: u8) -> bool {
-    (TOKEN..=STATEMENT).contains(&opcode)
+    (TOKEN..=INDENT).contains(&opcode)
 }
 
 /// The operand rules of tier 2's words, and of the words a tier-2 program may hold besides
@@ -44,7 +44,10 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // The word is the record's (its code), so the program's strings are the records' words.
         WORD_IS => mode <= 1 && program.strings.get(usize::from(operand)).is_some_and(|s| !s.is_empty() && s.len() <= 64) && records.is_some_and(|r| r.words == program.strings),
         // A level's word's kind (`REMEMBERED`) only as a moved or relabelled node's.
-        OPEN | NODE_SUPER => mode == 0 && operand != REMEMBERED,
+        // `m=1`: at the end of the record before the token (an `attached` rule's).
+        OPEN => mode <= 1 && operand != REMEMBERED,
+        // `m=1`: the moved node's slot, after a `WRAP`.
+        NODE_SUPER => mode <= 1 && operand != 0 && operand != REMEMBERED,
         // `m=1`: an extra's leaf, deferred; `m=2`: an extra's leaf placed now, never the node
         // made last at its level.
         // `m=3`: a token the grammar implies, no node.
@@ -63,7 +66,8 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // not of kind `operand` (`ending`).
         RETAG => (mode <= 2 && (mode != 0 || operand != REMEMBERED)) || (mode == 3 && usize::from(operand) < program.readings.maps.len()) || (mode == 4 && operand != REMEMBERED),
         // `m=2` with none: `decide`, the node made last has no field of its own (its call's, where it returns).
-        NODE_FIELD => mode <= 4 && (operand != 0 || mode == 2),
+        // `m=5`: the node the innermost open node, a wrap, holds first (`retag K inner G`).
+        NODE_FIELD => mode <= 5 && (operand != 0 || mode == 2),
         // `m=1`: the open node's two leaves, one (`fold`).
         MERGE => mode <= 1 && operand != REMEMBERED,
         WRAP => mode == 0 && operand != REMEMBERED,
@@ -71,13 +75,16 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         REMEMBER if operand == WORD_KIND => mode == 0 && !program.word_kinds.is_empty() && records.is_some_and(|r| r.words == program.strings),
         REMEMBER => mode == 0 && operand != 0 && operand != REMEMBERED,
         FLAG => mode <= 2 && operand < 16,
+        INDENT => mode == 0 && operand == 0,
         COUNT => mode <= 1 && usize::from(operand) < program.counts.len(),
         CHECK => mode == 0 && usize::from(operand) < program.local_checks.len(),
         // `m=2`, `m=3+f`: a mark's `loses`, the second where flag `f` is set.
         // A settle's mask, or a `drops`'s or `loses`'s gap pattern (`Words::gap_patterns`).
         SETTLE if mode == 0 => operand < 32 && program.block_programs.first().and_then(|b| b.records.as_ref()).is_some_and(|r| r.own >> operand & 1 == 1),
         SETTLE => mode < SETTLE_MOVE + 1 + 16 && program.gap_patterns.get(usize::from(operand)).is_some_and(|m| usize::from(operand) == 0 || program.gap_patterns[usize::from(operand) - 1].order != m.order),
-        CLOSE => mode <= 1 && operand == 0,
+        // `m=1`: at the token's end; `m=2`: an indented level's node, which keeps the extras
+        // pending at least as deep as the level's indent.
+        CLOSE => mode <= 2 && operand == 0,
         // `m`: the flag the call runs with (`push_flag`), of 16.
         PUSH => mode <= 32 && usize::from(operand) < words,
         RETURN => mode <= 1 && operand == 0,
@@ -138,7 +145,8 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         .collect();
     // A state: `TOKEN`, a `MARK` and its way (`GOTO` or `STOP`) per mark it tests, `SWITCH`; or
     // a state that only calls (decision 0492): `TOKEN`, then its call's code (its guards, acts,
-    // `PUSH`), or a `GOTO` to it, with no mark test.
+    // `PUSH`), or a `GOTO` to it, with no mark test. Its acts may close nodes first (a prefix
+    // operator's node, its operand's call returned, closed before the call after it).
     // After the `TOKEN`, a call's field on the node it made (`NODE_FIELD m=4`), where both
     // returns land (`RETURN m=0` at the `TOKEN`, `m=1` past it). A mark that loses (`, loses`)
     // has its `SETTLE m=2` right before its `MARK`, and one that refuses (`, refuses`) its
@@ -167,7 +175,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             }
             q += 2;
         }
-        split(words[p]).0 == TOKEN && words.get(q).is_some_and(|&w| split(w).0 == SWITCH || q == p + 1 + st + usize::from(split(words[p + 1 + st]).0 == NODE_FIELD) && matches!(split(w).0, GOTO | PUSH | OPEN | FLAG | REMEMBER | SETTLE))
+        split(words[p]).0 == TOKEN && words.get(q).is_some_and(|&w| split(w).0 == SWITCH || q == p + 1 + st + usize::from(split(words[p + 1 + st]).0 == NODE_FIELD) && matches!(split(w).0, GOTO | PUSH | OPEN | CLOSE | FLAG | REMEMBER | SETTLE))
     };
     for &p in &returns {
         if !state(p) {
@@ -438,6 +446,29 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
     run_seen(program, bytes, tier1, &mut |_| {})
 }
 
+/// A token's column (decision 0698): the bytes from the start of its line, the byte after the last
+/// line break before it, to its start.
+/// The wrappers outside node `at` in its base's chain (outermost first, `head` then `link`): a wrap
+/// opened inside another that moved the same node. Its records follow theirs, so its size counts
+/// none of them.
+fn outside(head: &HashMap<usize, usize>, link: &HashMap<usize, usize>, base: usize, at: usize) -> usize {
+    let mut n = 0;
+    let mut c = head.get(&base).copied();
+    while let Some(x) = c {
+        if x == at {
+            return n;
+        }
+        n += 1;
+        c = link.get(&x).copied();
+    }
+    0
+}
+
+pub fn column(bytes: &[u8], start: u32) -> u32 {
+    let s = (start as usize).min(bytes.len());
+    s as u32 - bytes[..s].iter().rposition(|&b| b == b'\n').map_or(0, |i| i as u32 + 1)
+}
+
 /// `run`, with `seen` told the place of each word it runs, in order: the words' profile (which
 /// states follow which, how often), for laying out the generated code.
 pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, seen: &mut dyn FnMut(usize)) -> Result<Vec<Node>, Refused> {
@@ -509,8 +540,10 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     // A reading dropped a node (`GONE`): its record stays, of kind `DEAD`, left out at `ACCEPT`.
     let mut dead = false;
     // Each call's return, with its caller's word (`REMEMBER`), given back where it returns.
-    let mut returns: Vec<(u16, u16, u16)> = Vec::new();
+    let mut returns: Vec<(u16, u16, u16, u32)> = Vec::new();
     let mut word: u16 = 0;
+    // The level's indent (`INDENT`, decision 0698): the caller's comes back where a call returns.
+    let mut indent: u32 = 0;
     // The level's flags (`FLAG`), a bit each: the caller's come back where a call returns.
     let mut flags: u16 = 0;
     // The counts of tokens (`COUNT`).
@@ -543,6 +576,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
         dead: bool,
         word: u16,
         flags: u16,
+        indent: u32,
         counts: Vec<u32>,
         strings: usize,
     }
@@ -619,6 +653,11 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                             }
                             let (s, l): (Vec<u32>, Vec<u32>) = tokens.iter().map(|&(a, b)| (a as u32, b as u32)).unzip();
                             let (codes, _) = crate::records::pass(r, table, bytes, &s, &l, &tier1.outputs);
+                            // The first part's gap is the record's, not the one from the file's
+                            // start the parts' own pass sees: it takes the record's marks (a
+                            // string after a block's indent has none of its line break's).
+                            let low = (1u32 << crate::records::MARK_SHIFT) - 1;
+                            let codes: Vec<u32> = codes.iter().enumerate().map(|(i, &c)| if i == 0 { c & low | code & !low } else { c }).collect();
                             parts.extend(s.iter().zip(&l).zip(&codes).map(|((&a, &b), &c)| (a, b, c)));
                             let (s, l, c) = parts.pop_front().expect("the opener");
                             (start, end, rec_end, code) = (s, s, l + 1, c);
@@ -723,6 +762,15 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 // Its entries together (`patterns_hold`): `unless before`s and `before`s.
                 let extra_bit = program.extras.first().map(|e| u32::from(e.0));
                 let here = here && (at_end || program.token_marks.iter().position(|m| u32::from(m.order) == k).is_none_or(|i| crate::program::patterns_hold(&program.token_marks, i, &mut |m| token_mark_holds(m, &tier1.codes, next, extra_bit))));
+                // Its column's question, against this level's indent (decision 0698); the file's
+                // end at column 0.
+                let col = if at_end { 0 } else { column(bytes, start) };
+                let here = here
+                    && match program.column(k as u8) {
+                        1 => col > indent,
+                        2 => col < indent,
+                        _ => true,
+                    };
                 if live >> k & 1 == 1 && here {
                     // Taken: it and the marks before it are done at this token. Kept: its arm
                     // calls the level that takes it.
@@ -878,6 +926,13 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
                 nodes[base].field = operand;
             }
+            NODE_FIELD if mode == 5 => {
+                let (Some(&at), Some(&base)) = (open.last(), bases.last()) else { refuse!('step, pc - 1, "an inner field with no open node") };
+                if !wraps.contains(&at) || link.contains_key(&at) {
+                    refuse!('step, pc - 1, "an inner field on an open node that is no wrap of a plain node");
+                }
+                nodes[base].field = operand;
+            }
             // A call's field where it returns: on the node it made, where that has none.
             NODE_FIELD if mode == 4 => {
                 let Some(Some((r, _))) = lasts_made.last().copied() else { refuse!('step, pc - 1, "a call's field with no node before it") };
@@ -909,12 +964,32 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             WRAP => {
                 let Some(Some((r, base))) = lasts_made.last().copied() else { refuse!('step, pc - 1, "a wrap with no node before it") };
                 let w = nodes.len();
-                let (field, start) = (nodes[r].field, nodes[r].start);
+                // The wrapper stands where the moved node stood: its field and its slot.
+                let (field, start, slot) = (nodes[r].field, nodes[r].start, std::mem::take(&mut nodes[r].supers));
                 nodes[r].field = 0;
-                nodes.push(Node { kind: operand, field, supers: vec![], start, end: 0, size: 0 });
+                nodes.push(Node { kind: operand, field, supers: slot, start, end: 0, size: 0 });
                 wraps.insert(w);
-                if let Some(h) = head.insert(base, w) {
-                    link.insert(w, h);
+                // The wrapper stands just outside the moved node in its base's chain (outermost
+                // first): the chain's head where the node is (a wrap of the node so far), else
+                // inside the wraps open around it (`wrap type _ wrap union_type _`: the second
+                // moves the node the first moved).
+                let mut outside = None;
+                let mut c = head.get(&base).copied();
+                while let Some(x) = c.filter(|&x| x != r) {
+                    outside = Some(x);
+                    c = link.get(&x).copied();
+                }
+                match outside {
+                    None => {
+                        if let Some(h) = head.insert(base, w) {
+                            link.insert(w, h);
+                        }
+                    }
+                    Some(o) => {
+                        if let Some(h) = link.insert(o, w) {
+                            link.insert(w, h);
+                        }
+                    }
                 }
                 moved = r;
                 pending = 0;
@@ -953,6 +1028,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 open.push(nodes.len());
                 bases.push(nodes.len());
                 lasts_made.push(None);
+                let start = if mode == 1 { last_end } else { start };
                 nodes.push(Node { kind: operand, field: 0, supers: vec![], start, end: 0, size: 0 });
             }
             CLOSE => {
@@ -962,8 +1038,18 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 if let Some(l) = lasts_made.last_mut() {
                     *l = Some((at, base));
                 }
+                if mode == 2 {
+                    // The leading extras pending at least as deep as the indent: the node's own
+                    // (tree-sitter's scanner dedents only past the comments as deep as the block).
+                    let first = nodes.len() - pending;
+                    let settled = (0..pending).take_while(|&i| column(bytes, nodes[first + i].start) >= indent).count();
+                    if settled > 0 {
+                        keep = nodes[first + settled - 1].end;
+                        pending -= settled;
+                    }
+                }
                 nodes[at].end = if mode == 1 { end } else if pending > 0 { keep } else { last_end };
-                nodes[at].size = (nodes.len() - pending - base) as u32;
+                nodes[at].size = (nodes.len() - pending - base - outside(&head, &link, base, at)) as u32;
             }
             // A token the grammar implies (`implied`): no node; the extras pending stay where
             // they are, as a leaf's would.
@@ -993,13 +1079,28 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             }
             NODE_FIELD if mode == 1 => nodes[moved].field = operand,
             NODE_FIELD => nodes.last_mut().expect("a node before its field").field = operand,
-            NODE_SUPER => nodes.last_mut().expect("a node before its supertype").supers.push(operand),
+            // A node's slot (decision 0698): its first `NODE_SUPER`; its classes are filled in at the end.
+            // The node a wrap moved into a slot: one of the slot's kinds (a row of its table), else
+            // the grammar read as the slot's what tree-sitter reads as another kind (a list as an
+            // assignment's target is a `list_pattern`), and the file is refused.
+            NODE_SUPER if mode == 1 => {
+                if !program.super_classes.iter().any(|r| r.0 == operand && r.1 == nodes[moved].kind) {
+                    return limit!(pc - 1, "a node moved into a slot not of its kind");
+                }
+                nodes[moved].supers = vec![operand];
+            }
+            NODE_SUPER => {
+                let n = nodes.last_mut().expect("a node before its supertype");
+                if n.supers.is_empty() {
+                    n.supers.push(operand);
+                }
+            }
             PUSH => {
                 // Calls nested at most `DEPTH` deep, as tier 2's runs and simdjson's `DEFAULT_MAX_DEPTH` (0537).
                 if returns.len() >= DEPTH as usize {
                     return limit!(pc - 1, "calls nested past the depth");
                 }
-                returns.push((operand, word, flags));
+                returns.push((operand, word, flags, indent));
                 match push_flag_of(mode) {
                     Some((k, true)) => flags |= 1 << k,
                     Some((k, false)) => flags &= !(1 << k),
@@ -1014,6 +1115,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             REMEMBER => word = operand,
+            INDENT => indent = column(bytes, start),
             COUNT if mode == 0 => {
                 counts[usize::from(operand)] += 1;
                 if counts[usize::from(operand)] > u32::from(program.counts[usize::from(operand)]) {
@@ -1058,8 +1160,8 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             RETURN => {
-                let Some((p, w, fl)) = returns.pop() else { refuse!('step, pc - 1, "a return with no call") };
-                (word, flags) = (w, fl);
+                let Some((p, w, fl, ind)) = returns.pop() else { refuse!('step, pc - 1, "a return with no call") };
+                (word, flags, indent) = (w, fl, ind);
                 pc = usize::from(p) + usize::from(mode);
             }
             ACCEPT => {
@@ -1074,6 +1176,12 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
                 nodes[at].end = bytes.len() as u32;
                 nodes[at].size = (nodes.len() - at) as u32;
+                // Each node's supertypes: its slot's and its kind's.
+                for n in &mut nodes {
+                    if let Some(&s) = n.supers.first() {
+                        n.supers = program.classes_of(s, n.kind);
+                    }
+                }
                 if head.is_empty() && !dead {
                     return Ok(nodes);
                 }
@@ -1132,6 +1240,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     dead,
                     word,
                     flags,
+                    indent,
                     counts: counts.clone(),
                     strings,
                 });
@@ -1185,10 +1294,10 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 *l = Some((at, base));
             }
             nodes[at].end = if pending > 0 { keep } else { last_end };
-            nodes[at].size = (nodes.len() - pending - base) as u32;
+            nodes[at].size = (nodes.len() - pending - base - outside(&head, &link, base, at)) as u32;
         }
         held = false;
-        (moved, dead, word, flags, counts, strings, lost) = (m.moved, m.dead, m.word, m.flags, m.counts, m.strings, None);
+        (moved, dead, word, flags, indent, counts, strings, lost) = (m.moved, m.dead, m.word, m.flags, m.indent, m.counts, m.strings, None);
         // The resume point: the first record after the statement's first token where a pattern holds, `at` it or
         // `past` it; the extras skipped.
         let count = starts.len().min(lasts.len());

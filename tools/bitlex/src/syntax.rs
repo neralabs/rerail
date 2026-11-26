@@ -427,6 +427,33 @@ pub struct Regions {
     /// The hidden bytes' name: the carry.
     pub hidden: String,
     pub kinds: Vec<Region>,
+    /// `level O to C max N else D` (after `H`): the bracket level in a template's code.
+    pub level: Option<RegionLevel>,
+}
+
+/// `regions H level O to C max N else D { … }`: from where a plain kind's region closes at its
+/// `or` (a template opens) to where a kind that `resumes` closes at its own closer (its string
+/// ends), each byte of `O` outside the regions adds one to the level and each of `C` takes one
+/// away (none at zero). A kind with `after` opens only at level zero, as the lean lexer's
+/// string reader takes back only the `}` its template's own `{` opened (`{a[1:2]}` has no
+/// format spec, `{ {k: v} }` one template). An `O` past `N` (1 to 15) is `D`: the level stays
+/// `N`. Not a fixed point of masks: the evaluator and the backends walk such regions (the
+/// rounds' body makes `D` empty and counts no level).
+///
+/// `nest M depth A B` (after `max N`): templates nest, `M` (2 to 4) deep, as the lean lexer's
+/// string stack does (`f"{f'{a}'}"`). A plain kind's region in a template's code closed at its
+/// `or` opens a template inside it; the outer one's kind and level wait until the inner string
+/// ends. One past `M` is `D` at its closer. `A` and `B` are the bits, low first, of each
+/// region's depth at its opener: the templates around it (a kind that resumes: around its
+/// string), which the token loop's records of strings open over a template's code are kept by.
+#[derive(Clone, Debug)]
+pub struct RegionLevel {
+    pub opens: Expr,
+    pub closes: Expr,
+    pub max: u8,
+    pub deep: String,
+    /// `nest M depth A B`: `M`, and the depth bits' names.
+    pub nest: Option<(u8, String, String)>,
 }
 
 /// A kind of region (`Regions`).
@@ -490,6 +517,7 @@ impl Regions {
     /// (`prev(c & ~C2)`, the string ended), from the round before, among the `B`s and no opener.
     pub fn body(&self) -> Vec<Stmt> {
         let name = |s: &str| Expr::Name(s.to_string());
+        let deep = self.level.iter().flat_map(|l| std::iter::once(l.deep.clone()).chain(l.nest.iter().flat_map(|n| [n.1.clone(), n.2.clone()]))).map(|d| Stmt::Mask(d, Expr::Empty));
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
         let not = |a: Expr| Expr::Not(Box::new(a));
         let call = |f: &str, args: Vec<Arg>| Expr::Call(f.to_string(), args);
@@ -590,6 +618,7 @@ impl Regions {
         if resumes {
             out.push(Stmt::Next(ended, call("prev", vec![Arg::E(ends.unwrap_or(Expr::Empty))])));
         }
+        out.extend(deep);
         out
     }
 }
@@ -658,13 +687,18 @@ pub enum Gram {
     /// `retag K A`: on entering `A`, the innermost open node becomes a `K` (its kind decided by
     /// the token `A` starts with).
     Retag(String, Box<Gram>),
+    /// `retag K inner G A`: on entering `A`, the node the innermost open node, a wrap, holds
+    /// first (the node it moved) takes field `G` (`a: int` a `typed_parameter`, its name of no
+    /// field; `a: int = 1` a `typed_default_parameter`, its name `name`).
+    Inner { field: String, body: Box<Gram> },
     /// `merge 'K' A`, `A` a token: its leaf and the leaf just before it become one leaf of kind
     /// `K`, from the first's start to its end (`.` and `decl`, `.decl`).
     Merge(String, Box<Gram>),
-    /// `wrap K F [as M] REST…`: a node `K` around the node just made at this level (the last
+    /// `wrap K F [as M] REST…` (`K` a name or quoted): a node `K` around the node just made at this level (the last
     /// child of the innermost open node) and what `REST` matches. `K` takes the moved node's
-    /// field; the moved node takes field `F` (`_`: none) and, with `as M`, kind `M`.
-    Wrap { kind: String, field: Option<String>, moved: Option<String>, body: Box<Gram> },
+    /// field and its slot; the moved node takes field `F` (`_`: none), with `as M` kind `M`, and
+    /// with `in S`: the moved node's slot, supertype `S` (none without it; decision 0698).
+    Wrap { kind: String, field: Option<String>, moved: Option<String>, slot: Option<String>, body: Box<Gram> },
     /// `balanced K OPEN CLOSE`: one leaf of kind `K` from an `OPEN` token through its matching
     /// `CLOSE` (pairs inside counted), every token between part of its text.
     Balanced { kind: String, open: String, close: String },
@@ -796,8 +830,10 @@ pub enum Stmt {
     /// root. `nested`: it may contain itself, and runs on a stack frame (doc 18 §1).
     /// `whole`: the root spans the whole file, from byte 0, and may hold no token. `whole
     /// padded`: from its first token or comment (none: the file's end), as tree-sitter's root
-    /// starts past the file's leading blanks, its padding.
-    Node { kind: String, nested: bool, whole: bool, padded: bool, body: Gram },
+    /// starts past the file's leading blanks, its padding. `attached`: it starts where the record
+    /// before its first token ends (a comment's included), not at that token, as tree-sitter's
+    /// match body starts at its `:`'s end.
+    Node { kind: String, nested: bool, attached: bool, whole: bool, padded: bool, body: Gram },
     /// `choice NAME [supertype S] = A | B …`: no node of its own; each alternative's node has
     /// supertype `S`.
     /// `choice N [supertype S] [nested] = …`: `nested`, a level of its own, called where it is
@@ -855,7 +891,11 @@ pub enum Stmt {
     /// `, passes M`: taken, it passes mark `M` too, though `M` comes after it: a mark tested
     /// before `M` where both hold (an annotation's line break before `semi`), which leaves no
     /// `M` at the token, as a line break that is no semicolon leaves none.
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)>, drops: Vec<GapPattern>, loses: Vec<GapPattern>, refuses: Vec<GapPattern>, refuses_taken: Vec<GapPattern>, passes: Vec<String> },
+    ///
+    /// `, deeper` and `, shallower` (decision 0698): the column of the token the mark is before
+    /// past the asking level's indent, or less than it (`Column`). Each level that asks for the
+    /// mark asks with its own indent (`indented`).
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)>, drops: Vec<GapPattern>, loses: Vec<GapPattern>, refuses: Vec<GapPattern>, refuses_taken: Vec<GapPattern>, passes: Vec<String>, column: Option<Column> },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
@@ -879,6 +919,10 @@ pub enum Stmt {
     /// level; `as CHOICE` (and a reading's `K as CHOICE`) then names that token's kind. A nested
     /// level starts with its caller's and gives it back when it ends.
     Remember(Vec<String>),
+    /// `indented RULE …` (in a tree, decision 0698): nested levels that hold an indent of their
+    /// own, the column of their first token. Every other level holds its caller's (the root's
+    /// is 0), as a remembered word is held: a mark's `deeper` and `shallower` compare with it.
+    Indented(Vec<String>),
     /// `flag F …` (in a tree): flags a level runs with (`with F A`, `unless F A`), clear in the
     /// root's.
     Flags(Vec<String>),
@@ -898,6 +942,16 @@ pub enum Stmt {
     /// parser's question after a call: `literal`'s `retag_atom` where its `term` was a call alone, a negation's
     /// failure where its operand was a comparison (decision 0668).
     Ending { rule: String, kind: String, ending: Ending },
+}
+
+/// A mark's question of the column of the token it is before, against the asking level's indent
+/// (`Stmt::Indented`, decision 0698).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Column {
+    /// `, deeper`: past the indent.
+    Deeper,
+    /// `, shallower`: less than the indent.
+    Shallower,
 }
 
 /// What `ending` does with the node made last where its level ends.
@@ -950,7 +1004,7 @@ fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
             // A token given a kind of its own, or merged, is a node's: not implied.
             Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter_mut().for_each(|g| mark(g, tokens, found)),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) => mark(a, tokens, found),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } => mark(a, tokens, found),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => mark(body, tokens, found),
         }
     }
@@ -1253,12 +1307,13 @@ impl P {
         if self.eat_p("(") {
             let inner = self.token_choices()?;
             // `with M`, `without M`: each token of the run with or without mark `M`, as the lean parser's
-            // `on_line` asks of each word it reads.
-            let inner = if matches!(inner.as_slice(), [TokenElem::Not(_)]) { inner } else { self.with_marks(inner)? };
+            // `on_line` asks of each word it reads (a `~`'s too: any other token without it).
+            let inner = self.with_marks(inner)?;
             self.want_p(")")?;
             self.want_p("*")?;
             // Kinds and words, or one `~` of them: a run of any other tokens.
-            let not = matches!(inner.as_slice(), [TokenElem::Not(_)]);
+            let marks = |c: &[TokenElem]| c.iter().all(|x| matches!(x, TokenElem::With(_) | TokenElem::Without(_)));
+            let not = matches!(inner.as_slice(), [TokenElem::Not(_), rest @ ..] if marks(rest));
             if !not && inner.iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::With(_) | TokenElem::Without(_))) {
                 return self.err("a run of kinds and words (`with`, `without` a mark), or of a `~` of them");
             }
@@ -1344,7 +1399,9 @@ impl P {
             } else {
                 return Ok(c);
             };
-            if !c.iter().all(|x| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_))) {
+            // A run's `~(…)` takes them too (`(~("def") without newline)*`).
+            let first_not = matches!(c.first(), Some(TokenElem::Not(_)));
+            if !c.iter().enumerate().all(|(i, x)| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_)) || (i == 0 && first_not)) {
                 return self.err("`with` or `without` after an element of kinds and words");
             }
             let m = self.ident()?;
@@ -1463,14 +1520,16 @@ impl P {
     fn gram_seq(&mut self) -> R<Gram> {
         let mut items = vec![];
         while matches!(self.peek(), Some(Tok::Str(_) | Tok::Ident(_) | Tok::P("(") | Tok::P("["))) {
-            // `wrap K F [as M]`: the rest of the sequence is its body.
+            // `wrap K F [as M] [in S]`: the rest of the sequence is its body.
             if matches!(self.peek(), Some(Tok::Ident(w)) if w == "wrap") {
                 self.i += 1;
-                let kind = self.ident()?;
+                // A quoted kind: one no name spells (`'not in'`).
+                let kind = self.kind()?;
                 let field = Some(self.ident()?).filter(|f| f != "_");
                 let moved = if self.eat_kw("as") { Some(self.kind()?) } else { None };
+                let slot = if self.eat_kw("in") { Some(self.ident()?) } else { None };
                 let body = Box::new(self.gram_seq()?);
-                items.push(Gram::Wrap { kind, field, moved, body });
+                items.push(Gram::Wrap { kind, field, moved, slot, body });
                 break;
             }
             // `relabel F [as M]`: the rest of the sequence is its body.
@@ -1555,6 +1614,11 @@ impl P {
         if self.eat_p(":") {
             return Ok(Gram::Field(name, Box::new(self.gram_atom()?)));
         }
+        // `implied 'A'`: this one token makes no leaf, as the lean parser's `implied()` where another place of the same
+        // rule writes it (`anon()`); `implied RULE 'A'` marks every one of a rule's.
+        if name == "implied" && matches!(self.peek(), Some(Tok::Str(_))) {
+            return Ok(Gram::As(IMPLIED.into(), Box::new(Gram::Lit(self.kind()?))));
+        }
         match name.as_str() {
             "with" | "without" => {
                 let flag = self.ident()?;
@@ -1566,6 +1630,10 @@ impl P {
             }
             "retag" => {
                 let kind = self.ident()?;
+                if self.eat_kw("inner") {
+                    let field = self.ident()?;
+                    return Ok(Gram::Retag(kind, Box::new(Gram::Inner { field, body: Box::new(self.gram_atom()?) })));
+                }
                 Ok(Gram::Retag(kind, Box::new(self.gram_atom()?)))
             }
             "merge" => {
@@ -1732,9 +1800,34 @@ impl P {
     }
 
     // --- statements ---
-    /// `regions H { K = O .. C [bytes N] [outside] [else E bytes M] [open K] … }` (`Regions`).
+    /// `regions H [level O to C max N else D] { K = O .. C [bytes N] [outside] [else E bytes M]
+    /// [open K] … }` (`Regions`).
     fn regions(&mut self) -> R<Regions> {
         let hidden = self.ident()?;
+        let level = if self.eat_kw("level") {
+            let opens = self.expr()?;
+            self.want_kw("to")?;
+            let closes = self.expr()?;
+            self.want_kw("max")?;
+            let max = self.int()?;
+            if !(1..=15).contains(&max) {
+                return self.err("a level's max from 1 to 15");
+            }
+            let nest = if self.eat_kw("nest") {
+                let m = self.int()?;
+                if !(2..=4).contains(&m) {
+                    return self.err("a nest from 2 to 4");
+                }
+                self.want_kw("depth")?;
+                Some((m as u8, self.ident()?, self.ident()?))
+            } else {
+                None
+            };
+            self.want_kw("else")?;
+            Some(RegionLevel { opens, closes, max: max as u8, deep: self.ident()?, nest })
+        } else {
+            None
+        };
         self.want_p("{")?;
         self.nls();
         let mut kinds = Vec::new();
@@ -1802,7 +1895,10 @@ impl P {
         if kinds.len() > 15 && kinds.iter().any(|r| !r.after.is_empty()) {
             return Err("regions with `after`: at most 15 kinds".into());
         }
-        Ok(Regions { hidden, kinds })
+        if level.is_some() && !kinds.iter().any(|r| !r.after.is_empty()) {
+            return self.err("a `level` on regions with a kind with `after`");
+        }
+        Ok(Regions { hidden, kinds, level })
     }
 
     fn block(&mut self) -> R<Vec<Stmt>> {
@@ -2209,10 +2305,11 @@ impl P {
             "node" => {
                 let kind = self.kind()?;
                 let nested = self.eat_kw("nested");
+                let attached = self.eat_kw("attached");
                 let whole = self.eat_kw("whole");
                 let padded = whole && self.eat_kw("padded");
                 self.want_p("=")?;
-                Stmt::Node { kind, nested, whole, padded, body: self.gram()? }
+                Stmt::Node { kind, nested, attached, whole, padded, body: self.gram()? }
             }
             "choice" => {
                 let name = self.ident()?;
@@ -2309,6 +2406,16 @@ impl P {
                 }
                 Stmt::Flags(names)
             }
+            "indented" => {
+                let mut names = vec![];
+                while matches!(self.peek(), Some(Tok::Ident(_))) {
+                    names.push(self.ident()?);
+                }
+                if names.is_empty() {
+                    return self.err("indented RULE …");
+                }
+                Stmt::Indented(names)
+            }
             "remember" => {
                 let mut names = vec![];
                 while matches!(self.peek(), Some(Tok::Ident(_))) {
@@ -2397,8 +2504,17 @@ impl P {
                 let (mut end, mut unplaced, mut checks, mut settles, mut ends, mut drops, mut loses, mut refuses, mut refuses_taken) = (false, None, vec![], false, false, vec![], vec![], vec![], vec![]);
                 let mut next: Vec<(bool, Vec<Vec<TokenElem>>)> = Vec::new();
                 let mut passes = Vec::new();
+                let mut column = None;
                 while self.eat_p(",") {
                     self.nls();
+                    if self.eat_kw("deeper") {
+                        column = Some(Column::Deeper);
+                        continue;
+                    }
+                    if self.eat_kw("shallower") {
+                        column = Some(Column::Shallower);
+                        continue;
+                    }
                     let not = self.eat_kw("unless");
                     if not || self.is_kw("before") {
                         self.want_kw("before")?;
@@ -2444,7 +2560,7 @@ impl P {
                 if !drops.is_empty() && !settles {
                     return self.err("`drops` on a mark that settles");
                 }
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken, passes }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken, passes, column }
             }
             "token" => {
                 let kind = self.kind()?;
@@ -2726,7 +2842,7 @@ pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
         f(g);
         match g {
             Gram::Seq(v) | Gram::Alt(v) => v.iter().for_each(|x| walk(x, f)),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => walk(a, f),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) => walk(a, f),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => walk(body, f),
             Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
         }
@@ -2758,7 +2874,8 @@ pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
         let k = cx.kind.to_owned();
         let token = |t: Gram| if first { Gram::As(k.clone(), Box::new(t)) } else { Gram::Merge(k.clone(), Box::new(t)) };
         Ok(match g {
-            Gram::Lit(_) => token(g.clone()),
+            // A token, or any token but some (`any except '(' ')'`).
+            Gram::Lit(_) | Gram::Any(_) => token(g.clone()),
             Gram::Sym(n) => match rule(n) {
                 Some((_, _, true)) => return Err(format!("leaf {k}: rule `{n}` makes a node")),
                 Some(_) => {
@@ -2792,7 +2909,7 @@ pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
     let mut out = Vec::new();
     for s in stmts {
         out.push(match s {
-            Stmt::Node { kind, nested, whole, padded, body } => Stmt::Node { kind: kind.clone(), nested: *nested, whole: *whole, padded: *padded, body: leaves_in(body, &mut todo, &name)? },
+            Stmt::Node { kind, nested, attached, whole, padded, body } => Stmt::Node { kind: kind.clone(), nested: *nested, attached: *attached, whole: *whole, padded: *padded, body: leaves_in(body, &mut todo, &name)? },
             Stmt::Choice { name: n, supertype, nested, body } => Stmt::Choice { name: n.clone(), supertype: supertype.clone(), nested: *nested, body: leaves_in(body, &mut todo, &name)? },
             s => s.clone(),
         });
@@ -2814,9 +2931,10 @@ pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
             Gram::Plus(a) => Gram::Plus(Box::new(d(a)?)),
             Gram::Field(f, a) => Gram::Field(f.clone(), Box::new(d(a)?)),
             Gram::Retag(k, a) => Gram::Retag(k.clone(), Box::new(d(a)?)),
+            Gram::Inner { field, body } => Gram::Inner { field: field.clone(), body: Box::new(d(body)?) },
             Gram::Merge(k, a) => Gram::Merge(k.clone(), Box::new(d(a)?)),
             Gram::As(k, a) => Gram::As(k.clone(), Box::new(d(a)?)),
-            Gram::Wrap { kind, field, moved, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), body: Box::new(d(body)?) },
+            Gram::Wrap { kind, field, moved, slot, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), slot: slot.clone(), body: Box::new(d(body)?) },
             Gram::Relabel { field, moved, inner, body } => Gram::Relabel { field: field.clone(), moved: moved.clone(), inner: inner.clone(), body: Box::new(d(body)?) },
             Gram::Fold { kind, body } => Gram::Fold { kind: kind.clone(), body: Box::new(d(body)?) },
             Gram::Reread { reading, body } => Gram::Reread { reading: reading.clone(), body: Box::new(d(body)?) },
@@ -2920,12 +3038,15 @@ mod tier2_tests {
             Ok((vec![(false, vec![vec![word("@")], vec![TokenElem::Many(vec![TokenElem::Not(vec![word("{")])], vec![paren.clone()], vec![name.clone(), word(")")])], vec![TokenElem::Not(vec![word(".")])]])], false))
         );
         assert!(mark("mark k = lf, before \"@\" (name)* ending (~name) \".\"").is_err());
-        // Each token of a run without a mark (decision 0673 step 4); not after a `~`.
+        // Each token of a run without a mark (decision 0673 step 4); after a `~` too (decision 0698).
         assert_eq!(
             mark("mark k = lf, before \"{\" (name | \",\" without k)* \"}\""),
             Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![name.clone(), word(","), TokenElem::Without("k".into())], vec![], vec![])], vec![word("}")]])], false))
         );
-        assert!(mark("mark k = lf, before \"{\" (~name without k)* \"}\"").is_err());
+        assert_eq!(
+            mark("mark k = lf, before \"{\" (~name without k)* \"}\""),
+            Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![TokenElem::Not(vec![name.clone()]), TokenElem::Without("k".into())], vec![], vec![])], vec![word("}")]])], false))
+        );
     }
 
     /// A settling mark's `drops` (decision 0416, its questions 0451): parsed with `settles`,

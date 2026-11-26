@@ -69,6 +69,11 @@ struct Proof<'a> {
     /// The position's own byte: the classes its readers tell apart, a byte of each and its
     /// members.
     own: Vec<(u8, ByteSet)>,
+    /// Each value at a lag, as `eval` found it under the bytes and values chosen now: the ops
+    /// are a graph, and a value many others read is evaluated once, not once a path to it.
+    /// Cleared where a choice changes (`zero`). Its first evaluation set `open` where it was
+    /// unknown, so a value found again sets nothing more, as evaluating it again would not.
+    memo: std::cell::RefCell<HashMap<(u16, u32), Option<bool>>>,
 }
 
 impl<'a> Proof<'a> {
@@ -76,7 +81,7 @@ impl<'a> Proof<'a> {
         let (cone, readers) = cone(ops, v);
         let groups = readers.iter().map(|(&lag, r)| (lag, groups(tables, r))).collect();
         let own = classes(tables, readers.get(&u32::from(d)));
-        Proof { ops, tables, d: u32::from(d), b: 0, bytes: HashMap::default(), vals: HashMap::default(), cone, groups, budget: 0, own }
+        Proof { ops, tables, d: u32::from(d), b: 0, bytes: HashMap::default(), vals: HashMap::default(), cone, groups, budget: 0, own, memo: Default::default() }
     }
 
     /// Whether the value is zero with the position's byte `b`.
@@ -127,6 +132,15 @@ impl<'a> Proof<'a> {
     }
 
     fn eval(&self, at: u16, lag: u32, open: &mut Option<Var>) -> Option<bool> {
+        if let Some(&x) = self.memo.borrow().get(&(at, lag)) {
+            return x;
+        }
+        let x = self.eval_once(at, lag, open);
+        self.memo.borrow_mut().insert((at, lag), x);
+        x
+    }
+
+    fn eval_once(&self, at: u16, lag: u32, open: &mut Option<Var>) -> Option<bool> {
         match self.ops[usize::from(at)] {
             BlockOp::Eq(c) => self.byte(lag, open).map(|x| self.member(Reader::Eq(c), x)),
             BlockOp::Class { table, bits } => self.byte(lag, open).map(|x| self.member(Reader::Class(table, bits), x)),
@@ -231,6 +245,8 @@ impl<'a> Proof<'a> {
 
     /// Whether the value `v` is zero under every way of the values not chosen yet.
     fn zero(&mut self, v: u16) -> bool {
+        // The bytes and values chosen differ from the last call's.
+        self.memo.get_mut().clear();
         let mut open = None;
         let r = self.eval(v, 0, &mut open);
         if r == Some(false) {

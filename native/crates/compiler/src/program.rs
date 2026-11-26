@@ -127,6 +127,10 @@ pub const SETTLE_MOVE: u8 = 36;
 /// statement before closed, one ERROR leaf made to the resume point (`Words::recover`'s patterns), and read on from
 /// there at the root's first state. A limit (the depth, a count, a check) still refuses the file.
 pub const STATEMENT: u8 = 0x85;
+/// The level's indent (decision 0698): the token's column, the bytes since the start of its line.
+/// After the `PUSH` of a call into an `indented` level, at that level's first token. A `PUSH`
+/// keeps the caller's indent, and its `RETURN` gives it back, as a level's word.
+pub const INDENT: u8 = 0x86;
 
 // The preprocessing words (decision 0348, `pp_words`): tier 2's words over a stack of token
 // sources (a file's tape, a range of the TU's arena), with a token register `T`, a macro register
@@ -311,6 +315,14 @@ pub struct Words {
     /// The marks each mark passes too where it is taken, past those before it (`markpasses K
     /// M`, a mark's `, passes`): mark `K`'s, a bit each by order. Rising by mark.
     pub mark_passes: Vec<(u8, u64)>,
+    /// The marks that ask the column of their token (`markcolumn K C`, decision 0698): mark `K`
+    /// holds only where its token's column is past the level's indent (`C` = 1, `, deeper`) or
+    /// less than it (`C` = 2, `, shallower`). Rising by mark.
+    pub mark_columns: Vec<(u8, u8)>,
+    /// A node's supertypes by its slot and kind (`superclass #S #K #C…`, decision 0698): a node
+    /// of kind `K` in slot `S` (its first `NODE_SUPER`) is in each `C`. A kind no row names for
+    /// its slot is in none. Rising by slot, then kind.
+    pub super_classes: Vec<(u16, u16, Vec<u16>)>,
     /// Each keyword's node kind (`wordkind sW #K`): a token whose record names string `W` makes a
     /// leaf of kind `K` where a `LEAF` names `stream_ir::WORD_KIND`. Rising by string.
     pub word_kinds: Vec<(u16, u16)>,
@@ -346,6 +358,20 @@ pub struct Words {
 }
 
 impl Words {
+    /// The supertypes of a node of kind `kind` in slot `slot` (0: none; `super_classes`), ascending.
+    pub fn classes_of(&self, slot: u16, kind: u16) -> Vec<u16> {
+        match self.super_classes.binary_search_by(|r| (r.0, r.1).cmp(&(slot, kind))) {
+            Ok(i) => self.super_classes[i].2.clone(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// What mark `order` asks of its token's column (`mark_columns`): 0 nothing, 1 past the
+    /// level's indent, 2 less than it.
+    pub fn column(&self, order: u8) -> u8 {
+        self.mark_columns.iter().find(|c| c.0 == order).map_or(0, |c| c.1)
+    }
+
     /// The marks done at a token where mark `order` is taken: it, the marks before it, and those
     /// it passes (`mark_passes`).
     pub fn taken(&self, order: u8) -> u64 {

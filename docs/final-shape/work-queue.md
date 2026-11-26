@@ -11630,3 +11630,24 @@ asks for the new check), c-directives eval::tests 50.
 
 - django-bugs at its pin, f7720e505a (its merge of Typing-support 2697062439): no file changes, the hub holds both sides;
   its spikes (b4ffdd3907, f7cd013c50) and the 0706 steps above them are not taken.
+
+### Q563. Roll-up 135 (Parser-generators-final-shape 477afdb869 onto Pulling-it-all-together): what the merge chose
+
+Parser-generators' 42 commits (0685 steps 13–14, 0696, 0698: tier 2's words as the JIT's hot helpers, the record stride compiled in, a thread's spare tape buffers, Python's compiled parser and its f-strings, nested templates, region levels), on the hub's format 16 only (0626, 0631) and `Vector` buffers.
+
+- **Format 15 stays removed.** The tape's image, tails, blocks, checkpoints, code keys, wide widths and the `Wide` tier 2s are not taken back. `native_cpu_tape::Image` is its widths alone, and the tape is the working rows and their sizes.
+- **Tier 2's table functions are the hub's format 16 set** (`shift`, `drop`, `settle`, `sixteen`), with Parser-generators' 0696 changes (inlined words, the jumps threaded). `drop_rows` ends at its `done` block, so no supertypes are written back to the tape: a node's supertypes are its key's slot.
+- **A key's slot is Parser-generators' form** (`slot_of`, `class_bits`, `numbers_by_key`). `CompiledStream::numbers_by` (the hub's numbering by a lean parser's names) decodes the slot the same way. It read the top bits as a supertype bitset, which numbered no Python key with supertypes.
+- **Records of another stride** take `Parser::tier2_at` (0696 §11) on the hub's `AnyStride`. `tier2_on::image16_on` (the device's buffers) asks for the tier 2 at the device layout's stride. `Parser::with_tiers` is added on that shape, keeping the any-stride tier 2 rather than format 15's wide ones.
+- **`rerail-python-parser` is format 16**, as `rerail-kotlin-parser` is: `lang()`, `tape`/`image`/`interpreted`, and text by `Written::text`. Its keys are numbered by `python_lean`'s names, its supertype ids mapped back to `lean::CLASSES`.
+- **The generated tier 2 Rust** (`bitlex_rust`) keeps the hub's format 16 runtime: `finish.target()`, `finish.again()`, and `Writer::new(..).to(target, src)`. kotlin_aot's and rr_aot's `tier2.rs` are regenerated from it (`RERAIL_BLESS=1`).
+- `block.rs`, `block_native.rs`: the hub's `Vector` with Parser-generators' levels, rounds taken and reader arms. `stream_analysis`: the `Mem` list without `Supers`, `BlockBase` or `Wide`.
+- rr_parser's `RR_FORM=image` bench writes the tape in format 16 (`image16`).
+
+Checked with Relax: compiler, cpu-stream, python-parser, kotlin-parser, rr-parser, kotlin-aot, rr-aot, parser-tests, c-directives, cpu-pp, cpu-block, lang-json, metal-programs, transducer, transducer-cpu, transducer-base, device-metal and setfix all check clean. boot runs past the cap alone; it uses only `block` and `program`, whose changed structs it never builds.
+
+Tests: python-parser 25/25, kotlin-parser 70/70, rr-parser 58/58, cpu-stream 72/72, compiler 46/46, and parser-tests' json and rr tests 17/18.
+
+The one red, `json_tests::simdjson_forms_starts_are_simdjsons_indexes` (word 94 spills a held field to `sp`), is red on the hub's HEAD too (ef401a4cd8, run from its archive) and green on 477afdb869. It is the hub's, not this merge's.
+
+One full kotlin-parser run faulted once, in tier 2 code (`a_string_with_templates_is_one_record`, bus error 14 bytes before a page end). It passed alone, and the next full run passed.
