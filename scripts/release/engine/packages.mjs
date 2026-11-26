@@ -103,7 +103,7 @@ export function enginePackageReadme(enginePackage, core) {
     "",
     `The native engine of [Rerail](${core.homepage}) for ${SYSTEMS[enginePackage.os]} on ${enginePackage.cpu}.`,
     "",
-    `It also holds \`${enginePackage.tray}\`, the program that shows Rerail's icon in the menu bar or system tray while its daemon runs.`,
+    `It also holds \`${enginePackage.tray}\`, the program that shows Rerail's icon in the menu bar or system tray while its daemon runs (internal testing: \`RERAIL_EXPERIMENTAL_TRAY_ICON=1\` turns it on).`,
     "",
     `[\`${core.name}\`](https://www.npmjs.com/package/${core.name}) depends on this package at its own version and loads the engine from it. Install \`${core.name}\`, not this package: it holds the engine and nothing to import.`,
     "",

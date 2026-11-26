@@ -60,8 +60,8 @@ function repository(name: string, overrides: Partial<TrayRepository> = {}): Tray
 }
 
 describe("trayGate", () => {
+  /** The facts of a main build on a Mac desktop, with the experiment on unless `overrides.env` says otherwise. */
   const facts = (overrides: Partial<TrayGateFacts> = {}): TrayGateFacts => ({
-    env: {},
     platform: "darwin",
     architecture: "arm64",
     mainBuild: true,
@@ -69,6 +69,7 @@ describe("trayGate", () => {
     trayPath: "/rerail/native/rerail-tray.darwin-arm64",
     sessionBusExists: false,
     ...overrides,
+    env: { RERAIL_EXPERIMENTAL_TRAY_ICON: "1", ...overrides.env },
   });
   const linux = (env: NodeJS.ProcessEnv, overrides: Partial<TrayGateFacts> = {}): TrayGateFacts =>
     facts({ platform: "linux", architecture: "x64", trayPath: "/rerail/native/rerail-tray.linux-x64-gnu", env, ...overrides });
@@ -80,9 +81,13 @@ describe("trayGate", () => {
     expect(trayGate(facts({ platform: "win32", architecture: "x64", trayPath: "C:\\rerail\\rerail-tray.exe" })).start).toBe(true);
   });
 
-  it("RERAIL_TRAY=0 or false turns it off", () => {
-    expect(trayGate(facts({ env: { RERAIL_TRAY: "0" } }))).toEqual({ start: false });
-    expect(trayGate(facts({ env: { RERAIL_TRAY: "false" } }))).toEqual({ start: false });
+  it("is internal testing: off unless RERAIL_EXPERIMENTAL_TRAY_ICON or RERAIL_EXPERIMENTAL turns it on", () => {
+    expect(trayGate(facts({ env: { RERAIL_EXPERIMENTAL_TRAY_ICON: undefined } }))).toEqual({ start: false });
+    expect(trayGate(facts({ env: { RERAIL_EXPERIMENTAL_TRAY_ICON: "0" } }))).toEqual({ start: false });
+    expect(trayGate(facts({ env: { RERAIL_EXPERIMENTAL_TRAY_ICON: undefined, RERAIL_EXPERIMENTAL: "1" } })).start).toBe(true);
+    expect(trayGate(facts({ env: { RERAIL_EXPERIMENTAL_TRAY_ICON: "0", RERAIL_EXPERIMENTAL: "1" } }))).toEqual({ start: false });
+    // A missing binary is not looked for while the experiment is off.
+    expect(trayGate(facts({ env: { RERAIL_EXPERIMENTAL_TRAY_ICON: undefined }, trayPath: undefined }))).toEqual({ start: false });
   });
 
   it("CI turns it off", () => {
@@ -131,7 +136,7 @@ describe("startDaemonTray", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it("starts nothing when a gate fails", () => {
-    vi.stubEnv("RERAIL_TRAY", "0");
+    vi.stubEnv("RERAIL_EXPERIMENTAL_TRAY_ICON", "0");
     const daemon: TrayDaemon = { health: () => health(), repositories: () => [], dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined };
     expect(startDaemonTray(daemon, { isNewer: () => false })).toBeUndefined();
   });

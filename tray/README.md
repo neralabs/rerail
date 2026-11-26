@@ -1,7 +1,8 @@
 # tray
 
 `rerail-tray`: the system tray icon the daemon starts as a child process while it runs. It is a separate program, not
-linked into the engine addon.
+linked into the engine addon. It is in [internal testing](../docs/internal-testing.md): the daemon starts it only with
+`RERAIL_EXPERIMENTAL_TRAY_ICON=1`.
 
 The daemon writes the menu's state to the tray's stdin as JSON lines, and the tray writes clicks back on stdout as JSON
 lines: `{"action":"open"}`, and `settings`, `docs`, `repositories`, `update`, `restart` or `stop` in the same shape; a

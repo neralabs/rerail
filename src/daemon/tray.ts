@@ -1,4 +1,7 @@
 /**
+ * Internal testing: the tray icon, off unless the daemon runs with `RERAIL_EXPERIMENTAL_TRAY_ICON=1`
+ * (docs/internal-testing.md).
+ *
  * The daemon's side of the tray icon (`tray/`, the `rerail-tray` program): whether to start it ({@link trayGate}), the
  * menu it shows ({@link trayMenuState}), and the child process the daemon runs it in ({@link startTray}).
  *
@@ -18,6 +21,7 @@ import { spawn } from "../engine/child-process.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { NATIVE_ENGINE_SYSTEMS, nativeTrayFileName, resolveNativeTrayPath } from "../engine/native/native.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
+import { experimentEnabled } from "../engine/experimental-features.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { BROWSER_OFF_NOTE, DAEMON_LOG_FILE, launchDetached, openInBrowser, type DaemonHealth, type DaemonMachine } from "../runtime/daemon-control.js";
 
@@ -38,8 +42,9 @@ export type TrayGateFacts = {
 };
 
 /**
- * Whether the daemon puts up a tray icon. Every gate must hold: a main build or `RERAIL_TRAY=1`, `RERAIL_TRAY` not `0`
- * or `false`, no `CI`, a loopback daemon, no SSH, on Linux a display and a session bus, and the binary. Tests, CI and a
+ * Whether the daemon puts up a tray icon. Every gate must hold: the experiment on (`RERAIL_EXPERIMENTAL_TRAY_ICON`),
+ * a main build or `RERAIL_TRAY=1`, no `CI`, a loopback daemon, no SSH, on Linux a display and a session bus, and the
+ * binary. Tests, CI and a
  * daemon reached over SSH never put an icon up. A failed gate is silent, but for a missing binary on a system that
  * should have one, whose `log` line the daemon writes once.
  */
@@ -54,11 +59,12 @@ export function trayGate(facts: TrayGateFacts): { start: true; trayPath: string 
 }
 
 /**
- * Whether this daemon should have an icon: a main build or `RERAIL_TRAY=1`, never `RERAIL_TRAY=0`, CI or a remote
- * host.
+ * Whether this daemon should have an icon: the experiment on, and a main build or a development checkout's daemon
+ * asked for one with `RERAIL_TRAY=1`, so the daemons of a developer's worktrees put up none of their own; never under
+ * CI or for a remote host.
  */
 function trayWanted({ env, mainBuild, loopback }: TrayGateFacts): boolean {
-  if (env.RERAIL_TRAY === "0" || env.RERAIL_TRAY === "false") return false;
+  if (!experimentEnabled("TRAY_ICON", env)) return false;
   return (mainBuild || env.RERAIL_TRAY === "1") && env.CI === undefined && loopback;
 }
 
