@@ -125,20 +125,27 @@ pub struct At<'t> {
 }
 
 /// A δ runs block a port (P§12's `LayerW` a port): the run's `(row, ±1)` pushed there, by host writers or by the
-/// operations that take the block as a slot.
+/// operations that take the block as a slot; and each port's kept state, the run's before (P§3: "the file's last
+/// result is its output trace's before"), read where it lies.
 pub struct Out {
     runs: Vec<BlockId>,
+    kept: Vec<Option<BlockId>>,
 }
 
 impl Out {
     /// No ports: an operator that asks nothing of its inputs.
     pub fn none() -> Out {
-        Out { runs: Vec::new() }
+        Out { runs: Vec::new(), kept: Vec::new() }
     }
 
     /// Port `port`'s δ runs block.
     pub fn block(&self, port: usize) -> BlockId {
         self.runs[port]
+    }
+
+    /// Port `port`'s kept state: its trace's head before the run (`None`: ∅, as a cold run's and `run`'s are).
+    pub fn kept(&self, port: usize) -> Option<BlockId> {
+        self.kept[port]
     }
 
     /// A writer of port `port`, pinned to write while it lives.
@@ -265,7 +272,7 @@ impl Instance {
         let mut cap = vec![FIRST_RUNS; self.outs.len()];
         loop {
             let runs: Vec<BlockId> = self.outs.iter().zip(&cap).map(|(t, &c)| t.open(cx.dir, c)).collect();
-            let mut out = Out { runs };
+            let mut out = Out { runs, kept: self.heads() };
             // After an attempt that outgrew its runs, a cache it wrote is open: it reads as ∅, and its first write
             // resets it.
             let mut cache = CacheW { cache: self.cache, from, begun: false };
@@ -347,7 +354,7 @@ pub fn apply<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId
     let mut cap = vec![FIRST_RUNS; outs.len()];
     loop {
         let runs: Vec<BlockId> = outs.iter().zip(&cap).map(|(t, &c)| t.open(cx.dir, c)).collect();
-        let mut out = Out { runs };
+        let mut out = Out { runs, kept: vec![None; outs.len()] };
         {
             let heads: Vec<BlockId> = ins.iter().filter_map(|p| p.1).collect();
             let l = cx.dir.read("the reference's inputs", &heads)?;

@@ -25,6 +25,7 @@ pub(crate) struct Fx {
     pub reg: Registry,
     pub ops: InternOps,
     pub k0: K0Ops,
+    pub drops: crate::drop::DropOps,
     pub traces: TraceOps,
     pub caches: CacheOps,
     pub dir: Directory,
@@ -43,15 +44,16 @@ impl Fx {
         let mut reg = Registry::default();
         let ops = InternOps::declare(&mut reg).unwrap();
         let k0 = K0Ops::declare(&mut reg).unwrap();
+        let drops = crate::drop::DropOps::declare(&mut reg).unwrap();
         let traces = TraceOps::declare(&mut reg).unwrap();
         let caches = CacheOps::declare(&mut reg).unwrap();
         let mut dir = Directory::default();
         let atoms = Atoms::new(&mut dir);
-        Fx { reg, ops, k0, traces, caches, dir, blobs: Blobs::default(), atoms }
+        Fx { reg, ops, k0, drops, traces, caches, dir, blobs: Blobs::default(), atoms }
     }
 
     pub fn l1(&self) -> L1 {
-        L1 { ops: self.k0 }
+        L1 { ops: self.k0, drops: self.drops }
     }
 
     /// A document of `src` answered at `path`, interned: its blobs and its symbols blob.
@@ -328,4 +330,40 @@ fn l0_is_k0() {
     let kform: BTreeSet<String> = RELATIONS.iter().map(|(n, _)| n.to_string()).collect();
     assert!(heads.is_subset(&kform), "{heads:?}");
     assert_eq!(rows[0].len(), 14, "13 reader rules and k_order's");
+}
+
+/// A document gone is retracted from the rows L1 kept, read in its output traces where they lie: its old tape is not
+/// read (here no blob holds it), and the run's output is the new document's cold rows.
+#[test]
+fn a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape() {
+    use crate::contract::{GlobalIn, Instance, rows_at};
+    let mut fx = Fx::new();
+    let a = fx.doc("e(1, 2).\np(x) :- e(x, _).\n", "m.rerail");
+    let b = fx.doc("e(1, 3).\n", "m.rerail");
+    let d = fx.s("m");
+    let want = fx.rows(&b, d).unwrap();
+    let mut t = Trace::new(&tape_shape()).unwrap().with_roll_up(RollUp::Never);
+    let (ra, rb) = (tape_row(d, &a.ids, &a.syms), tape_row(d, &b.ids, &b.syms));
+    let h1 = push_layer(&fx.reg, &fx.traces, &mut fx.dir, &mut t, &[(ra.clone(), 1)]).unwrap();
+    let h2 = push_layer(&fx.reg, &fx.traces, &mut fx.dir, &mut t, &[(ra, -1), (rb, 1)]).unwrap();
+    let n = u64::from(fx.atoms.count(&fx.dir));
+    let atoms = [GlobalIn { block: fx.atoms.0, before: Some(n), after: n }];
+    let l1 = fx.l1();
+    let mut inst = Instance::new(&l1, &mut fx.dir).unwrap();
+    let mut cx = Cx { reg: &fx.reg, dir: &mut fx.dir, blobs: &fx.blobs, traces: &fx.traces, caches: &fx.caches };
+    inst.step(&l1, &mut cx, &[(&t, None, Some(h1))], &atoms).unwrap();
+    let kept: usize = inst.outs.iter().map(|o| rows_at(&fx.dir, o, o.head()).unwrap().len()).sum();
+    assert!(kept > 0);
+    // The new document's blobs alone.
+    let mut only_b = Blobs::default();
+    for id in [b.ids.source, b.ids.tape, b.syms] {
+        only_b.house(&fx.dir, fx.place(&id)).unwrap();
+    }
+    let mut cx = Cx { reg: &fx.reg, dir: &mut fx.dir, blobs: &only_b, traces: &fx.traces, caches: &fx.caches };
+    let work = inst.step(&l1, &mut cx, &[(&t, Some(h1), Some(h2))], &atoms).unwrap();
+    let added: usize = want.iter().map(BTreeSet::len).sum();
+    assert_eq!(work.rows_written as usize, kept + added, "the kept rows retracted, the new ones placed");
+    for (k, o) in inst.outs.iter().enumerate() {
+        assert_eq!(rows_at(&fx.dir, o, o.head()).unwrap(), want[k], "{}", RELATIONS[k].0);
+    }
 }

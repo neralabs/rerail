@@ -32,6 +32,7 @@ use rerail_blocks::gens::Table;
 use rerail_blocks::region::BlockPin;
 
 pub mod cache;
+pub mod drop;
 pub mod intern;
 pub mod k0;
 pub mod samples;

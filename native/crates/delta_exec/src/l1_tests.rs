@@ -27,8 +27,9 @@ impl Disk {
         let (root, files) = root(name);
         let iops = InternOps::declare(&mut bench.reg).unwrap();
         let ops = K0Ops::declare(&mut bench.reg).unwrap();
+        let drops = crate::drop::DropOps::declare(&mut bench.reg).unwrap();
         let atoms = Atoms::new(&mut bench.dir);
-        Disk { root, tape: Tape::new(files, iops, atoms).unwrap(), l1: L1 { ops } }
+        Disk { root, tape: Tape::new(files, iops, atoms).unwrap(), l1: L1 { ops, drops } }
     }
 
     /// l0 read by the world (B§8's run, its first line).

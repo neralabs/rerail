@@ -34,6 +34,7 @@ pub mod boot;
 pub mod cache;
 pub mod contract;
 pub mod dir;
+pub mod drop;
 pub mod files;
 pub mod intern;
 pub mod k0;

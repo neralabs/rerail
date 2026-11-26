@@ -11,13 +11,16 @@
 //!   shares, read in place;
 //! - **output** (B2): P2's bistate in the program trace, a trace a K-form relation (`kform::shape`).
 //!
-//! Its strategy is file grain: a document added is read whole by `k0_pass` into the outputs' δ runs, a document gone
-//! is read whole again from its kept tape (a blob, never versioned) with the opposite sign, and `consolidate` nets
-//! the two, so the δ is the diff against the rows it kept. An unchanged tape is L4's identity: no operation runs, and
-//! L1 keeps no cache. Its Rust beyond `k0_pass` is the wiring of these ports.
+//! Its strategy is file grain (B§4: "an edited l0 is read again whole and diffed against its kept rows"): a document
+//! added is read whole by `k0_pass` into the outputs' δ runs; a document gone has its kept rows retracted, read in
+//! its output traces where they lie (`drop_parts`, P§3: "the file's last result is its output trace's before, not
+//! cache"), never its old tape; and `consolidate` nets the two, so the δ is the diff against the rows it kept. An
+//! unchanged tape is L4's identity: no operation runs. L1 keeps no cache: P§3's cache holds plans and compiled code,
+//! and L1 has neither. Its Rust beyond `k0_pass` and `drop_parts` is the wiring of these ports.
 
 use crate::contract::{At, CacheW, Cx, DeltaOp, In, Out, Port, Ports, Work};
 use crate::dir::BlockId;
+use crate::drop::{DropOps, drop_parts};
 use crate::files::{BlobId, Blobs, DocIds};
 use crate::k0::{K0Doc, K0Ops, k0_pass};
 use crate::kform::{self, RELATIONS};
@@ -43,6 +46,7 @@ pub fn tape_row(d: i64, doc: &DocIds, syms: &BlobId) -> Vec<i64> {
 /// L1: `k0_pass` over its tape port's changed documents.
 pub struct L1 {
     pub ops: K0Ops,
+    pub drops: DropOps,
 }
 
 fn cell(v: &View<'_>, id: RowId, c: u16) -> i64 {
@@ -88,8 +92,14 @@ impl DeltaOp for L1 {
         }
         let (tape, atoms) = (&ins.ports[TAPE], ins.globals[ATOMS].block);
         if let Some(tb) = tape.before() {
-            for id in tape.gone() {
-                self.pass(cx, atoms, doc_at(cx.blobs, tb, id)?, -1, out, &mut work)?;
+            let mut parts: Vec<i64> = tape.gone().map(|id| cell(tb, id, 0)).collect(); // copy: derived (the gone documents' ids)
+            parts.sort_unstable();
+            parts.dedup();
+            work.rows_read += parts.len() as u64;
+            for k in 0..RELATIONS.len() {
+                if let Some(kept) = out.kept(k) {
+                    work.rows_written += drop_parts(cx.reg, &self.drops, cx.dir, kept, &parts, -1, out.block(k))?;
+                }
             }
         }
         for id in tape.added() {

@@ -1076,3 +1076,63 @@ identity, the gone documents −1, the added +1), `l1.rs:114-121` (`run`: every 
 `boot.rs` (the file layer, `intern`, the ports' next layer). The shape script's `B6` section holds L1's file to
 running no operation but `k0_pass`, writing no row itself and walking no tape on the host, and `k0_pass`'s phases to
 count, scan, place. Clippy over blocks, twins and delta_exec, clean.
+
+## B4–B6 rebuilt to the pages (2026-11-26)
+
+Compared with the pages, B4–B6 as first built had eight departures that were not founded on the plan. Each is
+rebuilt here, in the order the user set.
+
+**Facts in carry the atoms** (61d2bdfb6c). B§4: facts in are the program globals. The contract has global ports
+(`contract::{Global, GlobalIn}`): a block every level shares, append-only (P§13: the atoms are "a trace with no
+kills"), so its state is its count. A global's count is part of the cache's digest and of L4's identity check
+(`In::is_identity`). L1's one global port is the atoms (`Ports::globals = ["atoms"]`), read through
+`ins.globals[ATOMS]`; L1 no longer holds them. A document's node → symbol facts travel with its tape port row, so
+the facts-in trace port is gone.
+
+**Ports name blobs, housed from placed bytes** (7e615e9b68). P§12 item 1 (`house(bytes: Placed) -> BlobId`, "takes
+bytes where they lie"; `get` in place), P§11.4 (source text and tapes are blobs, by content) and P§11 (a relation
+names a blob by its id):
+
+- `files::Blobs` maps a `BlobId` (the sha256 of the bytes where they lie) to a `Placed` (a frozen block, an offset,
+  a length). `house` refuses bytes in a block not frozen: a blob is never versioned. The same bytes housed again
+  are the first blob, and the second block is let go.
+- A document's tape block is frozen once parsed. The parser's regions are let go first. On a block with no free
+  list, letting a region go frees nothing, so the bytes stay where they were written. The source and the tape are
+  then two blobs (`files::DocIds`).
+- `intern`'s symbols block is frozen and housed too. Its first word is now its body's length, which is what a freeze
+  keeps.
+- L1's tape port row is `(d, source, tape, symbols)`, each blob as four words: 13 columns. L1 finds each blob's
+  place through `Cx::blobs`.
+- A view reads a document inside a read launch (`files::reads` over the block's bytes), not through an owned `Text`.
+
+How the store houses objects (`rerail-store`'s SQLite rows and object segments) is not brought into `delta_exec`.
+What is kept from it is what P§12 asks: bytes housed where they lie, named by content, read in place, never copied.
+
+**L1 diffs against its output's kept rows**. B§4: "an edited l0 is read again whole and diffed against its kept
+rows". P§3: "the file's last result is its output trace's before, not cache". P§11.3: kept rows "are data, kept in
+traces".
+
+- `Out::kept(port)` is each output trace's head before the run (`None` for a cold run and for `run`).
+- A new generic operation, `drop_parts`, is in `delta_exec::drop` with its twin `rerail_delta_twins::drop`. It reads
+  a trace state's head, with the layers below reached by reference, and a parts block (the partitions). It writes
+  every live row of those partitions into a δ runs block with a sign, read through `View::chain(..).part(p)`: one
+  item, counted, claimed at once, then written in order.
+- L1's delta retracts each gone document's kept rows from every output trace with `drop_parts` (−1). It reads an
+  added document with `k0_pass` (+1). It never reads an old tape again.
+- L1 keeps no cache. P§3's cache holds a wave's plans and compiled code, and L1 has neither. The user's goal asked
+  that L1 keep its rows in its cache, so that the cache and L5 checks test something real. That would make the
+  file's last result cache, which P§3 and §11.3 rule out. So the kept rows are read from the output traces, and L5
+  stays vacuous for L1: its first operator with plans will exercise it.
+
+Checks (Relax, local, `rerail-delta-exec --lib` 69 of 69):
+
+- `drop_parts` over two layers, the second killing a row of the first, gives exactly the live rows of the partitions
+  listed. Past its room, its claims are counted as needed.
+- `a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape`: with only the new document's blobs held, the
+  run's output is the new document's cold rows. Its rows written are the kept rows retracted plus the new ones.
+- `the_source_and_the_tape_are_blobs_in_the_documents_frozen_tape_block`: both blobs' names are the sha256 of their
+  bytes where they lie, in one frozen tape block. Housing the same bytes again gives the same blobs.
+- The harness over l0's edits on disk, and the B4–B6 checks above, pass unchanged in meaning.
+
+The shape script's `B6` section now also holds L1 to its atoms as a global port (no `Atoms` beside its ports), to
+retracting through `drop_parts` over `out.kept`, and to no old tape read again with −1.

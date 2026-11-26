@@ -433,8 +433,9 @@ def b5(failures: list) -> None:
 
 def b6(failures: list) -> None:
     """B6: L1. `k0_pass` is an operation of three phases (emit: count, scan, place), its twin the walk; L1 is a
-    DeltaOp with B§4's ports, whose Rust beyond `k0_pass` is the wiring of its ports: it runs no other operation,
-    writes no row itself, and never walks a tape on the host."""
+    DeltaOp with B§4's ports, whose Rust beyond `k0_pass` and `drop_parts` is the wiring of its ports: it runs no
+    other operation, writes no row itself, and never walks a tape on the host. A gone document is retracted from the
+    rows L1 kept, read in its output traces (`drop_parts`, P§3), never by reading its old tape again with -1."""
     k0 = (CRATE / "src/k0.rs").read_text()
     if "pub static K0_PASS: Signature" not in k0:
         failures.append("k0.rs: k0_pass is not an operation (B6)")
@@ -456,6 +457,11 @@ def b6(failures: list) -> None:
     if 'globals: vec!["atoms"]' not in l1.read_text():
         failures.append("l1.rs: the atoms are not its facts in, a global port (B§4: facts in are program globals)")
     hits(l1, code, r"\bAtoms\b", "the atoms held beside L1's ports (they are its facts in)", failures)
+    if not re.search(r"drop_parts\([^;]*out\.kept\(|out\.kept\([^;]*drop_parts\(", code, flags=re.S):
+        failures.append("l1.rs: a gone document is not retracted from its kept rows (drop_parts over out.kept, P§3)")
+    hits(l1, code, r"\bpass\([^;]*,\s*-1\s*,|k0_pass\([^;]*,\s*-1\s*,", "an old tape read again with -1 (retract the kept rows, P§3)", failures)
+    if not re.search(r'DROP_PARTS: &\[TwinPhase\]', (TWINS / "src/drop.rs").read_text()):
+        failures.append("delta_twins/src/drop.rs: drop_parts has no twin")
     for path in sorted((CRATE / "src").rglob("*.rs")):
         if path.name.endswith("_tests.rs") or path.name == "tests.rs":
             continue
