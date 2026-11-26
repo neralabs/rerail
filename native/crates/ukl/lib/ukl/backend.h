@@ -122,7 +122,6 @@ UKL_INLINE void ukl_fence_device() { atomic_thread_fence(mem_flags::mem_device, 
 UKL_INLINE void ukl_fence_system() { ukl_fence_device(); }
 // A relaxed add on a threadgroup word.
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomic_fetch_add_explicit((threadgroup atomic_uint*)p, v, memory_order_relaxed); }
-UKL_INLINE uint32_t ukl_atomic_or_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomic_fetch_or_explicit((threadgroup atomic_uint*)p, v, memory_order_relaxed); }
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return atomic_load_explicit((threadgroup atomic_uint*)p, memory_order_relaxed); }
 UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { atomic_store_explicit((threadgroup atomic_uint*)p, v, memory_order_relaxed); }
 // The specialization constant (`UKL_CONSTANT_U32`, below): Metal's function constant 0.
@@ -189,7 +188,6 @@ UKL_INLINE void ukl_fence_device() { __threadfence(); }
 // Writes the host reads while the kernel runs (pinned, mapped memory), ordered for it.
 UKL_INLINE void ukl_fence_system() { __threadfence_system(); }
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomicAdd(p, v); }
-UKL_INLINE uint32_t ukl_atomic_or_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomicOr(p, v); }
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return *(volatile uint32_t*)p; }
 UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { *(volatile uint32_t*)p = v; }
 
@@ -298,7 +296,6 @@ UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t 
 UKL_INLINE void ukl_fence_device() { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
 UKL_INLINE void ukl_fence_system() { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return __atomic_fetch_add(p, v, __ATOMIC_RELAXED); }
-UKL_INLINE uint32_t ukl_atomic_or_local(UKL_LOCAL uint32_t* p, uint32_t v) { return __atomic_fetch_or(p, v, __ATOMIC_RELAXED); }
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
 UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __atomic_store_n(p, v, __ATOMIC_RELAXED); }
 
@@ -443,7 +440,6 @@ UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t 
 UKL_INLINE void ukl_fence_device() { mem_fence(CLK_GLOBAL_MEM_FENCE); }
 UKL_INLINE void ukl_fence_system() { mem_fence(CLK_GLOBAL_MEM_FENCE); }
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomic_add((volatile __local uint32_t*)p, v); }
-UKL_INLINE uint32_t ukl_atomic_or_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomic_or((volatile __local uint32_t*)p, v); }
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return *(volatile __local uint32_t*)p; }
 UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { atomic_xchg((volatile __local uint32_t*)p, v); }
 #define UKL_CONSTANT_U32(name) __constant uint32_t name = (UKL_CONSTANT_0);

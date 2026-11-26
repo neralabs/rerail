@@ -830,16 +830,13 @@ pub struct Induction {
     work: Budget,
     /// The core of the solve that proved the last `prove` (`Outcome::Proved`).
     core: Option<Vec<bool>>,
-    /// The device its solves are handed to (`bitlex_csat_gpu::Service`, decision 0670): the same search as here.
-    #[cfg(not(target_family = "wasm"))]
-    device: Option<std::sync::Arc<crate::bitlex_csat_gpu::Service>>,
     /// The long solves' results, by their formulas, shared by its forks (`Solves`).
     kept: std::sync::Arc<Solves>,
 }
 
 /// The results of a compile's long solves, by their formulas' fingerprints (`lanes::Formula::fingerprint`), for
 /// the solves that repeat one: a cold Kotlin compile asks 13,613 solves of 8,311 formulas, and its repeats took 26%
-/// of the device's time (decision 0670). A solve is a function of its formula, so a repeat's result is the one a
+/// of the device's time when it had one (decision 0670). A solve is a function of its formula, so a repeat's result is the one a
 /// search would give, every count and clause as it. Only those of `KEPT_ROUNDS` rounds or more are kept (98% of
 /// the repeats' rounds there), their models and cores as bits, up to `KEPT_BYTES`.
 #[derive(Default)]
@@ -1291,7 +1288,7 @@ enum Outcome {
 
 impl Induction {
     pub fn new(rounds: &[Vec<(u16, u16)>], horizon: u32, conflicts: u32) -> Self {
-        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), block: std::sync::OnceLock::new(), question: 0, spent: 0, given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), core: None, #[cfg(not(target_family = "wasm"))] device: None, kept: Default::default() }
+        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), block: std::sync::OnceLock::new(), question: 0, spent: 0, given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), core: None, kept: Default::default() }
     }
 
     /// This prover within the compile's budget `work`.
@@ -1316,13 +1313,6 @@ impl Induction {
         p.block = self.block().clone().into();
         p.kept = self.kept.clone();
         p
-    }
-
-    /// Its solves handed to the device's service (decision 0670).
-    #[cfg(not(target_family = "wasm"))]
-    pub fn on_device(mut self, service: std::sync::Arc<crate::bitlex_csat_gpu::Service>) -> Self {
-        self.device = Some(service);
-        self
     }
 
     /// The block its windows are built in.
@@ -1667,17 +1657,15 @@ impl Induction {
         if !self.work.spend(u.vars.unsigned_abs().into()) {
             break 'solve Outcome::Unknown;
         }
-        // The device's search (`bitlex_csat_lanes`, decision 0670): the window at level 0, propagated once (`Start`);
-        // what its solves learned that holds without them; the solve's own clauses, each with `-sel`, a variable
-        // past the solve's, assumed. The same answers on the device and here.
+        // The search (`bitlex_csat_lanes`, decision 0670): the window at level 0, propagated once (`Start`); what
+        // its solves learned that holds without them; the solve's own clauses, each with `-sel`, a variable past
+        // the solve's, assumed.
         let start = start.get_or_insert_with(|| lanes::start(base_vars, &u.gates, base_gates, fan, &u.clauses, window_base));
         let sel = u.vars + 1;
         let vars = sel.unsigned_abs() as usize;
         let own_fan = (base_gates < u.gates.len()).then(|| Fanout::of_range(&u.gates, base_gates..u.gates.len(), vars));
         let budget = self.conflicts.min(u32::try_from(self.work.left()).unwrap_or(u32::MAX));
         let t_dump = std::time::Instant::now();
-        #[cfg(not(target_family = "wasm"))]
-        let service = self.device.clone();
         let x = {
             let resume = lanes::Resume { start, window_clauses: window_base, carried: learned, assume: sel, carry_vars: base_vars };
             let f = lanes::Formula { resume: Some(resume), ..lanes::Formula::new(vars, &u.gates, base_gates, fan, own_fan.as_ref(), &u.clauses, budget) };
@@ -1685,12 +1673,6 @@ impl Induction {
             match self.kept.get(fp) {
                 Some(x) => x,
                 None => {
-                    #[cfg(not(target_family = "wasm"))]
-                    let x = match &service {
-                        Some(s) => s.solve(&f),
-                        None => lanes::solve(&f),
-                    };
-                    #[cfg(target_family = "wasm")]
                     let x = lanes::solve(&f);
                     self.kept.put(fp, &x);
                     x
@@ -1959,7 +1941,7 @@ impl<'a> Unrolled<'a> {
         let mut held: Vec<(u16, u32)> = memo.keys().copied().collect();
         held.sort_unstable();
         let fan = Fanout::of(&gates, gates.len(), vars.unsigned_abs() as usize);
-        // In the window's block, where the device's solver reads them (decision 0670).
+        // In the window's block, where its solver reads them (decision 0670).
         let blocked = gates.placed().map_or_else(Clauses::default, |(b, _, _)| Clauses::in_block(b));
         Window { reach, far, at_position, held, fan, base_gates: gates.len(), base: clauses.len(), base_vars: vars, parts: Parts { d, gates, clauses, vars, memo, before, past, groups, readers }, start: None, learned: blocked }
     }

@@ -1,7 +1,6 @@
-//! The prover's formulas where both its solvers read them (decision 0670, step 3): a window's gates, its fanout and
-//! its plain clauses, and a solve's own, as chunks of one block a compile's provers share (`FormulaBlock`). The CPU's
-//! solver reads them there, and a batch's kernel binds the block once and reads each formula at its offsets: nothing
-//! is uploaded (decision 0353).
+//! The prover's formulas where its solver reads them (decision 0670, step 3): a window's gates and its plain
+//! clauses, and a solve's own, as chunks of one block a compile's provers share (`FormulaBlock`), read there in
+//! place (decision 0353).
 //!
 //! `Grown` is an array that grows as a formula is built: on the heap (a solver's own working memory, a test's), or
 //! in a block, a chunk of its free list, taken again twice as large as it fills (the old chunk given back), as a

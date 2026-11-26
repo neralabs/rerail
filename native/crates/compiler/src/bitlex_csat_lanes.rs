@@ -1,12 +1,8 @@
-//! The device's search (`bitlex_csat_gpu.uglykl`, decision 0670, step 3) on the CPU: its parts (a round's
-//! literals, their watch lists, their gates 32 at a time, what a step implies placed in lane order; the integer
-//! activities' heap; the analysis, jumps back and reductions), where the machine has no device or the device fails.
-//! Not the device's steps: the device decides a wide gate by its counter's atomic add (Nadel et al. 2026), and the
-//! two searches may differ. Their answers agree where both have one; a model, a core or what a solve carries is
-//! sound from either (Kotlin's shipped answers are the same bytes from the device alone, decision 0670).
-//!
-//! Each function names the kernel's it follows. Its working state is its own, as the kernel's is: the formula is
-//! read where it was built (decision 0353).
+//! The prover's search over the circuit (decision 0670, step 3): its parts (a round's literals, their watch lists,
+//! their gates 32 at a time, what a step implies placed in lane order; the integer activities' heap; the analysis,
+//! jumps back and reductions). Its working state is its own: the formula is read where it was built (decision
+//! 0353). A device search of it was measured and removed (decision 0670): a GPU's search of one formula is several
+//! times a core's.
 
 use crate::bitlex_csat::{Fanout, Gates, Kind};
 use crate::bitlex_grown::Grown;
@@ -85,7 +81,7 @@ impl<'a> Formula<'a> {
 
 /// A window at level 0 (`start`): the values its plain clauses and gates set there, in order, each three words (the
 /// literal, its reason, its argument; a clause's reason its number among the window's); or the contradiction it
-/// met, its clause. Made once a window, in its block, where the device reads it.
+/// met, its clause. Made once a window, in its block.
 #[derive(Clone, Debug, Default)]
 pub struct Start {
     pub set: Grown<u32>,
@@ -170,9 +166,6 @@ pub struct Solved {
     /// values learned at level 0); and, unsatisfiable, each variable whether its contradiction rests on it.
     pub carry: Vec<Vec<Lit>>,
     pub used: Option<Vec<bool>>,
-    /// The device's cycles by part, over 256 (0 where its backend has no clock, and on the CPU): watch visits, gate
-    /// items, analysis, jumps back, decisions, reductions.
-    pub cycles: [u32; 6],
 }
 
 /// A formula's room for learned clauses, by its size: their literals (64 words a variable, from 16,384 to 2^20), and
@@ -186,8 +179,7 @@ pub fn learned(vars: usize) -> u32 {
     arena(vars) / 16
 }
 
-/// The steps a search takes at most (a round, a conflict, a decision): the device's launches times a launch's steps
-/// (`bitlex_csat_gpu`'s `LAUNCHES` and `STEPS`). Past them a formula is unknown.
+/// The steps a search takes at most (a round, a conflict, a decision). Past them a formula is unknown.
 pub const STEPS: u64 = 1 << 24;
 
 const NONE: u32 = u32::MAX;
@@ -208,7 +200,7 @@ enum Status {
     Unsat,
     Unknown,
     Roomless,
-    /// A loop past the kernel's bound: a fault in the search.
+    /// A loop past its bound: a fault in the search.
     Broken,
 }
 
@@ -303,7 +295,7 @@ struct Search<'a> {
     gates_n: usize,
 }
 
-/// The formula solved as the device solves it: the same answer, model and counts.
+/// The formula solved: its answer, model and counts.
 pub fn solve(f: &Formula) -> Solved {
     let mut s = Search::new(f);
     s.start();
@@ -437,7 +429,6 @@ impl<'a> Search<'a> {
             reductions: self.reductions,
             carry: self.carry(),
             used: (self.status == Status::Unsat && self.f.resume.is_some()).then(|| self.used()),
-            cycles: [0; 6],
         }
     }
 
@@ -933,8 +924,7 @@ impl<'a> Search<'a> {
         false
     }
 
-    // The decisions' heap (`bitlex_sat::Order`'s): its top is always the most active variable in it, the kernel's
-    // tree's top (`cs_top`).
+    // The decisions' heap (`bitlex_sat::Order`'s): its top is always the most active variable in it.
     fn before(&self, a: u32, b: u32) -> bool {
         let (x, y) = (self.act[a as usize], self.act[b as usize]);
         x > y || (x == y && a > b)
@@ -1082,8 +1072,8 @@ impl<'a> Search<'a> {
 
     /// `cs_analyze`: the conflict's first unique implication point, learned at the arena's end (its asserting
     /// literal first, the highest of the rest second); its length and the level to jump back to, or none where the
-    /// room is full (or a fault). A clause's literals are taken 32 at a time, as the kernel's lanes take them: the
-    /// room is checked a chunk at a time.
+    /// room is full (or a fault). A clause's literals are taken 32 at a time: the room is checked a
+    /// chunk at a time.
     fn analyze(&mut self) -> Option<(usize, u32)> {
         let here = self.level;
         let u = self.used;
@@ -1224,7 +1214,7 @@ impl<'a> Search<'a> {
             }
             self.bump >>= BUMP_SHIFT;
             // Two activities scaled to one are ordered by their numbers now: the heap made again, so its top is
-            // the most active variable as the kernel's tree's is.
+            // the most active variable.
             for i in (0..self.heap_n / 2).rev() {
                 self.down(i);
             }
@@ -1512,7 +1502,7 @@ impl<'a> Search<'a> {
         }
     }
 
-    /// A step of the kernel's main loop.
+    /// A step of the search's main loop.
     fn step(&mut self) {
         let n = self.f.vars + 1;
         if self.trail.len() > n || self.head > self.trail.len() || self.level as usize >= n {

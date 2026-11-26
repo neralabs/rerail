@@ -216,18 +216,6 @@ impl Device {
         }
     }
 
-    /// The cache its cores share in front of memory, in bytes, where the device says: CUDA's L2
-    /// (`L2_CACHE_SIZE`), OpenCL's global memory cache. Metal does not say. What work resident at once should keep
-    /// within, where each item has its own hot data.
-    pub fn cache_bytes(&self) -> Option<u64> {
-        match self {
-            #[cfg(target_os = "linux")]
-            Device::Native(d) => (d.l2_bytes > 0).then_some(d.l2_bytes),
-            Device::OpenCl(d) => (d.cache() > 0).then_some(d.cache()),
-            _ => None,
-        }
-    }
-
     pub fn is_cpu(&self) -> bool {
         matches!(self, Device::Cpu(_))
     }

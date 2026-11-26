@@ -25,7 +25,6 @@ pub mod bitlex_sat;
 pub mod bitlex_csat;
 pub mod bitlex_csat_lanes;
 #[cfg(not(target_family = "wasm"))]
-pub mod bitlex_csat_gpu;
 pub mod bitlex_grown;
 pub mod bitlex_tier2;
 pub mod block;

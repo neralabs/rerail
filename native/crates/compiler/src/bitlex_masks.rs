@@ -2109,13 +2109,7 @@ impl Lowering {
         let xs: Vec<Val> = asked.iter().map(|a| a.1).collect();
         let (t1, c1) = (std::time::Instant::now(), process_cpu());
         let longest = std::sync::atomic::AtomicU64::new(0);
-        #[cfg(not(target_family = "wasm"))]
-        let on_gpu = crate::bitlex_csat_gpu::enabled();
-        #[cfg(target_family = "wasm")]
-        let on_gpu = false;
-        let (answers, found): (Vec<bool>, Vec<Vec<Vec<u8>>>) = if on_gpu {
-            never_on_device(prover, &ops, tables, &xs, &budgets)
-        } else {
+        let (answers, found): (Vec<bool>, Vec<Vec<Vec<u8>>>) = {
             xs.par_iter()
                 .zip(&budgets)
                 .map(|(x, work)| {
@@ -3720,43 +3714,6 @@ fn token_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows:
         from += j + 1;
     }
     Ok(None)
-}
-
-/// Threads asking questions a core, with the device: most of them wait on their solves on the device at a time.
-#[cfg(not(target_family = "wasm"))]
-const ASKING_A_CORE: usize = 16;
-
-/// `either_never_many`'s answers with the solves on the device (decisions 0654, 0670). Each question is asked as on
-/// the CPU, on a thread of its own, and each of its solves handed to the device's service (`bitlex_csat_gpu::Service`)
-/// and waited on: the device takes every solve waiting as one batch and hands each back as soon as a launch finishes
-/// it, so a question goes on the moment its own solve is answered. The threads are `ASKING_A_CORE` a core: those
-/// waiting on the device leave the cores to those asking. The answers are the CPU's: the device's search is its own.
-#[cfg(not(target_family = "wasm"))]
-fn never_on_device(prover: &bitlex_prove::Induction, ops: &[BlockOp], tables: &[crate::block::ClassTable], xs: &[Val], budgets: &[bitlex_prove::Budget]) -> (Vec<bool>, Vec<Vec<Vec<u8>>>) {
-    use rayon::prelude::*;
-    let service = std::sync::Arc::new(crate::bitlex_csat_gpu::Service::default());
-    // A measurement aid: `RERAIL_ASKING_A_CORE`, the threads a core.
-    let a_core = std::env::var("RERAIL_ASKING_A_CORE").ok().and_then(|v| v.parse().ok()).unwrap_or(ASKING_A_CORE);
-    let threads = a_core * std::thread::available_parallelism().map_or(1, |n| n.get());
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().expect("the asking threads");
-    std::thread::scope(|scope| {
-        let d = scope.spawn(|| service.run());
-        let got = pool.install(|| {
-            xs.par_iter()
-                .zip(budgets)
-                .map(|(x, work)| {
-                    let mut p = prover.fork(work).on_device(service.clone());
-                    let a = work.left() > 0 && !p.refutes(ops, tables, x.v, x.d) && (bitlex_prove::never_in_before_solve(work, ops, tables, x.v, x.d) || p.never(ops, tables, x.v, x.d));
-                    (a, p.found().to_vec())
-                })
-                .unzip()
-        });
-        service.close();
-        if let Err(e) = d.join().expect("the device's thread") {
-            eprintln!("the prover's GPU ({}): {e}; its solves on the CPU", rerail_gpu::device::backend());
-        }
-        got
-    })
 }
 
 /// `op` with its operands `base` later: an op of a list appended to another.

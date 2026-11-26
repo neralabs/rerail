@@ -1,5 +1,5 @@
-//! The prover's SAT solver on the circuit (decision 0670): a window is gates, not clauses, kept as flat arrays a
-//! UKL kernel can read as the CPU does, and the solver propagates each gate by its kind.
+//! The prover's SAT solver on the circuit (decision 0670): a window is gates, not clauses, kept as flat arrays in
+//! a block, and the solver propagates each gate by its kind.
 //!
 //! A gate is a kind, an output literal and its arguments' literals, end to end (`Gates`):
 //! - `And`: the output holds exactly when every argument does (none: it holds). An `or`, an equation (one argument)
@@ -31,7 +31,7 @@ pub enum Kind {
 #[derive(Clone, Debug, Default)]
 pub struct Gates {
     /// A gate a record: its kind and number of arguments (`kind | n << 2`), its output, and its arguments where it
-    /// has at most two, else where they begin in `args` (decision 0670: one load a gate, on the CPU and a device).
+    /// has at most two, else where they begin in `args` (decision 0670: one load a gate).
     rec: Grown<[Lit; 4]>,
     args: Grown<Lit>,
 }
@@ -41,7 +41,7 @@ pub struct Gates {
 const KINDS: [Kind; 3] = [Kind::And, Kind::Xor, Kind::One];
 
 impl Gates {
-    /// None yet, built in `block`, where a kernel reads them (`bitlex_grown`).
+    /// None yet, built in `block` (`bitlex_grown`).
     pub fn in_block(block: &FormulaBlock) -> Gates {
         Gates { rec: Grown::in_block(block), args: Grown::in_block(block) }
     }
@@ -236,164 +236,6 @@ pub struct Fanout {
     gates: Vec<u32>,
     /// A window's gates that imply with nothing set (`seed`): the CPU's `Solver` checks them first.
     seeds: Vec<u32>,
-    /// The gates it was made of.
-    range: std::ops::Range<usize>,
-    /// The device's propagation (`bitlex_csat_gpu`): the gates' clauses (`Gates::clauses_of`, in gate order),
-    /// indexed as Nadel et al.'s (`ClauseOcc`). Made at the device's first read: the CPU's search never reads it.
-    cnf: std::sync::OnceLock<ClauseOcc>,
-}
-
-/// A literal's index in the device's propagation (Nadel et al. 2026, §4.2): `2 (v - 1)` positive, `2 (v - 1) + 1`
-/// negative; a literal's negation is its index `^ 1`. Its bit in the assignment's bitmap, and what the sums of a
-/// clause word add.
-pub fn code(l: Lit) -> u32 {
-    2 * (l.unsigned_abs() - 1) + u32::from(l < 0)
-}
-
-/// A binary clause's entry in an occurrence list: the other literal's index, with this bit.
-pub const BIN: u32 = 1 << 31;
-/// `ClauseOcc`'s head: where its arrays lie in the block (word offsets) and their counts (the kernel's `CL_*`).
-pub const CL_WORDS: usize = 12;
-
-/// Clauses as the device's propagation reads them (`bitlex_csat_gpu.uglykl`'s `cs_round`; Nadel et al. 2026,
-/// §4.1–4.2): each clause of three or more literals (a long one) its length and the sum of its literals' indices
-/// (`code`), a job's clause word made from them; each literal's negated occurrence list (the clauses holding its
-/// negation), back to back with per-literal offsets, each entry two words: a long clause's number among the long
-/// ones, or `BIN` and a binary clause's other literal's index; and the clause's number. A literal's long clauses
-/// come first, so that a jump back takes back only those. Unit clauses are listed (their number and literal), the
-/// first empty one kept; a tautology has no entries. A clause's literals are kept here (`lits`) only where they are
-/// nowhere else (a gate's clauses); a formula's plain clauses are read where they are.
-#[derive(Clone, Debug, Default)]
-pub struct ClauseOcc {
-    head: Grown<u32>,
-    starts: Grown<u32>,
-    lits: Grown<u32>,
-    init: Grown<u32>,
-    occ_starts: Grown<u32>,
-    occ: Grown<u32>,
-    units: Grown<u32>,
-    clauses: usize,
-    longs: usize,
-    longest: usize,
-}
-
-impl ClauseOcc {
-    /// The index of `clauses` (each its literals, numbered in order) over `vars` variables, in `like`'s block; their
-    /// literals kept where `keep`.
-    pub fn of<T: Copy>(like: &Grown<T>, vars: usize, clauses: &[Vec<Lit>], keep: bool) -> ClauseOcc {
-        let slots = 2 * vars;
-        let mut c: Vec<Lit> = Vec::new();
-        let (mut starts, mut lits) = (Grown::like(like), Grown::like(like));
-        let (mut init, mut units) = (Grown::like(like), Grown::like(like));
-        let mut n = vec![[0u32; 2]; slots];
-        let (mut longs, mut longest, mut empty) = (0usize, 0usize, u32::MAX);
-        for (k, cl) in clauses.iter().enumerate() {
-            if keep {
-                starts.push(lits.len() as u32);
-                for &l in cl {
-                    lits.push(l as u32);
-                }
-            }
-            match normal(cl, &mut c) {
-                None => {}
-                Some(0) => empty = empty.min(k as u32),
-                Some(1) => {
-                    units.push(k as u32);
-                    units.push(c[0] as u32);
-                }
-                Some(2) => {
-                    n[code(-c[0]) as usize][1] += 1;
-                    n[code(-c[1]) as usize][1] += 1;
-                }
-                Some(len) => {
-                    init.push(len as u32);
-                    init.push(c.iter().fold(0u32, |s, &y| s.wrapping_add(code(y))));
-                    for &y in &c {
-                        n[code(-y) as usize][0] += 1;
-                    }
-                    longs += 1;
-                    longest = longest.max(len);
-                }
-            }
-        }
-        if keep {
-            starts.push(lits.len() as u32);
-        }
-        let mut occ_starts = Grown::like(like);
-        let mut at = 0u32;
-        for k in &n {
-            occ_starts.push(at);
-            occ_starts.push(at + k[0]);
-            at += k[0] + k[1];
-        }
-        occ_starts.push(at);
-        let mut occ = Grown::like(like);
-        occ.resize(2 * at as usize, 0);
-        let mut fill: Vec<[u32; 2]> = (0..slots).map(|k| [occ_starts[2 * k], occ_starts[2 * k + 1]]).collect();
-        let mut put = |slot: u32, part: usize, w: [u32; 2], occ: &mut Grown<u32>| {
-            let at = 2 * fill[slot as usize][part] as usize;
-            occ[at..at + 2].copy_from_slice(&w);
-            fill[slot as usize][part] += 1;
-        };
-        let mut long = 0u32;
-        for (k, cl) in clauses.iter().enumerate() {
-            match normal(cl, &mut c) {
-                Some(2) => {
-                    put(code(-c[0]), 1, [BIN | code(c[1]), k as u32], &mut occ);
-                    put(code(-c[1]), 1, [BIN | code(c[0]), k as u32], &mut occ);
-                }
-                Some(len) if len >= 3 => {
-                    for &y in &c {
-                        put(code(-y), 0, [long, k as u32], &mut occ);
-                    }
-                    long += 1;
-                }
-                _ => {}
-            }
-        }
-        let mut head = Grown::like(like);
-        let word = |g: &Grown<u32>| g.placed().map_or(u32::MAX, |(_, at)| (at / 4) as u32);
-        for w in [
-            if keep { word(&starts) } else { u32::MAX },
-            if keep { word(&lits) } else { u32::MAX },
-            word(&init),
-            word(&occ_starts),
-            word(&occ),
-            word(&units),
-            (units.len() / 2) as u32,
-            clauses.len() as u32,
-            longs as u32,
-            empty,
-            slots as u32,
-            longest as u32,
-        ] {
-            head.push(w);
-        }
-        ClauseOcc { head, starts, lits, init, occ_starts, occ, units, clauses: clauses.len(), longs, longest }
-    }
-
-    /// Its head's byte offset in the block it is in (`None` on the heap, or where an array of it is).
-    pub fn placed(&self) -> Option<usize> {
-        let at = self.head.placed()?.1;
-        let parts = [&self.init, &self.occ_starts, &self.occ, &self.units];
-        parts.iter().all(|g| g.placed().is_some() || g.is_empty()).then_some(at)
-    }
-
-    /// Its clauses, its long ones, and the longest's length.
-    pub fn clauses(&self) -> usize {
-        self.clauses
-    }
-    pub fn longs(&self) -> usize {
-        self.longs
-    }
-    pub fn longest(&self) -> usize {
-        self.longest
-    }
-
-    /// Its occurrence lists' entries (two words each).
-    pub fn entries(&self) -> usize {
-        self.occ.len() / 2
-    }
 }
 
 fn var(l: Lit) -> usize {
@@ -433,7 +275,7 @@ impl Fanout {
             }
         }
         if lo > hi {
-            return Fanout { vars, lo: 0, starts: Vec::new(), gates: Vec::new(), seeds: Vec::new(), range, cnf: std::sync::OnceLock::new() };
+            return Fanout { vars, lo: 0, starts: Vec::new(), gates: Vec::new(), seeds: Vec::new() };
         }
         let n = hi - lo + 1;
         let mut count = vec![0u32; n + 1];
@@ -461,18 +303,7 @@ impl Fanout {
                 }
             }
         }
-        Fanout { vars, lo, starts: count, gates: out, seeds: Vec::new(), range, cnf: std::sync::OnceLock::new() }
-    }
-
-    /// Its gates' clauses, as the device reads them: `gates` those it was made of.
-    pub fn cnf(&self, gates: &Gates) -> &ClauseOcc {
-        self.cnf.get_or_init(|| {
-            let mut cs = Vec::new();
-            for g in self.range.clone() {
-                gates.clauses_of(g, &mut cs);
-            }
-            ClauseOcc::of(&gates.rec, self.vars, &cs, true)
-        })
+        Fanout { vars, lo, starts: count, gates: out, seeds: Vec::new() }
     }
 
     /// The variables it covers.

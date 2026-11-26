@@ -37,8 +37,6 @@ sha2 = "0.11"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
-# The prover's solver on the GPU, its kernel in UKL (`bitlex_csat_gpu`, decisions 0654 and 0670).
-rerail-gpu = { path = "../../../gpu" }
 
 # The browser build: a page has no executable memory (the engine's `wasm/README.md`).
 [target.'cfg(target_family = "wasm")'.dependencies]

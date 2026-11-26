@@ -709,3 +709,9 @@ formula").
   asking threads 5.25 s of CPU, and 26 s once the device's clause index was made at its first read; on the CPU
   those solves cost 1.5 s in all (0.17 ms each). Cold Kotlin 32 to 38 s and 107 to 114 s of user CPU, against the
   CPU alone's 20 to 30 s and 93 to 101 s. The solves that cost the CPU are those that search.
+- **The device's search removed** (the user, 2026-11-25: "cut the GPU part"). Deleted: `bitlex_csat_gpu.rs` and
+  `.uglykl` (the kernel, the batch, the service, their tests and benchmarks), the prover's routing to them
+  (`Induction::on_device`, `never_on_device`, `RERAIL_PROVER_GPU`), the device's clause index (`ClauseOcc`,
+  `Fanout::cnf`), `Solved::cycles`, the compiler's `rerail-gpu` dependency, and the device layer's cache size
+  (`Device::cache_bytes`) and `ukl_atomic_or_local`, which only it read. The prover's search is `bitlex_csat_lanes`
+  on the CPU. Cold Kotlin on the Spark: 11.8 s, 53.9 s of user CPU, the shipped bytes.
