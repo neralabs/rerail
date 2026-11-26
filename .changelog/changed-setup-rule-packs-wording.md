@@ -1,0 +1,1 @@
+Set-up and the dashboard describe rule packs as best practices, mostly the same ones linters use. Set-up also recommends turning off the linter rules Rerail enforces as your agent writes, to avoid duplicate checks.
