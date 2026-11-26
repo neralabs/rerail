@@ -21,7 +21,6 @@ import {
   pruneCheckouts,
   recordCheckout,
   recordedCheckoutsReader,
-  type UnansweredLooks,
 } from "../../../src/engine/catalog/repository-registry.js";
 import { outsideGit, repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
@@ -1295,7 +1294,7 @@ describe("a checkout's record while another process holds the database's write l
     recordCheckout(database, worktree, 3_000, records);
     git(main, "worktree", "remove", worktree);
 
-    const unanswered: UnansweredLooks = { looking: undefined };
+    const unanswered: { looking: Promise<unknown> | undefined } = { looking: undefined };
     const pass = pruneCheckouts(database, { now: 2_000, unanswered });
     // The pass found the worktree gone. Given back now, the lock is free before the writes waiting for it are made.
     await unanswered.looking;

@@ -1402,6 +1402,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #modelPath: string | undefined;
   readonly #sessionStore: SqliteSessionStore;
   readonly #audits: SqliteAuditStore;
+  /** The database's record writer, for the seen time of the checkout a session starts in (`#startingCheckout`). */
+  readonly #checkoutRecords: RecordWriter;
   readonly #steersInFlight = new Set<Promise<AdapterDelivery | undefined>>();
   /** The steer each answer's delivery came from, and its session, until the answer reaches its asker or comes back (`returnUndelivered`). */
   readonly #handedOut = new WeakMap<AdapterDelivery, HandedOut>();
@@ -1409,8 +1411,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #evaluatorOpens = new Set<Promise<CodeRuleBridge | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
-  /** The database's record writer, for the seen time of the checkout a session starts in (`#startingCheckout`). */
-  readonly #checkoutRecords: RecordWriter;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
   /**
    * The Git reads that place a session's checkout, then the other worktrees Git lists for it (`placeCheckout`,
