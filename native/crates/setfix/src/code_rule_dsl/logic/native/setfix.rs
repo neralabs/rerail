@@ -4981,10 +4981,11 @@ impl View {
             && (cols.len() == 1 || !self.src.looks_up_columns())
             && !(dc.is_some_and(|dc| cols.iter().any(|&k| self.cols[k] == dc)) && cols.iter().any(|&k| self.src.kept_to_doc(self.cols[k])))
     }
-    /// Whether a probe binding every key column `cols` (two or more, nothing else read) is a test of the source
-    /// (`tests_keys`): a whole view, no constants, each key read with the lead's matches.
+    /// Whether a probe binding every key column `cols` (nothing else read) is a test of the source (`tests_keys`): a
+    /// whole view, no constants, each key read with the lead's matches. One key is a membership: the source's own test
+    /// of the value (a made relation's bits, layer c of the joins' design), else its matches read.
     fn keys_tested(&self, cols: &[usize]) -> bool {
-        self.eqs.is_empty() && self.ids.is_none() && (2..=READ).contains(&cols.len())
+        self.eqs.is_empty() && self.ids.is_none() && (1..=READ).contains(&cols.len())
     }
     /// Whether some row of the view has values `key` in view columns `cols`: the source's matches by the lead column
     /// read with the other key columns and compared as found, the first equal one ending it (a membership step's
@@ -7415,12 +7416,24 @@ impl InRel {
         let home = crate::code_rule_dsl::facts::rows::Part::for_host(0, n).unwrap_or_else(|e| panic!("a view's index home of {n} rows: {e}"));
         let ib = home.in_block(n as u32);
         let key: Vector<u16> = cols.iter().map(|&c| c as u16).collect();
-        let hash = |i: u32| {
-            let row = self.at(i as usize);
-            cols.iter().fold(rerail_blocks::SEED, |h, &c| rerail_blocks::mix(h, row.at(c)))
-        };
         charge(Unit::IndexEntry, n as u64);
-        let i = ib.own_index_hashed(&key, &hash).expect("room for its one index");
+        let v = self.view.as_ref().expect("a view");
+        let i = if v.whole() {
+            // Every row of the source, its keys' hashes read in row order (`Source::for_rows`: a view of the tape walks
+            // each document once), as the index's build takes them.
+            let src_cols: Vec<usize> = cols.iter().map(|&c| v.column(c)).collect();
+            let mut hashes: Vector<u64> = Vector::with_capacity(n);
+            v.src.for_rows(&src_cols, &mut |_, vals| hashes.push(vals.iter().fold(rerail_blocks::SEED, |h, &x| rerail_blocks::mix(h, x))));
+            debug_assert_eq!(hashes.len(), n);
+            ib.own_index_hashed(&key, &|i: u32| hashes[i as usize])
+        } else {
+            let hash = |i: u32| {
+                let row = self.at(i as usize);
+                cols.iter().fold(rerail_blocks::SEED, |h, &c| rerail_blocks::mix(h, row.at(c)))
+            };
+            ib.own_index_hashed(&key, &hash)
+        }
+        .expect("room for its one index");
         Some((ib, i))
     }
     fn index(&self, cols: &[usize]) -> Arc<Csr> {

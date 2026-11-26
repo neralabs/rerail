@@ -105,7 +105,7 @@ impl ViewEntry {
         // SAFETY: the entry is written by this alone (inside its projection's `OnceLock`), and its runs point at cells
         // of the same block (the numbering's descriptor among them), which live as long as it.
         unsafe {
-            (*d).preorder = u32::from(p.defs.is_none());
+            (*d).preorder = if p.tape_ids() { rerail_clif::view_reads::IDS_TAPE } else { u32::from(p.defs.is_none()) };
             (*d).nodes = p.len();
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
             Run::set(&raw mut (*d).kinds, kinds.as_ptr(), kinds.len());

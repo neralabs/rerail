@@ -11581,3 +11581,12 @@ asks for the new check), c-directives eval::tests 50.
 - `Part::read_range` (hub) and `Part::run` (SlotRuns) both kept.
 - Relax: check 0 errors (blocks, facts-base, facts, setfix, tests-lang); blocks 114, facts-base 86, setfix 141; the two
   kind-test tests; typed_corpus_reads_declarations_and_dependency_summaries; tests-corpus base_tests 43.
+
+### Q559. Roll-up 131 (final-rerail-shape a843cf3de5 onto Pulling-it-all-together): what the merge chose
+
+- final-rerail-shape (7 commits, a843cf3de5): layer c, a matcher's node set tested by bits and a one-key membership as
+  the source's test; node ids as tape positions (`RERAIL_NODE_IDS=tape`, opt-in) with a view's scans in row order;
+  inline-or-store pricing; demand priced per rule; reference rules keyed by class and name; W's join counts
+  (`RERAIL_W_JOINS`). A clean merge.
+- Relax: check 0 errors (facts, plan-search, logic, adapters, ukl, run); tests-lang facts::vtab 103, tests-rr
+  json_rules 9, prof 32, tests-logic all (two 64-test chunks passed the 12 GB cap at 4 threads; at 2 they pass).

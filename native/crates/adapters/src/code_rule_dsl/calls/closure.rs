@@ -128,6 +128,7 @@ struct Contribution {
 
 impl Contribution {
     fn of(path: &str, summary: &Summary) -> Self {
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::Contribution, summary.defs.len() as u64, 0);
         let mut contribution = Self::default();
         // A file is named by its package module, and by its path where that differs.
         let module = summary.module.map(|module| summary.interned(module));
@@ -250,7 +251,12 @@ fn parallel<I: Sync, R: Send>(items: &[I], work: impl Fn(&I) -> R + Sync + Send)
     if items.len() < 256 {
         items.iter().map(work).collect()
     } else {
-        crate::code_rule_dsl::logic::profile::on_cores(|| items.par_iter().map(work).collect())
+        // Counted on each thread it runs on, where W's joins are counted.
+        if rerail_prof::code_rule_dsl::w_joins::on() {
+            crate::code_rule_dsl::logic::profile::on_cores(|| items.par_iter().map(|i| rerail_prof::code_rule_dsl::w_joins::counted(|| work(i))).collect())
+        } else {
+            crate::code_rule_dsl::logic::profile::on_cores(|| items.par_iter().map(work).collect())
+        }
     }
 }
 
@@ -605,7 +611,9 @@ impl Graph {
                 .collect();
             let referenced: HashSet<(u32, u32)> = summary.references.iter().copied().collect();
             let mut labelled = Vec::new();
+            rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::RowsEdges, summary.edges.len() as u64 + summary.references.len() as u64, 0);
             for &(owner, name) in &summary.edges {
+                rerail_prof::code_rule_dsl::w_joins::steps(rerail_prof::code_rule_dsl::w_joins::Site::RowsTargets, self.links[summary.interned(name)].defs.len() as u64, 0);
                 let text = summary.name(name);
                 let vias = [
                     referenced
@@ -1095,6 +1103,7 @@ impl Graph {
             .into_iter()
             .cloned()
             .collect::<Vec<_>>();
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::LinkTargets, summaries.iter().map(|(_, s)| s.targets.len() as u64).sum(), unlinked.len() as u64);
         let linked = parallel(&unlinked, |name| self.link_followed(name));
         self.links.reserve(unlinked.len());
         for (name, (link, followed)) in unlinked.into_iter().zip(linked) {
@@ -1109,6 +1118,7 @@ impl Graph {
             self.links.insert(name, memo);
         }
         for (slot, summary) in &summaries {
+            rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::LinkUsers, summary.targets.len() as u64, 0);
             for target in &summary.targets {
                 let memo = self
                     .links
@@ -1157,8 +1167,10 @@ impl Graph {
         let summary = &self.slots[slot as usize].as_ref()?.summary;
         let mut edges = Vec::new();
         let mut open = Vec::new();
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::ResolveEdges, summary.edges.len() as u64, 0);
         for (owner, name) in &summary.edges {
             let memo = &self.links[summary.interned(*name)];
+            rerail_prof::code_rule_dsl::w_joins::steps(rerail_prof::code_rule_dsl::w_joins::Site::ResolveEdges, 0, memo.defs.len() as u64);
             if memo.open && open.last() != Some(owner) {
                 open.push(*owner);
             }
@@ -1542,6 +1554,7 @@ impl Graph {
     }
 
     pub fn link_name(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Link {
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::LinkName, 1, 0);
         if hops > MAX_HOPS {
             return Link {
                 defs: Vec::new(),
@@ -1569,6 +1582,7 @@ impl Graph {
         let defs = self.by_name.get(name);
         let aliases = self.aliases.get(name);
         let opaque = self.opaque.contains_key(name);
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::LinkMember, 3, u64::from(defs.is_some() || aliases.is_some() || opaque));
         if defs.is_none() && aliases.is_none() && !opaque {
             return None;
         }
@@ -1647,6 +1661,7 @@ impl Graph {
         hops: u32,
         followed: &mut Vec<Name>,
     ) -> Option<Link> {
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::LinkLookup, order.len() as u64, 0);
         let mut uncertain = false;
         for entry in order {
             match entry {
@@ -1672,6 +1687,7 @@ impl Graph {
     /// as `External`. `None` where it is unknown: the name is no one workspace class, a base no
     /// name denotes, an inconsistent order.
     pub fn mro(&self, class: &Name, hops: u32, followed: &mut Vec<Name>) -> Option<Vec<Mro>> {
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::LinkMro, 1, 0);
         if hops > MAX_HOPS {
             return None;
         }

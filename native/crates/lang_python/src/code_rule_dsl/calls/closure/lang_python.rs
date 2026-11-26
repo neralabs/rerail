@@ -210,6 +210,7 @@ impl PythonLinks for Graph {
             return link;
         }
         for prefix in name.lineage().skip(1) {
+            rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::LinkPrefix, 4, 0);
             let rest = &name.text()[prefix.text().len()..];
             if let Some(entries) = self.aliases.get(prefix) {
                 let targets = entries

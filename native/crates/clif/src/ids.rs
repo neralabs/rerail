@@ -256,6 +256,26 @@ impl Numbering {
         }
     }
 
+    /// The first `item` at or after tape node `x` (`NONE` past the last): a scan's next select, from the group the
+    /// last one was in.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn next_at(&self, item: u32, x: u32) -> u32 {
+        let n = self.groups.len as u32;
+        let (mut g, mut mask) = if x >> 6 < self.first { (0, !0u64) } else { ((x >> 6) - self.first, !0u64 << (x & 63)) };
+        while g < n {
+            // SAFETY: the caller's; `g` is a group.
+            let bits = unsafe { self.group(g) }[item as usize] & mask;
+            if bits != 0 {
+                return (self.first + g) * 64 + bits.trailing_zeros();
+            }
+            (g, mask) = (g + 1, !0);
+        }
+        NONE
+    }
+
     /// `select`, its group searched from `hint` (the last select's group, which a probe's cursor keeps): where number
     /// `r` lies a few groups past it at most, from there with no read of the sample; else from the sample. Any hint
     /// gives the same tape node.

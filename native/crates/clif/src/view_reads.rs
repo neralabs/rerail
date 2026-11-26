@@ -25,7 +25,8 @@ pub struct ViewDoc {
     pub key: u32,
     /// Its dialect's tape tag.
     pub tag: u32,
-    /// 1 when ids are local ids (`RERAIL_NODE_IDS=preorder`: no granule table).
+    /// How ids are numbered: 0 by definition (the granule table), 1 local ids (`RERAIL_NODE_IDS=preorder`), `IDS_TAPE`
+    /// tape positions (`RERAIL_NODE_IDS=tape`: a node's or token's id is its tape node, a span's in the top slots).
     pub preorder: u32,
     /// The projection's numbered nodes.
     pub nodes: u32,
@@ -77,6 +78,8 @@ pub struct ViewDoc {
 }
 const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 7 + 8);
 
+/// `ViewDoc::preorder` where ids are tape positions.
+pub const IDS_TAPE: u32 = 2;
 /// `ViewDoc::place`'s kinds.
 pub const PLACE_NAMED: u32 = 1;
 pub const PLACE_PAST_COMMENTS: u32 = 2;
@@ -464,14 +467,22 @@ impl B<'_, '_> {
         let key = self.entry_u32(at::KEY);
         let high = self.f.ins().ishl_imm(key, 32);
         let preorder = self.word_at(I32, self.tape, at::PREORDER);
-        let local = self.f.ins().icmp_imm(IntCC::NotEqual, preorder, 0);
+        let local = self.f.ins().icmp_imm(IntCC::Equal, preorder, 1);
         let low = self.either(I32, local, |_| l, |b| {
-            let numbering = b.follow(b.tape, at::NUMBERING);
-            let node = b.c32(0);
-            b.call_at("num_low_of", numbering, &[node, l])
+            let tape = b.ids_tape();
+            b.either(I32, tape, |b| b.tape_node(l), |b| {
+                let numbering = b.follow(b.tape, at::NUMBERING);
+                let node = b.c32(0);
+                b.call_at("num_low_of", numbering, &[node, l])
+            })
         });
         let low = self.f.ins().uextend(I64, low);
         self.f.ins().bor(high, low)
+    }
+    /// Whether the document's ids are tape positions (`IDS_TAPE`).
+    fn ids_tape(&mut self) -> Value {
+        let preorder = self.word_at(I32, self.tape, at::PREORDER);
+        self.f.ins().icmp_imm(IntCC::Equal, preorder, i64::from(IDS_TAPE))
     }
     /// Numbered node `l`'s parent's id (`Projected::parent`): its tape parent's, or the root's where that is not
     /// numbered (a narrowed projection's anchor); -1 for the root.
@@ -640,22 +651,25 @@ impl B<'_, '_> {
         let key = self.entry_u32(at::KEY);
         let high = self.f.ins().ishl_imm(key, 32);
         let preorder = self.word_at(I32, self.tape, at::PREORDER);
-        let local = self.f.ins().icmp_imm(IntCC::NotEqual, preorder, 0);
+        let local = self.f.ins().icmp_imm(IntCC::Equal, preorder, 1);
         let low = self.either(I32, local, |_| l, |b| {
             let nodes = b.word_at(I32, b.tape, at::NODES);
             let node = b.f.ins().icmp(IntCC::UnsignedLessThan, l, nodes);
             b.either(I32, node, |b| {
+                // A node's or token's id where ids are tape positions: its tape node (`num_select`).
+                let tape = b.ids_tape();
                 let numbering = b.follow(b.tape, at::NUMBERING);
                 let item = b.c32(0);
-                b.call_at("num_low_of", numbering, &[item, l])
+                b.either(I32, tape, |b| b.call_at("num_select", numbering, &[item, l]), |b| b.call_at("num_low_of", numbering, &[item, l]))
             }, |b| {
                 let i = b.f.ins().isub(l, nodes);
                 let tokens = b.word_at(I32, b.tape, at::TOKENS);
                 let token = b.f.ins().icmp(IntCC::UnsignedLessThan, i, tokens);
                 b.either(I32, token, |b| {
+                    let tape = b.ids_tape();
                     let numbering = b.follow(b.tape, at::NUMBERING);
                     let item = b.c32(1);
-                    b.call_at("num_low_of", numbering, &[item, i])
+                    b.either(I32, tape, |b| b.call_at("num_select", numbering, &[item, i]), |b| b.call_at("num_low_of", numbering, &[item, i]))
                 }, |b| {
                     let j = b.f.ins().isub(i, tokens);
                     let hi = b.f.ins().ushr_imm(j, i64::from(INDEX_BITS));
@@ -1289,9 +1303,21 @@ pub fn line_terminated(b: &mut B<'_, '_>) -> Value {
 pub fn number(b: &mut B<'_, '_>) -> Value {
     let low = b.arg(0);
     let preorder = b.word_at(I32, b.tape, at::PREORDER);
-    let local = b.f.ins().icmp_imm(IntCC::NotEqual, preorder, 0);
+    let local = b.f.ins().icmp_imm(IntCC::Equal, preorder, 1);
     let n = b.word_at(I32, b.tape, at::NODES);
-    let l = b.either(I32, local, |_| low, |b| {
+    let tape = b.ids_tape();
+    let l = b.either(I32, local, |_| low, |b| b.either(I32, tape, |b| {
+        // A tape position: the node there, if it is numbered (`num_is`), is its rank (`num_rank`).
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let item = b.c32(0);
+        let is = b.call_at("num_is", numbering, &[item, low]);
+        let numbered = b.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let item = b.c32(0);
+        let rank = b.call_at("num_rank", numbering, &[item, low]);
+        let no = b.c32(i64::from(NO_ROW));
+        b.f.ins().select(numbered, rank, no)
+    }, |b| {
         let numbering = b.follow(b.tape, at::NUMBERING);
         let found = b.call_at("num_number_of", numbering, &[low]);
         // A node's: item 0 in the high word.
@@ -1300,7 +1326,7 @@ pub fn number(b: &mut B<'_, '_>) -> Value {
         let number = b.f.ins().ireduce(I32, found);
         let no = b.c32(i64::from(NO_ROW));
         b.f.ins().select(node, number, no)
-    });
+    }));
     let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, l, n);
     let no = b.c32(i64::from(NO_ROW));
     b.f.ins().select(inside, l, no)
@@ -1382,10 +1408,14 @@ pub fn order(b: &mut B<'_, '_>) -> Value {
         let key = b.entry_u32(at::KEY);
         let high = b.f.ins().ishl_imm(key, 32);
         let preorder = b.word_at(I32, b.tape, at::PREORDER);
-        let local = b.f.ins().icmp_imm(IntCC::NotEqual, preorder, 0);
+        let local = b.f.ins().icmp_imm(IntCC::Equal, preorder, 1);
         let low = b.either(I32, local, |_| l, |b| {
-            let numbering = b.follow(b.tape, at::NUMBERING);
-            b.call_at("num_order_of", numbering, &[l])
+            // Where ids are tape positions, the order key is the tape node: the tape is in preorder.
+            let tape = b.ids_tape();
+            b.either(I32, tape, |b| b.tape_node(l), |b| {
+                let numbering = b.follow(b.tape, at::NUMBERING);
+                b.call_at("num_order_of", numbering, &[l])
+            })
         });
         let low = b.f.ins().uextend(I64, low);
         b.f.ins().bor(high, low)

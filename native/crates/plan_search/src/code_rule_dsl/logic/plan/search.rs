@@ -2358,6 +2358,35 @@ impl Model {
     /// hogql, 4,877 rows a key planned and none made, its stratum planned at 2.6 G units for 0.7 M done (Q44). Other
     /// relations keep one: what is kept or inlined (`keeps`) is chosen on these estimates, and the prior there
     /// inlined kept `pre_` relations (`rr_ctx282` read one at 0.8 M units, and inlined did 39 M).
+    /// A filter's share of rows passed on (decision 0297), where its variables bound before it are known. An equality of
+    /// a call and a variable a join bound (`$x = @rr_node_text_any($i)` after `rf_mlatest($m, $x, _, _)`) is a test
+    /// that the call's value is the one bound: it passes one value of the variable's in its distinct values, at the
+    /// most of the joins that read it. As `filter_pass` alone (0.4, its share as an assignment's or a test's alike), the
+    /// inlined `rf_annot_head` in `rf_forward` was priced at 176 rows of work, and ran 15.2 M: its test passed 40,006
+    /// rows of 121.8 M.
+    pub(crate) fn pass_at(&self, b: &Body<'_>, l: usize, is_bound: &dyn Fn(VarSlot) -> bool) -> f64 {
+        if let Lit::Cmp { l: x, op: CmpOp::Eq, r: y } = b.view(l) {
+            let tested = match (x, y) {
+                (TermRef::Call(..), TermRef::Var(v)) | (TermRef::Var(v), TermRef::Call(..)) => Some(v),
+                _ => None,
+            };
+            if let Some(v) = tested
+                && is_bound(v)
+            {
+                let ndv = (0..b.len())
+                    .filter(|&j| b.is_join(j))
+                    .filter_map(|j| b.atom(j).filter(|a| !a.neg()).map(|a| (j, a)))
+                    .flat_map(|(j, a)| {
+                        let rel = b.rel(a);
+                        b.args(j).iter().enumerate().filter(move |(_, t)| matches!(t, TermRef::Var(w) if *w == v)).map(move |(c, _)| self.ndv_or_default(rel, c))
+                    })
+                    .fold(1.0f64, f64::max);
+                return (1.0 / ndv).clamp(1e-6, 1.0);
+            }
+        }
+        b.filter_pass(l)
+    }
+
     pub(crate) fn ndv_or_default(&self, rel: &str, c: usize) -> f64 {
         const DEFAULT_NUM_DISTINCT: f64 = 200.0;
         // Unmeasured: its layout's estimate (decision 0361 step 4), else the prior.
@@ -4491,9 +4520,9 @@ impl Model {
                     if !b.is_join(l) && b.ready(l, bound) && !call_waits(i, &|v| bound.contains(v), &|j: usize| !order.iter().any(|s| s.at == j)) {
                         order.push(Step { at: i, mode: None });
                         rest.retain(|&j| j != i);
+                        rows *= self.pass_at(b, l, &|v| bound.contains(v));
                         bound.extend(b.vars(l));
                         progressed = true;
-                        rows *= b.filter_pass(l);
                         work += rows;
                     }
                 }
@@ -4548,7 +4577,7 @@ impl Model {
                     if !b.ready(l, &bound) {
                         return Err(Error::Plan("a kept filter cannot run".into()));
                     }
-                    rows *= b.filter_pass(l);
+                    rows *= self.pass_at(b, l, &|v| bound.contains(v));
                     work += rows;
                     order.push(*s);
                 }
@@ -4756,6 +4785,8 @@ impl Model {
         let filters: Vector<usize> = (0..b.len()).filter(|&i| !b.is_join(i)).collect();
         // Each filter's share of rows passed on (decision 0297); a body's first 128 filters are priced.
         let pass: Vector<f64> = filters.iter().map(|&f| b.filter_pass(f)).collect();
+        // The equalities of a call and a variable, priced where they are placed (`pass_at`).
+        let tests: u128 = filters.iter().take(128).enumerate().filter(|&(_, &f)| matches!(b.view(f), Lit::Cmp { l: x, op: CmpOp::Eq, r: y } if matches!((x, y), (TermRef::Call(..), TermRef::Var(_)) | (TermRef::Var(_), TermRef::Call(..))))).fold(0u128, |m, (k, _)| m | 1 << k);
         // Variables as bits (`var_ids`): a subset's bound variables are a mask, and a set of names is made only to
         // price a join or test a filter the first time its own variables are bound so.
         let names: Vec<VarSlot> = {
@@ -4974,10 +5005,12 @@ impl Model {
                     // is the rows it passes on (decision 0297).
                     let mut filtered = 0.0;
                     let mut new = mine.1 & !placed_prev;
+                    // The variables bound before the new filters: the joins', the head's, and the placed filters'.
+                    let joined = *bound | lit_bits[joins[i]];
                     while new != 0 {
                         let k = new.trailing_zeros() as usize;
                         new &= new - 1;
-                        out *= pass[k];
+                        out *= if tests >> k & 1 == 1 { self.pass_at(b, filters[k], &|v: VarSlot| var_ids[v.index()].is_some_and(|x| joined >> x & 1 == 1)) } else { pass[k] };
                         filtered += out;
                     }
                     // Past the head's binding, priced as the walk runs it (`witnessed`), as a fixed order is (`price`);
@@ -5111,7 +5144,7 @@ impl Model {
                             ("anti-join", source_of(b.rel(a)), "")
                         }
                         Lit::Cmp { op, .. } => {
-                            r *= b.filter_pass(s.at);
+                            r *= self.pass_at(b, s.at, &|v| bound.contains(v));
                             (if op == CmpOp::Eq { "assign" } else { "filter" }, "", "")
                         }
                         Lit::Agg { .. } => ("aggregate", "", ""),
@@ -5262,7 +5295,7 @@ impl Model {
                         }
                         Lit::Agg { .. } => {}
                         // A filter passes its share, as the search priced it (decision 0297).
-                        _ => r *= b.filter_pass(s.at),
+                        _ => r *= self.pass_at(b, s.at, &|v| bound.contains(v)),
                     }
                     bound.extend(b.vars(s.at));
                     steps.push(super::super::profile::StepPlan { literal: String::new(), access: String::new(), source: String::new(), rows: r, all: r, passed: Vec::new(), basis: String::new() });
@@ -5338,7 +5371,7 @@ impl Model {
                     // A filter passes its share, as the search priced it (decision 0297): a bound of an id's range
                     // nearly every row, an equality that binds every one. The record halved them (Q44).
                     Lit::Cmp { op, .. } => {
-                        r *= b.filter_pass(s.at);
+                        r *= self.pass_at(b, s.at, &|v| bound.contains(v));
                         (if op == CmpOp::Eq { "assign or test" } else { "filter" }.to_owned(), String::new())
                     }
                     Lit::Agg { .. } => ("aggregate".to_owned(), String::new()),
