@@ -3102,7 +3102,7 @@ impl<L: Layout> P<'_, L> {
     fn r_expression(&mut self) -> R {
         self.deeper()?;
         self.unary_tight()?;
-        self.unary_tight_ladder(0x1fbf)?;
+        self.unary_tight_ladder(0)?;
         self.depth -= 1;
         Ok(())
     }
@@ -3238,7 +3238,7 @@ impl<L: Layout> P<'_, L> {
     fn as_operand(&mut self) -> R {
         self.deeper()?;
         self.unary_tight()?;
-        self.unary_tight_ladder(0x2)?;
+        self.unary_tight_ladder(10)?;
         self.depth -= 1;
         Ok(())
     }
@@ -3329,7 +3329,7 @@ impl<L: Layout> P<'_, L> {
     fn add_operand(&mut self) -> R {
         self.deeper()?;
         self.unary_tight()?;
-        self.unary_tight_ladder(0x6)?;
+        self.unary_tight_ladder(9)?;
         self.depth -= 1;
         Ok(())
     }
@@ -3338,7 +3338,7 @@ impl<L: Layout> P<'_, L> {
     fn range_operand(&mut self) -> R {
         self.deeper()?;
         self.unary_tight()?;
-        self.unary_tight_ladder(0xe)?;
+        self.unary_tight_ladder(8)?;
         self.depth -= 1;
         Ok(())
     }
@@ -3347,7 +3347,7 @@ impl<L: Layout> P<'_, L> {
     fn infix_operand(&mut self) -> R {
         self.deeper()?;
         self.unary_tight()?;
-        self.unary_tight_ladder(0x1e)?;
+        self.unary_tight_ladder(7)?;
         self.depth -= 1;
         Ok(())
     }
@@ -3356,7 +3356,7 @@ impl<L: Layout> P<'_, L> {
     fn elvis_operand(&mut self) -> R {
         self.deeper()?;
         self.unary_tight()?;
-        self.unary_tight_ladder(0x3e)?;
+        self.unary_tight_ladder(6)?;
         self.depth -= 1;
         Ok(())
     }
@@ -3365,7 +3365,7 @@ impl<L: Layout> P<'_, L> {
     fn check_operand(&mut self) -> R {
         self.deeper()?;
         self.unary_tight()?;
-        self.unary_tight_ladder(0xbe)?;
+        self.unary_tight_ladder(5)?;
         self.depth -= 1;
         Ok(())
     }
@@ -3374,7 +3374,7 @@ impl<L: Layout> P<'_, L> {
     fn cmp_operand(&mut self) -> R {
         self.deeper()?;
         self.unary_tight()?;
-        self.unary_tight_ladder(0x1ff)?;
+        self.unary_tight_ladder(4)?;
         self.depth -= 1;
         Ok(())
     }
@@ -3383,7 +3383,7 @@ impl<L: Layout> P<'_, L> {
     fn eq_operand(&mut self) -> R {
         self.deeper()?;
         self.unary_tight()?;
-        self.unary_tight_ladder(0x3bf)?;
+        self.unary_tight_ladder(3)?;
         self.depth -= 1;
         Ok(())
     }
@@ -3392,7 +3392,7 @@ impl<L: Layout> P<'_, L> {
     fn conj_operand(&mut self) -> R {
         self.deeper()?;
         self.unary_tight()?;
-        self.unary_tight_ladder(0x7bf)?;
+        self.unary_tight_ladder(2)?;
         self.depth -= 1;
         Ok(())
     }
@@ -3401,7 +3401,7 @@ impl<L: Layout> P<'_, L> {
     fn disj_operand(&mut self) -> R {
         self.deeper()?;
         self.unary_tight()?;
-        self.unary_tight_ladder(0xfbf)?;
+        self.unary_tight_ladder(1)?;
         self.depth -= 1;
         Ok(())
     }
@@ -4409,22 +4409,23 @@ impl<L: Layout> P<'_, L> {
         Ok(())
     }
 
-    /// The operators' loop of the levels of `unary_tight` (an operator ladder): each operator where `set` has its bit.
-    fn unary_tight_ladder(&mut self, set: u64) -> R {
+    /// The operators' loop of the levels of `unary_tight` (an operator ladder), as the lean parser's `expr(min)`: each operator
+    /// that binds tighter than `min`.
+    fn unary_tight_ladder(&mut self, min: usize) -> R {
         loop {
             self.ask_semi(true)?;
             if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                 break;
-            } else if set >> 1 & 1 != 0 && self.m_as_split() {
+            } else if 11 > min && self.m_as_split() {
                 self.as_op()?;
-            } else if set >> 8 & 1 != 0 && self.m_is_split() {
+            } else if 5 > min && self.m_is_split() {
                 self.check_op()?;
-            } else if set >> 6 & 1 != 0 && self.pat_as_kwi_0_0(self.i, self.n) {
+            } else if matches!(min, 4) && self.pat_as_kwi_0_0(self.i, self.n) {
                 self.wrap(k::INFIX_EXPRESSION, 0)?;
                 self.kw_name()?;
                 self.infix_operand()?;
                 self.close()?;
-            } else if set >> 0 & 1 != 0 && self.m_generic() || set >> 0 & 1 != 0 && self.m_gen_nav() {
+            } else if 5 > min && self.m_generic() || 5 > min && self.m_gen_nav() {
                 if self.m_generic() {
                     self.mark_generic()?;
                     self.wrap(k::CALL_EXPRESSION, 0)?;
@@ -4442,61 +4443,61 @@ impl<L: Layout> P<'_, L> {
                 }
             } else {
                 match self.word() {
-                    w::AS_1 if set >> 1 & 1 != 0 => {
+                    w::AS_1 if 11 > min => {
                         self.as_op()?;
                     }
-                    w::STAR_31 | w::SLASH_65 | w::PERCENT_66 if set >> 2 & 1 != 0 => {
+                    w::STAR_31 | w::SLASH_65 | w::PERCENT_66 if 10 > min => {
                         self.wrap(k::MULTIPLICATIVE_EXPRESSION, 0)?;
                         self.tk_as(matches!(self.word(), w::STAR_31 | w::SLASH_65 | w::PERCENT_66), ANON[self.word() as usize], 0)?;
                         self.as_operand()?;
                         self.close()?;
                     }
-                    w::PLUS_63 | w::MINUS_64 if set >> 3 & 1 != 0 => {
+                    w::PLUS_63 | w::MINUS_64 if 9 > min => {
                         self.wrap(k::ADDITIVE_EXPRESSION, 0)?;
                         self.tk_as(matches!(self.word(), w::PLUS_63 | w::MINUS_64), ANON[self.word() as usize], 0)?;
                         self.add_operand()?;
                         self.close()?;
                     }
-                    w::DOT_DOT_45 | w::DOT_DOT_LT_46 if set >> 4 & 1 != 0 => {
+                    w::DOT_DOT_45 | w::DOT_DOT_LT_46 if 8 > min => {
                         self.wrap(k::RANGE_EXPRESSION, 0)?;
                         self.tk_as(matches!(self.word(), w::DOT_DOT_45 | w::DOT_DOT_LT_46), ANON[self.word() as usize], 0)?;
                         self.range_operand()?;
                         self.close()?;
                     }
-                    _ if (INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77)) && set >> 5 & 1 != 0 => {
+                    _ if (INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77)) && 7 > min => {
                         self.infix_op()?;
                     }
-                    w::QUEST_COLON_47 if set >> 7 & 1 != 0 => {
+                    w::QUEST_COLON_47 if 6 > min => {
                         self.wrap(k::ELVIS_EXPRESSION, 0)?;
                         self.implied()?;
                         self.elvis_operand()?;
                         self.close()?;
                     }
-                    w::BANG_48 | w::IN_12 | w::IS_23 if set >> 8 & 1 != 0 => {
+                    w::BANG_48 | w::IN_12 | w::IS_23 if 5 > min => {
                         self.check_op()?;
                     }
-                    w::LT_38 | w::GT_39 | w::LT_EQ_61 if set >> 9 & 1 != 0 => {
+                    w::LT_38 | w::GT_39 | w::LT_EQ_61 if 4 > min => {
                         self.cmp_op()?;
                     }
-                    w::EQ_EQ_59 | w::BANG_EQ_57 | w::EQ_EQ_EQ_60 | w::BANG_EQ_EQ_58 if set >> 10 & 1 != 0 => {
+                    w::EQ_EQ_59 | w::BANG_EQ_57 | w::EQ_EQ_EQ_60 | w::BANG_EQ_EQ_58 if 3 > min => {
                         self.wrap(k::EQUALITY_EXPRESSION, 0)?;
                         self.tk_as(matches!(self.word(), w::EQ_EQ_59 | w::BANG_EQ_57 | w::EQ_EQ_EQ_60 | w::BANG_EQ_EQ_58), ANON[self.word() as usize], 0)?;
                         self.eq_operand()?;
                         self.close()?;
                     }
-                    w::AMP_AMP_49 if set >> 11 & 1 != 0 => {
+                    w::AMP_AMP_49 if 2 > min => {
                         self.wrap(k::CONJUNCTION_EXPRESSION, 0)?;
                         self.implied()?;
                         self.conj_operand()?;
                         self.close()?;
                     }
-                    w::BAR_BAR_50 if set >> 12 & 1 != 0 => {
+                    w::BAR_BAR_50 if 1 > min => {
                         self.wrap(k::DISJUNCTION_EXPRESSION, 0)?;
                         self.implied()?;
                         self.disj_operand()?;
                         self.close()?;
                     }
-                    _ if set >> 5 & 1 != 0 && self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || set >> 5 & 1 != 0 && self.kind() == t::BACKTICK_NAME => {
+                    _ if 7 > min && self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || 7 > min && self.kind() == t::BACKTICK_NAME => {
                         self.infix_op()?;
                     }
                     _ => {

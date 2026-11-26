@@ -148,8 +148,8 @@ struct G<'a> {
     inline: std::cell::RefCell<HashMap<String, Block>>,
     /// The rules' methods' names, in the order `inlined` gives their moves.
     methods: std::cell::RefCell<Vec<String>>,
-    /// Each level of an operator ladder (`ladders`): the ladder's method and the set of its operators the level takes.
-    ladder_of: std::cell::RefCell<HashMap<String, (String, u64)>>,
+    /// Each level of an operator ladder (`ladders`): the ladder's method and the level's minimum (`min`).
+    ladder_of: std::cell::RefCell<HashMap<String, (String, usize)>>,
     /// What a level's call saves of its caller's, where only some levels change it (`records`' calls form): the levels
     /// that may refuse a mark or that a rule refusing one calls, and those whose code may set the level's word. None:
     /// every call saves both.
@@ -243,14 +243,14 @@ fn upper(name: &str) -> String {
     ident(name).to_ascii_uppercase()
 }
 
-/// A ladder's operator's guard (`G::ladders`): a flag named `#i`, which no grammar's name is, holds where the
-/// ladder's `set` has bit `i`.
+/// A ladder's operator's guard (`G::ladders`): a flag named `#` and its test of the level's `min`, which no grammar's
+/// name is.
 const LADDER_BIT: char = '#';
 
 /// The guard of an `unless F` alternative: taken where flag `F` is clear; a ladder's operator where its level takes it.
 fn flag_cond(f: &str) -> Cond {
     match f.strip_prefix(LADDER_BIT) {
-        Some(i) => Cond::text(format!("set >> {i} & 1 != 0")),
+        Some(t) => Cond::text(t.to_owned()),
         None => Cond::Flag(format!("FLAG_{}", upper(f))),
     }
 }
@@ -1796,10 +1796,10 @@ impl<'a> G<'a> {
                 }
             }
             let mut c = self.code(body, &[], name)?;
-            // A ladder's level: its operators' loop the ladder's, called with the set it takes (`ladders`).
-            if let Some((f, set)) = self.ladder_of.borrow().get(name) {
+            // A ladder's level: its operators' loop the ladder's, called with its minimum (`ladders`).
+            if let Some((f, min)) = self.ladder_of.borrow().get(name) {
                 match c.last_mut() {
-                    Some(op @ Op::Loop(_)) => *op = line(format!("self.{f}({set:#x})?;")),
+                    Some(op @ Op::Loop(_)) => *op = line(format!("self.{f}({min})?;")),
                     _ => return Err(format!("rule {name}: a ladder's level whose code ends in no loop")),
                 }
             }
@@ -1846,9 +1846,8 @@ impl<'a> G<'a> {
 
     /// The grammar's operator ladders (decision 0703): three or more nested choices `H (op | …)*` of one head `H`, as
     /// a grammar writes precedence levels, each its own set of operators. The lean parser has one loop with a minimum
-    /// precedence (`expr(min)`); a ladder's levels' sets need not nest (a level may take an operator a looser one does
-    /// not), so here the one loop takes the set: every level's operators in one order each level's keeps, each
-    /// guarded by its bit (an `unless` of the ladder's, `flag_cond`). Levels whose loops end differently (their exits,
+    /// precedence (`expr(min)`); here too: every level's operators in one order each level's keeps, each guarded by
+    /// its test of the level's minimum (an `unless` of the ladder's, `flag_cond`). Levels whose loops end differently (their exits,
     /// the marks after them) are no ladder, nor are operators whose tests have guards of their own. A grammar whose
     /// levels each have their own head (rr's `term`, `product`) has none: each level stays its own loop.
     /// Each: the ladder's method, a level whose context its loop takes, its loop, and its levels.
@@ -1904,17 +1903,35 @@ impl<'a> G<'a> {
                 }
             }
             let f = format!("{}_ladder", rule_fn(&head));
-            for (name, alts) in &levels {
-                let set = alts.iter().fold(0u64, |s, a| s | 1 << union.iter().position(|u| u == a).expect("in the union"));
-                self.ladder_of.borrow_mut().insert((*name).to_owned(), (f.clone(), set));
+            // A minimum a level, as the lean parser's precedence: by how many operators it takes, the widest 0. An
+            // operator's precedence `p` is the minimum below its tightest level's; it binds where `p > min`, as in
+            // `expr(min)`. One that a looser level does not take is tested by the levels that take it, as the lean
+            // parser tests a generic call (`min <= COMPARISON`) and a keyword as a name apart.
+            let sets: Vec<u64> = levels.iter().map(|(_, alts)| alts.iter().fold(0u64, |s, a| s | 1 << union.iter().position(|u| u == a).expect("in the union"))).collect();
+            let mut by: Vec<usize> = (0..levels.len()).collect();
+            by.sort_by_key(|&j| sets[j].count_ones());
+            let n = levels.len();
+            let min_of = |j: usize| n - 1 - by.iter().position(|&x| x == j).expect("a level");
+            for (j, (name, _)) in levels.iter().enumerate() {
+                self.ladder_of.borrow_mut().insert((*name).to_owned(), (f.clone(), min_of(j)));
             }
-            let guarded = union.into_iter().enumerate().map(|(i, a)| Gram::Unless { flag: format!("{LADDER_BIT}{i}"), body: Box::new(a) }).collect();
+            let guard = |i: usize| -> String {
+                let mut mins: Vec<usize> = (0..n).filter(|&j| sets[j] >> i & 1 == 1).map(min_of).collect();
+                mins.sort_unstable();
+                let top = mins.last().copied().unwrap_or(0);
+                if mins.iter().enumerate().all(|(k, m)| *m == k) {
+                    format!("{} > min", top + 1)
+                } else {
+                    format!("matches!(min, {})", mins.iter().map(usize::to_string).collect::<Vec<_>>().join(" | "))
+                }
+            };
+            let guarded = union.into_iter().enumerate().map(|(i, a)| Gram::Unless { flag: format!("{LADDER_BIT}{}", guard(i)), body: Box::new(a) }).collect();
             out.push((f, levels[0].0.to_owned(), Gram::Star(Box::new(Gram::Alt(guarded))), levels.iter().map(|l| l.0.to_owned()).collect()));
         }
         Ok(out)
     }
 
-    /// A ladder's method (`ladders`): its operators' loop, each taken where `set` has its bit, as the lean parser's
+    /// A ladder's method (`ladders`): its operators' loop, each taken where it binds tighter than `min`, as the lean parser's
     /// `expr(min)` loop takes an operator of `min`'s precedence or tighter.
     /// `nf`: every level runs with no mark refused (`rule`'s).
     pub(crate) fn ladder(&self, f: &str, rule: &str, star: &Gram, nf: bool) -> Result<Block, String> {
@@ -1923,7 +1940,7 @@ impl<'a> G<'a> {
             moves::no_refusing(&mut code);
         }
         let mut blk = Block::new();
-        blk.push(Op::Line(format!("    /// The operators' loop of the levels of `{}` (an operator ladder): each operator where `set` has its bit.\n    fn {f}(&mut self, set: u64) -> R {{\n", f.trim_end_matches("_ladder"))));
+        blk.push(Op::Line(format!("    /// The operators' loop of the levels of `{}` (an operator ladder), as the lean parser's `expr(min)`: each operator\n    /// that binds tighter than `min`.\n    fn {f}(&mut self, min: usize) -> R {{\n", f.trim_end_matches("_ladder"))));
         blk.push(Op::At("        ".into(), code));
         blk.push(Op::Line("        Ok(())\n    }\n\n".to_owned()));
         Ok(blk)

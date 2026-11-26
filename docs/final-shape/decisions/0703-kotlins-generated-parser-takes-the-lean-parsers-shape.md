@@ -172,6 +172,10 @@ them.
    it in 30 places, true where a statement or a class member starts (2) and false at a bracket, a condition, a
    parameter, an annotation or a template (28), as the lean parser switches `stmt` in 30 (true at 6, where its
    statements, a block, a class's or an enum's body, a lambda or a `when`'s body start).
+19. **The ladder takes a minimum** (`ladders`, `flag_cond`), as the lean parser's `expr(min)`: each level its minimum
+   (by how many operators it takes, the widest 0), each operator its precedence, binding where `p > min`. A generic
+   call binds where `5 > min`, as the lean parser's where `min <= COMPARISON`; `as_kwi`, which only the comparison's
+   operand takes, is tested of that level (`matches!(min, 4)`), as the lean parser tests a keyword as a name apart.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
