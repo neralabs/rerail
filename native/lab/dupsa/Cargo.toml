@@ -24,3 +24,7 @@ overflow-checks = true
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# Measurements: optimized, no debug assertions (the dev profile keeps them).
+[profile.release]
+debug = 1

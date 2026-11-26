@@ -121,6 +121,10 @@ impl<'a> NodeDocs<'a> {
         &self.capture.bytes[self.capture.files[self.files[d]].image.clone()]
     }
 
+    pub fn source(&self, d: usize) -> &'a [u8] {
+        &self.capture.bytes[self.capture.files[self.files[d]].source.clone()]
+    }
+
     pub fn path(&self, d: usize) -> &'a str {
         &self.capture.files[self.files[d]].path
     }
@@ -150,12 +154,12 @@ impl<'a> NodeDocs<'a> {
                 let gap = if i == 0 {
                     0
                 } else {
+                    // A line break between the two starts, read in the source where it lies: the bytes between
+                    // them (the newline index's `line` answers the same, at a rank and select a read).
                     let (s, p) = (reads::start(t, v, i), reads::start(t, v, i - 1));
-                    let lp = reads::line(t, v, p);
-                    if reads::line(t, v, s) == lp {
-                        u128::from(s - p)
-                    } else {
-                        1 << 32 | u128::from(reads::line_start(t, v, lp + 1) - p)
+                    match self.source(d)[p as usize..s as usize].iter().position(|&b| b == b'\n') {
+                        None => u128::from(s - p),
+                        Some(k) => 1 << 32 | (k as u128 + 1),
                     }
                 };
                 let code_slot = if cells == Cells::Local { cell(0, 1) | u128::from(leaf) << 8 } else { code_slot };
