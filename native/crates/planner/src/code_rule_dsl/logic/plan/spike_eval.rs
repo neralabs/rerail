@@ -17,7 +17,7 @@ use std::hash::Hasher;
 use std::sync::Arc;
 
 use hashbrown::HashTable;
-use rustc_hash::{FxHashMap as HashMap, FxHasher};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet, FxHasher};
 
 use super::spike_strata::{Chunk, NIL, NONE, Tree};
 use crate::code_rule_dsl::facts::rows::RangeRead;
@@ -189,15 +189,14 @@ impl Sorted {
         m.checked_shr(64 - bits).unwrap_or(0) as usize
     }
 
-    /// The index of `n` rows of `v` on `cols`: buckets about four rows each, counted, then filled, then each sorted.
+    /// The index of `n` rows of `v` on `cols`: buckets about four rows each, counted, then filled, then each sorted by
+    /// its rows' hashes, with no columns read; a key's run told by its first row's columns. Where two keys share a
+    /// hash (rare), that bucket sorted by its columns too.
     fn new(cols: Vec<usize>, v: &Vals, k: usize, n: usize) -> Sorted {
-        let hash = |id: u32| hash_vals(cols.iter().map(|&c| v.get(k, id, c)));
         let bits = (n / 4).max(1).next_power_of_two().trailing_zeros();
         let mut dir = vec![0u32; (1 << bits) + 1];
-        let mut fp = vec![0u32; n];
-        for id in 0..n as u32 {
-            let h = hash(id);
-            fp[id as usize] = (h >> 32) as u32;
+        let hs: Vec<u64> = (0..n as u32).map(|id| hash_vals(cols.iter().map(|&c| v.get(k, id, c)))).collect();
+        for &h in &hs {
             dir[Self::bucket(h, bits) + 1] += 1;
         }
         for b in 1..dir.len() {
@@ -205,37 +204,55 @@ impl Sorted {
         }
         let mut order = vec![0u32; n];
         let mut fill = dir.clone();
-        for id in 0..n as u32 {
-            let b = Self::bucket(hash(id), bits);
-            order[fill[b] as usize] = id;
+        for (id, &h) in hs.iter().enumerate() {
+            let b = Self::bucket(h, bits);
+            order[fill[b] as usize] = id as u32;
             fill[b] += 1;
         }
         drop(fill);
         let vals = |id: u32| cols.iter().map(move |&c| v.get(k, id, c));
         let (mut keys, mut squares) = (0, 0f64);
+        let mut first = vec![0i64; cols.len()];
         for b in 0..1 << bits {
             let rows = &mut order[dir[b] as usize..dir[b + 1] as usize];
-            if rows.len() > 1 {
-                rows.sort_unstable_by(|&x, &y| fp[x as usize].cmp(&fp[y as usize]).then_with(|| vals(x).cmp(vals(y))));
-            }
-            // Each key's run of rows.
-            let mut run = 0f64;
+            rows.sort_unstable_by_key(|&x| (hs[x as usize], x));
+            // Each key's run of rows: a new hash starts one; a row of its run's hash is its key's (else two keys share
+            // the hash, and the bucket is sorted by its columns). Its keys, the squares of its runs, the run open.
+            let (mut bk, mut bsq, mut run) = (0usize, 0f64, 0f64);
+            let mut shared = false;
             for (j, &id) in rows.iter().enumerate() {
-                if j > 0 && (fp[rows[j - 1] as usize] != fp[id as usize] || vals(rows[j - 1]).ne(vals(id))) {
-                    keys += 1;
-                    squares += run * run;
-                    run = 0.0;
+                if j == 0 || hs[rows[j - 1] as usize] != hs[id as usize] {
+                    for (f, x) in first.iter_mut().zip(vals(id)) {
+                        *f = x;
+                    }
+                    bk += 1;
+                    bsq += run * run;
+                    run = 1.0;
+                } else if vals(id).eq(first.iter().copied()) {
+                    run += 1.0;
+                } else {
+                    shared = true;
+                    break;
                 }
-                run += 1.0;
             }
-            if run > 0.0 {
-                keys += 1;
-                squares += run * run;
+            if shared {
+                rows.sort_unstable_by(|&x, &y| hs[x as usize].cmp(&hs[y as usize]).then_with(|| vals(x).cmp(vals(y))));
+                (bk, bsq, run) = (0, 0.0, 0.0);
+                for (j, &id) in rows.iter().enumerate() {
+                    if j == 0 || hs[rows[j - 1] as usize] != hs[id as usize] || vals(rows[j - 1]).ne(vals(id)) {
+                        bk += 1;
+                        bsq += run * run;
+                        run = 0.0;
+                    }
+                    run += 1.0;
+                }
             }
+            keys += bk;
+            squares += bsq + run * run;
         }
         let fan = squares / n.max(1) as f64;
         // Each row's bits in the index's order, read beside it.
-        let fp: Vec<u32> = order.iter().map(|&id| fp[id as usize]).collect();
+        let fp: Vec<u32> = order.iter().map(|&id| (hs[id as usize] >> 32) as u32).collect();
         Sorted { cols, order, fp, dir, bits, keys, fan }
     }
 
@@ -253,11 +270,12 @@ impl Sorted {
             return &[];
         }
         let same = |id: u32| self.cols.iter().zip(key).all(|(&c, &x)| v.get(k, id, c) == x);
-        // The rows of these bits are sorted by their columns: where the first and last are this key, all are.
+        // The rows of these bits lie together by key (by hash, then columns): where the first and last are this key,
+        // all are.
         if same(self.order[at]) && same(self.order[to - 1]) {
             return &self.order[at..to];
         }
-        // Past keys of the same bits (rare): sorted by their columns, so a scan reaches this one's run.
+        // Past keys of the same bits (rare): each key's rows together, so a scan reaches this one's run.
         while at < hi && self.fp[at] == f && !same(self.order[at]) {
             at += 1;
         }
@@ -900,6 +918,8 @@ pub trait Calls {
     fn intern(&self, text: &str) -> i64;
     /// The symbol of `text`: the one held, else a new one (`intern`).
     fn atom(&self, text: &str) -> i64;
+    /// The symbol of `text` where one is held; none is made.
+    fn existing(&self, text: &str) -> Option<i64>;
     /// Whether symbol `sym`'s text matches `m`, read where it lies; `None` for a symbol with no text.
     fn is_match(&self, sym: i64, m: &crate::code_rule_dsl::logic::strings::Matcher) -> Option<bool>;
     fn cat(&self, a: i64, b: i64) -> i64;
@@ -919,6 +939,8 @@ struct Eval<'a> {
     /// The values of calls of text functions, `@cat` and node reads by the call (its place) and its arguments' values,
     /// for the stratum: a row whose arguments an earlier row had reads no text and interns nothing. At most `MEMO`.
     memo: std::cell::RefCell<HashMap<(usize, [i64; 3]), Option<i64>>>,
+    /// The calls only probes of held relations read (`probe_only`), by their place.
+    looked: HashSet<usize>,
 }
 
 /// The most call values a stratum keeps (`Eval::memo`): 32 bytes each.
@@ -1263,23 +1285,27 @@ impl<'a> Eval<'a> {
             Expr::A(a) => return Some(Self::val(env, *a)),
             Expr::Call(f, args) => (f, args),
         };
-        let arg = |i: usize| self.value(env, &args[i]);
-        // A text function's, `@cat`'s or a node read's value, by its arguments' values: once a stratum.
-        let memo = matches!(f, Fun::Cat | Fun::NodeRead(_) | Fun::Eval(..)) && args.len() <= 3;
-        let key = if memo {
-            let mut vals = [i64::MIN; 3];
-            for (v, i) in vals.iter_mut().zip(0..args.len()) {
-                *v = arg(i)?;
+        // A text function's, `@cat`'s or a node read's value, by the values of the terms it is made of (at most 3, a
+        // call's within read through): once a stratum.
+        fn leaves(env: &Env, e: &Expr, vals: &mut [i64; 3], n: &mut usize) -> bool {
+            match e {
+                Expr::A(a) if *n < 3 => {
+                    vals[*n] = Eval::val(env, *a);
+                    *n += 1;
+                    true
+                }
+                Expr::A(_) => false,
+                Expr::Call(_, args) => args.iter().all(|a| leaves(env, a, vals, n)),
             }
-            let key = (std::ptr::from_ref(e) as usize, vals);
-            if let Some(&x) = self.memo.borrow().get(&key) {
-                return x;
-            }
-            Some(key)
-        } else {
-            None
-        };
-        let x = self.call(env, f, args);
+        }
+        let mut vals = [i64::MIN; 3];
+        let key = (matches!(f, Fun::Cat | Fun::NodeRead(_) | Fun::Eval(..)) && leaves(env, e, &mut vals, &mut 0)).then(|| (std::ptr::from_ref(e) as usize, vals));
+        if let Some(key) = &key
+            && let Some(&x) = self.memo.borrow().get(key)
+        {
+            return x;
+        }
+        let x = self.call(env, f, args, self.looked.contains(&(std::ptr::from_ref(e) as usize)));
         if let Some(key) = key {
             let mut m = self.memo.borrow_mut();
             if m.len() < MEMO {
@@ -1289,15 +1315,21 @@ impl<'a> Eval<'a> {
         x
     }
 
-    /// Call `f` of `args`, evaluated.
-    fn call(&self, env: &Env, f: &Fun, args: &[Expr]) -> Option<i64> {
+    /// Call `f` of `args`, evaluated; a text it makes `looked` up only (none where it has no symbol), else interned.
+    fn call(&self, env: &Env, f: &Fun, args: &[Expr], looked: bool) -> Option<i64> {
         use crate::code_rule_dsl::logic::strings;
         let calls = self.calls;
         let arg = |i: usize| self.value(env, &args[i]);
+        let symbol = |t: &str| if looked { calls.existing(t) } else { Some(calls.intern(t)) };
         Some(match f {
+            Fun::Cat if looked => match (self.text_of(env, &args[0]), self.text_of(env, &args[1])) {
+                (Some(a), Some(b)) if a.is_empty() => calls.existing(&b)?,
+                (Some(a), Some(b)) => calls.existing(&format!("{a}.{b}"))?,
+                _ => calls.cat(arg(0)?, arg(1)?),
+            },
             Fun::Cat => calls.cat(arg(0)?, arg(1)?),
             Fun::Doc => arg(0)? >> 32,
-            Fun::NodeRead(name) => calls.intern(&calls.node_read(name, arg(0)?)?),
+            Fun::NodeRead(name) => symbol(&calls.node_read(name, arg(0)?)?)?,
             Fun::In(set) => i64::from(set.contains(&arg(0)?)),
             Fun::Set(_) => return None,
             Fun::Test(op, held) if matches!(&args[1], Expr::Call(Fun::Set(_), _) | Expr::A(Arg::Const(_))) => {
@@ -1324,27 +1356,41 @@ impl<'a> Eval<'a> {
                 };
                 i64::from(strings::test(op, &s, &pattern))
             }
-            Fun::Eval(name, kinds, out, swap) => {
-                let mut values: Vec<i64> = (0..args.len()).map(arg).collect::<Option<_>>()?;
-                if *swap {
-                    values.swap(0, 1);
-                }
-                let mut texts = Vec::new();
-                let mut numbers = Vec::new();
-                for (k, &x) in kinds.iter().zip(&values) {
-                    match k {
-                        Kind::Text => texts.push(calls.name(x)?),
-                        Kind::Number => numbers.push(x),
-                    }
-                }
-                let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
-                match (strings::functions::eval(name, &texts, &numbers), out) {
-                    (rusqlite::types::Value::Integer(n), _) => n,
-                    (rusqlite::types::Value::Text(t), _) => calls.intern(&t),
-                    _ => return None,
-                }
-            }
+            Fun::Eval(..) => match self.eval(env, f, args)? {
+                rusqlite::types::Value::Integer(n) => n,
+                rusqlite::types::Value::Text(t) => symbol(&t)?,
+                _ => return None,
+            },
         })
+    }
+
+    /// Text function `f` of `args`: its texts read where they lie, a text function's among them made, not interned.
+    fn eval(&self, env: &Env, f: &Fun, args: &[Expr]) -> Option<rusqlite::types::Value> {
+        let Fun::Eval(name, kinds, _, swap) = f else { unreachable!("a text function") };
+        let mut at: Vec<usize> = (0..args.len()).collect();
+        if *swap {
+            at.swap(0, 1);
+        }
+        let mut texts = Vec::new();
+        let mut numbers = Vec::new();
+        for (k, &j) in kinds.iter().zip(&at) {
+            match k {
+                Kind::Text => texts.push(self.text_of(env, &args[j])?),
+                Kind::Number => numbers.push(self.value(env, &args[j])?),
+            }
+        }
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        Some(crate::code_rule_dsl::logic::strings::functions::eval(name, &texts, &numbers))
+    }
+
+    /// The text of term `e`: a text function's made, any other's its symbol's.
+    fn text_of(&self, env: &Env, e: &Expr) -> Option<String> {
+        if let Expr::Call(f @ Fun::Eval(..), args) = e
+            && let rusqlite::types::Value::Text(t) = self.eval(env, f, args)?
+        {
+            return Some(t);
+        }
+        self.calls.name(self.value(env, e)?)
     }
 
     #[inline]
@@ -1943,6 +1989,46 @@ fn nearest(t: &Tree, set: &[i64]) -> Arc<Vec<u32>> {
 }
 
 /// The relations a stratum reads that it does not make, by place in `prog.rels`.
+/// The calls `f` in `v = f(..)` (`@cat`, a node read, a text function) whose value only probes of held relations read:
+/// `v` in no head, no other comparison or aggregate, no negated atom and no atom of the stratum's, in one held
+/// relation's atom at least. Every symbol a held relation's rows have was made before the stratum, so a text such a
+/// call makes with no symbol matches no row: it is looked up, never interned (the row it would bind is none).
+fn probe_only(prog: &Prog) -> HashSet<usize> {
+    let mut out = HashSet::default();
+    for rule in &prog.rules {
+        let head = rule.args.iter().fold(0, |m, a| m | vars(a));
+        for (i, lit) in rule.lits.iter().enumerate() {
+            let LitP::Cmp { l, op: CmpOp::Eq, r } = lit else { continue };
+            let (v, call) = match (l, r) {
+                (Expr::A(Arg::Var(v)), c @ Expr::Call(Fun::Eval(..) | Fun::Cat | Fun::NodeRead(_), _))
+                | (c @ Expr::Call(Fun::Eval(..) | Fun::Cat | Fun::NodeRead(_), _), Expr::A(Arg::Var(v))) => (*v, c),
+                _ => continue,
+            };
+            let has = |m: u64| m >> v & 1 == 1;
+            let mut probed = false;
+            let mut other = has(head);
+            for (j, m) in rule.lits.iter().enumerate() {
+                if j == i {
+                    continue;
+                }
+                match m {
+                    LitP::Cmp { l, r, .. } => other |= has(vars(l) | vars(r)),
+                    LitP::Agg { var, atom, .. } => other |= has(binds(&atom.args) | 1 << var),
+                    LitP::Atom(a) if has(binds(&a.args)) => match a.src {
+                        Src::Rel(r) if r >= prog.nscc && !a.neg => probed = true,
+                        _ => other = true,
+                    },
+                    LitP::Atom(_) => {}
+                }
+            }
+            if probed && !other {
+                out.insert(std::ptr::from_ref(call) as usize);
+            }
+        }
+    }
+    out
+}
+
 pub fn reads(prog: &Prog) -> impl Iterator<Item = (usize, &str)> {
     prog.rels.iter().enumerate().skip(prog.nscc).map(|(i, r)| (i, r.as_str()))
 }
@@ -1968,7 +2054,7 @@ pub fn run(prog: &Prog, c: &Chunk<'_>, read: Vec<Option<Arc<HRel>>>, calls: &dyn
         c.shape();
     }
     let own: Vec<HRel> = (0..prog.nscc).map(|r| HRel::new(prog.widths[r])).collect();
-    let mut ev = Eval { prog, calls, c, own, read, lo: vec![0; prog.nscc], hi: vec![0; prog.nscc], memo: Default::default() };
+    let mut ev = Eval { prog, calls, c, own, read, lo: vec![0; prog.nscc], hi: vec![0; prog.nscc], memo: Default::default(), looked: probe_only(prog) };
     // Wave 0: every rule over its relations as they are (the stratum's empty).
     let mut plans: Vec<Vec<Step>> = Vec::new();
     for rule in &prog.rules {

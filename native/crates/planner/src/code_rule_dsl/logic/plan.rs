@@ -1757,6 +1757,10 @@ impl spike_eval::Calls for SpikeCalls<'_> {
         self.atoms.existing(text).map_or_else(|| self.intern(text), i64::from)
     }
 
+    fn existing(&self, text: &str) -> Option<i64> {
+        self.atoms.existing(text).map(i64::from)
+    }
+
     fn is_match(&self, sym: i64, m: &crate::code_rule_dsl::logic::strings::Matcher) -> Option<bool> {
         let atom = crate::content_store::atoms::Sym::try_from(sym).ok()?;
         self.atoms.with_str(atom, |s| m.is_match(s)).or_else(|| self.name(sym).map(|s| m.is_match(&s)))
