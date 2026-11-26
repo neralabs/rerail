@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { constants, type Dirent, type Stats } from "node:fs";
+import { type BigIntStats, constants, type Dirent } from "node:fs";
 import { access, type FileHandle, lstat, mkdtemp, open, opendir, realpath, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -530,7 +530,7 @@ function knownDigest(previous: ObservedSource | undefined): Pick<Source, "digest
   return previous?.digest === undefined ? {} : { digest: previous.digest };
 }
 /** A file observed without a read: an unlisted binary one, with no read error, or one too large to be a source. Undefined to read it. */
-async function unreadFile(location: SourceLocation, info: Stats): Promise<Pick<Source, "readError"> | undefined> {
+async function unreadFile(location: SourceLocation, info: FoundEntry): Promise<Pick<Source, "readError"> | undefined> {
   if (location.unlisted && await binaryPrefix(location.absolute)) return {};
   return info.size > MAX_SOURCE_BYTES ? { readError: OVERSIZE_ERROR } : undefined;
 }
@@ -763,12 +763,12 @@ async function openedOrNone(absolute: string): Promise<FileHandle | undefined> {
   }
 }
 /** The opened file as a source: none for an unlisted binary one, a read error for one too large or binary. */
-async function readOpenedSource(handle: FileHandle, location: SourceLocation, info: Stats): Promise<Source | undefined> {
+async function readOpenedSource(handle: FileHandle, location: SourceLocation, info: FoundEntry): Promise<Source | undefined> {
   if (location.unlisted && await binaryPrefix(handle)) return undefined;
   if (info.size > MAX_SOURCE_BYTES) return { path: location.path, language: location.language, readError: OVERSIZE_ERROR };
   return textSource(location, info, await handle.readFile());
 }
-function textSource(location: SourceLocation, info: Stats, source: Buffer): Source | undefined {
+function textSource(location: SourceLocation, info: FoundEntry, source: Buffer): Source | undefined {
   const content = nonText(location, source);
   if (content === undefined)
     return { path: location.path, language: location.language, text: source.toString("utf8"), stamp: fileStamp(info), digest: sha256(source) };
@@ -1159,7 +1159,7 @@ interface Refusal {
   /** `refused` is the path examined, so a look again that finds it gone finds the failure's path gone. */
   readonly examined: boolean;
   /** What the walk's lstat found at `refused` before the refusal, when it found it there. */
-  readonly before?: Stats;
+  readonly before?: EntryId;
 }
 /** What a look again at a refused path finds: still there (a denial), gone, going (its delete pending), or another entry than the walk found. */
 type LookedAgain = "there" | "gone" | "going" | "changed";
@@ -1577,14 +1577,14 @@ function discoveryGap(discovery: SourceDiscovery, gaps: readonly WalkGap[]): str
  * ignores case finds `m.py` as `M.py`, and Windows a file by its short name; the whole walk finds such a file under its
  * own name. A linked file no notice named is spelled as a walk found it, which its stamp alone answers ("stamp").
  */
-async function noticedEntry(absolute: string, path: string, how: NoticedRead): Promise<Stats | "gone" | undefined> {
-  const info = await lstat(absolute).catch(goneOrUnknown);
+async function noticedEntry(absolute: string, path: string, how: NoticedRead): Promise<FoundEntry | "gone" | undefined> {
+  const info = await lookAt(absolute).catch(goneOrUnknown);
   if (info === "gone" || info === undefined) return info;
   if (info.isDirectory()) return undefined;
   return how === "stamp" ? info : await asSpelled(absolute, path, info);
 }
 /** `info`, unless it is of a file the folder holds under another spelling than `path` (`spelledAsHeld`). */
-async function asSpelled(absolute: string, path: string, info: Stats): Promise<Stats | undefined> {
+async function asSpelled(absolute: string, path: string, info: FoundEntry): Promise<FoundEntry | undefined> {
   return !info.isFile() || (await spelledAsHeld(absolute, path)) ? info : undefined;
 }
 function goneOrUnknown(error: unknown): "gone" | undefined {
@@ -1662,7 +1662,7 @@ function refusedPath(error: unknown): string | undefined {
  * (`judgeRefusals`) when it refused with EPERM, as Windows refuses a path whose delete is pending and one the user is
  * denied. Not a path the walk starts at that refused itself, which stays a gap, nor one held a gap (`SourceWalk.held`).
  */
-function noteRefusal(walk: SourceWalk, absolute: string, error: unknown, before: Stats | undefined): void {
+function noteRefusal(walk: SourceWalk, absolute: string, error: unknown, before: EntryId | undefined): void {
   if (!hasErrorCode(error, "EPERM")) return;
   const refused = refusedPath(error) ?? absolute;
   const path = sessionPath(walk.discovery.root, absolute);
@@ -1674,7 +1674,7 @@ function startRefused(walk: SourceWalk, absolute: string, refused: string): bool
   return refused === absolute && walk.roots.has(absolute);
 }
 /** What the walk's lstat found (`before`) names `absolute`: it tells whether `refused` is still that entry only when it is `absolute`. */
-function refusalOf(path: string, absolute: string, refused: string, before: Stats | undefined): Refusal {
+function refusalOf(path: string, absolute: string, refused: string, before: EntryId | undefined): Refusal {
   const examined = refused === absolute;
   return { path, refused, examined, ...(examined && before !== undefined ? { before } : {}) };
 }
@@ -1705,13 +1705,61 @@ function deletePending(error: unknown): boolean {
   return hasErrorCode(error, "EPERM");
 }
 /** What an lstat of `path` finds against what the walk's lstat found (`before`). */
-async function sameEntryNow(path: string, before: Stats): Promise<LookedAgain> {
-  const now = await lstat(path).then(info => ({ info }), (error: unknown) => ({ error }));
+async function sameEntryNow(path: string, before: EntryId): Promise<LookedAgain> {
+  const now = await lstat(path, { bigint: true }).then(info => ({ info }), (error: unknown) => ({ error }));
   if ("error" in now) return vanished(now.error) ? "gone" : "there";
   return sameEntry(before, now.info) ? "there" : "changed";
 }
-function sameEntry(before: Stats, now: Stats): boolean {
+function sameEntry(before: EntryId, now: EntryId): boolean {
   return before.dev === now.dev && before.ino === now.ino;
+}
+/** An entry's device and file ids whole, as `lstat` with `bigint` gives them. */
+type EntryId = Pick<BigIntStats, "dev" | "ino">;
+const NS_PER_S = 1_000_000_000n;
+/**
+ * What a walk's lstat, or the stat of a file a tool's read opened, found: the numbers its readers take, each as a stat
+ * without `bigint` gives it, so its stamp (`fileStamp`) is the same, and its ids whole (`exact`). An NTFS file id passes
+ * 2^53, where a number holds only some of the values, so two files' ids can give one number: only the ids whole tell a
+ * file removed and made again from the one found (`sameEntry`).
+ */
+class FoundEntry {
+  readonly exact: BigIntStats;
+  readonly dev: number;
+  readonly ino: number;
+  readonly nlink: number;
+  readonly size: number;
+  readonly mtimeMs: number;
+  readonly ctimeMs: number;
+  constructor(exact: BigIntStats) {
+    this.exact = exact;
+    this.dev = Number(exact.dev);
+    this.ino = Number(exact.ino);
+    this.nlink = Number(exact.nlink);
+    this.size = Number(exact.size);
+    this.mtimeMs = msOf(exact.mtimeNs);
+    this.ctimeMs = msOf(exact.ctimeNs);
+  }
+  isFile(): boolean {
+    return this.exact.isFile();
+  }
+  isDirectory(): boolean {
+    return this.exact.isDirectory();
+  }
+  isSymbolicLink(): boolean {
+    return this.exact.isSymbolicLink();
+  }
+}
+/** What a walk's lstat finds at `absolute`. */
+async function lookAt(absolute: string): Promise<FoundEntry> {
+  return new FoundEntry(await lstat(absolute, { bigint: true }));
+}
+/**
+ * A time in nanoseconds in milliseconds as `lstat` without `bigint` gives it: its whole seconds' milliseconds plus the
+ * nanoseconds past them, from 0 to 999,999,999 for a time before 1970 too.
+ */
+function msOf(ns: bigint): number {
+  const past = ((ns % NS_PER_S) + NS_PER_S) % NS_PER_S;
+  return Number((ns - past) / NS_PER_S) * 1_000 + Number(past) / 1e6;
 }
 /**
  * Looks again at the first `MAX_LOOKED_AGAIN` refusals of `walk` (`noteRefusal`) in path order, those an earlier walk
@@ -4661,9 +4709,9 @@ export class CodeRuleBridge {
   }
 
   async #observePath(walk: SourceWalk, absolute: string): Promise<void> {
-    let info: Stats;
+    let info: FoundEntry;
     try {
-      info = await lstat(absolute);
+      info = await lookAt(absolute);
     } catch (error) {
       this.#observationFailed(walk, absolute, error, undefined);
       return;
@@ -4675,7 +4723,7 @@ export class CodeRuleBridge {
    * Observes what a pass of noticed paths found at `absolute` by its own look (`noticedEntry`), as `#observePath` does
    * what the walk finds; a failure to read it is the walk's to record.
    */
-  async #observeFound(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
+  async #observeFound(walk: SourceWalk, absolute: string, info: FoundEntry): Promise<void> {
     try {
       await this.#observeEntry(walk, absolute, info);
     } catch (error) {
@@ -4688,17 +4736,17 @@ export class CodeRuleBridge {
    * nothing for a path gone when examined, which the walk gave up on (`goneWhenExamined`); else the failure, and an
    * EPERM refusal to look at again (`noteRefusal`). A whole walk and a pass of noticed paths keep the same.
    */
-  #observationFailed(walk: SourceWalk, absolute: string, error: unknown, info: Stats | undefined): void {
+  #observationFailed(walk: SourceWalk, absolute: string, error: unknown, info: FoundEntry | undefined): void {
     if (walk.discovery.cancelled) return;
     if (goneWhenExamined(walk, absolute, error)) {
       gaveUpOn(walk.scan);
       return;
     }
     this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
-    noteRefusal(walk, absolute, error, info);
+    noteRefusal(walk, absolute, error, info?.exact);
   }
 
-  async #observeEntry(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
+  async #observeEntry(walk: SourceWalk, absolute: string, info: FoundEntry): Promise<void> {
     if (walk.discovery.cancelled || info.isSymbolicLink()) return;
     if (info.isDirectory()) await this.#expandDirectory(walk, absolute);
     else if (info.isFile()) await this.#observeRegularFile(walk, absolute, info);
@@ -4749,14 +4797,14 @@ export class CodeRuleBridge {
    * A file Git ignores is not observed at all: no baseline entry, so no later read or edit of it is audited. A
    * `.gitignore` is observed by its stamp whatever Git says of it, since it decides what is ignored.
    */
-  async #observeRegularFile(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
+  async #observeRegularFile(walk: SourceWalk, absolute: string, info: FoundEntry): Promise<void> {
     const path = sessionPath(walk.discovery.root, absolute);
     if (basename(path) === GITIGNORE || !walk.view.ignoresPath?.(path, false)) await this.#observeFile(walk, sourceLocation(absolute, path), info);
     else walk.scan.seen?.leftOut.add(path);
   }
 
   /** Observes a file, noting it when it has another name (`SourceScan.linked`). */
-  async #observeFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
+  async #observeFile(walk: SourceWalk, location: SourceLocation, info: FoundEntry): Promise<void> {
     if (info.nlink > 1) walk.scan.linked?.note(location.path);
     const observed = await this.#observedFile(walk, location, info);
     if (observed !== undefined) walk.scan.sources.set(location.path, observed);
@@ -4767,7 +4815,7 @@ export class CodeRuleBridge {
    * digest it had, and one whose stamp holds keeps its observation. An unlisted binary file is observed without a read,
    * nor a read error, so it is not read again while its stamp holds.
    */
-  async #observedFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<Source | undefined> {
+  async #observedFile(walk: SourceWalk, location: SourceLocation, info: FoundEntry): Promise<Source | undefined> {
     const stamped = { path: location.path, language: location.language, stamp: fileStamp(info), observedAt: walk.observedAt };
     const previous = walk.previousSources.get(location.path);
 
@@ -4870,7 +4918,7 @@ export class CodeRuleBridge {
     const handle = await openSource(location.absolute);
     if (handle === undefined) return undefined;
     try {
-      const info = await handle.stat();
+      const info = new FoundEntry(await handle.stat({ bigint: true }));
       if (!info.isFile()) return location.unlisted ? undefined : { path: location.path, language: location.language, readError: "Source is not a regular file" };
       const real = await this.#realPathInPlace(root, location, info);
       return real === undefined ? undefined : judgedWhereItLeads(await readOpenedSource(handle, location, info), real);
@@ -4883,13 +4931,13 @@ export class CodeRuleBridge {
    * The file's real path, `/`-separated from the checkout that owns it, when it stays inside that checkout and still
    * names the file that was opened; undefined otherwise.
    */
-  async #realPathInPlace(root: string, location: SourceLocation, info: Stats): Promise<string | undefined> {
+  async #realPathInPlace(root: string, location: SourceLocation, info: FoundEntry): Promise<string | undefined> {
     const owner = this.#owningCheckout(root, location.path);
     if (owner === undefined) return undefined;
     const canonical = await realpath(location.absolute);
     if (!withinFolder(owner, canonical)) return undefined;
-    const named = await lstat(canonical);
-    return named.dev === info.dev && named.ino === info.ino ? relative(owner, canonical).split(sep).join("/") : undefined;
+    const named = await lstat(canonical, { bigint: true });
+    return sameEntry(named, info.exact) ? relative(owner, canonical).split(sep).join("/") : undefined;
   }
 
   #failedSourceRead(location: SourceLocation, error: unknown): Source {

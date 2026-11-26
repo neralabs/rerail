@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
-import { type BigIntStats, type Dirent, existsSync, readdirSync, type Stats, writeFileSync } from "node:fs";
+import { type BigIntStats, constants, type Dirent, existsSync, readdirSync, type Stats, writeFileSync } from "node:fs";
 import { appendFile, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -66,6 +66,8 @@ const discovery = vi.hoisted(() => ({
    * NTFS file ids past 2^53 that give one number.
    */
   ids: new Map<string, Array<{ dev: bigint; ino: bigint }>>(),
+  /** The device and file ids every `stat` of a handle opened at the path gives. */
+  openedIds: new Map<string, { dev: bigint; ino: bigint }>(),
 }));
 /**
  * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, a Git
@@ -202,6 +204,15 @@ vi.mock("node:fs/promises", async importOriginal => {
           await close();
           closed();
         };
+      }
+      // A path in `discovery.openedIds` gives those ids to every `stat` of a handle opened there (`idsAs`).
+      const opened = discovery.openedIds.get(String(args[0]));
+      if (opened !== undefined) {
+        const stat = handle.stat.bind(handle);
+        handle.stat = (async (...options: Parameters<typeof stat>) => {
+          const info = await stat(...options);
+          return Object.assign(Object.create(Object.getPrototypeOf(info) as object) as typeof info, info, idsAs(opened, typeof info.ino === "bigint"));
+        }) as typeof handle.stat;
       }
       if (!readBuffers.watching) return handle;
       // Every form of `read` passes through unchanged; only the buffer it fills is noted.
@@ -474,6 +485,7 @@ afterEach(async () => {
   discovery.opens.clear();
   discovery.stamps.clear();
   discovery.ids.clear();
+  discovery.openedIds.clear();
   heldGit.reads = 0;
   heldGit.started = undefined;
   asyncGitCalls.before = undefined;
@@ -1560,6 +1572,27 @@ describe("CodeRuleBridge", () => {
     const info = await lstat(file);
     expect(info.mtimeMs < 0).toBe(at !== undefined);
     expect(observations.get(root)?.get("src/a.py")?.stamp).toBe(fileStamp(info));
+  });
+
+  // A tool's read takes a file only while its real path still names the file it opened: a link swapped in for a folder
+  // mid-read brings no bytes from elsewhere. Here the two are files whose NTFS ids give one number, 103582791429957568.
+  it("takes nothing from a file a tool wrote whose real path names another file by then, whose id gives the same number", async () => {
+    const root = await workspace();
+    const file = join(root, "src", "a.py");
+    await writeFile(file, "a = 1\n");
+    const audit = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(audit), { discoveryWaitMs: Number.POSITIVE_INFINITY });
+    await bridge.openWorkspace("session-1");
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await writeFile(file, "a = 2\n");
+    const opened = { dev: 7n, ino: 103582791429957566n };
+    const named = { dev: 7n, ino: 103582791429957568n };
+    discovery.openedIds.set(file, opened);
+    // Windows has no O_NOFOLLOW: its open looks with lstat first and checks the opened file is the one that look found.
+    discovery.ids.set(file, constants.O_NOFOLLOW === undefined ? [opened, named] : [named]);
+    await bridge.finish("write-1");
+    expect(discovery.ids.get(file)).toEqual([named]);
+    expect(audit.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).not.toContain("src/a.py");
   });
 
   describe("a walk that cannot read part of the folder", () => {
