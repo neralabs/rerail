@@ -366,6 +366,34 @@ describe("Git's ignore answers kept per checkout", () => {
       expect(walk(auditor, "a.log", "b.log")).toEqual([true, false]);
     });
 
+    // Where a server sets the index file's times (a network file system), its clock can run ahead of this machine's: a
+    // time ahead of the clock keeps no stamp, as one inside the window does.
+    for (const [name, time] of [["modification", "mtimeNs"], ["change", "ctimeNs"]] as const) {
+      it(`answers by the files an index with no checksum tracks now, reading it whole at each walk, while its ${name} time is ahead of the clock`, async () => {
+        const { session, databasePath } = await checkout();
+        git(session, "config", "index.skipHash", "true");
+        await writeFile(join(session, ".gitignore"), "*.log\n");
+        await writeFile(join(session, "a.log"), "kept\n");
+        await writeFile(join(session, "b.log"), "kept\n");
+        git(session, "add", "--force", "--", ".gitignore", "a.log");
+        withoutChecksum(indexOf(session));
+        const stats = realFs.statSync(indexOf(session), { bigint: true });
+        startTestRepository(session, databasePath);
+        const auditor = await opened(session, databasePath, new GitIgnoreMatchers());
+        await clockAfter(indexOf(session), 3_000);
+        stats[time] = BigInt(Date.now() + 10_000) * 1_000_000n;
+        vi.mocked(fstatSync).mockImplementation((descriptor, options) => (options?.bigint === true ? stats : realFs.fstatSync(descriptor, options)));
+        const reads = wholeReads();
+        expect([walk(auditor, "a.log", "b.log"), walk(auditor, "a.log", "b.log"), reads()]).toEqual([[false, true], [false, true], 2]);
+
+        git(session, "rm", "--cached", "--quiet", "--", "a.log");
+        git(session, "add", "--force", "--", "b.log");
+        withoutChecksum(indexOf(session));
+        expect((await stat(indexOf(session), { bigint: true })).size).toBe(stats.size);
+        expect(walk(auditor, "a.log", "b.log")).toEqual([true, false]);
+      });
+    }
+
     it("answers by the files the index tracks as index.skipHash is turned on and off between walks, reading it whole only while Git writes no checksum", async () => {
       const { session, databasePath } = await checkout();
       await writeFile(join(session, ".gitignore"), "*.log\n");
