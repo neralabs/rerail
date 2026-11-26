@@ -15,6 +15,7 @@
 // Overloads are checked as a pair instead: with exactly two overloads of three plain positional parameters, each
 // must loosely be `None, None, None` or `type[BaseException], BaseException, TracebackType`.
 #include "python/typing.rerail"
+#include "python/python-07.rerail"   // union_arg: `Union[(A, None)]` is `Union[A, None]` to Ruff
 
 .violation PYI036(at: node, m: symbol, msg: symbol) code "PYI036" "{msg}"
     suppress ruff "PYI036"
@@ -56,8 +57,8 @@ object_or_unused(t) :- (pyi_sym(t, "builtins.object") ; pyi_sym(t, "_typeshed.Un
 optional_ok(t, i) :- non_none(t, x), slot_type(x, i).
 .decl non_none(t: node, x: node)
 non_none(t, x) :- typing_subscript(t, "Optional"), tsub(t, _, 0, x), !kind(x, "none").
-non_none(t, x) :- typing_subscript(t, "Union"), tsub_n(t, 2), union_part(t, x), !kind(x, "none"), union_part(t, z),
-    kind(z, "none").
+non_none(t, x) :- union_arg(t, x), !kind(x, "none"), union_arg(t, z), kind(z, "none"),
+    count : { union_arg(t, y) } = 2.
 // `L | R` gives L when L is not None, else R when R is not None: `type[BaseException] | int` passes for slot 1.
 non_none(t, x) :- pipe_sides(t, l0, _), type_bare(l0, x), !kind(x, "none").
 non_none(t, x) :- pipe_sides(t, l0, r0), type_bare(l0, l), kind(l, "none"), type_bare(r0, x), !kind(x, "none").

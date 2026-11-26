@@ -15,6 +15,13 @@
 PYI026(t, x) :- stub_stmt(a), simple_assign(a, t, v), plain_target(t, x), alias_type(v).
 .decl alias_type(v: node)
 alias_type(v) :- kind(v, "subscript").
-alias_type(v) :- kind(v, "none"), simple_assign(a, _, v), !in_enum(a).  // an enum member is a value
+alias_type(v) :- kind(v, "none"), simple_assign(a, _, v), !in_enum(a), !paren_enum(a).  // an enum member is a value
 alias_type(v) :- pep604(v).
 alias_type(v) :- typing_sym(v, "Any").
+// paren_enum(a): a sits in a class whose base is a subscripted parenthesised enum, `class B((Enum)[int])`, which
+// in_enum's class_base_sym misses (it reads the subscript's value without unparenthesising it). Ruff strips the
+// parentheses and the subscript (map_subscript).
+.decl paren_enum(a: node)
+paren_enum(a) :- nearest(a, c, scope), kind(c, "class_definition"), field(c, "superclasses", al), child(al, b0, _),
+    unparen(b0, b), kind(b, "subscript"), field(b, "value", v0), kind(v0, "parenthesized_expression"), unparen(v0, v),
+    pyi_sym(v, q), split_dot(q, "enum", x), enum_class(x).
