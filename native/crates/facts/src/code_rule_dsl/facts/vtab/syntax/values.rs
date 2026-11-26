@@ -171,6 +171,13 @@ pub struct Values {
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub(super) struct Dir {
     pub(super) views: super::device_chunk::ViewsInPlace,
+    /// Each view's relation of no columns over the chunk's rows and the values' (by its device code,
+    /// `device_chunk::VIEW_*`), its indexes' block (decision 0478 step 3): made the first time a stratum reads the
+    /// layered view, then found by every stratum after it until values are admitted again (a new directory). The base's
+    /// home is of the batch's rows alone: an index of the layered rows was never found there, and with its room taken
+    /// by the base's indexes, each stratum built its own into a fresh home (the data-layer rules over 50 files: about
+    /// 2,000 builds of `child`'s index of 58-70 K rows, 47 of the join program's 61 s, 2026-11-25).
+    homes: [std::sync::OnceLock<Option<(usize, crate::code_rule_dsl::facts::rows::Part)>>; 16],
     _batches: Vec<Arc<super::Batch>>,
 }
 
@@ -239,7 +246,7 @@ impl Values {
         {
             return made.clone();
         }
-        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, _batches: batches.clone() }));
+        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, homes: Default::default(), _batches: batches.clone() }));
         *dir = Some((batches.len(), made.clone()));
         made
     }
@@ -469,7 +476,15 @@ impl Layered {
         // The base's kind, the directory of every document as the join programs here read it (the host's, where
         // they run on the host).
         *v = crate::code_rule_dsl::facts::vtab::ViewInPlace { kind: v.kind, ..views.read_of(dv_ref.view, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>)? };
-        dv_ref.rows = self.len();
+        let rows = self.len();
+        dv_ref.rows = rows;
+        // Its own home, of its own rows (`Dir::homes`), not the base's.
+        let make = || crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, rows, crate::code_rule_dsl::facts::rows::AXIS_KEYS).ok();
+        dv_ref.home = match dir.homes.get(dv_ref.view as usize)?.get_or_init(|| make().map(|part| (rows, part))) {
+            Some((n, part)) if *n == rows => Some(part.clone()),
+            // Rows of another count than the first reader's: a home of its own, as each was before.
+            _ => make(),
+        };
         dv
     }
 
