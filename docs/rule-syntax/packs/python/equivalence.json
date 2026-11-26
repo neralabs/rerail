@@ -2160,16 +2160,6 @@
         }
       }
     },
-    "ruff-n801-invalid-class-name": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
     "ruff-n802-invalid-function-name": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -2180,73 +2170,13 @@
         }
       }
     },
-    "ruff-n803-invalid-argument-name": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 5
-        }
-      }
-    },
-    "ruff-n804-invalid-first-argument-name-for-class-method": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-n805-invalid-first-argument-name-for-method": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 9
-        }
-      }
-    },
-    "ruff-n806-non-lowercase-variable-in-function": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 6,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-n807-dunder-function-name": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+    "ruff-n812-lowercase-imported-as-non-lowercase": {
+      "reason": "N812-normalized-alias-and-ignored-names.py:15, `from mod import foo as ˤx`: NFKC gives `ʕx`. Unicode 17 made U+0295 a caseless letter (Lo), so Ruff (Rust std, Unicode 17) finds `ʕx` not lowercase and reports it; the engine's regexes use regex-syntax's Unicode 16 tables, where U+0295 is Ll and in \\p{Lowercase}, so the translation reads `ʕx` as lowercase. An engine gap (regex Unicode tables), not expressible in the rule without special-casing the character.",
+      "right": "original",
       "counts": {
         "fixtures": {
           "originalOnly": 1,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-n811-constant-imported-as-non-constant": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 6,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-n812-lowercase-imported-as-non-lowercase": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 5,
-          "translationOnly": 3
+          "translationOnly": 0
         }
       }
     },

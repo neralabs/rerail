@@ -1,0 +1,135 @@
+// python/python-19: pep8-naming's names as Ruff reads them (N801, N803–N807, N811, N812): normalised, cased by
+// Unicode, and the method kinds of N804/N805 with decorators resolved as Ruff resolves them.
+//
+// Interface
+//   1. Names:    pep8_name(n, x)          identifier n reads x after NFKC: `class Ｅrror` gives "Error", `ªb` "ab"
+//                pep8_word(x)             every pep8_name x: the domain of the tests below
+//   2. Case:     pep8_lower(x)            str::is_lowercase: no char is alphabetic and not lowercase: "x1", "_";
+//                                         not "x日", not "ʼnx"
+//                pep8_cased_lower(x)      str::is_cased_lowercase: no uppercase char, a lowercase one: "a日"
+//                pep8_cased_upper(x)      str::is_cased_uppercase: no lowercase char, an uppercase one: "A日", "L·"
+//                pep8_camel(x)            helpers::is_camelcase: neither cased form, and no `_`: "Abc", "日", "Dž"
+//                pep8_capwords(x)         N801's test: after the leading `_`s an uppercase char, then no `_`
+//   3. Options:  pep8_ignored(x)          naming_ignored over the normalised name
+//   4. Methods:  pep8_method_kind(f, k)   naming_method_kind, with decorators read as Ruff reads them
+//                pep8_first_param(f, nm, x)  naming_first_param, x normalised
+//
+// Ruff background
+//   - Ruff's parser NFKC-normalises every identifier, as CPython does, and every rule reads the normalised name:
+//     `def __ｇｅｔａｔｔｒ__` at module level is PEP 562's `__getattr__`, and `class Ｅrror` is CapWords.
+//   - ruff_python_stdlib::str tests case with Rust's char::is_uppercase / is_lowercase / is_alphabetic, the Unicode
+//     properties Uppercase, Lowercase and Alphabetic. A titlecase letter (`ǅ`) is neither upper nor lower; a letter
+//     without case (`日`, `ʕ`) is alphabetic and neither. naming.rerail's tests are ASCII over the raw text.
+//   - function_type::classify resolves each decorator, with its call taken off, by resolve_qualified_name: a name as
+//     it was bound when Ruff visited it. A class body at module level is visited in order, so `@staticmethod` there
+//     is the builtin until the module rebinds it; a function body is visited after the whole module, so a class in
+//     it sees every module binding. An annotation without a value (`classmethod: object`) binds nothing, and
+//     `except E as classmethod` unbinds the name after its handler. That is ruff_qual. Ruff's AST has no
+//     parentheses: `@(staticmethod)` is `@staticmethod`.
+//   - is_metaclass follows bases through the classes of the file, a subscripted one by its value: in
+//     `class Meta(type, Generic[T])` / `class A(Meta[int])`, A is a metaclass and its methods take `cls`.
+//   e.g.  class C:
+//             @(classmethod)
+//             def make(cls): ...      pep8_method_kind "classmethod"
+//         from m import ǆx as ǅx      N812: "džx" is cased lowercase, "Džx" is not lowercase
+#include "python/naming.rerail"
+#include "python/ruff.rerail"
+
+// ---- 1. names ----------------------------------------------------------------------------------------------------
+.decl pep8_name(n: node, x: symbol)
+pep8_name(n, @nfkc(t)) :- kind(n, "identifier"), text(n, t).
+.decl pep8_word(x: symbol)
+pep8_word(x) :- pep8_name(_, x).
+
+// ---- 2. case -----------------------------------------------------------------------------------------------------
+.decl pep8_lower(x: symbol)
+pep8_lower(x) :- pep8_word(x), match("[\\p{Lowercase}\\P{Alphabetic}]*", x).
+.decl pep8_cased_lower(x: symbol)
+pep8_cased_lower(x) :- pep8_word(x), match("\\P{Uppercase}*\\p{Lowercase}\\P{Uppercase}*", x).
+.decl pep8_cased_upper(x: symbol)
+pep8_cased_upper(x) :- pep8_word(x), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", x).
+.decl pep8_camel(x: symbol)
+pep8_camel(x) :- pep8_word(x), !pep8_cased_lower(x), !pep8_cased_upper(x), !contains("_", x).
+.decl pep8_capwords(x: symbol)
+pep8_capwords(x) :- pep8_word(x), match("_*\\p{Uppercase}[^_]*", x).
+
+// ---- 3. options --------------------------------------------------------------------------------------------------
+.decl pep8_ignored(x: symbol)
+pep8_ignored(x) :- pep8_word(x), option_item("pep8-naming.ignore-names", _, g), glob(g, x).
+pep8_ignored(x) :- pep8_word(x), !option_item("pep8-naming.ignore-names", _, _), naming_default_ignore(x).
+pep8_ignored(x) :- pep8_word(x), option_item("pep8-naming.extend-ignore-names", _, g), glob(g, x).
+
+// ---- 4. methods --------------------------------------------------------------------------------------------------
+// pep8_dec(f, e): a decorator of f, its parentheses and call taken off: `@(d)`, `@d(1)` and `@(d)(1)` give d.
+.decl pep8_dec(f: node, e: node)
+pep8_dec(f, m) :- decorator(f, e), unparen(e, m), !kind(m, "call").
+pep8_dec(f, m) :- decorator(f, e), unparen(e, c), kind(c, "call"), field(c, "function", g), unparen(g, m).
+// pep8_qual(e, q): decorator e resolves to q as Ruff resolves it when it visits e. ruff_qual, except that a bare name
+// is the builtin by pep8_builtin.
+.decl pep8_qual(e: node, q: symbol)
+pep8_qual(e, q) :- pep8_dec(_, e), ruff_qual(e, q), !prefix("builtins.", q).
+pep8_qual(e, q) :- pep8_dec(_, e), !kind(e, "identifier"), ruff_qual(e, q), prefix("builtins.", q).
+pep8_qual(e, cat("builtins.", x)) :- pep8_builtin(e, x).
+// pep8_builtin(e, x): the name e reads builtin x: its lookup, scope by scope outwards (classes skipped past the
+// first), finds no binding Ruff has seen when it visits e. In a scope whose body Ruff is visiting with e (no def or
+// lambda between them) it has seen the bindings above e; in an enclosing scope of a deferred body, all of them. An
+// annotation without a value binds nothing; an `except … as x` binding is gone after its handler.
+//   class C:                       C's body runs with the module's: the `classmethod` below is not seen yet
+//       @classmethod
+//       def m(cls): ...
+//   classmethod = lambda f: f
+.decl pep8_builtin(e: node, x: symbol)
+pep8_builtin(e, x) :- pep8_chain(e, x, m), kind(m, "module"), !pep8_seen(e, x, m), builtin(x).
+.decl pep8_chain(e: node, x: symbol, s: node)  // e's lookup reaches scope s
+pep8_chain(e, x, s) :- pep8_up(e, x, s), wstart(e, s).
+pep8_chain(e, x, p) :- pep8_chain(e, x, s), !pep8_seen(e, x, s), nearest(s, p, lfscope).
+.decl pep8_up(e: node, x: symbol, s: node)  // s is a scope e's lookup may reach
+pep8_up(e, x, s) :- pep8_dec(_, e), kind(e, "identifier"), text(e, x), (wstart(e, s) ; inside(e, s, lfscope)).
+.decl pep8_seen(e: node, x: symbol, s: node)
+pep8_seen(e, x, s) :- pep8_up(e, x, s), binding(s, x, b, _), (pep8_deferred(e, s) ; b < e), !pep8_gone(e, b).
+.decl pep8_fn(k: symbol)
+pep8_fn("function_definition"). pep8_fn("lambda").
+.decl pep8_deferred(e: node, s: node)  // a def or lambda below s holds e: Ruff visits e after all of s
+pep8_deferred(e, s) :- pep8_up(e, _, s), nearest(e, g, pep8_fn), within(g, s).
+.decl pep8_gone(e: node, b: node)  // b is an `except … as x` binding and e is past its handler
+pep8_gone(e, b) :- pep8_up(e, x, s), binding(s, x, b, "except"), nearest(b, h, except_k), !within(e, h).
+.decl except_k(k: symbol)
+except_k("except_clause").
+// pep8_dec_named(f, opt): a decorator of f is named by an entry of list option opt: by its qualified name, or by
+// its last segment (`@prop.expression` with "expression" configured).
+.decl pep8_dec_named(f: node, opt: symbol)
+pep8_dec_named(f, o) :- pep8_dec(f, e), option_item(o, _, q), pep8_qual(e, q).
+pep8_dec_named(f, o) :- pep8_dec(f, e), option_item(o, _, x), leaf_name(e, x).
+.decl pep8_static(f: node)
+pep8_static(f) :- pep8_dec(f, e), pep8_qual(e, q), (q = "builtins.staticmethod" ; q = "abc.abstractstaticmethod").
+pep8_static(f) :- pep8_dec_named(f, "pep8-naming.staticmethod-decorators").
+.decl pep8_classm(f: node)
+pep8_classm(f) :- pep8_dec(f, e), pep8_qual(e, q), (q = "builtins.classmethod" ; q = "abc.abstractclassmethod").
+pep8_classm(f) :- pep8_dec_named(f, "pep8-naming.classmethod-decorators").
+pep8_classm(f) :- in_class(f, _), def_name(f, x), (x = "__init_subclass__" ; x = "__class_getitem__").
+// pep8_method_kind(f, k): naming_method_kind's order: explicit decorators, then `__new__`, then a plain method, a
+// class method in a metaclass; none when the class may or may not be one.
+.decl pep8_method_kind(f: node, k: symbol)
+pep8_method_kind(f, "staticmethod") :- in_class(f, _), kind(f, "function_definition"), pep8_static(f).
+pep8_method_kind(f, "classmethod") :- in_class(f, _), kind(f, "function_definition"), pep8_classm(f), !pep8_static(f).
+pep8_method_kind(f, "new") :- pep8_plain(f, _, "__new__").
+pep8_method_kind(f, "classmethod") :- pep8_plain(f, c, x), x != "__new__", pep8_meta_any(c), !pep8_maybe_meta(c).
+pep8_method_kind(f, "method") :- pep8_plain(f, c, x), x != "__new__", !pep8_meta_any(c), !pep8_maybe_meta(c).
+.decl pep8_plain(f: node, c: node, x: symbol)  // no static/class decorator, not an implicit class method
+pep8_plain(f, c, x) :- in_class(f, c), kind(f, "function_definition"), def_name(f, x), !pep8_static(f), !pep8_classm(f).
+// pep8_meta_any(c): a base of c, followed through the classes of this file (a subscripted one by its value), is a
+// metaclass base (naming_meta_any).
+.decl pep8_meta_any(c: node)
+pep8_meta_any(c) :- naming_meta_any(c).
+pep8_meta_any(c) :- pep8_base_class(c, k), pep8_meta_any(k).
+.decl pep8_base_class(c: node, k: node)  // a base of c, or the value of a subscripted one, is class k of c's file
+pep8_base_class(c, k) :- naming_base(c, e), unparen(e, u), kind(u, "subscript"), field(u, "value", v), sym_of(v, q),
+    class_def(k, q), docof(c, d), docof(k, d).
+pep8_base_class(c, k) :- naming_base(c, e), unparen(e, u), !kind(u, "subscript"), sym_of(u, q), class_def(k, q),
+    docof(c, d), docof(k, d).
+// pep8_maybe_meta(c): naming_maybe_metaclass, with its metaclass bases followed as pep8_meta_any does.
+.decl pep8_maybe_meta(c: node)
+pep8_maybe_meta(c) :- pep8_meta_any(c), naming_call_base(c).
+pep8_maybe_meta(c) :- naming_maybe_metaclass(c), !pep8_meta_any(c).
+.decl pep8_first_param(f: node, nm: node, x: symbol)
+pep8_first_param(f, nm, @nfkc(t)) :- naming_first_param(f, nm, t).

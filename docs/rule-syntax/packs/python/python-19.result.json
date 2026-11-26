@@ -1,0 +1,20 @@
+[
+  { "id": "ruff-n801-invalid-class-name", "status": "same" },
+  { "id": "ruff-n803-invalid-argument-name", "status": "same" },
+  { "id": "ruff-n804-invalid-first-argument-name-for-class-method", "status": "same" },
+  { "id": "ruff-n805-invalid-first-argument-name-for-method", "status": "same" },
+  { "id": "ruff-n806-non-lowercase-variable-in-function", "status": "same" },
+  { "id": "ruff-n807-dunder-function-name", "status": "same" },
+  { "id": "ruff-n811-constant-imported-as-non-constant", "status": "same" },
+  {
+    "id": "ruff-n812-lowercase-imported-as-non-lowercase",
+    "status": "different",
+    "reason": "N812-normalized-alias-and-ignored-names.py:15, `from mod import foo as ˤx`: NFKC gives `ʕx`. Unicode 17 made U+0295 a caseless letter (Lo), so Ruff (Rust std, Unicode 17) finds `ʕx` not lowercase and reports it; the engine's regexes use regex-syntax's Unicode 16 tables, where U+0295 is Ll and in \\p{Lowercase}, so the translation reads `ʕx` as lowercase. An engine gap (regex Unicode tables), not expressible in the rule without special-casing the character.",
+    "right": "original",
+    "counts": {
+      "examples": { "originalOnly": 0, "translationOnly": 0 },
+      "fixtures": { "originalOnly": 1, "translationOnly": 0 },
+      "samples-python": { "originalOnly": 0, "translationOnly": 0 }
+    }
+  }
+]
