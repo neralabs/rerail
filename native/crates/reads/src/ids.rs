@@ -256,6 +256,27 @@ impl Numbering {
         }
     }
 
+    /// The first numbered `item` at or after tape node `x` (`NONE` past the last): `select(item, rank(item, x))`, by
+    /// its group's word from `x` on, then the groups after. From a numbered node's tape node plus one, the next number's
+    /// node: a walk of the numbers in order steps through the bits, with no sample read.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn next(&self, item: u32, x: u32) -> u32 {
+        // SAFETY: the caller's.
+        let groups = unsafe { Self::of::<[u64; WORDS as usize]>(&self.groups) };
+        let (mut g, mut keep) = if x >> 6 < self.first { (0, u64::MAX) } else { (((x >> 6) - self.first) as usize, u64::MAX << (x & 63)) };
+        while g < groups.len() {
+            let m = groups[g][item as usize] & keep;
+            if m != 0 {
+                return (self.first + g as u32) * 64 + m.trailing_zeros();
+            }
+            (g, keep) = (g + 1, u64::MAX);
+        }
+        NONE
+    }
+
     /// `select`, its group searched from `hint` (the last select's group, which a probe's cursor keeps): where number
     /// `r` lies a few groups past it at most, from there with no read of the sample; else from the sample. Any hint
     /// gives the same tape node.

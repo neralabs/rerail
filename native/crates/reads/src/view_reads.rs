@@ -179,6 +179,9 @@ pub struct Doc<'a> {
     /// (`fielded`; `u32::MAX`: none): a row's columns read one after another select its node once. `u32::MAX`: none
     /// yet.
     last: std::cell::Cell<Selected>,
+    /// The granule its last node's id was found in (`Numbering::low_of_near`'s hint): the next node's is most often in
+    /// the same one. Checked, not trusted: any value gives the same ids.
+    granule: std::cell::Cell<u32>,
 }
 
 /// What a `Doc` last selected (`Doc::selected`): numbered node `l`, its tape node `x`, and the `field` view's row
@@ -199,7 +202,7 @@ impl<'a> Doc<'a> {
     /// The document's reads, through its directory row's `entry`, with its language's codes' `(kinds, fields)`.
     #[inline]
     pub fn new(entry: &'a ViewDoc, tape: Tape<'a>, lines: &'a [u8], source: &'a [u8], (kinds, fields): (&'a [u32], &'a [u32])) -> Doc<'a> {
-        Doc { entry, tape, lines, source, kinds, fields, last: std::cell::Cell::new(Selected::NONE) }
+        Doc { entry, tape, lines, source, kinds, fields, last: std::cell::Cell::new(Selected::NONE), granule: std::cell::Cell::new(u32::MAX) }
     }
     #[inline(always)]
     fn numbering(&self) -> &'a Numbering {
@@ -231,10 +234,24 @@ impl<'a> Doc<'a> {
         if s.l == l {
             return s.x;
         }
+        // The number after the last selected: its node is the next numbered one past it (rows read in order: an
+        // index's keys, a copy); else from the sample.
         // SAFETY: the entry's numbering (`numbering`).
-        let x = unsafe { self.numbering().select(0, l) };
+        let x = unsafe { if s.l != u32::MAX && l == s.l + 1 { self.numbering().next(0, s.x + 1) } else { self.numbering().select(0, l) } };
         self.last.set(Selected { l, x, field_row: u32::MAX });
         x
+    }
+    /// Numbered node `l`'s id's low 32 bits (`num_low_of`), its granule tried first where the last id's was.
+    ///
+    /// # Safety
+    /// As `tape_node`'s.
+    #[inline]
+    unsafe fn low_of(&self, l: u32) -> u32 {
+        let mut j = self.granule.get();
+        // SAFETY: the caller's.
+        let low = unsafe { self.numbering().low_of_near(0, l, &mut j) };
+        self.granule.set(j);
+        low
     }
     /// The numbered nodes before tape node `x` (`num_rank`).
     #[inline]
@@ -255,7 +272,7 @@ impl<'a> Doc<'a> {
             l
         } else {
             // SAFETY: as `tape_node`.
-            unsafe { self.numbering().low_of(0, l) }
+            unsafe { self.low_of(l) }
         };
         (i64::from(self.entry.key) << 32) | i64::from(low)
     }
@@ -332,8 +349,9 @@ impl<'a> Doc<'a> {
         if s.field_row == i {
             return (s.l, s.x);
         }
+        // The row after the last: its node is the next fielded one past it (rows read in order); else from the sample.
         // SAFETY: as `tape_node`.
-        let x = unsafe { self.numbering().select(2, i) };
+        let x = unsafe { if s.field_row != u32::MAX && i == s.field_row + 1 { self.numbering().next(2, s.x + 1) } else { self.numbering().select(2, i) } };
         let l = self.rank(x);
         self.last.set(Selected { l, x, field_row: i });
         (l, x)
@@ -514,7 +532,7 @@ impl<'a> Doc<'a> {
             l
         } else if l < e.nodes {
             // SAFETY: as `tape_node`.
-            unsafe { self.numbering().low_of(0, l) }
+            unsafe { self.low_of(l) }
         } else {
             let i = l - e.nodes;
             if i < e.tokens {

@@ -2995,6 +2995,32 @@ fn host_id_reads(h: &rerail_clif::ids::Numbering, x: u32) -> [u32; 12] {
     }
 }
 
+/// A numbering's next numbered item from a tape node (`Numbering::next`) is the select of its rank: for every tape node
+/// of every case and past them, every item; and from each numbered node's next tape node, the next number's.
+#[test]
+fn a_numberings_next_is_the_select_of_its_rank() {
+    let mut tried = 0;
+    for (at, p, n) in id_read_cases() {
+        let r = p.ranks();
+        let h = r.numbering();
+        for item in 0..rerail_clif::ids::ITEMS {
+            // SAFETY: the projection's live descriptor.
+            unsafe {
+                for x in 0..n + 70 {
+                    assert_eq!(h.next(item, x), h.select(item, h.rank(item, x)), "{at}: item {item}, tape node {x}");
+                    tried += 1;
+                }
+                let mut l = 0;
+                while h.select(item, l) != rerail_clif::ids::NONE {
+                    assert_eq!(h.next(item, h.select(item, l) + 1), h.select(item, l + 1), "{at}: item {item}, number {l}");
+                    l += 1;
+                }
+            }
+        }
+    }
+    assert!(tried > 1000, "{tried}");
+}
+
 /// Decision 0536: the numbering's reads written directly in Rust (`Numbering::is`, …) answer what its reads in CLIF
 /// answer, by the JIT: for every tape node, the kernels' probes (`the_kernels_id_reads_are_the_hosts`) and every
 /// item's bit, rank and select, and lows and order keys that are no item's. In every format, whole and narrowed.
