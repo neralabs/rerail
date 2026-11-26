@@ -185,8 +185,8 @@ export interface TrayOptions {
   /** Whether the release `latest` is newer than the `running` one. */
   isNewer(latest: string, running: string): boolean;
   openUrl(url: string): void;
-  /** Runs `rerail update`; its exit code. */
-  runUpdate(): Promise<number>;
+  /** Runs `rerail update`; how it ended ({@link runRerailUpdate}). */
+  runUpdate(): Promise<UpdateExit>;
   /** Writes one line, with no newline, to daemon.log. */
   log(line: string): void;
   /** How often the daemon's health is read for a changed menu; 5 s by default. */
@@ -275,10 +275,15 @@ export function startTray(options: TrayOptions): TrayHandle {
     if (version === null) return;
     run = { state: "running", version };
     send();
+    // daemon.log, which the failed line names, says why: an update that never started wrote nothing there itself.
+    const failed = (why: string): false => {
+      log(`rerail tray: the update to ${version} failed: ${why}`);
+      return false;
+    };
     // Through a promise, so a runUpdate that throws as it is called fails the update like one that rejects.
     void Promise.resolve().then(() => options.runUpdate()).then(
-      code => code === 0,
-      () => false,
+      exit => exit.code === 0 || failed(exit.reason),
+      (error: unknown) => failed(error instanceof Error ? error.message : String(error)),
     ).then(succeeded => {
       run = { state: succeeded ? "done" : "failed", version };
       send();
@@ -375,6 +380,18 @@ function eachLine(stream: NodeJS.ReadableStream, take: (line: string) => void): 
 
 /** How often a running `rerail update` is asked whether it has exited. */
 const UPDATE_POLL_MS = 1_000;
+/**
+ * How long the menu waits for `rerail update` before it counts the update as failed and offers it again. An update
+ * downloads the release and its engine package, may rebuild the SQLite binding, and refreshes the daemons: minutes on a
+ * slow connection, never half an hour, so only a hung one reaches this.
+ */
+const UPDATE_DEADLINE_MS = 30 * 60_000;
+
+/** How a `rerail update` the menu ran ended: its exit code, and why it ended, for daemon.log. */
+export interface UpdateExit {
+  code: number;
+  reason: string;
+}
 
 /**
  * Starts the tray for the running `daemon` when every gate holds ({@link trayGate}); undefined when one does not. The
@@ -449,15 +466,29 @@ export function accountHome(): string {
  * Runs `rerail update` with the active launcher's CLI, detached, with its output appended to daemon.log, as
  * `autostartDaemon` runs `daemon start` (`launchDetached`): on Windows it then opens no console window, and an update
  * that stops this daemon still finishes: its refresh stops it to start the new version's in its place, and an update
- * that rebuilds the SQLite binding stops it first. Its exit code; 1 when it could not start, was ended by a signal, or
- * is gone where no code was kept. `machine` is `launchDetached`'s, this one unless a test's.
+ * that rebuilds the SQLite binding stops it first. Its exit code and why it ended; code 1 when it could not start, was
+ * ended by a signal, is gone where no code was kept, or still runs at the deadline (30 minutes). That one is not
+ * killed, which could leave an install half done; a retry meanwhile fails at once while it holds the update lock,
+ * rather than run beside it. `machine` is `launchDetached`'s, and `timing` the deadline's and the poll's; a test passes
+ * its own.
  */
-export async function runRerailUpdate(home: string, env: NodeJS.ProcessEnv, machine?: DaemonMachine): Promise<number> {
+export async function runRerailUpdate(
+  home: string,
+  env: NodeJS.ProcessEnv,
+  machine?: DaemonMachine,
+  timing: { deadlineMs?: number; pollMs?: number } = {},
+): Promise<UpdateExit> {
+  const { deadlineMs = UPDATE_DEADLINE_MS, pollMs = UPDATE_POLL_MS } = timing;
   const args = [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "update"];
   const launched = launchDetached({ args, cwd: home, env, logFile: join(home, DAEMON_LOG_FILE) }, machine);
+  const deadline = Date.now() + deadlineMs;
   for (;;) {
     const code = launched.exitCode();
-    if (code !== undefined) return code ?? 1;
-    await delay(UPDATE_POLL_MS, undefined, { ref: false });
+    if (code !== undefined) return { code: code ?? 1, reason: launched.exitReason() ?? "exited" };
+    if (Date.now() >= deadline) {
+      const waited = deadlineMs >= 60_000 ? `${Math.round(deadlineMs / 60_000)} minutes` : `${deadlineMs} ms`;
+      return { code: 1, reason: `still running after ${waited}, and left to run` };
+    }
+    await delay(pollMs, undefined, { ref: false });
   }
 }

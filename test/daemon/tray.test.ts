@@ -300,9 +300,11 @@ describe("startTray", () => {
       homePath: "~/.rerail",
       isNewer: (latest, running) => latest !== running,
       openUrl: url => void calls.opened.push(url),
+      // A test's update gives its exit code; a throw as it is called stays one.
       runUpdate: () => {
         calls.updates += 1;
-        return options.runUpdate?.() ?? Promise.resolve(0);
+        const code = options.runUpdate?.() ?? Promise.resolve(0);
+        return code.then(exit => ({ code: exit, reason: `exited with code ${exit}` }));
       },
       log: line => void calls.logs.push(line),
       intervalMs: options.intervalMs ?? 20,
@@ -419,6 +421,8 @@ describe("startTray", () => {
       "Updating to 0.2.3…",
       "Updated to 0.2.3. New sessions use it.",
     ]);
+    // daemon.log, which the failed line names, says why.
+    expect(calls.logs).toEqual(["rerail tray: the update to 0.2.3 failed: exited with code 1"]);
   });
 
   it("actions split across chunks are joined", async () => {
@@ -465,6 +469,7 @@ describe("startTray", () => {
     await until(() => received().length === 5, 10_000, "the retried update");
     expect(calls.updates).toBe(2);
     expect(updateLabels().slice(1, 3)).toEqual(["Updating to 0.2.3…", "Update failed, see daemon.log"]);
+    expect(calls.logs).toEqual(["rerail tray: the update to 0.2.3 failed: no node"]);
   });
 
   it("a menu state that cannot be made is logged once, and the menu keeps its last state", async () => {
@@ -491,7 +496,7 @@ describe("startTray", () => {
       homePath: "~/.rerail",
       isNewer: () => false,
       openUrl: () => undefined,
-      runUpdate: async () => 0,
+      runUpdate: async () => ({ code: 0, reason: "exited with code 0" }),
       log: line => void logs.push(line),
     });
     // As Node's spawn answers when it runs out of file descriptors: no pipes, and an error on the next tick.
@@ -522,7 +527,7 @@ describe("startTray", () => {
       homePath: "~/.rerail",
       isNewer: () => false,
       openUrl: () => undefined,
-      runUpdate: async () => 0,
+      runUpdate: async () => ({ code: 0, reason: "exited with code 0" }),
       log: line => void logs.push(line),
       intervalMs: 20,
     });
@@ -545,7 +550,7 @@ describe("startTray", () => {
       homePath: "~/.rerail",
       isNewer: () => false,
       openUrl: () => undefined,
-      runUpdate: async () => 0,
+      runUpdate: async () => ({ code: 0, reason: "exited with code 0" }),
       log: line => void logs.push(line),
     });
     await until(() => received().length === 1, 10_000, "the first state");
@@ -595,16 +600,20 @@ describe("runRerailUpdate", () => {
 
   it("runs rerail update and resolves with its exit code", async () => {
     const launches: Array<readonly string[]> = [];
-    await expect(runRerailUpdate(home, {}, ended({ exit: 0 }, launches))).resolves.toBe(0);
+    await expect(runRerailUpdate(home, {}, ended({ exit: 0 }, launches))).resolves.toEqual({ code: 0, reason: "exited with code 0" });
     expect(launches).toHaveLength(1);
     expect(launches[0]!.slice(1)).toEqual(["update"]);
     expect(launches[0]![0]).toMatch(/cli\.js$/u);
-    await expect(runRerailUpdate(home, {}, ended({ exit: 3 }))).resolves.toBe(3);
+    await expect(runRerailUpdate(home, {}, ended({ exit: 3 }))).resolves.toEqual({ code: 3, reason: "exited with code 3" });
   });
 
-  it("resolves non-zero for an update ended by a signal or never started", async () => {
-    await expect(runRerailUpdate(home, {}, ended({ exit: null }))).resolves.toBe(1);
-    await expect(runRerailUpdate(home, {}, ended({ error: new Error("spawn ENOENT") }))).resolves.toBe(1);
+  it("resolves non-zero, and says why, for an update ended by a signal or never started", async () => {
+    await expect(runRerailUpdate(home, {}, ended({ exit: null }))).resolves.toEqual({ code: 1, reason: "exited with code signal" });
+    // The update wrote nothing to daemon.log: only this reason says why.
+    await expect(runRerailUpdate(home, {}, ended({ error: new Error("spawn ENOENT") }))).resolves.toEqual({
+      code: 1,
+      reason: "could not start: spawn ENOENT",
+    });
   });
 
   it("reads the code the Windows native spawn kept, and 1 where it kept none", async () => {
@@ -612,10 +621,21 @@ describe("runRerailUpdate", () => {
       nodeExecutable: () => String.raw`C:\Program Files\nodejs\node.exe`,
       spawnDetached: () => ({ pid: 4242, ...(exitCode === undefined ? {} : { exitCode }) }),
     });
-    await expect(runRerailUpdate(home, {}, windows(() => 0))).resolves.toBe(0);
-    await expect(runRerailUpdate(home, {}, windows(() => 5))).resolves.toBe(5);
+    await expect(runRerailUpdate(home, {}, windows(() => 0))).resolves.toEqual({ code: 0, reason: "exited with code 0" });
+    await expect(runRerailUpdate(home, {}, windows(() => 5))).resolves.toEqual({ code: 5, reason: "exited with code 5" });
     // A binary that keeps no handle: the pid is gone (the fake machine's kill says so), with no code.
-    await expect(runRerailUpdate(home, {}, windows())).resolves.toBe(1);
+    await expect(runRerailUpdate(home, {}, windows())).resolves.toEqual({ code: 1, reason: "exited" });
+  });
+
+  it("fails an update still running at its deadline, so the menu offers it again", async () => {
+    const hung = fakeMachine("linux", {
+      nodeExecutable: () => "/usr/bin/node",
+      spawn: () => ({ pid: 4242, once: () => undefined, unref: () => undefined }),
+    });
+    await expect(runRerailUpdate(home, {}, hung, { deadlineMs: 30, pollMs: 5 })).resolves.toEqual({
+      code: 1,
+      reason: "still running after 30 ms, and left to run",
+    });
   });
 });
 
