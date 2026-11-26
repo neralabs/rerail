@@ -3741,9 +3741,18 @@ impl Prog {
             }
             return true;
         }
-        // The group's threads, a range: all of them, then (a segment's) each stride's below its limit.
+        // The group's threads, a range: all of them, then (a segment's) each stride's, below its limit each. A
+        // segment's rows past its limit are past the room its size script placed (its counts' `count + plus`): the
+        // next job's, written there by its last group in whatever order the groups run (a scan's zeros over the next
+        // job's counts, its rows lost).
         let mut t0 = g.wrapping_mul(TG);
         let mut t1 = t0.saturating_add(TG);
+        if step != 0 {
+            t1 = t1.min(lim);
+            if t0 >= t1 {
+                return true;
+            }
+        }
         loop {
             self.range(kind, j, &bufs, t0, t1);
             match t0.checked_add(step) {

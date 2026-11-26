@@ -2788,6 +2788,10 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         H = H + 2u * places;
     }
     for (uint32_t pass = 0u; pass < PHASE_TURNS; pass++) {
+    // A segment's thread past its limit is past the room its size script placed (its counts' `count + plus`): the
+    // next job's, which it would write in whatever order the groups run (a scan's zeros over the next job's counts).
+    // A row text's SIMD groups keep their lanes together.
+    if (step != 0u && t >= lim && kind != PK_ROW_TEXT) break;
     switch (kind) {
         case PK_COPY: rows_copy_one((JSPACE const uint8_t*)L, (JSPACE uint8_t*)O, j->totals, (JSPACE const Copy*)j->P, j->RF != 0 ? j->RF : (JSPACE const uint8_t*)L, t); break;
         case PK_IX_KEY: ix_key_one((JSPACE const uint8_t*)L, H, (JSPACE uint32_t*)j->S, (JSPACE const IxP*)j->P, j->RF != 0 ? j->RF : (JSPACE const uint8_t*)L, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
