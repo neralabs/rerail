@@ -663,8 +663,6 @@ pub struct P<'a, L: Layout> {
     recs: &'a [crate::tier1::Rec],
     /// The comments (the extras), apart from the tokens, as the lean parser's `comments`.
     xs: &'a [crate::tier1::Rec],
-    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).
-    m: &'a crate::tier1::Masks,
     n: usize,
     /// The next grammar token's record.
     i: usize,
@@ -707,6 +705,9 @@ pub struct P<'a, L: Layout> {
     lost: Option<(u16, Option<u32>)>,
     /// The extra a mark's `loses since` moved, by comment, and where: of no width there.
     moved: Option<(usize, u32)>,
+    /// The regions of the strings open over a template's code, innermost last (`strings` of them): the region a
+    /// template's `}` resumes is the one after the innermost (decision 0703 step 16).
+    string_k: [u8; 8],
     /// The strings open over a template's code (decision 0600): their parts go on at the next
     /// opener of a reader that resumes them (`advance`).
     strings: usize,
@@ -715,10 +716,10 @@ pub struct P<'a, L: Layout> {
 #[allow(dead_code)]
 impl<'a, L: Layout> P<'a, L> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L, target: rerail_tape_format::Target) -> R<Self> {
-        let (recs, xs, m) = (&lx.recs[..], &lx.extras[..], &lx.masks);
+        let (recs, xs) = (&lx.recs[..], &lx.extras[..]);
         let n = recs.len();
         // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
-        let mut p = P { src, recs, xs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(widths, n + n / 2 + xs.len() + 8).to(target, src), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, leaf_from: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), dead: Vec::new(), lost: None, moved: None, strings: 0 };
+        let mut p = P { src, recs, xs, n, i: 0, sub: Vec::new(), k: 0, pend: 0, string_k: [0; 8], xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(widths, n + n / 2 + xs.len() + 8).to(target, src), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, leaf_from: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), dead: Vec::new(), lost: None, moved: None, strings: 0 };
         p.pass_comments();
         p.arrive()?;
         Ok(p)
@@ -29870,87 +29871,86 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// `"`'s region (`read str | rstr | str2 | rstr2 parts`), record `j`: its opener's byte, each part, each run of the bytes between, its closer.
-    fn split_0(&mut self, j: usize) -> R {
+    fn split_0(&mut self, j: usize, sp: crate::tier1::Span) -> R {
         let s = self.recs[j].start as usize;
         self.sub.clear();
         self.k = 0;
         self.sub.push((s as u32, s as u32, self.recs[j].code));
-        let m = self.m;
         let mut at = s + 1;
         loop {
-            let Some(c) = first_bit(&m.rd0_close, at) else {
+            let Some(c) = self.ffirst(crate::tier1::fields::rd0_close, sp, at) else {
                 return self.refuse();
             };
             // The part first after `at`, before the closer: the earliest, the shortest at one byte.
             let mut part: Option<(usize, u8, usize)> = None;
             // `""`
-            if let Some(e) = first_bit(&m.rd0_part0, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::rd0_part0, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 2, 0) < q) {
                     part = Some((e, 2, 0));
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.r_start, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::r_start, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 0, 1) < q) {
                     part = Some((e, 0, 1));
                 }
             }
             // `""`
-            if let Some(e) = first_bit(&m.r_lead, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::r_lead, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 1, 2) < q) {
                     part = Some((e, 1, 2));
                 }
             }
             // `interpolation_identifier_start`
-            if let Some(e) = first_bit(&m.id_dollar, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::id_dollar, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 1, 3) < q) {
                     part = Some((e, 1, 3));
                 }
             }
             // `interpolated_identifier`
-            if let Some(e) = first_bit(&m.rd0_part4, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::rd0_part4, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 0, 4) < q) {
                     part = Some((e, 0, 4));
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.lone1, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::lone1, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 1, 5) < q) {
                     part = Some((e, 1, 5));
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.d_first, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::d_first, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 0, 6) < q) {
                     part = Some((e, 0, 6));
                 }
             }
             // `esc_q`
-            if let Some(e) = first_bit(&m.rd0_part7, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::rd0_part7, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 2, 7) < q) {
                     part = Some((e, 2, 7));
                 }
             }
             // `esc_qd`
-            if let Some(e) = first_bit(&m.rd0_part8, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::rd0_part8, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 2, 8) < q) {
                     part = Some((e, 2, 8));
                 }
             }
             // `interpolation_identifier_start`
-            if let Some(e) = first_bit(&m.id2, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::id2, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 2, 9) < q) {
                     part = Some((e, 2, 9));
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.extra2, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::extra2, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 1, 10) < q) {
                     part = Some((e, 1, 10));
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.d2_first, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::d2_first, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 0, 11) < q) {
                     part = Some((e, 0, 11));
                 }
@@ -29963,18 +29963,18 @@ impl<L: Layout> P<'_, L> {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
                         0 => (e + 1, 5),
-                        1 => (match first_bit(&m.rd0_part1_last, e) {
+                        1 => (match self.ffirst(crate::tier1::fields::rd0_part1_last, sp, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 3),
                         2 => (e + 0, 5),
                         3 => (e + 0, 4),
-                        4 => (match first_bit(&m.id_last, e) {
+                        4 => (match self.ffirst(crate::tier1::fields::id_last, sp, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 6),
                         5 => (e + 0, 3),
-                        6 => (match first_bit(&m.d_last, e) {
+                        6 => (match self.ffirst(crate::tier1::fields::d_last, sp, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 3),
@@ -29982,7 +29982,7 @@ impl<L: Layout> P<'_, L> {
                         8 => (e + 1, 17),
                         9 => (e + 1, 4),
                         10 => (e + 0, 3),
-                        11 => (match first_bit(&m.d2_last, e) {
+                        11 => (match self.ffirst(crate::tier1::fields::d2_last, sp, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 3),
@@ -29992,25 +29992,28 @@ impl<L: Layout> P<'_, L> {
                     at = l + 1;
                 }
                 None => {
-                    let (l, kind) = if bit(&m.t_dollar, c) {
+                    let (l, kind) = if self.fbit(crate::tier1::fields::t_dollar, sp, c) {
                         (c + 1, 2)
-                    } else if bit(&m.t2_dollar, c) {
+                    } else if self.fbit(crate::tier1::fields::t2_dollar, sp, c) {
                         (c + 2, 2)
-                    } else if bit(&m.o_str, s) {
+                    } else if sp.k == crate::tier1::regions::k_str {
                         // `str`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 13)
-                    } else if bit(&m.o_rstr, s) {
+                        (if self.fbit(crate::tier1::fields::t_dollar, sp, c) { c + 0 } else { c + 0 }, 13)
+                    } else if sp.k == crate::tier1::regions::k_rstr {
                         // `rstr`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 13)
-                    } else if bit(&m.o_str2, s) {
+                        (if self.fbit(crate::tier1::fields::t_dollar, sp, c) { c + 0 } else { c + 2 }, 13)
+                    } else if sp.k == crate::tier1::regions::k_str2 {
                         // `str2`
-                        (if bit(&m.t2_dollar, c) { c + 1 } else { c + 0 }, 13)
+                        (if self.fbit(crate::tier1::fields::t2_dollar, sp, c) { c + 1 } else { c + 0 }, 13)
                     } else {
                         // `rstr2`
-                        (if bit(&m.t2_dollar, c) { c + 1 } else { c + 2 }, 13)
+                        (if self.fbit(crate::tier1::fields::t2_dollar, sp, c) { c + 1 } else { c + 2 }, 13)
                     };
                     self.piece(c, l, kind);
-                    if bit(&m.t_dollar, c) || bit(&m.t2_dollar, c) {
+                    if self.fbit(crate::tier1::fields::t_dollar, sp, c) || self.fbit(crate::tier1::fields::t2_dollar, sp, c) {
+                        if self.strings < self.string_k.len() {
+                            self.string_k[self.strings] = sp.k;
+                        }
                         self.strings += 1;
                     }
                     return Ok(());
@@ -30021,79 +30024,81 @@ impl<L: Layout> P<'_, L> {
 
     /// `interpolation_expression_end`'s region (`read tail | rtail | tail2 | rtail2 parts`), at byte `s`, no record of its own: the string's parts after its template's `}`: its opener's byte, each part, each run of the bytes between, its closer.
     fn resume_1(&mut self, s: usize) -> R {
+        let Some(sp) = crate::tier1::span(self.src, match self.string_k[(self.strings - 1).min(self.string_k.len() - 1)] { crate::tier1::regions::k_str => crate::tier1::regions::k_tail, crate::tier1::regions::k_rstr => crate::tier1::regions::k_rtail, crate::tier1::regions::k_str2 => crate::tier1::regions::k_tail2, crate::tier1::regions::k_rstr2 => crate::tier1::regions::k_rtail2, _ => u8::MAX }, s) else {
+            return self.refuse();
+        };
         self.sub.clear();
         self.k = 0;
         self.piece(s, s, 1);
-        let m = self.m;
         let mut at = s + 1;
         loop {
-            let Some(c) = first_bit(&m.rd1_close, at) else {
+            let Some(c) = self.ffirst(crate::tier1::fields::rd1_close, sp, at) else {
                 return self.refuse();
             };
             // The part first after `at`, before the closer: the earliest, the shortest at one byte.
             let mut part: Option<(usize, u8, usize)> = None;
             // `string_content`
-            if let Some(e) = first_bit(&m.r_start, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::r_start, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 0, 0) < q) {
                     part = Some((e, 0, 0));
                 }
             }
             // `""`
-            if let Some(e) = first_bit(&m.r_lead, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::r_lead, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 1, 1) < q) {
                     part = Some((e, 1, 1));
                 }
             }
             // `interpolation_identifier_start`
-            if let Some(e) = first_bit(&m.id_dollar, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::id_dollar, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 1, 2) < q) {
                     part = Some((e, 1, 2));
                 }
             }
             // `interpolated_identifier`
-            if let Some(e) = first_bit(&m.rd0_part4, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::rd0_part4, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 0, 3) < q) {
                     part = Some((e, 0, 3));
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.lone1, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::lone1, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 1, 4) < q) {
                     part = Some((e, 1, 4));
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.d_first, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::d_first, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 0, 5) < q) {
                     part = Some((e, 0, 5));
                 }
             }
             // `esc_q`
-            if let Some(e) = first_bit(&m.rd0_part7, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::rd0_part7, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 2, 6) < q) {
                     part = Some((e, 2, 6));
                 }
             }
             // `esc_qd`
-            if let Some(e) = first_bit(&m.rd0_part8, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::rd0_part8, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 2, 7) < q) {
                     part = Some((e, 2, 7));
                 }
             }
             // `interpolation_identifier_start`
-            if let Some(e) = first_bit(&m.id2, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::id2, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 2, 8) < q) {
                     part = Some((e, 2, 8));
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.extra2, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::extra2, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 1, 9) < q) {
                     part = Some((e, 1, 9));
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.d2_first, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::d2_first, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 0, 10) < q) {
                     part = Some((e, 0, 10));
                 }
@@ -30105,18 +30110,18 @@ impl<L: Layout> P<'_, L> {
             match part {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
-                        0 => (match first_bit(&m.rd0_part1_last, e) {
+                        0 => (match self.ffirst(crate::tier1::fields::rd0_part1_last, sp, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 3),
                         1 => (e + 0, 5),
                         2 => (e + 0, 4),
-                        3 => (match first_bit(&m.id_last, e) {
+                        3 => (match self.ffirst(crate::tier1::fields::id_last, sp, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 6),
                         4 => (e + 0, 3),
-                        5 => (match first_bit(&m.d_last, e) {
+                        5 => (match self.ffirst(crate::tier1::fields::d_last, sp, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 3),
@@ -30124,7 +30129,7 @@ impl<L: Layout> P<'_, L> {
                         7 => (e + 1, 17),
                         8 => (e + 1, 4),
                         9 => (e + 0, 3),
-                        10 => (match first_bit(&m.d2_last, e) {
+                        10 => (match self.ffirst(crate::tier1::fields::d2_last, sp, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 3),
@@ -30134,29 +30139,29 @@ impl<L: Layout> P<'_, L> {
                     at = l + 1;
                 }
                 None => {
-                    let (l, kind) = if bit(&m.rd1_closes0, c) {
+                    let (l, kind) = if self.fbit(crate::tier1::fields::rd1_closes0, sp, c) {
                         (c + 0, 13)
-                    } else if bit(&m.rd1_closes1, c) {
+                    } else if self.fbit(crate::tier1::fields::rd1_closes1, sp, c) {
                         (c + 2, 13)
-                    } else if bit(&m.t_dollar, c) {
+                    } else if self.fbit(crate::tier1::fields::t_dollar, sp, c) {
                         (c + 1, 2)
-                    } else if bit(&m.t2_dollar, c) {
+                    } else if self.fbit(crate::tier1::fields::t2_dollar, sp, c) {
                         (c + 2, 2)
-                    } else if bit(&m.o_tail, s) {
+                    } else if sp.k == crate::tier1::regions::k_tail {
                         // `tail`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_rtail, s) {
+                        (if self.fbit(crate::tier1::fields::t_dollar, sp, c) { c + 0 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
+                    } else if sp.k == crate::tier1::regions::k_rtail {
                         // `rtail`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_tail2, s) {
+                        (if self.fbit(crate::tier1::fields::t_dollar, sp, c) { c + 0 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
+                    } else if sp.k == crate::tier1::regions::k_tail2 {
                         // `tail2`
-                        (if bit(&m.t2_dollar, c) { c + 1 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
+                        (if self.fbit(crate::tier1::fields::t2_dollar, sp, c) { c + 1 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
                     } else {
                         // `rtail2`
-                        (if bit(&m.t2_dollar, c) { c + 1 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
+                        (if self.fbit(crate::tier1::fields::t2_dollar, sp, c) { c + 1 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
                     };
                     self.piece(c, l, kind);
-                    if !(bit(&m.t_dollar, c) || bit(&m.t2_dollar, c)) {
+                    if !(self.fbit(crate::tier1::fields::t_dollar, sp, c) || self.fbit(crate::tier1::fields::t2_dollar, sp, c)) {
                         self.strings = self.strings.saturating_sub(1);
                     }
                     return Ok(());
@@ -30166,33 +30171,32 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// `'`'s region (`read chr parts`), record `j`: its opener's byte, each part, each run of the bytes between, its closer.
-    fn split_2(&mut self, j: usize) -> R {
+    fn split_2(&mut self, j: usize, sp: crate::tier1::Span) -> R {
         let s = self.recs[j].start as usize;
         self.sub.clear();
         self.k = 0;
         self.sub.push((s as u32, s as u32, self.recs[j].code));
-        let m = self.m;
         let mut at = s + 1;
         loop {
-            let Some(c) = first_bit(&m.sq_close, at) else {
+            let Some(c) = self.ffirst(crate::tier1::fields::sq_close, sp, at) else {
                 return self.refuse();
             };
             // The part first after `at`, before the closer: the earliest, the shortest at one byte.
             let mut part: Option<(usize, u8, usize)> = None;
             // `\u`
-            if let Some(e) = first_bit(&m.c_uesc, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::c_uesc, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 2, 0) < q) {
                     part = Some((e, 2, 0));
                 }
             }
             // `uni_digits`
-            if let Some(e) = first_bit(&m.rd2_part1, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::rd2_part1, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 4, 1) < q) {
                     part = Some((e, 4, 1));
                 }
             }
             // `character_escape_seq`
-            if let Some(e) = first_bit(&m.rd2_part2, at).filter(|&e| e < c) {
+            if let Some(e) = self.ffirst(crate::tier1::fields::rd2_part2, sp, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 2, 2) < q) {
                     part = Some((e, 2, 2));
                 }
@@ -30223,10 +30227,51 @@ impl<L: Layout> P<'_, L> {
         }
     }
 
+    /// Field `f`'s first byte at or after `from` in region token `sp`, to its last byte, of the bytes.
+    fn ffirst(&self, f: u8, sp: crate::tier1::Span, from: usize) -> Option<usize> {
+        let mut p = from & !63;
+        let mut w = crate::tier1::field(f, self.src, sp, p) & (!0u64 << (from & 63));
+        loop {
+            if w != 0 {
+                return Some(p + w.trailing_zeros() as usize).filter(|&q| q <= sp.last);
+            }
+            p += 64;
+            if p > sp.last {
+                return None;
+            }
+            w = crate::tier1::field(f, self.src, sp, p);
+        }
+    }
+
+    /// Whether field `f` holds at byte `q` of region token `sp`, of the bytes.
+    fn fbit(&self, f: u8, sp: crate::tier1::Span, q: usize) -> bool {
+        crate::tier1::field(f, self.src, sp, q & !63) >> (q & 63) & 1 == 1
+    }
+
+    /// Where a template's `}` resumes its string (region `k`'s opener): the first byte from `from`, before the next
+    /// record, that opens it, the comments passed.
+    fn tail_at(&self, from: usize, k: u8) -> Option<usize> {
+        let end = if self.i + 1 >= self.n { self.src.len() } else { self.recs[self.i + 1].start as usize };
+        let mut x = self.xs.partition_point(|r| (r.last as usize) < from);
+        let mut q = from;
+        while q < end {
+            if x < self.xs.len() && self.xs[x].start as usize <= q {
+                q = self.xs[x].last as usize + 1;
+                x += 1;
+                continue;
+            }
+            if crate::tier1::opens(self.src, k, q) {
+                return Some(q);
+            }
+            q += 1;
+        }
+        None
+    }
+
     /// Past the token, to the next grammar token's record, or the string's parts a template's `}` resumes, at the record before the next (decision 0600).
     #[inline(always)]
     fn advance(&mut self, from: usize) -> R {
-        if self.strings > 0 && let Some(p) = first_bit(&self.m.rd1_open, from).filter(|&p| self.i + 1 >= self.n || p < self.recs[self.i + 1].start as usize) {
+        if self.strings > 0 && let Some(p) = self.tail_at(from, match self.string_k[(self.strings - 1).min(self.string_k.len() - 1)] { crate::tier1::regions::k_str => crate::tier1::regions::k_tail, crate::tier1::regions::k_rstr => crate::tier1::regions::k_rtail, crate::tier1::regions::k_str2 => crate::tier1::regions::k_tail2, crate::tier1::regions::k_rstr2 => crate::tier1::regions::k_rtail2, _ => u8::MAX }) {
             while (self.next_x as usize) < p {
                 self.xi += 1;
                 self.next_x = self.xs.get(self.xi).map_or(u32::MAX, |x| x.start);
@@ -30244,11 +30289,11 @@ impl<L: Layout> P<'_, L> {
     #[inline(always)]
     fn split(&mut self, j: usize) -> R {
         let s = self.recs[j].start as usize;
-        if bit(&self.m.rd0_open, s) {
-            return self.split_0(j);
+        if let Some(sp) = crate::tier1::open_at(self.src, crate::tier1::regions::READER_0, s) {
+            return self.split_0(j, sp);
         }
-        if bit(&self.m.o_chr, s) {
-            return self.split_2(j);
+        if let Some(sp) = crate::tier1::open_at(self.src, crate::tier1::regions::READER_2, s) {
+            return self.split_2(j, sp);
         }
         let _ = s;
         Ok(())

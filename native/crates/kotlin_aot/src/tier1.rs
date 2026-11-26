@@ -8,55 +8,1078 @@ pub struct Rec {
     pub code: u32,
 }
 
-/// The masks tier 2 reads, a bit a byte: those it splits a region by, where it reads one in parts.
-pub struct Masks {
-    pub rd0_close: Vec<u64>,
-    pub o_str: Vec<u64>,
-    pub o_rstr: Vec<u64>,
-    pub o_str2: Vec<u64>,
-    pub o_rstr2: Vec<u64>,
-    pub t_dollar: Vec<u64>,
-    pub t2_dollar: Vec<u64>,
-    pub rd0_part0: Vec<u64>,
-    pub r_start: Vec<u64>,
-    pub rd0_part1_last: Vec<u64>,
-    pub r_lead: Vec<u64>,
-    pub id_dollar: Vec<u64>,
-    pub rd0_part4: Vec<u64>,
-    pub id_last: Vec<u64>,
-    pub lone1: Vec<u64>,
-    pub d_first: Vec<u64>,
-    pub d_last: Vec<u64>,
-    pub rd0_part7: Vec<u64>,
-    pub rd0_part8: Vec<u64>,
-    pub id2: Vec<u64>,
-    pub extra2: Vec<u64>,
-    pub d2_first: Vec<u64>,
-    pub d2_last: Vec<u64>,
-    pub rd0_open: Vec<u64>,
-    pub rd1_close: Vec<u64>,
-    pub o_tail: Vec<u64>,
-    pub o_rtail: Vec<u64>,
-    pub o_tail2: Vec<u64>,
-    pub o_rtail2: Vec<u64>,
-    pub rd1_closes0: Vec<u64>,
-    pub rd1_closes1: Vec<u64>,
-    pub rd1_open: Vec<u64>,
-    pub sq_close: Vec<u64>,
-    pub c_uesc: Vec<u64>,
-    pub rd2_part1: Vec<u64>,
-    pub rd2_part2: Vec<u64>,
-    pub o_chr: Vec<u64>,
-}
-
-/// Tier 1's records, one a grammar token; the comments (the extras) apart, as the lean lexer keeps its comments; the
-/// masks tier 2 reads; and whether the file goes to tree-sitter.
+/// Tier 1's records, one a grammar token; the comments (the extras) apart, as the lean lexer keeps its comments; and
+/// whether the file goes to tree-sitter.
 pub struct Lexed {
     pub recs: Vec<Rec>,
     pub extras: Vec<Rec>,
-    pub masks: Masks,
     pub refused: bool,
 }
+
+// Tier 2's reads of the region tokens it reads in parts (decision 0703 step 16), of the bytes.
+/// The regions, by their order in `regions` (the walk's), and each reader's, in that order.
+#[allow(non_upper_case_globals, dead_code)]
+pub mod regions {
+    pub const k_line: u8 = 0;
+    pub const k_block: u8 = 1;
+    pub const k_rstr: u8 = 2;
+    pub const k_str: u8 = 3;
+    pub const k_rstr2: u8 = 4;
+    pub const k_str2: u8 = 5;
+    pub const k_chr: u8 = 6;
+    pub const k_tick: u8 = 7;
+    pub const k_tail: u8 = 8;
+    pub const k_rtail: u8 = 9;
+    pub const k_tail2: u8 = 10;
+    pub const k_rtail2: u8 = 11;
+    pub const READER_0: &[u8] = &[k_rstr, k_str, k_rstr2, k_str2];
+    pub const READER_1: &[u8] = &[k_tail, k_rtail, k_tail2, k_rtail2];
+    pub const READER_2: &[u8] = &[k_chr];
+}
+
+/// The fields tier 2 reads a region token's parts by.
+#[allow(non_upper_case_globals, dead_code)]
+pub mod fields {
+    pub const rd0_close: u8 = 0;
+    pub const o_str: u8 = 1;
+    pub const o_rstr: u8 = 2;
+    pub const o_str2: u8 = 3;
+    pub const o_rstr2: u8 = 4;
+    pub const t_dollar: u8 = 5;
+    pub const t2_dollar: u8 = 6;
+    pub const rd0_part0: u8 = 7;
+    pub const r_start: u8 = 8;
+    pub const rd0_part1_last: u8 = 9;
+    pub const r_lead: u8 = 10;
+    pub const id_dollar: u8 = 11;
+    pub const rd0_part4: u8 = 12;
+    pub const id_last: u8 = 13;
+    pub const lone1: u8 = 14;
+    pub const d_first: u8 = 15;
+    pub const d_last: u8 = 16;
+    pub const rd0_part7: u8 = 17;
+    pub const rd0_part8: u8 = 18;
+    pub const id2: u8 = 19;
+    pub const extra2: u8 = 20;
+    pub const d2_first: u8 = 21;
+    pub const d2_last: u8 = 22;
+    pub const rd0_open: u8 = 23;
+    pub const rd1_close: u8 = 24;
+    pub const o_tail: u8 = 25;
+    pub const o_rtail: u8 = 26;
+    pub const o_tail2: u8 = 27;
+    pub const o_rtail2: u8 = 28;
+    pub const rd1_closes0: u8 = 29;
+    pub const rd1_closes1: u8 = 30;
+    pub const rd1_open: u8 = 31;
+    pub const sq_close: u8 = 32;
+    pub const c_uesc: u8 = 33;
+    pub const rd2_part1: u8 = 34;
+    pub const rd2_part2: u8 = 35;
+    pub const o_chr: u8 = 36;
+}
+
+/// A region token tier 2 reads in parts: its region `k`, its opener's first byte `s`, its closer's first `c`, its last
+/// byte `last`.
+#[derive(Clone, Copy)]
+pub struct Span {
+    pub k: u8,
+    pub s: usize,
+    pub c: usize,
+    pub last: usize,
+}
+
+/// Region `k`'s token from its opener `s`, as the walk reads it: none where its opener does not hold there, or no
+/// closer follows.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[allow(unused_variables)]
+unsafe fn span_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> Option<Span> {
+    let n = src.len();
+    match k {
+        3 => {
+            // `str`
+            if !((((src[s] == b'"') && !at_dq3(src, n, s)) && !at_q2(src, n, s))) {
+                return None;
+            }
+            let c = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t6::<S>(src, n, p, esc) })?;
+            Some(Span { k, s, c, last: if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 } })
+        }
+        2 => {
+            // `rstr`
+            if !((at_dq3(src, n, s) && !at_q2(src, n, s))) {
+                return None;
+            }
+            let c = wfirst_bit(n, s + 3, |p: isize, esc: &mut u64| unsafe { w_t4::<S>(src, n, p, esc) })?;
+            Some(Span { k, s, c, last: if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 0 } else { c + 2 } } })
+        }
+        5 => {
+            // `str2`
+            if !((((src[s] == b'"') && !at_dq3(src, n, s)) && at_q2(src, n, s))) {
+                return None;
+            }
+            let c = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t10::<S>(src, n, p, esc) })?;
+            Some(Span { k, s, c, last: if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 } } })
+        }
+        4 => {
+            // `rstr2`
+            if !((at_dq3(src, n, s) && at_q2(src, n, s))) {
+                return None;
+            }
+            let c = wfirst_bit(n, s + 3, |p: isize, esc: &mut u64| unsafe { w_t8::<S>(src, n, p, esc) })?;
+            Some(Span { k, s, c, last: if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 2 } } })
+        }
+        8 => {
+            // `tail`
+            if !((src[s] == b'}')) {
+                return None;
+            }
+            let c = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t6::<S>(src, n, p, esc) })?;
+            Some(Span { k, s, c, last: if (((c < n && (src[c] == b'"')) && (c < n && !af_1(src, n, c)))) { c + 0 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 } })
+        }
+        9 => {
+            // `rtail`
+            if !((src[s] == b'}')) {
+                return None;
+            }
+            let c = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t4::<S>(src, n, p, esc) })?;
+            Some(Span { k, s, c, last: if ((at_dq3(src, n, c) && (c < n && !(c + 3 < n && (src[c + 3] == b'"'))))) { c + 2 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 0 } else { c + 2 } } })
+        }
+        10 => {
+            // `tail2`
+            if !((src[s] == b'}')) {
+                return None;
+            }
+            let c = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t10::<S>(src, n, p, esc) })?;
+            Some(Span { k, s, c, last: if (((c < n && (src[c] == b'"')) && (c < n && !af_1(src, n, c)))) { c + 0 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 } } })
+        }
+        11 => {
+            // `rtail2`
+            if !((src[s] == b'}')) {
+                return None;
+            }
+            let c = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t8::<S>(src, n, p, esc) })?;
+            Some(Span { k, s, c, last: if ((at_dq3(src, n, c) && (c < n && !(c + 3 < n && (src[c + 3] == b'"'))))) { c + 2 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 2 } } })
+        }
+        6 => {
+            // `chr`
+            if !((src[s] == b'\'')) {
+                return None;
+            }
+            let c = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_sq_close::<S>(src, n, p, esc) })?;
+            Some(Span { k, s, c, last: c + 0 })
+        }
+        _ => None,
+    }
+}
+
+rerail_simd8::dispatch! {
+    /// Region `k`'s token from its opener `s` (`span_on`).
+    pub fn span(src: &[u8], k: u8, s: usize) -> Option<Span> = span_on, on span_on_best;
+}
+
+/// Whether region `k`'s opener holds at byte `s`.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[allow(unused_variables)]
+unsafe fn opens_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> bool {
+    let n = src.len();
+    match k {
+        // `str`
+        3 => ((((src[s] == b'"') && !at_dq3(src, n, s)) && !at_q2(src, n, s))),
+        // `rstr`
+        2 => ((at_dq3(src, n, s) && !at_q2(src, n, s))),
+        // `str2`
+        5 => ((((src[s] == b'"') && !at_dq3(src, n, s)) && at_q2(src, n, s))),
+        // `rstr2`
+        4 => ((at_dq3(src, n, s) && at_q2(src, n, s))),
+        // `tail`
+        8 => ((src[s] == b'}')),
+        // `rtail`
+        9 => ((src[s] == b'}')),
+        // `tail2`
+        10 => ((src[s] == b'}')),
+        // `rtail2`
+        11 => ((src[s] == b'}')),
+        // `chr`
+        6 => ((src[s] == b'\'')),
+        _ => false,
+    }
+}
+
+rerail_simd8::dispatch! {
+    /// Whether region `k`'s opener holds at byte `s` (`opens_on`).
+    pub fn opens(src: &[u8], k: u8, s: usize) -> bool = opens_on, on opens_on_best;
+}
+
+/// The token of the first region of `ks` (in the walk's order) whose opener holds at `s`.
+pub fn open_at(src: &[u8], ks: &[u8], s: usize) -> Option<Span> {
+    ks.iter().find(|&&k| opens(src, k, s)).and_then(|&k| span(src, k, s))
+}
+
+/// Field `f`'s bits at the 64 bytes from `p` (a multiple of 64) in region token `sp`, as tier 1 wrote them over the token.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[allow(unused_variables, unused_mut)]
+unsafe fn field_on<S: rerail_simd8::Simd8x64>(f: u8, src: &[u8], sp: Span, p: usize) -> u64 {
+    let n = src.len();
+    let Span { k, s, c, last } = sp;
+    let mut fwin = 0u64;
+    match f {
+        0 => {
+            // `rd0_close`
+            win_put(&mut fwin, p, p, p + 63, |p: isize, esc: &mut u64| unsafe { w_t162::<S>(src, n, p, esc) });
+            match k {
+                0 => {
+                    win_clear(&mut fwin, p, s, s);
+                    win_clear(&mut fwin, p, c, last);
+                }
+                1 => {
+                    win_clear(&mut fwin, p, s, s);
+                    win_clear(&mut fwin, p, c, last);
+                }
+                2 => {
+                    win_put(&mut fwin, p, s, s, |p: isize, esc: &mut u64| unsafe { w_m_rclose::<S>(src, n, p, esc) });
+                    win_clear(&mut fwin, p, s + 1, (s + 2).min(c - 1));
+                    win_put(&mut fwin, p, s + 3, c - 1, |p: isize, esc: &mut u64| unsafe { w_t4::<S>(src, n, p, esc) });
+                    match c - s {
+                        1 => {
+                            win_put(&mut fwin, p, c, c, |p: isize, esc: &mut u64| unsafe { w_t163::<S>(src, n, p, esc) });
+                            win_put(&mut fwin, p, c + 1, (c + 1).min(last), |p: isize, esc: &mut u64| unsafe { w_t163::<S>(src, n, p, esc) });
+                        }
+                        2 => {
+                            win_put(&mut fwin, p, c, c, |p: isize, esc: &mut u64| unsafe { w_t163::<S>(src, n, p, esc) });
+                        }
+                        _ => {}
+                    }
+                }
+                3 => {
+                    win_put(&mut fwin, p, s, s, |p: isize, esc: &mut u64| unsafe { w_m_dq_close::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t6::<S>(src, n, p, esc) });
+                }
+                4 => {
+                    win_put(&mut fwin, p, s, s, |p: isize, esc: &mut u64| unsafe { w_m_rclose::<S>(src, n, p, esc) });
+                    win_clear(&mut fwin, p, s + 1, (s + 2).min(c - 1));
+                    win_put(&mut fwin, p, s + 3, c - 1, |p: isize, esc: &mut u64| unsafe { w_t8::<S>(src, n, p, esc) });
+                    match c - s {
+                        1 => {
+                            win_put(&mut fwin, p, c, c, |p: isize, esc: &mut u64| unsafe { w_t164::<S>(src, n, p, esc) });
+                            win_put(&mut fwin, p, c + 1, (c + 1).min(last), |p: isize, esc: &mut u64| unsafe { w_t164::<S>(src, n, p, esc) });
+                        }
+                        2 => {
+                            win_put(&mut fwin, p, c, c, |p: isize, esc: &mut u64| unsafe { w_t164::<S>(src, n, p, esc) });
+                        }
+                        _ => {}
+                    }
+                }
+                5 => {
+                    win_put(&mut fwin, p, s, s, |p: isize, esc: &mut u64| unsafe { w_m_dq_close::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t10::<S>(src, n, p, esc) });
+                }
+                6 => {
+                    win_clear(&mut fwin, p, s, s);
+                    win_clear(&mut fwin, p, c, last);
+                }
+                7 => {
+                    win_clear(&mut fwin, p, s, s);
+                    win_clear(&mut fwin, p, c, last);
+                }
+                8 => {
+                    win_clear(&mut fwin, p, s, s);
+                }
+                9 => {
+                    win_clear(&mut fwin, p, s, s);
+                }
+                10 => {
+                    win_clear(&mut fwin, p, s, s);
+                }
+                11 => {
+                    win_clear(&mut fwin, p, s, s);
+                }
+                _ => {}
+            }
+        }
+        1 => {
+            // `o_str`
+            match k {
+                3 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                _ => {}
+            }
+        }
+        2 => {
+            // `o_rstr`
+            match k {
+                2 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                _ => {}
+            }
+        }
+        3 => {
+            // `o_str2`
+            match k {
+                5 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                _ => {}
+            }
+        }
+        4 => {
+            // `o_rstr2`
+            match k {
+                4 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                _ => {}
+            }
+        }
+        5 => {
+            // `t_dollar`
+            win_put(&mut fwin, p, p, p + 63, |p: isize, esc: &mut u64| unsafe { w_m_t_dollar::<S>(src, n, p, esc) });
+        }
+        6 => {
+            // `t2_dollar`
+            win_put(&mut fwin, p, p, p + 63, |p: isize, esc: &mut u64| unsafe { w_m_t2_dollar::<S>(src, n, p, esc) });
+        }
+        7 => {
+            // `rd0_part0`
+            match k {
+                2 => {
+                    win_set(&mut fwin, p, s + 1, (s + 1).min(c - 1) + 1);
+                    if c - s == 1 {
+                        win_set(&mut fwin, p, c, c + 1);
+                    }
+                }
+                4 => {
+                    win_set(&mut fwin, p, s + 1, (s + 1).min(c - 1) + 1);
+                    if c - s == 1 {
+                        win_set(&mut fwin, p, c, c + 1);
+                    }
+                }
+                _ => {}
+            }
+        }
+        8 => {
+            // `r_start`
+            match k {
+                2 => {
+                    win_put(&mut fwin, p, s + 3, (s + 3).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t165::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, s + 4, c - 1, |p: isize, esc: &mut u64| unsafe { w_t170::<S>(src, n, p, esc) });
+                }
+                4 => {
+                    win_put(&mut fwin, p, s + 3, (s + 3).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t172::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, s + 4, c - 1, |p: isize, esc: &mut u64| unsafe { w_t177::<S>(src, n, p, esc) });
+                }
+                9 => {
+                    win_put(&mut fwin, p, s + 1, (s + 1).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t165::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t170::<S>(src, n, p, esc) });
+                }
+                11 => {
+                    win_put(&mut fwin, p, s + 1, (s + 1).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t172::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t177::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        9 => {
+            // `rd0_part1_last`
+            match k {
+                2 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t179::<S>(src, n, p, esc) });
+                    if s + 1 < c {
+                        win_clear(&mut fwin, p, s + 1, s + 1);
+                    }
+                    if s + 2 < c {
+                        win_clear(&mut fwin, p, s + 2, s + 2);
+                    }
+                    if s + 3 < c {
+                        match c - s - 3 {
+                            1 => { win_put(&mut fwin, p, s + 3, s + 3, |p: isize, esc: &mut u64| unsafe { w_t178::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if s + 4 < c {
+                        match c - s - 4 {
+                            1 => { win_put(&mut fwin, p, s + 4, s + 4, |p: isize, esc: &mut u64| unsafe { w_t178::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if c > s + 5 {
+                        win_put(&mut fwin, p, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t178::<S>(src, n, p, esc) });
+                    }
+                }
+                4 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t181::<S>(src, n, p, esc) });
+                    if s + 1 < c {
+                        win_clear(&mut fwin, p, s + 1, s + 1);
+                    }
+                    if s + 2 < c {
+                        win_clear(&mut fwin, p, s + 2, s + 2);
+                    }
+                    if s + 3 < c {
+                        match c - s - 3 {
+                            1 => { win_put(&mut fwin, p, s + 3, s + 3, |p: isize, esc: &mut u64| unsafe { w_t180::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if s + 4 < c {
+                        match c - s - 4 {
+                            1 => { win_put(&mut fwin, p, s + 4, s + 4, |p: isize, esc: &mut u64| unsafe { w_t180::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if c > s + 5 {
+                        win_put(&mut fwin, p, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t180::<S>(src, n, p, esc) });
+                    }
+                }
+                9 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t179::<S>(src, n, p, esc) });
+                    if c > s + 1 {
+                        win_put(&mut fwin, p, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t178::<S>(src, n, p, esc) });
+                    }
+                }
+                11 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t181::<S>(src, n, p, esc) });
+                    if c > s + 1 {
+                        win_put(&mut fwin, p, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t180::<S>(src, n, p, esc) });
+                    }
+                }
+                _ => {}
+            }
+        }
+        10 => {
+            // `r_lead`
+            match k {
+                2 => {
+                    win_put(&mut fwin, p, s + 3, c - 1, |p: isize, esc: &mut u64| unsafe { w_t182::<S>(src, n, p, esc) });
+                }
+                4 => {
+                    win_put(&mut fwin, p, s + 3, c - 1, |p: isize, esc: &mut u64| unsafe { w_t182::<S>(src, n, p, esc) });
+                }
+                9 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t182::<S>(src, n, p, esc) });
+                }
+                11 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t182::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        11 => {
+            // `id_dollar`
+            match k {
+                2 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t74::<S>(src, n, p, esc) });
+                }
+                3 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t74::<S>(src, n, p, esc) });
+                }
+                8 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t74::<S>(src, n, p, esc) });
+                }
+                9 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t74::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        12 => {
+            // `rd0_part4`
+            match k {
+                2 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t167::<S>(src, n, p, esc) });
+                }
+                3 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t167::<S>(src, n, p, esc) });
+                }
+                4 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t174::<S>(src, n, p, esc) });
+                }
+                5 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t174::<S>(src, n, p, esc) });
+                }
+                8 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t167::<S>(src, n, p, esc) });
+                }
+                9 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t167::<S>(src, n, p, esc) });
+                }
+                10 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t174::<S>(src, n, p, esc) });
+                }
+                11 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t174::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        13 => {
+            // `id_last`
+            match k {
+                2 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
+                }
+                3 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
+                }
+                4 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
+                }
+                5 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
+                }
+                8 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
+                }
+                9 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
+                }
+                10 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
+                }
+                11 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        14 => {
+            // `lone1`
+            match k {
+                2 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t183::<S>(src, n, p, esc) });
+                }
+                3 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t183::<S>(src, n, p, esc) });
+                }
+                8 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t183::<S>(src, n, p, esc) });
+                }
+                9 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t183::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        15 => {
+            // `d_first`
+            match k {
+                2 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t184::<S>(src, n, p, esc) });
+                }
+                3 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t184::<S>(src, n, p, esc) });
+                }
+                8 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t184::<S>(src, n, p, esc) });
+                }
+                9 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t184::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        16 => {
+            // `d_last`
+            match k {
+                2 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t186::<S>(src, n, p, esc) });
+                    if c > s + 1 {
+                        win_put(&mut fwin, p, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t185::<S>(src, n, p, esc) });
+                    }
+                }
+                3 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t186::<S>(src, n, p, esc) });
+                    if c > s + 1 {
+                        win_put(&mut fwin, p, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t185::<S>(src, n, p, esc) });
+                    }
+                }
+                8 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t186::<S>(src, n, p, esc) });
+                    if c > s + 1 {
+                        win_put(&mut fwin, p, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t185::<S>(src, n, p, esc) });
+                    }
+                }
+                9 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t186::<S>(src, n, p, esc) });
+                    if c > s + 1 {
+                        win_put(&mut fwin, p, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t185::<S>(src, n, p, esc) });
+                    }
+                }
+                _ => {}
+            }
+        }
+        17 => {
+            // `rd0_part7`
+            match k {
+                3 => {
+                    win_put(&mut fwin, p, s + 1, (s + 1).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t187::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t188::<S>(src, n, p, esc) });
+                }
+                5 => {
+                    win_put(&mut fwin, p, s + 1, (s + 1).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t187::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t190::<S>(src, n, p, esc) });
+                }
+                8 => {
+                    win_put(&mut fwin, p, s + 1, (s + 1).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t187::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t188::<S>(src, n, p, esc) });
+                }
+                10 => {
+                    win_put(&mut fwin, p, s + 1, (s + 1).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t187::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t190::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        18 => {
+            // `rd0_part8`
+            match k {
+                3 => {
+                    win_put(&mut fwin, p, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t192::<S>(src, n, p, esc) });
+                }
+                5 => {
+                    win_put(&mut fwin, p, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t193::<S>(src, n, p, esc) });
+                }
+                8 => {
+                    win_put(&mut fwin, p, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t192::<S>(src, n, p, esc) });
+                }
+                10 => {
+                    win_put(&mut fwin, p, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t193::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        19 => {
+            // `id2`
+            match k {
+                4 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t194::<S>(src, n, p, esc) });
+                }
+                5 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t194::<S>(src, n, p, esc) });
+                }
+                10 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t194::<S>(src, n, p, esc) });
+                }
+                11 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t194::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        20 => {
+            // `extra2`
+            match k {
+                4 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t195::<S>(src, n, p, esc) });
+                }
+                5 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t195::<S>(src, n, p, esc) });
+                }
+                10 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t195::<S>(src, n, p, esc) });
+                }
+                11 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t195::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        21 => {
+            // `d2_first`
+            match k {
+                4 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t196::<S>(src, n, p, esc) });
+                }
+                5 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t196::<S>(src, n, p, esc) });
+                }
+                10 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t196::<S>(src, n, p, esc) });
+                }
+                11 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t196::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        22 => {
+            // `d2_last`
+            match k {
+                4 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t200::<S>(src, n, p, esc) });
+                    if s + 1 < c {
+                        match c - s - 1 {
+                            1 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t198::<S>(src, n, p, esc) }); }
+                            2 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                            3 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                            4 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                            _ => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                        }
+                    }
+                    if s + 2 < c {
+                        match c - s - 2 {
+                            1 => { win_put(&mut fwin, p, s + 2, s + 2, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if s + 3 < c {
+                        match c - s - 3 {
+                            1 => { win_put(&mut fwin, p, s + 3, s + 3, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if s + 4 < c {
+                        match c - s - 4 {
+                            1 => { win_put(&mut fwin, p, s + 4, s + 4, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if c > s + 5 {
+                        win_put(&mut fwin, p, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) });
+                    }
+                }
+                5 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t200::<S>(src, n, p, esc) });
+                    if s + 1 < c {
+                        match c - s - 1 {
+                            1 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t198::<S>(src, n, p, esc) }); }
+                            2 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                            3 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                            4 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                            _ => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                        }
+                    }
+                    if s + 2 < c {
+                        match c - s - 2 {
+                            1 => { win_put(&mut fwin, p, s + 2, s + 2, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if s + 3 < c {
+                        match c - s - 3 {
+                            1 => { win_put(&mut fwin, p, s + 3, s + 3, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if s + 4 < c {
+                        match c - s - 4 {
+                            1 => { win_put(&mut fwin, p, s + 4, s + 4, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if c > s + 5 {
+                        win_put(&mut fwin, p, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) });
+                    }
+                }
+                10 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t200::<S>(src, n, p, esc) });
+                    if s + 1 < c {
+                        match c - s - 1 {
+                            1 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t198::<S>(src, n, p, esc) }); }
+                            2 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                            3 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                            4 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                            _ => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                        }
+                    }
+                    if s + 2 < c {
+                        match c - s - 2 {
+                            1 => { win_put(&mut fwin, p, s + 2, s + 2, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if s + 3 < c {
+                        match c - s - 3 {
+                            1 => { win_put(&mut fwin, p, s + 3, s + 3, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if s + 4 < c {
+                        match c - s - 4 {
+                            1 => { win_put(&mut fwin, p, s + 4, s + 4, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if c > s + 5 {
+                        win_put(&mut fwin, p, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) });
+                    }
+                }
+                11 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t200::<S>(src, n, p, esc) });
+                    if s + 1 < c {
+                        match c - s - 1 {
+                            1 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t198::<S>(src, n, p, esc) }); }
+                            2 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                            3 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                            4 => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                            _ => { win_put(&mut fwin, p, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
+                        }
+                    }
+                    if s + 2 < c {
+                        match c - s - 2 {
+                            1 => { win_put(&mut fwin, p, s + 2, s + 2, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if s + 3 < c {
+                        match c - s - 3 {
+                            1 => { win_put(&mut fwin, p, s + 3, s + 3, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if s + 4 < c {
+                        match c - s - 4 {
+                            1 => { win_put(&mut fwin, p, s + 4, s + 4, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
+                            _ => {}
+                        }
+                    }
+                    if c > s + 5 {
+                        win_put(&mut fwin, p, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) });
+                    }
+                }
+                _ => {}
+            }
+        }
+        23 => {
+            // `rd0_open`
+            match k {
+                2 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                3 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                4 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                5 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                _ => {}
+            }
+        }
+        24 => {
+            // `rd1_close`
+            win_put(&mut fwin, p, p, p + 63, |p: isize, esc: &mut u64| unsafe { w_t162::<S>(src, n, p, esc) });
+            match k {
+                0 => {
+                    win_clear(&mut fwin, p, s, s);
+                    win_clear(&mut fwin, p, c, last);
+                }
+                1 => {
+                    win_clear(&mut fwin, p, s, s);
+                    win_clear(&mut fwin, p, c, last);
+                }
+                2 => {
+                    win_put(&mut fwin, p, s, s, |p: isize, esc: &mut u64| unsafe { w_t201::<S>(src, n, p, esc) });
+                }
+                3 => {
+                    win_put(&mut fwin, p, s, s, |p: isize, esc: &mut u64| unsafe { w_t201::<S>(src, n, p, esc) });
+                }
+                4 => {
+                    win_put(&mut fwin, p, s, s, |p: isize, esc: &mut u64| unsafe { w_t201::<S>(src, n, p, esc) });
+                }
+                5 => {
+                    win_put(&mut fwin, p, s, s, |p: isize, esc: &mut u64| unsafe { w_t201::<S>(src, n, p, esc) });
+                }
+                6 => {
+                    win_clear(&mut fwin, p, s, s);
+                    win_clear(&mut fwin, p, c, last);
+                }
+                7 => {
+                    win_clear(&mut fwin, p, s, s);
+                    win_clear(&mut fwin, p, c, last);
+                }
+                8 => {
+                    win_clear(&mut fwin, p, s, s);
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t6::<S>(src, n, p, esc) });
+                }
+                9 => {
+                    win_clear(&mut fwin, p, s, s);
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t4::<S>(src, n, p, esc) });
+                }
+                10 => {
+                    win_clear(&mut fwin, p, s, s);
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t10::<S>(src, n, p, esc) });
+                }
+                11 => {
+                    win_clear(&mut fwin, p, s, s);
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t8::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        25 => {
+            // `o_tail`
+            match k {
+                8 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                _ => {}
+            }
+        }
+        26 => {
+            // `o_rtail`
+            match k {
+                9 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                _ => {}
+            }
+        }
+        27 => {
+            // `o_tail2`
+            match k {
+                10 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                _ => {}
+            }
+        }
+        28 => {
+            // `o_rtail2`
+            match k {
+                11 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                _ => {}
+            }
+        }
+        29 => {
+            // `rd1_closes0`
+            match k {
+                8 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_m_dq_close::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, c, last, |p: isize, esc: &mut u64| unsafe { w_m_dq_close::<S>(src, n, p, esc) });
+                }
+                10 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_m_dq_close::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, c, last, |p: isize, esc: &mut u64| unsafe { w_m_dq_close::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        30 => {
+            // `rd1_closes1`
+            match k {
+                9 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_m_rclose::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, c, c, |p: isize, esc: &mut u64| unsafe { w_m_rclose::<S>(src, n, p, esc) });
+                }
+                11 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_m_rclose::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, c, c, |p: isize, esc: &mut u64| unsafe { w_m_rclose::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        31 => {
+            // `rd1_open`
+            match k {
+                8 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                9 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                10 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                11 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                _ => {}
+            }
+        }
+        32 => {
+            // `sq_close`
+            win_put(&mut fwin, p, p, p + 63, |p: isize, esc: &mut u64| unsafe { w_m_sq_close::<S>(src, n, p, esc) });
+        }
+        33 => {
+            // `c_uesc`
+            match k {
+                6 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t77::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        34 => {
+            // `rd2_part1`
+            match k {
+                6 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t202::<S>(src, n, p, esc) });
+                    win_put(&mut fwin, p, c, last, |p: isize, esc: &mut u64| unsafe { w_t202::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        35 => {
+            // `rd2_part2`
+            match k {
+                6 => {
+                    win_put(&mut fwin, p, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t203::<S>(src, n, p, esc) });
+                }
+                _ => {}
+            }
+        }
+        36 => {
+            // `o_chr`
+            match k {
+                6 => {
+                    win_set(&mut fwin, p, s, s + 1);
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+    fwin
+}
+
+rerail_simd8::dispatch! {
+    /// Field `f`'s bits at the 64 bytes from `p` in region token `sp` (`field_on`).
+    pub fn field(f: u8, src: &[u8], sp: Span, p: usize) -> u64 = field_on, on field_on_best;
+}
+
+/// Word `v` of the 64 bytes from `p`: its bits at bytes `a..=b` those of the windows `w` gives (`wput`'s).
+#[inline(always)]
+fn win_put(v: &mut u64, p: usize, a: usize, b: usize, mut w: impl FnMut(isize, &mut u64) -> u64) {
+    let (a, b) = (a.max(p), b.min(p + 63));
+    if a > b {
+        return;
+    }
+    let m = (if b - a == 63 { !0 } else { (1u64 << (b - a + 1)) - 1 }) << (a - p);
+    *v = *v & !m | w(p as isize, &mut 0) & m;
+}
+
+/// Word `v` of the 64 bytes from `p`: its bits at bytes `a..b` set (`set`'s).
+#[inline(always)]
+fn win_set(v: &mut u64, p: usize, a: usize, b: usize) {
+    let (a, b) = (a.max(p), b.min(p + 64));
+    if a >= b {
+        return;
+    }
+    *v |= (if b - a == 64 { !0 } else { (1u64 << (b - a)) - 1 }) << (a - p);
+}
+
+/// Word `v` of the 64 bytes from `p`: its bits at bytes `a..=b` cleared (`clear`'s).
+#[inline(always)]
+fn win_clear(v: &mut u64, p: usize, a: usize, b: usize) {
+    let (a, b) = (a.max(p), b.min(p + 63));
+    if a > b {
+        return;
+    }
+    *v &= !((if b - a == 63 { !0 } else { (1u64 << (b - a + 1)) - 1 }) << (a - p));
+}
+
+// The end of tier 2's reads of the region tokens.
 
 /// Each byte's record kind, as a token's first byte.
 const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 19, 20, 21, 22, 2, 13, 3, 4, 6, 17, 18, 5, 7, 1, 9, 10, 8, 0, 0, 14, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 0, 0, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 16, 15, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16];
@@ -169,8 +1192,11 @@ struct Stage1 {
     m_esc_dollar: Vec<u64>,
     #[cfg(feature = "test-hooks")]
     m_dq_close: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_sq_close: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_t_dollar: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_t2_dollar: Vec<u64>,
     #[cfg(feature = "test-hooks")]
     m_t_lex: Vec<u64>,
@@ -378,8 +1404,6 @@ struct Stage1 {
     t232: Vec<u64>,
     #[cfg(feature = "test-hooks")]
     t233: Vec<u64>,
-    fw_rd0_close: Vec<u64>,
-    fw_rd1_close: Vec<u64>,
     refused: bool,
 }
 
@@ -741,7 +1765,7 @@ impl Stage1Run {
 impl Stage1 {
     /// The masks, no block made yet.
     fn new(nw: usize) -> Self {
-        Stage1 { #[cfg(feature = "test-hooks")] m_ws: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_lf: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_slash: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_word: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_alpha: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_digit: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dot: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_at_sign: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_semicolon: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_rbrace: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_gt: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_sq: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_bt: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_u_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_zero: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_x_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_b_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_e_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_f_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_sign: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_hexd: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_bind: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_backslash: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_lbrace: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_high: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_punct: vec![0u64; nw], #[cfg(feature = "test-hooks")] t0: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_line_open: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_block_open: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_block_end: vec![0u64; nw], #[cfg(feature = "test-hooks")] t1: vec![0u64; nw], #[cfg(feature = "test-hooks")] t2: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_esc_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq_close: vec![0u64; nw], m_sq_close: vec![0u64; nw], m_t_dollar: vec![0u64; nw], m_t2_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_t_lex: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq3: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_rclose: vec![0u64; nw], #[cfg(feature = "test-hooks")] t3: vec![0u64; nw], #[cfg(feature = "test-hooks")] t4: vec![0u64; nw], #[cfg(feature = "test-hooks")] t5: vec![0u64; nw], #[cfg(feature = "test-hooks")] t6: vec![0u64; nw], #[cfg(feature = "test-hooks")] t7: vec![0u64; nw], #[cfg(feature = "test-hooks")] t8: vec![0u64; nw], #[cfg(feature = "test-hooks")] t9: vec![0u64; nw], #[cfg(feature = "test-hooks")] t10: vec![0u64; nw], #[cfg(feature = "test-hooks")] t11: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_pre_at: vec![0u64; nw], #[cfg(feature = "test-hooks")] t12: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_d_start: vec![0u64; nw], #[cfg(feature = "test-hooks")] t15: vec![0u64; nw], #[cfg(feature = "test-hooks")] t18: vec![0u64; nw], #[cfg(feature = "test-hooks")] t20: vec![0u64; nw], #[cfg(feature = "test-hooks")] t22: vec![0u64; nw], #[cfg(feature = "test-hooks")] t24: vec![0u64; nw], #[cfg(feature = "test-hooks")] t37: vec![0u64; nw], #[cfg(feature = "test-hooks")] t38: vec![0u64; nw], #[cfg(feature = "test-hooks")] t41: vec![0u64; nw], #[cfg(feature = "test-hooks")] t42: vec![0u64; nw], #[cfg(feature = "test-hooks")] t43: vec![0u64; nw], #[cfg(feature = "test-hooks")] t44: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_two_start: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_two_start_three: vec![0u64; nw], #[cfg(feature = "test-hooks")] t56: vec![0u64; nw], #[cfg(feature = "test-hooks")] t55: vec![0u64; nw], #[cfg(feature = "test-hooks")] t57: vec![0u64; nw], #[cfg(feature = "test-hooks")] t58: vec![0u64; nw], #[cfg(feature = "test-hooks")] t59: vec![0u64; nw], #[cfg(feature = "test-hooks")] t60: vec![0u64; nw], #[cfg(feature = "test-hooks")] t61: vec![0u64; nw], #[cfg(feature = "test-hooks")] t63: vec![0u64; nw], #[cfg(feature = "test-hooks")] t64: vec![0u64; nw], #[cfg(feature = "test-hooks")] t65: vec![0u64; nw], #[cfg(feature = "test-hooks")] t66: vec![0u64; nw], #[cfg(feature = "test-hooks")] t67: vec![0u64; nw], #[cfg(feature = "test-hooks")] t68: vec![0u64; nw], #[cfg(feature = "test-hooks")] t69: vec![0u64; nw], #[cfg(feature = "test-hooks")] t71: vec![0u64; nw], #[cfg(feature = "test-hooks")] t74: vec![0u64; nw], #[cfg(feature = "test-hooks")] t72: vec![0u64; nw], #[cfg(feature = "test-hooks")] t75: vec![0u64; nw], #[cfg(feature = "test-hooks")] t77: vec![0u64; nw], #[cfg(feature = "test-hooks")] t76: vec![0u64; nw], #[cfg(feature = "test-hooks")] t78: vec![0u64; nw], #[cfg(feature = "test-hooks")] t79: vec![0u64; nw], #[cfg(feature = "test-hooks")] t81: vec![0u64; nw], #[cfg(feature = "test-hooks")] t82: vec![0u64; nw], #[cfg(feature = "test-hooks")] t102: vec![0u64; nw], #[cfg(feature = "test-hooks")] t103: vec![0u64; nw], #[cfg(feature = "test-hooks")] t121: vec![0u64; nw], #[cfg(feature = "test-hooks")] t130: vec![0u64; nw], #[cfg(feature = "test-hooks")] t141: vec![0u64; nw], #[cfg(feature = "test-hooks")] t142: vec![0u64; nw], #[cfg(feature = "test-hooks")] t143: vec![0u64; nw], #[cfg(feature = "test-hooks")] t163: vec![0u64; nw], #[cfg(feature = "test-hooks")] t164: vec![0u64; nw], #[cfg(feature = "test-hooks")] t167: vec![0u64; nw], #[cfg(feature = "test-hooks")] t169: vec![0u64; nw], #[cfg(feature = "test-hooks")] t165: vec![0u64; nw], #[cfg(feature = "test-hooks")] t170: vec![0u64; nw], #[cfg(feature = "test-hooks")] t174: vec![0u64; nw], #[cfg(feature = "test-hooks")] t172: vec![0u64; nw], #[cfg(feature = "test-hooks")] t177: vec![0u64; nw], #[cfg(feature = "test-hooks")] t178: vec![0u64; nw], #[cfg(feature = "test-hooks")] t179: vec![0u64; nw], #[cfg(feature = "test-hooks")] t180: vec![0u64; nw], #[cfg(feature = "test-hooks")] t181: vec![0u64; nw], #[cfg(feature = "test-hooks")] t182: vec![0u64; nw], #[cfg(feature = "test-hooks")] t183: vec![0u64; nw], #[cfg(feature = "test-hooks")] t185: vec![0u64; nw], #[cfg(feature = "test-hooks")] t184: vec![0u64; nw], #[cfg(feature = "test-hooks")] t186: vec![0u64; nw], #[cfg(feature = "test-hooks")] t187: vec![0u64; nw], #[cfg(feature = "test-hooks")] t188: vec![0u64; nw], #[cfg(feature = "test-hooks")] t190: vec![0u64; nw], #[cfg(feature = "test-hooks")] t192: vec![0u64; nw], #[cfg(feature = "test-hooks")] t193: vec![0u64; nw], #[cfg(feature = "test-hooks")] t194: vec![0u64; nw], #[cfg(feature = "test-hooks")] t195: vec![0u64; nw], #[cfg(feature = "test-hooks")] t197: vec![0u64; nw], #[cfg(feature = "test-hooks")] t196: vec![0u64; nw], #[cfg(feature = "test-hooks")] t198: vec![0u64; nw], #[cfg(feature = "test-hooks")] t199: vec![0u64; nw], #[cfg(feature = "test-hooks")] t200: vec![0u64; nw], #[cfg(feature = "test-hooks")] t201: vec![0u64; nw], #[cfg(feature = "test-hooks")] t202: vec![0u64; nw], #[cfg(feature = "test-hooks")] t203: vec![0u64; nw], #[cfg(feature = "test-hooks")] t204: vec![0u64; nw], #[cfg(feature = "test-hooks")] t205: vec![0u64; nw], #[cfg(feature = "test-hooks")] t217: vec![0u64; nw], #[cfg(feature = "test-hooks")] t218: vec![0u64; nw], #[cfg(feature = "test-hooks")] t219: vec![0u64; nw], #[cfg(feature = "test-hooks")] t220: vec![0u64; nw], #[cfg(feature = "test-hooks")] t225: vec![0u64; nw], #[cfg(feature = "test-hooks")] t226: vec![0u64; nw], #[cfg(feature = "test-hooks")] t231: vec![0u64; nw], #[cfg(feature = "test-hooks")] t232: vec![0u64; nw], #[cfg(feature = "test-hooks")] t233: vec![0u64; nw], fw_rd0_close: vec![0u64; nw], fw_rd1_close: vec![0u64; nw], refused: Default::default() }
+        Stage1 { #[cfg(feature = "test-hooks")] m_ws: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_lf: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_slash: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_word: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_alpha: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_digit: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dot: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_at_sign: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_semicolon: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_rbrace: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_gt: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_sq: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_bt: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_u_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_zero: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_x_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_b_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_e_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_f_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_sign: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_hexd: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_bind: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_backslash: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_lbrace: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_high: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_punct: vec![0u64; nw], #[cfg(feature = "test-hooks")] t0: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_line_open: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_block_open: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_block_end: vec![0u64; nw], #[cfg(feature = "test-hooks")] t1: vec![0u64; nw], #[cfg(feature = "test-hooks")] t2: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_esc_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq_close: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_sq_close: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_t_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_t2_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_t_lex: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq3: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_rclose: vec![0u64; nw], #[cfg(feature = "test-hooks")] t3: vec![0u64; nw], #[cfg(feature = "test-hooks")] t4: vec![0u64; nw], #[cfg(feature = "test-hooks")] t5: vec![0u64; nw], #[cfg(feature = "test-hooks")] t6: vec![0u64; nw], #[cfg(feature = "test-hooks")] t7: vec![0u64; nw], #[cfg(feature = "test-hooks")] t8: vec![0u64; nw], #[cfg(feature = "test-hooks")] t9: vec![0u64; nw], #[cfg(feature = "test-hooks")] t10: vec![0u64; nw], #[cfg(feature = "test-hooks")] t11: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_pre_at: vec![0u64; nw], #[cfg(feature = "test-hooks")] t12: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_d_start: vec![0u64; nw], #[cfg(feature = "test-hooks")] t15: vec![0u64; nw], #[cfg(feature = "test-hooks")] t18: vec![0u64; nw], #[cfg(feature = "test-hooks")] t20: vec![0u64; nw], #[cfg(feature = "test-hooks")] t22: vec![0u64; nw], #[cfg(feature = "test-hooks")] t24: vec![0u64; nw], #[cfg(feature = "test-hooks")] t37: vec![0u64; nw], #[cfg(feature = "test-hooks")] t38: vec![0u64; nw], #[cfg(feature = "test-hooks")] t41: vec![0u64; nw], #[cfg(feature = "test-hooks")] t42: vec![0u64; nw], #[cfg(feature = "test-hooks")] t43: vec![0u64; nw], #[cfg(feature = "test-hooks")] t44: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_two_start: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_two_start_three: vec![0u64; nw], #[cfg(feature = "test-hooks")] t56: vec![0u64; nw], #[cfg(feature = "test-hooks")] t55: vec![0u64; nw], #[cfg(feature = "test-hooks")] t57: vec![0u64; nw], #[cfg(feature = "test-hooks")] t58: vec![0u64; nw], #[cfg(feature = "test-hooks")] t59: vec![0u64; nw], #[cfg(feature = "test-hooks")] t60: vec![0u64; nw], #[cfg(feature = "test-hooks")] t61: vec![0u64; nw], #[cfg(feature = "test-hooks")] t63: vec![0u64; nw], #[cfg(feature = "test-hooks")] t64: vec![0u64; nw], #[cfg(feature = "test-hooks")] t65: vec![0u64; nw], #[cfg(feature = "test-hooks")] t66: vec![0u64; nw], #[cfg(feature = "test-hooks")] t67: vec![0u64; nw], #[cfg(feature = "test-hooks")] t68: vec![0u64; nw], #[cfg(feature = "test-hooks")] t69: vec![0u64; nw], #[cfg(feature = "test-hooks")] t71: vec![0u64; nw], #[cfg(feature = "test-hooks")] t74: vec![0u64; nw], #[cfg(feature = "test-hooks")] t72: vec![0u64; nw], #[cfg(feature = "test-hooks")] t75: vec![0u64; nw], #[cfg(feature = "test-hooks")] t77: vec![0u64; nw], #[cfg(feature = "test-hooks")] t76: vec![0u64; nw], #[cfg(feature = "test-hooks")] t78: vec![0u64; nw], #[cfg(feature = "test-hooks")] t79: vec![0u64; nw], #[cfg(feature = "test-hooks")] t81: vec![0u64; nw], #[cfg(feature = "test-hooks")] t82: vec![0u64; nw], #[cfg(feature = "test-hooks")] t102: vec![0u64; nw], #[cfg(feature = "test-hooks")] t103: vec![0u64; nw], #[cfg(feature = "test-hooks")] t121: vec![0u64; nw], #[cfg(feature = "test-hooks")] t130: vec![0u64; nw], #[cfg(feature = "test-hooks")] t141: vec![0u64; nw], #[cfg(feature = "test-hooks")] t142: vec![0u64; nw], #[cfg(feature = "test-hooks")] t143: vec![0u64; nw], #[cfg(feature = "test-hooks")] t163: vec![0u64; nw], #[cfg(feature = "test-hooks")] t164: vec![0u64; nw], #[cfg(feature = "test-hooks")] t167: vec![0u64; nw], #[cfg(feature = "test-hooks")] t169: vec![0u64; nw], #[cfg(feature = "test-hooks")] t165: vec![0u64; nw], #[cfg(feature = "test-hooks")] t170: vec![0u64; nw], #[cfg(feature = "test-hooks")] t174: vec![0u64; nw], #[cfg(feature = "test-hooks")] t172: vec![0u64; nw], #[cfg(feature = "test-hooks")] t177: vec![0u64; nw], #[cfg(feature = "test-hooks")] t178: vec![0u64; nw], #[cfg(feature = "test-hooks")] t179: vec![0u64; nw], #[cfg(feature = "test-hooks")] t180: vec![0u64; nw], #[cfg(feature = "test-hooks")] t181: vec![0u64; nw], #[cfg(feature = "test-hooks")] t182: vec![0u64; nw], #[cfg(feature = "test-hooks")] t183: vec![0u64; nw], #[cfg(feature = "test-hooks")] t185: vec![0u64; nw], #[cfg(feature = "test-hooks")] t184: vec![0u64; nw], #[cfg(feature = "test-hooks")] t186: vec![0u64; nw], #[cfg(feature = "test-hooks")] t187: vec![0u64; nw], #[cfg(feature = "test-hooks")] t188: vec![0u64; nw], #[cfg(feature = "test-hooks")] t190: vec![0u64; nw], #[cfg(feature = "test-hooks")] t192: vec![0u64; nw], #[cfg(feature = "test-hooks")] t193: vec![0u64; nw], #[cfg(feature = "test-hooks")] t194: vec![0u64; nw], #[cfg(feature = "test-hooks")] t195: vec![0u64; nw], #[cfg(feature = "test-hooks")] t197: vec![0u64; nw], #[cfg(feature = "test-hooks")] t196: vec![0u64; nw], #[cfg(feature = "test-hooks")] t198: vec![0u64; nw], #[cfg(feature = "test-hooks")] t199: vec![0u64; nw], #[cfg(feature = "test-hooks")] t200: vec![0u64; nw], #[cfg(feature = "test-hooks")] t201: vec![0u64; nw], #[cfg(feature = "test-hooks")] t202: vec![0u64; nw], #[cfg(feature = "test-hooks")] t203: vec![0u64; nw], #[cfg(feature = "test-hooks")] t204: vec![0u64; nw], #[cfg(feature = "test-hooks")] t205: vec![0u64; nw], #[cfg(feature = "test-hooks")] t217: vec![0u64; nw], #[cfg(feature = "test-hooks")] t218: vec![0u64; nw], #[cfg(feature = "test-hooks")] t219: vec![0u64; nw], #[cfg(feature = "test-hooks")] t220: vec![0u64; nw], #[cfg(feature = "test-hooks")] t225: vec![0u64; nw], #[cfg(feature = "test-hooks")] t226: vec![0u64; nw], #[cfg(feature = "test-hooks")] t231: vec![0u64; nw], #[cfg(feature = "test-hooks")] t232: vec![0u64; nw], #[cfg(feature = "test-hooks")] t233: vec![0u64; nw], refused: Default::default() }
     }
 }
 
@@ -1173,6 +2197,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // mask sq_close = sq & ~escaped(backslash)
             let v_m_sq_close = v_m_sq & (!st.v_t1 & lv);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_sq_close[q] = v_m_sq_close;
             }
@@ -1503,6 +2528,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             let p_m_t_dollar = st.v_m_t_dollar;
             // mask t_dollar = ((dollar & next(lbrace)) & ~escaped(bs)) & ~prev(esc_dollar)
             st.v_m_t_dollar = st.p_m_dollar & (st.p_m_lbrace >> 1 | st.v_m_lbrace << 63) & (!st.p_t2 & lv) & (!(st.p_m_esc_dollar << 1 | st.r_m_esc_dollar[(q + RING - 1) % RING] >> 63) & lv);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_t_dollar[q] = st.v_m_t_dollar;
             }
@@ -1510,6 +2536,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             // mask t2_dollar = (((dollar & next(dollar)) & next(lbrace, 2)) & ~escaped(bs)) & ~prev(esc_dollar)
             st.v_m_t2_dollar = st.p_m_dollar & (st.p_m_dollar >> 1 | st.v_m_dollar << 63) & (st.p_m_lbrace >> 2 | st.v_m_lbrace << 62) & (!st.p_t2 & lv) & (!(st.p_m_esc_dollar << 1 | st.r_m_esc_dollar[(q + RING - 1) % RING] >> 63) & lv);
             st.r_m_t2_dollar[q % RING] = st.v_m_t2_dollar;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_t2_dollar[q] = st.v_m_t2_dollar;
             }
@@ -1835,12 +2862,6 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t143[q] = v_t143;
-            }
-            // (((dq_close | t_dollar) | (rclose | t_dollar)) | (dq_close | t2_dollar)) | (rclose | t2_dollar)
-            let v_t162 = ((((st.p_m_dq_close | st.v_m_t_dollar) | (v_m_rclose | st.v_m_t_dollar)) | (st.p_m_dq_close | st.v_m_t2_dollar)) | (v_m_rclose | st.v_m_t2_dollar));
-            if q < nw {
-                o.fw_rd0_close[q] = v_t162;
-                o.fw_rd1_close[q] = v_t162;
             }
             // ((dq_close | t_dollar) | (dq_close | t2_dollar)) | (rclose | t2_dollar)
             let v_t163 = (((st.p_m_dq_close | st.v_m_t_dollar) | (st.p_m_dq_close | st.v_m_t2_dollar)) | (v_m_rclose | st.v_m_t2_dollar));
@@ -2322,6 +3343,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
     let n = src.len();
     let nw = n.div_ceil(64);
     // Each word's bits inside the file.
+    #[cfg(feature = "test-hooks")]
     let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();
     // Stage 1: the masks the regions and the tokens read, and whether an escape holds.
     // Stage 1, made as the token loop comes to its blocks (decision 0703): its state and its masks.
@@ -3050,76 +4072,195 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
     let mut rec_0 = false;
     // The closer the region token read ends at, where a fill the loop keeps opens after it, or a read resumes a string's.
     let mut close: usize;
-    // `o_str` for tier 2, written over each region token.
-    let mut fw_o_str = vec![0u64; nw];
-    // `o_rstr` for tier 2, written over each region token.
-    let mut fw_o_rstr = vec![0u64; nw];
-    // `o_str2` for tier 2, written over each region token.
-    let mut fw_o_str2 = vec![0u64; nw];
-    // `o_rstr2` for tier 2, written over each region token.
-    let mut fw_o_rstr2 = vec![0u64; nw];
-    // `rd0_part0` for tier 2, written over each region token.
-    let mut fw_rd0_part0 = vec![0u64; nw];
-    // `r_start` for tier 2, written over each region token.
-    let mut fw_r_start = vec![0u64; nw];
-    // `rd0_part1_last` for tier 2, written over each region token.
-    let mut fw_rd0_part1_last = vec![0u64; nw];
-    // `r_lead` for tier 2, written over each region token.
-    let mut fw_r_lead = vec![0u64; nw];
-    // `id_dollar` for tier 2, written over each region token.
-    let mut fw_id_dollar = vec![0u64; nw];
-    // `rd0_part4` for tier 2, written over each region token.
-    let mut fw_rd0_part4 = vec![0u64; nw];
-    // `id_last` for tier 2, written over each region token.
-    let mut fw_id_last = vec![0u64; nw];
-    // `lone1` for tier 2, written over each region token.
-    let mut fw_lone1 = vec![0u64; nw];
-    // `d_first` for tier 2, written over each region token.
-    let mut fw_d_first = vec![0u64; nw];
-    // `d_last` for tier 2, written over each region token.
-    let mut fw_d_last = vec![0u64; nw];
-    // `rd0_part7` for tier 2, written over each region token.
-    let mut fw_rd0_part7 = vec![0u64; nw];
-    // `rd0_part8` for tier 2, written over each region token.
-    let mut fw_rd0_part8 = vec![0u64; nw];
-    // `id2` for tier 2, written over each region token.
-    let mut fw_id2 = vec![0u64; nw];
-    // `extra2` for tier 2, written over each region token.
-    let mut fw_extra2 = vec![0u64; nw];
-    // `d2_first` for tier 2, written over each region token.
-    let mut fw_d2_first = vec![0u64; nw];
-    // `d2_last` for tier 2, written over each region token.
-    let mut fw_d2_last = vec![0u64; nw];
-    // `rd0_open` for tier 2, written over each region token.
-    let mut fw_rd0_open = vec![0u64; nw];
-    // `o_tail` for tier 2, written over each region token.
-    let mut fw_o_tail = vec![0u64; nw];
-    // `o_rtail` for tier 2, written over each region token.
-    let mut fw_o_rtail = vec![0u64; nw];
-    // `o_tail2` for tier 2, written over each region token.
-    let mut fw_o_tail2 = vec![0u64; nw];
-    // `o_rtail2` for tier 2, written over each region token.
-    let mut fw_o_rtail2 = vec![0u64; nw];
-    // `rd1_closes0` for tier 2, written over each region token.
-    let mut fw_rd1_closes0 = vec![0u64; nw];
-    // `rd1_closes1` for tier 2, written over each region token.
-    let mut fw_rd1_closes1 = vec![0u64; nw];
-    // `rd1_open` for tier 2, written over each region token.
-    let mut fw_rd1_open = vec![0u64; nw];
-    // `c_uesc` for tier 2, written over each region token.
-    let mut fw_c_uesc = vec![0u64; nw];
-    // `rd2_part1` for tier 2, written over each region token.
-    let mut fw_rd2_part1 = vec![0u64; nw];
-    // `rd2_part2` for tier 2, written over each region token.
-    let mut fw_rd2_part2 = vec![0u64; nw];
-    // `o_chr` for tier 2, written over each region token.
-    let mut fw_o_chr = vec![0u64; nw];
     // The bytes outside the region tokens (`code`), as the loop reads them.
+    // The region tokens' spans not yet passed by the escapes made of `code` (`code_pass`), in order.
+    let mut code_spans: Vec<(usize, usize)> = Vec::with_capacity(64);
+    #[cfg(feature = "test-hooks")]
     let mut code_l = vec![!0u64; nw];
     // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).
     let mut b = at / 64;
+    // The escapes made of `code`, a word at a time as the token loop leaves each block (decision 0703 step 17): word `i`
+    // is `code` once every token that starts before its end is read.
+    let mut t108_v = [0u64; 4];
+    let mut t105_p = 0u64;
+    let mut t108_p = 0u64;
+    let mut t110_p = 0u64;
+    let mut t114_p = 0u64;
+    let mut t115_p = 0u64;
+    let mut t116_p = 0u64;
+    let mut t119_p = 0u64;
+    let mut t120_p = 0u64;
+    let mut t123_p = 0u64;
+    let mut t125_p = 0u64;
+    let mut t106_c = 0u64;
+    let mut t110_c = 0u64;
+    let mut t112_c = 0u64;
+    let mut t117_c = 0u64;
+    let mut t125_c = 0u64;
+    let mut t123_c = 0u64;
+    let mut t131_p = 0u64;
+    let mut t137_p = 0u64;
+    let mut t135_c = 0u64;
+    let mut t133_c = 0u64;
+    let mut t131_c = 0u64;
+    /// A ring's word `i` of `prev(x, k)`: each byte's bit from `k` bytes before.
+    #[inline(always)]
+    fn rprev(x: &[u64; 4], i: usize, k: u32) -> u64 {
+        x[i & 3] << k | if i > 0 { x[(i - 1) & 3] >> (64 - k) } else { 0 }
+    }
+    /// A ring's word `i` of `next(x, k)`, of `nw` words: each byte's bit from `k` bytes after.
+    #[inline(always)]
+    fn rnext(x: &[u64; 4], nw: usize, i: usize, k: u32) -> u64 {
+        x[i & 3] >> k | if i + 1 < nw { x[(i + 1) & 3] << (64 - k) } else { 0 }
+    }
+    let mut code_r = [0u64; 4];
+    let mut code_i = [0usize; 2];
+    macro_rules! code_pass {
+        ($upto:expr) => {
+        let upto: usize = $upto;
+        // Pass 0.
+        let to: usize = upto;
+        while code_i[0] < to {
+            let i = code_i[0];
+            code_i[0] += 1;
+            let lv_w = if 64 * i + 64 <= n { !0u64 } else { (1u64 << (n % 64)) - 1 };
+            // The word's bytes outside the region tokens read (`code`).
+            let mut code_w = lv_w;
+            for &(a, b) in &code_spans {
+                if a > 64 * i + 63 {
+                    break;
+                }
+                if b >= 64 * i {
+                    let (lo, hi) = (a.max(64 * i), b.min(64 * i + 63));
+                    code_w &= !((if hi - lo == 63 { !0 } else { (1u64 << (hi - lo + 1)) - 1 }) << (lo - 64 * i));
+                }
+            }
+            code_spans.retain(|&(_, b)| b > 64 * i + 63);
+            #[cfg(feature = "test-hooks")]
+            assert_eq!(code_w, code_l[i] & lv_w, "`code_spans` against `code_l` at word {i}");
+            code_r[i & 3] = code_w;
+                    let t108 = code_w & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) });
+                    t108_v[i & 3] = t108;
+                    let t107 = code_w & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) }) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize, &mut 0) } & (!(t108 << 1 | t108_p >> 63) & lv_w) & (!unsafe { w_t18::<S>(src, n, (i * 64) as isize - 1, &mut 0) } & lv_w);
+                    let t109 = !(code_w & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) })) & lv_w;
+                    let t106 = {
+                        let (s, e) = (t107, t109);
+                        let b = !e | s;
+                        let f = s | (!e & (s.wrapping_add(b).wrapping_add(t106_c) ^ s ^ b));
+                        t106_c = f >> 63;
+                        f
+                    };
+                    let t111 = code_w & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) }) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize, &mut 0) } & (!(t108 << 1 | t108_p >> 63) & lv_w) & (!unsafe { w_t18::<S>(src, n, (i * 64) as isize - 1, &mut 0) } & lv_w) & (!(code_w & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) }) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize, &mut 0) } & (!(t108 << 1 | t108_p >> 63) & lv_w) & (!unsafe { w_t18::<S>(src, n, (i * 64) as isize - 1, &mut 0) } & lv_w) & unsafe { w_m_zero::<S>(src, n, (i * 64) as isize, &mut 0) } & unsafe { w_m_x_letter::<S>(src, n, (i * 64) as isize + 1, &mut 0) }) & lv_w) & (!(code_w & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) }) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize, &mut 0) } & (!(t108 << 1 | t108_p >> 63) & lv_w) & (!unsafe { w_t18::<S>(src, n, (i * 64) as isize - 1, &mut 0) } & lv_w) & unsafe { w_m_zero::<S>(src, n, (i * 64) as isize, &mut 0) } & unsafe { w_m_b_letter::<S>(src, n, (i * 64) as isize + 1, &mut 0) }) & lv_w);
+                    let t110 = {
+                        let (s, e) = (t111, unsafe { w_t24::<S>(src, n, (i * 64) as isize, &mut 0) });
+                        let b = !e | s;
+                        let f = s | (!e & (s.wrapping_add(b).wrapping_add(t110_c) ^ s ^ b));
+                        t110_c = f >> 63;
+                        f
+                    };
+                    let t114 = (code_w & unsafe { w_m_dot::<S>(src, n, (i * 64) as isize, &mut 0) } & (t110 << 1 | t110_p >> 63) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 1, &mut 0) } | code_w & unsafe { w_m_dot::<S>(src, n, (i * 64) as isize, &mut 0) } & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 1, &mut 0) } & (!(t108 << 1 | t108_p >> 63) & lv_w) & (!unsafe { w_m_dot::<S>(src, n, (i * 64) as isize - 1, &mut 0) } & lv_w));
+                    let t113 = (t114 << 1 | t114_p >> 63);
+                    let t112 = {
+                        let (s, e) = (t113, unsafe { w_t24::<S>(src, n, (i * 64) as isize, &mut 0) });
+                        let b = !e | s;
+                        let f = s | (!e & (s.wrapping_add(b).wrapping_add(t112_c) ^ s ^ b));
+                        t112_c = f >> 63;
+                        f
+                    };
+                    let t115 = (t110 | t112);
+                    let t116 = code_w & unsafe { w_m_e_letter::<S>(src, n, (i * 64) as isize, &mut 0) } & (t115 << 1 | t115_p >> 63) & (unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 1, &mut 0) } | unsafe { w_m_sign::<S>(src, n, (i * 64) as isize + 1, &mut 0) } & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 2, &mut 0) });
+                    let t119 = unsafe { w_m_sign::<S>(src, n, (i * 64) as isize, &mut 0) } & (t116 << 1 | t116_p >> 63);
+                    let t118 = ((t116 << 1 | t116_p >> 63) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize, &mut 0) } | (t119 << 1 | t119_p >> 63));
+                    let t117 = {
+                        let (s, e) = (t118, unsafe { w_t24::<S>(src, n, (i * 64) as isize, &mut 0) });
+                        let b = !e | s;
+                        let f = s | (!e & (s.wrapping_add(b).wrapping_add(t117_c) ^ s ^ b));
+                        t117_c = f >> 63;
+                        f
+                    };
+                    let t120 = ((t110 | t112) | t117);
+                    let t105 = (t106 | (((((((t110 | code_w & unsafe { w_m_dot::<S>(src, n, (i * 64) as isize, &mut 0) } & (t110 << 1 | t110_p >> 63) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 1, &mut 0) }) | code_w & unsafe { w_m_dot::<S>(src, n, (i * 64) as isize, &mut 0) } & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 1, &mut 0) } & (!(t108 << 1 | t108_p >> 63) & lv_w) & (!unsafe { w_m_dot::<S>(src, n, (i * 64) as isize - 1, &mut 0) } & lv_w)) | t112) | code_w & unsafe { w_m_e_letter::<S>(src, n, (i * 64) as isize, &mut 0) } & (t115 << 1 | t115_p >> 63) & (unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 1, &mut 0) } | unsafe { w_m_sign::<S>(src, n, (i * 64) as isize + 1, &mut 0) } & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 2, &mut 0) })) | unsafe { w_m_sign::<S>(src, n, (i * 64) as isize, &mut 0) } & (t116 << 1 | t116_p >> 63)) | t117) | code_w & unsafe { w_m_f_letter::<S>(src, n, (i * 64) as isize, &mut 0) } & (t120 << 1 | t120_p >> 63)));
+                    let t104 = code_w & unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) } & (t105 << 1 | t105_p >> 63);
+                    // a name's letter past ASCII touching a number
+                    refused |= t104 != 0;
+                    let t126 = unsafe { w_m_lf::<S>(src, n, (i * 64) as isize, &mut 0) } & code_w;
+                    let t127 = (code_w & (!unsafe { w_m_ws::<S>(src, n, (i * 64) as isize, &mut 0) } & lv_w) | (!code_w & lv_w) & rprev(&code_r, i, 1));
+                    let t125 = {
+                        let (s, e) = (t126, t127);
+                        let b = !e | s;
+                        let f = s | (!e & (s.wrapping_add(b).wrapping_add(t125_c) ^ s ^ b));
+                        t125_c = f >> 63;
+                        f
+                    };
+                    let t124 = (!code_w & lv_w) & rprev(&code_r, i, 1) & unsafe { w_m_slash::<S>(src, n, (i * 64) as isize, &mut 0) } & (t125 << 1 | t125_p >> 63);
+                    let t128 = (code_w & (!unsafe { w_m_ws::<S>(src, n, (i * 64) as isize, &mut 0) } & lv_w) | (!code_w & lv_w) & rprev(&code_r, i, 1) & (!unsafe { w_m_slash::<S>(src, n, (i * 64) as isize, &mut 0) } & lv_w));
+                    let t123 = {
+                        let (s, e) = (t124, t128);
+                        let b = !e | s;
+                        let f = s | (!e & (s.wrapping_add(b).wrapping_add(t123_c) ^ s ^ b));
+                        t123_c = f >> 63;
+                        f
+                    };
+                    let t122 = code_w & unsafe { w_m_semicolon::<S>(src, n, (i * 64) as isize, &mut 0) } & (t123 << 1 | t123_p >> 63);
+                    // a `;` after a line break and a comment
+                    refused |= t122 != 0;
+                    t105_p = t105;
+                    t108_p = t108;
+                    t110_p = t110;
+                    t114_p = t114;
+                    t115_p = t115;
+                    t116_p = t116;
+                    t119_p = t119;
+                    t120_p = t120;
+                    t123_p = t123;
+                    t125_p = t125;
+        }
+        // Pass 1, a word behind the pass before: it reads that one's masks after its word.
+        let to: usize = if upto == nw { nw } else { upto.saturating_sub(1) };
+        while code_i[1] < to {
+            let i = code_i[1];
+            code_i[1] += 1;
+            let lv_w = if 64 * i + 64 <= n { !0u64 } else { (1u64 << (n % 64)) - 1 };
+            let code_w = code_r[i & 3];
+                    let t137 = code_w & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) }) & (!rprev(&t108_v, i, 1) & lv_w) & (unsafe { w_t37::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_t38::<S>(src, n, (i * 64) as isize, &mut 0) }) & (!rnext(&t108_v, nw, i, 2) & lv_w);
+                    let t136 = (t137 << 2 | t137_p >> 62);
+                    let t138 = !(code_w & ((((((unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_m_dot::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_t41::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_t42::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_t43::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_t44::<S>(src, n, (i * 64) as isize, &mut 0) })) & lv_w;
+                    let t135 = {
+                        let (s, e) = (t136, t138);
+                        let b = !e | s;
+                        let f = s | (!e & (s.wrapping_add(b).wrapping_add(t135_c) ^ s ^ b));
+                        t135_c = f >> 63;
+                        f
+                    };
+                    let t134 = t135 & unsafe { w_m_dot::<S>(src, n, (i * 64) as isize, &mut 0) };
+                    let t139 = !t135 & lv_w;
+                    let t133 = {
+                        let (s, e) = (t134, t139);
+                        let b = !e | s;
+                        let f = s | (!e & (s.wrapping_add(b).wrapping_add(t133_c) ^ s ^ b));
+                        t133_c = f >> 63;
+                        f
+                    };
+                    let t132 = t133 & unsafe { w_t43::<S>(src, n, (i * 64) as isize, &mut 0) };
+                    let t140 = (((!t133 & lv_w | unsafe { w_t42::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_t43::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_m_gt::<S>(src, n, (i * 64) as isize, &mut 0) } & unsafe { w_m_gt::<S>(src, n, (i * 64) as isize - 1, &mut 0) });
+                    let t131 = {
+                        let (s, e) = (t132, t140);
+                        let b = !e | s;
+                        let f = s | (!e & (s.wrapping_add(b).wrapping_add(t131_c) ^ s ^ b));
+                        t131_c = f >> 63;
+                        f
+                    };
+                    let t129 = ((unsafe { w_t41::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_slash::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_t130::<S>(src, n, (i * 64) as isize, &mut 0) }) & (t131 << 1 | t131_p >> 63) & unsafe { w_m_gt::<S>(src, n, (i * 64) as isize - 1, &mut 0) };
+                    // a blank, a comment or a `\r` after a type the lean parser may split
+                    refused |= t129 != 0;
+                    t131_p = t131;
+                    t137_p = t137;
+        }
+        };
+    }
     'tokens: while b < nw {
         let base = b * 64;
+        code_pass!(b);
         // Stage 1 through the next block (the last a token of a few bytes reads), 16 more at a time.
         if st1.t < b + 2 + 2 {
             stage1_best(src, &mut st1, &mut s1, b + 2 + 2 + 16);
@@ -3309,17 +4450,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             match row {
                 0 => {
                     // `line_comment`: read line
-                    let l = {
-                        let c = s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_lf::<S>(src, n, p, esc) })).unwrap_or(n);
-                        let last = c - 1;
-                        // `rd0_close`, for tier 2
-                        clear(&mut s1.fw_rd0_close, s, s);
-                        clear(&mut s1.fw_rd0_close, c, last);
-                        // `rd1_close`, for tier 2
-                        clear(&mut s1.fw_rd1_close, s, s);
-                        clear(&mut s1.fw_rd1_close, c, last);
-                        last
-                    };
+                    let l = s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_lf::<S>(src, n, p, esc) })).unwrap_or(n) - 1;
                     let l = l.max(s);
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
@@ -3358,12 +4489,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
-                            // `rd0_close`, for tier 2
-                            clear(&mut s1.fw_rd0_close, s, s);
-                            clear(&mut s1.fw_rd0_close, c, last);
-                            // `rd1_close`, for tier 2
-                            clear(&mut s1.fw_rd1_close, s, s);
-                            clear(&mut s1.fw_rd1_close, c, last);
                             last
                         },
                         None => {
@@ -3565,7 +4690,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `"`: read str parts, to its closer
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t6::<S>(src, n, p, esc) })) {
                         Some(c) => {
-                            if bit(&s1.m_t_dollar, c) {
+                            if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) {
                                 template = 3;
                                 if depth == 4 {
                                     refused = true;
@@ -3581,7 +4706,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 opened += 1;
                             }
                             {
-                            let last = if bit(&s1.m_t_dollar, c) { c + 1 } else { c + 0 };
+                            let last = if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 };
                             // a `$` after a `$` and backslashes
                             if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t71::<S>(src, n, p, esc) })).is_some() {
                                 refused = true;
@@ -3597,35 +4722,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
-                            // `rd0_close`, for tier 2
-                            wput(&mut s1.fw_rd0_close, s, s, |p: isize, esc: &mut u64| unsafe { w_m_dq_close::<S>(src, n, p, esc) });
-                            wput(&mut s1.fw_rd0_close, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t6::<S>(src, n, p, esc) });
-                            // `o_str`, for tier 2
-                            set(&mut fw_o_str, s, s + 1);
-                            // `id_dollar`, for tier 2
-                            wput(&mut fw_id_dollar, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t74::<S>(src, n, p, esc) });
-                            // `rd0_part4`, for tier 2
-                            wput(&mut fw_rd0_part4, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t167::<S>(src, n, p, esc) });
-                            // `id_last`, for tier 2
-                            wput(&mut fw_id_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
-                            // `lone1`, for tier 2
-                            wput(&mut fw_lone1, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t183::<S>(src, n, p, esc) });
-                            // `d_first`, for tier 2
-                            wput(&mut fw_d_first, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t184::<S>(src, n, p, esc) });
-                            // `d_last`, for tier 2
-                            wput(&mut fw_d_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t186::<S>(src, n, p, esc) });
-                            if c > s + 1 {
-                                wput(&mut fw_d_last, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t185::<S>(src, n, p, esc) });
-                            }
-                            // `rd0_part7`, for tier 2
-                            wput(&mut fw_rd0_part7, s + 1, (s + 1).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t187::<S>(src, n, p, esc) });
-                            wput(&mut fw_rd0_part7, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t188::<S>(src, n, p, esc) });
-                            // `rd0_part8`, for tier 2
-                            wput(&mut fw_rd0_part8, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t192::<S>(src, n, p, esc) });
-                            // `rd0_open`, for tier 2
-                            set(&mut fw_rd0_open, s, s + 1);
-                            // `rd1_close`, for tier 2
-                            wput(&mut s1.fw_rd1_close, s, s, |p: isize, esc: &mut u64| unsafe { w_t201::<S>(src, n, p, esc) });
                             last
                         }
                         },
@@ -3645,7 +4741,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `"`: read rstr parts, to its closer
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 3, |p: isize, esc: &mut u64| unsafe { w_t4::<S>(src, n, p, esc) })) {
                         Some(c) => {
-                            if bit(&s1.m_t_dollar, c) {
+                            if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) {
                                 template = 2;
                                 if depth == 4 {
                                     refused = true;
@@ -3661,7 +4757,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 opened += 1;
                             }
                             {
-                            let last = if bit(&s1.m_t_dollar, c) { c + 1 } else { if bit(&s1.m_t_dollar, c) { c + 0 } else { c + 2 } };
+                            let last = if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 0 } else { c + 2 } };
                             // a `$` before a quote or a `$` in a raw string
                             if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t69::<S>(src, n, p, esc) })).is_some() {
                                 refused = true;
@@ -3677,74 +4773,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
-                            // `rd0_close`, for tier 2
-                            wput(&mut s1.fw_rd0_close, s, s, |p: isize, esc: &mut u64| unsafe { w_m_rclose::<S>(src, n, p, esc) });
-                            clear(&mut s1.fw_rd0_close, s + 1, (s + 2).min(c - 1));
-                            wput(&mut s1.fw_rd0_close, s + 3, c - 1, |p: isize, esc: &mut u64| unsafe { w_t4::<S>(src, n, p, esc) });
-                            match c - s {
-                                1 => {
-                                    wput(&mut s1.fw_rd0_close, c, c, |p: isize, esc: &mut u64| unsafe { w_t163::<S>(src, n, p, esc) });
-                                    wput(&mut s1.fw_rd0_close, c + 1, (c + 1).min(last), |p: isize, esc: &mut u64| unsafe { w_t163::<S>(src, n, p, esc) });
-                                }
-                                2 => {
-                                    wput(&mut s1.fw_rd0_close, c, c, |p: isize, esc: &mut u64| unsafe { w_t163::<S>(src, n, p, esc) });
-                                }
-                                _ => {}
-                            }
-                            // `o_rstr`, for tier 2
-                            set(&mut fw_o_rstr, s, s + 1);
-                            // `rd0_part0`, for tier 2
-                            set(&mut fw_rd0_part0, s + 1, (s + 1).min(c - 1) + 1);
-                            if c - s == 1 {
-                                set(&mut fw_rd0_part0, c, c + 1);
-                            }
-                            // `r_start`, for tier 2
-                            wput(&mut fw_r_start, s + 3, (s + 3).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t165::<S>(src, n, p, esc) });
-                            wput(&mut fw_r_start, s + 4, c - 1, |p: isize, esc: &mut u64| unsafe { w_t170::<S>(src, n, p, esc) });
-                            // `rd0_part1_last`, for tier 2
-                            wput(&mut fw_rd0_part1_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t179::<S>(src, n, p, esc) });
-                            if s + 1 < c {
-                                clear(&mut fw_rd0_part1_last, s + 1, s + 1);
-                            }
-                            if s + 2 < c {
-                                clear(&mut fw_rd0_part1_last, s + 2, s + 2);
-                            }
-                            if s + 3 < c {
-                                match c - s - 3 {
-                                    1 => { wput(&mut fw_rd0_part1_last, s + 3, s + 3, |p: isize, esc: &mut u64| unsafe { w_t178::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if s + 4 < c {
-                                match c - s - 4 {
-                                    1 => { wput(&mut fw_rd0_part1_last, s + 4, s + 4, |p: isize, esc: &mut u64| unsafe { w_t178::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if c > s + 5 {
-                                wput(&mut fw_rd0_part1_last, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t178::<S>(src, n, p, esc) });
-                            }
-                            // `r_lead`, for tier 2
-                            wput(&mut fw_r_lead, s + 3, c - 1, |p: isize, esc: &mut u64| unsafe { w_t182::<S>(src, n, p, esc) });
-                            // `id_dollar`, for tier 2
-                            wput(&mut fw_id_dollar, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t74::<S>(src, n, p, esc) });
-                            // `rd0_part4`, for tier 2
-                            wput(&mut fw_rd0_part4, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t167::<S>(src, n, p, esc) });
-                            // `id_last`, for tier 2
-                            wput(&mut fw_id_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
-                            // `lone1`, for tier 2
-                            wput(&mut fw_lone1, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t183::<S>(src, n, p, esc) });
-                            // `d_first`, for tier 2
-                            wput(&mut fw_d_first, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t184::<S>(src, n, p, esc) });
-                            // `d_last`, for tier 2
-                            wput(&mut fw_d_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t186::<S>(src, n, p, esc) });
-                            if c > s + 1 {
-                                wput(&mut fw_d_last, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t185::<S>(src, n, p, esc) });
-                            }
-                            // `rd0_open`, for tier 2
-                            set(&mut fw_rd0_open, s, s + 1);
-                            // `rd1_close`, for tier 2
-                            wput(&mut s1.fw_rd1_close, s, s, |p: isize, esc: &mut u64| unsafe { w_t201::<S>(src, n, p, esc) });
                             last
                         }
                         },
@@ -3764,7 +4792,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `"`: read str2 parts, to its closer
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t10::<S>(src, n, p, esc) })) {
                         Some(c) => {
-                            if bit(&s1.m_t2_dollar, c) {
+                            if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) {
                                 template = 5;
                                 if depth == 4 {
                                     refused = true;
@@ -3780,7 +4808,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 opened += 1;
                             }
                             {
-                            let last = if bit(&s1.m_t_dollar, c) { c + 1 } else if bit(&s1.m_t2_dollar, c) { c + 2 } else { if bit(&s1.m_t2_dollar, c) { c + 1 } else { c + 0 } };
+                            let last = if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 } };
                             // a `$` after a `$` and backslashes
                             if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t71::<S>(src, n, p, esc) })).is_some() {
                                 refused = true;
@@ -3791,62 +4819,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
-                            // `rd0_close`, for tier 2
-                            wput(&mut s1.fw_rd0_close, s, s, |p: isize, esc: &mut u64| unsafe { w_m_dq_close::<S>(src, n, p, esc) });
-                            wput(&mut s1.fw_rd0_close, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t10::<S>(src, n, p, esc) });
-                            // `o_str2`, for tier 2
-                            set(&mut fw_o_str2, s, s + 1);
-                            // `rd0_part4`, for tier 2
-                            wput(&mut fw_rd0_part4, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t174::<S>(src, n, p, esc) });
-                            // `id_last`, for tier 2
-                            wput(&mut fw_id_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
-                            // `rd0_part7`, for tier 2
-                            wput(&mut fw_rd0_part7, s + 1, (s + 1).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t187::<S>(src, n, p, esc) });
-                            wput(&mut fw_rd0_part7, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t190::<S>(src, n, p, esc) });
-                            // `rd0_part8`, for tier 2
-                            wput(&mut fw_rd0_part8, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t193::<S>(src, n, p, esc) });
-                            // `id2`, for tier 2
-                            wput(&mut fw_id2, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t194::<S>(src, n, p, esc) });
-                            // `extra2`, for tier 2
-                            wput(&mut fw_extra2, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t195::<S>(src, n, p, esc) });
-                            // `d2_first`, for tier 2
-                            wput(&mut fw_d2_first, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t196::<S>(src, n, p, esc) });
-                            // `d2_last`, for tier 2
-                            wput(&mut fw_d2_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t200::<S>(src, n, p, esc) });
-                            if s + 1 < c {
-                                match c - s - 1 {
-                                    1 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t198::<S>(src, n, p, esc) }); }
-                                    2 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                    3 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                    4 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                    _ => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                }
-                            }
-                            if s + 2 < c {
-                                match c - s - 2 {
-                                    1 => { wput(&mut fw_d2_last, s + 2, s + 2, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if s + 3 < c {
-                                match c - s - 3 {
-                                    1 => { wput(&mut fw_d2_last, s + 3, s + 3, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if s + 4 < c {
-                                match c - s - 4 {
-                                    1 => { wput(&mut fw_d2_last, s + 4, s + 4, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if c > s + 5 {
-                                wput(&mut fw_d2_last, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) });
-                            }
-                            // `rd0_open`, for tier 2
-                            set(&mut fw_rd0_open, s, s + 1);
-                            // `rd1_close`, for tier 2
-                            wput(&mut s1.fw_rd1_close, s, s, |p: isize, esc: &mut u64| unsafe { w_t201::<S>(src, n, p, esc) });
                             last
                         }
                         },
@@ -3866,7 +4838,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `"`: read rstr2 parts, to its closer
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 3, |p: isize, esc: &mut u64| unsafe { w_t8::<S>(src, n, p, esc) })) {
                         Some(c) => {
-                            if bit(&s1.m_t2_dollar, c) {
+                            if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) {
                                 template = 4;
                                 if depth == 4 {
                                     refused = true;
@@ -3882,7 +4854,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 opened += 1;
                             }
                             {
-                            let last = if bit(&s1.m_t_dollar, c) { c + 1 } else if bit(&s1.m_t2_dollar, c) { c + 2 } else { if bit(&s1.m_t2_dollar, c) { c + 1 } else { c + 2 } };
+                            let last = if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 2 } };
                             // a `$` before a quote or a `$` in a raw string
                             if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t69::<S>(src, n, p, esc) })).is_some() {
                                 refused = true;
@@ -3893,101 +4865,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
-                            // `rd0_close`, for tier 2
-                            wput(&mut s1.fw_rd0_close, s, s, |p: isize, esc: &mut u64| unsafe { w_m_rclose::<S>(src, n, p, esc) });
-                            clear(&mut s1.fw_rd0_close, s + 1, (s + 2).min(c - 1));
-                            wput(&mut s1.fw_rd0_close, s + 3, c - 1, |p: isize, esc: &mut u64| unsafe { w_t8::<S>(src, n, p, esc) });
-                            match c - s {
-                                1 => {
-                                    wput(&mut s1.fw_rd0_close, c, c, |p: isize, esc: &mut u64| unsafe { w_t164::<S>(src, n, p, esc) });
-                                    wput(&mut s1.fw_rd0_close, c + 1, (c + 1).min(last), |p: isize, esc: &mut u64| unsafe { w_t164::<S>(src, n, p, esc) });
-                                }
-                                2 => {
-                                    wput(&mut s1.fw_rd0_close, c, c, |p: isize, esc: &mut u64| unsafe { w_t164::<S>(src, n, p, esc) });
-                                }
-                                _ => {}
-                            }
-                            // `o_rstr2`, for tier 2
-                            set(&mut fw_o_rstr2, s, s + 1);
-                            // `rd0_part0`, for tier 2
-                            set(&mut fw_rd0_part0, s + 1, (s + 1).min(c - 1) + 1);
-                            if c - s == 1 {
-                                set(&mut fw_rd0_part0, c, c + 1);
-                            }
-                            // `r_start`, for tier 2
-                            wput(&mut fw_r_start, s + 3, (s + 3).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t172::<S>(src, n, p, esc) });
-                            wput(&mut fw_r_start, s + 4, c - 1, |p: isize, esc: &mut u64| unsafe { w_t177::<S>(src, n, p, esc) });
-                            // `rd0_part1_last`, for tier 2
-                            wput(&mut fw_rd0_part1_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t181::<S>(src, n, p, esc) });
-                            if s + 1 < c {
-                                clear(&mut fw_rd0_part1_last, s + 1, s + 1);
-                            }
-                            if s + 2 < c {
-                                clear(&mut fw_rd0_part1_last, s + 2, s + 2);
-                            }
-                            if s + 3 < c {
-                                match c - s - 3 {
-                                    1 => { wput(&mut fw_rd0_part1_last, s + 3, s + 3, |p: isize, esc: &mut u64| unsafe { w_t180::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if s + 4 < c {
-                                match c - s - 4 {
-                                    1 => { wput(&mut fw_rd0_part1_last, s + 4, s + 4, |p: isize, esc: &mut u64| unsafe { w_t180::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if c > s + 5 {
-                                wput(&mut fw_rd0_part1_last, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t180::<S>(src, n, p, esc) });
-                            }
-                            // `r_lead`, for tier 2
-                            wput(&mut fw_r_lead, s + 3, c - 1, |p: isize, esc: &mut u64| unsafe { w_t182::<S>(src, n, p, esc) });
-                            // `rd0_part4`, for tier 2
-                            wput(&mut fw_rd0_part4, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t174::<S>(src, n, p, esc) });
-                            // `id_last`, for tier 2
-                            wput(&mut fw_id_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
-                            // `id2`, for tier 2
-                            wput(&mut fw_id2, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t194::<S>(src, n, p, esc) });
-                            // `extra2`, for tier 2
-                            wput(&mut fw_extra2, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t195::<S>(src, n, p, esc) });
-                            // `d2_first`, for tier 2
-                            wput(&mut fw_d2_first, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t196::<S>(src, n, p, esc) });
-                            // `d2_last`, for tier 2
-                            wput(&mut fw_d2_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t200::<S>(src, n, p, esc) });
-                            if s + 1 < c {
-                                match c - s - 1 {
-                                    1 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t198::<S>(src, n, p, esc) }); }
-                                    2 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                    3 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                    4 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                    _ => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                }
-                            }
-                            if s + 2 < c {
-                                match c - s - 2 {
-                                    1 => { wput(&mut fw_d2_last, s + 2, s + 2, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if s + 3 < c {
-                                match c - s - 3 {
-                                    1 => { wput(&mut fw_d2_last, s + 3, s + 3, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if s + 4 < c {
-                                match c - s - 4 {
-                                    1 => { wput(&mut fw_d2_last, s + 4, s + 4, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if c > s + 5 {
-                                wput(&mut fw_d2_last, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) });
-                            }
-                            // `rd0_open`, for tier 2
-                            set(&mut fw_rd0_open, s, s + 1);
-                            // `rd1_close`, for tier 2
-                            wput(&mut s1.fw_rd1_close, s, s, |p: isize, esc: &mut u64| unsafe { w_t201::<S>(src, n, p, esc) });
                             last
                         }
                         },
@@ -4008,7 +4885,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t6::<S>(src, n, p, esc) })) {
                         Some(c) => {
                             close = c;
-                            let last = if (((c < n && (src[c] == b'"')) && (c < n && !af_6(src, n, c)))) { c + 0 } else if bit(&s1.m_t_dollar, c) { c + 1 } else { c + 0 };
+                            let last = if (((c < n && (src[c] == b'"')) && (c < n && !af_1(src, n, c)))) { c + 0 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 };
                             // an empty `${}`
                             if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
                                 refused = true;
@@ -4029,38 +4906,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
-                            // `rd0_close`, for tier 2
-                            clear(&mut s1.fw_rd0_close, s, s);
-                            // `id_dollar`, for tier 2
-                            wput(&mut fw_id_dollar, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t74::<S>(src, n, p, esc) });
-                            // `rd0_part4`, for tier 2
-                            wput(&mut fw_rd0_part4, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t167::<S>(src, n, p, esc) });
-                            // `id_last`, for tier 2
-                            wput(&mut fw_id_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
-                            // `lone1`, for tier 2
-                            wput(&mut fw_lone1, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t183::<S>(src, n, p, esc) });
-                            // `d_first`, for tier 2
-                            wput(&mut fw_d_first, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t184::<S>(src, n, p, esc) });
-                            // `d_last`, for tier 2
-                            wput(&mut fw_d_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t186::<S>(src, n, p, esc) });
-                            if c > s + 1 {
-                                wput(&mut fw_d_last, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t185::<S>(src, n, p, esc) });
-                            }
-                            // `rd0_part7`, for tier 2
-                            wput(&mut fw_rd0_part7, s + 1, (s + 1).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t187::<S>(src, n, p, esc) });
-                            wput(&mut fw_rd0_part7, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t188::<S>(src, n, p, esc) });
-                            // `rd0_part8`, for tier 2
-                            wput(&mut fw_rd0_part8, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t192::<S>(src, n, p, esc) });
-                            // `rd1_close`, for tier 2
-                            clear(&mut s1.fw_rd1_close, s, s);
-                            wput(&mut s1.fw_rd1_close, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t6::<S>(src, n, p, esc) });
-                            // `o_tail`, for tier 2
-                            set(&mut fw_o_tail, s, s + 1);
-                            // `rd1_closes0`, for tier 2
-                            wput(&mut fw_rd1_closes0, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_m_dq_close::<S>(src, n, p, esc) });
-                            wput(&mut fw_rd1_closes0, c, last, |p: isize, esc: &mut u64| unsafe { w_m_dq_close::<S>(src, n, p, esc) });
-                            // `rd1_open`, for tier 2
-                            set(&mut fw_rd1_open, s, s + 1);
                             last
                         },
                         None => {
@@ -4072,6 +4917,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
+                    code_spans.push((s, l));
+                    #[cfg(feature = "test-hooks")]
                     clear(&mut code_l, s, l);
                     // Resumes the open string's record: no record of its own.
                     match opened {
@@ -4082,7 +4929,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                         _ => {
                             // SAFETY: record `held[opened - 1]` is written (`< len`).
                             unsafe { (*out.add(held[opened - 1])).last = l as u32 };
-                            if bit(&s1.m_t_dollar, close) {
+                            if (((((close < n && (src[close] == b'$')) && (close + 1 < n && (src[close + 1] == b'{'))) && (close < n && !af_1(src, n, close))) && (close < n && !(close >= 1 && at_esc_dollar(src, n, (close - 1)))))) {
                                 if depth == 4 {
                                     refused = true;
                                     break 'tokens;
@@ -4109,7 +4956,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t4::<S>(src, n, p, esc) })) {
                         Some(c) => {
                             close = c;
-                            let last = if ((at_dq3(src, n, c) && (c < n && !(c + 3 < n && (src[c + 3] == b'"'))))) { c + 2 } else if bit(&s1.m_t_dollar, c) { c + 1 } else { if bit(&s1.m_t_dollar, c) { c + 0 } else { c + 2 } };
+                            let last = if ((at_dq3(src, n, c) && (c < n && !(c + 3 < n && (src[c + 3] == b'"'))))) { c + 2 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 0 } else { c + 2 } };
                             // an empty `${}`
                             if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
                                 refused = true;
@@ -4130,43 +4977,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
-                            // `rd0_close`, for tier 2
-                            clear(&mut s1.fw_rd0_close, s, s);
-                            // `r_start`, for tier 2
-                            wput(&mut fw_r_start, s + 1, (s + 1).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t165::<S>(src, n, p, esc) });
-                            wput(&mut fw_r_start, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t170::<S>(src, n, p, esc) });
-                            // `rd0_part1_last`, for tier 2
-                            wput(&mut fw_rd0_part1_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t179::<S>(src, n, p, esc) });
-                            if c > s + 1 {
-                                wput(&mut fw_rd0_part1_last, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t178::<S>(src, n, p, esc) });
-                            }
-                            // `r_lead`, for tier 2
-                            wput(&mut fw_r_lead, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t182::<S>(src, n, p, esc) });
-                            // `id_dollar`, for tier 2
-                            wput(&mut fw_id_dollar, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t74::<S>(src, n, p, esc) });
-                            // `rd0_part4`, for tier 2
-                            wput(&mut fw_rd0_part4, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t167::<S>(src, n, p, esc) });
-                            // `id_last`, for tier 2
-                            wput(&mut fw_id_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
-                            // `lone1`, for tier 2
-                            wput(&mut fw_lone1, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t183::<S>(src, n, p, esc) });
-                            // `d_first`, for tier 2
-                            wput(&mut fw_d_first, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t184::<S>(src, n, p, esc) });
-                            // `d_last`, for tier 2
-                            wput(&mut fw_d_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t186::<S>(src, n, p, esc) });
-                            if c > s + 1 {
-                                wput(&mut fw_d_last, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t185::<S>(src, n, p, esc) });
-                            }
-                            // `rd1_close`, for tier 2
-                            clear(&mut s1.fw_rd1_close, s, s);
-                            wput(&mut s1.fw_rd1_close, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t4::<S>(src, n, p, esc) });
-                            // `o_rtail`, for tier 2
-                            set(&mut fw_o_rtail, s, s + 1);
-                            // `rd1_closes1`, for tier 2
-                            wput(&mut fw_rd1_closes1, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_m_rclose::<S>(src, n, p, esc) });
-                            wput(&mut fw_rd1_closes1, c, c, |p: isize, esc: &mut u64| unsafe { w_m_rclose::<S>(src, n, p, esc) });
-                            // `rd1_open`, for tier 2
-                            set(&mut fw_rd1_open, s, s + 1);
                             last
                         },
                         None => {
@@ -4178,6 +4988,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
+                    code_spans.push((s, l));
+                    #[cfg(feature = "test-hooks")]
                     clear(&mut code_l, s, l);
                     // Resumes the open string's record: no record of its own.
                     match opened {
@@ -4188,7 +5000,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                         _ => {
                             // SAFETY: record `held[opened - 1]` is written (`< len`).
                             unsafe { (*out.add(held[opened - 1])).last = l as u32 };
-                            if bit(&s1.m_t_dollar, close) {
+                            if (((((close < n && (src[close] == b'$')) && (close + 1 < n && (src[close + 1] == b'{'))) && (close < n && !af_1(src, n, close))) && (close < n && !(close >= 1 && at_esc_dollar(src, n, (close - 1)))))) {
                                 if depth == 4 {
                                     refused = true;
                                     break 'tokens;
@@ -4215,7 +5027,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t10::<S>(src, n, p, esc) })) {
                         Some(c) => {
                             close = c;
-                            let last = if (((c < n && (src[c] == b'"')) && (c < n && !af_6(src, n, c)))) { c + 0 } else if bit(&s1.m_t_dollar, c) { c + 1 } else if bit(&s1.m_t2_dollar, c) { c + 2 } else { if bit(&s1.m_t2_dollar, c) { c + 1 } else { c + 0 } };
+                            let last = if (((c < n && (src[c] == b'"')) && (c < n && !af_1(src, n, c)))) { c + 0 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 } };
                             // an empty `${}`
                             if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
                                 refused = true;
@@ -4231,65 +5043,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
-                            // `rd0_close`, for tier 2
-                            clear(&mut s1.fw_rd0_close, s, s);
-                            // `rd0_part4`, for tier 2
-                            wput(&mut fw_rd0_part4, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t174::<S>(src, n, p, esc) });
-                            // `id_last`, for tier 2
-                            wput(&mut fw_id_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
-                            // `rd0_part7`, for tier 2
-                            wput(&mut fw_rd0_part7, s + 1, (s + 1).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t187::<S>(src, n, p, esc) });
-                            wput(&mut fw_rd0_part7, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t190::<S>(src, n, p, esc) });
-                            // `rd0_part8`, for tier 2
-                            wput(&mut fw_rd0_part8, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t193::<S>(src, n, p, esc) });
-                            // `id2`, for tier 2
-                            wput(&mut fw_id2, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t194::<S>(src, n, p, esc) });
-                            // `extra2`, for tier 2
-                            wput(&mut fw_extra2, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t195::<S>(src, n, p, esc) });
-                            // `d2_first`, for tier 2
-                            wput(&mut fw_d2_first, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t196::<S>(src, n, p, esc) });
-                            // `d2_last`, for tier 2
-                            wput(&mut fw_d2_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t200::<S>(src, n, p, esc) });
-                            if s + 1 < c {
-                                match c - s - 1 {
-                                    1 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t198::<S>(src, n, p, esc) }); }
-                                    2 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                    3 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                    4 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                    _ => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                }
-                            }
-                            if s + 2 < c {
-                                match c - s - 2 {
-                                    1 => { wput(&mut fw_d2_last, s + 2, s + 2, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if s + 3 < c {
-                                match c - s - 3 {
-                                    1 => { wput(&mut fw_d2_last, s + 3, s + 3, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if s + 4 < c {
-                                match c - s - 4 {
-                                    1 => { wput(&mut fw_d2_last, s + 4, s + 4, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if c > s + 5 {
-                                wput(&mut fw_d2_last, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) });
-                            }
-                            // `rd1_close`, for tier 2
-                            clear(&mut s1.fw_rd1_close, s, s);
-                            wput(&mut s1.fw_rd1_close, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t10::<S>(src, n, p, esc) });
-                            // `o_tail2`, for tier 2
-                            set(&mut fw_o_tail2, s, s + 1);
-                            // `rd1_closes0`, for tier 2
-                            wput(&mut fw_rd1_closes0, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_m_dq_close::<S>(src, n, p, esc) });
-                            wput(&mut fw_rd1_closes0, c, last, |p: isize, esc: &mut u64| unsafe { w_m_dq_close::<S>(src, n, p, esc) });
-                            // `rd1_open`, for tier 2
-                            set(&mut fw_rd1_open, s, s + 1);
                             last
                         },
                         None => {
@@ -4301,6 +5054,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
+                    code_spans.push((s, l));
+                    #[cfg(feature = "test-hooks")]
                     clear(&mut code_l, s, l);
                     // Resumes the open string's record: no record of its own.
                     match opened {
@@ -4311,7 +5066,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                         _ => {
                             // SAFETY: record `held[opened - 1]` is written (`< len`).
                             unsafe { (*out.add(held[opened - 1])).last = l as u32 };
-                            if bit(&s1.m_t_dollar, close) {
+                            if (((((close < n && (src[close] == b'$')) && (close + 1 < n && (src[close + 1] == b'{'))) && (close < n && !af_1(src, n, close))) && (close < n && !(close >= 1 && at_esc_dollar(src, n, (close - 1)))))) {
                                 if depth == 4 {
                                     refused = true;
                                     break 'tokens;
@@ -4338,7 +5093,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t8::<S>(src, n, p, esc) })) {
                         Some(c) => {
                             close = c;
-                            let last = if ((at_dq3(src, n, c) && (c < n && !(c + 3 < n && (src[c + 3] == b'"'))))) { c + 2 } else if bit(&s1.m_t_dollar, c) { c + 1 } else if bit(&s1.m_t2_dollar, c) { c + 2 } else { if bit(&s1.m_t2_dollar, c) { c + 1 } else { c + 2 } };
+                            let last = if ((at_dq3(src, n, c) && (c < n && !(c + 3 < n && (src[c + 3] == b'"'))))) { c + 2 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 2 } };
                             // an empty `${}`
                             if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
                                 refused = true;
@@ -4354,70 +5109,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
-                            // `rd0_close`, for tier 2
-                            clear(&mut s1.fw_rd0_close, s, s);
-                            // `r_start`, for tier 2
-                            wput(&mut fw_r_start, s + 1, (s + 1).min(c - 1), |p: isize, esc: &mut u64| unsafe { w_t172::<S>(src, n, p, esc) });
-                            wput(&mut fw_r_start, s + 2, c - 1, |p: isize, esc: &mut u64| unsafe { w_t177::<S>(src, n, p, esc) });
-                            // `rd0_part1_last`, for tier 2
-                            wput(&mut fw_rd0_part1_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t181::<S>(src, n, p, esc) });
-                            if c > s + 1 {
-                                wput(&mut fw_rd0_part1_last, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t180::<S>(src, n, p, esc) });
-                            }
-                            // `r_lead`, for tier 2
-                            wput(&mut fw_r_lead, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t182::<S>(src, n, p, esc) });
-                            // `rd0_part4`, for tier 2
-                            wput(&mut fw_rd0_part4, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t174::<S>(src, n, p, esc) });
-                            // `id_last`, for tier 2
-                            wput(&mut fw_id_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t169::<S>(src, n, p, esc) });
-                            // `id2`, for tier 2
-                            wput(&mut fw_id2, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t194::<S>(src, n, p, esc) });
-                            // `extra2`, for tier 2
-                            wput(&mut fw_extra2, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t195::<S>(src, n, p, esc) });
-                            // `d2_first`, for tier 2
-                            wput(&mut fw_d2_first, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t196::<S>(src, n, p, esc) });
-                            // `d2_last`, for tier 2
-                            wput(&mut fw_d2_last, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t200::<S>(src, n, p, esc) });
-                            if s + 1 < c {
-                                match c - s - 1 {
-                                    1 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t198::<S>(src, n, p, esc) }); }
-                                    2 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                    3 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                    4 => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                    _ => { wput(&mut fw_d2_last, s + 1, s + 1, |p: isize, esc: &mut u64| unsafe { w_t199::<S>(src, n, p, esc) }); }
-                                }
-                            }
-                            if s + 2 < c {
-                                match c - s - 2 {
-                                    1 => { wput(&mut fw_d2_last, s + 2, s + 2, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if s + 3 < c {
-                                match c - s - 3 {
-                                    1 => { wput(&mut fw_d2_last, s + 3, s + 3, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if s + 4 < c {
-                                match c - s - 4 {
-                                    1 => { wput(&mut fw_d2_last, s + 4, s + 4, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) }); }
-                                    _ => {}
-                                }
-                            }
-                            if c > s + 5 {
-                                wput(&mut fw_d2_last, c - 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t197::<S>(src, n, p, esc) });
-                            }
-                            // `rd1_close`, for tier 2
-                            clear(&mut s1.fw_rd1_close, s, s);
-                            wput(&mut s1.fw_rd1_close, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t8::<S>(src, n, p, esc) });
-                            // `o_rtail2`, for tier 2
-                            set(&mut fw_o_rtail2, s, s + 1);
-                            // `rd1_closes1`, for tier 2
-                            wput(&mut fw_rd1_closes1, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_m_rclose::<S>(src, n, p, esc) });
-                            wput(&mut fw_rd1_closes1, c, c, |p: isize, esc: &mut u64| unsafe { w_m_rclose::<S>(src, n, p, esc) });
-                            // `rd1_open`, for tier 2
-                            set(&mut fw_rd1_open, s, s + 1);
                             last
                         },
                         None => {
@@ -4429,6 +5120,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
+                    code_spans.push((s, l));
+                    #[cfg(feature = "test-hooks")]
                     clear(&mut code_l, s, l);
                     // Resumes the open string's record: no record of its own.
                     match opened {
@@ -4439,7 +5132,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                         _ => {
                             // SAFETY: record `held[opened - 1]` is written (`< len`).
                             unsafe { (*out.add(held[opened - 1])).last = l as u32 };
-                            if bit(&s1.m_t_dollar, close) {
+                            if (((((close < n && (src[close] == b'$')) && (close + 1 < n && (src[close + 1] == b'{'))) && (close < n && !af_1(src, n, close))) && (close < n && !(close >= 1 && at_esc_dollar(src, n, (close - 1)))))) {
                                 if depth == 4 {
                                     refused = true;
                                     break 'tokens;
@@ -4483,7 +5176,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
 ,
                 16 => {
                     // `'`: read chr parts, to its closer
-                    let l = match s1_first_bit(src, &mut st1, &mut s1, |o: &Stage1| &o.m_sq_close[..], s + 1) {
+                    let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_sq_close::<S>(src, n, p, esc) })) {
                         Some(c) => {
                             let last = c + 0;
                             // a character or a backtick name over a line
@@ -4496,21 +5189,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
-                            // `rd0_close`, for tier 2
-                            clear(&mut s1.fw_rd0_close, s, s);
-                            clear(&mut s1.fw_rd0_close, c, last);
-                            // `rd1_close`, for tier 2
-                            clear(&mut s1.fw_rd1_close, s, s);
-                            clear(&mut s1.fw_rd1_close, c, last);
-                            // `c_uesc`, for tier 2
-                            wput(&mut fw_c_uesc, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t77::<S>(src, n, p, esc) });
-                            // `rd2_part1`, for tier 2
-                            wput(&mut fw_rd2_part1, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t202::<S>(src, n, p, esc) });
-                            wput(&mut fw_rd2_part1, c, last, |p: isize, esc: &mut u64| unsafe { w_t202::<S>(src, n, p, esc) });
-                            // `rd2_part2`, for tier 2
-                            wput(&mut fw_rd2_part2, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_t203::<S>(src, n, p, esc) });
-                            // `o_chr`, for tier 2
-                            set(&mut fw_o_chr, s, s + 1);
                             last
                         },
                         None => {
@@ -4535,12 +5213,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
-                            // `rd0_close`, for tier 2
-                            clear(&mut s1.fw_rd0_close, s, s);
-                            clear(&mut s1.fw_rd0_close, c, last);
-                            // `rd1_close`, for tier 2
-                            clear(&mut s1.fw_rd1_close, s, s);
-                            clear(&mut s1.fw_rd1_close, c, last);
                             last
                         },
                         None => {
@@ -4632,6 +5304,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         acc_0 = extra && acc_0;
         rec_0 = false;
         if open != usize::MAX {
+            code_spans.push((s, l));
+            #[cfg(feature = "test-hooks")]
             clear(&mut code_l, s, l);
         }
         let rec = Rec { start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 };
@@ -4657,6 +5331,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
     let escapes = s1.refused;
     refused |= escapes;
     let _ = (from, from_record, before, pending);
+    #[cfg(feature = "test-hooks")]
     for (c, v) in code_l.iter_mut().zip(&lv) {
         *c &= v;
     }
@@ -4666,186 +5341,13 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             panic!("code_l is not the regions' code in word {q} ({:#x} against {:#x}) of {:?}", code_l[q], m_code[q], String::from_utf8_lossy(src));
         }
     }
-    // The escapes made of `code`: one pass over the words, each mask a word (24 masks).
-    let mut t108_v = vec![0u64; nw];
-    let mut t105_p = 0u64;
-    let mut t108_p = 0u64;
-    let mut t110_p = 0u64;
-    let mut t114_p = 0u64;
-    let mut t115_p = 0u64;
-    let mut t116_p = 0u64;
-    let mut t119_p = 0u64;
-    let mut t120_p = 0u64;
-    let mut t123_p = 0u64;
-    let mut t125_p = 0u64;
-    let mut t106_c = 0u64;
-    let mut t110_c = 0u64;
-    let mut t112_c = 0u64;
-    let mut t117_c = 0u64;
-    let mut t125_c = 0u64;
-    let mut t123_c = 0u64;
-    for i in 0..nw {
-        let t108 = code_l[i] & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) });
-        t108_v[i] = t108;
-        let t107 = code_l[i] & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) }) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize, &mut 0) } & (!(t108 << 1 | t108_p >> 63) & lv[i]) & (!unsafe { w_t18::<S>(src, n, (i * 64) as isize - 1, &mut 0) } & lv[i]);
-        let t109 = !(code_l[i] & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) })) & lv[i];
-        let t106 = {
-            let (s, e) = (t107, t109);
-            let b = !e | s;
-            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t106_c) ^ s ^ b));
-            t106_c = f >> 63;
-            f
-        };
-        let t111 = code_l[i] & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) }) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize, &mut 0) } & (!(t108 << 1 | t108_p >> 63) & lv[i]) & (!unsafe { w_t18::<S>(src, n, (i * 64) as isize - 1, &mut 0) } & lv[i]) & (!(code_l[i] & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) }) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize, &mut 0) } & (!(t108 << 1 | t108_p >> 63) & lv[i]) & (!unsafe { w_t18::<S>(src, n, (i * 64) as isize - 1, &mut 0) } & lv[i]) & unsafe { w_m_zero::<S>(src, n, (i * 64) as isize, &mut 0) } & unsafe { w_m_x_letter::<S>(src, n, (i * 64) as isize + 1, &mut 0) }) & lv[i]) & (!(code_l[i] & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) }) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize, &mut 0) } & (!(t108 << 1 | t108_p >> 63) & lv[i]) & (!unsafe { w_t18::<S>(src, n, (i * 64) as isize - 1, &mut 0) } & lv[i]) & unsafe { w_m_zero::<S>(src, n, (i * 64) as isize, &mut 0) } & unsafe { w_m_b_letter::<S>(src, n, (i * 64) as isize + 1, &mut 0) }) & lv[i]);
-        let t110 = {
-            let (s, e) = (t111, unsafe { w_t24::<S>(src, n, (i * 64) as isize, &mut 0) });
-            let b = !e | s;
-            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t110_c) ^ s ^ b));
-            t110_c = f >> 63;
-            f
-        };
-        let t114 = (code_l[i] & unsafe { w_m_dot::<S>(src, n, (i * 64) as isize, &mut 0) } & (t110 << 1 | t110_p >> 63) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 1, &mut 0) } | code_l[i] & unsafe { w_m_dot::<S>(src, n, (i * 64) as isize, &mut 0) } & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 1, &mut 0) } & (!(t108 << 1 | t108_p >> 63) & lv[i]) & (!unsafe { w_m_dot::<S>(src, n, (i * 64) as isize - 1, &mut 0) } & lv[i]));
-        let t113 = (t114 << 1 | t114_p >> 63);
-        let t112 = {
-            let (s, e) = (t113, unsafe { w_t24::<S>(src, n, (i * 64) as isize, &mut 0) });
-            let b = !e | s;
-            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t112_c) ^ s ^ b));
-            t112_c = f >> 63;
-            f
-        };
-        let t115 = (t110 | t112);
-        let t116 = code_l[i] & unsafe { w_m_e_letter::<S>(src, n, (i * 64) as isize, &mut 0) } & (t115 << 1 | t115_p >> 63) & (unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 1, &mut 0) } | unsafe { w_m_sign::<S>(src, n, (i * 64) as isize + 1, &mut 0) } & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 2, &mut 0) });
-        let t119 = unsafe { w_m_sign::<S>(src, n, (i * 64) as isize, &mut 0) } & (t116 << 1 | t116_p >> 63);
-        let t118 = ((t116 << 1 | t116_p >> 63) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize, &mut 0) } | (t119 << 1 | t119_p >> 63));
-        let t117 = {
-            let (s, e) = (t118, unsafe { w_t24::<S>(src, n, (i * 64) as isize, &mut 0) });
-            let b = !e | s;
-            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t117_c) ^ s ^ b));
-            t117_c = f >> 63;
-            f
-        };
-        let t120 = ((t110 | t112) | t117);
-        let t105 = (t106 | (((((((t110 | code_l[i] & unsafe { w_m_dot::<S>(src, n, (i * 64) as isize, &mut 0) } & (t110 << 1 | t110_p >> 63) & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 1, &mut 0) }) | code_l[i] & unsafe { w_m_dot::<S>(src, n, (i * 64) as isize, &mut 0) } & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 1, &mut 0) } & (!(t108 << 1 | t108_p >> 63) & lv[i]) & (!unsafe { w_m_dot::<S>(src, n, (i * 64) as isize - 1, &mut 0) } & lv[i])) | t112) | code_l[i] & unsafe { w_m_e_letter::<S>(src, n, (i * 64) as isize, &mut 0) } & (t115 << 1 | t115_p >> 63) & (unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 1, &mut 0) } | unsafe { w_m_sign::<S>(src, n, (i * 64) as isize + 1, &mut 0) } & unsafe { w_m_digit::<S>(src, n, (i * 64) as isize + 2, &mut 0) })) | unsafe { w_m_sign::<S>(src, n, (i * 64) as isize, &mut 0) } & (t116 << 1 | t116_p >> 63)) | t117) | code_l[i] & unsafe { w_m_f_letter::<S>(src, n, (i * 64) as isize, &mut 0) } & (t120 << 1 | t120_p >> 63)));
-        let t104 = code_l[i] & unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) } & (t105 << 1 | t105_p >> 63);
-        // a name's letter past ASCII touching a number
-        refused |= t104 != 0;
-        let t126 = unsafe { w_m_lf::<S>(src, n, (i * 64) as isize, &mut 0) } & code_l[i];
-        let t127 = (code_l[i] & (!unsafe { w_m_ws::<S>(src, n, (i * 64) as isize, &mut 0) } & lv[i]) | (!code_l[i] & lv[i]) & prev(&code_l, i, 1));
-        let t125 = {
-            let (s, e) = (t126, t127);
-            let b = !e | s;
-            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t125_c) ^ s ^ b));
-            t125_c = f >> 63;
-            f
-        };
-        let t124 = (!code_l[i] & lv[i]) & prev(&code_l, i, 1) & unsafe { w_m_slash::<S>(src, n, (i * 64) as isize, &mut 0) } & (t125 << 1 | t125_p >> 63);
-        let t128 = (code_l[i] & (!unsafe { w_m_ws::<S>(src, n, (i * 64) as isize, &mut 0) } & lv[i]) | (!code_l[i] & lv[i]) & prev(&code_l, i, 1) & (!unsafe { w_m_slash::<S>(src, n, (i * 64) as isize, &mut 0) } & lv[i]));
-        let t123 = {
-            let (s, e) = (t124, t128);
-            let b = !e | s;
-            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t123_c) ^ s ^ b));
-            t123_c = f >> 63;
-            f
-        };
-        let t122 = code_l[i] & unsafe { w_m_semicolon::<S>(src, n, (i * 64) as isize, &mut 0) } & (t123 << 1 | t123_p >> 63);
-        // a `;` after a line break and a comment
-        refused |= t122 != 0;
-        t105_p = t105;
-        t108_p = t108;
-        t110_p = t110;
-        t114_p = t114;
-        t115_p = t115;
-        t116_p = t116;
-        t119_p = t119;
-        t120_p = t120;
-        t123_p = t123;
-        t125_p = t125;
-    }
-    // The escapes made of `code`: one pass over the words, each mask a word (11 masks).
-    let mut t131_p = 0u64;
-    let mut t137_p = 0u64;
-    let mut t135_c = 0u64;
-    let mut t133_c = 0u64;
-    let mut t131_c = 0u64;
-    for i in 0..nw {
-        let t137 = code_l[i] & (unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) }) & (!prev(&t108_v, i, 1) & lv[i]) & (unsafe { w_t37::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_t38::<S>(src, n, (i * 64) as isize, &mut 0) }) & (!next(&t108_v, i, 2) & lv[i]);
-        let t136 = (t137 << 2 | t137_p >> 62);
-        let t138 = !(code_l[i] & ((((((unsafe { w_m_word::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_high::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_m_dot::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_t41::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_t42::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_t43::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_t44::<S>(src, n, (i * 64) as isize, &mut 0) })) & lv[i];
-        let t135 = {
-            let (s, e) = (t136, t138);
-            let b = !e | s;
-            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t135_c) ^ s ^ b));
-            t135_c = f >> 63;
-            f
-        };
-        let t134 = t135 & unsafe { w_m_dot::<S>(src, n, (i * 64) as isize, &mut 0) };
-        let t139 = !t135 & lv[i];
-        let t133 = {
-            let (s, e) = (t134, t139);
-            let b = !e | s;
-            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t133_c) ^ s ^ b));
-            t133_c = f >> 63;
-            f
-        };
-        let t132 = t133 & unsafe { w_t43::<S>(src, n, (i * 64) as isize, &mut 0) };
-        let t140 = (((!t133 & lv[i] | unsafe { w_t42::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_t43::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_m_gt::<S>(src, n, (i * 64) as isize, &mut 0) } & unsafe { w_m_gt::<S>(src, n, (i * 64) as isize - 1, &mut 0) });
-        let t131 = {
-            let (s, e) = (t132, t140);
-            let b = !e | s;
-            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t131_c) ^ s ^ b));
-            t131_c = f >> 63;
-            f
-        };
-        let t129 = ((unsafe { w_t41::<S>(src, n, (i * 64) as isize, &mut 0) } | unsafe { w_m_slash::<S>(src, n, (i * 64) as isize, &mut 0) }) | unsafe { w_t130::<S>(src, n, (i * 64) as isize, &mut 0) }) & (t131 << 1 | t131_p >> 63) & unsafe { w_m_gt::<S>(src, n, (i * 64) as isize - 1, &mut 0) };
-        // a blank, a comment or a `\r` after a type the lean parser may split
-        refused |= t129 != 0;
-        t131_p = t131;
-        t137_p = t137;
-    }
+    // The escapes made of `code`: the words the loop left.
+    code_pass!(nw);
     // SAFETY: `len` records written.
     unsafe { recs.set_len(len) };
     Lexed {
         recs,
         extras,
-        masks: Masks {
-            rd0_close: s1.fw_rd0_close,
-            o_str: fw_o_str,
-            o_rstr: fw_o_rstr,
-            o_str2: fw_o_str2,
-            o_rstr2: fw_o_rstr2,
-            t_dollar: s1.m_t_dollar,
-            t2_dollar: s1.m_t2_dollar,
-            rd0_part0: fw_rd0_part0,
-            r_start: fw_r_start,
-            rd0_part1_last: fw_rd0_part1_last,
-            r_lead: fw_r_lead,
-            id_dollar: fw_id_dollar,
-            rd0_part4: fw_rd0_part4,
-            id_last: fw_id_last,
-            lone1: fw_lone1,
-            d_first: fw_d_first,
-            d_last: fw_d_last,
-            rd0_part7: fw_rd0_part7,
-            rd0_part8: fw_rd0_part8,
-            id2: fw_id2,
-            extra2: fw_extra2,
-            d2_first: fw_d2_first,
-            d2_last: fw_d2_last,
-            rd0_open: fw_rd0_open,
-            rd1_close: s1.fw_rd1_close,
-            o_tail: fw_o_tail,
-            o_rtail: fw_o_rtail,
-            o_tail2: fw_o_tail2,
-            o_rtail2: fw_o_rtail2,
-            rd1_closes0: fw_rd1_closes0,
-            rd1_closes1: fw_rd1_closes1,
-            rd1_open: fw_rd1_open,
-            sq_close: s1.m_sq_close,
-            c_uesc: fw_c_uesc,
-            rd2_part1: fw_rd2_part1,
-            rd2_part2: fw_rd2_part2,
-            o_chr: fw_o_chr,
-        },
         refused,
     }
 }
@@ -5765,17 +6267,52 @@ fn at_q2(src: &[u8], n: usize, q: usize) -> bool {
     ((q >= 1 && (q - 1 < n && (src[q - 1] == b'$'))) && (q >= 2 && (q - 2 < n && (src[q - 2] == b'$'))))
 }
 
-/// Whether mask `two_start` holds at byte `q`, from the bytes.
+/// Whether mask `bs` holds at byte `q`, from the bytes.
 #[inline]
 #[allow(unused_variables, dead_code)]
-fn at_two_start(src: &[u8], n: usize, q: usize) -> bool {
-    (((((((((((((((((((q < n && (src[q] == b'-')) && (q + 1 < n && (src[q + 1] == b'>'))) || ((q < n && (src[q] == b'=')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'!')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'<')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'&')) && (q + 1 < n && (src[q + 1] == b'&')))) || ((q < n && (src[q] == b'|')) && (q + 1 < n && (src[q + 1] == b'|')))) || ((q < n && (src[q] == b'+')) && (q + 1 < n && (src[q + 1] == b'+')))) || ((q < n && (src[q] == b'-')) && (q + 1 < n && (src[q + 1] == b'-')))) || ((q < n && (src[q] == b'+')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'-')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'*')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'/')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'%')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b':')) && (q + 1 < n && (src[q + 1] == b':')))) || ((q < n && (src[q] == b'?')) && (q + 1 < n && (src[q + 1] == b':')))) || ((q < n && (src[q] == b'.')) && (q + 1 < n && (src[q + 1] == b'.')))) || ((q < n && (src[q] == b'!')) && (q + 1 < n && (src[q + 1] == b'!')))) && (q < n && !af_0(src, n, q)))
+fn at_bs(src: &[u8], n: usize, q: usize) -> bool {
+    ((q < n && (src[q] == b'\\')) && (q < n && !(q >= 1 && at_esc0(src, n, (q - 1)))))
+}
+
+/// Whether mask `esc0` holds at byte `q`, from the bytes.
+#[inline]
+#[allow(unused_variables, dead_code)]
+fn at_esc0(src: &[u8], n: usize, q: usize) -> bool {
+    ((q < n && (src[q] == b'$')) && af_0(src, n, q))
 }
 
 /// Whether a fill or an escape holds at byte `q`, from the bytes.
 #[inline]
 #[allow(unused_variables, dead_code)]
 fn af_0(src: &[u8], n: usize, q: usize) -> bool {
+    (esc_back((q) as isize, |q: usize| (q < n && (src[q] == b'\\'))) == 1)
+}
+
+/// Whether a fill or an escape holds at byte `q`, from the bytes.
+#[inline]
+#[allow(unused_variables, dead_code)]
+fn af_1(src: &[u8], n: usize, q: usize) -> bool {
+    (esc_back((q) as isize, |q: usize| at_bs(src, n, q)) == 1)
+}
+
+/// Whether mask `esc_dollar` holds at byte `q`, from the bytes.
+#[inline]
+#[allow(unused_variables, dead_code)]
+fn at_esc_dollar(src: &[u8], n: usize, q: usize) -> bool {
+    ((q < n && (src[q] == b'$')) && af_1(src, n, q))
+}
+
+/// Whether mask `two_start` holds at byte `q`, from the bytes.
+#[inline]
+#[allow(unused_variables, dead_code)]
+fn at_two_start(src: &[u8], n: usize, q: usize) -> bool {
+    (((((((((((((((((((q < n && (src[q] == b'-')) && (q + 1 < n && (src[q + 1] == b'>'))) || ((q < n && (src[q] == b'=')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'!')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'<')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'&')) && (q + 1 < n && (src[q + 1] == b'&')))) || ((q < n && (src[q] == b'|')) && (q + 1 < n && (src[q + 1] == b'|')))) || ((q < n && (src[q] == b'+')) && (q + 1 < n && (src[q + 1] == b'+')))) || ((q < n && (src[q] == b'-')) && (q + 1 < n && (src[q + 1] == b'-')))) || ((q < n && (src[q] == b'+')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'-')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'*')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'/')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'%')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b':')) && (q + 1 < n && (src[q + 1] == b':')))) || ((q < n && (src[q] == b'?')) && (q + 1 < n && (src[q + 1] == b':')))) || ((q < n && (src[q] == b'.')) && (q + 1 < n && (src[q + 1] == b'.')))) || ((q < n && (src[q] == b'!')) && (q + 1 < n && (src[q + 1] == b'!')))) && (q < n && !af_2(src, n, q)))
+}
+
+/// Whether a fill or an escape holds at byte `q`, from the bytes.
+#[inline]
+#[allow(unused_variables, dead_code)]
+fn af_2(src: &[u8], n: usize, q: usize) -> bool {
     (esc_back((q) as isize, |q: usize| ((((((((((((((((((q < n && (src[q] == b'-')) && (q + 1 < n && (src[q + 1] == b'>'))) || ((q < n && (src[q] == b'=')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'!')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'<')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'&')) && (q + 1 < n && (src[q + 1] == b'&')))) || ((q < n && (src[q] == b'|')) && (q + 1 < n && (src[q + 1] == b'|')))) || ((q < n && (src[q] == b'+')) && (q + 1 < n && (src[q + 1] == b'+')))) || ((q < n && (src[q] == b'-')) && (q + 1 < n && (src[q + 1] == b'-')))) || ((q < n && (src[q] == b'+')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'-')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'*')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'/')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'%')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b':')) && (q + 1 < n && (src[q + 1] == b':')))) || ((q < n && (src[q] == b'?')) && (q + 1 < n && (src[q + 1] == b':')))) || ((q < n && (src[q] == b'.')) && (q + 1 < n && (src[q + 1] == b'.')))) || ((q < n && (src[q] == b'!')) && (q + 1 < n && (src[q + 1] == b'!'))))) == 1)
 }
 
@@ -5789,22 +6326,8 @@ fn at_two_start_three(src: &[u8], n: usize, q: usize) -> bool {
 /// Whether a fill or an escape holds at byte `q`, from the bytes.
 #[inline]
 #[allow(unused_variables, dead_code)]
-fn af_1(src: &[u8], n: usize, q: usize) -> bool {
-    (fill_back((q) as isize + 1, |q: usize| ((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && !((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'x' | b'X'))))) && (q < n && !((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'b' | b'B'))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) == 1)
-}
-
-/// Whether a fill or an escape holds at byte `q`, from the bytes.
-#[inline]
-#[allow(unused_variables, dead_code)]
-fn af_2(src: &[u8], n: usize, q: usize) -> bool {
-    (fill_back((q) as isize + 1, |q: usize| (q >= 1 && ((((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) >= 1 && af_1(src, n, ((q - 1) - 1)))) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) || ((((q - 1 < n && (src[q - 1] == b'.')) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], 0x80..=0xff)))))) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.'))))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) == 1)
-}
-
-/// Whether a fill or an escape holds at byte `q`, from the bytes.
-#[inline]
-#[allow(unused_variables, dead_code)]
 fn af_3(src: &[u8], n: usize, q: usize) -> bool {
-    (fill_back((q) as isize + 1, |q: usize| (((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'x' | b'X'))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'b' | b'B'))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) == 1)
+    (fill_back((q) as isize + 1, |q: usize| ((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && !((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'x' | b'X'))))) && (q < n && !((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'b' | b'B'))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) == 1)
 }
 
 /// Whether a fill or an escape holds at byte `q`, from the bytes.
@@ -5814,39 +6337,18 @@ fn af_4(src: &[u8], n: usize, q: usize) -> bool {
     (fill_back((q) as isize + 1, |q: usize| (q >= 1 && ((((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) >= 1 && af_3(src, n, ((q - 1) - 1)))) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) || ((((q - 1 < n && (src[q - 1] == b'.')) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], 0x80..=0xff)))))) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.'))))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) == 1)
 }
 
-/// Whether mask `bs` holds at byte `q`, from the bytes.
-#[inline]
-#[allow(unused_variables, dead_code)]
-fn at_bs(src: &[u8], n: usize, q: usize) -> bool {
-    ((q < n && (src[q] == b'\\')) && (q < n && !(q >= 1 && at_esc0(src, n, (q - 1)))))
-}
-
-/// Whether mask `esc0` holds at byte `q`, from the bytes.
-#[inline]
-#[allow(unused_variables, dead_code)]
-fn at_esc0(src: &[u8], n: usize, q: usize) -> bool {
-    ((q < n && (src[q] == b'$')) && af_5(src, n, q))
-}
-
 /// Whether a fill or an escape holds at byte `q`, from the bytes.
 #[inline]
 #[allow(unused_variables, dead_code)]
 fn af_5(src: &[u8], n: usize, q: usize) -> bool {
-    (esc_back((q) as isize, |q: usize| (q < n && (src[q] == b'\\'))) == 1)
+    (fill_back((q) as isize + 1, |q: usize| (((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'x' | b'X'))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'b' | b'B'))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) == 1)
 }
 
 /// Whether a fill or an escape holds at byte `q`, from the bytes.
 #[inline]
 #[allow(unused_variables, dead_code)]
 fn af_6(src: &[u8], n: usize, q: usize) -> bool {
-    (esc_back((q) as isize, |q: usize| at_bs(src, n, q)) == 1)
-}
-
-/// Whether mask `esc_dollar` holds at byte `q`, from the bytes.
-#[inline]
-#[allow(unused_variables, dead_code)]
-fn at_esc_dollar(src: &[u8], n: usize, q: usize) -> bool {
-    ((q < n && (src[q] == b'$')) && af_6(src, n, q))
+    (fill_back((q) as isize + 1, |q: usize| (q >= 1 && ((((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) >= 1 && af_5(src, n, ((q - 1) - 1)))) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) || ((((q - 1 < n && (src[q - 1] == b'.')) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], 0x80..=0xff)))))) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.'))))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) == 1)
 }
 
 /// Whether mask `pre_at` holds at byte `q`, from the bytes.
@@ -5854,6 +6356,694 @@ fn at_esc_dollar(src: &[u8], n: usize, q: usize) -> bool {
 #[allow(unused_variables, dead_code)]
 fn at_pre_at(src: &[u8], n: usize, q: usize) -> bool {
     (((q < n && (src[q] == b'$')) && (q + 1 < n && (src[q + 1] == b'"'))) || (((q < n && (src[q] == b'$')) && (q + 1 < n && (src[q + 1] == b'$'))) && (q + 2 < n && (src[q + 2] == b'"'))))
+}
+
+/// Class `dq`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_dq<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x22) };
+    padded(b, q, p)
+}
+
+/// Class `backslash`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_backslash<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x5c) };
+    padded(b, q, p)
+}
+
+/// Class `dollar`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_dollar<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x24) };
+    padded(b, q, p)
+}
+
+/// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline]
+#[allow(unused_variables, dead_code)]
+unsafe fn wf_0<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    { let mut c = esc_back(p, |q: usize| (q < n && (src[q] == b'\\'))); escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, &mut c) }
+}
+
+/// Mask `esc0`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline]
+#[allow(unused_variables, dead_code)]
+unsafe fn d_esc0<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    (unsafe { cls_dollar::<S>(src, n, p) } & unsafe { wf_0::<S>(src, n, p) })
+}
+
+/// Mask `bs`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline]
+#[allow(unused_variables, dead_code)]
+unsafe fn d_bs<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    (unsafe { cls_backslash::<S>(src, n, p) } & (!unsafe { d_esc0::<S>(src, n, (p - 1)) } & valid(n, p)))
+}
+
+/// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline]
+#[allow(unused_variables, dead_code)]
+unsafe fn wf_1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    { let mut c = esc_back(p, |q: usize| at_bs(src, n, q)); escaped_step(unsafe { d_bs::<S>(src, n, p) }, &mut c) }
+}
+
+/// Mask `dq_close`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline]
+#[allow(unused_variables, dead_code)]
+unsafe fn d_dq_close<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    (unsafe { cls_dq::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p)))
+}
+
+/// Class `lbrace`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_lbrace<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x7b) };
+    padded(b, q, p)
+}
+
+/// Mask `esc_dollar`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline]
+#[allow(unused_variables, dead_code)]
+unsafe fn d_esc_dollar<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    (unsafe { cls_dollar::<S>(src, n, p) } & unsafe { wf_1::<S>(src, n, p) })
+}
+
+/// Mask `t_dollar`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline]
+#[allow(unused_variables, dead_code)]
+unsafe fn d_t_dollar<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    (((unsafe { cls_dollar::<S>(src, n, p) } & (unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63)) & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))
+}
+
+/// `t6`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t6<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t_dollar::<S>(src, n, p) })
+}
+
+/// Mask `dq3`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline]
+#[allow(unused_variables, dead_code)]
+unsafe fn d_dq3<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    ((unsafe { cls_dq::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63)) & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63))
+}
+
+/// Mask `rclose`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline]
+#[allow(unused_variables, dead_code)]
+unsafe fn d_rclose<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    (unsafe { d_dq3::<S>(src, n, p) } & (!(unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63) & valid(n, p)))
+}
+
+/// `t4`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t4<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (unsafe { d_rclose::<S>(src, n, p) } | unsafe { d_t_dollar::<S>(src, n, p) })
+}
+
+/// Mask `t2_dollar`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline]
+#[allow(unused_variables, dead_code)]
+unsafe fn d_t2_dollar<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    ((((unsafe { cls_dollar::<S>(src, n, p) } & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_lbrace::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x7b)) << 63)) & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))
+}
+
+/// `t10`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t10<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t2_dollar::<S>(src, n, p) })
+}
+
+/// `t8`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t8<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (unsafe { d_rclose::<S>(src, n, p) } | unsafe { d_t2_dollar::<S>(src, n, p) })
+}
+
+/// Class `sq`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_sq<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x27) };
+    padded(b, q, p)
+}
+
+/// `m_sq_close`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_m_sq_close<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (unsafe { cls_sq::<S>(src, n, p) } & (!unsafe { wf_0::<S>(src, n, p) } & valid(n, p)))
+}
+
+/// `t162`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t162<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((((unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t_dollar::<S>(src, n, p) }) | (unsafe { d_rclose::<S>(src, n, p) } | unsafe { d_t_dollar::<S>(src, n, p) })) | (unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t2_dollar::<S>(src, n, p) })) | (unsafe { d_rclose::<S>(src, n, p) } | unsafe { d_t2_dollar::<S>(src, n, p) }))
+}
+
+/// `m_rclose`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_m_rclose<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (unsafe { d_dq3::<S>(src, n, p) } & (!(unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63) & valid(n, p)))
+}
+
+/// `t163`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t163<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (((unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t_dollar::<S>(src, n, p) }) | (unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t2_dollar::<S>(src, n, p) })) | (unsafe { d_rclose::<S>(src, n, p) } | unsafe { d_t2_dollar::<S>(src, n, p) }))
+}
+
+/// `m_dq_close`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_m_dq_close<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (unsafe { cls_dq::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p)))
+}
+
+/// `t164`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t164<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (((unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t_dollar::<S>(src, n, p) }) | (unsafe { d_rclose::<S>(src, n, p) } | unsafe { d_t_dollar::<S>(src, n, p) })) | (unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t2_dollar::<S>(src, n, p) }))
+}
+
+/// `m_t_dollar`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_m_t_dollar<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (((unsafe { cls_dollar::<S>(src, n, p) } & (unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63)) & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))
+}
+
+/// `m_t2_dollar`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_m_t2_dollar<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((((unsafe { cls_dollar::<S>(src, n, p) } & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_lbrace::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x7b)) << 63)) & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))
+}
+
+/// Class `alpha`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_alpha<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { (S::to_bitmask(S::ge(v, 0x61)) & !S::to_bitmask(S::ge(v, 0x7b))) | (S::to_bitmask(S::ge(v, 0x41)) & !S::to_bitmask(S::ge(v, 0x5b))) | S::eq_mask(v, 0x5f) };
+    padded(b, q, p)
+}
+
+/// Class `high`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_high<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::to_bitmask(S::ge(v, 0x80)) };
+    padded(b, q, p)
+}
+
+/// Class `word`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_word<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { (S::to_bitmask(S::ge(v, 0x61)) & !S::to_bitmask(S::ge(v, 0x7b))) | (S::to_bitmask(S::ge(v, 0x41)) & !S::to_bitmask(S::ge(v, 0x5b))) | (S::to_bitmask(S::ge(v, 0x30)) & !S::to_bitmask(S::ge(v, 0x3a))) | S::eq_mask(v, 0x5f) };
+    padded(b, q, p)
+}
+
+/// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline]
+#[allow(unused_variables, dead_code)]
+unsafe fn wf_2<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    { let (fs, fe) = (((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) })), (((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & (!(unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p - 1))))); let c = fill_back(p, |q: usize| (q >= 1 && ((((q - 1 < n && (src[q - 1] == b'$')) && ((q - 1) < n && !af_1(src, n, (q - 1)))) && ((q - 1) < n && !((q - 1) >= 1 && at_esc_dollar(src, n, ((q - 1) - 1))))) && ((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'a'..=b'z' | b'A'..=b'Z' | b'_')) || (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], 0x80..=0xff))))), |q: usize| (q >= 1 && (((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff))) && ((q - 1) < n && !((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], 0x80..=0xff))))))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
+}
+
+/// `t165`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t165<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (((!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) | (((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p)))) & valid(n, p)) & (!unsafe { wf_2::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p)))
+}
+
+/// `t170`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t170<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    { let a = (((!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) | (((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p)))) & valid(n, p)) & (!unsafe { wf_2::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p))); if a == 0 { 0 } else { a & ((!(((!(((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) })) | ((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (!(unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p - 1))))) & valid(n, (p - 1))) & (!unsafe { wf_2::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!(unsafe { d_dq3::<S>(src, n, (p - 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)) & valid(n, (p - 1)))) & valid(n, p)) | ((unsafe { cls_dq::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x22))) & (!unsafe { cls_dq::<S>(src, n, p) } & valid(n, (p - 1))))) } }
+}
+
+/// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline]
+#[allow(unused_variables, dead_code)]
+unsafe fn wf_3<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    { let (fs, fe) = ((((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (((unsafe { cls_dollar::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x24)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24)) << 1) & (!unsafe { wf_1::<S>(src, n, (p - 2)) } & valid(n, (p - 2)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 3)) } & valid(n, (p - 2))))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) })), (((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & (!(unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p - 1))))); let c = fill_back(p, |q: usize| (q >= 1 && (((((q - 1 < n && (src[q - 1] == b'$')) && ((q - 1) < n && !af_1(src, n, (q - 1)))) && ((q - 1) < n && !((q - 1) >= 1 && at_esc_dollar(src, n, ((q - 1) - 1))))) && ((q - 1) >= 1 && (((((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'$')) && (((q - 1) - 1) < n && !af_1(src, n, ((q - 1) - 1)))) && (((q - 1) - 1) < n && !(((q - 1) - 1) >= 1 && at_esc_dollar(src, n, (((q - 1) - 1) - 1))))))) && ((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'a'..=b'z' | b'A'..=b'Z' | b'_')) || (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], 0x80..=0xff))))), |q: usize| (q >= 1 && (((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff))) && ((q - 1) < n && !((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], 0x80..=0xff))))))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
+}
+
+/// `t172`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t172<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (((!((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & valid(n, p)) & (!unsafe { wf_3::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p)))
+}
+
+/// `t177`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t177<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    { let a = (((!((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & valid(n, p)) & (!unsafe { wf_3::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p))); if a == 0 { 0 } else { a & ((!(((!(((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & valid(n, (p - 1))) & (!unsafe { wf_3::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!(unsafe { d_dq3::<S>(src, n, (p - 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)) & valid(n, (p - 1)))) & valid(n, p)) | ((unsafe { cls_dq::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x22))) & (!unsafe { cls_dq::<S>(src, n, p) } & valid(n, (p - 1))))) } }
+}
+
+/// `t179`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t179<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((unsafe { cls_dq::<S>(src, n, p) } & (!(unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63) & valid(n, p))) | { let a = (((!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) | (((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p)))) & valid(n, p)) & (!unsafe { wf_2::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p))); if a == 0 { 0 } else { a & (!(((!(((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_1::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) | ((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_1::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63)) & valid(n, (p + 1))))) & valid(n, (p + 1))) & (!unsafe { wf_2::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!(unsafe { d_dq3::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x22)) << 63)) & valid(n, (p + 1)))) & valid(n, p)) } })
+}
+
+/// `t178`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t178<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((unsafe { cls_dq::<S>(src, n, p) } & (!(unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63) & valid(n, p))) | (((!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) | (((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p)))) & valid(n, p)) & (!unsafe { wf_2::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p))))
+}
+
+/// `t181`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t181<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((unsafe { cls_dq::<S>(src, n, p) } & (!(unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63) & valid(n, p))) | ((((!((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & valid(n, p)) & (!unsafe { wf_3::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p))) & (!(((!(((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_1::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & valid(n, (p + 1))) & (!unsafe { wf_3::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!(unsafe { d_dq3::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x22)) << 63)) & valid(n, (p + 1)))) & valid(n, p))))
+}
+
+/// `t180`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t180<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((unsafe { cls_dq::<S>(src, n, p) } & (!(unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63) & valid(n, p))) | (((!((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & valid(n, p)) & (!unsafe { wf_3::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p))))
+}
+
+/// `t182`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t182<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63))
+}
+
+/// `t74`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t74<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)))
+}
+
+/// `t167`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t167<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }))
+}
+
+/// `t174`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t174<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (((unsafe { cls_dollar::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x24)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24)) << 1) & (!unsafe { wf_1::<S>(src, n, (p - 2)) } & valid(n, (p - 2)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 3)) } & valid(n, (p - 2))))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }))
+}
+
+/// `t169`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t169<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p)))
+}
+
+/// Mask `d_start`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline]
+#[allow(unused_variables, dead_code)]
+unsafe fn d_d_start<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    ((unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) | unsafe { cls_lbrace::<S>(src, n, p) })
+}
+
+/// `t183`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t183<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    { let a = (((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p))); if a == 0 { 0 } else { a & (!{ let a = ((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p))) & (!(unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63) & valid(n, p))); if a == 0 { 0 } else { a & (!{ let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (((unsafe { d_d_start::<S>(src, n, (p + 1)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 2)) })) | (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 3)) })) | ((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 4)) })) } } & valid(n, p)) } } & valid(n, p)) } }
+}
+
+/// `t184`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t184<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    { let a = { let a = ((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p))) & (!(unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63) & valid(n, p))); if a == 0 { 0 } else { a & (!{ let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (((unsafe { d_d_start::<S>(src, n, (p + 1)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 2)) })) | (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 3)) })) | ((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 4)) })) } } & valid(n, p)) } }; if a == 0 { 0 } else { a & (!{ let a = (((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (!(unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p - 1)))) & (!unsafe { cls_lbrace::<S>(src, n, p) } & valid(n, (p - 1)))); if a == 0 { 0 } else { a & (!{ let a = (((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))); if a == 0 { 0 } else { a & (((unsafe { d_d_start::<S>(src, n, p) } | (unsafe { cls_dollar::<S>(src, n, p) } & unsafe { d_d_start::<S>(src, n, (p + 1)) })) | ((unsafe { cls_dollar::<S>(src, n, p) } & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 2)) })) | (((unsafe { cls_dollar::<S>(src, n, p) } & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 3)) })) } } & valid(n, (p - 1))) } } & valid(n, p)) } }
+}
+
+/// `t186`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t186<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    { let a = { let a = ((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p))) & (!(unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63) & valid(n, p))); if a == 0 { 0 } else { a & (!{ let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (((unsafe { d_d_start::<S>(src, n, (p + 1)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 2)) })) | (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 3)) })) | ((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 4)) })) } } & valid(n, p)) } }; if a == 0 { 0 } else { a & (!{ let a = (((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_1::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63)) & valid(n, (p + 1)))) & (!(unsafe { cls_lbrace::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x7b)) << 63) & valid(n, (p + 1)))); if a == 0 { 0 } else { a & (!{ let a = (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_1::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))); if a == 0 { 0 } else { a & (((unsafe { d_d_start::<S>(src, n, (p + 2)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 3)) })) | (((unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 4)) })) | ((((unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 5)) })) } } & valid(n, (p + 1))) } } & valid(n, p)) } }
+}
+
+/// `t185`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t185<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    { let a = ((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p))) & (!(unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63) & valid(n, p))); if a == 0 { 0 } else { a & (!{ let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (((unsafe { d_d_start::<S>(src, n, (p + 1)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 2)) })) | (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 3)) })) | ((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 4)) })) } } & valid(n, p)) } }
+}
+
+/// `t187`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t187<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (unsafe { d_esc_dollar::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63))
+}
+
+/// `t188`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t188<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    { let a = (unsafe { d_esc_dollar::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)); if a == 0 { 0 } else { a & (!{ let a = { let a = (!unsafe { wf_2::<S>(src, n, (p - 1)) } & valid(n, (p - 1))); if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) })) & valid(n, (p - 1))) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (!(unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p - 1)))) & valid(n, (p - 1))) } } & valid(n, p)) } }
+}
+
+/// `t190`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t190<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((unsafe { d_esc_dollar::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)) & (!((!unsafe { wf_3::<S>(src, n, (p - 1)) } & valid(n, (p - 1))) & (!(((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & valid(n, (p - 1)))) & valid(n, p)))
+}
+
+/// `t192`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t192<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    { let a = (unsafe { d_esc_dollar::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)); if a == 0 { 0 } else { a & { let a = { let a = (!unsafe { wf_2::<S>(src, n, (p - 1)) } & valid(n, (p - 1))); if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) })) & valid(n, (p - 1))) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (!(unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p - 1)))) & valid(n, (p - 1))) } } } }
+}
+
+/// `t193`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t193<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((unsafe { d_esc_dollar::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)) & ((!unsafe { wf_3::<S>(src, n, (p - 1)) } & valid(n, (p - 1))) & (!(((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & valid(n, (p - 1)))))
+}
+
+/// `t194`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t194<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63)))
+}
+
+/// `t195`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t195<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 3)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 4)) })))
+}
+
+/// `t196`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t196<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    { let a = (({ let a = { let a = { let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 3)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 4)) }))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1))))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } } & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_t2_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(({ let a = { let a = { let a = (((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))); if a == 0 { 0 } else { a & (!((((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & unsafe { cls_dollar::<S>(src, n, p) }) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 2)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 3)) }))) & valid(n, (p - 1))) } }; if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & unsafe { cls_dollar::<S>(src, n, p) }) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) & valid(n, (p - 1))) } }; if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (((unsafe { cls_dollar::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x24)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24)) << 1) & (!unsafe { wf_1::<S>(src, n, (p - 2)) } & valid(n, (p - 2)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 3)) } & valid(n, (p - 2))))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) })) & valid(n, (p - 1))) } } & (!unsafe { d_t2_dollar::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_t2_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & valid(n, p)) } }
+}
+
+/// `t200`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t200<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    { let a = (({ let a = { let a = { let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 3)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 4)) }))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1))))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } } & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_t2_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(({ let a = { let a = { let a = (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_1::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))); if a == 0 { 0 } else { a & (!((((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_1::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 4)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 5)) }))) & valid(n, (p + 1))) } }; if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_1::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x80..=0xff)) << 63))) & valid(n, (p + 1))) } }; if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_1::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, (p + 1))) } } & (!unsafe { d_t2_dollar::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & valid(n, p)) } }
+}
+
+/// `t198`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t198<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (({ let a = { let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 3)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 4)) }))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } } & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_t2_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))
+}
+
+/// `t199`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t199<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    { let a = (({ let a = { let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 3)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 4)) }))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } } & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_t2_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(({ let a = { let a = { let a = (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_1::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))); if a == 0 { 0 } else { a & (!((((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_1::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 4)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 5)) }))) & valid(n, (p + 1))) } }; if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_1::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x80..=0xff)) << 63))) & valid(n, (p + 1))) } }; if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_1::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, (p + 1))) } } & (!unsafe { d_t2_dollar::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & valid(n, p)) } }
+}
+
+/// `t197`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t197<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (({ let a = { let a = { let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 3)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 4)) }))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_1::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1))))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } } & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_t2_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))
+}
+
+/// `t201`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t201<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (((unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_rclose::<S>(src, n, p) }) | unsafe { d_dq_close::<S>(src, n, p) }) | unsafe { d_rclose::<S>(src, n, p) })
+}
+
+/// Class `u_letter`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_u_letter<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x75) };
+    padded(b, q, p)
+}
+
+/// `t77`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t77<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((unsafe { cls_backslash::<S>(src, n, p) } & (!unsafe { wf_0::<S>(src, n, p) } & valid(n, p))) & (unsafe { cls_u_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x75)) << 63))
+}
+
+/// `t202`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t202<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (((unsafe { cls_backslash::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x5c)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x5c)) << 1) & (!unsafe { wf_0::<S>(src, n, (p - 2)) } & valid(n, (p - 2)))) & (unsafe { cls_u_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x75))))
+}
+
+/// `t203`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t203<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((unsafe { cls_backslash::<S>(src, n, p) } & (!unsafe { wf_0::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { cls_u_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x75)) << 63) & valid(n, p)))
 }
 
 /// Class `ws`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -5972,30 +7162,6 @@ unsafe fn w_t11<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: 
 #[allow(unused_variables)]
 unsafe fn w_t79<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
     ((unsafe { cls_slash::<S>(src, n, p) } & (unsafe { cls_star::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2a)))) & ((unsafe { cls_slash::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2f)) << 1) & (unsafe { cls_star::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2a)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2a)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2a)) << 2)))
-}
-
-/// Class `word`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_word<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { (S::to_bitmask(S::ge(v, 0x61)) & !S::to_bitmask(S::ge(v, 0x7b))) | (S::to_bitmask(S::ge(v, 0x41)) & !S::to_bitmask(S::ge(v, 0x5b))) | (S::to_bitmask(S::ge(v, 0x30)) & !S::to_bitmask(S::ge(v, 0x3a))) | S::eq_mask(v, 0x5f) };
-    padded(b, q, p)
-}
-
-/// Class `high`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_high<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::to_bitmask(S::ge(v, 0x80)) };
-    padded(b, q, p)
 }
 
 /// `t56`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -6486,7 +7652,7 @@ unsafe fn cls_decd<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) ->
 /// The CPU runs `S`'s backend.
 #[inline]
 #[allow(unused_variables, dead_code)]
-unsafe fn wf_0<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+unsafe fn wf_4<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
     { let (fs, fe) = ({ let a = { let a = (((unsafe { cls_word::<S>(src, n, p) } & unsafe { cls_digit::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & valid(n, (p - 1)))) & valid(n, p))); if a == 0 { 0 } else { a & (!(((((unsafe { cls_word::<S>(src, n, p) } & unsafe { cls_digit::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & valid(n, (p - 1)))) & valid(n, p))) & unsafe { cls_zero::<S>(src, n, p) }) & (unsafe { cls_x_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x78 | 0x58)) << 63)) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!(((((unsafe { cls_word::<S>(src, n, p) } & unsafe { cls_digit::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & valid(n, (p - 1)))) & valid(n, p))) & unsafe { cls_zero::<S>(src, n, p) }) & (unsafe { cls_b_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x62 | 0x42)) << 63)) & valid(n, p)) } }, (!unsafe { cls_decd::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| ((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && !((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'x' | b'X'))))) && (q < n && !((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'b' | b'B'))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
 }
 
@@ -6496,8 +7662,8 @@ unsafe fn wf_0<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64
 /// The CPU runs `S`'s backend.
 #[inline]
 #[allow(unused_variables, dead_code)]
-unsafe fn wf_1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    { let (fs, fe) = (((((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & unsafe { wf_0::<S>(src, n, (p - 2)) }) & unsafe { cls_digit::<S>(src, n, p) }) | ((((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & unsafe { cls_digit::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & valid(n, (p - 1)))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & valid(n, (p - 1))))), (!unsafe { cls_decd::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| (q >= 1 && ((((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) >= 1 && af_1(src, n, ((q - 1) - 1)))) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) || ((((q - 1 < n && (src[q - 1] == b'.')) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], 0x80..=0xff)))))) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.'))))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
+unsafe fn wf_5<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    { let (fs, fe) = (((((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & unsafe { wf_4::<S>(src, n, (p - 2)) }) & unsafe { cls_digit::<S>(src, n, p) }) | ((((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & unsafe { cls_digit::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & valid(n, (p - 1)))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & valid(n, (p - 1))))), (!unsafe { cls_decd::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| (q >= 1 && ((((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) >= 1 && af_3(src, n, ((q - 1) - 1)))) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) || ((((q - 1 < n && (src[q - 1] == b'.')) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], 0x80..=0xff)))))) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.'))))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
 }
 
 /// Class `e_letter`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -6530,8 +7696,8 @@ unsafe fn cls_sign<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) ->
 /// The CPU runs `S`'s backend.
 #[inline]
 #[allow(unused_variables, dead_code)]
-unsafe fn wf_2<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    { let (fs, fe) = ((({ let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45))) & (unsafe { wf_0::<S>(src, n, (p - 2)) } | unsafe { wf_1::<S>(src, n, (p - 2)) })); if a == 0 { 0 } else { a & (unsafe { cls_digit::<S>(src, n, p) } | (unsafe { cls_sign::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) } } & unsafe { cls_digit::<S>(src, n, p) }) | { let a = (unsafe { cls_sign::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2b | 0x2d))); if a == 0 { 0 } else { a & { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x65 | 0x45)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45)) << 1) & (unsafe { wf_0::<S>(src, n, (p - 3)) } | unsafe { wf_1::<S>(src, n, (p - 3)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39))) | ((unsafe { cls_sign::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2b | 0x2d))) & unsafe { cls_digit::<S>(src, n, p) })) } } } }), (!unsafe { cls_decd::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| (((q >= 1 && (((q - 1 < n && matches!(src[q - 1], b'e' | b'E')) && ((q - 1) >= 1 && (af_1(src, n, ((q - 1) - 1)) || af_2(src, n, ((q - 1) - 1))))) && ((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9')) || ((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'+' | b'-')) && (((q - 1) + 2) < n && matches!(src[((q - 1) + 2)], b'0'..=b'9')))))) && (q < n && matches!(src[q], b'0'..=b'9'))) || (q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'+' | b'-')) && ((q - 1) >= 1 && (((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'e' | b'E')) && (((q - 1) - 1) >= 1 && (af_1(src, n, (((q - 1) - 1) - 1)) || af_2(src, n, (((q - 1) - 1) - 1))))) && (((((q - 1) - 1) + 1) < n && matches!(src[(((q - 1) - 1) + 1)], b'0'..=b'9')) || (((((q - 1) - 1) + 1) < n && matches!(src[(((q - 1) - 1) + 1)], b'+' | b'-')) && ((((q - 1) - 1) + 2) < n && matches!(src[(((q - 1) - 1) + 2)], b'0'..=b'9'))))))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
+unsafe fn wf_6<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    { let (fs, fe) = ((({ let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45))) & (unsafe { wf_4::<S>(src, n, (p - 2)) } | unsafe { wf_5::<S>(src, n, (p - 2)) })); if a == 0 { 0 } else { a & (unsafe { cls_digit::<S>(src, n, p) } | (unsafe { cls_sign::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) } } & unsafe { cls_digit::<S>(src, n, p) }) | { let a = (unsafe { cls_sign::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2b | 0x2d))); if a == 0 { 0 } else { a & { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x65 | 0x45)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45)) << 1) & (unsafe { wf_4::<S>(src, n, (p - 3)) } | unsafe { wf_5::<S>(src, n, (p - 3)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39))) | ((unsafe { cls_sign::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2b | 0x2d))) & unsafe { cls_digit::<S>(src, n, p) })) } } } }), (!unsafe { cls_decd::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| (((q >= 1 && (((q - 1 < n && matches!(src[q - 1], b'e' | b'E')) && ((q - 1) >= 1 && (af_3(src, n, ((q - 1) - 1)) || af_4(src, n, ((q - 1) - 1))))) && ((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9')) || ((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'+' | b'-')) && (((q - 1) + 2) < n && matches!(src[((q - 1) + 2)], b'0'..=b'9')))))) && (q < n && matches!(src[q], b'0'..=b'9'))) || (q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'+' | b'-')) && ((q - 1) >= 1 && (((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'e' | b'E')) && (((q - 1) - 1) >= 1 && (af_3(src, n, (((q - 1) - 1) - 1)) || af_4(src, n, (((q - 1) - 1) - 1))))) && (((((q - 1) - 1) + 1) < n && matches!(src[(((q - 1) - 1) + 1)], b'0'..=b'9')) || (((((q - 1) - 1) + 1) < n && matches!(src[(((q - 1) - 1) + 1)], b'+' | b'-')) && ((((q - 1) - 1) + 2) < n && matches!(src[(((q - 1) - 1) + 2)], b'0'..=b'9'))))))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
 }
 
 /// Class `f_letter`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -6564,7 +7730,7 @@ unsafe fn cls_hexd<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) ->
 /// The CPU runs `S`'s backend.
 #[inline]
 #[allow(unused_variables, dead_code)]
-unsafe fn wf_3<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+unsafe fn wf_7<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
     { let (fs, fe) = ((((((((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) & (unsafe { cls_digit::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x30..=0x39)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39)) << 1)) & (!((unsafe { cls_word::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 2) | (unsafe { cls_high::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x80..=0xff)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 2)) & valid(n, (p - 2)))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 2) & (!(unsafe { cls_dot::<S>(src, n, p) } << 4 | u64::from(p >= 4 && matches!(unsafe { *src.get_unchecked((p - 4) as usize) }, 0x2e)) | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) << 1 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 2 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 3) & valid(n, (p - 3)))) & valid(n, (p - 2)))) & (unsafe { cls_zero::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x30)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30)) << 1)) & (unsafe { cls_x_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x78 | 0x58)))) & unsafe { cls_hexd::<S>(src, n, p) }), (!unsafe { cls_hexd::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| ((q >= 2 && ((((((q - 2 < n && matches!(src[q - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q - 2 < n && matches!(src[q - 2], b'0'..=b'9'))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], 0x80..=0xff)))))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && (src[((q - 2) - 1)] == b'.')) && (((q - 2) - 1) < n && !(((q - 2) - 1) >= 1 && ((((q - 2) - 1) - 1) < n && (src[(((q - 2) - 1) - 1)] == b'.')))))))) && (q - 2 < n && (src[q - 2] == b'0'))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'x' | b'X')))) && (q < n && matches!(src[q], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_'))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
 }
 
@@ -6586,7 +7752,7 @@ unsafe fn cls_bind<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) ->
 /// The CPU runs `S`'s backend.
 #[inline]
 #[allow(unused_variables, dead_code)]
-unsafe fn wf_4<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+unsafe fn wf_8<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
     { let (fs, fe) = ((((((((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) & (unsafe { cls_digit::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x30..=0x39)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39)) << 1)) & (!((unsafe { cls_word::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 2) | (unsafe { cls_high::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x80..=0xff)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 2)) & valid(n, (p - 2)))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 2) & (!(unsafe { cls_dot::<S>(src, n, p) } << 4 | u64::from(p >= 4 && matches!(unsafe { *src.get_unchecked((p - 4) as usize) }, 0x2e)) | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) << 1 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 2 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 3) & valid(n, (p - 3)))) & valid(n, (p - 2)))) & (unsafe { cls_zero::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x30)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30)) << 1)) & (unsafe { cls_b_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x62 | 0x42)))) & unsafe { cls_bind::<S>(src, n, p) }), (!unsafe { cls_bind::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| ((q >= 2 && ((((((q - 2 < n && matches!(src[q - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q - 2 < n && matches!(src[q - 2], b'0'..=b'9'))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], 0x80..=0xff)))))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && (src[((q - 2) - 1)] == b'.')) && (((q - 2) - 1) < n && !(((q - 2) - 1) >= 1 && ((((q - 2) - 1) - 1) < n && (src[(((q - 2) - 1) - 1)] == b'.')))))))) && (q - 2 < n && (src[q - 2] == b'0'))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'b' | b'B')))) && (q < n && matches!(src[q], b'0' | b'1' | b'_'))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0' | b'1' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
 }
 
@@ -6597,7 +7763,7 @@ unsafe fn wf_4<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t82<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = (unsafe { cls_word::<S>(src, n, p) } & unsafe { cls_digit::<S>(src, n, p) }); if a == 0 { 0 } else { a & ((({ let a = ((unsafe { wf_0::<S>(src, n, (p - 1)) } | unsafe { wf_1::<S>(src, n, (p - 1)) }) | unsafe { wf_2::<S>(src, n, (p - 1)) }); if a == 0 { 0 } else { a & (!(((((((unsafe { wf_0::<S>(src, n, p) } | ((unsafe { cls_dot::<S>(src, n, p) } & unsafe { wf_0::<S>(src, n, (p - 1)) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) | (((unsafe { cls_dot::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & valid(n, p)))) | unsafe { wf_1::<S>(src, n, p) }) | { let a = (unsafe { cls_e_letter::<S>(src, n, p) } & (unsafe { wf_0::<S>(src, n, (p - 1)) } | unsafe { wf_1::<S>(src, n, (p - 1)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) } }) | { let a = unsafe { cls_sign::<S>(src, n, p) }; if a == 0 { 0 } else { a & { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45))) & (unsafe { wf_0::<S>(src, n, (p - 2)) } | unsafe { wf_1::<S>(src, n, (p - 2)) })); if a == 0 { 0 } else { a & (unsafe { cls_digit::<S>(src, n, p) } | (unsafe { cls_sign::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) } } } }) | unsafe { wf_2::<S>(src, n, p) }) | (unsafe { cls_f_letter::<S>(src, n, p) } & ((unsafe { wf_0::<S>(src, n, (p - 1)) } | unsafe { wf_1::<S>(src, n, (p - 1)) }) | unsafe { wf_2::<S>(src, n, (p - 1)) }))) & valid(n, (p - 1))) } } & unsafe { wf_0::<S>(src, n, (p - 1)) }) | (unsafe { wf_3::<S>(src, n, (p - 1)) } & (!unsafe { wf_3::<S>(src, n, p) } & valid(n, (p - 1))))) | (unsafe { wf_4::<S>(src, n, (p - 1)) } & (!unsafe { wf_4::<S>(src, n, p) } & valid(n, (p - 1))))) } }
+    { let a = (unsafe { cls_word::<S>(src, n, p) } & unsafe { cls_digit::<S>(src, n, p) }); if a == 0 { 0 } else { a & ((({ let a = ((unsafe { wf_4::<S>(src, n, (p - 1)) } | unsafe { wf_5::<S>(src, n, (p - 1)) }) | unsafe { wf_6::<S>(src, n, (p - 1)) }); if a == 0 { 0 } else { a & (!(((((((unsafe { wf_4::<S>(src, n, p) } | ((unsafe { cls_dot::<S>(src, n, p) } & unsafe { wf_4::<S>(src, n, (p - 1)) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) | (((unsafe { cls_dot::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & valid(n, p)))) | unsafe { wf_5::<S>(src, n, p) }) | { let a = (unsafe { cls_e_letter::<S>(src, n, p) } & (unsafe { wf_4::<S>(src, n, (p - 1)) } | unsafe { wf_5::<S>(src, n, (p - 1)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) } }) | { let a = unsafe { cls_sign::<S>(src, n, p) }; if a == 0 { 0 } else { a & { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45))) & (unsafe { wf_4::<S>(src, n, (p - 2)) } | unsafe { wf_5::<S>(src, n, (p - 2)) })); if a == 0 { 0 } else { a & (unsafe { cls_digit::<S>(src, n, p) } | (unsafe { cls_sign::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) } } } }) | unsafe { wf_6::<S>(src, n, p) }) | (unsafe { cls_f_letter::<S>(src, n, p) } & ((unsafe { wf_4::<S>(src, n, (p - 1)) } | unsafe { wf_5::<S>(src, n, (p - 1)) }) | unsafe { wf_6::<S>(src, n, (p - 1)) }))) & valid(n, (p - 1))) } } & unsafe { wf_4::<S>(src, n, (p - 1)) }) | (unsafe { wf_7::<S>(src, n, (p - 1)) } & (!unsafe { wf_7::<S>(src, n, p) } & valid(n, (p - 1))))) | (unsafe { wf_8::<S>(src, n, (p - 1)) } & (!unsafe { wf_8::<S>(src, n, p) } & valid(n, (p - 1))))) } }
 }
 
 /// `t102`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -6607,7 +7773,7 @@ unsafe fn w_t82<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: 
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t102<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (({ let a = (((((((unsafe { wf_0::<S>(src, n, p) } | ((unsafe { cls_dot::<S>(src, n, p) } & unsafe { wf_0::<S>(src, n, (p - 1)) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) | (((unsafe { cls_dot::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & valid(n, p)))) | unsafe { wf_1::<S>(src, n, p) }) | { let a = (unsafe { cls_e_letter::<S>(src, n, p) } & (unsafe { wf_0::<S>(src, n, (p - 1)) } | unsafe { wf_1::<S>(src, n, (p - 1)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) } }) | { let a = unsafe { cls_sign::<S>(src, n, p) }; if a == 0 { 0 } else { a & { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45))) & (unsafe { wf_0::<S>(src, n, (p - 2)) } | unsafe { wf_1::<S>(src, n, (p - 2)) })); if a == 0 { 0 } else { a & (unsafe { cls_digit::<S>(src, n, p) } | (unsafe { cls_sign::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) } } } }) | unsafe { wf_2::<S>(src, n, p) }) | (unsafe { cls_f_letter::<S>(src, n, p) } & ((unsafe { wf_0::<S>(src, n, (p - 1)) } | unsafe { wf_1::<S>(src, n, (p - 1)) }) | unsafe { wf_2::<S>(src, n, (p - 1)) }))); if a == 0 { 0 } else { a & (!(((((((unsafe { wf_0::<S>(src, n, (p + 1)) } | (((unsafe { cls_dot::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2e)) << 63) & unsafe { wf_0::<S>(src, n, p) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) | ((((unsafe { cls_dot::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2e)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63)) & (!(unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p + 1)))) & (!unsafe { cls_dot::<S>(src, n, p) } & valid(n, (p + 1))))) | unsafe { wf_1::<S>(src, n, (p + 1)) }) | { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x65 | 0x45)) << 63) & (unsafe { wf_0::<S>(src, n, p) } | unsafe { wf_1::<S>(src, n, p) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x30..=0x39)) << 63))) } }) | { let a = (unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63); if a == 0 { 0 } else { a & { let a = (unsafe { cls_e_letter::<S>(src, n, p) } & (unsafe { wf_0::<S>(src, n, (p - 1)) } | unsafe { wf_1::<S>(src, n, (p - 1)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) } } } }) | unsafe { wf_2::<S>(src, n, (p + 1)) }) | ((unsafe { cls_f_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x66 | 0x46)) << 63) & ((unsafe { wf_0::<S>(src, n, p) } | unsafe { wf_1::<S>(src, n, p) }) | unsafe { wf_2::<S>(src, n, p) }))) & valid(n, p)) } } & (!unsafe { wf_0::<S>(src, n, p) } & valid(n, p))) & ((unsafe { cls_word::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)))
+    (({ let a = (((((((unsafe { wf_4::<S>(src, n, p) } | ((unsafe { cls_dot::<S>(src, n, p) } & unsafe { wf_4::<S>(src, n, (p - 1)) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) | (((unsafe { cls_dot::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & valid(n, p)))) | unsafe { wf_5::<S>(src, n, p) }) | { let a = (unsafe { cls_e_letter::<S>(src, n, p) } & (unsafe { wf_4::<S>(src, n, (p - 1)) } | unsafe { wf_5::<S>(src, n, (p - 1)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) } }) | { let a = unsafe { cls_sign::<S>(src, n, p) }; if a == 0 { 0 } else { a & { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45))) & (unsafe { wf_4::<S>(src, n, (p - 2)) } | unsafe { wf_5::<S>(src, n, (p - 2)) })); if a == 0 { 0 } else { a & (unsafe { cls_digit::<S>(src, n, p) } | (unsafe { cls_sign::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) } } } }) | unsafe { wf_6::<S>(src, n, p) }) | (unsafe { cls_f_letter::<S>(src, n, p) } & ((unsafe { wf_4::<S>(src, n, (p - 1)) } | unsafe { wf_5::<S>(src, n, (p - 1)) }) | unsafe { wf_6::<S>(src, n, (p - 1)) }))); if a == 0 { 0 } else { a & (!(((((((unsafe { wf_4::<S>(src, n, (p + 1)) } | (((unsafe { cls_dot::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2e)) << 63) & unsafe { wf_4::<S>(src, n, p) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) | ((((unsafe { cls_dot::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2e)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63)) & (!(unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p + 1)))) & (!unsafe { cls_dot::<S>(src, n, p) } & valid(n, (p + 1))))) | unsafe { wf_5::<S>(src, n, (p + 1)) }) | { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x65 | 0x45)) << 63) & (unsafe { wf_4::<S>(src, n, p) } | unsafe { wf_5::<S>(src, n, p) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x30..=0x39)) << 63))) } }) | { let a = (unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63); if a == 0 { 0 } else { a & { let a = (unsafe { cls_e_letter::<S>(src, n, p) } & (unsafe { wf_4::<S>(src, n, (p - 1)) } | unsafe { wf_5::<S>(src, n, (p - 1)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) } } } }) | unsafe { wf_6::<S>(src, n, (p + 1)) }) | ((unsafe { cls_f_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x66 | 0x46)) << 63) & ((unsafe { wf_4::<S>(src, n, p) } | unsafe { wf_5::<S>(src, n, p) }) | unsafe { wf_6::<S>(src, n, p) }))) & valid(n, p)) } } & (!unsafe { wf_4::<S>(src, n, p) } & valid(n, p))) & ((unsafe { cls_word::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)))
 }
 
 /// Class `underscore`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -6629,7 +7795,7 @@ unsafe fn cls_underscore<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isi
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t103<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((({ let a = ((unsafe { wf_0::<S>(src, n, p) } | unsafe { wf_1::<S>(src, n, p) }) | unsafe { wf_2::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!(((((((unsafe { wf_0::<S>(src, n, (p + 1)) } | (((unsafe { cls_dot::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2e)) << 63) & unsafe { wf_0::<S>(src, n, p) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) | ((((unsafe { cls_dot::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2e)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63)) & (!(unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p + 1)))) & (!unsafe { cls_dot::<S>(src, n, p) } & valid(n, (p + 1))))) | unsafe { wf_1::<S>(src, n, (p + 1)) }) | { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x65 | 0x45)) << 63) & (unsafe { wf_0::<S>(src, n, p) } | unsafe { wf_1::<S>(src, n, p) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x30..=0x39)) << 63))) } }) | { let a = (unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63); if a == 0 { 0 } else { a & { let a = (unsafe { cls_e_letter::<S>(src, n, p) } & (unsafe { wf_0::<S>(src, n, (p - 1)) } | unsafe { wf_1::<S>(src, n, (p - 1)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) } } } }) | unsafe { wf_2::<S>(src, n, (p + 1)) }) | ((unsafe { cls_f_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x66 | 0x46)) << 63) & ((unsafe { wf_0::<S>(src, n, p) } | unsafe { wf_1::<S>(src, n, p) }) | unsafe { wf_2::<S>(src, n, p) }))) & valid(n, p)) } } | (unsafe { wf_3::<S>(src, n, p) } & (!unsafe { wf_3::<S>(src, n, (p + 1)) } & valid(n, p)))) | (unsafe { wf_4::<S>(src, n, p) } & (!unsafe { wf_4::<S>(src, n, (p + 1)) } & valid(n, p)))) & unsafe { cls_underscore::<S>(src, n, p) })
+    ((({ let a = ((unsafe { wf_4::<S>(src, n, p) } | unsafe { wf_5::<S>(src, n, p) }) | unsafe { wf_6::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!(((((((unsafe { wf_4::<S>(src, n, (p + 1)) } | (((unsafe { cls_dot::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2e)) << 63) & unsafe { wf_4::<S>(src, n, p) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) | ((((unsafe { cls_dot::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2e)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63)) & (!(unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p + 1)))) & (!unsafe { cls_dot::<S>(src, n, p) } & valid(n, (p + 1))))) | unsafe { wf_5::<S>(src, n, (p + 1)) }) | { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x65 | 0x45)) << 63) & (unsafe { wf_4::<S>(src, n, p) } | unsafe { wf_5::<S>(src, n, p) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x30..=0x39)) << 63))) } }) | { let a = (unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63); if a == 0 { 0 } else { a & { let a = (unsafe { cls_e_letter::<S>(src, n, p) } & (unsafe { wf_4::<S>(src, n, (p - 1)) } | unsafe { wf_5::<S>(src, n, (p - 1)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) } } } }) | unsafe { wf_6::<S>(src, n, (p + 1)) }) | ((unsafe { cls_f_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x66 | 0x46)) << 63) & ((unsafe { wf_4::<S>(src, n, p) } | unsafe { wf_5::<S>(src, n, p) }) | unsafe { wf_6::<S>(src, n, p) }))) & valid(n, p)) } } | (unsafe { wf_7::<S>(src, n, p) } & (!unsafe { wf_7::<S>(src, n, (p + 1)) } & valid(n, p)))) | (unsafe { wf_8::<S>(src, n, p) } & (!unsafe { wf_8::<S>(src, n, (p + 1)) } & valid(n, p)))) & unsafe { cls_underscore::<S>(src, n, p) })
 }
 
 /// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.
@@ -6638,7 +7804,7 @@ unsafe fn w_t103<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
 /// The CPU runs `S`'s backend.
 #[inline]
 #[allow(unused_variables, dead_code)]
-unsafe fn wf_5<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+unsafe fn wf_9<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
     { let (fs, fe) = ({ let a = { let a = ((((unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & unsafe { cls_digit::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & valid(n, (p - 1)))) & valid(n, p))); if a == 0 { 0 } else { a & (!((((((unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & unsafe { cls_digit::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & valid(n, (p - 1)))) & valid(n, p))) & unsafe { cls_zero::<S>(src, n, p) }) & (unsafe { cls_x_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x78 | 0x58)) << 63)) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((((unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & unsafe { cls_digit::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & valid(n, (p - 1)))) & valid(n, p))) & unsafe { cls_zero::<S>(src, n, p) }) & (unsafe { cls_b_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x62 | 0x42)) << 63)) & valid(n, p)) } }, (!unsafe { cls_decd::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| (((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'x' | b'X'))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'b' | b'B'))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
 }
 
@@ -6648,8 +7814,8 @@ unsafe fn wf_5<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64
 /// The CPU runs `S`'s backend.
 #[inline]
 #[allow(unused_variables, dead_code)]
-unsafe fn wf_6<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    { let (fs, fe) = (((((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & unsafe { wf_5::<S>(src, n, (p - 2)) }) & unsafe { cls_digit::<S>(src, n, p) }) | ((((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & unsafe { cls_digit::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & valid(n, (p - 1)))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & valid(n, (p - 1))))), (!unsafe { cls_decd::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| (q >= 1 && ((((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) >= 1 && af_3(src, n, ((q - 1) - 1)))) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) || ((((q - 1 < n && (src[q - 1] == b'.')) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], 0x80..=0xff)))))) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.'))))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
+unsafe fn wf_10<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    { let (fs, fe) = (((((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & unsafe { wf_9::<S>(src, n, (p - 2)) }) & unsafe { cls_digit::<S>(src, n, p) }) | ((((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & unsafe { cls_digit::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & valid(n, (p - 1)))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & valid(n, (p - 1))))), (!unsafe { cls_decd::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| (q >= 1 && ((((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) >= 1 && af_5(src, n, ((q - 1) - 1)))) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) || ((((q - 1 < n && (src[q - 1] == b'.')) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9'))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], 0x80..=0xff)))))) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.'))))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
 }
 
 /// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.
@@ -6658,8 +7824,8 @@ unsafe fn wf_6<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64
 /// The CPU runs `S`'s backend.
 #[inline]
 #[allow(unused_variables, dead_code)]
-unsafe fn wf_7<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    { let (fs, fe) = ((({ let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45))) & (unsafe { wf_5::<S>(src, n, (p - 2)) } | unsafe { wf_6::<S>(src, n, (p - 2)) })); if a == 0 { 0 } else { a & (unsafe { cls_digit::<S>(src, n, p) } | (unsafe { cls_sign::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) } } & unsafe { cls_digit::<S>(src, n, p) }) | { let a = (unsafe { cls_sign::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2b | 0x2d))); if a == 0 { 0 } else { a & { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x65 | 0x45)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45)) << 1) & (unsafe { wf_5::<S>(src, n, (p - 3)) } | unsafe { wf_6::<S>(src, n, (p - 3)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39))) | ((unsafe { cls_sign::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2b | 0x2d))) & unsafe { cls_digit::<S>(src, n, p) })) } } } }), (!unsafe { cls_decd::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| (((q >= 1 && (((q - 1 < n && matches!(src[q - 1], b'e' | b'E')) && ((q - 1) >= 1 && (af_3(src, n, ((q - 1) - 1)) || af_4(src, n, ((q - 1) - 1))))) && ((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9')) || ((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'+' | b'-')) && (((q - 1) + 2) < n && matches!(src[((q - 1) + 2)], b'0'..=b'9')))))) && (q < n && matches!(src[q], b'0'..=b'9'))) || (q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'+' | b'-')) && ((q - 1) >= 1 && (((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'e' | b'E')) && (((q - 1) - 1) >= 1 && (af_3(src, n, (((q - 1) - 1) - 1)) || af_4(src, n, (((q - 1) - 1) - 1))))) && (((((q - 1) - 1) + 1) < n && matches!(src[(((q - 1) - 1) + 1)], b'0'..=b'9')) || (((((q - 1) - 1) + 1) < n && matches!(src[(((q - 1) - 1) + 1)], b'+' | b'-')) && ((((q - 1) - 1) + 2) < n && matches!(src[(((q - 1) - 1) + 2)], b'0'..=b'9'))))))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
+unsafe fn wf_11<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    { let (fs, fe) = ((({ let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45))) & (unsafe { wf_9::<S>(src, n, (p - 2)) } | unsafe { wf_10::<S>(src, n, (p - 2)) })); if a == 0 { 0 } else { a & (unsafe { cls_digit::<S>(src, n, p) } | (unsafe { cls_sign::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) } } & unsafe { cls_digit::<S>(src, n, p) }) | { let a = (unsafe { cls_sign::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2b | 0x2d))); if a == 0 { 0 } else { a & { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x65 | 0x45)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45)) << 1) & (unsafe { wf_9::<S>(src, n, (p - 3)) } | unsafe { wf_10::<S>(src, n, (p - 3)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39))) | ((unsafe { cls_sign::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2b | 0x2d))) & unsafe { cls_digit::<S>(src, n, p) })) } } } }), (!unsafe { cls_decd::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| (((q >= 1 && (((q - 1 < n && matches!(src[q - 1], b'e' | b'E')) && ((q - 1) >= 1 && (af_5(src, n, ((q - 1) - 1)) || af_6(src, n, ((q - 1) - 1))))) && ((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'0'..=b'9')) || ((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'+' | b'-')) && (((q - 1) + 2) < n && matches!(src[((q - 1) + 2)], b'0'..=b'9')))))) && (q < n && matches!(src[q], b'0'..=b'9'))) || (q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'+' | b'-')) && ((q - 1) >= 1 && (((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'e' | b'E')) && (((q - 1) - 1) >= 1 && (af_5(src, n, (((q - 1) - 1) - 1)) || af_6(src, n, (((q - 1) - 1) - 1))))) && (((((q - 1) - 1) + 1) < n && matches!(src[(((q - 1) - 1) + 1)], b'0'..=b'9')) || (((((q - 1) - 1) + 1) < n && matches!(src[(((q - 1) - 1) + 1)], b'+' | b'-')) && ((((q - 1) - 1) + 2) < n && matches!(src[(((q - 1) - 1) + 2)], b'0'..=b'9'))))))))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
 }
 
 /// `t205`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -6669,7 +7835,7 @@ unsafe fn wf_7<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t205<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (((((((unsafe { wf_5::<S>(src, n, p) } | ((unsafe { cls_dot::<S>(src, n, p) } & unsafe { wf_5::<S>(src, n, (p - 1)) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) | (((unsafe { cls_dot::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & valid(n, p)))) | unsafe { wf_6::<S>(src, n, p) }) | { let a = (unsafe { cls_e_letter::<S>(src, n, p) } & (unsafe { wf_5::<S>(src, n, (p - 1)) } | unsafe { wf_6::<S>(src, n, (p - 1)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) } }) | { let a = unsafe { cls_sign::<S>(src, n, p) }; if a == 0 { 0 } else { a & { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45))) & (unsafe { wf_5::<S>(src, n, (p - 2)) } | unsafe { wf_6::<S>(src, n, (p - 2)) })); if a == 0 { 0 } else { a & (unsafe { cls_digit::<S>(src, n, p) } | (unsafe { cls_sign::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) } } } }) | unsafe { wf_7::<S>(src, n, p) }) | (unsafe { cls_f_letter::<S>(src, n, p) } & ((unsafe { wf_5::<S>(src, n, (p - 1)) } | unsafe { wf_6::<S>(src, n, (p - 1)) }) | unsafe { wf_7::<S>(src, n, (p - 1)) })))
+    (((((((unsafe { wf_9::<S>(src, n, p) } | ((unsafe { cls_dot::<S>(src, n, p) } & unsafe { wf_9::<S>(src, n, (p - 1)) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) | (((unsafe { cls_dot::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & valid(n, p)))) | unsafe { wf_10::<S>(src, n, p) }) | { let a = (unsafe { cls_e_letter::<S>(src, n, p) } & (unsafe { wf_9::<S>(src, n, (p - 1)) } | unsafe { wf_10::<S>(src, n, (p - 1)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) } }) | { let a = unsafe { cls_sign::<S>(src, n, p) }; if a == 0 { 0 } else { a & { let a = ((unsafe { cls_e_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x65 | 0x45))) & (unsafe { wf_9::<S>(src, n, (p - 2)) } | unsafe { wf_10::<S>(src, n, (p - 2)) })); if a == 0 { 0 } else { a & (unsafe { cls_digit::<S>(src, n, p) } | (unsafe { cls_sign::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63))) } } } }) | unsafe { wf_11::<S>(src, n, p) }) | (unsafe { cls_f_letter::<S>(src, n, p) } & ((unsafe { wf_9::<S>(src, n, (p - 1)) } | unsafe { wf_10::<S>(src, n, (p - 1)) }) | unsafe { wf_11::<S>(src, n, (p - 1)) })))
 }
 
 /// `t217`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -6679,7 +7845,7 @@ unsafe fn w_t205<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t217<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((((unsafe { cls_dot::<S>(src, n, p) } & unsafe { wf_0::<S>(src, n, (p - 1)) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)) | { let a = (unsafe { cls_e_letter::<S>(src, n, p) } & (unsafe { wf_0::<S>(src, n, (p - 1)) } | unsafe { wf_1::<S>(src, n, (p - 1)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) } }) | (unsafe { cls_f_letter::<S>(src, n, p) } & ((unsafe { wf_0::<S>(src, n, (p - 1)) } | unsafe { wf_1::<S>(src, n, (p - 1)) }) | unsafe { wf_2::<S>(src, n, (p - 1)) })))
+    ((((unsafe { cls_dot::<S>(src, n, p) } & unsafe { wf_4::<S>(src, n, (p - 1)) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)) | { let a = (unsafe { cls_e_letter::<S>(src, n, p) } & (unsafe { wf_4::<S>(src, n, (p - 1)) } | unsafe { wf_5::<S>(src, n, (p - 1)) })); if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) } }) | (unsafe { cls_f_letter::<S>(src, n, p) } & ((unsafe { wf_4::<S>(src, n, (p - 1)) } | unsafe { wf_5::<S>(src, n, (p - 1)) }) | unsafe { wf_6::<S>(src, n, (p - 1)) })))
 }
 
 /// `t81`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -6878,7 +8044,7 @@ unsafe fn cls_pair_byte_2e<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: i
 /// The CPU runs `S`'s backend.
 #[inline]
 #[allow(unused_variables, dead_code)]
-unsafe fn wf_8<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+unsafe fn wf_12<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
     { let mut c = esc_back(p, |q: usize| ((((((((((((((((((q < n && (src[q] == b'-')) && (q + 1 < n && (src[q + 1] == b'>'))) || ((q < n && (src[q] == b'=')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'!')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'<')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'&')) && (q + 1 < n && (src[q + 1] == b'&')))) || ((q < n && (src[q] == b'|')) && (q + 1 < n && (src[q + 1] == b'|')))) || ((q < n && (src[q] == b'+')) && (q + 1 < n && (src[q + 1] == b'+')))) || ((q < n && (src[q] == b'-')) && (q + 1 < n && (src[q + 1] == b'-')))) || ((q < n && (src[q] == b'+')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'-')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'*')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'/')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b'%')) && (q + 1 < n && (src[q + 1] == b'=')))) || ((q < n && (src[q] == b':')) && (q + 1 < n && (src[q + 1] == b':')))) || ((q < n && (src[q] == b'?')) && (q + 1 < n && (src[q + 1] == b':')))) || ((q < n && (src[q] == b'.')) && (q + 1 < n && (src[q + 1] == b'.')))) || ((q < n && (src[q] == b'!')) && (q + 1 < n && (src[q + 1] == b'!'))))); escaped_step((((((((((((((((((unsafe { cls_pair_byte_2d::<S>(src, n, p) } & (unsafe { cls_pair_byte_3e::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3e)) << 63)) | (unsafe { cls_pair_byte_3d::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_21::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_3c::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_26::<S>(src, n, p) } & (unsafe { cls_pair_byte_26::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x26)) << 63))) | (unsafe { cls_pair_byte_7c::<S>(src, n, p) } & (unsafe { cls_pair_byte_7c::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7c)) << 63))) | (unsafe { cls_pair_byte_2b::<S>(src, n, p) } & (unsafe { cls_pair_byte_2b::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b)) << 63))) | (unsafe { cls_pair_byte_2d::<S>(src, n, p) } & (unsafe { cls_pair_byte_2d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2d)) << 63))) | (unsafe { cls_pair_byte_2b::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_2d::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_2a::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_2f::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_25::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_3a::<S>(src, n, p) } & (unsafe { cls_pair_byte_3a::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3a)) << 63))) | (unsafe { cls_pair_byte_3f::<S>(src, n, p) } & (unsafe { cls_pair_byte_3a::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3a)) << 63))) | (unsafe { cls_pair_byte_2e::<S>(src, n, p) } & (unsafe { cls_pair_byte_2e::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2e)) << 63))) | (unsafe { cls_pair_byte_21::<S>(src, n, p) } & (unsafe { cls_pair_byte_21::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x21)) << 63))), &mut c) }
 }
 
@@ -6889,7 +8055,7 @@ unsafe fn wf_8<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64
 #[inline]
 #[allow(unused_variables, dead_code)]
 unsafe fn d_two_start<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    ((((((((((((((((((unsafe { cls_pair_byte_2d::<S>(src, n, p) } & (unsafe { cls_pair_byte_3e::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3e)) << 63)) | (unsafe { cls_pair_byte_3d::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_21::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_3c::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_26::<S>(src, n, p) } & (unsafe { cls_pair_byte_26::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x26)) << 63))) | (unsafe { cls_pair_byte_7c::<S>(src, n, p) } & (unsafe { cls_pair_byte_7c::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7c)) << 63))) | (unsafe { cls_pair_byte_2b::<S>(src, n, p) } & (unsafe { cls_pair_byte_2b::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b)) << 63))) | (unsafe { cls_pair_byte_2d::<S>(src, n, p) } & (unsafe { cls_pair_byte_2d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2d)) << 63))) | (unsafe { cls_pair_byte_2b::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_2d::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_2a::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_2f::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_25::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_3a::<S>(src, n, p) } & (unsafe { cls_pair_byte_3a::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3a)) << 63))) | (unsafe { cls_pair_byte_3f::<S>(src, n, p) } & (unsafe { cls_pair_byte_3a::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3a)) << 63))) | (unsafe { cls_pair_byte_2e::<S>(src, n, p) } & (unsafe { cls_pair_byte_2e::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2e)) << 63))) | (unsafe { cls_pair_byte_21::<S>(src, n, p) } & (unsafe { cls_pair_byte_21::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x21)) << 63))) & (!unsafe { wf_8::<S>(src, n, p) } & valid(n, p)))
+    ((((((((((((((((((unsafe { cls_pair_byte_2d::<S>(src, n, p) } & (unsafe { cls_pair_byte_3e::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3e)) << 63)) | (unsafe { cls_pair_byte_3d::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_21::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_3c::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_26::<S>(src, n, p) } & (unsafe { cls_pair_byte_26::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x26)) << 63))) | (unsafe { cls_pair_byte_7c::<S>(src, n, p) } & (unsafe { cls_pair_byte_7c::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7c)) << 63))) | (unsafe { cls_pair_byte_2b::<S>(src, n, p) } & (unsafe { cls_pair_byte_2b::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b)) << 63))) | (unsafe { cls_pair_byte_2d::<S>(src, n, p) } & (unsafe { cls_pair_byte_2d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2d)) << 63))) | (unsafe { cls_pair_byte_2b::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_2d::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_2a::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_2f::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_25::<S>(src, n, p) } & (unsafe { cls_pair_byte_3d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3d)) << 63))) | (unsafe { cls_pair_byte_3a::<S>(src, n, p) } & (unsafe { cls_pair_byte_3a::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3a)) << 63))) | (unsafe { cls_pair_byte_3f::<S>(src, n, p) } & (unsafe { cls_pair_byte_3a::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x3a)) << 63))) | (unsafe { cls_pair_byte_2e::<S>(src, n, p) } & (unsafe { cls_pair_byte_2e::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2e)) << 63))) | (unsafe { cls_pair_byte_21::<S>(src, n, p) } & (unsafe { cls_pair_byte_21::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x21)) << 63))) & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p)))
 }
 
 /// Mask `two_start_three`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -6919,7 +8085,7 @@ unsafe fn d_two_start_two<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: is
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t141<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (({ let a = (unsafe { cls_punct::<S>(src, n, p) } & (!(unsafe { d_two_start::<S>(src, n, (p - 1)) } | unsafe { d_two_start_three::<S>(src, n, (p - 2)) }) & valid(n, p))); if a == 0 { 0 } else { a & (!(((unsafe { cls_dot::<S>(src, n, p) } & unsafe { wf_0::<S>(src, n, (p - 1)) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)) | (((unsafe { cls_dot::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & valid(n, p)))) & valid(n, p)) } } & unsafe { d_two_start_three::<S>(src, n, p) }) & unsafe { d_two_start_two::<S>(src, n, (p + 2)) })
+    (({ let a = (unsafe { cls_punct::<S>(src, n, p) } & (!(unsafe { d_two_start::<S>(src, n, (p - 1)) } | unsafe { d_two_start_three::<S>(src, n, (p - 2)) }) & valid(n, p))); if a == 0 { 0 } else { a & (!(((unsafe { cls_dot::<S>(src, n, p) } & unsafe { wf_4::<S>(src, n, (p - 1)) }) & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)) | (((unsafe { cls_dot::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & valid(n, p)))) & valid(n, p)) } } & unsafe { d_two_start_three::<S>(src, n, p) }) & unsafe { d_two_start_two::<S>(src, n, (p + 2)) })
 }
 
 /// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.
@@ -6928,7 +8094,7 @@ unsafe fn w_t141<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
 /// The CPU runs `S`'s backend.
 #[inline]
 #[allow(unused_variables, dead_code)]
-unsafe fn wf_9<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+unsafe fn wf_13<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
     { let (fs, fe) = (((((((((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & (unsafe { cls_digit::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x30..=0x39)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39)) << 1)) & (!((unsafe { cls_word::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 2) | (unsafe { cls_high::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x80..=0xff)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 2)) & valid(n, (p - 2)))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 2) & (!(unsafe { cls_dot::<S>(src, n, p) } << 4 | u64::from(p >= 4 && matches!(unsafe { *src.get_unchecked((p - 4) as usize) }, 0x2e)) | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) << 1 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 2 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 3) & valid(n, (p - 3)))) & valid(n, (p - 2)))) & (unsafe { cls_zero::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x30)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30)) << 1)) & (unsafe { cls_x_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x78 | 0x58)))) & unsafe { cls_hexd::<S>(src, n, p) }), (!unsafe { cls_hexd::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| ((q >= 2 && (((((((q - 2 < n && matches!(src[q - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 2 < n && matches!(src[q - 2], 0x80..=0xff))) && (q - 2 < n && matches!(src[q - 2], b'0'..=b'9'))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], 0x80..=0xff)))))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && (src[((q - 2) - 1)] == b'.')) && (((q - 2) - 1) < n && !(((q - 2) - 1) >= 1 && ((((q - 2) - 1) - 1) < n && (src[(((q - 2) - 1) - 1)] == b'.')))))))) && (q - 2 < n && (src[q - 2] == b'0'))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'x' | b'X')))) && (q < n && matches!(src[q], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_'))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
 }
 
@@ -6939,7 +8105,7 @@ unsafe fn wf_9<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t220<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((((((((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & (unsafe { cls_digit::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39)))) & (!((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & valid(n, (p - 1)))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & (!(unsafe { cls_dot::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 2) & valid(n, (p - 2)))) & valid(n, (p - 1)))) & (unsafe { cls_zero::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30)))) & unsafe { cls_x_letter::<S>(src, n, p) }) | unsafe { wf_9::<S>(src, n, p) })
+    ((((((((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & (unsafe { cls_digit::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39)))) & (!((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & valid(n, (p - 1)))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & (!(unsafe { cls_dot::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 2) & valid(n, (p - 2)))) & valid(n, (p - 1)))) & (unsafe { cls_zero::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30)))) & unsafe { cls_x_letter::<S>(src, n, p) }) | unsafe { wf_13::<S>(src, n, p) })
 }
 
 /// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.
@@ -6948,7 +8114,7 @@ unsafe fn w_t220<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
 /// The CPU runs `S`'s backend.
 #[inline]
 #[allow(unused_variables, dead_code)]
-unsafe fn wf_10<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+unsafe fn wf_14<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
     { let (fs, fe) = (((((((((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & (unsafe { cls_digit::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x30..=0x39)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39)) << 1)) & (!((unsafe { cls_word::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 2) | (unsafe { cls_high::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x80..=0xff)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 2)) & valid(n, (p - 2)))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 2) & (!(unsafe { cls_dot::<S>(src, n, p) } << 4 | u64::from(p >= 4 && matches!(unsafe { *src.get_unchecked((p - 4) as usize) }, 0x2e)) | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) << 1 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 2 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 3) & valid(n, (p - 3)))) & valid(n, (p - 2)))) & (unsafe { cls_zero::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x30)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30)) << 1)) & (unsafe { cls_b_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x62 | 0x42)))) & unsafe { cls_bind::<S>(src, n, p) }), (!unsafe { cls_bind::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| ((q >= 2 && (((((((q - 2 < n && matches!(src[q - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 2 < n && matches!(src[q - 2], 0x80..=0xff))) && (q - 2 < n && matches!(src[q - 2], b'0'..=b'9'))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], 0x80..=0xff)))))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && (src[((q - 2) - 1)] == b'.')) && (((q - 2) - 1) < n && !(((q - 2) - 1) >= 1 && ((((q - 2) - 1) - 1) < n && (src[(((q - 2) - 1) - 1)] == b'.')))))))) && (q - 2 < n && (src[q - 2] == b'0'))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'b' | b'B')))) && (q < n && matches!(src[q], b'0' | b'1' | b'_'))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0' | b'1' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
 }
 
@@ -6959,135 +8125,7 @@ unsafe fn wf_10<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u6
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t226<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((((((((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & (unsafe { cls_digit::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39)))) & (!((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & valid(n, (p - 1)))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & (!(unsafe { cls_dot::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 2) & valid(n, (p - 2)))) & valid(n, (p - 1)))) & (unsafe { cls_zero::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30)))) & unsafe { cls_b_letter::<S>(src, n, p) }) | unsafe { wf_10::<S>(src, n, p) })
-}
-
-/// Class `dq`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_dq<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::eq_mask(v, 0x22) };
-    padded(b, q, p)
-}
-
-/// Class `backslash`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_backslash<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::eq_mask(v, 0x5c) };
-    padded(b, q, p)
-}
-
-/// Class `dollar`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_dollar<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::eq_mask(v, 0x24) };
-    padded(b, q, p)
-}
-
-/// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline]
-#[allow(unused_variables, dead_code)]
-unsafe fn wf_11<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    { let mut c = esc_back(p, |q: usize| (q < n && (src[q] == b'\\'))); escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, &mut c) }
-}
-
-/// Mask `esc0`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline]
-#[allow(unused_variables, dead_code)]
-unsafe fn d_esc0<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    (unsafe { cls_dollar::<S>(src, n, p) } & unsafe { wf_11::<S>(src, n, p) })
-}
-
-/// Mask `bs`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline]
-#[allow(unused_variables, dead_code)]
-unsafe fn d_bs<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    (unsafe { cls_backslash::<S>(src, n, p) } & (!unsafe { d_esc0::<S>(src, n, (p - 1)) } & valid(n, p)))
-}
-
-/// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline]
-#[allow(unused_variables, dead_code)]
-unsafe fn wf_12<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    { let mut c = esc_back(p, |q: usize| at_bs(src, n, q)); escaped_step(unsafe { d_bs::<S>(src, n, p) }, &mut c) }
-}
-
-/// Mask `dq_close`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline]
-#[allow(unused_variables, dead_code)]
-unsafe fn d_dq_close<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    (unsafe { cls_dq::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p)))
-}
-
-/// Class `lbrace`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_lbrace<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::eq_mask(v, 0x7b) };
-    padded(b, q, p)
-}
-
-/// Mask `esc_dollar`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline]
-#[allow(unused_variables, dead_code)]
-unsafe fn d_esc_dollar<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    (unsafe { cls_dollar::<S>(src, n, p) } & unsafe { wf_12::<S>(src, n, p) })
-}
-
-/// Mask `t_dollar`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline]
-#[allow(unused_variables, dead_code)]
-unsafe fn d_t_dollar<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    (((unsafe { cls_dollar::<S>(src, n, p) } & (unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63)) & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))
-}
-
-/// `t6`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t6<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t_dollar::<S>(src, n, p) })
+    ((((((((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & (unsafe { cls_digit::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39)))) & (!((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & valid(n, (p - 1)))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & (!(unsafe { cls_dot::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 2) & valid(n, (p - 2)))) & valid(n, (p - 1)))) & (unsafe { cls_zero::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30)))) & unsafe { cls_b_letter::<S>(src, n, p) }) | unsafe { wf_14::<S>(src, n, p) })
 }
 
 /// `t71`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -7100,26 +8138,14 @@ unsafe fn w_t71<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: 
     (((unsafe { d_esc0::<S>(src, n, p) } & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, p))) | (unsafe { d_esc_dollar::<S>(src, n, p) } & (!unsafe { d_esc0::<S>(src, n, p) } & valid(n, p)))) & (unsafe { cls_backslash::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x5c)) << 63))
 }
 
-/// Class `alpha`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_alpha<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { (S::to_bitmask(S::ge(v, 0x61)) & !S::to_bitmask(S::ge(v, 0x7b))) | (S::to_bitmask(S::ge(v, 0x41)) & !S::to_bitmask(S::ge(v, 0x5b))) | S::eq_mask(v, 0x5f) };
-    padded(b, q, p)
-}
-
 /// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.
 ///
 /// # Safety
 /// The CPU runs `S`'s backend.
 #[inline]
 #[allow(unused_variables, dead_code)]
-unsafe fn wf_13<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    { let (fs, fe) = ((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))), (!(unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, p))); let c = fill_back(p, |q: usize| ((((q < n && (src[q] == b'$')) && (q < n && !af_6(src, n, q))) && (q < n && !(q >= 1 && at_esc_dollar(src, n, (q - 1))))) && ((q + 1 < n && matches!(src[q + 1], b'a'..=b'z' | b'A'..=b'Z' | b'_')) || (q + 1 < n && matches!(src[q + 1], 0x80..=0xff)))), |q: usize| (q < n && !((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
+unsafe fn wf_15<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    { let (fs, fe) = ((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))), (!(unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, p))); let c = fill_back(p, |q: usize| ((((q < n && (src[q] == b'$')) && (q < n && !af_1(src, n, q))) && (q < n && !(q >= 1 && at_esc_dollar(src, n, (q - 1))))) && ((q + 1 < n && matches!(src[q + 1], b'a'..=b'z' | b'A'..=b'Z' | b'_')) || (q + 1 < n && matches!(src[q + 1], 0x80..=0xff)))), |q: usize| (q < n && !((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
 }
 
 /// `t72`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -7129,7 +8155,7 @@ unsafe fn wf_13<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u6
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t72<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { wf_13::<S>(src, n, p) } & unsafe { cls_high::<S>(src, n, p) }) & (!unsafe { d_uni::<S>(src, n, p) } & valid(n, p)))
+    ((unsafe { wf_15::<S>(src, n, p) } & unsafe { cls_high::<S>(src, n, p) }) & (!unsafe { d_uni::<S>(src, n, p) } & valid(n, p)))
 }
 
 /// `t75`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -7139,177 +8165,7 @@ unsafe fn w_t72<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: 
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t75<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x24)) << 63))
-}
-
-/// `m_dq_close`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_m_dq_close<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (unsafe { cls_dq::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p)))
-}
-
-/// `t74`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t74<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)))
-}
-
-/// `t167`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t167<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }))
-}
-
-/// `t169`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t169<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p)))
-}
-
-/// Mask `d_start`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline]
-#[allow(unused_variables, dead_code)]
-unsafe fn d_d_start<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    ((unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) | unsafe { cls_lbrace::<S>(src, n, p) })
-}
-
-/// `t183`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t183<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = (((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p))); if a == 0 { 0 } else { a & (!{ let a = ((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p))) & (!(unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63) & valid(n, p))); if a == 0 { 0 } else { a & (!{ let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (((unsafe { d_d_start::<S>(src, n, (p + 1)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 2)) })) | (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 3)) })) | ((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 4)) })) } } & valid(n, p)) } } & valid(n, p)) } }
-}
-
-/// `t184`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t184<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = { let a = ((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p))) & (!(unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63) & valid(n, p))); if a == 0 { 0 } else { a & (!{ let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (((unsafe { d_d_start::<S>(src, n, (p + 1)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 2)) })) | (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 3)) })) | ((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 4)) })) } } & valid(n, p)) } }; if a == 0 { 0 } else { a & (!{ let a = (((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (!(unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p - 1)))) & (!unsafe { cls_lbrace::<S>(src, n, p) } & valid(n, (p - 1)))); if a == 0 { 0 } else { a & (!{ let a = (((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))); if a == 0 { 0 } else { a & (((unsafe { d_d_start::<S>(src, n, p) } | (unsafe { cls_dollar::<S>(src, n, p) } & unsafe { d_d_start::<S>(src, n, (p + 1)) })) | ((unsafe { cls_dollar::<S>(src, n, p) } & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 2)) })) | (((unsafe { cls_dollar::<S>(src, n, p) } & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 3)) })) } } & valid(n, (p - 1))) } } & valid(n, p)) } }
-}
-
-/// `t186`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t186<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = { let a = ((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p))) & (!(unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63) & valid(n, p))); if a == 0 { 0 } else { a & (!{ let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (((unsafe { d_d_start::<S>(src, n, (p + 1)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 2)) })) | (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 3)) })) | ((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 4)) })) } } & valid(n, p)) } }; if a == 0 { 0 } else { a & (!{ let a = (((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_12::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63)) & valid(n, (p + 1)))) & (!(unsafe { cls_lbrace::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x7b)) << 63) & valid(n, (p + 1)))); if a == 0 { 0 } else { a & (!{ let a = (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_12::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))); if a == 0 { 0 } else { a & (((unsafe { d_d_start::<S>(src, n, (p + 2)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 3)) })) | (((unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 4)) })) | ((((unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 5)) })) } } & valid(n, (p + 1))) } } & valid(n, p)) } }
-}
-
-/// `t185`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t185<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = ((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p))) & (!(unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63) & valid(n, p))); if a == 0 { 0 } else { a & (!{ let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (((unsafe { d_d_start::<S>(src, n, (p + 1)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 2)) })) | (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 3)) })) | ((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & unsafe { d_d_start::<S>(src, n, (p + 4)) })) } } & valid(n, p)) } }
-}
-
-/// `t187`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t187<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (unsafe { d_esc_dollar::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63))
-}
-
-/// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline]
-#[allow(unused_variables, dead_code)]
-unsafe fn wf_14<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    { let (fs, fe) = (((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) })), (((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & (!(unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p - 1))))); let c = fill_back(p, |q: usize| (q >= 1 && ((((q - 1 < n && (src[q - 1] == b'$')) && ((q - 1) < n && !af_6(src, n, (q - 1)))) && ((q - 1) < n && !((q - 1) >= 1 && at_esc_dollar(src, n, ((q - 1) - 1))))) && ((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'a'..=b'z' | b'A'..=b'Z' | b'_')) || (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], 0x80..=0xff))))), |q: usize| (q >= 1 && (((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff))) && ((q - 1) < n && !((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], 0x80..=0xff))))))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
-}
-
-/// `t188`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t188<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = (unsafe { d_esc_dollar::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)); if a == 0 { 0 } else { a & (!{ let a = { let a = (!unsafe { wf_14::<S>(src, n, (p - 1)) } & valid(n, (p - 1))); if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) })) & valid(n, (p - 1))) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (!(unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p - 1)))) & valid(n, (p - 1))) } } & valid(n, p)) } }
-}
-
-/// `t192`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t192<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = (unsafe { d_esc_dollar::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)); if a == 0 { 0 } else { a & { let a = { let a = (!unsafe { wf_14::<S>(src, n, (p - 1)) } & valid(n, (p - 1))); if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) })) & valid(n, (p - 1))) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (!(unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p - 1)))) & valid(n, (p - 1))) } } } }
-}
-
-/// Mask `dq3`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline]
-#[allow(unused_variables, dead_code)]
-unsafe fn d_dq3<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    ((unsafe { cls_dq::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63)) & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63))
-}
-
-/// Mask `rclose`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline]
-#[allow(unused_variables, dead_code)]
-unsafe fn d_rclose<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    (unsafe { d_dq3::<S>(src, n, p) } & (!(unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63) & valid(n, p)))
-}
-
-/// `t201`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t201<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (((unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_rclose::<S>(src, n, p) }) | unsafe { d_dq_close::<S>(src, n, p) }) | unsafe { d_rclose::<S>(src, n, p) })
-}
-
-/// `t4`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t4<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (unsafe { d_rclose::<S>(src, n, p) } | unsafe { d_t_dollar::<S>(src, n, p) })
+    ((((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_1::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x24)) << 63))
 }
 
 /// `t69`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -7319,267 +8175,7 @@ unsafe fn w_t4<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t69<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { cls_dollar::<S>(src, n, p) } & unsafe { wf_11::<S>(src, n, p) }) & ((unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63) | (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)))
-}
-
-/// `m_rclose`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_m_rclose<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (unsafe { d_dq3::<S>(src, n, p) } & (!(unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63) & valid(n, p)))
-}
-
-/// Mask `t2_dollar`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline]
-#[allow(unused_variables, dead_code)]
-unsafe fn d_t2_dollar<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    ((((unsafe { cls_dollar::<S>(src, n, p) } & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_lbrace::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x7b)) << 63)) & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))
-}
-
-/// `t163`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t163<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (((unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t_dollar::<S>(src, n, p) }) | (unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t2_dollar::<S>(src, n, p) })) | (unsafe { d_rclose::<S>(src, n, p) } | unsafe { d_t2_dollar::<S>(src, n, p) }))
-}
-
-/// `t165`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t165<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (((!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) | (((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p)))) & valid(n, p)) & (!unsafe { wf_14::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p)))
-}
-
-/// `t170`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t170<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = (((!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) | (((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p)))) & valid(n, p)) & (!unsafe { wf_14::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p))); if a == 0 { 0 } else { a & ((!(((!(((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) })) | ((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (!(unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p - 1))))) & valid(n, (p - 1))) & (!unsafe { wf_14::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!(unsafe { d_dq3::<S>(src, n, (p - 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)) & valid(n, (p - 1)))) & valid(n, p)) | ((unsafe { cls_dq::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x22))) & (!unsafe { cls_dq::<S>(src, n, p) } & valid(n, (p - 1))))) } }
-}
-
-/// `t179`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t179<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { cls_dq::<S>(src, n, p) } & (!(unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63) & valid(n, p))) | { let a = (((!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) | (((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p)))) & valid(n, p)) & (!unsafe { wf_14::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p))); if a == 0 { 0 } else { a & (!(((!(((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_12::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) | ((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_12::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63)) & valid(n, (p + 1))))) & valid(n, (p + 1))) & (!unsafe { wf_14::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!(unsafe { d_dq3::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x22)) << 63)) & valid(n, (p + 1)))) & valid(n, p)) } })
-}
-
-/// `t178`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t178<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { cls_dq::<S>(src, n, p) } & (!(unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63) & valid(n, p))) | (((!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) | (((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (!((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, p)))) & valid(n, p)) & (!unsafe { wf_14::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p))))
-}
-
-/// `t182`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t182<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63))
-}
-
-/// `t10`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t10<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t2_dollar::<S>(src, n, p) })
-}
-
-/// `t174`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t174<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (((unsafe { cls_dollar::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x24)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24)) << 1) & (!unsafe { wf_12::<S>(src, n, (p - 2)) } & valid(n, (p - 2)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 3)) } & valid(n, (p - 2))))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }))
-}
-
-/// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline]
-#[allow(unused_variables, dead_code)]
-unsafe fn wf_15<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    { let (fs, fe) = ((((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (((unsafe { cls_dollar::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x24)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24)) << 1) & (!unsafe { wf_12::<S>(src, n, (p - 2)) } & valid(n, (p - 2)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 3)) } & valid(n, (p - 2))))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) })), (((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & (!(unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) & valid(n, (p - 1))))); let c = fill_back(p, |q: usize| (q >= 1 && (((((q - 1 < n && (src[q - 1] == b'$')) && ((q - 1) < n && !af_6(src, n, (q - 1)))) && ((q - 1) < n && !((q - 1) >= 1 && at_esc_dollar(src, n, ((q - 1) - 1))))) && ((q - 1) >= 1 && (((((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'$')) && (((q - 1) - 1) < n && !af_6(src, n, ((q - 1) - 1)))) && (((q - 1) - 1) < n && !(((q - 1) - 1) >= 1 && at_esc_dollar(src, n, (((q - 1) - 1) - 1))))))) && ((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'a'..=b'z' | b'A'..=b'Z' | b'_')) || (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], 0x80..=0xff))))), |q: usize| (q >= 1 && (((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff))) && ((q - 1) < n && !((((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], 0x80..=0xff))))))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
-}
-
-/// `t190`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t190<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { d_esc_dollar::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)) & (!((!unsafe { wf_15::<S>(src, n, (p - 1)) } & valid(n, (p - 1))) & (!(((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & valid(n, (p - 1)))) & valid(n, p)))
-}
-
-/// `t193`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t193<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { d_esc_dollar::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)) & ((!unsafe { wf_15::<S>(src, n, (p - 1)) } & valid(n, (p - 1))) & (!(((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & valid(n, (p - 1)))))
-}
-
-/// `t194`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t194<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63)))
-}
-
-/// `t195`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t195<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 3)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 4)) })))
-}
-
-/// `t196`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t196<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = (({ let a = { let a = { let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 3)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 4)) }))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1))))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } } & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_t2_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(({ let a = { let a = { let a = (((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))); if a == 0 { 0 } else { a & (!((((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & unsafe { cls_dollar::<S>(src, n, p) }) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 2)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 3)) }))) & valid(n, (p - 1))) } }; if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & unsafe { cls_dollar::<S>(src, n, p) }) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) & valid(n, (p - 1))) } }; if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & (((unsafe { cls_dollar::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x24)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24)) << 1) & (!unsafe { wf_12::<S>(src, n, (p - 2)) } & valid(n, (p - 2)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 3)) } & valid(n, (p - 2))))) & (unsafe { cls_alpha::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) })) & valid(n, (p - 1))) } } & (!unsafe { d_t2_dollar::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_t2_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & valid(n, p)) } }
-}
-
-/// `t200`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t200<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = (({ let a = { let a = { let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 3)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 4)) }))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1))))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } } & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_t2_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(({ let a = { let a = { let a = (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_12::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))); if a == 0 { 0 } else { a & (!((((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_12::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 4)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 5)) }))) & valid(n, (p + 1))) } }; if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_12::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x80..=0xff)) << 63))) & valid(n, (p + 1))) } }; if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_12::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, (p + 1))) } } & (!unsafe { d_t2_dollar::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & valid(n, p)) } }
-}
-
-/// `t198`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t198<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (({ let a = { let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 3)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 4)) }))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } } & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_t2_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))
-}
-
-/// `t199`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t199<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = (({ let a = { let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 3)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 4)) }))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } } & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_t2_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(({ let a = { let a = { let a = (((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_12::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))); if a == 0 { 0 } else { a & (!((((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_12::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 4)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 5)) }))) & valid(n, (p + 1))) } }; if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_12::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x80..=0xff)) << 63))) & valid(n, (p + 1))) } }; if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_12::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, (p + 1))) } } & (!unsafe { d_t2_dollar::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & valid(n, p)) } }
-}
-
-/// `t197`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t197<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (({ let a = { let a = { let a = ((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))); if a == 0 { 0 } else { a & (!(((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63)) & (unsafe { d_d_start::<S>(src, n, (p + 3)) } | ((unsafe { cls_dollar::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x24)) << 63) & unsafe { d_d_start::<S>(src, n, (p + 4)) }))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } }; if a == 0 { 0 } else { a & (!((((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & (((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1))))) & ((unsafe { cls_alpha::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63))) & valid(n, p)) } } & (!unsafe { d_t2_dollar::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_t2_dollar::<S>(src, n, (p - 1)) } & valid(n, p)))
-}
-
-/// `t8`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t8<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (unsafe { d_rclose::<S>(src, n, p) } | unsafe { d_t2_dollar::<S>(src, n, p) })
-}
-
-/// `t164`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t164<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (((unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t_dollar::<S>(src, n, p) }) | (unsafe { d_rclose::<S>(src, n, p) } | unsafe { d_t_dollar::<S>(src, n, p) })) | (unsafe { d_dq_close::<S>(src, n, p) } | unsafe { d_t2_dollar::<S>(src, n, p) }))
-}
-
-/// `t172`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t172<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (((!((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & valid(n, p)) & (!unsafe { wf_15::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p)))
-}
-
-/// `t177`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t177<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = (((!((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & valid(n, p)) & (!unsafe { wf_15::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p))); if a == 0 { 0 } else { a & ((!(((!(((unsafe { cls_dollar::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x24))) & (!unsafe { wf_12::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 2)) } & valid(n, (p - 1)))) & valid(n, (p - 1))) & (!unsafe { wf_15::<S>(src, n, (p - 1)) } & valid(n, (p - 1)))) & (!(unsafe { d_dq3::<S>(src, n, (p - 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)) & valid(n, (p - 1)))) & valid(n, p)) | ((unsafe { cls_dq::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x22))) & (!unsafe { cls_dq::<S>(src, n, p) } & valid(n, (p - 1))))) } }
-}
-
-/// `t181`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t181<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { cls_dq::<S>(src, n, p) } & (!(unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63) & valid(n, p))) | ((((!((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & valid(n, p)) & (!unsafe { wf_15::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p))) & (!(((!(((unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63) & (!unsafe { wf_12::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!unsafe { d_esc_dollar::<S>(src, n, p) } & valid(n, (p + 1)))) & valid(n, (p + 1))) & (!unsafe { wf_15::<S>(src, n, (p + 1)) } & valid(n, (p + 1)))) & (!(unsafe { d_dq3::<S>(src, n, (p + 1)) } & (unsafe { cls_dq::<S>(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x22)) << 63)) & valid(n, (p + 1)))) & valid(n, p))))
-}
-
-/// `t180`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t180<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { cls_dq::<S>(src, n, p) } & (!(unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63) & valid(n, p))) | (((!((unsafe { cls_dollar::<S>(src, n, p) } & (!unsafe { wf_12::<S>(src, n, p) } & valid(n, p))) & (!unsafe { d_esc_dollar::<S>(src, n, (p - 1)) } & valid(n, p))) & valid(n, p)) & (!unsafe { wf_15::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { d_dq3::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & valid(n, p))))
+    ((unsafe { cls_dollar::<S>(src, n, p) } & unsafe { wf_0::<S>(src, n, p) }) & ((unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63) | (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)))
 }
 
 /// `t232`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -7622,18 +8218,6 @@ unsafe fn w_t68<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: 
     ((unsafe { cls_dollar::<S>(src, n, p) } & (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)) & (unsafe { cls_dollar::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x24)) << 63))
 }
 
-/// Class `u_letter`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_u_letter<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::eq_mask(v, 0x75) };
-    padded(b, q, p)
-}
-
 /// Class `hex_digit`'s bits in the 64 bytes from `p`: none past the file or before it.
 ///
 /// # Safety
@@ -7653,37 +8237,7 @@ unsafe fn cls_hex_digit<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isiz
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t76<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = (((unsafe { cls_backslash::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x5c)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x5c)) << 1) & (!unsafe { wf_11::<S>(src, n, (p - 2)) } & valid(n, (p - 2)))) & (unsafe { cls_u_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x75)))); if a == 0 { 0 } else { a & (!(((unsafe { cls_hex_digit::<S>(src, n, p) } & (unsafe { cls_hex_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 63)) & (unsafe { cls_hex_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 63)) & (unsafe { cls_hex_digit::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 63)) & valid(n, p)) } }
-}
-
-/// `t77`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t77<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { cls_backslash::<S>(src, n, p) } & (!unsafe { wf_11::<S>(src, n, p) } & valid(n, p))) & (unsafe { cls_u_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x75)) << 63))
-}
-
-/// `t202`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t202<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (((unsafe { cls_backslash::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x5c)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x5c)) << 1) & (!unsafe { wf_11::<S>(src, n, (p - 2)) } & valid(n, (p - 2)))) & (unsafe { cls_u_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x75))))
-}
-
-/// `t203`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t203<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { cls_backslash::<S>(src, n, p) } & (!unsafe { wf_11::<S>(src, n, p) } & valid(n, p))) & (!(unsafe { cls_u_letter::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x75)) << 63) & valid(n, p)))
+    { let a = (((unsafe { cls_backslash::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x5c)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x5c)) << 1) & (!unsafe { wf_0::<S>(src, n, (p - 2)) } & valid(n, (p - 2)))) & (unsafe { cls_u_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x75)))); if a == 0 { 0 } else { a & (!(((unsafe { cls_hex_digit::<S>(src, n, p) } & (unsafe { cls_hex_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 63)) & (unsafe { cls_hex_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 63)) & (unsafe { cls_hex_digit::<S>(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 63)) & valid(n, p)) } }
 }
 
 /// Class `bt`'s bits in the 64 bytes from `p`: none past the file or before it.

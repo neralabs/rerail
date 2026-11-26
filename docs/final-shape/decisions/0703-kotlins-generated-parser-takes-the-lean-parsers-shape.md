@@ -152,12 +152,24 @@ them.
    tier 1 keeps no `as_lt` over the gap. Tier 1 writes two of the ten marks, the line break (the lean lexer's `nl`)
    and `real` (its real literal's kind); tier 1's Rust is 573 KB. rr's tier 1 gains `code_at` (its regions none),
    and its calls of `spanned` the question; JSON's code is unchanged.
+16. **Tier 2 reads a region token's parts of the bytes at the token** (`span_reads`, `Span`, `field`), as JSON's
+   tier 2 reads a string's pieces: tier 1 keeps no mask of the file for them (`Masks`, its 37 vectors, and stage 1's
+   vectors of their values outside the regions, are gone). Tier 1 gives a token's span of the bytes (`span`: its
+   region by its opener's test, its closer by the region's search, its last byte), whether a region opens at a byte
+   (`opens`), and each field's word of 64 bytes (`field`), written as tier 1 wrote it over the token (`field_lines`,
+   one window, `win_put`). `bit_reads` reads their masks of the bytes as it reads `lex`'s. Tier 2 scans a field a word
+   at a time (`ffirst`, `fbit`); a template's `}` is the first byte after the template's last token that opens the
+   region its string resumes (`tail_at`), the regions of the strings open over templates a stack (`string_k`).
+17. **The escapes made of `code` are tested in the token loop** (`code_pass_in_loop`), as the lean lexer refuses at
+   the token it reads: word `i` of `code` is known once every token that starts before its end is read, so the passes
+   over the words step to each block at its start (`code_pass!(b)`) and finish after the loop. A pass that reads an
+   earlier one's mask past its word steps a word behind it, that mask in a ring of four words; `code` is the region
+   tokens' spans not yet passed (`code_spans`), each word in a ring too. The test build keeps `code_l` and holds each
+   word to it. The product's `lex` makes no vector of the file but its records (`lv` too is the test build's).
 
-What stays: stage 1 makes the 5 vectors tier 2 reads a string's parts by, for the whole file, where the lean lexer
-makes 5 masks a block for its loop; and tier 1 computes two marks into the token's code, as the lean lexer does:
-`head_ctor`'s line break (its `nl`) and `real` (its real literal's kind, a count of a number's bytes). Tier 2 switches
-`asks` at 27 calls and in 22 levels and contexts (49), where a bracket, a condition or a body starts; the lean parser
-switches `stmt` so in 30 (`level(stmt, …)` at 29, and one of its own). Its strings trip every condition of 0619's one
-pass: templates that resume a string (`tail ... or t_dollar resumes str`), a fill kept over a region (`assume ... at
-ends t_brace`), and strings that tier 2 reads in parts, from tier 1's masks (`rd1_open`). The lookahead of `as_split`
-and `is_split` stays a function a state (`next_*`).
+What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
+`nl`) and `real` (its real literal's kind, a count of a number's bytes). Tier 2 switches `asks` at 27 calls and in 22
+levels and contexts (49), where a bracket, a condition or a body starts; the lean parser switches `stmt` so in 30
+(`level(stmt, …)` at 29, and one of its own). Tier 2 sets `asks` true at 22 places, 12 of them the precedence ladder's
+operand levels, where the lean parser sets `stmt` true at 6, where a body starts: tier 2 decides it of what may follow
+each call in the grammar. The lookahead of `as_split` and `is_split` stays a function a state (`next_*`).

@@ -1947,8 +1947,9 @@ impl<'a> G<'a> {
         let has = |f: &str| out.contains(&format!("    {f}: "));
         let mut fields = vec![("i", "usize"), ("pend", "usize"), ("xi", "usize"), ("next_x", "u32"), ("w", "usize"), ("levels", "usize"), ("top", "(u32, u32)"), ("last_end", "u32"), ("flags", "u32"), ("depth", "u32"), ("marked", "bool")];
         fields.retain(|(f, _)| *f != "marked" || has(f));
-        for (f, t) in [("word", "u16"), ("asks", "u64"), ("refusing", "u32"), ("strings", "usize")] {
-            if has(f) {
+        let parts = !crate::bitlex_lex_rust::readers(self.x.lexer).is_empty();
+        for (f, t) in [("word", "u16"), ("asks", "u64"), ("refusing", "u32"), ("string_k", "[u8; 8]"), ("strings", "usize")] {
+            if has(f) && (f != "string_k" || parts) {
                 fields.push((f, t));
             }
         }
@@ -3315,7 +3316,7 @@ impl<'a> G<'a> {
             let piece = |name: &str, closes: bool| crate::bitlex_lex_rust::piece_kind(self.x.lexer, self.x.row_kinds, &rd.kind, name, closes);
             // A reader that resumes has no record of its own to split (`advance` enters it).
             if !rd.regions.iter().all(|g| g.resumes) {
-                let _ = write!(at, "        if bit(&self.m.{}, s) {{\n            return self.split_{r}(j);\n        }}\n", rd.open);
+                let _ = write!(at, "        if let Some(sp) = crate::tier1::open_at(self.src, crate::tier1::regions::READER_{r}, s) {{\n            return self.split_{r}(j, sp);\n        }}\n");
             }
             let content = kind_or(piece(&rd.content, false), "at");
             let mut parts = String::new();
@@ -3325,9 +3326,9 @@ impl<'a> G<'a> {
                     ::bitlex::syntax::PartLen::Bytes(b) => *b,
                     ::bitlex::syntax::PartLen::Last(_) => 0,
                 };
-                let _ = write!(parts, "            // `{name}`\n            if let Some(e) = first_bit(&m.{start}, at).filter(|&e| e < c) {{\n                if part.is_none_or(|q| (e, {bytes}, {i}) < q) {{\n                    part = Some((e, {bytes}, {i}));\n                }}\n            }}\n");
+                let _ = write!(parts, "            // `{name}`\n            if let Some(e) = self.ffirst(crate::tier1::fields::{start}, sp, at).filter(|&e| e < c) {{\n                if part.is_none_or(|q| (e, {bytes}, {i}) < q) {{\n                    part = Some((e, {bytes}, {i}));\n                }}\n            }}\n");
                 let l = match last {
-                    Some(f) => format!("match first_bit(&m.{f}, e) {{\n                            Some(l) => l,\n                            None => return self.refuse(),\n                        }}"),
+                    Some(f) => format!("match self.ffirst(crate::tier1::fields::{f}, sp, e) {{\n                            Some(l) => l,\n                            None => return self.refuse(),\n                        }}"),
                     None => format!("e + {}", usize::from(bytes).saturating_sub(1)),
                 };
                 let _ = writeln!(lasts, "                        {i} => ({l}, {}),", kind_or(piece(name, false), "e"));
@@ -3337,19 +3338,19 @@ impl<'a> G<'a> {
             let region_last = |q: usize| {
                 let g = &rd.regions[q];
                 match (&rd.region_or[q], &g.or) {
-                    (Some(f), Some((_, m2))) => format!("if bit(&m.{f}, c) {{ c + {} }} else {{ c + {} }}", m2 - 1, g.bytes - 1),
+                    (Some(f), Some((_, m2))) => format!("if self.fbit(crate::tier1::fields::{f}, sp, c) {{ c + {} }} else {{ c + {} }}", m2 - 1, g.bytes - 1),
                     _ => format!("c + {}", g.bytes - 1),
                 }
             };
             let mut closer = String::new();
             for (k, f, b) in &rd.closes {
-                let _ = write!(closer, "if bit(&m.{f}, c) {{\n                        (c + {}, {})\n                    }} else ", b - 1, kind_or(piece(k, true), "c"));
+                let _ = write!(closer, "if self.fbit(crate::tier1::fields::{f}, sp, c) {{\n                        (c + {}, {})\n                    }} else ", b - 1, kind_or(piece(k, true), "c"));
             }
             if rd.regions.len() == 1 {
                 let _ = write!(closer, "{{\n                        ({}, {own})\n                    }}", region_last(0));
             } else {
                 for q in 0..rd.regions.len() {
-                    let test = if q + 1 == rd.regions.len() { String::new() } else { format!("if bit(&m.{}, s) ", rd.region_open[q]) };
+                    let test = if q + 1 == rd.regions.len() { String::new() } else { format!("if sp.k == crate::tier1::regions::k_{} ", rd.regions[q].kind) };
                     let _ = write!(closer, "{test}{{\n                        // `{}`\n                        ({}, {own})\n                    }}{}", rd.regions[q].kind, region_last(q), if test.is_empty() { "" } else { " else " });
                 }
             }
@@ -3363,11 +3364,11 @@ impl<'a> G<'a> {
             let strings = if templates.is_empty() {
                 String::new()
             } else {
-                let t = templates.iter().map(|f| format!("bit(&m.{f}, c)")).collect::<Vec<_>>().join(" || ");
+                let t = templates.iter().map(|f| format!("self.fbit(crate::tier1::fields::{f}, sp, c)")).collect::<Vec<_>>().join(" || ");
                 if resumes {
                     format!("                    if !({t}) {{\n                        self.strings = self.strings.saturating_sub(1);\n                    }}\n")
                 } else {
-                    format!("                    if {t} {{\n                        self.strings += 1;\n                    }}\n")
+                    format!("                    if {t} {{\n                        if self.strings < self.string_k.len() {{\n                            self.string_k[self.strings] = sp.k;\n                        }}\n                        self.strings += 1;\n                    }}\n")
                 }
             };
             let (name, doc, head) = if resumes {
@@ -3376,18 +3377,29 @@ impl<'a> G<'a> {
                 let own = rows.enumerate().find(|(_, s)| matches!(s, ::bitlex::syntax::Stmt::Token { kind, .. } if *kind == rd.kind)).and_then(|(i, _)| self.x.row_kinds.get(i).copied().flatten());
                 // Before the next grammar token: its pieces at the `}`, the comments before it in the
                 // template's code passed (`xi`), as the JIT's tier 2 looks at each record it fetches.
-                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_bit(&self.m.{}, from).filter(|&p| self.i + 1 >= self.n || p < self.recs[self.i + 1].start as usize) {{\n            while (self.next_x as usize) < p {{\n                self.xi += 1;\n                self.next_x = self.xs.get(self.xi).map_or(u32::MAX, |x| x.start);\n            }}\n            self.known = 0;\n            return self.resume_{r}(p);\n        }}\n", rd.open);
-                (format!("resume_{r}"), "at byte `s`, no record of its own: the string's parts after its template's `}`", format!("s: usize) -> R {{\n        self.sub.clear();\n        self.k = 0;\n        self.piece(s, s, {});", kind_or(own, "s")))
+                // The region it resumes: the one after the innermost string open over a template's code.
+                let mut arms = String::new();
+                for g in &rd.regions {
+                    for a in &g.after {
+                        let _ = write!(arms, "crate::tier1::regions::k_{a} => crate::tier1::regions::k_{}, ", g.kind);
+                    }
+                }
+                let resumed_k = format!("match self.string_k[(self.strings - 1).min(self.string_k.len() - 1)] {{ {arms}_ => u8::MAX }}");
+                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = self.tail_at(from, {resumed_k}) {{\n            while (self.next_x as usize) < p {{\n                self.xi += 1;\n                self.next_x = self.xs.get(self.xi).map_or(u32::MAX, |x| x.start);\n            }}\n            self.known = 0;\n            return self.resume_{r}(p);\n        }}\n");
+                (format!("resume_{r}"), "at byte `s`, no record of its own: the string's parts after its template's `}`", format!("s: usize) -> R {{\n        let Some(sp) = crate::tier1::span(self.src, {resumed_k}, s) else {{\n            return self.refuse();\n        }};\n        self.sub.clear();\n        self.k = 0;\n        self.piece(s, s, {});", kind_or(own, "s")))
             } else {
-                (format!("split_{r}"), "record `j`", "j: usize) -> R {\n        let s = self.recs[j].start as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.recs[j].code));".to_owned())
+                (format!("split_{r}"), "record `j`", "j: usize, sp: crate::tier1::Span) -> R {\n        let s = self.recs[j].start as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.recs[j].code));".to_owned())
             };
             let _ = write!(
                 out,
-                "    /// `{kind}`'s region (`read {regions} parts`), {doc}: its opener's byte, each part, each run of the bytes between, its closer.\n    fn {name}(&mut self, {head}\n        let m = self.m;\n        let mut at = s + 1;\n        loop {{\n            let Some(c) = first_bit(&m.{close}, at) else {{\n                return self.refuse();\n            }};\n            // The part first after `at`, before the closer: the earliest, the shortest at one byte.\n            let mut part: Option<(usize, u8, usize)> = None;\n{parts}            let to = part.map_or(c, |q| q.0);\n            if to > at {{\n                self.piece(at, to - 1, {content});\n            }}\n            match part {{\n                Some((e, _, i)) => {{\n                    let (l, kind) = match i {{\n{lasts}                        _ => unreachable!(),\n                    }};\n                    self.piece(e, l, kind);\n                    at = l + 1;\n                }}\n                None => {{\n                    let (l, kind) = {closer};\n                    self.piece(c, l, kind);\n{strings}                    return Ok(());\n                }}\n            }}\n        }}\n    }}\n\n",
+                "    /// `{kind}`'s region (`read {regions} parts`), {doc}: its opener's byte, each part, each run of the bytes between, its closer.\n    fn {name}(&mut self, {head}\n        let mut at = s + 1;\n        loop {{\n            let Some(c) = self.ffirst(crate::tier1::fields::{close}, sp, at) else {{\n                return self.refuse();\n            }};\n            // The part first after `at`, before the closer: the earliest, the shortest at one byte.\n            let mut part: Option<(usize, u8, usize)> = None;\n{parts}            let to = part.map_or(c, |q| q.0);\n            if to > at {{\n                self.piece(at, to - 1, {content});\n            }}\n            match part {{\n                Some((e, _, i)) => {{\n                    let (l, kind) = match i {{\n{lasts}                        _ => unreachable!(),\n                    }};\n                    self.piece(e, l, kind);\n                    at = l + 1;\n                }}\n                None => {{\n                    let (l, kind) = {closer};\n                    self.piece(c, l, kind);\n{strings}                    return Ok(());\n                }}\n            }}\n        }}\n    }}\n\n",
                 kind = rd.kind,
                 regions = regions.join(" | "),
                 close = rd.close
             );
+        }
+        if !readers.is_empty() {
+            out.push_str(SPAN_READS);
         }
         let _ = write!(out, "    /// Past the token, to the next grammar token's record{}.\n    #[inline(always)]\n    fn advance(&mut self, from: usize) -> R {{\n{resume}        // The next token, the comments before it passed.\n        self.i += 1;\n        self.pass_comments();\n        self.arrive()\n    }}\n\n", if resume.is_empty() { "" } else { ", or the string's parts a template's `}` resumes, at the record before the next (decision 0600)" });
         let _ = write!(out, "    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {{\n        let s = self.recs[j].start as usize;\n{at}        let _ = s;\n        Ok(())\n    }}\n\n");
@@ -3692,9 +3704,8 @@ impl<'a> G<'a> {
                 ("    /// A piece of the record split, `s..=l`, of record kind `kind` and the word its bytes are.\n    fn piece(&mut self, s: usize, l: usize, kind: u32) {\n        let word = word_in(kind, &self.src[s..=l]);\n        self.sub.push((s as u32, l as u32, kind | word << 8));\n    }\n\n", ""),
                 ("    /// Record `j`'s code, its first and its last byte: the piece's at the token.\n    #[inline(always)]\n    fn code_at(&self, j: usize) -> u32 {\n        if j == self.i && self.k < self.sub.len() { self.sub[self.k].2 } else { self.recs[j].code }\n    }\n", "    /// Record `j`'s code.\n    #[inline(always)]\n    fn code_at(&self, j: usize) -> u32 {\n        self.recs[j].code\n    }\n"),
                 ("        } else if self.k < self.sub.len() {\n            self.sub[self.k].0\n", ""),
-                ("    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).\n    m: &'a crate::tier1::Masks,\n", ""),
-                ("let (recs, xs, m) = (&lx.recs[..], &lx.extras[..], &lx.masks);", "let (recs, xs) = (&lx.recs[..], &lx.extras[..]);"),
-                ("P { src, recs, xs, m, n,", "P { src, recs, xs, n,"),
+                ("string_k: [0; 8], ", ""),
+                ("    /// The regions of the strings open over a template's code, innermost last (`strings` of them): the region a\n    /// template's `}` resumes is the one after the innermost (decision 0703 step 16).\n    string_k: [u8; 8],\n", ""),
                 ("    /// At record `i`: split it where tier 2 reads its region in parts.\n", "    /// At record `i`: its code read, no mark known there yet.\n"),
                 ("        if self.i < self.n {\n            self.split(self.i)?;\n        }\n", "        self.cur = if self.i < self.n { self.recs[self.i].code } else { 0 };\n"),
                 // The token's code held as the token is reached (a token is its record), as the lean parser holds its
@@ -4057,8 +4068,6 @@ pub struct P<'a, L: Layout> {
     recs: &'a [crate::tier1::Rec],
     /// The comments (the extras), apart from the tokens, as the lean parser's `comments`.
     xs: &'a [crate::tier1::Rec],
-    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).
-    m: &'a crate::tier1::Masks,
     n: usize,
     /// The next grammar token's record.
     i: usize,
@@ -4095,6 +4104,9 @@ pub struct P<'a, L: Layout> {
     lost: Option<(u16, Option<u32>)>,
     /// The extra a mark's `loses since` moved, by comment, and where: of no width there.
     moved: Option<(usize, u32)>,
+    /// The regions of the strings open over a template's code, innermost last (`strings` of them): the region a
+    /// template's `}` resumes is the one after the innermost (decision 0703 step 16).
+    string_k: [u8; 8],
     /// The strings open over a template's code (decision 0600): their parts go on at the next
     /// opener of a reader that resumes them (`advance`).
     strings: usize,
@@ -4103,10 +4115,10 @@ pub struct P<'a, L: Layout> {
 #[allow(dead_code)]
 impl<'a, L: Layout> P<'a, L> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L, target: rerail_tape_format::Target) -> R<Self> {
-        let (recs, xs, m) = (&lx.recs[..], &lx.extras[..], &lx.masks);
+        let (recs, xs) = (&lx.recs[..], &lx.extras[..]);
         let n = recs.len();
         // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
-        let mut p = P { src, recs, xs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(widths, n + n / 2 + xs.len() + 8).to(target, src), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
+        let mut p = P { src, recs, xs, n, i: 0, sub: Vec::new(), k: 0, pend: 0, string_k: [0; 8], xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(widths, n + n / 2 + xs.len() + 8).to(target, src), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
         p.pass_comments();
         p.arrive()?;
         Ok(p)
@@ -4608,3 +4620,48 @@ pub fn tier2(x: &Input<'_>) -> Result<String, String> {
     }
     G::new(x).source()
 }
+
+/// Tier 2's reads of a region token's fields (decision 0703 step 16): of the bytes at the token, a word of 64 at a time,
+/// as JSON's string reads its marks; and a template's `}` found where its string resumes.
+const SPAN_READS: &str = r#"    /// Field `f`'s first byte at or after `from` in region token `sp`, to its last byte, of the bytes.
+    fn ffirst(&self, f: u8, sp: crate::tier1::Span, from: usize) -> Option<usize> {
+        let mut p = from & !63;
+        let mut w = crate::tier1::field(f, self.src, sp, p) & (!0u64 << (from & 63));
+        loop {
+            if w != 0 {
+                return Some(p + w.trailing_zeros() as usize).filter(|&q| q <= sp.last);
+            }
+            p += 64;
+            if p > sp.last {
+                return None;
+            }
+            w = crate::tier1::field(f, self.src, sp, p);
+        }
+    }
+
+    /// Whether field `f` holds at byte `q` of region token `sp`, of the bytes.
+    fn fbit(&self, f: u8, sp: crate::tier1::Span, q: usize) -> bool {
+        crate::tier1::field(f, self.src, sp, q & !63) >> (q & 63) & 1 == 1
+    }
+
+    /// Where a template's `}` resumes its string (region `k`'s opener): the first byte from `from`, before the next
+    /// record, that opens it, the comments passed.
+    fn tail_at(&self, from: usize, k: u8) -> Option<usize> {
+        let end = if self.i + 1 >= self.n { self.src.len() } else { self.recs[self.i + 1].start as usize };
+        let mut x = self.xs.partition_point(|r| (r.last as usize) < from);
+        let mut q = from;
+        while q < end {
+            if x < self.xs.len() && self.xs[x].start as usize <= q {
+                q = self.xs[x].last as usize + 1;
+                x += 1;
+                continue;
+            }
+            if crate::tier1::opens(self.src, k, q) {
+                return Some(q);
+            }
+            q += 1;
+        }
+        None
+    }
+
+"#;

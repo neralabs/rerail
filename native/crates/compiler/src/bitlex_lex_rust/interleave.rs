@@ -471,19 +471,33 @@ fn test_only(text: &str, fields: &[(&str, &str)]) -> String {
 pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(String, ::bitlex::syntax::Expr)]) -> String {
     let Some(lx) = text.find("\npub fn lex(src: &[u8]) -> Lexed {") else { return text.to_owned() };
     let Some(len) = text[lx..].find("\n}\n") else { return text.to_owned() };
-    let (head, lex, tail) = (&text[..lx], &text[lx..lx + len], &text[lx + len..]);
+    // The product's sections: `lex`, and tier 2's reads of the region tokens (`span_reads`), all of them product lines.
+    let mut sections = vec![(lx, lx + len, true)];
+    if let Some(a) = text.find(super::T2_BEGIN)
+        && let Some(b) = text[a..].find(super::T2_END)
+    {
+        sections.push((a, a + b, false));
+    }
+    sections.sort_unstable();
     // The product's lines: not the destructuring of stage 1's masks, nor the walk.
-    let lines: Vec<&str> = lex.split('\n').collect();
-    let mut product = vec![false; lines.len()];
-    let mut in_walk = false;
-    for (i, l) in lines.iter().enumerate() {
-        if l.starts_with("    let (") && l.ends_with(") = {") && i > 0 && lines[i - 1].trim() == "#[cfg(feature = \"test-hooks\")]" {
-            in_walk = true;
+    let mut lines: Vec<&str> = Vec::new();
+    let mut product: Vec<bool> = Vec::new();
+    let mut cuts = Vec::new();
+    for &(a, b, is_lex) in &sections {
+        let from = lines.len();
+        let mut in_walk = false;
+        for l in text[a..b].split('\n') {
+            let i = lines.len();
+            if is_lex && l.starts_with("    let (") && l.ends_with(") = {") && i > from && lines[i - 1].trim() == "#[cfg(feature = \"test-hooks\")]" {
+                in_walk = true;
+            }
+            product.push(!is_lex || (!in_walk && !l.starts_with("    let Stage1 { ")));
+            if in_walk && l == "    };" {
+                in_walk = false;
+            }
+            lines.push(l);
         }
-        product[i] = !in_walk && !l.starts_with("    let Stage1 { ");
-        if in_walk && *l == "    };" {
-            in_walk = false;
-        }
+        cuts.push((a, b, from, lines.len()));
     }
     let whole = |t: &str, pat: &str| t.match_indices(pat).filter(|(i, _)| !t[..*i].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.') && !t[i + pat.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')).count();
     let all: String = lines.iter().zip(&product).filter(|x| *x.1).map(|x| format!("{}\n", code_of(x.0))).collect();
@@ -499,7 +513,21 @@ pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(
         let done: String = out.iter().zip(&product).filter(|x| *x.1).map(|x| format!("{}\n", code_of(x.0))).collect();
         let keep: Vec<&str> = cands.iter().copied().filter(|n| by.failed.contains(*n) || whole(&done, n) > 0).collect();
         if keep.is_empty() {
-            return format!("{head}{}{tail}\n{}", out.join("\n"), by.code());
+            let mut t = String::with_capacity(text.len());
+            let mut at = 0;
+            for &(a, b, from, to) in &cuts {
+                t.push_str(&text[at..a]);
+                let sec = out[from..to].join("\n");
+                // A field's word of the 64 bytes from `p`: its writes of the window (`win_put`, `win_set`, `win_clear`).
+                if text[a..].starts_with(super::T2_BEGIN) {
+                    t.push_str(&sec.replace("wput(&mut fwin, ", "win_put(&mut fwin, p, ").replace("set(&mut fwin, ", "win_set(&mut fwin, p, ").replace("clear(&mut fwin, ", "win_clear(&mut fwin, p, "));
+                } else {
+                    t.push_str(&sec);
+                }
+                at = b;
+            }
+            t.push_str(&text[at..]);
+            return format!("{t}\n{}", by.code());
         }
         for k in keep {
             cands.remove(k);
@@ -527,4 +555,156 @@ pub(super) fn generic_lex(text: &str) -> String {
     out.push_str("\nrerail_simd8::dispatch! {\n    /// `src`'s records.\n    pub fn lex(src: &[u8]) -> Lexed = lex_on, on lex_on_best;\n}\n");
     out.push_str(&text[lx + len + 3..]);
     out
+}
+
+/// The escapes made of `code` in the token loop (decision 0703 step 17), as the lean lexer refuses a file at the token
+/// it reads: word `i` of `code` is known once the loop has read every token that starts before its end, so the passes
+/// over the words (`one_pass_after`) step to the block at each block's start (`code_pass!`), and the rest after the
+/// loop. A pass that reads an earlier pass's mask past its word (`next`) steps a word behind that one, the mask in a
+/// ring of four words. `code_l`, the vector of the file's `code`, is then the region tokens' spans not yet passed
+/// (`code_spans`), each word of it kept in a ring too; the test build keeps the vector and holds each word to it. None
+/// where a pass reads anything else of the file.
+pub(super) fn code_pass_in_loop(text: &str) -> String {
+    let head = "    // The escapes made of `code`: one pass over the words, each mask a word (";
+    let lp = "    'tokens: while b < nw {\n        let base = b * 64;\n";
+    let decl = "    let mut code_l = vec![!0u64; nw];\n";
+    let zip = "    for (c, v) in code_l.iter_mut().zip(&lv) {\n        *c &= v;\n    }\n";
+    if text.matches(lp).count() != 1 || text.matches(decl).count() != 1 || text.matches(zip).count() != 1 {
+        return text.to_owned();
+    }
+    let Some(a) = text.find(&format!("\n{head}")).map(|a| a + 1) else { return text.to_owned() };
+    // The passes, one after another: each its declarations and its body.
+    let mut passes: Vec<(Vec<&str>, Vec<&str>)> = Vec::new();
+    let mut at = a;
+    while text[at..].starts_with(head) {
+        let Some(f) = text[at..].find("\n    for i in 0..nw {\n").map(|f| at + f + 1) else { return text.to_owned() };
+        let body_at = f + "    for i in 0..nw {\n".len();
+        let Some(e) = text[body_at..].find("\n    }\n").map(|e| body_at + e + 1) else { return text.to_owned() };
+        passes.push((text[at..f].lines().skip(1).collect(), text[body_at..e].lines().collect()));
+        at = e + "    }\n".len();
+    }
+    let end = at;
+    // A ring of four words holds what a pass two words behind reads.
+    if text[end..].contains(head) || passes.len() > 3 {
+        return text.to_owned();
+    }
+    // The masks kept for a later pass: rings of four words.
+    let mut rings: Vec<String> = Vec::new();
+    for (decls, _) in &mut passes {
+        for d in decls.iter_mut() {
+            if let Some(v) = d.trim().strip_prefix("let mut ").and_then(|r| r.strip_suffix(" = vec![0u64; nw];")) {
+                rings.push(v.to_owned());
+            }
+        }
+    }
+    if rings.iter().any(|v| text[end..].contains(v.as_str())) {
+        return text.to_owned();
+    }
+    let is_id = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut steps = String::new();
+    let last = passes.len() - 1;
+    for (p, (decls, body)) in passes.iter().enumerate() {
+        let mut b: String = body.iter().map(|l| format!("            {l}\n")).collect();
+        for v in &rings {
+            b = b.replace(&format!("prev(&{v}, i, "), &format!("rprev(&{v}, i, ")).replace(&format!("next(&{v}, i, "), &format!("rnext(&{v}, nw, i, ")).replace(&format!("{v}[i]"), &format!("{v}[i & 3]"));
+            if b.contains(&format!("{v}, ")) && !b.contains(&format!("rprev(&{v}, ")) && !b.contains(&format!("rnext(&{v}, ")) {
+                return text.to_owned();
+            }
+        }
+        // `code` a word before: the ring's.
+        let b = b.replace("prev(&code_l, i, ", "rprev(&code_r, i, ").replace("code_l[i]", "code_w").replace("lv[i]", "lv_w");
+        // Nothing else of the file's: no vector read at a word but a ring's.
+        if b.contains("code_l") || b.match_indices("[i").any(|(k, _)| b[..k].ends_with(is_id) && !b[k..].starts_with("[i & 3]")) || b.match_indices(", i, ").any(|(k, _)| b[..k].rsplit(['(', '&']).next().is_some_and(|x| !x.is_empty() && x != "code_r" && !rings.iter().any(|v| v == x)) && !b[..k].ends_with("nw")) {
+            return text.to_owned();
+        }
+        let _ = decls;
+        let upto = if p == 0 { "upto".to_owned() } else { format!("if upto == nw {{ nw }} else {{ upto.saturating_sub({p}) }}") };
+        let code = if p == 0 {
+            "            // The word's bytes outside the region tokens read (`code`).\n            let mut code_w = lv_w;\n            for &(a, b) in &code_spans {\n                if a > 64 * i + 63 {\n                    break;\n                }\n                if b >= 64 * i {\n                    let (lo, hi) = (a.max(64 * i), b.min(64 * i + 63));\n                    code_w &= !((if hi - lo == 63 { !0 } else { (1u64 << (hi - lo + 1)) - 1 }) << (lo - 64 * i));\n                }\n            }\n            code_spans.retain(|&(_, b)| b > 64 * i + 63);\n            #[cfg(feature = \"test-hooks\")]\n            assert_eq!(code_w, code_l[i] & lv_w, \"`code_spans` against `code_l` at word {i}\");\n            code_r[i & 3] = code_w;\n".to_owned()
+        } else {
+            "            let code_w = code_r[i & 3];\n".to_owned()
+        };
+        let _ = std::fmt::Write::write_fmt(&mut steps, format_args!("        // Pass {p}{}.\n        let to: usize = {upto};\n        while code_i[{p}] < to {{\n            let i = code_i[{p}];\n            code_i[{p}] += 1;\n            let lv_w = if 64 * i + 64 <= n {{ !0u64 }} else {{ (1u64 << (n % 64)) - 1 }};\n{code}{b}        }}\n", if p == 0 { "" } else { ", a word behind the pass before: it reads that one's masks after its word" }));
+        let _ = last;
+    }
+    let mut decls = String::new();
+    for (ds, _) in &passes {
+        for d in ds {
+            match d.trim().strip_prefix("let mut ").and_then(|r| r.strip_suffix(" = vec![0u64; nw];")) {
+                Some(v) => {
+                    let _ = std::fmt::Write::write_fmt(&mut decls, format_args!("    let mut {v} = [0u64; 4];\n"));
+                }
+                None => {
+                    decls.push_str(d);
+                    decls.push('\n');
+                }
+            }
+        }
+    }
+    let ring_fns = if rings.is_empty() && !steps.contains("rprev(&code_r") { "" } else { "    /// A ring's word `i` of `prev(x, k)`: each byte's bit from `k` bytes before.\n    #[inline(always)]\n    fn rprev(x: &[u64; 4], i: usize, k: u32) -> u64 {\n        x[i & 3] << k | if i > 0 { x[(i - 1) & 3] >> (64 - k) } else { 0 }\n    }\n    /// A ring's word `i` of `next(x, k)`, of `nw` words: each byte's bit from `k` bytes after.\n    #[inline(always)]\n    fn rnext(x: &[u64; 4], nw: usize, i: usize, k: u32) -> u64 {\n        x[i & 3] >> k | if i + 1 < nw { x[(i + 1) & 3] << (64 - k) } else { 0 }\n    }\n" };
+    let pass = format!(
+        "    // The escapes made of `code`, a word at a time as the token loop leaves each block (decision 0703 step 17): word `i`\n    // is `code` once every token that starts before its end is read.\n{decls}{ring_fns}    let mut code_r = [0u64; 4];\n    let mut code_i = [0usize; {}];\n    macro_rules! code_pass {{\n        ($upto:expr) => {{\n        let upto: usize = $upto;\n{steps}        }};\n    }}\n",
+        passes.len()
+    );
+    let mut out = String::with_capacity(text.len());
+    out.push_str(&text[..a]);
+    out.push_str("    // The escapes made of `code`: the words the loop left.\n    code_pass!(nw);\n");
+    out.push_str(&text[end..]);
+    // The spans, not the vector; the vector the test build's.
+    let mut out = out.replacen(decl, &format!("    // The region tokens' spans not yet passed by the escapes made of `code` (`code_pass`), in order.\n    let mut code_spans: Vec<(usize, usize)> = Vec::with_capacity(64);\n    #[cfg(feature = \"test-hooks\")]\n{decl}"), 1);
+    out = out.replacen(zip, &format!("    #[cfg(feature = \"test-hooks\")]\n{zip}"), 1);
+    let mut lines: Vec<String> = Vec::new();
+    for l in out.split_inclusive('\n') {
+        if l.trim() == "clear(&mut code_l, s, l);" {
+            let ind = &l[..l.len() - l.trim_start().len()];
+            lines.push(format!("{ind}code_spans.push((s, l));\n{ind}#[cfg(feature = \"test-hooks\")]\n"));
+        }
+        lines.push(l.to_owned());
+    }
+    let out: String = lines.concat();
+    let out = out.replacen(lp, &format!("{pass}{lp}        code_pass!(b);\n"), 1);
+    // The file's word bits (`lv`), where only the test build reads them: its alone.
+    let lv = "    // Each word's bits inside the file.\n    let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();\n";
+    if out.matches(lv).count() == 1 && !product_reads(&out[out.find(lv).expect("one") + lv.len()..], &["lv[", "&lv)", "&lv,"]) {
+        return out.replacen(lv, &lv.replacen("\n    let lv", "\n    #[cfg(feature = \"test-hooks\")]\n    let lv", 1), 1);
+    }
+    out
+}
+
+/// Whether a line of `text` up to its function's end reads one of `pats` outside a block or a statement the test build
+/// alone has (`#[cfg(feature = "test-hooks")]` before it).
+fn product_reads(text: &str, pats: &[&str]) -> bool {
+    let mut test_until: Option<String> = None;
+    let mut cfg = false;
+    for l in text.lines() {
+        if l == "}" {
+            return false;
+        }
+        if let Some(end) = &test_until {
+            if l == end {
+                test_until = None;
+            }
+            continue;
+        }
+        if cfg {
+            cfg = false;
+            let ind = &l[..l.len() - l.trim_start().len()];
+            if l.trim_end().ends_with('{') {
+                test_until = Some(format!("{ind}}}"));
+                // A `let … = {` closes at its `};`.
+                if l.trim_start().starts_with("let ") {
+                    test_until = Some(format!("{ind}}};"));
+                }
+            }
+            continue;
+        }
+        if l.trim() == "#[cfg(feature = \"test-hooks\")]" {
+            cfg = true;
+            continue;
+        }
+        if pats.iter().any(|p| code_of(l).contains(p)) {
+            return true;
+        }
+    }
+    false
 }

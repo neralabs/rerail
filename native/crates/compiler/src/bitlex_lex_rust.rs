@@ -1217,6 +1217,9 @@ struct Gen<'a> {
     fills: Vec<LoopFill>,
     /// Tier 2's fields the loop writes (`FieldWrite`).
     field_writes: Vec<FieldWrite>,
+    /// Each region tier 2 reads in parts: its index (`opens`), its kind, its opener, its closer's search from its opener
+    /// `s`, and its last byte from its closer `c` (`span`).
+    t2_spans: Vec<(usize, String, String, String, String)>,
     /// How each region token may end (`End`), and the bytes its first bytes may be: what a
     /// byte outside the regions may have before and after it in a region.
     ends: Option<Vec<End>>,
@@ -4865,10 +4868,83 @@ impl Gen<'_> {
             }
             let _ = write!(out, "// {why}\nif {} {{\n    refused = true;\n    break;\n}}\n", tests.join(" || "));
         }
-        // Tier 2's fields the loop writes, over this token's parts.
-        for fw in &self.field_writes {
+        out
+    }
+
+    /// Tier 2's reads of the region tokens it reads in parts (decision 0703 step 16), as JSON's tier 2 reads a string's
+    /// pieces: of the bytes at the token, tier 1 keeping no mask of the file for them. A token's span (`span`: its region,
+    /// opener, closer and last byte, as the walk reads it); whether a region opens at a byte (`opens`); and each field's
+    /// word of 64 bytes (`field`), written as tier 1 wrote it over the token. Between `T2_BEGIN` and `T2_END`, where
+    /// `bit_reads` reads their masks of the bytes.
+    fn span_reads(&self, x: &Input, field_plan: &[(String, String)]) -> String {
+        let opens: Vec<String> = self.opens.as_ref().map(|o| o.iter().map(|q| q.0.clone()).collect()).unwrap_or_default();
+        let mut out = String::from(T2_BEGIN);
+        out.push_str("/// The regions, by their order in `regions` (the walk's), and each reader's, in that order.\n#[allow(non_upper_case_globals, dead_code)]\npub mod regions {\n");
+        for (k, name) in opens.iter().enumerate() {
+            let _ = writeln!(out, "    pub const k_{name}: u8 = {k};");
+        }
+        for (r, rd) in readers(x.stmts).iter().enumerate() {
+            let mut ks: Vec<usize> = rd.regions.iter().filter_map(|g| opens.iter().position(|o| *o == g.kind)).collect();
+            ks.sort_unstable();
+            let _ = writeln!(out, "    pub const READER_{r}: &[u8] = &[{}];", ks.iter().map(|k| format!("k_{}", opens[*k])).collect::<Vec<_>>().join(", "));
+        }
+        out.push_str("}\n\n/// The fields tier 2 reads a region token's parts by.\n#[allow(non_upper_case_globals, dead_code)]\npub mod fields {\n");
+        for (i, (f, _)) in field_plan.iter().enumerate() {
+            let _ = writeln!(out, "    pub const {f}: u8 = {i};");
+        }
+        out.push_str("}\n\n/// A region token tier 2 reads in parts: its region `k`, its opener's first byte `s`, its closer's first `c`, its last\n/// byte `last`.\n#[derive(Clone, Copy)]\npub struct Span {\n    pub k: u8,\n    pub s: usize,\n    pub c: usize,\n    pub last: usize,\n}\n\n");
+        let mut seen = Vec::new();
+        let mut span = String::new();
+        let mut open = String::new();
+        for (k, kind, o, search, last) in &self.t2_spans {
+            if seen.contains(k) {
+                continue;
+            }
+            seen.push(*k);
+            let _ = write!(span, "        {k} => {{\n            // `{kind}`\n            if !bit(&{o}, s) {{\n                return None;\n            }}\n            let c = {search}?;\n            Some(Span {{ k, s, c, last: {last} }})\n        }}\n");
+            let _ = writeln!(open, "        // `{kind}`\n        {k} => bit(&{o}, s),");
+        }
+        let _ = write!(out, "/// Region `k`'s token from its opener `s`, as the walk reads it: none where its opener does not hold there, or no\n/// closer follows.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[allow(unused_variables)]\nunsafe fn span_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> Option<Span> {{\n    let n = src.len();\n    match k {{\n{span}        _ => None,\n    }}\n}}\n\nrerail_simd8::dispatch! {{\n    /// Region `k`'s token from its opener `s` (`span_on`).\n    pub fn span(src: &[u8], k: u8, s: usize) -> Option<Span> = span_on, on span_on_best;\n}}\n\n");
+        let _ = write!(out, "/// Whether region `k`'s opener holds at byte `s`.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[allow(unused_variables)]\nunsafe fn opens_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> bool {{\n    let n = src.len();\n    match k {{\n{open}        _ => false,\n    }}\n}}\n\nrerail_simd8::dispatch! {{\n    /// Whether region `k`'s opener holds at byte `s` (`opens_on`).\n    pub fn opens(src: &[u8], k: u8, s: usize) -> bool = opens_on, on opens_on_best;\n}}\n\n/// The token of the first region of `ks` (in the walk's order) whose opener holds at `s`.\npub fn open_at(src: &[u8], ks: &[u8], s: usize) -> Option<Span> {{\n    ks.iter().find(|&&k| opens(src, k, s)).and_then(|&k| span(src, k, s))\n}}\n\n");
+        let per: Vec<Vec<(usize, String)>> = (0..opens.len()).map(|k| self.field_lines(k)).collect();
+        let mut arms = String::new();
+        for (i, (f, v)) in field_plan.iter().enumerate() {
+            let _ = write!(arms, "        {i} => {{\n            // `{f}`\n");
+            match self.field_writes.iter().position(|fw| fw.var == *v) {
+                Some(w) => {
+                    if let Some(o) = &self.field_writes[w].outside {
+                        let _ = writeln!(arms, "            put(&mut fwin, &{o}, p, p + 63);");
+                    }
+                    let mut ks = String::new();
+                    for (k, lines) in per.iter().enumerate() {
+                        if let Some((_, l)) = lines.iter().find(|l| l.0 == w) {
+                            let _ = write!(ks, "                {k} => {{\n{}\n                }}\n", l.lines().map(|l| format!("                    {l}")).collect::<Vec<_>>().join("\n"));
+                        }
+                    }
+                    if !ks.is_empty() {
+                        let _ = write!(arms, "            match k {{\n{ks}                _ => {{}}\n            }}\n");
+                    }
+                }
+                None => {
+                    let _ = writeln!(arms, "            put(&mut fwin, &{v}, p, p + 63);");
+                }
+            }
+            arms.push_str("        }\n");
+        }
+        let _ = write!(out, "/// Field `f`'s bits at the 64 bytes from `p` (a multiple of 64) in region token `sp`, as tier 1 wrote them over the token.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[allow(unused_variables, unused_mut)]\nunsafe fn field_on<S: rerail_simd8::Simd8x64>(f: u8, src: &[u8], sp: Span, p: usize) -> u64 {{\n    let n = src.len();\n    let Span {{ k, s, c, last }} = sp;\n    let mut fwin = 0u64;\n    match f {{\n{arms}        _ => {{}}\n    }}\n    fwin\n}}\n\nrerail_simd8::dispatch! {{\n    /// Field `f`'s bits at the 64 bytes from `p` in region token `sp` (`field_on`).\n    pub fn field(f: u8, src: &[u8], sp: Span, p: usize) -> u64 = field_on, on field_on_best;\n}}\n\n");
+        out.push_str(WIN_HELPERS);
+        out.push_str(T2_END);
+        out
+    }
+
+    /// Tier 2's fields over region `k`'s token (`field_writes`): each field's writes of its word `fwin`, from the token's
+    /// opener `s`, its closer `c` and its last byte `last` (decision 0703 step 16: tier 2 asks them of the bytes).
+    fn field_lines(&self, k: usize) -> Vec<(usize, String)> {
+        let mut out = Vec::new();
+        for (i, fw) in self.field_writes.iter().enumerate() {
             let FieldPart { why, at, body, closer, grid } = &fw.parts[k];
-            let f = &fw.var;
+            let f = "fwin";
+            let _ = why;
             // A part none: nothing where the field starts as none, else its bits cleared.
             let w = |m: &Option<String>, a: String, b: String| match m.as_deref() {
                 None => None,
@@ -4957,7 +5033,7 @@ impl Gen<'_> {
                 }
             }
             if !lines.is_empty() {
-                let _ = writeln!(out, "// {why}\n{}", lines.join("\n"));
+                out.push((i, lines.join("\n")));
             }
         }
         out
@@ -5015,7 +5091,6 @@ impl Gen<'_> {
                     None
                 } else {
                     let id = self.node(&outside)?;
-                    self.nodes[id].also.push(var.clone());
                     Some(self.nodes[id].name.clone())
                 };
                 let mut parts = Vec::new();
@@ -6188,6 +6263,12 @@ impl Gen<'_> {
                     let r = Self::row_region(start, rs).ok_or_else(|| format!("tier 1 as Rust: `{kind}`'s row reads no one region"))?.clone();
                     let c = self.val(&r.closers())?;
                     let found = self.closer_last(&r, &parts.closes)?;
+                    // Tier 2's span of the token (`span`): its closer and its last byte, of the bytes.
+                    if let Some(k) = self.opens.as_ref().and_then(|o| o.iter().position(|(q, _, _)| *q == r.kind)) {
+                        let search = self.closer_from(&r, &format!("s + {}", r.opens), false)?;
+                        let open = self.val(&r.opener)?;
+                        self.t2_spans.push((k, r.kind.clone(), open, search, found.clone()));
+                    }
                     let tests = self.region_tests(&r.kind);
                     let found = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
                     let found = self.template_close(&r.kind, found)?;
@@ -6656,9 +6737,6 @@ impl Gen<'_> {
             let _ = writeln!(fields_init, "            {f}: {v},");
         }
         let mut fw_decl = String::new();
-        for fw in self.field_writes.iter().filter(|fw| fw.outside.is_none()) {
-            let _ = writeln!(fw_decl, "    // `{}` for tier 2, written over each region token.\n    let mut {} = vec![0u64; nw];", fw.parts.first().map_or("", |p| p.why.as_str()).trim_start_matches('`').split('`').next().unwrap_or(""), fw.var);
-        }
         // The region a token's start opens, as the walk opens them (`regions`): the first declared whose
         // opener holds there, a kind `after` others where the region opened last of those with none is one.
         let mut open_code = String::new();
@@ -7068,11 +7146,8 @@ impl Gen<'_> {
             // No region tier 2 reads in parts (decision 0619, as 0586's): no mask for it.
             out.push_str("/// A token's record (the lean lexer's `Tok`): its first and last byte, and its code (its kind, its word and its marks).\n#[derive(Clone, Copy)]\npub struct Rec {\n    pub start: u32,\n    pub last: u32,\n    pub code: u32,\n}\n\n/// Tier 1's records, one a grammar token; the comments (the extras) apart, as the lean lexer keeps its comments; and\n/// whether the file goes to tree-sitter.\npub struct Lexed {\n    pub recs: Vec<Rec>,\n    pub extras: Vec<Rec>,\n    pub refused: bool,\n}\n\n");
         } else {
-            out.push_str("/// A token's record (the lean lexer's `Tok`): its first and last byte, and its code (its kind, its word and its marks).\n#[derive(Clone, Copy)]\npub struct Rec {\n    pub start: u32,\n    pub last: u32,\n    pub code: u32,\n}\n\n/// The masks tier 2 reads, a bit a byte: those it splits a region by, where it reads one in parts.\npub struct Masks {\n");
-            for f in &fields {
-                let _ = writeln!(out, "    pub {f}: Vec<u64>,");
-            }
-            out.push_str("}\n\n/// Tier 1's records, one a grammar token; the comments (the extras) apart, as the lean lexer keeps its comments; the\n/// masks tier 2 reads; and whether the file goes to tree-sitter.\npub struct Lexed {\n    pub recs: Vec<Rec>,\n    pub extras: Vec<Rec>,\n    pub masks: Masks,\n    pub refused: bool,\n}\n\n");
+            out.push_str("/// A token's record (the lean lexer's `Tok`): its first and last byte, and its code (its kind, its word and its marks).\n#[derive(Clone, Copy)]\npub struct Rec {\n    pub start: u32,\n    pub last: u32,\n    pub code: u32,\n}\n\n/// Tier 1's records, one a grammar token; the comments (the extras) apart, as the lean lexer keeps its comments; and\n/// whether the file goes to tree-sitter.\npub struct Lexed {\n    pub recs: Vec<Rec>,\n    pub extras: Vec<Rec>,\n    pub refused: bool,\n}\n\n");
+            out.push_str(&self.span_reads(x, &field_plan));
         }
         let kinds: Vec<String> = x.kinds.iter().map(|k| k.to_string()).collect();
         let _ = write!(out, "/// Each byte's record kind, as a token's first byte.\nconst KINDS: [u8; 256] = [{}];\n\n", kinds.join(", "));
@@ -7130,7 +7205,8 @@ impl Gen<'_> {
         if !fused {
             let _ = writeln!(out, "    // Stage 1: the masks the regions and the tokens read, and whether an escape holds.\n    let Stage1 {{ {}, refused: escapes }} = stage1_best(src);", kept.join(", "));
         }
-        let rest = format!("{plain_decl_text}{fw_decl}{open_code}{branches}{token_code}{own_code}{gap_code}{acc_after}{span_after}{fields_init}");
+        let _ = &fields_init;
+        let rest = format!("{plain_decl_text}{fw_decl}{open_code}{branches}{token_code}{own_code}{gap_code}{acc_after}{span_after}");
         // A refusal in the token loop leaves both its loops.
         let tokens = |t: &str| t.replace("break;\n", "break 'tokens;\n");
         let (open_code, branches, token_code, own_code, gap_code, acc_after) = (tokens(&open_code), tokens(&branches), tokens(&token_code), tokens(&own_code), tokens(&gap_code), tokens(&acc_after));
@@ -7351,7 +7427,7 @@ impl Gen<'_> {
                 Some((_, st, ..)) => st.clone(),
                 None => format!("        let mut firsts = !{skip}[b]"),
             },
-            masks_init = if fields.is_empty() { String::new() } else { format!("        masks: Masks {{\n{fields_init}        }},\n") },
+            masks_init = String::new(),
         );
         }
         if from_bytes.is_some() {
@@ -8573,7 +8649,7 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [Bytes::ALL; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), shapes: Default::default(), regional_ids: Default::default(), opener_ids: Default::default(), def_ids: Default::default(), end_names: Default::default(), shape_ids: Default::default(), name_strs: Default::default(), name_ids: Default::default(), kept: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default() }.source().map(|t| interleave::generic_lex(&interleave::interleave(&t).unwrap_or(t)))
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), t2_spans: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [Bytes::ALL; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), shapes: Default::default(), regional_ids: Default::default(), opener_ids: Default::default(), def_ids: Default::default(), end_names: Default::default(), shape_ids: Default::default(), name_strs: Default::default(), name_ids: Default::default(), kept: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default() }.source().map(|t| interleave::generic_lex(&interleave::code_pass_in_loop(&interleave::interleave(&t).unwrap_or(t))))
 }
 
 /// Whether `e` names `n`.
@@ -9674,3 +9750,41 @@ fn one_pass_after(code: &str) -> Option<String> {
     }
     Some(out)
 }
+
+/// Where tier 1's reads for tier 2 of the region tokens begin and end (`span_reads`, `bit_reads`).
+pub(crate) const T2_BEGIN: &str = "// Tier 2's reads of the region tokens it reads in parts (decision 0703 step 16), of the bytes.\n";
+pub(crate) const T2_END: &str = "// The end of tier 2's reads of the region tokens.\n\n";
+
+/// A field's word at the 64 bytes from `p` (`fwin`), written as `wput`, `set` and `clear` write a mask of the file.
+const WIN_HELPERS: &str = r#"/// Word `v` of the 64 bytes from `p`: its bits at bytes `a..=b` those of the windows `w` gives (`wput`'s).
+#[inline(always)]
+fn win_put(v: &mut u64, p: usize, a: usize, b: usize, mut w: impl FnMut(isize, &mut u64) -> u64) {
+    let (a, b) = (a.max(p), b.min(p + 63));
+    if a > b {
+        return;
+    }
+    let m = (if b - a == 63 { !0 } else { (1u64 << (b - a + 1)) - 1 }) << (a - p);
+    *v = *v & !m | w(p as isize, &mut 0) & m;
+}
+
+/// Word `v` of the 64 bytes from `p`: its bits at bytes `a..b` set (`set`'s).
+#[inline(always)]
+fn win_set(v: &mut u64, p: usize, a: usize, b: usize) {
+    let (a, b) = (a.max(p), b.min(p + 64));
+    if a >= b {
+        return;
+    }
+    *v |= (if b - a == 64 { !0 } else { (1u64 << (b - a)) - 1 }) << (a - p);
+}
+
+/// Word `v` of the 64 bytes from `p`: its bits at bytes `a..=b` cleared (`clear`'s).
+#[inline(always)]
+fn win_clear(v: &mut u64, p: usize, a: usize, b: usize) {
+    let (a, b) = (a.max(p), b.min(p + 63));
+    if a > b {
+        return;
+    }
+    *v &= !((if b - a == 63 { !0 } else { (1u64 << (b - a + 1)) - 1 }) << (a - p));
+}
+
+"#;
