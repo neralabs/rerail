@@ -46,10 +46,15 @@ mna_where(h, cat("`", h, "/`")) :- mna_home(_, h), h != "".
 mna_where("", "the repository root") :- mna_home(_, "").
 
 // mna_entry(d, e, f, dir): document d, named f in folder dir, is written as a Next.js middleware/proxy file; e is its
-// export that Next.js would run (a default, or the binding named after the file). Not imported by another file.
+// export that Next.js would run (a default, or the binding named after the file). Not imported by another file, and
+// in a package that uses Next.js: the nearest package.json above it lists next (a React Router or Hono app has
+// middleware files of its own).
 .decl mna_entry(d: number, e: node, f: symbol, dir: symbol)
 mna_entry(d, e, f, @dir(p)) :- file_name(d, f), match("(middleware|proxy)\\.(tsx|ts|jsx|js)", f), doc(d, p, _),
-    mna_runs(d, e), mna_next_like(d), !mna_imported(d).
+    package_for(p, pd), mna_next_pkg(pd), mna_runs(d, e), mna_next_like(d), !mna_imported(d).
+.decl mna_next_pkg(dir: symbol)
+mna_next_pkg(dir) :- package_field(dir, k, _),
+    (k = "dependencies/next" ; k = "devDependencies/next" ; k = "peerDependencies/next").
 // mna_runs(d, e): export e is `export default …`, or exports the file's own name: `export function middleware`,
 // `export const proxy = …`, `export { auth as middleware }`, `export { auth as middleware } from "./auth"`.
 .decl mna_runs(d: number, e: node)
@@ -149,6 +154,10 @@ mna_imported(d) :- mna_base(d, b), mna_spec(i, s), match("[@~#][^/]*/(?<rest>.+)
     .fixture "apps/admin/package.json" from "../cases/next-practice-middleware-not-applied/apps/admin/package.json"
     .fixture "apps/admin/src/middleware.ts" from "../cases/next-practice-middleware-not-applied/apps/admin/src/middleware.ts"
     .fixture "apps/admin/src/app/page.tsx" from "../cases/next-practice-middleware-not-applied/apps/admin/src/app/page.tsx"
+    .fixture "apps/rr-app/package.json" from "../cases/next-practice-middleware-not-applied/apps/rr-app/package.json"
+    .fixture "apps/rr-app/react-router.config.ts" from "../cases/next-practice-middleware-not-applied/apps/rr-app/react-router.config.ts"
+    .fixture "apps/rr-app/app/routes/home.tsx" from "../cases/next-practice-middleware-not-applied/apps/rr-app/app/routes/home.tsx"
+    .fixture "apps/rr-app/src/middleware.ts" from "../cases/next-practice-middleware-not-applied/apps/rr-app/src/middleware.ts"
     .expect _ at "apps/web/middleware.ts":4
     .expect _ at "apps/web/src/app/(dashboard)/middleware.ts":3
     .expect _ at "apps/site/src/middleware.ts":3

@@ -36,17 +36,25 @@
 //   function visible(p) {…} in the function, read by the cached function         not reported: code, not data
 //   `'use cache'` functions                                                       not reported: not unstable_cache
 // Gaps: what a captured function or helper itself reads is not followed; a captured value that is the same for every
-// request (a client or config built by a call in the function) is reported; a project wrapper around unstable_cache
-// (cal.diy's `@calcom/lib/unstable_cache`) is not followed to its callers; `this` is not read; only initial values
-// are traced, not reassignments.
+// request (a client or config built by a call in the function) is reported; a project's own wrapper around
+// unstable_cache (a workspace module that re-exports or wraps it) is not followed to its callers; `this` is not read;
+// only initial values are traced, not reassignments.
 
 #include "tsx/names.rerail"
 
 .violation ClosureKey(at: node, x: symbol) "The function cached by `unstable_cache` reads `{x}` from the function around it, but the cache key is only keyParts, the arguments the cached function is called with and its source text: the result computed for the first `{x}` is served for every other `{x}` (another user's or tenant's data) until it revalidates. Make `{x}` (or the ids it comes from) a parameter of the cached function and pass it at the call, `unstable_cache(async ({x}) => …, [\"…\"])({x})`, or add it to keyParts. Leave it only if `{x}` is the same for every call, such as a client or a constant."
-ClosureKey(e, x) :- ucck_call(c, e), ucck_free(c, x, s), ucck_open(c, s).
+ClosureKey(e, x) :- ucck_call(c, e), ucck_next_call(c), ucck_free(c, x, s), ucck_open(c, s).
 .violation ClosureKeyField(at: node, t: symbol, x: symbol) "The function cached by `unstable_cache` reads `{t}` from the function around it, and keyParts hold only other fields of `{x}`, not `{t}` or a value it belongs to: the result computed for the first `{t}` is served for every later request whose keyed fields match (another organization's data, when the same user switches organization) until it revalidates. Add `{t}` to keyParts, or make it a parameter of the cached function and pass it at the call. Leave it only if what keyParts hold already fixes `{t}`."
-ClosureKeyField(e, t, x) :- ucck_call(c, e), ucck_read(c, r, s), ref(r, x, "value"), ucck_request(s),
-    ucck_key_ref(c, s, _), ucck_top(r, t), !ucck_path_covered(c, s, t).
+ClosureKeyField(e, t, x) :- ucck_call(c, e), ucck_next_call(c), ucck_read(c, r, s), ref(r, x, "value"),
+    ucck_request(s), ucck_key_ref(c, s, _), ucck_top(r, t), !ucck_path_covered(c, s, t).
+
+// ucck_next_call(c): the call is in a package that uses Next.js: the nearest package.json above its file lists next
+// (dependencies, devDependencies or peerDependencies), not only an import that names next/cache.
+.decl ucck_next_call(c: node)
+ucck_next_call(c) :- ucck_call(c, _), docof(c, d), doc(d, p, _), package_for(p, dir), ucck_next_pkg(dir).
+.decl ucck_next_pkg(dir: symbol)
+ucck_next_pkg(dir) :- package_field(dir, k, _),
+    (k = "dependencies/next" ; k = "devDependencies/next" ; k = "peerDependencies/next").
 
 // ucck_call(c, e): c calls Next's unstable_cache, named by callee e: imported from next/cache under any local name,
 // or a member of `import * as nc from "next/cache"`. Read from this file's imports alone (no import resolution
@@ -155,6 +163,9 @@ ucck_path_covered(c, s, t) :- ucck_read(c, r, s), ucck_top(r, t), ucck_key_ref(c
 // `// caught` is reported, and no other line.
 .test cases exactly
     .fixture "package.json" from "../cases/next-practice-unstable-cache-closure-key/package.json"
+    .fixture "rr-app/package.json" from "../cases/next-practice-unstable-cache-closure-key/rr-app/package.json"
+    .fixture "rr-app/react-router.config.ts" from "../cases/next-practice-unstable-cache-closure-key/rr-app/react-router.config.ts"
+    .fixture "rr-app/app/routes/dashboard.tsx" from "../cases/next-practice-unstable-cache-closure-key/rr-app/app/routes/dashboard.tsx"
     .fixture "tsconfig.json" from "../cases/next-practice-unstable-cache-closure-key/tsconfig.json"
     .fixture "lib/db.ts" from "../cases/next-practice-unstable-cache-closure-key/lib/db.ts"
     .fixture "lib/auth.ts" from "../cases/next-practice-unstable-cache-closure-key/lib/auth.ts"

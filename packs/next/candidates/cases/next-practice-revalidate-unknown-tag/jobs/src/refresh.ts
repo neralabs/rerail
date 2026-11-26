@@ -6,4 +6,6 @@ export function teamsChanged(id: string) {
   revalidateTag("teams", "max");
   revalidateTag(`team:${id}`, "max");
   revalidatePath("/settings/teams");
+  revalidateTag("projects", "max"); // caught
+  revalidateTag("members", "max");
 }

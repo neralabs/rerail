@@ -1,9 +1,10 @@
 "use server";
 
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { api, requireRole } from "@acme/auth-client";
 import { prisma } from "@/lib/db";
 import { createWorkoutSession } from "@/lib/workout";
+import { session } from "@acme/session-store";
 
 // A function named after a "session" model is no session check.
 export async function startWorkout(userId: string) { // caught
@@ -61,4 +62,23 @@ export async function archiveWorkout(id: string) {
 export async function pinWorkout(id: string) {
   await requireRole("COACH");
   await prisma.workout.update({ where: { id }, data: { pinned: true } });
+}
+
+// A cookie written, not read, is no check.
+export async function setWorkoutTheme(id: string) { // caught
+  (await cookies()).set("theme", "dark");
+  await prisma.workout.update({ where: { id }, data: { theme: "dark" } });
+}
+
+// A method on an object named session is not a session check: only the callee's own name is read.
+export async function saveWorkoutDraft(id: string) { // caught
+  await session.save(id);
+  await prisma.workout.create({ data: { id } });
+}
+
+// The session cookie is read through the store cookies() returns.
+export async function starWorkout(id: string) {
+  const store = await cookies();
+  if (!store.get("session")) throw new Error("Unauthorized");
+  await prisma.workout.update({ where: { id }, data: { starred: true } });
 }

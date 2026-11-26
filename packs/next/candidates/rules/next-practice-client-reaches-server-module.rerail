@@ -80,10 +80,15 @@ crs_edge(d, e) :- crs_spec(i, s), docof(i, d), crs_resolve(d, s, e), e != d, !cr
 .decl crs_guarded(d: number)
 crs_guarded(d) :- crs_spec(i, "server-only"), docof(i, d).
 
-// crs_reached(d): d is in the client bundle: a 'use client' module or a module one of them loads, transitively.
+// crs_reached(d): d is in the client bundle: a 'use client' module or a module one of them loads, transitively. The
+// 'use client' module must be in a package that uses Next.js (the nearest package.json above it lists next): React
+// Router and other React apps have 'use client' modules too, and bundle them by their own rules.
 .decl crs_reached(d: number)
-crs_reached(d) :- crs_root(d).
+crs_reached(d) :- crs_root(d), doc(d, p, _), package_for(p, dir), crs_next_pkg(dir).
 crs_reached(e) :- crs_reached(d), !crs_guarded(d), crs_edge(d, e).
+.decl crs_next_pkg(dir: symbol)
+crs_next_pkg(dir) :- package_field(dir, k, _),
+    (k = "dependencies/next" ; k = "devDependencies/next" ; k = "peerDependencies/next").
 
 // crs_node_only(s): a Node.js built-in Next.js does not polyfill for the browser.
 .decl crs_node_only(s: symbol)
@@ -174,6 +179,9 @@ crs_ext("/index.ts"). crs_ext("/index.tsx"). crs_ext("/index.js"). crs_ext("/ind
 .test cases exactly
     .fixture "next.config.mjs" from "../cases/next-practice-client-reaches-server-module/next.config.mjs"
     .fixture "package.json" from "../cases/next-practice-client-reaches-server-module/package.json"
+    .fixture "rr-app/package.json" from "../cases/next-practice-client-reaches-server-module/rr-app/package.json"
+    .fixture "rr-app/react-router.config.ts" from "../cases/next-practice-client-reaches-server-module/rr-app/react-router.config.ts"
+    .fixture "rr-app/app/components/Uploader.tsx" from "../cases/next-practice-client-reaches-server-module/rr-app/app/components/Uploader.tsx"
     .fixture "tsconfig.json" from "../cases/next-practice-client-reaches-server-module/tsconfig.json"
     .fixture "src/app/actions/auth.ts" from "../cases/next-practice-client-reaches-server-module/src/app/actions/auth.ts"
     .fixture "src/app/orders/page.tsx" from "../cases/next-practice-client-reaches-server-module/src/app/orders/page.tsx"

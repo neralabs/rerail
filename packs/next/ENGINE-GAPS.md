@@ -36,6 +36,7 @@ against these rules, so what they close is read from their commit messages:
 | 14 | `run-rr` `.output` writes partial or empty CSVs | client-reaches-server-module | open |
 | 15 | `test-rr --json` lists findings without their messages | revalidate-unknown-target | open |
 | 16 | `child(p, c, i)` counts comments as children (a trap, not a bug) | unstable-cache-closure-key | not a bug |
+| 17 | A large app fills the content store and the run fails | every rule, on the test set's lobehub/lobe-chat | open |
 
 ---
 
@@ -218,3 +219,18 @@ finding depended on it), so debugging needed `.violation` probes instead.
 Not a bug, but a trap: comments are named children, so an argument's index shifts when a comment sits in an argument
 list (`unstable_cache( // note` makes the function argument 1). unstable-cache-closure-key counts non-comment siblings
 (`ucck_arg`); a small shared `ts_call_arg` would avoid the trap.
+
+## 17. A large app fills the content store
+
+**Symptom.** On the frozen test set (2026-11-26), the run of the rules pack.json turned on then on lobehub/lobe-chat
+`58a93517c7` stopped after 933 s with exit 1: "invalid content store input: a write queued behind the run failed: …
+the run's record: invalid content store input: content store hard limit rejects new payloads" (reported against
+server-action-without-auth's file, the first rule). A first run of the rules from before the generalization pass timed
+out on the same app at 3018 s. No finding was recorded, so every next rule's test-set numbers are for the other 19
+apps.
+
+**Repro.** One `run-policies` of the next pack's turned-on rules over lobehub/lobe-chat at `58a93517c7`, profiling
+engine of `628c1f905f`, on a fleet workspace.
+
+**Rules affected.** All of them on that app: the run, not one rule's output, reaches the store's limit. The app
+counts as not run.

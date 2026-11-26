@@ -50,13 +50,21 @@
 
 .violation RedirectInTry(at: node, x: symbol, t: node)
     "`{x}()` is called inside the try block at line {t.line}, and that try's catch neither rethrows the caught error nor calls `unstable_rethrow(err)`. `{x}()` works by throwing a Next.js control-flow error, so the catch swallows it: the redirect or error page never happens and the catch's fallback runs instead. Call `{x}()` after the try/catch (keep the value it needs in a variable declared before the try), or add `unstable_rethrow(err)` from next/navigation as the catch's first statement (or `throw err` for errors the catch does not handle)."
-RedirectInTry(c, x, t) :- nrt_api_call(c, x), nrt_swallowing_try(t, b), nrt_throws_into(c, b), !nrt_client_callback(c, x),
-    !nrt_ends_in(t, x).
+RedirectInTry(c, x, t) :- nrt_api_call(c, x), nrt_next_node(c), nrt_swallowing_try(t, b), nrt_throws_into(c, b),
+    !nrt_client_callback(c, x), !nrt_ends_in(t, x).
+// nrt_next_node(n): n is in a package that uses Next.js: the nearest package.json above its file lists next
+// (dependencies, devDependencies or peerDependencies), not only an import that names next/navigation.
+.decl nrt_next_node(n: node)
+nrt_next_node(n) :- (nrt_api_call(n, _) ; nrt_helper_call(n, _)), docof(n, d), doc(d, p, _), package_for(p, dir),
+    nrt_next_pkg(dir).
+.decl nrt_next_pkg(dir: symbol)
+nrt_next_pkg(dir) :- package_field(dir, k, _),
+    (k = "dependencies/next" ; k = "devDependencies/next" ; k = "peerDependencies/next").
 
 .violation RedirectInClientHandler(at: node, x: symbol, t: node)
     "`{x}()` is called inside the try block at line {t.line} of a callback in a 'use client' file, and that try's catch does not rethrow. `{x}()` works by throwing a Next.js control-flow error, so the catch swallows it and shows its error path after the work succeeded; Next.js also supports `{x}()` in Client Components only while rendering, not in event handlers. In an event handler or effect, navigate with `const router = useRouter()` (next/navigation) and `router.push(...)` (or `router.replace`) in the try's success path instead."
-RedirectInClientHandler(c, x, t) :- nrt_api_call(c, x), nrt_swallowing_try(t, b), nrt_throws_into(c, b),
-    nrt_client_callback(c, x), !nrt_ends_in(t, x).
+RedirectInClientHandler(c, x, t) :- nrt_api_call(c, x), nrt_next_node(c), nrt_swallowing_try(t, b),
+    nrt_throws_into(c, b), nrt_client_callback(c, x), !nrt_ends_in(t, x).
 // nrt_client_callback(c, x): redirect call c sits in a function nested inside another (an event handler or effect in
 // a component), in a 'use client' file.
 .decl nrt_client_callback(c: node, x: symbol)
@@ -66,12 +74,14 @@ nrt_client_callback(c, x) :- nrt_api_call(c, x), (x = "redirect" ; x = "permanen
 
 .violation RedirectHelperInTry(at: node, g: symbol, x: symbol, t: node, p: symbol, o: node)
     "`{g}()` is called inside the try block at line {t.line} and can call `{x}()` ({p}:{o.line}), but that try's catch neither rethrows the caught error nor calls `unstable_rethrow(err)`. `{x}()` works by throwing a Next.js control-flow error, so when `{g}()` redirects the catch swallows it and the code after the try/catch runs instead. Call `{g}()` before the try, or add `unstable_rethrow(err)` from next/navigation as the catch's first statement (or `throw err` for errors the catch does not handle)."
-RedirectHelperInTry(k, g, x, t, p, o) :- nrt_swallowing_try(t, b), nrt_helper_call(k, o), within_stop(k, b, fn_scope),
-    field(k, "function", fn), text(fn, g), nrt_api_call(o, x), !nrt_ends_in(t, x), docof(o, d), doc(d, p, _).
+RedirectHelperInTry(k, g, x, t, p, o) :- nrt_swallowing_try(t, b), nrt_helper_call(k, o), nrt_next_node(k),
+    within_stop(k, b, fn_scope), field(k, "function", fn), text(fn, g), nrt_api_call(o, x), !nrt_ends_in(t, x),
+    docof(o, d), doc(d, p, _).
 
 .violation RedirectInPromiseCatch(at: node, x: symbol, k: node)
     "`{x}()` is called in a `.then()` callback, and the `.catch()` at line {k.line} of the same promise chain neither rethrows nor calls `unstable_rethrow(err)`. `{x}()` works by throwing a Next.js control-flow error, which rejects the chain, so the `.catch()` callback swallows it: the redirect or error page never happens and the callback's fallback value is used instead. Await the chain first and call `{x}()` after it (`const saved = await save().then(() => true).catch(() => false); if (saved) {x}(…)`), or call `unstable_rethrow(err)` from next/navigation first in the `.catch()` callback."
-RedirectInPromiseCatch(c, x, k) :- nrt_api_call(c, x), within_stop(c, f, fn_scope), nrt_then_cb(f, t), nrt_chain(t, k),
+RedirectInPromiseCatch(c, x, k) :- nrt_api_call(c, x), nrt_next_node(c), within_stop(c, f, fn_scope), nrt_then_cb(f, t),
+    nrt_chain(t, k),
     nrt_step(k, "catch"), field(k, "arguments", al), child(al, g, 0),
     (kind(g, "arrow_function") ; kind(g, "function_expression")), !nrt_cb_rethrows(g).
 // nrt_then_cb(f, t): function f is the first argument of `t = p.then(f)`.
@@ -89,12 +99,19 @@ nrt_chain(t, k) :- nrt_then_cb(_, t), field(k, "function", m), kind(m, "member_e
     nrt_step(k, _).
 nrt_chain(t, k) :- nrt_chain(t, j), (nrt_step(j, "then") ; nrt_step(j, "finally")), field(k, "function", m),
     kind(m, "member_expression"), field(m, "object", j), nrt_step(k, _).
-// nrt_cb_rethrows(g): .catch callback g throws an identifier (its parameter, as written) or names a Next.js guard.
+// nrt_cb_rethrows(g): .catch callback g throws an identifier (its parameter, as written), names a Next.js guard, or
+// reads `.digest` of its parameter.
 .decl nrt_cb_rethrows(g: node)
 nrt_cb_rethrows(g) :- (kind(g, "arrow_function") ; kind(g, "function_expression")), kind(s, "throw_statement"),
     within_stop(s, g, fn_scope), child(s, r, _), kind(r, "identifier").
 nrt_cb_rethrows(g) :- (kind(g, "arrow_function") ; kind(g, "function_expression")), within(n, g),
     (kind(n, "identifier") ; kind(n, "property_identifier")), text(n, x), nrt_guard_name(x).
+nrt_cb_rethrows(g) :- (kind(g, "arrow_function") ; kind(g, "function_expression")), within(m, g),
+    nrt_digest_of(m, r), text(r, x), nrt_cb_param(g, x).
+.decl nrt_cb_param(g: node, x: symbol)
+nrt_cb_param(g, x) :- field(g, "parameter", i), text(i, x).
+nrt_cb_param(g, x) :- field(g, "parameters", ps), child(ps, pp, _), (pp = i ; within(i, pp)), kind(i, "identifier"),
+    text(i, x).
 
 // nrt_api_call(c, x): c calls x, one of the next/navigation functions that throw instead of returning, imported by
 // name (`import { redirect as go } from "next/navigation"`) or through a namespace (`nav.redirect()`).
@@ -118,12 +135,28 @@ nrt_ends_in(t, x) :- kind(t, "try_statement"), field(t, "handler", h), field(h, 
 
 // nrt_rethrows(h): catch clause h lets Next.js's error out: it throws its own parameter (`throw e`, under any
 // condition but an `instanceof Error` guard that returns first), or names the error kinds or unstable_rethrow
-// (`unstable_rethrow(e)`, `isRedirectError(e)`, `e.digest`, a "NEXT_REDIRECT" string).
+// (`unstable_rethrow(e)`, `isRedirectError(e)`, `e.digest` of the caught error, a "NEXT_REDIRECT" string).
 .decl nrt_rethrows(h: node)
 nrt_rethrows(h) :- kind(h, "catch_clause"), field(h, "parameter", p), kind(s, "throw_statement"),
     within_stop(s, h, fn_scope), child(s, r, _), kind(r, "identifier"), ref_site(r, p), !nrt_error_swallow(h).
 nrt_rethrows(h) :- kind(h, "catch_clause"), within(n, h), (kind(n, "identifier") ; kind(n, "property_identifier")),
     text(n, x), nrt_guard_name(x).
+nrt_rethrows(h) :- kind(h, "catch_clause"), field(h, "parameter", p), within(m, h), nrt_digest_of(m, r), ref_site(r, p).
+// nrt_digest_of(m, r): m reads `.digest` of the name r: `e.digest`, `e?.digest`, `(e as NextError).digest`. A
+// digest of anything else (`hash.digest("hex")`, `checksum(e).digest()`) is no guard.
+.decl nrt_digest_of(m: node, r: node)
+nrt_digest_of(m, r) :- kind(m, "member_expression"), field(m, "property", pr), text(pr, "digest"), field(m, "object", o),
+    nrt_bare(o, r).
+// nrt_bare(o, r): the object o of a `.digest` read is the name r, through parentheses, `as`, `satisfies` and `!`.
+.decl nrt_digest_q(o: node)
+nrt_digest_q(o) :- kind(m, "member_expression"), field(m, "property", pr), text(pr, "digest"), field(m, "object", o).
+nrt_digest_q(g) :- nrt_digest_q(o), nrt_wrap(o), child(o, g, 0).
+.decl nrt_wrap(o: node)
+nrt_wrap(o) :- kind(o, "parenthesized_expression") ; kind(o, "as_expression") ; kind(o, "satisfies_expression") ;
+    kind(o, "non_null_expression").
+.decl nrt_bare(o: node, r: node)
+nrt_bare(o, o) :- nrt_digest_q(o), kind(o, "identifier").
+nrt_bare(o, r) :- nrt_digest_q(o), nrt_wrap(o), child(o, g, 0), nrt_bare(g, r).
 nrt_rethrows(h) :- kind(h, "catch_clause"), within(n, h), kind(n, "string"), text(n, s),
     (contains("NEXT_REDIRECT", s) ; contains("NEXT_NOT_FOUND", s) ; contains("NEXT_HTTP_ERROR", s)).
 // nrt_error_swallow(h): catch h handles every Error before its rethrow: `if (e instanceof Error) return …` (or a
@@ -146,7 +179,7 @@ nrt_leaves(cs) :- kind(cs, "statement_block"), kind(s, "throw_statement"), withi
     !kind(r, "identifier").
 .decl nrt_guard_name(x: symbol)
 nrt_guard_name("unstable_rethrow"). nrt_guard_name("isRedirectError"). nrt_guard_name("isNotFoundError").
-nrt_guard_name("isNextRouterError"). nrt_guard_name("isHTTPAccessFallbackError"). nrt_guard_name("digest").
+nrt_guard_name("isNextRouterError"). nrt_guard_name("isHTTPAccessFallbackError").
 
 // nrt_throws_into(c, b): what c throws reaches try body b: c is in b with no function between, or c is in a
 // callback that a call in b runs before b goes on (an array method's callback) or awaits (`await p.then(cb)`,
@@ -211,6 +244,9 @@ nrt_ext("/index.js").
 // The cases, `cases/next-practice-redirect-in-try/`, read as one repository: each line ending in `// caught` is
 // reported, and no other line.
 .test cases exactly
+    .fixture "rr-app/package.json" from "../cases/next-practice-redirect-in-try/rr-app/package.json"
+    .fixture "rr-app/react-router.config.ts" from "../cases/next-practice-redirect-in-try/rr-app/react-router.config.ts"
+    .fixture "rr-app/app/routes/posts/actions.ts" from "../cases/next-practice-redirect-in-try/rr-app/app/routes/posts/actions.ts"
     .fixture "package.json" from "../cases/next-practice-redirect-in-try/package.json"
     .fixture "tsconfig.json" from "../cases/next-practice-redirect-in-try/tsconfig.json"
     .fixture "src/lib/auth.ts" from "../cases/next-practice-redirect-in-try/src/lib/auth.ts"
@@ -223,6 +259,7 @@ nrt_ext("/index.js").
     .fixture "src/app/posts/actions.test.ts" from "../cases/next-practice-redirect-in-try/src/app/posts/actions.test.ts"
     .fixture "src/components/delete-post-button.tsx" from "../cases/next-practice-redirect-in-try/src/components/delete-post-button.tsx"
     .expect _ at "src/app/posts/actions.ts":17
+    .expect _ at "src/app/posts/actions.ts":201
     .expect _ at "src/app/posts/actions.ts":25
     .expect _ at "src/app/posts/actions.ts":35
     .expect _ at "src/app/posts/actions.ts":47

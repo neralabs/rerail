@@ -23,9 +23,11 @@
 // check, on camelCase word boundaries (auth, requireAuth, getServerSession, getSession, currentUser, getUser,
 // requireUser, validateRequest, requireRole, checkPermission, assertCanEdit, isAdmin, …; never `getAuthor`,
 // `OAuth`, `createWorkoutSession` or `updatePermissions`, and never a name whose first word is a write such as
-// create, update, delete, set or setup), reads cookies(), reads an `authorization` or `cookie` header
-// (`h.get("authorization")`), or passes headers() on (`getSession({ headers: await headers() })`); a headers() read
-// of another header (`x-forwarded-for`) is no check. One finding per action, at its name, naming one write.
+// create, update, delete, set or setup), reads a cookie (`(await cookies()).get("session")`; not cookies().set()),
+// reads an `authorization` or `cookie` header (`h.get("authorization")`), or passes headers() on
+// (`getSession({ headers: await headers() })`); a headers() read of another header (`x-forwarded-for`) is no check.
+// A function the action passes by name to a call (`.use(throwIfSignedIn)`) is followed like one it calls. One
+// finding per action, at its name, naming one write.
 //   actions.ts:   'use server'
 //                 export async function deleteProject(id) {        reported: writes, checks nobody
 //                   await prisma.project.delete({ where: { id } }) }
@@ -41,12 +43,15 @@
 //   actions.ts:   w.action(async ({ ctx }) => …)                     not reported: ctx comes from a middleware
 //   actions.ts:   createSafeActionClient().action(…), a package's wrapper   not reported: its code is not read
 //   actions.ts:   only reads (findMany) or only revalidatePath()     not reported: no write
-//   actions.ts:   signUp, login, resetPassword, subscribe, contact form…   not reported: public by design (name or path
-//                 folder: `(public)/`, `signup/`, `contact-us/`; `public` only as a name's first word, `publicAction`)
+//   actions.ts:   signUp, login, resetPassword, subscribe, contact form…   not reported: public by design (a whole
+//                 word of the name or of a path folder: `(public)/`, `signup/`, `contact-us/`; `public` only as a
+//                 name's first word, `publicAction`)
+//   actions.ts:   .use(throwIfSignedIn).action(…) where throwIfSignedIn reads the session   not reported
 //   lib/data.ts:  the same functions without 'use server'           not reported: not an endpoint
 // Gaps: writes through other clients (Supabase, Mongoose, raw pg), service objects (`svc.remove()`), callbacks
-// passed around, or packages the resolver cannot find (monorepo workspaces by package name); auth checks by
-// any name the pattern misses. Whether the check's result is used, and whether it checks the right owner
+// stored and run later, or packages the resolver cannot find (monorepo workspaces by package name); auth checks by
+// any name the pattern misses; an action gated by a secret token it looks up (an emailed link) is reported unless
+// its name or folder says it is public. Whether the check's result is used, and whether it checks the right owner
 // (authorisation, not only authentication), is not seen: an action that calls auth() and ignores it passes. Import
 // aliases (`@/`, `~/`, `#/`) are resolved by layout (the importing file's nearest directory with the file, at
 // `<dir>/x` or `<dir>/src/x`), not from tsconfig `paths`, which the runner does not read. The engine keeps .ts and
@@ -67,23 +72,34 @@ ServerActionWithoutAuthVia(n, x, gx, what, p, o) :- nsaw_report(f, n, x), !nsaw_
 ServerActionWithoutAuthWrapped(n, x, w, what, p, o) :- nsaw_report(f, n, x), nsaw_wrapped_action(f, w),
     !nsaw_guarded(f), o = min y : { nsaw_writes(f, y, _) }, nsaw_write(o, what), docof(o, d), doc(d, p, _).
 
-// nsaw_report(f, n, x): f is a Server Action named x, reported at n, outside tests and not public by its name or
-// file path.
+// nsaw_report(f, n, x): f is a Server Action named x, reported at n, in a package that uses Next.js, outside tests
+// and not public by its name or file path.
 .decl nsaw_report(f: node, n: node, x: symbol)
-nsaw_report(f, n, x) :- nsaw_action(f, n, x), docof(f, d), doc(d, p, _), !nsaw_test_doc(d), !nsaw_public_name(x),
-    !nsaw_public_path(p).
-// nsaw_public_name(s): an action's or a wrapper's name that says it is for signed-out visitors. `public` counts only
-// as the first word (`publicAction`, not `makeProjectPublic`).
+nsaw_report(f, n, x) :- nsaw_action(f, n, x), docof(f, d), doc(d, p, _), nsaw_next_doc(d), !nsaw_test_doc(d),
+    !nsaw_public_name(x), !nsaw_public_path(p).
+// nsaw_next_doc(d): the nearest package.json above document d lists next (dependencies, devDependencies or
+// peerDependencies). 'use server' is React's, not only Next.js's: a React Router or Waku app has it too.
+.decl nsaw_next_doc(d: number)
+nsaw_next_doc(d) :- doc(d, p, _), package_for(p, dir), nsaw_next_pkg(dir).
+.decl nsaw_next_pkg(dir: symbol)
+nsaw_next_pkg(dir) :- package_field(dir, k, _),
+    (k = "dependencies/next" ; k = "devDependencies/next" ; k = "peerDependencies/next").
+// nsaw_public_name(s): an action's or a wrapper's name that says it is for signed-out visitors: one of the words
+// below as a whole camelCase or snake_case word (`signUp`, `handleSignUp`, `sign_up_user`, `unsubscribe`; not
+// `catalogInfo`, `signups`). `public` counts only as the first word (`publicAction`, not `makeProjectPublic`).
 .decl nsaw_public_name(s: symbol)
 nsaw_public_name(s) :- (nsaw_fn_name(_, s) ; nsaw_vroot(_, s)),
-    (match("(?i).*(sign_?-?in|sign_?-?up|log_?-?in|register|registration|forgot|reset_?-?password|password_?-?reset|verify|verification|confirm_?-?email|contact_?-?(form|us)|(send|submit)_?-?contact|subscribe|newsletter|waitlist|wait_?-?list|feedback|webhook|magic_?-?link|(send|verify|check|resend)_?-?otp|captcha|consent|cookie_?-?banner|track_?-?view|page_?-?view|increment_?-?view).*", s) ;
-    match("public([A-Z0-9_].*)?", s)).
-// nsaw_public_path(s): a file path with a folder or file name that starts with one of those words (`(auth)/signup/`,
-// `contact-us/`, `verify-email/`), or a folder named public (`(public)/`, `public/`).
+    match("(?<pre>.*?)(?<w>(?i:sign_?in|sign_?up|log_?in|register|registration|forgot_?password|forgot|reset_?password|password_?reset|confirm_?email|contact_?(?:form|us)|(?:send|submit)_?contact|(?:un)?subscribe|newsletter|wait_?list|magic_?link|(?:send|verify|check|resend)_?otp|captcha|cookie_?banner))(?<post>.*)", s),
+    (pre = "" ; suffix("_", pre) ; match(".*[a-z0-9]", pre), match("[A-Z].*", w)),
+    (post = "" ; match("[A-Z0-9_].*", post)).
+nsaw_public_name(s) :- (nsaw_fn_name(_, s) ; nsaw_vroot(_, s)), match("public([A-Z0-9_].*)?", s).
+// nsaw_public_path(s): a file path with a folder or file name that is one of those words, whole (`(auth)/signup/`,
+// `contact-us/`, `forgot-password.ts`; not `contacts/`, `verify-domain/`), or a folder named public (`(public)/`,
+// `public/`).
 .decl nsaw_public_path(s: symbol)
 nsaw_public_path(s) :- doc(_, s, _),
-    (match("(?i)(.*[/(_.-])?(sign_?-?in|sign_?-?up|log_?-?in|register|registration|forgot|reset_?-?password|password_?-?reset|verify|verification|confirm_?-?email|contact_?-?(form|us)|(send|submit)_?-?contact|subscribe|newsletter|waitlist|wait_?-?list|feedback|webhook|magic_?-?link|(send|verify|check|resend)_?-?otp|captcha|consent|cookie_?-?banner|track_?-?view|page_?-?view|increment_?-?view).*", s) ;
-    match("(?i)(.*/)?\\(?public\\)?/.*", s)).
+    match("(?i)(?:.*[/(_.-])?(?:sign_?-?in|sign_?-?up|log_?-?in|register|registration|forgot_?-?password|forgot|reset_?-?password|password_?-?reset|confirm_?-?email|contact_?-?(?:form|us)|(?:send|submit)_?-?contact|(?:un)?subscribe|newsletter|wait_?-?list|magic_?-?link|(?:send|verify|check|resend)_?-?otp|captcha|cookie_?-?banner)(?:[-_/).].*)?", s).
+nsaw_public_path(s) :- doc(_, s, _), match("(?i)(.*/)?\\(?public\\)?/.*", s).
 .decl nsaw_test_doc(d: number)
 nsaw_test_doc(d) :- doc(d, p, _),
     match("(?i)(.*/)?(__tests__|tests?|e2e|__mocks__|__fixtures__|fixtures|cypress|playwright)/.*|.*\\.(test|spec|cy|stories|story)\\.[cm]?[jt]sx?", p).
@@ -188,11 +204,14 @@ nsaw_unit(f) :- nsaw_inline(f).
 .decl nsaw_in(c: node, f: node)
 nsaw_in(c, f) :- kind(c, "call_expression"), inside(c, f, nsaw_fnk), nsaw_unit(f).
 nsaw_in(c, v) :- kind(c, "call_expression"), inside(c, v, "variable_declarator"), nsaw_topvar(v, _, _, _).
-// nsaw_reach(f, g): action f runs unit g: itself, or one a call it reaches resolves to.
+// nsaw_reach(f, g): action f runs unit g: itself, one a call it reaches resolves to, or a function it passes by name
+// to a call (`.use(throwIfSignedIn)`, `items.map(removeItem)`): what it hands over is run.
 .decl nsaw_reach(f: node, g: node)
 nsaw_reach(f, f) :- nsaw_action(f, _, _).
 nsaw_reach(f, h) :- nsaw_reach(f, g), nsaw_in(c, g), nsaw_target(c, h).
 nsaw_reach(f, h) :- nsaw_reach(f, g), nsaw_vroot(g, w), docof(g, d), nsaw_name_unit(d, w, h).
+nsaw_reach(f, h) :- nsaw_reach(f, g), nsaw_in(c, g), field(c, "arguments", al), child(al, a, _), kind(a, "identifier"),
+    text(a, x), docof(c, d), nsaw_name_unit(d, x, h), nsaw_top(h, _, _, _).
 // nsaw_writes(f, o, g): action f reaches write o, in unit g.
 .decl nsaw_writes(f: node, o: node, g: node)
 nsaw_writes(f, o, g) :- nsaw_reach(f, g), nsaw_in(o, g), nsaw_write(o, _).
@@ -224,10 +243,12 @@ nsaw_prisma_arg(a) :- kind(a, "object"), child(a, pr, _), (kind(pr, "pair"), fie
     kind(pr, "shorthand_property_identifier"), text(pr, x)), (x = "where" ; x = "data" ; x = "create" ; x = "update").
 
 // nsaw_auth_call(c): c reads the session or checks the caller: its callee's name (`auth()`, `getSession()`,
-// `supabase.auth.getUser()`, `auth.api.getSession()`) reads as one, it is cookies(), it reads an authorization,
+// `supabase.auth.getUser()`, `auth.api.getSession()`) reads as one, it reads a cookie (`(await cookies()).get(…)`,
+// `store.get(…)` for `const store = await cookies()`; a cookies().set() is no check), it reads an authorization,
 // cookie or API-key header (`(await headers()).get("authorization")`, `req.headers.get("cookie")`), or it is a
 // headers() call passed on to another call (`getSession({ headers: await headers() })`). headers() alone is no
-// check: actions read it for the client's IP or locale.
+// check: actions read it for the client's IP or locale. The receiver's name is not read: `session.save()` and
+// `auth.update()` are no checks.
 .decl nsaw_auth_call(c: node)
 nsaw_auth_call(c) :- kind(c, "call_expression"), field(c, "function", fn), nsaw_callee_name(fn, x), nsaw_auth_name(x).
 nsaw_auth_call(c) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
@@ -237,27 +258,46 @@ nsaw_auth_call(c) :- kind(c, "call_expression"), field(c, "function", fn), nsaw_
     (e = c ; kind(e, "await_expression"), child(e, c, 0)),
     (child(al, e, _), kind(al, "arguments") ;
      kind(pr, "pair"), field(pr, "value", e), child(o, pr, _), kind(o, "object"), child(al, o, _), kind(al, "arguments")).
+// nsaw_auth_call(c) for a cookie read: `.get(…)`, `.getAll()` or `.has(…)` on cookies() (awaited or not), or on a
+// name the same function binds to it.
+nsaw_auth_call(c) :- nsaw_cookie_read(c, o), nsaw_cookies_value(o).
+nsaw_auth_call(c) :- nsaw_cookie_read(c, o), kind(o, "identifier"), text(o, x), nearest(o, f, nsaw_fnk),
+    nsaw_cookie_var(f, x).
+// nsaw_cookie_read(c, o): c is `o.get(…)`, `o.getAll()` or `o.has(…)`.
+.decl nsaw_cookie_read(c: node, o: node)
+nsaw_cookie_read(c, o) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
+    field(fn, "property", pr), text(pr, m), (m = "get" ; m = "getAll" ; m = "has"), field(fn, "object", o).
+// nsaw_cookie_var(f, x): function f binds x to cookies() (`const store = await cookies()`).
+.decl nsaw_cookie_var(f: node, x: symbol)
+nsaw_cookie_var(f, x) :- nsaw_cookies_value(e), field(v, "value", e), kind(v, "variable_declarator"), field(v, "name", n),
+    text(n, x), nearest(v, f, nsaw_fnk).
+// nsaw_cookies_value(e): e is `cookies()`, `await cookies()`, or either in parentheses.
+.decl nsaw_cookies_value(e: node)
+nsaw_cookies_value(e) :- kind(e, "call_expression"), field(e, "function", fn), kind(fn, "identifier"), text(fn, "cookies").
+nsaw_cookies_value(e) :- (kind(e, "await_expression") ; kind(e, "parenthesized_expression")), child(e, g, 0),
+    nsaw_cookies_value(g).
 .decl nsaw_callee_name(fn: node, x: symbol)
 nsaw_callee_name(fn, x) :- kind(fn, "identifier"), text(fn, x).
 nsaw_callee_name(fn, x) :- kind(fn, "member_expression"), field(fn, "property", pr), text(pr, x).
-nsaw_callee_name(fn, x) :- kind(fn, "member_expression"), field(fn, "object", o), kind(o, "identifier"), text(o, x).
 // nsaw_auth_name(x): a callee or wrapper name that reads as an auth check, matched on camelCase word boundaries:
 //   - the word Auth (Authed, Authenticated, Authorize…) anywhere, unless the first word is a write (create, update,
 //     delete, set, setup, enable, remove, …: `setupTwoFactorAuth`, `removeAuthToken`); never Author or OAuth;
 //   - a read verb, then Session or User (`getServerSession`, `getKindeServerSession`, `requireUserId`,
-//     `currentUser`, `serverRequiredUser`), not `createWorkoutSession`, `getSessionBySlug` or `getUserById`;
+//     `currentUser`, `getSessionOrThrow`), not `createWorkoutSession`, `getSessionBySlug` or `getUserById`;
 //   - a check verb, then Role, Permission, Access, Admin, Member or Owner (`requireRole`, `checkHasAccess`,
 //     `isAdmin`), or `assertCan…`; not `updatePermissions`;
-//   - a few fixed names: cookies, validateRequest, verifyToken, jwtVerify, protect, authGuard, isLoggedIn, viewer…
-// A workspace helper with another name is still followed into, so its own auth() call counts.
+//   - a few fixed names: validateRequest, verifyToken, jwtVerify, protect, authGuard, isLoggedIn, viewer…
+// A workspace helper with another name is still followed into, so its own auth() call counts. Gaps: a package's
+// helper under another name (`getRequiredUser`, `serverUser`, `getToken`, `getCurrentAdmin`, `verifyOwnership`).
+// These names are a naming convention, not an API: a check under a name none of them reads as is missed.
 .decl nsaw_auth_name(x: symbol)
 nsaw_auth_name(x) :- nsaw_name_q(x), match("((.*[a-z0-9])?Auth|(.*_)?auth)(enticat[a-z]*|oriz[a-z]*|ed|s)?([A-Z0-9_].*)?", x),
     !match("(create|update|delete|remove|set|add|insert|upsert|save|reset|enable|disable|setup|start|end|send|resend|initiate|complete|generate|handle|to|revoke|clear|sign|log|register|refresh|store|persist|mark|link|unlink|connect|disconnect|invite)([A-Z0-9_].*)?", x).
 nsaw_auth_name(x) :- nsaw_name_q(x),
-    (match("(get|require|validate|verify|check|ensure|assert|use|read|load|fetch)(Server|Iron|Auth|User|Current|Active|Valid|Supabase|Kinde|Optional|Required)*Session(OrThrow|OrRedirect|OrNull|Or401|User|Token|Cookie|Data|From[A-Z][A-Za-z]*)?|session(User|Or[A-Z][A-Za-z]*)?", x) ;
-     match("(get|require|ensure|assert|check|validate|verify|use|fetch|load|read|current|server)(Server|Current|Authenticated|Auth|Session|Signed|Logged|In|Valid|Required|Optional|Active)*User(Id|OrThrow|OrRedirect|OrNull|Or401|Session|From[A-Z][A-Za-z]*)?", x) ;
+    (match("(get|require|validate|verify|check|ensure|assert|use|read|load|fetch)(Server|Iron|Auth|User|Current|Active|Valid|Supabase|Kinde|Optional)*Session(Or[A-Z0-9][A-Za-z0-9]*|User|Token|Cookie|Data|From[A-Z][A-Za-z]*)?|session(User|Or[A-Z][A-Za-z]*)?", x) ;
+     match("(get|require|ensure|assert|check|validate|verify|use|fetch|load|read|current)(Server|Current|Authenticated|Auth|Session|Signed|Logged|In|Valid|Optional|Active)*User(Id|Or[A-Z0-9][A-Za-z0-9]*|Session|From[A-Z][A-Za-z]*)?", x) ;
      match("(require|check|assert|ensure|verify|validate|has|is|can)([A-Z][a-z0-9]*)*(Role|Roles|Permission|Permissions|Access|Admin|Member|Membership|Owner|Scope|Scopes)(OrThrow|OrRedirect|For[A-Z][A-Za-z]*|In[A-Z][A-Za-z]*|On[A-Z][A-Za-z]*)?|(assert|check|ensure|require)Can[A-Z][A-Za-z0-9]*", x) ;
-     match("(?i)(cookies|current_?user|get_?me|whoami|validate_?request|verify_?(token|jwt|access_?token|id_?token|session_?cookie|api_?key|request)|jwt_?verify|protect(ed[a-z_]*)?|(auth|role|admin|access|route|session|user|api|login)_?guard|guard|with_?(auth_?)?guard|(is|require|check|ensure)_?(logged|signed)_?in|signed_?in|logged_?in|require_?login|(get|require|current)_?viewer|viewer|current_?member|(require|ensure)_?(org|organization|workspace|team|user)|ensure_?user)", x)).
+     match("(?i)(current_?user|get_?me|whoami|validate_?request|verify_?(token|jwt|access_?token|id_?token|session_?cookie|api_?key|request)|jwt_?verify|protect(ed[a-z_]*)?|(auth|role|admin|access|route|session|user|api|login)_?guard|guard|with_?(auth_?)?guard|(is|require|check|ensure)_?(logged|signed)_?in|signed_?in|logged_?in|require_?login|(get|require|current)_?viewer|viewer|current_?member|(require|ensure)_?(org|organization|workspace|team|user)|ensure_?user)", x)).
 .decl nsaw_name_q(x: symbol)
 nsaw_name_q(x) :- nsaw_callee_name(_, x) ; nsaw_vroot(_, x).
 
@@ -331,17 +371,24 @@ nsaw_ext("/index.ts"). nsaw_ext("/index.tsx"). nsaw_ext("/index.js"). nsaw_ext("
 // `// caught` is reported, and no other line.
 .test cases exactly
     .fixture "package.json" from "../cases/next-practice-server-action-without-auth/package.json"
+    .fixture "rr-app/package.json" from "../cases/next-practice-server-action-without-auth/rr-app/package.json"
+    .fixture "rr-app/react-router.config.ts" from "../cases/next-practice-server-action-without-auth/rr-app/react-router.config.ts"
+    .fixture "rr-app/app/routes/notes/actions.ts" from "../cases/next-practice-server-action-without-auth/rr-app/app/routes/notes/actions.ts"
     .fixture "src/app/(public)/polls/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/(public)/polls/actions.ts"
     .fixture "src/app/(auth)/signup/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/(auth)/signup/actions.ts"
+    .fixture "src/app/accounts/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/accounts/actions.ts"
     .fixture "src/app/admin/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/admin/actions.ts"
+    .fixture "src/app/catalog/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/catalog/actions.ts"
     .fixture "src/app/contact-us/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/contact-us/actions.ts"
     .fixture "src/app/crm/contacts/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/crm/contacts/actions.ts"
     .fixture "src/app/notes/note-list.tsx" from "../cases/next-practice-server-action-without-auth/src/app/notes/note-list.tsx"
     .fixture "src/app/notes/page.tsx" from "../cases/next-practice-server-action-without-auth/src/app/notes/page.tsx"
     .fixture "src/app/projects/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/projects/actions.ts"
     .fixture "src/app/publications/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/publications/actions.ts"
+    .fixture "src/app/settings/verify-domain/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/settings/verify-domain/actions.ts"
     .fixture "src/app/tags/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/tags/actions.ts"
     .fixture "src/app/teams/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/teams/actions.ts"
+    .fixture "src/app/webhooks/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/webhooks/actions.ts"
     .fixture "src/app/workouts/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/workouts/actions.ts"
     .fixture "src/auth.ts" from "../cases/next-practice-server-action-without-auth/src/auth.ts"
     .fixture "src/db/client.ts" from "../cases/next-practice-server-action-without-auth/src/db/client.ts"
@@ -349,6 +396,7 @@ nsaw_ext("/index.ts"). nsaw_ext("/index.tsx"). nsaw_ext("/index.js"). nsaw_ext("
     .fixture "src/lib/__tests__/actions.test.ts" from "../cases/next-practice-server-action-without-auth/src/lib/__tests__/actions.test.ts"
     .fixture "src/lib/action.ts" from "../cases/next-practice-server-action-without-auth/src/lib/action.ts"
     .fixture "src/lib/db.ts" from "../cases/next-practice-server-action-without-auth/src/lib/db.ts"
+    .fixture "src/lib/guards.ts" from "../cases/next-practice-server-action-without-auth/src/lib/guards.ts"
     .fixture "src/lib/projects-admin.ts" from "../cases/next-practice-server-action-without-auth/src/lib/projects-admin.ts"
     .fixture "src/lib/safe-action.ts" from "../cases/next-practice-server-action-without-auth/src/lib/safe-action.ts"
     .fixture "src/lib/session.ts" from "../cases/next-practice-server-action-without-auth/src/lib/session.ts"
@@ -362,17 +410,22 @@ nsaw_ext("/index.ts"). nsaw_ext("/index.tsx"). nsaw_ext("/index.js"). nsaw_ext("
     .expect _ at "src/app/admin/actions.ts":21
     .expect _ at "src/app/admin/actions.ts":25
     .expect _ at "src/app/admin/actions.ts":29
+    .expect _ at "src/app/catalog/actions.ts":6
     .expect _ at "src/app/crm/contacts/actions.ts":6
     .expect _ at "src/app/notes/page.tsx":10
     .expect _ at "src/app/notes/page.tsx":15
     .expect _ at "src/app/publications/actions.ts":6
+    .expect _ at "src/app/settings/verify-domain/actions.ts":6
     .expect _ at "src/app/tags/actions.ts":7
     .expect _ at "src/app/tags/actions.ts":11
     .expect _ at "src/app/teams/actions.ts":11
     .expect _ at "src/app/teams/actions.ts":15
-    .expect _ at "src/app/workouts/actions.ts":9
-    .expect _ at "src/app/workouts/actions.ts":14
-    .expect _ at "src/app/workouts/actions.ts":19
-    .expect _ at "src/app/workouts/actions.ts":26
-    .expect _ at "src/app/workouts/actions.ts":35
+    .expect _ at "src/app/webhooks/actions.ts":6
+    .expect _ at "src/app/workouts/actions.ts":10
+    .expect _ at "src/app/workouts/actions.ts":15
+    .expect _ at "src/app/workouts/actions.ts":20
+    .expect _ at "src/app/workouts/actions.ts":27
+    .expect _ at "src/app/workouts/actions.ts":36
+    .expect _ at "src/app/workouts/actions.ts":68
+    .expect _ at "src/app/workouts/actions.ts":74
 .end

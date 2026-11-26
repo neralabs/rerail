@@ -193,3 +193,29 @@ export async function showDraft(id: string) {
     notFound();
   }
 }
+
+// A digest of something other than the caught error is no rethrow guard.
+export async function publishSigned(id: string) {
+  try {
+    await prisma.post.update({ where: { id }, data: { published: true } });
+    redirect(`/posts/${id}`); // caught
+  } catch (e) {
+    const sum = checksum(String(e)).digest("hex");
+    return { error: `publish failed (${sum})` };
+  }
+}
+
+// The caught error's digest is read: Next.js's errors carry one.
+export async function publishGuarded(id: string) {
+  try {
+    await prisma.post.update({ where: { id }, data: { published: true } });
+    redirect(`/posts/${id}`);
+  } catch (error) {
+    if ((error as { digest?: string }).digest?.startsWith("NEXT_")) unstable_rethrow(error);
+    return { error: "publish failed" };
+  }
+}
+
+function checksum(text: string) {
+  return { digest: (encoding: string) => `${encoding}:${text.length}` };
+}

@@ -48,13 +48,22 @@
 nscp_directive(d, x) :- program(d, p), directive(p, _, x).
 
 // nscp_entry(d): an App Router file Next.js renders as a Server Component unless it says 'use client': a page,
-// layout, template, default, loading, not-found, forbidden or unauthorized file in an app/ directory, outside pages/.
-// (next.config.* cannot be read from here: it is a .js/.mjs file, another lane than .tsx; see the notes.) Expo
-// Router's app/ uses _layout and index, Remix's app/routes, so these names are the App Router's.
+// layout, template, default, loading, not-found, forbidden or unauthorized file under `app/` or `src/app/` of a
+// package whose package.json lists next (dependencies, devDependencies or peerDependencies), the nearest one above
+// the file. A React Router, Remix or Expo app's app/ folder is not one, nor is a folder named app deeper in the
+// package (pages/app/page.tsx is the Pages Router's URL /app/page; app/docs/pages/page.tsx is an App Router route).
+// (next.config.* cannot be read from here: it is a .js/.mjs file, another lane than .tsx; see the notes.)
 .decl nscp_entry(d: number)
 nscp_entry(d) :- file_name(d, f),
     glob("{page,layout,template,default,loading,not-found,global-not-found,forbidden,unauthorized}.{tsx,jsx,ts,js}", f),
-    path_part(d, "app"), !path_part(d, "pages"), !nscp_directive(d, "use client").
+    nscp_app_file(d), !nscp_directive(d, "use client").
+.decl nscp_app_file(d: number)
+nscp_app_file(d) :- doc(d, p, _), package_for(p, ""), nscp_next_pkg(""), match("(src/)?app/.+", p).
+nscp_app_file(d) :- doc(d, p, _), package_for(p, dir), dir != "", nscp_next_pkg(dir), prefix(cat(dir, "/"), p),
+    rel = substr(p, strlen(dir) + 1, strlen(p) - strlen(dir) - 1), match("(src/)?app/.+", rel).
+.decl nscp_next_pkg(dir: symbol)
+nscp_next_pkg(dir) :- package_field(dir, k, _),
+    (k = "dependencies/next" ; k = "devDependencies/next" ; k = "peerDependencies/next").
 
 // nscp_import(d, d2): d imports (or re-exports) a value from workspace document d2. `import type` loads nothing.
 .decl nscp_import(d: number, d2: number)
@@ -209,10 +218,17 @@ nscp_ext("/index.tsx"). nscp_ext("/index.ts"). nscp_ext("/index.jsx"). nscp_ext(
     .fixture "apps/web/lib/format.ts" from "../cases/next-practice-non-serializable-client-prop/apps/web/lib/format.ts"
     .fixture "apps/web/next.config.mjs" from "../cases/next-practice-non-serializable-client-prop/apps/web/next.config.mjs"
     .fixture "apps/web/package.json" from "../cases/next-practice-non-serializable-client-prop/apps/web/package.json"
+    .fixture "apps/web/app/docs/pages/[slug]/page.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/app/docs/pages/[slug]/page.tsx"
+    .fixture "apps/web/pages/app/page.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/pages/app/page.tsx"
     .fixture "apps/web/pages/legacy.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/web/pages/legacy.tsx"
     .fixture "apps/web/tsconfig.json" from "../cases/next-practice-non-serializable-client-prop/apps/web/tsconfig.json"
     .fixture "package.json" from "../cases/next-practice-non-serializable-client-prop/package.json"
+    .fixture "apps/rr-app/package.json" from "../cases/next-practice-non-serializable-client-prop/apps/rr-app/package.json"
+    .fixture "apps/rr-app/react-router.config.ts" from "../cases/next-practice-non-serializable-client-prop/apps/rr-app/react-router.config.ts"
+    .fixture "apps/rr-app/app/components/picker.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/rr-app/app/components/picker.tsx"
+    .fixture "apps/rr-app/app/routes/dashboard/page.tsx" from "../cases/next-practice-non-serializable-client-prop/apps/rr-app/app/routes/dashboard/page.tsx"
     .expect _ at "apps/web/app/about/page.tsx":13
+    .expect _ at "apps/web/app/docs/pages/[slug]/page.tsx":5
     .expect _ at "apps/web/app/about/page.tsx":22
     .expect _ at "apps/web/app/about/page.tsx":25
     .expect _ at "apps/web/app/settings/page.tsx":19

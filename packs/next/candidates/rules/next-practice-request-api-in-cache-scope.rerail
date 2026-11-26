@@ -49,16 +49,24 @@
 .violation RequestInCache(at: node, api: symbol, how: symbol, sp: symbol, s: node)
     "`{api}()` reads the incoming request inside a cache scope ({how} at {sp}:{s.line}). Next.js forbids that: it throws `next-request-in-use-cache` (with unstable_cache, an error that the function cannot depend on the request), on a dynamic route only when the route runs. Read `{api}()` in the caller, outside the cached function, and pass the value you need in as an argument so it becomes part of the cache key. If the result must differ per user and the value cannot be passed in, use 'use cache: private' instead of 'use cache'."
 RequestInCache(r, api, how, sp, a) :- rac_request(r, api), nearest(r, h, rac_fnkind),
-    s = min x : { rac_runs(x, h) }, rac_scope(s, how, a), docof(a, d), doc(d, sp, _).
+    s = min x : { rac_runs(x, h) }, rac_scope(s, how, a), docof(a, d), rac_next_doc(d), doc(d, sp, _).
 .violation RequestReached(at: node, g: symbol, api: symbol, rp: symbol, r: node, how: symbol, sp: symbol, s: node)
     "`{g}()` reads the incoming request (`{api}()` at {rp}:{r.line}) and is called inside a cache scope ({how} at {sp}:{s.line}). Next.js forbids that, and the restriction follows the call stack: it throws `next-request-in-use-cache` (with unstable_cache, an error that the function cannot depend on the request), on a dynamic route only when the route runs. Call `{g}()` in the caller, outside the cached function, and pass the value you need in as an argument so it becomes part of the cache key. If the result must differ per user and the value cannot be passed in, use 'use cache: private' instead of 'use cache'."
 RequestReached(c, g, api, rp, r, how, sp, a) :- rac_call_in(c, h), s = min x : { rac_runs(x, h) }, rac_scope(s, how, a),
     field(c, "function", fn), text(fn, g), r = min y : { rac_callee(c, t), rac_reach(t, y) }, rac_request(r, api),
-    docof(r, rd), doc(rd, rp, _), docof(a, d), doc(d, sp, _).
+    docof(r, rd), doc(rd, rp, _), docof(a, d), rac_next_doc(d), doc(d, sp, _).
 .violation SearchParamsInCache(at: node, how: symbol, sp: symbol, s: node)
     "This page reads `searchParams`, request data, but is cached ({how} at {sp}:{s.line}). Next.js forbids that: it throws `next-request-in-use-cache`, or the prerender stalls until it times out. Take the cache off the page: read `searchParams` in the page and pass the values you need, as arguments, to a cached function or component."
 SearchParamsInCache(n, how, sp, a) :- rac_page_scope(s), rac_scope(s, how, a), rac_search_params(s, n), docof(a, d),
     doc(d, sp, _).
+
+// rac_next_doc(d): d is in a package that uses Next.js: the nearest package.json above it lists next
+// (dependencies, devDependencies or peerDependencies), not only an import that names next/headers or next/cache.
+.decl rac_next_doc(d: number)
+rac_next_doc(d) :- doc(d, p, _), package_for(p, dir), rac_next_pkg(dir).
+.decl rac_next_pkg(dir: symbol)
+rac_next_pkg(dir) :- package_field(dir, k, _),
+    (k = "dependencies/next" ; k = "devDependencies/next" ; k = "peerDependencies/next").
 
 // ---- cache scopes ----------------------------------------------------------------------------------------------
 .decl rac_fnkind(k: symbol)
@@ -135,10 +143,16 @@ rac_reach(g, r) :- rac_sub(g, h), rac_request(r, _), nearest(r, h, rac_fnkind), 
 rac_reach(g, r) :- rac_sub(g, h), rac_call_in(c, h), rac_callee(c, t), t != g, rac_reach(t, r), !rac_own_cache(g).
 
 // ---- searchParams in a cached page -----------------------------------------------------------------------------
-.decl rac_page_scope(s: node)  // s is the default export of app/**/page.*
-rac_page_scope(s) :- kind(p, "program"), docof(p, d), doc(d, path, _), match("(.*/)?app/(.*/)?page\\.(tsx|ts|jsx|js)", path),
+// rac_page_scope(s): s is the default export of an App Router page: `app/**/page.*` or `src/app/**/page.*` from the
+// folder of a package.json that lists next (a React Router or Remix app's app/ folder is not one).
+.decl rac_page_scope(s: node)
+rac_page_scope(s) :- kind(p, "program"), docof(p, d), rac_app_page(d),
     child(p, e, _), kind(e, "export_statement"), op(e, "default"), (field(e, "declaration", s) ; field(e, "value", x),
     rac_unparen(x, s)), rac_fn(s).
+.decl rac_app_page(d: number)
+rac_app_page(d) :- doc(d, p, _), package_for(p, ""), rac_next_pkg(""), match("(src/)?app/(.*/)?page\\.(tsx|ts|jsx|js)", p).
+rac_app_page(d) :- doc(d, p, _), package_for(p, dir), dir != "", rac_next_pkg(dir), prefix(cat(dir, "/"), p),
+    rel = substr(p, strlen(dir) + 1, strlen(p) - strlen(dir) - 1), match("(src/)?app/(.*/)?page\\.(tsx|ts|jsx|js)", rel).
 // rac_search_params(s, n): s's props parameter reads searchParams: `({ searchParams })`, `({ searchParams: sp })`,
 // or `props.searchParams` in s's own code.
 .decl rac_search_params(s: node, n: node)
@@ -262,6 +276,10 @@ rac_ext_name("/index.ts"). rac_ext_name("/index.tsx"). rac_ext_name("/index.js")
 // `// caught` is reported, and no other line.
 .test cases exactly
     .fixture "tsconfig.json" from "../cases/next-practice-request-api-in-cache-scope/tsconfig.json"
+    .fixture "package.json" from "../cases/next-practice-request-api-in-cache-scope/package.json"
+    .fixture "rr-app/package.json" from "../cases/next-practice-request-api-in-cache-scope/rr-app/package.json"
+    .fixture "rr-app/react-router.config.ts" from "../cases/next-practice-request-api-in-cache-scope/rr-app/react-router.config.ts"
+    .fixture "rr-app/app/blog/page.tsx" from "../cases/next-practice-request-api-in-cache-scope/rr-app/app/blog/page.tsx"
     .fixture "src/app/blog/[slug]/page.tsx" from "../cases/next-practice-request-api-in-cache-scope/src/app/blog/[slug]/page.tsx"
     .fixture "src/app/blog/page.tsx" from "../cases/next-practice-request-api-in-cache-scope/src/app/blog/page.tsx"
     .fixture "src/app/page.tsx" from "../cases/next-practice-request-api-in-cache-scope/src/app/page.tsx"

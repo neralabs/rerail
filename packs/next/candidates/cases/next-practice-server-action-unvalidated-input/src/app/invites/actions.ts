@@ -165,3 +165,35 @@ export async function getProjectBySlug(slug: string) {
     },
   });
 }
+
+// A unique lookup by its only key, whatever the field is called, comes first.
+export async function removeInviteByEmail(email: string) {
+  await prisma.invite.delete({ where: { email } });
+  await prisma.inviteLog.deleteMany({ where: { email } });
+}
+
+// A key beside another in a unique lookup's where may be a plain filter field: it proves nothing.
+export async function leaveProject(projectId: string, memberId: string) {
+  await prisma.member.update({ where: { id: memberId, projectId }, data: { left: true } });
+  await prisma.task.deleteMany({ where: { assigneeId: memberId } }); // caught
+}
+
+// A test that also takes another value compares the two; it does not check the type.
+export async function changeEmail(userId: string, password: string) {
+  if (!(await verifyPassword(userId, password))) throw new Error("wrong password");
+  return prisma.account.findFirst({ where: { userId } }); // caught
+}
+
+// A one-argument type test.
+export async function getByUuid(id: string) {
+  if (!isUuid(id)) throw new Error("bad id");
+  return prisma.project.findFirst({ where: { id } });
+}
+
+function verifyPassword(userId: string, password: string): Promise<boolean> {
+  return Promise.resolve(userId.length > 0 && password.length > 0);
+}
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f-]{36}$/.test(value);
+}
