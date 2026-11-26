@@ -306,8 +306,11 @@ fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys, cons
             // A join of a file's nodes with a constant (`export_all(e, m) :- star_export(e, s), node_module(s, m)`):
             // a lookup in the constant, made in the file. Handed on as parts, the constant's part and the key were
             // tables of every file's values, and their readers, which join them at the file's nodes, went to the
-            // cross part (decision 0677), as the deferred joins' lookups did (`product_demand::deferred`).
-            let constant = |r: &str| constants.contains(r) || (f.has_facts(r) && !rules_of.contains_key(r));
+            // cross part (decision 0677), as the deferred joins' lookups did (`product_demand::deferred`). An earlier
+            // phase's or a stage's export (`phased::is_probed`, decision 0709) is one: every file reads the same rows,
+            // a placeless input. `node_module`, staged, was factorized, its part keyed by `star_export(_, s)` of every
+            // file, and `module_use` went to the cross part over the exports' nodes.
+            let constant = |r: &str| constants.contains(r) || (f.has_facts(r) && !rules_of.contains_key(r)) || crate::code_rule_dsl::logic::plan::phased::is_probed(r);
             let lookup = parts.iter().any(|p| part_lits(p).iter().all(|l| l.atom().is_none_or(|a| constant(v.rel_name(a.rel())))));
             if head_holds_node && lookup {
                 break;

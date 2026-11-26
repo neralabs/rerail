@@ -236,6 +236,11 @@ const STATE: &[(&str, &str)] = &[
     // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HeldPhaseOne"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "Phases"),
+    // The run's stages (decision 0709) while the run is under way: its own program's parts, gone when it ends.
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "Stages"),
+    // The keys the run's phases declare for their exports (decision 0705), bound while the run is under way: how its
+    // readers' entries are keyed, not results.
+    ("code_rule_dsl/logic/plan/phased.rs", "DeclaredKeys"),
     ("code_rule_dsl/logic/profile.rs", "Dir"),
     // The invocation's rule sources (decision 0488's report of authored joins), bound while a run profiles them.
     ("code_rule_dsl/logic/profile/author_joins.rs", "Held"),

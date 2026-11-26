@@ -281,8 +281,10 @@ pub fn node_crossings(program: &Version, f: &Fields<'_>, cross: &Version, local:
     for r in cross.rules() {
         let head = cross.rel_name(r.head().rel());
         // A file-local relation the cross part derives again for its readers (`kind`, a projected export) holds each
-        // file's own rows: the node enters at the cross-file rule that reads it, which is named.
-        if found.contains_key(head) || f.is_output(head) || local.contains(head) {
+        // file's own rows: the node enters at the cross-file rule that reads it, which is named. An output's located
+        // form (`locate`'s `violation_at`, read back as `violation`) is the output.
+        let output_at = head.strip_suffix("_at").is_some_and(|o| f.is_output(o));
+        if found.contains_key(head) || f.is_output(head) || output_at || local.contains(head) {
             continue;
         }
         let flows = nodes.flowing(cross, r, &inherited);

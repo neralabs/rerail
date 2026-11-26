@@ -289,12 +289,12 @@ dj_instance_class(r, h, mq) :- kind(r, "identifier"), text(r, "self"), dj_model_
     class_def(k, mq).
 dj_instance_class(r, h, mq) :- kind(r, "identifier"), text(r, o), look(r, o, h), asg(h, o, v, _),
     dj_instance_value(v, mq).
-// dj_instance_value(v, mq): expression v makes or fetches one instance of model class mq.
+// dj_instance_value(v, mq): expression v makes or fetches one instance of model class mq. A model's constructor names
+// the model by symbol (dj_model_named), in any file, so no class node of another file is paired with v (decision 0677).
 .decl dj_instance_value(v: node, mq: symbol)
 dj_instance_value(v, mq) :- unparen(v, c), dj_fetch_call(c, mq).
 dj_instance_value(v, mq) :- unparen(v, w), kind(w, "await"), child(w, c, 0), dj_fetch_call(c, mq).
-dj_instance_value(v, mq) :- unparen(v, c), kind(c, "call"), field(c, "function", fn), sym_of(fn, mq), class_def(k, mq),
-    dj_model(k).
+dj_instance_value(v, mq) :- unparen(v, c), kind(c, "call"), field(c, "function", fn), dj_model_named(fn, mq).
 
 // ---- transactions ------------------------------------------------------------------------------------------------
 .decl dj_atomic(e: node)
