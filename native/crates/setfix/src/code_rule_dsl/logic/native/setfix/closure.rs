@@ -318,6 +318,10 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     if !c.edges.is_empty() || !c.gates.is_empty() || !c.requests.is_empty() || !c.produced.is_empty() {
         return None;
     }
+    // A lattice relation folds its rows by key (`Rel::fold`); the closure keeps sets of rows reached, unfolded.
+    if store.rels.iter().any(|r| r.lat.is_some()) {
+        return None;
+    }
     let nrels = store.rels.len();
     // The walking relation: the one a probe reads the delta of to make more of (with readers beside it, decision 0561).
     let wi = c.probes.iter().find(|p| matches!(p.body, Body::Join(_)) && p.delta == p.head && p.delta != SEED).map(|p| p.head)?;
