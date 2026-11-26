@@ -3794,7 +3794,7 @@ impl TableFns {
         let shift = if wraps { Some(outline(module, "rerail_stream_shift", 5, 0, false, &[], |f, p, heads| shift_rows(f, p, inner, w, heads))?) } else { None };
         let drop = if drops { Some(outline(module, "rerail_stream_drop", 10, 2, false, &[], |f, p, heads| drop_rows(f, p, inner, w, heads))?) } else { None };
         let settle = if words.iter().any(|b| matches!(b.operation, Op::Close { deep: true, .. })) { Some(outline(module, "rerail_stream_settle", 5, 1, false, &[], settle_rows)?) } else { None };
-        let ids = rerail_clif::writer::define_ops(module, cranelift_module::Linkage::Local, near).map_err(|e| {
+        let ids = rerail_clif::writer::define_ops(module, cranelift_module::Linkage::Local, near, cranelift_codegen::isa::CallConv::PreserveMost).map_err(|e| {
             if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
                 eprintln!("the writer's ops: {e}");
             }
