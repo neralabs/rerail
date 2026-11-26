@@ -1258,6 +1258,7 @@ impl Dec<'_> {
                 }
             }
             GROUPS => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.grp(lo + j)),
+            DICT => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.dct(lo + j)),
             _ => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.on_line(lo + j)),
         }
     }
@@ -1439,6 +1440,12 @@ mod tests {
             write(&c, v, data, runs);
             let col = unsafe { &*p };
             assert!((0..v.len()).all(|i| col.get(i) == v[i] && col.dec().get(i) == v[i]), "a value read back");
+            // A window at once (`Dec::fill`, the packer's ranged read): a dictionary's codes, not read as a line.
+            for (lo, m) in [(0, v.len()), (1, v.len() - 1), (v.len() / 3, v.len() / 3), (v.len() - 1, 1)] {
+                let mut out = vec![0i64; m];
+                col.dec().fill(lo, &mut out);
+                assert_eq!(&out[..], &v[lo..lo + m], "a window from {lo}");
+            }
             let mut each = Vec::new();
             col.for_each(|x| each.push(x));
             assert_eq!(&each, v);
