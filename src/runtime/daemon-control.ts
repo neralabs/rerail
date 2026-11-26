@@ -2616,14 +2616,17 @@ export const BROWSER_OFF_NOTE = "BROWSER is set to none, so no browser opened.";
 
 /**
  * Hands the URL to the desktop's default browser, unless `BROWSER=none` ({@link browserOff}); whether it did. Returns
- * once the opener has been spawned.
+ * once the opener has been spawned. An opener that cannot start is said on stderr with the URL, for a person at a
+ * terminal to visit, unless `onError` handles it: the daemon's stderr is daemon.log, where a URL with an access token
+ * must not go.
  */
-export function openInBrowser(url: string, machine: DaemonMachine = THIS_MACHINE): boolean {
+export function openInBrowser(url: string, machine: DaemonMachine = THIS_MACHINE, options: { onError?: (error: Error) => void } = {}): boolean {
   if (browserOff(machine.env)) return false;
   const { command, args, cwd } = browserOpener(url, machine.platform, machine.env);
   const child = machine.spawnShown(command, args, { detached: true, stdio: "ignore", ...(cwd === undefined ? {} : { cwd }) });
-  child.once("error", () => {
-    process.stderr.write(`rerail: could not open a browser; visit ${url}\n`);
+  child.once("error", (error: Error) => {
+    if (options.onError !== undefined) options.onError(error);
+    else process.stderr.write(`rerail: could not open a browser; visit ${url}\n`);
   });
   child.unref();
   return true;

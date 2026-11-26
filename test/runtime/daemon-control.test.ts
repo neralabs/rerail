@@ -965,6 +965,32 @@ describe("openDashboard", () => {
     expect(commands).toEqual([orca, desktopOpener]);
   });
 
+  it("says on stderr, with the link, when the browser opener cannot start, unless the caller handles that itself", async () => {
+    const failing = (): DaemonMachine => fakeMachine("linux", {
+      spawnShown: () => {
+        const child = Object.assign(new EventEmitter(), { unref() {} });
+        process.nextTick(() => child.emit("error", Object.assign(new Error("spawn xdg-open ENOENT"), { code: "ENOENT" })));
+        return child;
+      },
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      // A person at a terminal (`rerail manage`) is shown the link to visit.
+      expect(openInBrowser(url, failing())).toBe(true);
+      await new Promise(resolve => setImmediate(resolve));
+      expect(stderr.mock.calls.map(([chunk]) => String(chunk))).toEqual([`rerail: could not open a browser; visit ${url}\n`]);
+
+      stderr.mockClear();
+      const errors: string[] = [];
+      expect(openInBrowser(url, failing(), { onError: error => void errors.push(error.message) })).toBe(true);
+      await new Promise(resolve => setImmediate(resolve));
+      expect(errors).toEqual(["spawn xdg-open ENOENT"]);
+      expect(stderr).not.toHaveBeenCalled();
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
   it("falls back to the desktop browser when orca fails", async () => {
     const { commands, machine } = opening(underOrca, child => child.emit("exit", 1, null));
     expect(await openDashboard(url, machine, candidates)).toBe("system-browser");

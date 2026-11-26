@@ -8,7 +8,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE, probeDaemon, readDaemonState, type DaemonHealth } from "../../src/runtime/index.js";
 import { serveRerailDaemon } from "../../src/daemon/daemon.js";
-import { accountHome, displayHomePath, runRerailUpdate, startDaemonTray, startTray, trayGate, trayMenuState, type TrayDaemon, type TrayGateFacts, type TrayHandle, type TrayOptions, type TrayUpdateRun } from "../../src/daemon/tray.js";
+import { accountHome, displayHomePath, openTrayPage, runRerailUpdate, startDaemonTray, startTray, trayGate, trayMenuState, type TrayDaemon, type TrayGateFacts, type TrayHandle, type TrayOptions, type TrayUpdateRun } from "../../src/daemon/tray.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { until } from "../support/processes/daemon-home.js";
@@ -128,6 +128,38 @@ describe("startDaemonTray", () => {
     vi.stubEnv("RERAIL_TRAY", "0");
     const daemon: TrayDaemon = { health: () => health(), dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined };
     expect(startDaemonTray(daemon, { isNewer: () => false })).toBeUndefined();
+  });
+});
+
+describe("openTrayPage", () => {
+  const link = "http://127.0.0.1:4737/?rerail-access=secret-token#settings";
+
+  it("logs why a page could not open without its link, which carries the access token", async () => {
+    // Node's spawn error names the opener in its message, and keeps every argument, the link too, in `spawnargs`.
+    const machine = fakeMachine("linux", {
+      spawnShown: (command, args) => {
+        const child = Object.assign(new EventEmitter(), { unref() {} });
+        const error = Object.assign(new Error(`spawn ${command} ENOENT`), { code: "ENOENT", spawnargs: [...args] });
+        process.nextTick(() => child.emit("error", error));
+        return child;
+      },
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const logs: string[] = [];
+    try {
+      openTrayPage(link, line => void logs.push(line), machine);
+      await new Promise(resolve => setImmediate(resolve));
+      expect(logs).toEqual(["rerail tray: could not open the page: spawn xdg-open ENOENT"]);
+      expect(stderr).not.toHaveBeenCalled();
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
+  it("says BROWSER=none kept the page from opening, without its link", () => {
+    const logs: string[] = [];
+    openTrayPage(link, line => void logs.push(line), fakeMachine("linux", { env: { BROWSER: "none" } }));
+    expect(logs).toEqual(["rerail tray: could not open the page: BROWSER is set to none, so no browser opened."]);
   });
 });
 

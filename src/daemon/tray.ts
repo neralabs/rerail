@@ -385,13 +385,20 @@ export function startDaemonTray(daemon: TrayDaemon, deps: { isNewer(latest: stri
     daemon,
     homePath: displayHomePath(home, accountHome(), process.platform),
     isNewer: deps.isNewer,
-    // The link carries the access token, so the line does not name it.
-    openUrl: url => {
-      if (!openInBrowser(url)) log(`rerail tray: could not open the page: ${BROWSER_OFF_NOTE}`);
-    },
+    openUrl: url => openTrayPage(url, log),
     runUpdate: async () => await runRerailUpdate(home, env),
     log,
   });
+}
+
+/**
+ * Opens a page the menu names in the desktop's browser, on `machine`, this one unless a test's. Why it could not is
+ * logged without the URL: a dashboard link carries the access token, and the log is daemon.log. A spawn error's message
+ * names the opener alone; its `spawnargs`, which hold the URL, are never logged.
+ */
+export function openTrayPage(url: string, log: (line: string) => void, machine?: DaemonMachine): void {
+  const failed = (why: string): void => log(`rerail tray: could not open the page: ${why}`);
+  if (!openInBrowser(url, machine, { onError: error => failed(error.message) })) failed(BROWSER_OFF_NOTE);
 }
 
 /**
