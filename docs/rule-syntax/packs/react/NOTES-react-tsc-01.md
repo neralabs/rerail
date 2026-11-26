@@ -76,6 +76,10 @@ Not modelled: typescript-eslint's scope manager keeps a type and a value of one 
 = …; const Ctx = createContext()` makes the type the first definition and ESLint answers false; the translation
 looks at values only. Not seen in the corpora.
 
+Cost: asked of every identifier tag, the innermost-scope aggregate took the rule from 51 s to over 4 min on
+samples-react (fleet box, `run-policies`, this rule alone). It is now asked only of tags with a `value` prop whose
+name the same file declares from createContext (the only tags it can answer yes for): 53 s.
+
 ## Library changes
 
 None needed.
