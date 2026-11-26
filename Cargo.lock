@@ -5825,6 +5825,7 @@ version = "0.1.0"
 dependencies = [
  "ksni",
  "muda",
+ "objc2",
  "png",
  "serde",
  "serde_json",

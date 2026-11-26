@@ -129,6 +129,8 @@ impl Tray {
             &MenuItem::with_id("stop", "Stop daemon", true, None),
         ])
         .map_err(|error| format!("could not build the menu: {error}"))?;
+        #[cfg(target_os = "macos")]
+        show_first_item_image(&menu);
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu.clone()))
             .build()
@@ -207,6 +209,33 @@ impl Tray {
         let set = self.icon.set_icon(Some(icon));
         if let Err(error) = set {
             eprintln!("rerail-tray: could not set the icon: {error}");
+        }
+    }
+}
+
+/// Asks AppKit to draw the first item's image, the status circle. From macOS 27 AppKit hides menu item images unless
+/// an item's `preferredImageVisibility` is `.visible`; earlier versions have no such property and always draw them.
+/// muda does not expose its `NSMenuItem`s, so the item is reached through the menu's `NSMenu`.
+#[cfg(target_os = "macos")]
+fn show_first_item_image(menu: &Menu) {
+    use muda::ContextMenu;
+    use objc2::runtime::AnyObject;
+    use objc2::{msg_send, sel};
+
+    /// `NSMenuItemImageVisibilityVisible`.
+    const VISIBLE: isize = 1;
+    // SAFETY: `ns_menu` is the live `NSMenu` muda keeps for `menu`, and this runs on the main thread, as muda's own
+    // calls do. Each message is one `NSMenu` or `NSMenuItem` declares, sent only where it responds to it.
+    unsafe {
+        let Some(ns_menu) = (menu.ns_menu() as *const AnyObject).as_ref() else {
+            return;
+        };
+        let item: *mut AnyObject = msg_send![ns_menu, itemAtIndex: 0isize];
+        let Some(item) = item.as_ref() else { return };
+        let available: bool =
+            msg_send![item, respondsToSelector: sel!(setPreferredImageVisibility:)];
+        if available {
+            let _: () = msg_send![item, setPreferredImageVisibility: VISIBLE];
         }
     }
 }
