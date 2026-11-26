@@ -29,8 +29,8 @@ no hosted model.
   `minishlab/potion-base-8M`), run in-process after a SHA-256 manifest check. The engine has no HTTP or socket code
   (`native/Cargo.toml`, `native/src/model.rs`).
 - **No silent updates.** Only `rerail update` or `rerail setup` installs a version (`src/setup/updater.ts`).
-- **One request on its own.** Once a day the daemon of an installed Rerail asks npm for the newest `@neralabs/rerail`
-  on your update channel, so the dashboard can say a newer version is out. It installs nothing and sends nothing about
+- **One request on its own.** Once a day the daemon of an installed Rerail asks npm for the `@neralabs/rerail` version
+  under the `latest` dist-tag, so the dashboard can say a newer version is out. It installs nothing and sends nothing about
   your work: the request carries what any npm request does, npm's user agent (npm and Node versions, operating system,
   CPU) and the credentials your npm config holds for the registry. `RERAIL_UPDATE_CHECK=0` set for the daemon turns it
   off (`src/setup/update-check.ts`).

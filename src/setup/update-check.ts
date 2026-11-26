@@ -1,6 +1,7 @@
 /**
- * The daemon's daily update check: once a day it asks npm for the version a bare `rerail update` would install, and
- * keeps the answer, so `/healthz` and the dashboard can say a newer Rerail is out. Unless a remote is added or Merge
+ * The daemon's daily update check: once a day it asks npm for the version under the `latest` dist-tag, and keeps the
+ * answer, so `/healthz` and the dashboard can say a newer Rerail is out. It asks about `latest` whatever channel
+ * `rerail update` installs from: a release candidate under `next` is never recommended. Unless a remote is added or Merge
  * Assist is on (internal testing), it is the only request Rerail makes on its own, apart from an npm rebuild of the
  * SQLite binding when it fails to load (docs/privacy.md). It installs nothing: `rerail update` stays the only way a
  * new version arrives.
@@ -15,9 +16,9 @@ import { join } from "node:path";
 import { z } from "zod";
 import { ACTIVE_PROFILE_FILE } from "../activation/customer-profile.js";
 import { replaceFileSync } from "../engine/file-replace.js";
-import { UPDATE_CHECK_FILE, UPDATE_STATE_FILE } from "../engine/storage/rerail-home.js";
+import { UPDATE_CHECK_FILE } from "../engine/storage/rerail-home.js";
 import { type NpmRunner, runNpm } from "../runtime/npm.js";
-import { assertChannel, DEFAULT_UPDATE_CHANNEL, NpmPackageRegistry, type PackageRegistry } from "./updater.js";
+import { NpmPackageRegistry, type PackageRegistry } from "./updater.js";
 
 export { UPDATE_CHECK_FILE };
 
@@ -27,8 +28,10 @@ export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60_000;
 const DUE_LOOK_MS = 60 * 60_000;
 /** The first look waits this long after the daemon starts, so a start never waits on npm. */
 const FIRST_LOOK_MS = 60_000;
+/** The dist-tag the check asks about: released versions only, never a `next` release candidate. */
+const CHECKED_CHANNEL = "latest";
 
-/** The newest Rerail on the channel and when npm said so (epoch ms), as `/healthz.update` reports it. */
+/** The newest Rerail under `latest` and when npm said so (epoch ms), as `/healthz.update` reports it. */
 export interface NewestRelease {
   latest: string;
   checkedAt: number;
@@ -37,8 +40,8 @@ export interface NewestRelease {
 /** A running update check: its last answer, and stopping it. */
 export interface UpdateChecks {
   /**
-   * The last answer, while its channel is still the one `rerail update` installs from; null before the first answer,
-   * after a channel change until the next answer, and while a signed customer profile is active.
+   * The last answer about `latest`; null before the first one (an older daemon's answer about another channel does
+   * not count), and while a signed customer profile is active.
    */
   newest(): NewestRelease | null;
   /** Stops asking. An ask still out is not awaited: its answer is dropped, and npm ends on its own timeout. */
@@ -71,8 +74,8 @@ export function updateCheckOff(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 /**
- * Whether the daemon of `home` checks at all. A signed customer profile (internal testing) sets the channel
- * `rerail update` installs from; the daemon cannot read it without the device's keychain, so it does not check there.
+ * Whether the daemon of `home` checks at all. A signed customer profile (internal testing) limits updates to its own
+ * dist-tag, so `latest` is not the version to recommend there, and the daemon does not check.
  * A profile activated while the daemon runs stops the check too ({@link checkedChannel}).
  */
 export function updateCheckApplies(home: string, env: NodeJS.ProcessEnv = process.env): boolean {
@@ -83,24 +86,9 @@ function profileActive(home: string): boolean {
   return existsSync(join(home, ACTIVE_PROFILE_FILE));
 }
 
-/**
- * The channel the check asks about: the one a bare `rerail update` installs from, as `update-state.json` records it,
- * else `latest`. Undefined while a signed customer profile is active, whose channel the daemon cannot read.
- */
+/** The channel the check asks about, `latest`; undefined while a signed customer profile is active. */
 function checkedChannel(home: string): string | undefined {
-  return profileActive(home) ? undefined : recordedChannel(home);
-}
-
-/** The channel a bare `rerail update` installs from: the one `update-state.json` records, else `latest`. */
-function recordedChannel(home: string): string {
-  try {
-    const { channel } = JSON.parse(readFileSync(join(home, UPDATE_STATE_FILE), "utf8")) as { channel?: unknown };
-    if (typeof channel !== "string") return DEFAULT_UPDATE_CHANNEL;
-    assertChannel(channel);
-    return channel;
-  } catch {
-    return DEFAULT_UPDATE_CHANNEL;
-  }
+  return profileActive(home) ? undefined : CHECKED_CHANNEL;
 }
 
 function readRecord(path: string): UpdateCheckRecord | undefined {
@@ -178,7 +166,7 @@ export function startUpdateChecks(options: UpdateCheckOptions): UpdateChecks {
   const timer = setInterval(look, options.lookEveryMs ?? DUE_LOOK_MS);
   timer.unref();
   return {
-    // Read on every `/healthz`: the channel can change, or a profile be activated, between two looks.
+    // Read on every `/healthz`: a profile can be activated between two looks.
     newest: () => answerFor(record, checkedChannel(home)),
     stop: () => {
       stopped = true;

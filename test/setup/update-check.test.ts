@@ -108,22 +108,27 @@ describe("the daemon's daily update check", () => {
     expect(restarted.newest()?.latest).toBe("0.4.0");
   });
 
-  it("asks on the channel rerail update installs from, and asks again at the next look when it changes", async () => {
-    const folder = home(), time = clock(), npm = registry("0.3.0-next.2", "0.3.0");
-    writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: "next", current: { version: "0.2.1", packageRoot: folder } }));
+  it("asks about latest only, even where rerail update installs from next", async () => {
+    const folder = home(), time = clock(), npm = registry("0.3.0", "0.3.1");
+    writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: "next", current: { version: "0.3.0-next.2", packageRoot: folder } }));
     const checks = start(folder, npm, time.now);
     await time.advance(1_000);
-    expect(checks.newest()?.latest).toBe("0.3.0-next.2");
+    expect(checks.newest()?.latest).toBe("0.3.0");
 
-    writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: "latest", current: { version: "0.2.1", packageRoot: folder } }));
-    // The channel left behind is not reported in the meantime, nor by a daemon restarted before its first look.
+    await time.advance(DAY);
+    expect(npm.asked).toEqual(["latest", "latest"]);
+    expect(checks.newest()?.latest).toBe("0.3.1");
+  });
+
+  it("drops an older daemon's answer about next, and asks about latest at its first look", async () => {
+    const folder = home(), time = clock(), npm = registry("0.3.0");
+    writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: "next", current: { version: "0.3.0-next.2", packageRoot: folder } }));
+    writeFileSync(join(folder, UPDATE_CHECK_FILE), JSON.stringify({ channel: "next", latest: "0.3.1-next.0", answeredAt: time.now(), askedAt: time.now() }));
+    const checks = start(folder, npm, time.now);
     expect(checks.newest()).toBeNull();
-    const restarted = start(folder, npm, time.now);
-    expect(restarted.newest()).toBeNull();
-    restarted.stop();
 
-    await time.advance(HOUR);
-    expect(npm.asked).toEqual(["next", "latest"]);
+    await time.advance(1_000);
+    expect(npm.asked).toEqual(["latest"]);
     expect(checks.newest()?.latest).toBe("0.3.0");
   });
 
