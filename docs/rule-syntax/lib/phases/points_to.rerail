@@ -9,8 +9,8 @@
 // ```text
 // # m.py                     # n.py
 // class C:                   from m import make
-//     def run(self): ...     make().run()      call_target_at("n.py", "n@19+12^1", "m.C.run").
-// def make(): return C()                       type_of_at("n.py", "n@19+6^0", "m.C").
+//     def run(self): ...     make().run()      call_target_at("n.py", "n.py:n@19+12^1", "m.C.run").
+// def make(): return C()                       type_of_at("n.py", "n.py:n@19+6^0", "m.C").
 // ```
 //
 // Exports (p: the file's path, t: the node's term)

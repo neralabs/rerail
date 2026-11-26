@@ -778,8 +778,10 @@ pt_cls_q(c, @dot(q, x)) :- pt_cls_q(o, q), pt_rdefn(o, x, c), kind(c, "class_def
 // - A module: its name (its path, where it has none).
 // - A definition: its symbol, as P1 names it (struct.rerail's `sym`): `m.C.run`, and `m.f#1` for the second live
 //   definition of a name in its scope. A definition in a function is named so too (`m.f.inner`), as P1 does not.
-// - Any other node: its place in its nearest definition or module, relative to that one's start, with its length,
-//   and how many of its ancestors have both (`pt_tm_same`): `m.C.run@14+5^0`.
+// - Any other node: its file's path, and its place in its nearest definition or module, relative to that one's start,
+//   with its length, and how many of its ancestors have both (`pt_tm_same`): `m.py:m.C.run@14+5^0`. A place is its
+//   file's: two files can be one module (two package roots `s1/app/`, `s2/app/` make `app.m` twice), and the same
+//   place in each is two calls (review F7). A definition named by its place (a dead one, below) is named so too.
 // - A guest's node (a quoted annotation's code): its place in the guest's own document, which every string of that
 //   text shares: `~1825239168@0+4^1`.
 .decl pt_tm(n: node, t: symbol)
@@ -804,12 +806,16 @@ pt_tm_dead_child(f, s, b - sb, e - b, c) :- kind(f, k), pt_tm_def(k), py_dead_at
     node(_, f, _, b, e), node(_, s, _, sb, _), pt_tm_same(f, c).
 pt_scope_tm(f, @dot(q, x)) :- pt_scope_tm(s, q), pt_tm_child(f, s, x, 0).
 pt_scope_tm(f, cat(@dot(q, x), "#", to_string(i))) :- pt_scope_tm(s, q), pt_tm_child(f, s, x, i), i > 0.
-pt_scope_tm(f, cat(q, "@", to_string(o), "+", to_string(l), "^", to_string(c))) :- pt_scope_tm(s, q), pt_tm_dead_child(f, s, o, l, c).
+pt_scope_tm(f, cat(p, ":", q, "@", to_string(o), "+", to_string(l), "^", to_string(c))) :- pt_scope_tm(s, q), pt_tm_dead_child(f, s, o, l, c),
+    docof(f, d), doc(d, p, _).
 .decl pt_tm_scope(kind: symbol)
 pt_tm_scope("module"). pt_tm_scope("function_definition"). pt_tm_scope("class_definition").
 pt_tm(s, q) :- pt_scope_tm(s, q).
-pt_tm(n, cat(q, "@", to_string(b - sb), "+", to_string(e - b), "^", to_string(c))) :- node(_, n, k, b, e), !pt_tm_def(k),
-    k != "module", !host_node(n, _), nearest(n, s, pt_tm_scope), node(_, s, _, sb, _), pt_scope_tm(s, q), pt_tm_same(n, c).
+pt_tm(n, cat(r, "@", to_string(b - sb), "+", to_string(e - b), "^", to_string(c))) :- node(_, n, k, b, e), !pt_tm_def(k),
+    k != "module", !host_node(n, _), nearest(n, s, pt_tm_scope), node(_, s, _, sb, _), pt_tm_root(s, r), pt_tm_same(n, c).
+// pt_tm_root(s, r): what the places in scope s are relative to: its file's path and its term, made once a scope.
+.decl pt_tm_root(s: node, r: symbol)
+pt_tm_root(s, cat(p, ":", q)) :- pt_scope_tm(s, q), node(d, s, _, _, _), doc(d, p, _).
 // A guest's node is the guest's own: named by its document and its place there. A guest document's number is a
 // function of its host's path, its place there and its grammar (`corpus::guests`), so the phase and the file that
 // reads its rows name it alike.

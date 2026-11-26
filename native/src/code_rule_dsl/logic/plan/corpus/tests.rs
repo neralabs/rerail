@@ -2732,3 +2732,39 @@ fn a_file_added_beside_an_unedited_file_changes_what_it_finds() {
     assert_eq!(under(), Vec::<Vec<String>>::new(), "the __init__.py removed again: nothing");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Two package roots of one name (a monorepo's `s1/app/` and `s2/app/`, each with an `__init__.py`) make two files
+/// one module, `app.m`: a call at one place in each is still its own file's, and runs its own file's definition
+/// only (review F7). A file outside every package is named by its folders too (`tests/conftest.py` is
+/// `tests.conftest`), so two stems alone do not collide.
+#[test]
+fn two_modules_of_one_name_keep_their_own_call_targets() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("same-stem");
+    let _ = std::fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    std::fs::create_dir_all(src.join("tests")).unwrap();
+    std::fs::write(src.join("conftest.py"), "def a():\n    pass\n\ndef go():\n    a()\n").unwrap();
+    std::fs::write(src.join("tests/conftest.py"), "def b():\n    pass\n\ndef go():\n    b()\n").unwrap();
+    for (root, def) in [("s1", "c"), ("s2", "e")] {
+        std::fs::create_dir_all(src.join(root).join("app")).unwrap();
+        std::fs::write(src.join(root).join("app/__init__.py"), "").unwrap();
+        std::fs::write(src.join(root).join("app/m.py"), format!("def {def}():\n    pass\n\ndef go():\n    {def}()\n")).unwrap();
+    }
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = crate::code_rule_dsl::logic::rr::print(
+        &crate::code_rule_dsl::logic::rr::parse(
+            "#include \"core.rerail\"\n#include \"python/points-to.rerail\"\n.decl tgt(p: symbol, f: symbol)\ntgt(p, f) :- call_target(c, f), docof(c, d), doc(d, p, _).\n.output tgt\n",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
+    let mut tgt = crate::code_rule_dsl::logic::plan::output::shown(&out, "tgt").unwrap();
+    tgt.sort();
+    let row = |p: &str, f: &str| vec![p.to_owned(), f.to_owned()];
+    assert_eq!(tgt, vec![row("conftest.py", "conftest.a"), row("s1/app/m.py", "app.m.c"), row("s2/app/m.py", "app.m.e"), row("tests/conftest.py", "tests.conftest.b")]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
