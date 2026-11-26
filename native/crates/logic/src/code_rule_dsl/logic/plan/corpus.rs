@@ -4850,8 +4850,10 @@ fn run_observed_within(
         }
 
         /// The main thread's next message: a chunk, a batch's end (`None`) or an error; `Err` once the builder has
-        /// ended. [`Builder::main_wait`] lets nested callers advance queued document work.
-        fn next<'s>(&'s self, jobs: &crate::threads::Jobs<'s, '_>) -> std::result::Result<Result<Option<Chunk>>, ()>
+        /// ended. `None` when `file` holds first (the chunk at the front is evaluated): the main thread files it, as
+        /// the builder may wait for the size its filing decides. [`Builder::main_wait`] lets nested callers advance
+        /// queued document work.
+        fn next<'s>(&'s self, jobs: &crate::threads::Jobs<'s, '_>, file: &dyn Fn() -> bool) -> Option<std::result::Result<Result<Option<Chunk>>, ()>>
         where
             'a: 's,
         {
@@ -4860,16 +4862,20 @@ fn run_observed_within(
                 // has ended. A load asked after a load's chunk failed waited here for ever, the pool idle (Q224: the
                 // cone posts its requests ahead of their answers, and the next was answered before the error was read).
                 if self.stopped.load(std::sync::atomic::Ordering::Relaxed) {
-                    return Some(Err(()));
+                    return Some(Some(Err(())));
                 }
                 self.advance(jobs);
                 let mut c = self.cut.lock();
                 if let Some(r) = c.handed.pop_front() {
                     drop(c);
                     self.advance(jobs);
-                    return Some(Ok(r));
+                    return Some(Some(Ok(r)));
                 }
-                (c.ended && c.out.is_empty()).then_some(Err(()))
+                if c.ended && c.out.is_empty() {
+                    return Some(Some(Err(())));
+                }
+                drop(c);
+                file().then_some(None)
             })
         }
 
@@ -5144,7 +5150,9 @@ fn run_observed_within(
     let chunks_at_once = std::env::var("RERAIL_CHUNKS_AT_ONCE").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or_else(|| crate::threads::max().saturating_sub(1).min(8)).max(1);
     // Q88: what chunk `n` plans with is the run's as filed once chunks `0..=n - plan_window` were, whether the chunks
     // evaluate at once or one by one: the same plans either way, and whatever the threads' timing.
-    let plan_window = crate::code_rule_dsl::logic::plan::PLAN_WINDOW.max(chunks_at_once);
+    // Two sets of the chunks at once: those evaluating, and as many evaluated waiting for a slower one before them to
+    // be filed. One set held them to 8 begun and unfiled: cold PostHog's chunks ran 2-4 at once in most of the phase.
+    let plan_window = 2 * crate::code_rule_dsl::logic::plan::PLAN_WINDOW.max(chunks_at_once);
     // The chunks' sizes (decision 0435 §4, Q314): the first `probe_nodes()`, each next decided from the chunks
     // filed before it in their order, by what their blocks wrote, against the limit less the run's count now; the
     // builder holds a cut until its size is decided, so every run cuts the same chunks. `RERAIL_RUN_MB` (a
@@ -6345,7 +6353,11 @@ fn run_observed_within(
                 file_front(&mut flight, &mut ordered, process)?;
             }
             main_doing.set("wait");
-            let next = crate::code_rule_dsl::logic::profile::wait("the worker's next chunk", &worker_doing, || builder.next(jobs));
+            // Woken to file the chunk at the front once it is evaluated: chunks are cut at the sizes filing decides.
+            let front_evaluated = || flight.front().is_some_and(|(_, s)| s.lock().is_some());
+            let Some(next) = crate::code_rule_dsl::logic::profile::wait("the worker's next chunk", &worker_doing, || builder.next(jobs, &front_evaluated)) else {
+                continue;
+            };
             let chunk = match next {
                 Err(()) | Ok(Ok(None)) => {
                     while !flight.is_empty() {
@@ -6395,9 +6407,26 @@ fn run_observed_within(
                 bell.ring();
             });
             flight.push_back((ctx, slot));
-            // As many in flight as the run's headroom holds (Q74), at most `k`.
-            while flight.len() >= at_once_allowed.load(std::sync::atomic::Ordering::Relaxed).clamp(1, k) {
-                file_front(&mut flight, &mut ordered, process)?;
+            // As many evaluating at once as the run's headroom holds (Q74), at most `k`: the chunks still evaluating,
+            // not those evaluated and waiting to be filed in order. Counted by the unfiled, a slow chunk at the front
+            // held its window while the others ended, and none began: cold PostHog's chunks ran 2-4 at once of 8 in
+            // most of the phase, the main thread waiting 25 s on the front. An evaluated chunk holds its rows alone
+            // (its scopes' memory is given back, about 2 MB of 40 MB at its most), so the unfiled are bounded apart:
+            // by the plans' window, as chunk `n` plans with what was filed `plan_window` before it (Q88).
+            let evaluating = |flight: &std::collections::VecDeque<(Ctx, Slot)>| flight.iter().filter(|(_, s)| s.lock().is_none()).count();
+            loop {
+                while flight.front().is_some_and(|(_, s)| s.lock().is_some()) {
+                    file_front(&mut flight, &mut ordered, process)?;
+                }
+                let allowed = at_once_allowed.load(std::sync::atomic::Ordering::Relaxed).clamp(1, k);
+                if flight.len() >= plan_window {
+                    file_front(&mut flight, &mut ordered, process)?;
+                } else if evaluating(&flight) >= allowed {
+                    main_doing.set("wait for a chunk evaluated");
+                    builder.main_wait("the main thread: a chunk evaluated", || (evaluating(&flight) < at_once_allowed.load(std::sync::atomic::Ordering::Relaxed).clamp(1, k)).then_some(()));
+                } else {
+                    break;
+                }
             }
         })();
         if got.is_err() {
