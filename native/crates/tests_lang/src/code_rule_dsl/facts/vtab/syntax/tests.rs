@@ -2995,10 +2995,11 @@ fn host_id_reads(h: &rerail_clif::ids::Numbering, x: u32) -> [u32; 12] {
     }
 }
 
-/// A numbering's next numbered item from a tape node (`Numbering::next`) is the select of its rank: for every tape node
-/// of every case and past them, every item; and from each numbered node's next tape node, the next number's.
+/// A walk of a numbering's items from a tape node (`Numbering::nodes_at`) gives the selects of their ranks on: for
+/// every tape node of every case and past them, every item, its first few steps; and from number `r`
+/// (`nodes_from`), every number after it in order to the last, then `NONE`.
 #[test]
-fn a_numberings_next_is_the_select_of_its_rank() {
+fn a_numberings_walk_is_the_selects_of_its_ranks() {
     let mut tried = 0;
     for (at, p, n) in id_read_cases() {
         let r = p.ranks();
@@ -3007,13 +3008,20 @@ fn a_numberings_next_is_the_select_of_its_rank() {
             // SAFETY: the projection's live descriptor.
             unsafe {
                 for x in 0..n + 70 {
-                    assert_eq!(h.next(item, x), h.select(item, h.rank(item, x)), "{at}: item {item}, tape node {x}");
-                    tried += 1;
+                    let mut w = h.nodes_at(item, x);
+                    let first = h.rank(item, x);
+                    for step in 0..3 {
+                        assert_eq!(w.next(), h.select(item, first + step), "{at}: item {item}, tape node {x}, step {step}");
+                        tried += 1;
+                    }
                 }
-                let mut l = 0;
-                while h.select(item, l) != rerail_clif::ids::NONE {
-                    assert_eq!(h.next(item, h.select(item, l) + 1), h.select(item, l + 1), "{at}: item {item}, number {l}");
-                    l += 1;
+                let count = (0..).take_while(|&l| h.select(item, l) != rerail_clif::ids::NONE).count() as u32;
+                for from in [0, count / 2, count.saturating_sub(1), count] {
+                    let mut w = h.nodes_from(item, from);
+                    for l in from..count {
+                        assert_eq!(w.next(), h.select(item, l), "{at}: item {item}, number {l}, walked from {from}");
+                    }
+                    assert_eq!(w.next(), rerail_clif::ids::NONE, "{at}: item {item}, past the last, walked from {from}");
                 }
             }
         }
@@ -4308,6 +4316,64 @@ fn an_answer_s_values_are_admitted_as_one_batch() {
     assert!(keys.contains(&3) && keys.contains(&4), "both values' rows: {keys:?}");
 }
 
+/// Decision 0707: a chunk with a value admitted (decision 0431 §8: `values::Layered`, its base the chunk's batch and
+/// its parts the value's) is read where it lies by the host's join programs: `within` is the axis solved on the host
+/// into one relation in its block, the batch's rows then the value's, and `docof`, a placed relation (the `Loc` view's
+/// rows, then its spans'), is a placed read over the values' directory. Each was refused in place before, and each
+/// stratum that read it uploaded every row: 1 GB of `within` and 284 MB of `docof` over the data layer's 50 files.
+#[test]
+fn a_chunks_axis_and_places_with_a_value_admitted_are_read_where_they_lie_on_the_host() {
+    struct NoWave;
+    impl AstWave for NoWave {
+        fn len(&self) -> usize {
+            0
+        }
+        fn matched(
+            &self,
+            _: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
+            _: &[Option<&Projected>],
+            _: crate::code_rule_dsl::facts::nearest::Binding,
+            _: &dyn crate::content_store::AtomTable,
+        ) -> StoreResult<Vec<(String, Relation)>> {
+            Ok(Vec::new())
+        }
+    }
+    let store = ContentStore::open(&temp("values-in-place")).unwrap();
+    let matchers = Matchers::new(Arc::new(NoWave) as Arc<dyn AstWave>);
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let binding = crate::code_rule_dsl::facts::nearest::Binding::Cpu;
+    let reads = ["node", "child", "within", "line", "docof", "source", "src_line"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("# a comment\ndef f{k}(x):\n    return [x for y in x]\n"));
+    let (sources, mut grower) = Grower::start(&store, vec![file(1), file(2)], &[], &matchers, &tests, binding, &projection, &HashMap::new()).unwrap();
+    // Each source the chunk binds, layered over its values, as the corpus run binds them.
+    let values = Arc::new(values::Values::default());
+    let src = |name: &str| -> Arc<dyn Source> {
+        let (_, s) = sources.iter().find(|(n, _)| n == name).unwrap_or_else(|| panic!("{name} is bound"));
+        Arc::new(values::Layered::new(name, Arc::clone(s), Arc::clone(&values)))
+    };
+    let (within, docof) = (src("within"), src("docof"));
+    let before = (within.len(), docof.len());
+    // A tape value, as a string annotation is (decision 0431 §8): a guest, so no `Extra` span of its own (a value's
+    // spans would be rows of no one relation, and a layered read refuses them).
+    let mut value = document(3, "m3.py", "python", "List[int]");
+    let whole = Placement::Copied { delta: 0, within: [0, 9] };
+    value.guest = Some(Arc::new(Guest { host: 1, file: 1, at: 1 << 32, grammar: "python".to_owned(), role: "annotation".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::Tape { places: Vec::new() } }));
+    values.add(&[3], &[1], grower.admit(&store, vec![value], &[], &tests, binding, &projection).unwrap());
+    assert!(within.len() > before.0 && docof.len() > before.1, "the value's rows are the chunk's too: {before:?}");
+    let _host = rerail_accel::gpu::shared::on_host();
+    let solved = within.in_block().expect("within: the axis solved on the host into one relation in its block");
+    assert!(solved.rows as usize >= within.len(), "within: every pair, the value's too ({} of {})", solved.rows, within.len());
+    let (_, base) = sources.iter().find(|(n, _)| n == "docof").unwrap();
+    let base_view = base.device_view().expect("docof: the chunk's view read through the views");
+    let base_read = &base_view.in_place;
+    assert!(base_read.kind & places::VIEW_PLACED != 0, "docof: the chunk's spans past its view's rows");
+    let view = docof.device_view().expect("docof: read through the views");
+    let read = &view.in_place;
+    assert!(read.kind & places::VIEW_PLACED != 0, "docof: its spans past the view's rows");
+    assert_eq!(view.rows, docof.len(), "docof: every row, the value's too");
+}
+
 /// Q216 (decision 0353 step 3): where a program reads spans, a node's and a token's places are the `Loc` view's, and
 /// the place rows made are the spans' alone. The bound relation is the view's rows, then the spans', and a span's
 /// place is read by its id: a line's own line, its start's column 0.
@@ -4534,7 +4600,7 @@ fn the_join_programs_view_reads_are_the_jits() {
     use crate::code_rule_dsl::tape::formats::{Format, as_run};
     use rerail_clif::view::{F16Z_FORMAT, TapeView};
     use rerail_clif::view_reads::{VIEWS, ViewDir};
-    use rerail_ukl_rust::join_program::reads::{at, block, doc, home, row};
+    use rerail_ukl_rust::join_program::reads::{at, block, col, doc, home, row};
     type Row = extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, *const u8, u32, u32) -> u64;
     type Walk = extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, *const u8, u32) -> u32;
     let jit = rerail_clif::jit::Reads::new();
@@ -4580,6 +4646,18 @@ fn the_join_programs_view_reads_are_the_jits() {
                         for col in 0..cols {
                             assert_eq!(found.col(col), rows[k](e, t, v, l, c, r, col), "{place}: {} row {r} column {col}", VIEWS[k]);
                             tried += 1;
+                        }
+                    }
+                    // Its rows read in order through one document's reads (an index's key pass: each row's node the
+                    // walk's next, `Numbering::nodes_at`), from each first row the walk may start at: each as a
+                    // document's reads made for it alone find it.
+                    for from in [0, n / 3, n.saturating_sub(1)].into_iter().filter(|&f| f < n) {
+                        let walked = doc.clone();
+                        for r in from..n {
+                            for c in 0..cols {
+                                assert_eq!(col(&walked, k as u32, r, c), at(doc.clone(), k as u32, r).col(c), "{place}: {} row {r} column {c}, walked from {from}", VIEWS[k]);
+                                tried += 1;
+                            }
                         }
                     }
                 }

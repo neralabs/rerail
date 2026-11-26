@@ -80,7 +80,64 @@ struct OnHost {
     home: crate::code_rule_dsl::facts::rows::Part,
 }
 
+/// A placed relation whose view's rows are another directory's (`values::Layered`: a chunk's and its values'
+/// documents', of `rows` rows), these spans' rows past them: its `PlacedDir`, where the join programs read it.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub(super) enum Over {
+    Host(OnHost),
+    Device(OnDevice),
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl Over {
+    /// `v`, the view read through the other directory, made this placed relation's read.
+    pub(super) fn apply(&self, v: &mut crate::code_rule_dsl::facts::vtab::ViewInPlace) -> Option<()> {
+        match self {
+            Over::Host(on) => v.dir = std::ptr::from_ref::<PlacedDir>(&on.dir) as u64,
+            Over::Device(on) => {
+                v.dir = on.dir.device_address()?;
+                v.buffers.push((*on.dir).clone());
+                v.buffers.push(on.tail.clone());
+            }
+        }
+        v.kind |= VIEW_PLACED;
+        Some(())
+    }
+    /// Its relation of no columns, which its indexes go in, where it keeps it.
+    pub(super) fn home(&self) -> crate::code_rule_dsl::facts::rows::Part {
+        match self {
+            Over::Host(on) => on.home.clone(),
+            Over::Device(on) => on.home.clone(),
+        }
+    }
+}
+
+/// A placed relation's relation of no columns, of `rows` rows, which its probes' indexes go in: room for as many
+/// as a relation takes (`ADDED_INDEXES`, its address space; pages taken as each is written), as a view's home has,
+/// so every probe's index is built there and found again (with room for one, each probe by another key built its
+/// index in a home of its own, never found again).
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+fn home(rows: usize) -> Option<crate::code_rule_dsl::facts::rows::Part> {
+    crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, rows, rerail_blocks::relation::ADDED_INDEXES).ok()
+}
+
 impl Places {
+    /// Its spans' rows, past the view's.
+    pub(super) fn spans_len(&self) -> usize {
+        self.spans.len()
+    }
+
+    /// Its spans past `rows` rows of a view read through the directory at `view_dir` (`values::Layered`'s, of the
+    /// chunk's documents and its values'), where the join programs here read it.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub(super) fn over(&self, view_dir: u64, rows: usize) -> Option<Over> {
+        if super::device_chunk::ViewsInPlace::read_on_host() {
+            self.on_host(view_dir, rows).map(Over::Host)
+        } else {
+            self.on_device(view_dir, rows).map(Over::Device)
+        }
+    }
+
     pub fn new(view: Arc<dyn Source>, spans: Arc<dyn Source>) -> Self {
         debug_assert_eq!(view.columns().len(), spans.columns().len());
         Places {
@@ -124,29 +181,29 @@ impl Places {
     /// The view's directory and the spans' rows where they lie, in a `PlacedDir` (`view_dir`: the view's, read in
     /// place). `None` where the spans' rows are in no block, or the device's buffers have no addresses.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    fn on_device(&self, view_dir: u64) -> Option<OnDevice> {
+    fn on_device(&self, view_dir: u64, rows: usize) -> Option<OnDevice> {
         let device = crate::code_rule_dsl::tape::placed::device()?;
         let spans = self.spans.in_block()?;
         let tail = spans.facts.block.device_buffer(device).ok()?;
         let base = tail.device_address()?;
         let dir = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, std::mem::size_of::<PlacedDir>());
-        let placed = PlacedDir { dir: view_dir, tail: base, at: spans.at as u64, rows: self.first() as u32, pad: 0 };
+        let placed = PlacedDir { dir: view_dir, tail: base, at: spans.at as u64, rows: rows as u32, pad: 0 };
         // SAFETY: the buffer's bytes, shared with the host, `PlacedDir`'s size, read by no stage yet.
         unsafe { dir.contents().cast::<PlacedDir>().write_unaligned(placed) };
         let at = dir.contents().cast::<u8>();
         let dir = rerail_blocks::ledger::Tracked::new(dir, at, std::mem::size_of::<PlacedDir>());
-        let home = crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()?;
+        let home = home(rows + self.spans.len())?;
         Some(OnDevice { dir, tail, _spans: spans, home })
     }
 
     /// `on_device`'s `PlacedDir` at the host's addresses (`view_dir`: the view's directory's host address), for the
     /// host's join programs: the spans' block where it lies here, no device buffer.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    fn on_host(&self, view_dir: u64) -> Option<OnHost> {
+    fn on_host(&self, view_dir: u64, rows: usize) -> Option<OnHost> {
         let spans = self.spans.in_block()?;
         let tail = spans.facts.block.base_ptr() as u64;
-        let dir = Box::new(PlacedDir { dir: view_dir, tail, at: spans.at as u64, rows: self.first() as u32, pad: 0 });
-        let home = crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()?;
+        let dir = Box::new(PlacedDir { dir: view_dir, tail, at: spans.at as u64, rows: rows as u32, pad: 0 });
+        let home = home(rows + self.spans.len())?;
         Some(OnHost { dir, _spans: spans, home })
     }
 }
@@ -167,14 +224,14 @@ impl Source for Places {
         // Where the join programs run on the host, the view's directory is at its host address (`device_view` of
         // the syntax source), and so is this one.
         if super::device_chunk::ViewsInPlace::read_on_host() {
-            let on = self.host.get_or_init(|| self.on_host(v.dir)).as_ref()?;
+            let on = self.host.get_or_init(|| self.on_host(v.dir, self.first())).as_ref()?;
             v.dir = std::ptr::from_ref::<PlacedDir>(&on.dir) as u64;
             v.kind |= VIEW_PLACED;
             d.rows = self.len();
             d.home = on.home.clone();
             return Some(d);
         }
-        let on = self.device.get_or_init(|| self.on_device(v.dir)).as_ref()?;
+        let on = self.device.get_or_init(|| self.on_device(v.dir, self.first())).as_ref()?;
         v.dir = on.dir.device_address()?;
         v.kind |= VIEW_PLACED;
         v.buffers.push((*on.dir).clone());

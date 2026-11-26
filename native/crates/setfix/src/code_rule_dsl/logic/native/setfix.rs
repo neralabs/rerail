@@ -8787,6 +8787,25 @@ pub fn prefetch_joins(conn: &Connection, specs: &[Join]) -> Result<usize> {
     level::prefetch(conn, specs)
 }
 
+/// Decision 0707: the indexes the joins `specs` probe their relations by, built on the device before the strata that
+/// run them (`SolverDevice::build_indexes`), as the device would compile them (`host`: its join programs the host's).
+/// How many it built; none with no device.
+pub fn prefetch_device_indexes(conn: &Connection, specs: &[Join], host: bool) -> Result<usize> {
+    let Some(dev) = solver().filter(|d| d.join_available()) else { return Ok(0) };
+    let _host = host.then(rerail_accel::gpu::shared::on_host);
+    let symbols = symbols(conn)?;
+    let mut syms = Interner::for_loading(&symbols);
+    let plans: Vec<JoinPlan> = specs.iter().filter_map(|spec| {
+        let j = join_rule(conn, spec, &mut syms).ok()?;
+        // No component's own texts: its head names none of them.
+        dev.compile_join(&j, &spec.to_text(), &[], usize::MAX).ok()
+    }).collect();
+    if plans.is_empty() {
+        return Ok(0);
+    }
+    dev.build_indexes(&plans.iter().collect::<Vec<_>>()).map_err(err)
+}
+
 /// Drops a chunk's pending pairs and what the lanes keep for it.
 pub fn level_clear() {
     level::clear()

@@ -1794,6 +1794,21 @@ impl spike_strata::Inputs for Run<'_, '_> {
 /// Whether a text-test stratum's rules are its native's definition (`h(x…) :- input(x…), test`), so the native makes
 /// its rows: in a maintained form its relation's rules are its old rows and its new ones (`maintain`), made as rules,
 /// while its `h__ins` and a stratum derived again are the definition.
+/// Decision 0707: the indexes the strata about to run probe by (their seed joins, `specs`), built before any of them
+/// runs, in one batch of the device's, where the strata run on the device (or its join programs on the host): each
+/// stratum finds each built, none builds its own beside another's.
+fn indexes_first(db: &Connection, specs: &[PlanJoin]) -> Result<()> {
+    if !placement::device_on() && !placement::host_joins() {
+        return Ok(());
+    }
+    let _wave = super::profile::span(|| "device wave (indexes)".into());
+    let built = super::native::component::prefetch_device_indexes(db, specs, !placement::device_on())?;
+    if built > 0 {
+        super::profile::decision("indexes first (decision 0707)", || format!("{built} indexes built before the {} seed joins that probe them", specs.len()));
+    }
+    Ok(())
+}
+
 fn text_test_defined(vs: &body::Versions, rules: &[body::RuleKey], input: &str) -> bool {
     matches!(rules, [k] if { let (v, r) = vs.rule_at(*k); r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())).eq([input]) })
 }
@@ -7859,6 +7874,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     }
                 }
                 if !specs.is_empty() {
+                    indexes_first(db, &specs)?;
                     let _wave = super::profile::span(|| "level wave (joins, a maintained level)".into());
                     let sent = super::native::component::prefetch_joins(db, &specs)?;
                     if sent > 0 {
@@ -8316,6 +8332,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             let own = specs.len();
             specs.extend(later.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])));
             if !specs.is_empty() {
+                indexes_first(db, &specs)?;
                 let _wave = super::profile::span(|| "level wave (joins)".into());
                 let sent = super::native::component::prefetch_joins(db, &specs)?;
                 if sent > 0 {

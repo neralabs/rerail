@@ -599,6 +599,70 @@ impl Within {
         &self.solved().rows
     }
 
+    /// Its solve and those of `more` on the host, in one relation as the device writes it (`solved_with`): its rows,
+    /// then each one's of `more`, each batch's written as `solved_from` writes it (its documents' key runs, per node
+    /// row its nearest member ancestor, or for `inside` the chain of them).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn solved_on_host_with(&self, more: &[&Within]) -> crate::code_rule_dsl::facts::rows::Part {
+        use crate::code_rule_dsl::facts::nearest as file_local;
+        use crate::code_rule_dsl::facts::rows::{Life, Part};
+        let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
+        let all: Vec<&Within> = std::iter::once(self).chain(more.iter().copied()).collect();
+        let found: Vec<Vector<u32>> = all.iter().map(|w| w.found()).collect();
+        let chain = |found: &[u32], v: usize, each: &mut dyn FnMut(u32)| {
+            let mut a = found[v];
+            while a != file_local::NONE {
+                each(a);
+                a = if inside { found[a as usize] } else { file_local::NONE };
+            }
+        };
+        // Per batch, per node row its first row in the relation (past the batches' before), and the runs: one a
+        // document that has rows.
+        let (mut starts, mut len, mut runs) = (Vec::with_capacity(all.len()), 0u32, 0usize);
+        for (w, f) in all.iter().zip(&found) {
+            let mut start = Vector::with_capacity(f.len() + 1);
+            for v in 0..f.len() {
+                start.push(len);
+                chain(f, v, &mut |_| len += 1);
+            }
+            start.push(len);
+            let offsets = w.batch.nodes();
+            runs += (0..w.batch.docs.len()).filter(|&d| start[offsets.at(d + 1)] > start[offsets.at(d)]).count();
+            starts.push(start);
+        }
+        let (rows, keys) = Part::over_key_runs(Life::Run, 2, len as usize, runs);
+        let mut k = 0;
+        for (w, start) in all.iter().zip(&starts) {
+            let offsets = w.batch.nodes();
+            for (doc, key) in w.batch.docs.keys().enumerate() {
+                let first = start[offsets.at(doc)];
+                if start[offsets.at(doc + 1)] > first {
+                    keys.put(k, first, key);
+                    k += 1;
+                }
+            }
+        }
+        let mut at = 0u32;
+        for (w, f) in all.iter().zip(&found) {
+            // The directory's searches' memo, this batch's.
+            let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
+            for v in 0..f.len() {
+                let id = w.batch.id(v, &mut memo);
+                chain(f, v, &mut |a| {
+                    // SAFETY: row `at` is below the `len` rows reserved, and nothing reads it before `written`.
+                    unsafe {
+                        rows.put(at, 0, id);
+                        rows.put(at, 1, w.batch.id(a as usize, &mut memo));
+                    }
+                    at += 1;
+                });
+            }
+        }
+        // SAFETY: rows `0..len` are written.
+        unsafe { rows.written(len) };
+        rows
+    }
+
     /// The solve made on the device off the batch's tapes (decision 0353 step 4), when the binding is the device's
     /// and one is registered: `None` sends it to the host's.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -620,6 +684,12 @@ impl Within {
     pub(super) fn solved_with(&self, more: &[&Within], views: &super::device_chunk::ViewsInPlace, keep: Arc<dyn std::any::Any + Send + Sync>) -> Option<crate::code_rule_dsl::facts::rows::Part> {
         if !self.solvable() || more.iter().any(|w| w.mode != self.mode) {
             return None;
+        }
+        // Solved on the host where the device does not solve it: the rows are the same relation's, in its block, so
+        // its readers read it there and keep its indexes, not each a copy of its rows (1 GB of uploads a run over
+        // 50 files, each stratum's copy indexed again: decision 0707).
+        if !self.on_device() {
+            return Some(self.solved_on_host_with(more));
         }
         self.solved_over(views, keep).map(|c| c.rows)
     }

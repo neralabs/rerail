@@ -71,7 +71,13 @@ pub fn at(d: Doc<'_>, k: u32, r: u32) -> At<'_> {
     At { d, k, r }
 }
 
-impl At<'_> {
+impl<'a> At<'a> {
+    /// Its document's reads.
+    #[inline]
+    pub fn doc(&self) -> &Doc<'a> {
+        &self.d
+    }
+
     /// Its column `col`.
     #[inline]
     pub fn col(&self, c: u32) -> u64 {

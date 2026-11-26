@@ -485,9 +485,8 @@ unsafe fn vrow_dir(kind: u32, d: *const ViewDir, r: u32, f: &Found<'_>) -> Row {
 
 /// The document a walk's view reads last found (`Row::get`): its directory, its row there and its reads (one `Doc`,
 /// which keeps the node it last selected). A walk's rows come in order, most of them in the document of the row
-/// before: such a row neither searches the directory again nor makes the document's reads again. (A select started
-/// from the row before's, `Numbering::select_near`, cost more: rows in an index's key order are far apart in the
-/// numbering, and the near search walked groups the sample skips.)
+/// before: such a row neither searches the directory again nor makes the document's reads again, and the row after
+/// the one before takes its node by the reads' walk (`Doc::tape_node`), not a select.
 struct Found<'a> {
     d: *const ViewDir,
     lo: u32,
@@ -2844,13 +2843,7 @@ unsafe fn ix_key_range(bb: *const u8, rf: *const u8, out: *mut u32, places: *mut
         dedup_lanes::ix_keys_lanes::<{ stage_lanes::LANES }>(bb, far_block(bb, rf), out, rows, p, kb, eb, t0, t1);
         return;
     }
-    let far = far_block(bb, rf);
-    let mut f = Found::new();
-    for t in t0..t1 {
-        let h = ix_hash64(bb, far, p, t, &mut f);
-        *out.add((eb + t) as usize) = kb.wrapping_add((h & p.mask) as u32);
-        *rows.add(t as usize) = mark_tag(h);
-    }
+    dedup_lanes::ix_keys_view_lanes::<{ stage_lanes::LANES }>(bb, far_block(bb, rf), out, rows, p, kb, eb, t0, t1);
 }
 
 /// The index's rows written into its relation's block, from the level's keys sorted (stably) with their places: its

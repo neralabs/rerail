@@ -9,7 +9,7 @@
 //! from the same entry and tape: their first definition, the host's rows the reference.
 
 use crate::tape::{NONE, f16, f16z::Z};
-use crate::ids::{INDEX_BITS, Numbering, SLOT_BITS, SPAN_SLOTS};
+use crate::ids::{INDEX_BITS, Nodes, Numbering, SLOT_BITS, SPAN_SLOTS};
 use crate::view::{F16Z_FORMAT, TapeView};
 use crate::views::{NO_ROW, NO_SPAN, PLACED_AT, PLACED_COPIED, PLACED_SEGMENTS, PLACED_TABLE, ViewDoc};
 
@@ -179,6 +179,9 @@ pub struct Doc<'a> {
     /// (`fielded`; `u32::MAX`: none): a row's columns read one after another select its node once. `u32::MAX`: none
     /// yet.
     last: std::cell::Cell<Selected>,
+    /// The walk of the numbering on from the last node selected (`Numbering::nodes_at`), made by the first row read in
+    /// order after it: each next row's node its next set bit, with no select (an index's keys, a copy, a scan).
+    walk: std::cell::Cell<Option<Nodes<'a>>>,
     /// The granule its last node's id was found in (`Numbering::low_of_near`'s hint): the next node's is most often in
     /// the same one. Checked, not trusted: any value gives the same ids.
     granule: std::cell::Cell<u32>,
@@ -202,7 +205,7 @@ impl<'a> Doc<'a> {
     /// The document's reads, through its directory row's `entry`, with its language's codes' `(kinds, fields)`.
     #[inline]
     pub fn new(entry: &'a ViewDoc, tape: Tape<'a>, lines: &'a [u8], source: &'a [u8], (kinds, fields): (&'a [u32], &'a [u32])) -> Doc<'a> {
-        Doc { entry, tape, lines, source, kinds, fields, last: std::cell::Cell::new(Selected::NONE), granule: std::cell::Cell::new(u32::MAX) }
+        Doc { entry, tape, lines, source, kinds, fields, last: std::cell::Cell::new(Selected::NONE), walk: std::cell::Cell::new(None), granule: std::cell::Cell::new(u32::MAX) }
     }
     #[inline(always)]
     fn numbering(&self) -> &'a Numbering {
@@ -225,7 +228,22 @@ impl<'a> Doc<'a> {
     #[inline]
     pub fn knowing(self, l: u32, x: u32, field_row: u32) -> Self {
         self.last.set(Selected { l, x, field_row });
+        self.walk.set(None);
         self
+    }
+    /// The tape node of `item`'s next numbered node after the last selected (tape node `x`): its walk's next, the walk
+    /// made from `x` where the last select was not of `item` in order.
+    #[inline]
+    fn next_after(&self, item: u32, x: u32) -> u32 {
+        // SAFETY: as `tape_node`.
+        let mut w = match self.walk.get() {
+            Some(w) if w.item() == item => w,
+            _ => unsafe { self.numbering().nodes_at(item, x + 1) },
+        };
+        // SAFETY: as `tape_node`.
+        let next = unsafe { w.next() };
+        self.walk.set(Some(w));
+        next
     }
     /// Numbered node `l`'s tape node (`num_select`).
     #[inline]
@@ -235,9 +253,14 @@ impl<'a> Doc<'a> {
             return s.x;
         }
         // The number after the last selected: its node is the next numbered one past it (rows read in order: an
-        // index's keys, a copy); else from the sample.
-        // SAFETY: the entry's numbering (`numbering`).
-        let x = unsafe { if s.l != u32::MAX && l == s.l + 1 { self.numbering().next(0, s.x + 1) } else { self.numbering().select(0, l) } };
+        // index's keys, a copy), the walk's next; else from the sample.
+        let x = if s.l != u32::MAX && l == s.l + 1 {
+            self.next_after(0, s.x)
+        } else {
+            self.walk.set(None);
+            // SAFETY: the entry's numbering (`numbering`).
+            unsafe { self.numbering().select(0, l) }
+        };
         self.last.set(Selected { l, x, field_row: u32::MAX });
         x
     }
@@ -350,8 +373,13 @@ impl<'a> Doc<'a> {
             return (s.l, s.x);
         }
         // The row after the last: its node is the next fielded one past it (rows read in order); else from the sample.
-        // SAFETY: as `tape_node`.
-        let x = unsafe { if s.field_row != u32::MAX && i == s.field_row + 1 { self.numbering().next(2, s.x + 1) } else { self.numbering().select(2, i) } };
+        let x = if s.field_row != u32::MAX && i == s.field_row + 1 {
+            self.next_after(2, s.x)
+        } else {
+            self.walk.set(None);
+            // SAFETY: as `tape_node`.
+            unsafe { self.numbering().select(2, i) }
+        };
         let l = self.rank(x);
         self.last.set(Selected { l, x, field_row: i });
         (l, x)

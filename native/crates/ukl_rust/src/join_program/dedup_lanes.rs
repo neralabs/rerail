@@ -195,6 +195,65 @@ where
     }
 }
 
+/// `ix_key`'s of a view's rows `t0..t1` at `N` lanes, and each row's tag at `t` of `tags` (`ix_keys_lanes`'): each
+/// document found once and its rows read in order, through its reads (`Doc`), which walk its numbering from row to row
+/// (`Numbering::nodes_at`) rather than select each row's node; `N` rows' keys hashed an operation. A placed view's rows
+/// past its directory's (its tail relation's) are `ix_hash64`'s.
+pub(super) unsafe fn ix_keys_view_lanes<const N: usize>(bb: *const u8, far: *const u8, out: *mut u32, tags: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    let (mut kind, mut d, mut lim) = (p.kind as u32, p.dir, t1);
+    if kind & VIEW_PLACED != 0 {
+        let pd = d as *const PlacedDir;
+        (kind, d, lim) = (kind & !VIEW_PLACED, (*pd).dir, t1.min((*pd).rows));
+    }
+    let (k, nk) = (kind - 1, (p.ncols & !IX_LIVE).min(8) as usize);
+    let (ndocs, rows) = ((*d).ndocs, view_rows(d));
+    let (mut t, mut memo) = (t0, NONE);
+    while t < lim {
+        let a = ViewDir::doc_of_row(d, k, t, memo);
+        memo = a;
+        let e = rows.add(a as usize);
+        let first = (*e).rows[k as usize];
+        let stop = if a + 1 < ndocs { (*rows.add(a as usize + 1)).rows[k as usize].min(lim) } else { lim };
+        if stop <= t {
+            let h = ix_hash64(bb, far, p, t, &mut Found::new());
+            *out.add((eb + t) as usize) = kb.wrapping_add((h & p.mask) as u32);
+            *tags.add(t as usize) = mark_tag(h);
+            t += 1;
+            continue;
+        }
+        let doc = doc(d, e);
+        while t < stop {
+            let n = (stop - t).min(N as u32);
+            // Each key column's values of the lanes' rows (0 past them, their keys not written).
+            let mut v = [[0u64; N]; 8];
+            for j in 0..n as usize {
+                let r = t - first + j as u32;
+                for (c, &col) in v[..nk].iter_mut().zip(&p.cols) {
+                    c[j] = reads::col(&doc, k.min(12), r, col);
+                }
+            }
+            let mut h = U::<N>::splat(KEY_SEED);
+            for c in &v[..nk] {
+                h = ln::key_mix(h, U::from_array(*c));
+            }
+            let keys: [u32; N] = ((h & U::splat(p.mask)).cast::<u32>() + sr(kb)).to_array();
+            core::ptr::copy_nonoverlapping(keys.as_ptr(), out.add((eb + t) as usize), n as usize);
+            let g: [u32; N] = ((h >> U::splat(32)).cast::<u32>() & sr(!MARK_SAME)).to_array();
+            core::ptr::copy_nonoverlapping(g.as_ptr(), tags.add(t as usize), n as usize);
+            t += n;
+        }
+    }
+    let mut f = Found::new();
+    for t in lim.max(t0)..t1 {
+        let h = ix_hash64(bb, far, p, t, &mut f);
+        *out.add((eb + t) as usize) = kb.wrapping_add((h & p.mask) as u32);
+        *tags.add(t as usize) = mark_tag(h);
+    }
+}
+
 /// Rows `t0..t1` of an index's relation (rows in its block, no view): each one's key hash, masked, plus `kb`, at
 /// `eb + t` of `out`, and its tag at `t` of `tags`, as `ix_key`'s.
 pub(super) unsafe fn ix_keys_lanes<const N: usize>(bb: *const u8, far: *const u8, out: *mut u32, tags: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
