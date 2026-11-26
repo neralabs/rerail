@@ -92,7 +92,8 @@ fn npm_ignored(tree: &Tree<'_>) -> Vec<Vec<String>> {
     let manifests: BTreeMap<String, Manifest> = tree
         .packages
         .iter()
-        .filter(|(_, json)| matches!(json, Some(serde_json::Value::Object(_))))
+        // Every package.json, read or not: npm's nearest manifest decides, and one it cannot read decides nothing
+        // (`publishes` is None) rather than handing its files to the package above (review F9).
         .map(|(dir, _)| {
             let bytes = std::fs::read(tree.root.join(dir).join("package.json")).unwrap_or_default();
             (dir.clone(), Manifest::parse(dir.clone(), &bytes).with_ignore_files(read(dir, ".npmignore"), read(dir, ".gitignore")))
@@ -162,11 +163,15 @@ mod tests {
             ("cli/index.js", ""),
             ("cli/scripts/build.js", ""),
             ("tools/x.js", ""),
+            // A package.json npm cannot read is still the nearest one: its folder's files are no longer `lib`'s to
+            // decide (review F9).
+            ("lib/sub/package.json", "{not json"),
+            ("lib/sub/x.js", ""),
         ]);
         let ignored = npm_ignored(&Tree { root: &root, files: &files, docs: &[], packages: &packages });
         let ignored: Vec<&str> = ignored.iter().map(|r| r[0].as_str()).collect();
         assert!(ignored.contains(&"lib/test/a.js") && ignored.contains(&"cli/scripts/build.js"), "{ignored:?}");
-        assert!(!ignored.iter().any(|p| ["lib/dist/a.js", "lib/package.json", "cli/index.js", "cli/package.json", "tools/x.js"].contains(p)), "{ignored:?}");
+        assert!(!ignored.iter().any(|p| ["lib/dist/a.js", "lib/package.json", "cli/index.js", "cli/package.json", "tools/x.js", "lib/sub/x.js"].contains(p)), "{ignored:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 }
