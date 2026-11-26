@@ -687,4 +687,20 @@ Not built or not run:
 - The executor's `execute` runs twins only. A device version launched by the executor through this handoff is
   registered versions' work (E3), not yet built.
 
-Still not built: clippy (as above).
+And **clippy** (the last item above), over blocks, the twins and delta_exec, libraries and tests, with the tests'
+features (`cargo clippy -p rerail-blocks -p rerail-delta-twins -p rerail-delta-exec --lib --tests --features
+rerail-delta-exec/test-hooks`, 51 s from the target as it was, a few seconds after an edit). Its findings there,
+each fixed:
+
+- `Launch::to_fence` returned the launch unboxed in its `Err`; it is boxed now.
+- Two tests used `.err().expect()`; they use `let … else`.
+- blocks' maps (0678): `Mem` was neither `Send` nor `Sync` only because it caches a pointer into its `Region`,
+  which is both, so an `Arc<Mem>` was flagged six times. It is now `Send` and `Sync`, by the same reasoning as the
+  maps that hold it. A string's hash reads its words by `as_chunks`, and the maps' `UnwindSafe` impls come before
+  their tests.
+
+The twins' `clippy.toml` is shown to catch what it names: a call of `std::env::var` added to a twin was reported
+("the environment is not a twin's input"), then removed. Its three lints are now `deny` in the twins' crate, so a
+twin that breaks a rule fails the lint rather than warning. The lint is clean over the three crates; the warnings
+left are in crates they depend on (ukl_vec, tape_format, ukl, c_pp). Checks (Relax, local): `rerail-blocks --lib --
+maps:: sketch:: region::` 31 of 31; `rerail-delta-exec --lib` 28 of 28.

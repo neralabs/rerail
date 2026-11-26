@@ -25,6 +25,8 @@
 //! A params struct is declared once, here, by `params!`; the executor gives UKL its declaration from `Params::FIELDS`.
 
 #![forbid(unsafe_code)]
+// The twins' rules (`clippy.toml`) refuse, not warn.
+#![deny(clippy::disallowed_methods, clippy::disallowed_types, clippy::disallowed_macros)]
 
 use rerail_blocks::gens::Table;
 use rerail_blocks::region::BlockPin;

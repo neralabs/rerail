@@ -524,7 +524,7 @@ DEFINE_KERNEL2(delta_exec_tests, desc_probe, ROBUFFER, uint8_t, t, "[table]", RO
     let (table_buffer, table_at, reached) = (dt.buffer.clone(), dt.at, dt.reached.clone());
     let fence = rerail_blocks::ledger::Fence::new();
     dt.to_fence(&fence, "device probe").unwrap();
-    l.to_fence(&fence, "device probe", 0).map_err(|(_, e)| e).unwrap();
+    l.to_fence(&fence, "device probe", 0).map_err(|b| b.1).unwrap();
     assert!(dir.launch("rival", &[(top, true)]).is_err(), "a block the device reads is not written meanwhile");
     let mut cq = ComputeQueue::new(&shared.queue);
     let mut run = launch(&cq, probe).buffer_at("t", &table_buffer, table_at).buffer("q", &qb).value("p", &ProbeP { n: n as u32, pad: 0 }).buffer("out", &out);
@@ -586,7 +586,8 @@ fn a_launch_on_a_device_holds_its_blocks_until_its_fence_completes() {
     dir.replicate(out, 1, copy(0x1_0000_0000)).unwrap();
     assert!(dir.replicate(out, 1, copy(0x1_1000_0000)).is_err(), "one replica a domain");
     let l = dir.launch("k", &[(out, true)]).unwrap();
-    let (l, e) = l.to_fence(&Fence::new(), "k", 1).err().expect("a block reached has no replica in domain 1");
+    let Err(refused) = l.to_fence(&Fence::new(), "k", 1) else { panic!("a block reached has no replica in domain 1") };
+    let (l, e) = *refused;
     assert!(e.contains("no replica"), "{e}");
     let rows = l.table().rows().to_vec();
     assert!(rerail_blocks::gens::device_rows_in(&rows, &l.pins(), 1).is_err(), "nor a table row there");

@@ -75,6 +75,12 @@ struct Mem {
     base: *mut u8,
 }
 
+// SAFETY: `base` is `region`'s first byte, and `Region` is `Send` and `Sync`: its bytes are reached only as the
+// structure holding it allows (written through its `&mut self`, or read only once frozen), as each one's own
+// `Send` and `Sync` say.
+unsafe impl Send for Mem {}
+unsafe impl Sync for Mem {}
+
 impl Mem {
     fn new(room: &dyn Room, bytes: usize, align: usize, name: &'static str) -> Mem {
         let bytes = bytes.max(8);
@@ -167,11 +173,10 @@ impl<const N: usize> Key for [u64; N] {
 /// The engine's hash of a string's bytes: `mix` over its little-endian 8-byte words, then its length.
 pub fn hash_bytes(b: &[u8]) -> u64 {
     let mut h = crate::SEED;
-    let mut words = b.chunks_exact(8);
-    for w in &mut words {
-        h = crate::mix(h, i64::from_le_bytes(w.try_into().expect("8 bytes")));
+    let (words, rest) = b.as_chunks::<8>();
+    for w in words {
+        h = crate::mix(h, i64::from_le_bytes(*w));
     }
-    let rest = words.remainder();
     if !rest.is_empty() {
         let mut w = [0u8; 8];
         // copy: not block data: a hash's last, partial word
@@ -1241,93 +1246,6 @@ impl<T: Pod> std::ops::Deref for Rec<T> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// An id table in a block (`IdTable`, a set of row ids found by their rows' hashes) finds each id through growth,
-    /// removals that move ids probed past the removed one back, and an id written again in its slot; ids whose hashes
-    /// collide are told apart by their rows. (The engine's other id set in a block, `facts::rows::IdSet`, was merged
-    /// into it, with this test.)
-    #[test]
-    fn an_id_table_finds_each_id_through_growth_and_removals() {
-        // Rows are their ids' values; a hash of 8 values only, so many collide.
-        let row = |id: u32| u64::from(id) * 7 + 1;
-        let hash = |&id: &u32| row(id) % 8;
-        let mut set: IdTable<u32> = IdTable::new();
-        for id in 0..3000u32 {
-            assert_eq!(set.find(hash(&id), |&i| row(i) == row(id)), None);
-            set.insert_unique(hash(&id), id, hash);
-        }
-        assert_eq!(set.len(), 3000);
-        for id in (0..3000u32).step_by(3) {
-            assert_eq!(set.remove(hash(&id), |&i| row(i) == row(id), hash), Some(id));
-        }
-        assert_eq!(set.len(), 2000);
-        for id in 0..3000u32 {
-            let want = (id % 3 != 0).then_some(id);
-            assert_eq!(set.find(hash(&id), |&i| row(i) == row(id)).copied(), want, "id {id}");
-        }
-        assert!(set.find_mut(hash(&1), |&i| i == 1).map(|v| *v = 1).is_some());
-        assert!(set.find_mut(hash(&0), |&i| i == 0).is_none(), "a removed id is not held");
-    }
-    use crate::block::kind;
-
-    fn room() -> Arc<dyn Room> {
-        Arc::new(InBlock(Arc::new(Block::anon(kind::FACTS, 1 << 24).with_free_list())))
-    }
-
-    #[test]
-    fn a_block_hash_holds_what_a_hash_map_holds() {
-        let mut m = BlockHash::<u64, u32>::new(room());
-        let mut want = std::collections::HashMap::new();
-        for i in 0..5000u64 {
-            let k = (i * 7919) % 3001;
-            if i % 5 == 4 {
-                assert_eq!(m.remove(&k), want.remove(&k));
-            } else {
-                assert_eq!(m.insert(k, i as u32), want.insert(k, i as u32));
-            }
-        }
-        m.insert(u64::MAX, 9);
-        want.insert(u64::MAX, 9);
-        assert_eq!(m.len(), want.len());
-        for (k, v) in &want {
-            assert_eq!(m.get(k), Some(v));
-        }
-        let mut got: Vec<_> = m.iter().collect();
-        got.sort();
-        let mut all: Vec<_> = want.into_iter().collect();
-        all.sort();
-        assert_eq!(got, all);
-    }
-
-    #[test]
-    fn a_sorted_map_finds_its_keys_and_keeps_the_last_value() {
-        let entries: Vec<(u32, u32)> = (0..1000u32).map(|i| ((i * 37) % 500, i)).collect();
-        let m = BlockSorted::build(&*room(), entries.len(), entries.iter().copied());
-        assert_eq!(m.len(), 500);
-        assert!(m.keys().windows(2).all(|w| w[0] < w[1]));
-        for (k, _) in &entries {
-            let last = entries.iter().rev().find(|(k2, _)| k2 == k).unwrap().1;
-            assert_eq!(m.get(k), Some(&last));
-        }
-    }
-
-    #[test]
-    fn an_interner_holds_each_string_once() {
-        let mut t = BlockInterner::new(room());
-        let words: Vec<String> = (0..3000).map(|i| format!("w{}", i % 1200)).collect();
-        let ids: Vec<usize> = words.iter().map(|w| t.intern(w)).collect();
-        assert_eq!(t.len(), 1200);
-        for (w, &i) in words.iter().zip(&ids) {
-            assert_eq!(t.get(i), w);
-            assert_eq!(t.find(w), Some(i));
-        }
-        assert_eq!(t.intern(""), 1200);
-        assert_eq!(t.get(1200), "");
-    }
-}
 impl<K: Key, V: Pod + Copy> std::panic::UnwindSafe for BlockHash<K, V> {}
 impl<K: Key, V: Pod + Copy> std::panic::RefUnwindSafe for BlockHash<K, V> {}
 impl<K: Pod + Copy + Ord, V: Pod + Copy> std::panic::UnwindSafe for BlockSorted<K, V> {}
@@ -1504,5 +1422,93 @@ impl<T: Pod + Copy> IdTable<T> {
 impl<T: Pod + Copy> Clone for IdTable<T> {
     fn clone(&self) -> Self {
         IdTable { tags: self.tags.clone(), vals: self.vals.clone(), len: self.len }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An id table in a block (`IdTable`, a set of row ids found by their rows' hashes) finds each id through growth,
+    /// removals that move ids probed past the removed one back, and an id written again in its slot; ids whose hashes
+    /// collide are told apart by their rows. (The engine's other id set in a block, `facts::rows::IdSet`, was merged
+    /// into it, with this test.)
+    #[test]
+    fn an_id_table_finds_each_id_through_growth_and_removals() {
+        // Rows are their ids' values; a hash of 8 values only, so many collide.
+        let row = |id: u32| u64::from(id) * 7 + 1;
+        let hash = |&id: &u32| row(id) % 8;
+        let mut set: IdTable<u32> = IdTable::new();
+        for id in 0..3000u32 {
+            assert_eq!(set.find(hash(&id), |&i| row(i) == row(id)), None);
+            set.insert_unique(hash(&id), id, hash);
+        }
+        assert_eq!(set.len(), 3000);
+        for id in (0..3000u32).step_by(3) {
+            assert_eq!(set.remove(hash(&id), |&i| row(i) == row(id), hash), Some(id));
+        }
+        assert_eq!(set.len(), 2000);
+        for id in 0..3000u32 {
+            let want = (id % 3 != 0).then_some(id);
+            assert_eq!(set.find(hash(&id), |&i| row(i) == row(id)).copied(), want, "id {id}");
+        }
+        assert!(set.find_mut(hash(&1), |&i| i == 1).map(|v| *v = 1).is_some());
+        assert!(set.find_mut(hash(&0), |&i| i == 0).is_none(), "a removed id is not held");
+    }
+    use crate::block::kind;
+
+    fn room() -> Arc<dyn Room> {
+        Arc::new(InBlock(Arc::new(Block::anon(kind::FACTS, 1 << 24).with_free_list())))
+    }
+
+    #[test]
+    fn a_block_hash_holds_what_a_hash_map_holds() {
+        let mut m = BlockHash::<u64, u32>::new(room());
+        let mut want = std::collections::HashMap::new();
+        for i in 0..5000u64 {
+            let k = (i * 7919) % 3001;
+            if i % 5 == 4 {
+                assert_eq!(m.remove(&k), want.remove(&k));
+            } else {
+                assert_eq!(m.insert(k, i as u32), want.insert(k, i as u32));
+            }
+        }
+        m.insert(u64::MAX, 9);
+        want.insert(u64::MAX, 9);
+        assert_eq!(m.len(), want.len());
+        for (k, v) in &want {
+            assert_eq!(m.get(k), Some(v));
+        }
+        let mut got: Vec<_> = m.iter().collect();
+        got.sort();
+        let mut all: Vec<_> = want.into_iter().collect();
+        all.sort();
+        assert_eq!(got, all);
+    }
+
+    #[test]
+    fn a_sorted_map_finds_its_keys_and_keeps_the_last_value() {
+        let entries: Vec<(u32, u32)> = (0..1000u32).map(|i| ((i * 37) % 500, i)).collect();
+        let m = BlockSorted::build(&*room(), entries.len(), entries.iter().copied());
+        assert_eq!(m.len(), 500);
+        assert!(m.keys().windows(2).all(|w| w[0] < w[1]));
+        for (k, _) in &entries {
+            let last = entries.iter().rev().find(|(k2, _)| k2 == k).unwrap().1;
+            assert_eq!(m.get(k), Some(&last));
+        }
+    }
+
+    #[test]
+    fn an_interner_holds_each_string_once() {
+        let mut t = BlockInterner::new(room());
+        let words: Vec<String> = (0..3000).map(|i| format!("w{}", i % 1200)).collect();
+        let ids: Vec<usize> = words.iter().map(|w| t.intern(w)).collect();
+        assert_eq!(t.len(), 1200);
+        for (w, &i) in words.iter().zip(&ids) {
+            assert_eq!(t.get(i), w);
+            assert_eq!(t.find(w), Some(i));
+        }
+        assert_eq!(t.intern(""), 1200);
+        assert_eq!(t.get(1200), "");
     }
 }

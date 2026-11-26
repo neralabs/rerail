@@ -1417,7 +1417,7 @@ mod tests {
         g.complete();
         // No copy in domain 1: refused, and the pin is as it was (its drop ends its read).
         let r = pin_block(&b, "step", false).unwrap();
-        let (r, e) = r.to_fence(&Fence::new(), "step", 1).err().expect("no copy in domain 1");
+        let Err((r, e)) = r.to_fence(&Fence::new(), "step", 1) else { panic!("no copy in domain 1") };
         assert!(e.contains("domain 1") && !r.has_copy_in(1) && r.has_copy_in(0), "{e}");
         assert!(pin_block(&b, "head", true).is_err(), "the read given back still holds the block");
         drop(r);

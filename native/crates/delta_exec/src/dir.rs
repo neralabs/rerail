@@ -282,10 +282,10 @@ impl Launch {
     /// conflicting GPU use of them can begin, and they are not freed. Refused, the launch given back as it was, when
     /// a block has no copy in `domain`. The CPU's descriptor table goes: the device reads its own (`DeviceTable`,
     /// handed to the fence first).
-    pub fn to_fence(self, fence: &Arc<Fence>, op: &'static str, domain: u32) -> Result<(), (Launch, String)> {
+    pub fn to_fence(self, fence: &Arc<Fence>, op: &'static str, domain: u32) -> Result<(), Box<(Launch, String)>> {
         if let Some(p) = self.slots.iter().chain(&self.reach).find(|p| !p.has_copy_in(domain)) {
             let e = format!("{op} on domain {domain}: a block at {:#x} it reaches has no replica there (Directory::replicate)", p.addr());
-            return Err((self, e));
+            return Err(Box::new((self, e)));
         }
         // The launch's pins exclude every conflicting use since it started (a CPU write, a GPU write of another
         // domain), and each has its copy in `domain`: no handoff can be refused now.
