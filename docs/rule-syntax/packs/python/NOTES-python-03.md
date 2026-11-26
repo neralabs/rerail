@@ -6,7 +6,8 @@ each case Ruff 0.17.6 on the fixture agreed with the original. Every rule was al
 against Ruff (`ruff check --select <CODE>`). All of them matched, except the FNs listed under "Left as is".
 
 New library: `lib/python/python-03.rerail`. `type_str_node` and the `type_*` argument relations are used by RUF032,
-RUF034, RUF037, RUF046 and RUF048. `ruff_dataclass` is used by RUF033 and RUF049.
+RUF034, RUF037, RUF046 and RUF048. `ruff_sym`, `ruff_call` and `ruff_only_binding` (names in Ruff's order) are used
+by RUF032, RUF037, RUF046, RUF048 and RUF049. `ruff_dataclass` is used by RUF033 and RUF049.
 
 ## Per rule
 
@@ -58,10 +59,47 @@ RUF034, RUF037, RUF046 and RUF048. `ruff_dataclass` is used by RUF033 and RUF049
 
   The decorator is read through `ruff_dataclass`.
 
+## Review fixes (review/python-03.review.md)
+
+Each counterexample of the review is a `.test` in its rule, expecting exactly Ruff 0.17.6's lines, and so is each
+further case below (`rerail-engine test-rr`: 19 tests pass).
+
+- **Names in Ruff's order (RUF032, RUF033, RUF037, RUF046, RUF049).** python/ruff's `ruff_qual`/`call_q` and
+  ruff-classes' `dataclass_of` read Python's scopes: a name bound anywhere in a function is that function's, and a
+  binding counts when it stands above the read. Ruff resolves a name while it walks the file and walks a function
+  body after the module:
+  ```python
+  from decimal import Decimal
+  def f():
+      v = Decimal(1.0)          # RUF032: Ruff reads the import; f's class is not bound yet
+      class Decimal: pass
+  def g():
+      w = Decimal(2.0)          # not RUF032: the module is done, and its last Decimal is str
+  Decimal = str
+  ```
+  The same holds for `@dc` (RUF033, RUF049), a deque alias (RUF037), `m.ceil` (RUF046), the enum base (RUF049) and
+  the builtins `int`, `round`, `map`, `list`, … (`deque(tuple())` above a local `class tuple` in a function is
+  RUF037; `deque(set())` in a function with `set = 1` at module level below it is not). python-03 now has
+  `ruff_sym(e, q)`: the head's binding by python/upgrade's `up_site` (walk order; a function's enclosing scopes
+  finished), then the attributes, parentheses opened (`(collections).deque`), re-exports not followed. `ruff_call`
+  is the callee's. `ruff_dataclass` is Ruff's `dataclass_kind` over `ruff_sym`: the first decorator naming a
+  dataclass maker decides. A type string's names are still read by `ruff_qual` (Ruff defers them to the end).
+- **RUF046, `int(round(before, 2))` above `before = 1`.** Ruff's `only_binding` is the binding the name reads in
+  walk order, if it shadows no earlier binding of the name in its scope; a later rebinding does not matter
+  (`x = 1; int(round(x, 2)); x = 2.5` is RUF046; `y = 1.5; y = 1; int(round(y, 2))` is not). python/ruff's
+  `one_binding` instead wants the only binding of the scope Python's lookup lands on. `ruff_only_binding` is Ruff's;
+  RUF046's `int_name` now covers what `typed_as` gave (an annotation `int`, a parameter `x: int`, a walrus) over it.
+- **RUF034, `b"a" b"b" if t else b"ab"`.** python/compare's concatenated-bytes leaf reads each part's `value`, which
+  has no rows for bytes, so the concatenation compared as a node and differed. The rule adds a `same_leaf` clause that
+  joins the parts' `str` (library change 2). `b"a" b"" b"b" if t else b'ab'` is RUF034 too, and so are nested ones,
+  `f(b"a" b"b") if t else f(b"ab")`; `b"a" b"c"` against `b"ab"` is not.
+- **RUF048, `"map(int, __version__.split('.' ''))"`.** In a type string the separator is now `type_dot`: one `'.'`
+  among empty parts (`'' '.' ''`, `r'.'` too; `'.' 'x'` not).
+- **RUF040.** Reviewed `ok`; the review's boundary case is a test.
+
 ## Left as is (FNs against Ruff, no corpus key)
 
-- RUF034: `f(a, \⏎ b) if t else f(a, b)` and `b"a" b"b" if t else b"ab"` are Ruff findings that python/compare misses.
-  See library changes 2 and 3.
+- RUF034: `f(a, \⏎ b) if t else f(a, b)` is a Ruff finding that python/compare misses (library change 2).
 - RUF034 in a type string compares branches by text, so `'a if t else (a)'` there is missed.
 - RUF037 in a type string: an empty concatenation or f-string iterable (`"deque('' '')"`) is not recognised.
 
@@ -71,13 +109,16 @@ RUF034, RUF037, RUF046 and RUF048. `ruff_dataclass` is used by RUF033 and RUF049
    (`cast("T", x)`, a TypeVar `bound=`). Otherwise names inside them do not resolve. python-03 adds that clause
    (`parsed_in(e, s) :- string_annotation(s), parsed(s, "annotation", r), …`). It belongs in names.
 2. `python/compare`: `same_child` should skip `line_continuation` as it skips comments. The concatenated-bytes leaf
-   should read `str`, not `value` (`value` has no rows for bytes).
+   should read `str`, not `value` (`value` has no rows for bytes): RUF034 adds that clause to `same_leaf` itself.
 3. `python/compare`: `same_leaf`'s tag column is lost (engine item E1). Until that is fixed, compare should carry
    the literal type itself. RUF034's `lit_type`/`flat` guards are that check and could move into compare as
    `cmp_differs`. The BoolOp flattening (`flat`) belongs there too.
 4. `python/ruff`: relations that count children (`call_item`, `call_nargs`, `empty_literal`, `same_child`, …) give
    wrong rows on a guest's nodes (E2). python-03's `type_arg`/`type_nargs`/`type_nkwargs`/`type_kwarg` are the
    guest-safe versions. Once E2 is fixed they can go.
+5. `python/ruff` (`ruff_qual`, `call_q`, `call_param`, `empty_literal`, `one_binding`/`typed_as`) and
+   python/ruff-classes (`dataclass_of`): Ruff reads names in walk order, so these should read them as python-03's
+   `ruff_sym`/`ruff_call`/`ruff_only_binding` do (review fixes above). They are python-03's until then.
 
 ## Engine gaps found
 
@@ -99,5 +140,6 @@ RUF034, RUF037, RUF046 and RUF048. `ruff_dataclass` is used by RUF033 and RUF049
 
 ## Equivalence file
 
-`equivalence.json` (not edited here) still lists RUF032, RUF033, RUF037, RUF040, RUF046, RUF048 and RUF049 under
-`different`, and RUF034 under `untranslated`. All eight are `same` now: remove them from both.
+All eight are `same` (ptcheck on the review fixes: examples, fixtures, samples-python), so the review fixes take
+RUF032, RUF033, RUF037, RUF040, RUF046, RUF048 and RUF049 out of `different` in `equivalence.json`, and RUF034 out of
+`untranslated`.

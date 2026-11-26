@@ -20,3 +20,42 @@
 // The method is in the class's scope: in its body, or in an `if` or `try` there.
 RUF033(at) :- kind(f, "function_definition"), def_name(f, "__post_init__"), child(p, f, _), nearest(p, c, scope),
     ruff_dataclass(c, _), sig_param(f, _, _, _, _, _, d), !unset(d), unparen(d, at).
+
+// Review python-03 counterexample: Ruff 0.17.6 reports exactly these lines.
+.test decorator_read_before_a_later_local_class exactly
+    .fixture "case.py" ```
+        from dataclasses import dataclass as dc
+        
+        def f():
+            @dc
+            class C:
+                def __post_init__(self, value=1): pass
+            class dc: pass
+            return C
+        ```
+    .expect RUF033 at "case.py":6
+.end
+
+.test module_rebinding_below_a_function
+    .fixture "case.py" ```
+        from dataclasses import dataclass
+        from enum import Enum
+        import collections
+
+        def f():
+            @dataclass
+            class A(Enum): pass
+            return A
+
+        def g():
+            @dataclass
+            class B:
+                def __post_init__(self, v=2): pass
+            return B
+
+        d = (collections).deque([])
+
+        dataclass = 1
+        ```
+    .expect no RUF033
+.end

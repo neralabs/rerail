@@ -12,6 +12,7 @@
 //   x = 1 if flag else 2                    not reported
 //   x = "\r" if flag else b"\r"             not reported: a str and a bytes
 //   x = (a and b and c) if t else ((a and b) and c)    not reported
+//   x = b"a" b"b" if t else b"ab"           ← RUF034: adjacent bytes are one bytes literal
 #include "python/compare.rerail"
 #include "python/python-03.rerail"
 
@@ -28,6 +29,10 @@ branches(e, a, b) :- branch(e, 0, a), branch(e, 2, b).
 branch(e, i, x) :- kind(e, "conditional_expression"), child(e, x, j), !kind(x, "comment"), !kind(x, "line_continuation"),
     i = count : { child(e, y, k), k < j, !kind(y, "comment"), !kind(y, "line_continuation") }.
 cmp_same_ask(a, b) :- branches(_, a, b).
+// Adjacent bytes compare by their joined decoded bytes. python/compare's clause reads each part's `value`, which
+// has no rows for bytes, so it never holds; this one reads `str` (NOTES-python-03, library change 2).
+same_leaf(n, "bytes", v) :- same_some(n), kind(n, "concatenated_string"), child(n, s0, 0), string_form(s0, "bytes"),
+    v = join w by i sep "" : { child(n, s, i), kind(s, "string"), str(s, w) }.
 
 // differs(a, b): python/compare calls them the same, but a pair of nodes at the same place in both is not
 // (NOTES-python-03): literals of different types, whose values compare equal there, or `and`/`or` operations of
@@ -47,3 +52,31 @@ lit_type(x, "float") :- same_some(x), kind(x, "float"), !same_imaginary(x).
 lit_type(x, "complex") :- same_imaginary(x).
 .decl flat(x: node)
 flat(x) :- same_some(x), kind(x, "boolean_operator"), field(x, "left", l), kind(l, "boolean_operator"), op(x, o), op(l, o).
+
+// Review python-03 counterexample: Ruff 0.17.6 reports exactly these lines.
+.test adjacent_bytes_equal_their_concatenation exactly
+    .fixture "case.py" ```
+        value = b"a" b"b" if condition else b"ab"
+        ```
+    .expect RUF034 at "case.py":1
+.end
+
+.test adjacent_bytes_by_value exactly
+    .fixture "case.py" ```
+        value: "map(int, __version__.split('' '.' ''))"
+        other: "map(int, __version__.split('.' 'x'))"
+        third: "map(int, __version__.split(r'.'))"
+        y = b"a" b"" b"b" if t else b'ab'
+        z = b"a" b"c" if t else b"ab"
+        ```
+    .expect RUF034 at "case.py":4
+.end
+
+.test nested_adjacent_bytes exactly
+    .fixture "case.py" ```
+        x = f(b"a" b"b") if t else f(b"ab")
+        y = [b"x", b"a" b"b"] if t else [b"x", b"ab"]
+        ```
+    .expect RUF034 at "case.py":1
+    .expect RUF034 at "case.py":2
+.end

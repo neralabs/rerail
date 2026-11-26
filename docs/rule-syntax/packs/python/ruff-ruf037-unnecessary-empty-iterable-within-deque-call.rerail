@@ -13,6 +13,7 @@
 //   deque([1, 2])              not reported
 //   deque(frozenset())         not reported: Ruff takes only set, list, dict and tuple calls
 //   a: "deque([], 3)"          ← RUF037: Ruff checks the expressions of string type definitions too
+// `deque` and the empty call's `list` are read where Ruff reads them (python/python-03's ruff_call).
 #include "python/python-03.rerail"
 param_slot("collections.deque", "iterable", 0). param_slot("collections.deque", "maxlen", 1).
 
@@ -21,23 +22,24 @@ param_slot("collections.deque", "iterable", 0). param_slot("collections.deque", 
 RUF037(c, m) :- deque_param(c, "iterable", a), empty_iterable(a), deque_size(c, n), n <= 2, says(c, m).
 // The call's parameters and argument count: python/ruff's in the file, python/python-03's in a type string.
 .decl deque_param(c: node, x: symbol, a: node)
-deque_param(c, x, a) :- call_param(c, x, a).
-deque_param(c, x, a) :- type_str_node(c), call_q(c, "collections.deque"), param_slot("collections.deque", x, i),
+deque_param(c, x, a) :- !type_str_node(c), ruff_call(c, "collections.deque"), param_slot("collections.deque", x, i),
+    (ruff_arg(c, i, a) ; call_kwarg(c, x, a)).
+deque_param(c, x, a) :- type_str_node(c), ruff_call(c, "collections.deque"), param_slot("collections.deque", x, i),
     (type_arg(c, i, a) ; type_kwarg(c, x, a)).
 .decl deque_size(c: node, n: number)
-deque_size(c, n + k) :- call_param(c, "iterable", _), call_nargs(c, n), call_nkwargs(c, k).
-deque_size(c, n + k) :- deque_param(c, "iterable", _), type_nargs(c, n), type_nkwargs(c, k).
+deque_size(c, n + k) :- deque_param(c, "iterable", _), !type_str_node(c), call_nargs(c, n), call_nkwargs(c, k).
+deque_size(c, n + k) :- deque_param(c, "iterable", _), type_str_node(c), type_nargs(c, n), type_nkwargs(c, k).
 // empty_iterable(a): a display, a str or bytes literal, or a list, tuple, set or dict call, that is empty.
 .decl empty_iterable(a: node)
-empty_iterable(a) :- deque_param(_, "iterable", a), !type_str_node(a), empty_literal(a, _), !empty_ctor_call(a, "str"),
-    !empty_ctor_call(a, "bytes"), !empty_ctor_call(a, "frozenset").
+empty_iterable(a) :- deque_param(_, "iterable", a), !type_str_node(a), empty_literal(a, _), unparen(a, m),
+    !kind(m, "call").
+empty_iterable(a) :- deque_param(_, "iterable", a), unparen(a, m), kind(m, "call"), no_args(m), ruff_call(m, q),
+    empty_ctor(q, t), (t = "list" ; t = "tuple" ; t = "set" ; t = "dict").
 empty_iterable(a) :- deque_param(_, "iterable", a), type_str_node(a), unparen(a, m),
-    (list_like(m, _), !type_has_child(m) ;
-     kind(m, "call"), type_nargs(m, 0), type_nkwargs(m, 0), call_q(m, q), empty_ctor(q, t),
-     (t = "list" ; t = "tuple" ; t = "set" ; t = "dict") ;
-     kind(m, "string"), !string_body(m)).
-.decl empty_ctor_call(a: node, t: symbol)
-empty_ctor_call(a, t) :- unparen(a, m), kind(m, "call"), empty_literal(m, t).
+    (list_like(m, _), !type_has_child(m) ; kind(m, "string"), !string_body(m)).
+.decl no_args(m: node)
+no_args(m) :- !type_str_node(m), call_nargs(m, 0), call_nkwargs(m, 0).
+no_args(m) :- type_str_node(m), type_nargs(m, 0), type_nkwargs(m, 0).
 .decl string_body(m: node)  // a string in a type string with a character between its quotes
 string_body(m) :- type_str_node(m), kind(m, "string"), child(m, x, _), !kind(x, "string_start"), !kind(x, "string_end").
 .decl says(c: node, m: symbol)
@@ -45,3 +47,80 @@ says(c, "Drop the empty iterable and pass the bound by keyword: `deque(maxlen=..
     deque_param(c, "iterable", _), deque_param(c, "maxlen", _).
 says(c, "Remove the empty iterable argument; `deque()` already starts empty.") :-
     deque_param(c, "iterable", _), !deque_param(c, "maxlen", _).
+
+// Review python-03 counterexample: Ruff 0.17.6 reports exactly these lines.
+.test import_read_before_a_later_local_class exactly
+    .fixture "case.py" ```
+        from collections import deque as D
+        
+        def f():
+            value = D([])
+            class D: pass
+            return value
+        ```
+    .expect RUF037 at "case.py":4
+.end
+
+.test module_rebinding_below_a_function
+    .fixture "case.py" ```
+        from decimal import Decimal
+        from collections import deque
+        import math
+
+        def f():
+            a = Decimal(1.0)
+            b = deque([])
+            c = int(math.ceil(1.2))
+            d = (math).floor(1.2)
+            return a, b, c, d
+
+        Decimal = str
+        deque = list
+        math = None
+        ```
+    .expect no RUF037
+.end
+
+.test empty_call_builtins_in_walk_order exactly
+    .fixture "case.py" ```
+        from collections import deque
+        list = lambda: [1]
+        a = deque(list())
+
+        def f():
+            b = deque(tuple())
+            class tuple: pass
+            return b
+
+        def g():
+            c = deque(set())
+            return c
+
+        set = 1
+        ```
+    .expect RUF037 at "case.py":6
+.end
+
+.test parenthesized_module exactly
+    .fixture "case.py" ```
+        from dataclasses import dataclass
+        from enum import Enum
+        import collections
+
+        def f():
+            @dataclass
+            class A(Enum): pass
+            return A
+
+        def g():
+            @dataclass
+            class B:
+                def __post_init__(self, v=2): pass
+            return B
+
+        d = (collections).deque([])
+
+        dataclass = 1
+        ```
+    .expect RUF037 at "case.py":16
+.end

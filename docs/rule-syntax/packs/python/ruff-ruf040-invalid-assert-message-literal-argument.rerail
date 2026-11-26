@@ -17,3 +17,15 @@
 RUF040(m) :- kind(a, "assert_statement"), child(a, x, 1), unparen(x, m), (kind(m, k), non_str(k) ; bytes_lit(m)).
 .decl non_str(k: symbol)
 non_str("integer"). non_str("float"). non_str("true"). non_str("false"). non_str("none"). non_str("ellipsis").
+
+// Review python-03 counterexample: Ruff 0.17.6 reports exactly these lines.
+.test review_boundary_cases exactly
+    .fixture "case.py" ```
+        assert value, 1
+        assert value, -1
+        assert value, b"a" b"b"
+        assert value, "ok"
+        ```
+    .expect RUF040 at "case.py":1
+    .expect RUF040 at "case.py":3
+.end

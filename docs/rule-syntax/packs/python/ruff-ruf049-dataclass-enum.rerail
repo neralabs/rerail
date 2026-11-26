@@ -11,7 +11,8 @@
 //   class E(Enum): ...
 // A base read as a class of this file is looked up as Ruff's lookup_attribute does when it checks the class,
 // after binding it: the class's own name is the class itself, so `class E(E)` over an enum E is not one; other
-// names in walk order (python/upgrade's up_site), `Outer.Inner` by Outer's last binding of Inner.
+// names in walk order (python/upgrade's up_site), `Outer.Inner` by Outer's last binding of Inner. An imported base
+// and the decorator are read in walk order too (python/python-03's ruff_sym, ruff_dataclass).
 //   class Outer:
 //       class Inner(Enum): ...
 //   @dataclass                ← RUF049
@@ -24,7 +25,7 @@
 RUF049(d) :- ruff_dataclass(c, e), enum_class(c), kind(d, "decorator"), child(d, e, 0).
 
 .decl enum_class(c: node)
-enum_class(c) :- class_base_expr(c, b), base_head(b, h), ruff_qual(h, q), enum_base(q).
+enum_class(c) :- class_base_expr(c, b), base_head(b, h), ruff_sym(h, q), enum_base(q).
 enum_class(c) :- class_base_expr(c, b), base_head(b, h), unparen(h, m), ref_class(c, m, k), enum_class(k).
 // base_ref(c, m): m is a base of c (subscript off), or an object in its attribute chain.
 .decl base_ref(c: node, m: node)
@@ -44,3 +45,43 @@ last_bind(s, x, site) :- ref_class(_, _, s), binding(s, x, site, _), visit_index
 .decl enum_base(q: symbol)
 enum_base(cat("enum.", x)) :- (x = "Enum" ; x = "Flag" ; x = "IntEnum" ; x = "IntFlag" ; x = "StrEnum" ; x = "ReprEnum" ;
     x = "CheckEnum").
+
+// Review python-03 counterexample: Ruff 0.17.6 reports exactly these lines.
+.test decorator_and_base_read_before_later_local_classes exactly
+    .fixture "case.py" ```
+        from dataclasses import dataclass as dc
+        from enum import Enum as E
+        
+        def f():
+            @dc
+            class C(E): pass
+            class dc: pass
+            class E: pass
+            return C
+        ```
+    .expect RUF049 at "case.py":5
+.end
+
+.test module_rebinding_below_a_function
+    .fixture "case.py" ```
+        from dataclasses import dataclass
+        from enum import Enum
+        import collections
+
+        def f():
+            @dataclass
+            class A(Enum): pass
+            return A
+
+        def g():
+            @dataclass
+            class B:
+                def __post_init__(self, v=2): pass
+            return B
+
+        d = (collections).deque([])
+
+        dataclass = 1
+        ```
+    .expect no RUF049
+.end

@@ -4,8 +4,7 @@
   "equivalent": false,
   "untranslated": {
     "bandit-b105-hardcoded-password-string": "no .rerail translation; recorded by the suite, not yet explained",
-    "ruff-perf403-manual-dict-comprehension": "failed: check-rr reader-failed ruff-perf403-manual-dict-comprehension.rerail: not lowered yet: flat: match_all over $e, a node or span not bound by `source`, `src_line`, `kind` or a capture",
-    "ruff-ruf034-useless-if-else": "failed: samples-python: the translation failed: rerail-engine: docs/rule-syntax/packs/python/ruff-ruf034-useless-if-else.rerail: `value` is answered on request in the cross-file part, which holds no documents to read it from (decision 0174 §6) (exit 1)"
+    "ruff-perf403-manual-dict-comprehension": "failed: check-rr reader-failed ruff-perf403-manual-dict-comprehension.rerail: not lowered yet: flat: match_all over $e, a node or span not bound by `source`, `src_line`, `kind` or a capture"
   },
   "different": {
     "bandit-b101-assert-used": {
@@ -4174,46 +4173,6 @@
         }
       }
     },
-    "ruff-ruf032-decimal-from-float-literal": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ruf033-post-init-default": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-ruf037-unnecessary-empty-iterable-within-deque-call": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ruf040-invalid-assert-message-literal-argument": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 4
-        }
-      }
-    },
     "ruff-ruf041-unnecessary-nested-literal": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -4221,36 +4180,6 @@
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ruf046-unnecessary-cast-to-int": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ruf048-map-int-version-parsing": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ruf049-dataclass-enum": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 5
         }
       }
     },

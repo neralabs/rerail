@@ -1,5 +1,6 @@
-// python/python-03: two things batch python-03's Ruff rules share: the expressions Ruff reads inside string type
-// definitions (RUF032, RUF034, RUF037, RUF046), and a dataclass decorator read where Ruff reads it (RUF033, RUF049).
+// python/python-03: three things batch python-03's Ruff rules share: the expressions Ruff reads inside string type
+// definitions (RUF032, RUF034, RUF037, RUF046), names read in Ruff's order (RUF032, RUF037, RUF046, RUF048, RUF049),
+// and a dataclass decorator read where Ruff reads it (RUF033, RUF049).
 //
 // What a rule gets from this library:
 //   1. Type strings:  type_str_node(e)     e is in the tree Ruff parses from a string it reads as a type (core's
@@ -11,9 +12,18 @@
 //                     type_nargs(c, n), type_nkwargs(c, n)   call_nargs, call_nkwargs, likewise
 //                     type_has_child(m)    m, in such a tree, has a child that is not a comment (a display that is
 //                                          not empty)
-//   2. Dataclasses:   ruff_dataclass(c, e) class c is a stdlib dataclass by decorator e (python/ruff-classes'
-//                                          dataclass_of), and e's name reads `dataclasses.dataclass` at e, in Ruff's
-//                                          order (python/upgrade's sym_at)
+//   2. Names:         ruff_sym(e, q)       e, parentheses off, names q where Ruff reads it: the binding its head reads
+//                                          in Ruff's walk order (python/upgrade's up_site), then its attributes. An
+//                                          import gives its target, a def or class its qualname, no binding a
+//                                          builtin; re-exports are not followed. In a type string, python/ruff's
+//                                          ruff_qual
+//                     ruff_call(c, q)      call c's callee is ruff_sym q
+//                     ruff_only_binding(e, b, f)   Ruff's only_binding: name e (parentheses off) reads binding b,
+//                                          of form f, in walk order, and b shadows no earlier binding of its name in
+//                                          its scope (a later one does not matter)
+//   3. Dataclasses:   ruff_dataclass(c, e) class c is a stdlib dataclass by decorator e: of c's decorators, the
+//                                          first whose ruff_sym (call off) is a dataclass maker (python/ruff-classes'
+//                                          dc_maker) is e, and it is `dataclasses.dataclass`
 //
 // Ruff background
 //   - Ruff's checker visits the expressions it parses from string type definitions like any other, so an
@@ -27,14 +37,20 @@
 //   - Names in those trees resolve from where the string stands. python/names does that for strings in
 //     annotations (parsed_in); the clause below adds the other strings Ruff reads as types (`cast("T", x)`), so
 //     `Decimal` in `cast("Decimal(3.5)", 1)` resolves to decimal.Decimal too.
-//   - Ruff resolves a decorator while it walks the module: a module-level class decorated with `@dataclass` above
-//     `from dataclasses import dataclass` is no dataclass; one in a function body (walked after the module) is.
+//   - Ruff resolves a name while it walks the module, and walks a function body after the module. python/ruff's
+//     ruff_qual and call_q read Python's scopes (a name bound anywhere in a function is that function's) and the
+//     bindings above the read anywhere, so they disagree with Ruff where a binding comes later:
+//       def f():
+//           v = Decimal(1.0)      Ruff: the module's import (f's class is not bound yet); call_q: f's class
+//           class Decimal: pass
+//     and, in a function, a module-level binding below it is the one Ruff reads. A module-level class decorated
+//     with `@dataclass` above `from dataclasses import dataclass` is no dataclass; one in a function body is.
 //
 //   from decimal import Decimal
 //   x: "Decimal(1.5)" = 1                 type_str_node(<Decimal(1.5)>), call_q(<Decimal(1.5)>, "decimal.Decimal"),
 //                                         type_arg(<Decimal(1.5)>, 0, <1.5>), type_nargs(<Decimal(1.5)>, 1)
 //   y: Literal["Decimal(1.5)"] = 1        none: a Literal's string is a value
-//   @dataclass                            no ruff_dataclass: `dataclass` is not bound yet here
+//   @dataclass                            no ruff_dataclass: `dataclass` is not bound yet here (ruff_sym)
 //   class A: ...
 //   from dataclasses import dataclass
 #include "python/ruff-classes.rerail"
@@ -70,9 +86,24 @@ type_nkwargs(c, n) :- type_str_node(c), kind(c, "call"), n = count : { type_item
 .decl type_has_child(m: node)
 type_has_child(m) :- type_str_node(m), child(m, x, _), !kind(x, "comment").
 
+// ---- names, in Ruff's order --------------------------------------------------------------------------------------
+.decl ruff_sym(e: node, q: symbol)
+ruff_sym(e, q) :- !type_str_node(e), unparen(e, m), walk_sym(m, q).
+ruff_sym(e, q) :- type_str_node(e), ruff_qual(e, q).
+.decl walk_sym(m: node, q: symbol)
+walk_sym(m, r) :- head_ref(m, m, _), up_site(m, site), site_root(site, r, _).
+walk_sym(m, @dot("builtins", x)) :- head_ref(m, m, x), up_unbound(m), builtin(x).
+walk_sym(m, @dot(q, a)) :- attr_of(m, o0, a), unparen(o0, o), walk_sym(o, q).
+.decl ruff_call(c: node, q: symbol)
+ruff_call(c, q) :- kind(c, "call"), field(c, "function", f), ruff_sym(f, q).
+.decl ruff_only_binding(e: node, b: node, f: symbol)
+ruff_only_binding(e, b, f) :- unparen(e, m), head_ref(m, m, x), up_site(m, b), binding(s, x, b, f), visit_index(b, i),
+    count : { binding(s, x, b2, _), visit_index(b2, j), j < i } = 0.
+
 // ---- dataclasses -------------------------------------------------------------------------------------------------
-// The decorator's name: `@dataclass`, `@dataclasses.dataclass`, or the callee of `@dataclass(…)`.
+// Ruff's dataclass_kind: the first decorator whose name (the callee of `@dataclass(…)`) resolves to a maker decides.
 .decl ruff_dataclass(c: node, e: node)
-ruff_dataclass(c, e) :- dataclass_of(c, "stdlib", e), unparen(e, m), !kind(m, "call"), sym_at(m, "dataclasses.dataclass").
-ruff_dataclass(c, e) :- dataclass_of(c, "stdlib", e), unparen(e, m), kind(m, "call"), field(m, "function", f),
-    unparen(f, g), sym_at(g, "dataclasses.dataclass").
+ruff_dataclass(c, e) :- ruff_dc_dec(c, e, "stdlib"), count : { ruff_dc_dec(c, e0, _), e0 < e } = 0.
+.decl ruff_dc_dec(c: node, e: node, k: symbol)
+ruff_dc_dec(c, e, k) :- kind(c, "class_definition"), decorator(c, e), unparen(e, m),
+    (!kind(m, "call"), g = m ; kind(m, "call"), field(m, "function", g)), ruff_sym(g, q), dc_maker(q, k).
