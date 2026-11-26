@@ -1172,8 +1172,8 @@ The shape script holds `l1.rs` to one `k0_pass` call, and `k0.rs` to one launch 
 - `boot::run(l1, inst, l0, globals, docs, bench, last)` returns `(Pins, Doc, Work)`. Its `Pins` say where the run
   left each trace it read or wrote: the document set's head, L1's outputs' heads, and the atoms' count.
 - A trace has two states, the committed one and the run's open layer on it. This is "B2's trace: two states" above:
-  no reads at other frontiers, no named pins. So `Pins` is a record that holds no block. P§12's `Trace::pin` (a
-  named frontier) is not built.
+  no reads at other frontiers, no named pins. So `Pins` is a record that holds no block, and P§12's `Trace::pin` (a
+  named frontier) is left out by that decision.
 - `last = None` is a cold run. Every bistate starts from ∅ (L2): the document set's, the atoms', and L1's outputs,
   which are emptied first (`Trace::clear`).
 - `last = Some(p)` must be where the last run left the traces. Pins of any other state are refused, as a cache of
@@ -1322,8 +1322,7 @@ leased from the device pool. It is shared by many documents, and each source and
 allocation of its own length, plus a word (`placed::place`, `tape_room`). Slabs are retired whole, by the budget and
 least recent use. The change instead gave each document a slab of its own, reserved at the tape's bound of 80 times
 the source and resident whole. `tape_block` is back to a sparse reservation in run memory, and the change's test is
-gone. A document's source and tape still do not lie in the residency's rooms; B4's "read once into a slab room
-through read_placed and a placer" is still not built.
+gone. (Superseded by "Slab rooms, as the residency's", next: sources and tapes now lie in the residency's rooms.)
 
 **Slab rooms, as the residency's (B4)**. Sources and tapes now lie as the residency places them (`rerail_slabs`):
 
