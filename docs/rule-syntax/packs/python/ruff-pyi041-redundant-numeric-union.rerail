@@ -10,6 +10,7 @@
 //   def f(x: int | float): ...              ← PYI041: write `float`
 //   def g(x: int | float | complex): ...    ← PYI041: write `complex`
 #include "python/typing.rerail"
+#include "python/python-07.rerail"   // union_tuple: `Union[(int, float)]`
 
 .violation PYI041(at: node, msg: symbol) code "PYI041" "{msg}"
     suppress ruff "PYI041"
@@ -23,4 +24,10 @@ PYI041(u, "Remove `int` from this parameter union where `float` is also listed; 
 param_union(u) :- kind(f, "function_definition"), sig_param(f, _, _, _, _, a, _), !unset(a), type_bare(a, u), within(u, f),
     union_top(u).
 .decl has_num(u: node, x: symbol)  // the builtin x is a member
-has_num(u, x) :- union_leaf(u, m), pyi_sym(m, q), split_dot(q, "builtins", x).
+has_num(u, x) :- union_leaf(u, m), num_member(m, x).
+// A leaf that is the parenthesised tuple of `Union[(int, float)]` is that Union's members to Ruff (python-07); a
+// member that is itself a union, `Union[(int, float | str)]`, is flattened.
+has_num(u, x) :- union_leaf(u, a), union_tuple(_, a), child(a, y, _), type_bare(y, e),
+    (union_leaf(e, m) ; !union(e), m = e), num_member(m, x).
+.decl num_member(m: node, x: symbol)
+num_member(m, x) :- pyi_sym(m, q), split_dot(q, "builtins", x).

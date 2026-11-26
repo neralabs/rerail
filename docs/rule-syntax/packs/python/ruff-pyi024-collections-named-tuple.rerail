@@ -4,11 +4,25 @@
 .mode steer
 .scope include "**/*"
 
-// Ruff PYI024 (flake8-pyi), every file: a use of `collections.namedtuple`, called or not, however imported (the
-// import itself is not reported). `typing.NamedTuple` carries field types.
+// Ruff PYI024 (flake8-pyi), every file: a reference to `collections.namedtuple`, called or not, as Ruff's semantic
+// model resolves it: a Name read (load context) whose binding there is the import, any Attribute (`del` and
+// assignment targets too, and inside a longer chain: `collections.namedtuple._make`), a dotted value pattern
+// `case collections.namedtuple.x:`, and names in string annotations. The import itself is not reported, nor a name
+// after it is rebound (`namedtuple += 1` stores; a later `namedtuple` is the new value).
 //   Point = collections.namedtuple("Point", "x y")    ← PYI024 at `collections.namedtuple`
 #include "python/typing.rerail"
+#include "python/misc2-case.rerail"
 
 .violation PYI024(at: node) code "PYI024" "Replace `collections.namedtuple` with a class inheriting `typing.NamedTuple` that annotates each field; keep it where field names are built at runtime or `rename=True` is needed."
     suppress ruff "PYI024"
-PYI024(e) :- pyi_sym(e, "collections.namedtuple"), (kind(e, "attribute") ; ast_name(e, _)), !field(_, "object", e).
+PYI024(e) :- ast_name(e, x), expr_ctx(e, "load"), ruff_qual(e, "collections.namedtuple"), !deleted(e, x).
+PYI024(e) :- kind(e, "attribute"), ruff_qual(e, "collections.namedtuple"), !root_deleted(e).
+PYI024(e) :- case_value_name(e, q), (q = "collections.namedtuple" ; prefix("collections.namedtuple.", q)).
+// tree-sitter reads `[*collections.namedtuple]` as the attribute `namedtuple` of the splat `*collections`.
+PYI024(e) :- attr_of(e, s, "namedtuple"), kind(s, "list_splat"), child(s, r, 0), ruff_qual(r, "collections").
+// deleted(e, x): an unconditional `del x` comes between the import and the read e, which then reads nothing.
+.decl deleted(e: node, x: symbol)
+deleted(e, x) :- look(e, x, s), del_site(s, n, st), text(n, x), st < e,
+    count : { binding(s, x, a, "import"), st < a, a < e } = 0.
+.decl root_deleted(e: node)  // the name at the root of attribute chain e is deleted
+root_deleted(e) :- chain_root(e, r), ast_name(r, x), deleted(r, x).

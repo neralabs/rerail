@@ -1,0 +1,17 @@
+// python/python-07: `Union[…]`'s slice as Ruff reads it, for PYI036 and PYI041.
+//
+// Interface
+//   union_tuple(t, a)       t is `Union[(…)]`: its one argument is the parenthesised tuple a, with no comma after
+//                           it. Ruff's slice is then that tuple, so a's elements are t's members, as in `Union[A, B]`:
+//                             Union[(int, float)]       union_tuple: members int and float (PYI041 reports it)
+//                             Union[(int, float),]      no row: a one-element tuple, whose member is the tuple
+//                           typing's tsub (and so union_part and union_leaf) reads the tuple as one argument.
+//   union_arg(t, x)         x is a member of `Union[…]` t, one level, union_tuple's elements opened
+#include "python/typing.rerail"
+
+.decl union_tuple(t: node, a: node)
+union_tuple(t, a) :- typing_subscript(t, "Union"), tsub_n(t, 1), tsub(t, _, 0, a), kind(a, "tuple"),
+    !match("(?s).*,\\s*\\]", t).
+.decl union_arg(t: node, x: node)
+union_arg(t, x) :- typing_subscript(t, "Union"), tsub(t, _, _, x), !union_tuple(t, _).
+union_arg(t, x) :- union_tuple(t, a), child(a, y, _), !kind(y, "comment"), type_bare(y, x).

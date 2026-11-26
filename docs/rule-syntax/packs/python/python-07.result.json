@@ -1,0 +1,82 @@
+[
+  {
+    "id": "ruff-pyi024-collections-named-tuple",
+    "status": "different",
+    "reason": "A name in a string annotation, `-> \"namedtuple\"` after `from collections import namedtuple` (F401_0.py:46): Ruff reports it (46:21), the original does not.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-pyi026-type-alias-without-annotation",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi030-unnecessary-literal-union",
+    "status": "different",
+    "reason": "`\"list[int] | Literal[1]\" \"\"` has one Literal member; Ruff does not report it, the original does.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 1,
+        "translationOnly": 0
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-pyi032-any-eq-ne-annotation",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi033-legacy-type-comment",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi036-bad-exit-annotation",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi041-redundant-numeric-union",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi044-future-annotations-in-stub",
+    "status": "different",
+    "reason": "`from ..__future__ import annotations` and `from . __future__ import annotations` are relative imports of a package module, not future statements; Ruff does not report them, the original does.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 2,
+        "translationOnly": 0
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  }
+]
