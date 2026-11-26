@@ -488,8 +488,8 @@ What a run block's trace refuses, each saying where the plan puts it (`a_shape_t
   two states rule out.
 
 Outside these runs: the descriptor table is the CPU's (a device's comes with a device executor; no Metal runs here);
-the twins' clippy.toml and a cargo build of these crates were not run (only narrow Relax runs on this machine are
-allowed); references of a block that is gone are let go at the directory's next `release`, `make` or `sweep`.
+the twins' clippy.toml and a cargo build of these crates were not run (I wrongly took "stop wasting time" as a ban
+on them; clippy was run later, below); references of a block that is gone are let go at the directory's next `release`, `make` or `sweep`.
 
 ## The device's descriptor table; clippy and cargo (2026-11-25)
 
@@ -588,8 +588,8 @@ Not built yet, each still the plan's:
 - E1 on a device: GPU uses pinned through fences, and replicas made by the directory where a device needs them.
 - consolidate's kills search each row's key in every layer below (a binary search a layer, by its order); its cost
   is not measured.
-- Clippy with the twins' `clippy.toml` was not run on this code (no cargo or clippy runs are allowed here), so it is
-  not shown to catch anything yet.
+- Clippy with the twins' `clippy.toml` was not run on this code, so it is not shown to catch anything yet. (I wrote
+  here that cargo and clippy runs were not allowed: the user never said so. It was run later, below.)
 
 Then (the same day), two of the items above:
 
@@ -628,8 +628,9 @@ partition's rows and kills, the counted reads, the partitions a change touches) 
 `View::new(base, top)`. `check_delta_exec_shape.py` refuses a `Chain` type, or a `Read` or `States` for one, beside
 View. Checks (Relax, local): `rerail-delta-exec --lib` 26 of 26; `rerail-blocks --lib -- bistate:: relation:: table::
 change:: sketch:: facts:: layer:: rows::` 42 of 42; `rerail-clif --lib -- relation::` 8 of 8; the twins compile.
-Not run: the old engine's crates that build a View (setfix's blocks comparison tests, store's kept facts) and blocks'
-examples. Their change is the constructor only, and none of their tests are in the narrow runs allowed here.
+Not run: the old engine's tests that build a View (setfix's blocks comparison tests, store's kept facts) and blocks'
+examples. Their change is the constructor only. Compiled since (2026-11-25, `cargo check`): blocks' examples and
+store's library, and logic's library and tests, with no error.
 
 And **the kill search's cost, measured** (the third item above). A View's counted reads now count every search step
 too: each row a layer's binary search compares, and each step of a search of a layer's kills. Over a trace of eight
