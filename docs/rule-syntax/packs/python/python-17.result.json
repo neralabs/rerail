@@ -1,0 +1,48 @@
+[
+  {
+    "id": "ruff-d101-undocumented-public-class",
+    "status": "different",
+    "reason": "The translation reports D101 for the undocumented public ServiceRefOrValue classes at ruff/pyupgrade/UP045_1.py:35 and :43. Ruff 0.17.6 reports both; the JSON original reports neither.",
+    "right": "translation",
+    "counts": {
+      "examples": { "originalOnly": 0, "translationOnly": 0 },
+      "fixtures": { "originalOnly": 0, "translationOnly": 2 },
+      "samples-python": { "originalOnly": 0, "translationOnly": 0 }
+    }
+  },
+  {
+    "id": "ruff-d102-undocumented-public-method",
+    "status": "same"
+  },
+  {
+    "id": "ruff-d103-undocumented-public-function",
+    "status": "different",
+    "reason": "The remaining 19 fixture keys are undocumented public functions that Ruff 0.17.6 and the translation report but the JSON original omits; ruff/flake8_bugbear/B012.py:1 def a() is one counterexample.",
+    "right": "translation",
+    "counts": {
+      "examples": { "originalOnly": 0, "translationOnly": 0 },
+      "fixtures": { "originalOnly": 0, "translationOnly": 19 },
+      "samples-python": { "originalOnly": 0, "translationOnly": 0 }
+    }
+  },
+  {
+    "id": "ruff-d105-undocumented-magic-method",
+    "status": "same"
+  },
+  {
+    "id": "ruff-d107-undocumented-public-init",
+    "status": "same"
+  },
+  {
+    "id": "ruff-d200-unnecessary-multiline-docstring",
+    "status": "same"
+  },
+  {
+    "id": "ruff-d205-missing-blank-line-after-summary",
+    "status": "same"
+  },
+  {
+    "id": "ruff-d209-new-line-after-last-paragraph",
+    "status": "same"
+  }
+]
