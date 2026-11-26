@@ -81,7 +81,7 @@ where
     }
 
     /// The lanes whose row the relation holds (`dedup_held`): each lane's walk of the map from its hash's place.
-    unsafe fn held(&self, d: &Dedup, rel: *const u8, hb: *const u8, sealed: ln::Sealed, on: W<N>) -> W<N> {
+    unsafe fn held(&self, d: &Dedup, rel: *const u8, hb: *const u8, on: W<N>) -> W<N> {
         let m = hb.add(d.h_at as usize) as *const u32;
         let rd = rel.wrapping_add(d.r_at as usize);
         let (mut at, mut go, mut held) = (self.h & sr(d.hmask), on, Mask::splat(false));
@@ -96,7 +96,7 @@ where
             // A lane done reads the first walking lane's row: every read is of a row there is.
             let y = go.select(y, sr(y[f]));
             // The set's own relation, one part in its block: no far base.
-            let row = ln::rel_at(rd, y, rd, sealed);
+            let row = ln::rel_at(rd, y, rd);
             let mut same = go;
             for c in 0..d.ncols.min(16) as usize {
                 same &= row.get(c as u32).cast::<i64>().simd_eq(self.v[c]).cast::<i32>();
@@ -112,7 +112,7 @@ where
 /// Rows `x0..x1` of a dedup (all below its rows): each kept (1) where its place (its claim's, past the places) holds
 /// it, the least of its equal rows, and, less a relation's (`Dedup::seen`), the relation holds no equal row.
 #[allow(clippy::too_many_arguments)]
-pub(super) unsafe fn dedup_mark_lanes<const N: usize>(t: *const i64, p: *const u32, counts: *mut u32, rel: *const u8, hb: *const u8, d: &Dedup, sealed: ln::Sealed, x0: u32, x1: u32)
+pub(super) unsafe fn dedup_mark_lanes<const N: usize>(t: *const i64, p: *const u32, counts: *mut u32, rel: *const u8, hb: *const u8, d: &Dedup, x0: u32, x1: u32)
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -128,7 +128,7 @@ where
         let y = ln::gather32_ix(p.cast::<u8>(), on.select(at, sr(0)), 2);
         let mut keep = on & y.simd_eq(me);
         if d.seen != 0 && keep.any() {
-            keep &= !Rows::<N>::of(d, t, x, n).held(d, rel, hb, sealed, keep);
+            keep &= !Rows::<N>::of(d, t, x, n).held(d, rel, hb, keep);
         }
         let c: [u32; N] = keep.select(sr(1), sr(0)).to_array();
         core::ptr::copy_nonoverlapping(c.as_ptr(), counts.add(x as usize), n as usize);
@@ -197,7 +197,7 @@ where
 
 /// Rows `t0..t1` of an index's relation (rows in its block, no view): each one's key hash, masked, plus `kb`, at
 /// `eb + t` of `out`, as `ix_key`'s.
-pub(super) unsafe fn ix_keys_lanes<const N: usize>(bb: *const u8, far: *const u8, sealed: ln::Sealed, out: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
+pub(super) unsafe fn ix_keys_lanes<const N: usize>(bb: *const u8, far: *const u8, out: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -207,7 +207,7 @@ where
         let n = (t1 - t).min(N as u32);
         // Lanes past the rows read the first one's: every read is of a row there is.
         let row = first::<N>(n).select(sr(p.from.wrapping_add(t)) + iota::<N>(), sr(p.from.wrapping_add(t)));
-        let at = ln::rel_at(d, row, far, sealed);
+        let at = ln::rel_at(d, row, far);
         let mut h = U::splat(KEY_SEED);
         for i in 0..(p.ncols & !IX_LIVE).min(8) as usize {
             h = ln::key_mix(h, at.get(p.cols[i]));

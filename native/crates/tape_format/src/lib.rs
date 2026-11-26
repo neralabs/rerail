@@ -11,10 +11,12 @@ pub mod f16;
 pub mod home;
 pub mod newlines;
 /// The tape's reads in Rust, written directly (decision 0534): this crate's readers'.
-pub mod reads;
-/// The views' reads in Rust, written directly (decision 0353 step 3 on the CPU): the host executor's reads of a
-/// document's views' rows, through its entry in its batch's views' directory.
-pub mod view_reads;
+// The reads (decision 0534), in the crate below every reader of a tape (`rerail_reads::tape`), where they were.
+pub use rerail_reads::tape as reads;
+/// The views' reads in Rust, written directly (decision 0353 step 3 on the CPU): the reads of a document's views' rows,
+/// through its entry in its batch's views' directory; the host executor's and the CPU's join program's
+/// (`rerail_reads::view_reads`).
+pub use rerail_reads::view_reads;
 /// The tape's writer in Rust, written directly (decision 0532): the host's, and a generated tier 2's `ops` module.
 pub mod writer16;
 /// A tape's auxiliary index (decision 0656): the names stream, the vocabulary, sibling places, code counts and rare
@@ -50,16 +52,8 @@ pub mod codes_dir {
 
     /// Run `k` (0 kinds, 1 fields) of language `tag`: empty for a tag with no table.
     fn run(tag: u8, k: usize) -> &'static [u32] {
-        let at = |i: usize| u32::from_le_bytes(DIR.0[i..i + 4].try_into().expect("a u32")) as usize;
-        let place = usize::from(tag) * super::codes::LANG_BYTES;
-        let (kinds, fields) = (at(place), at(place + 4));
-        if kinds == 0 {
-            return &[];
-        }
-        let n = (fields - kinds) / 4;
-        let start = if k == 0 { kinds } else { fields };
-        // SAFETY: `n` u32s at a multiple of 4 from the page-aligned directory, inside it (`codes::image`).
-        unsafe { std::slice::from_raw_parts(DIR.0.as_ptr().add(start).cast::<u32>(), n) }
+        // SAFETY: the binary's directory, static.
+        unsafe { rerail_reads::views::code_atoms(DIR.0.as_ptr(), tag, k) }
     }
 
     /// Language `tag`'s codes' kind atoms, by number: the `kind` column's value of a node of each.

@@ -8,10 +8,10 @@
 //! The views no CLIF reads yet (`tape`, `ast_depth`, `node_order`, `next_sibling`, `rr_report_location`) are read here
 //! from the same entry and tape: their first definition, the host's rows the reference.
 
-use crate::reads::{NONE, f16, f16z::Z};
-use rerail_clif::ids::{INDEX_BITS, Numbering, SLOT_BITS, SPAN_SLOTS};
-use rerail_clif::view::{F16Z_FORMAT, TapeView};
-use rerail_clif::view_reads::{NO_ROW, NO_SPAN, PLACED_AT, PLACED_COPIED, PLACED_SEGMENTS, PLACED_TABLE, ViewDoc};
+use crate::tape::{NONE, f16, f16z::Z};
+use crate::ids::{INDEX_BITS, Numbering, SLOT_BITS, SPAN_SLOTS};
+use crate::view::{F16Z_FORMAT, TapeView};
+use crate::views::{NO_ROW, NO_SPAN, PLACED_AT, PLACED_COPIED, PLACED_SEGMENTS, PLACED_TABLE, ViewDoc};
 
 /// A document's tape as the views read it: its bytes from its view's base, its view, in its format; a 16z tape with
 /// the cache its reads share.
@@ -94,7 +94,7 @@ impl<'a> Tape<'a> {
     /// Its auxiliary index in its home (decision 0656), after its presence: the presence's bytes from its header
     /// rounded up to 16 (`f16::presence::aux_at`), as `tape_place` finds it. `None` without a presence, or where the
     /// bytes there are no index.
-    fn aux(&self) -> Option<crate::aux_index::AuxIndex<'a>> {
+    fn aux(&self) -> Option<crate::aux::AuxIndex<'a>> {
         let (t, v) = match *self {
             Tape::F16(t, v) => (t, v),
             Tape::F16Z(z) => (z.t, z.v),
@@ -103,16 +103,16 @@ impl<'a> Tape<'a> {
             return None;
         }
         let at = v.presence as usize;
-        let head = t.get(at..at + crate::f16::presence::HEAD)?;
+        let head = t.get(at..at + crate::tape::presence::HEAD)?;
         let w = |k: usize| u32::from_le_bytes([head[4 * k], head[4 * k + 1], head[4 * k + 2], head[4 * k + 3]]) as usize;
-        let len = crate::f16::presence::HEAD + 8 * (w(0) + w(1)) * w(2) + 4 * w(3);
-        crate::aux_index::AuxIndex::read(t.get(crate::f16::presence::aux_at(at, at + len)..)?).ok()
+        let len = crate::tape::presence::HEAD + 8 * (w(0) + w(1)) * w(2) + 4 * w(3);
+        crate::aux::AuxIndex::read(t.get(crate::tape::presence::aux_at(at, at + len)..)?).ok()
     }
     /// Named node `node`'s place among its parent's named children (`tape_place`, `aux_index::place`): 0 for the
     /// first, and for the root; from the last every-K-th named sibling at or before it, the siblings stepped to it,
     /// each named one counted. `NONE` where the home holds no index.
     pub fn place(&self, node: u32) -> u32 {
-        use crate::aux_index::{K, NONE as NO_ENTRY};
+        use crate::aux::{K, NONE as NO_ENTRY};
         let Some(aux) = self.aux() else { return NONE };
         let p = self.parent(node);
         if p == NONE {
@@ -132,7 +132,7 @@ impl<'a> Tape<'a> {
     /// `aux_index::place_past_comments`: T's shape's places): as `place`, the comments before the every-K-th named
     /// sibling taken off, and the steps after it counting no comment. `NONE` where the home holds no index.
     pub fn place_past_comments(&self, node: u32) -> u32 {
-        use crate::aux_index::K;
+        use crate::aux::K;
         let Some(aux) = self.aux() else { return NONE };
         let p = self.parent(node);
         if p == NONE {
@@ -171,6 +171,10 @@ pub struct Doc<'a> {
     pub tape: Tape<'a>,
     pub lines: &'a [u8],
     pub source: &'a [u8],
+    /// Its language's codes' kind atoms and field atoms, by code (decision 0697, `views::code_atoms`): the `node`
+    /// view's kind and the `field` view's field.
+    pub kinds: &'a [u32],
+    pub fields: &'a [u32],
     /// The numbered node last selected and its tape node (`tape_node`), and the `field` view's row it is the node of
     /// (`fielded`; `u32::MAX`: none): a row's columns read one after another select its node once. `u32::MAX`: none
     /// yet.
@@ -192,10 +196,10 @@ impl Selected {
 }
 
 impl<'a> Doc<'a> {
-    /// The document's reads, through its directory row's `entry`.
+    /// The document's reads, through its directory row's `entry`, with its language's codes' `(kinds, fields)`.
     #[inline]
-    pub fn new(entry: &'a ViewDoc, tape: Tape<'a>, lines: &'a [u8], source: &'a [u8]) -> Doc<'a> {
-        Doc { entry, tape, lines, source, last: std::cell::Cell::new(Selected::NONE) }
+    pub fn new(entry: &'a ViewDoc, tape: Tape<'a>, lines: &'a [u8], source: &'a [u8], (kinds, fields): (&'a [u32], &'a [u32])) -> Doc<'a> {
+        Doc { entry, tape, lines, source, kinds, fields, last: std::cell::Cell::new(Selected::NONE) }
     }
     #[inline(always)]
     fn numbering(&self) -> &'a Numbering {
@@ -204,7 +208,7 @@ impl<'a> Doc<'a> {
         unsafe { &self.entry.numbering.as_slice::<Numbering>()[0] }
     }
     #[inline(always)]
-    fn items(&self, run: &'a rerail_clif::ids::Run) -> &'a [u32] {
+    fn items(&self, run: &'a crate::ids::Run) -> &'a [u32] {
         // SAFETY: one of the entry's runs of u32s, set where it was made, in its block.
         unsafe { run.as_slice::<u32>() }
     }
@@ -286,7 +290,7 @@ impl<'a> Doc<'a> {
             _ => {
                 let x = self.x_of(l, x);
                 match col {
-                    2 => i64::from(crate::codes_dir::kinds(self.entry.tag as u8)[self.tape.number(x) as usize]),
+                    2 => i64::from(self.kinds[self.tape.number(x) as usize]),
                     3 => i64::from(self.tape.start(x)),
                     _ => i64::from(self.tape.end(x)),
                 }
@@ -309,11 +313,11 @@ impl<'a> Doc<'a> {
             // entry's shape numbers places (decision 0656 step 4).
             _ => {
                 let x = self.x_of(l, x);
-                let anchor = rerail_clif::view_reads::ANCHOR_ITEM as u32;
+                let anchor = crate::views::ANCHOR_ITEM as u32;
                 i64::from(if self.is(anchor, x) {
                     // SAFETY: as `tape_node`.
                     unsafe { self.numbering().rank(anchor, x) }
-                } else if self.entry.place == rerail_clif::view_reads::PLACE_PAST_COMMENTS {
+                } else if self.entry.place == crate::views::PLACE_PAST_COMMENTS {
                     self.tape.place_past_comments(x)
                 } else {
                     self.tape.place(x)
@@ -345,7 +349,7 @@ impl<'a> Doc<'a> {
     pub fn field_at(&self, l: u32, x: u32, col: u32) -> i64 {
         match col {
             0 => self.parent_id(l, x),
-            1 => i64::from(crate::codes_dir::fields(self.entry.tag as u8)[self.tape.number(x) as usize]),
+            1 => i64::from(self.fields[self.tape.number(x) as usize]),
             _ => self.node_id(l),
         }
     }
@@ -446,7 +450,7 @@ impl<'a> Doc<'a> {
     #[inline]
     pub fn op_child(&self, i: u32) -> u32 {
         // SAFETY: as `tape_node`.
-        unsafe { self.numbering().select(rerail_clif::ids::OP_ITEM, i) }
+        unsafe { self.numbering().select(crate::ids::OP_ITEM, i) }
     }
     /// `view_op(i, col)`: row `i`'s numbered node's id (an anonymous child is no root), its name atom (by its tape
     /// code, `ViewDoc::names`).
@@ -529,7 +533,7 @@ impl<'a> Doc<'a> {
     /// (decision 0612); a guest's are its host's.
     #[inline(always)]
     fn loc_count(&self) -> u32 {
-        crate::newlines::count(self.lines).expect("a line index") + 1
+        crate::lines::count(self.lines).expect("a line index") + 1
     }
     /// Line `k`'s first byte (from 0, `lines_start`).
     #[inline(always)]
@@ -544,7 +548,7 @@ impl<'a> Doc<'a> {
             return self.entry.source_len;
         }
         let last = self.loc_start(k + 1) - 1;
-        last + 1 - crate::newlines::length_ending_at(self.source, last as usize) as u32
+        last + 1 - crate::lines::length_ending_at(self.source, last as usize) as u32
     }
     /// `Loc` position `l`'s byte span: a node's or token's off the tape, the whole text, a line's text, or a node's
     /// end point.
@@ -703,6 +707,23 @@ impl<'a> Doc<'a> {
         let end = self.tape.end_of(p);
         self.numbered_from(self.tape.next_in(x, end), end)
     }
+    /// `view_up(l)`: numbered node `l`'s nearest numbered strict tape ancestor, or `NO_ROW`.
+    #[inline]
+    pub fn up(&self, l: u32) -> u32 {
+        let mut p = self.tape.parent(self.tape_node(l));
+        while p != NO_ROW {
+            if self.is(0, p) {
+                return self.rank(p);
+            }
+            p = self.tape.parent(p);
+        }
+        NO_ROW
+    }
+    /// `view_end(l)`: the number past numbered node `l`'s numbered descendants.
+    #[inline]
+    pub fn end(&self, l: u32) -> u32 {
+        self.rank(self.tape.end_of(self.tape_node(l)))
+    }
     /// `view_number(low)`: the numbered node whose id's low 32 bits are `low`, or `NO_ROW`.
     #[inline]
     pub fn number(&self, low: u32) -> u32 {
@@ -731,7 +752,7 @@ impl<'a> Doc<'a> {
     pub fn line_span(&self, low: u32) -> u64 {
         let l = low & ((1 << INDEX_BITS) - 1);
         let count = self.loc_count();
-        if low >> INDEX_BITS != rerail_clif::ids::LINE_SLOT || self.entry.own_text == 0 || l > count {
+        if low >> INDEX_BITS != crate::ids::LINE_SLOT || self.entry.own_text == 0 || l > count {
             return NO_SPAN;
         }
         let len = self.entry.source_len;
@@ -745,7 +766,7 @@ impl<'a> Doc<'a> {
     #[inline]
     pub fn line_terminated(&self, low: u32) -> bool {
         let l = low & ((1 << INDEX_BITS) - 1);
-        low >> INDEX_BITS == rerail_clif::ids::LINE_SLOT && l != 0 && l < self.loc_count()
+        low >> INDEX_BITS == crate::ids::LINE_SLOT && l != 0 && l < self.loc_count()
     }
     /// The text of the line whose span's id has low bits `low` (`line_span`), read where the source lies, its
     /// terminator's length off the source's bytes where it has one (`lines_terminator_length`), as
@@ -757,7 +778,7 @@ impl<'a> Doc<'a> {
         }
         let (start, mut stop) = ((span >> 32) as usize, span as u32 as usize);
         if self.line_terminated(low) {
-            stop -= crate::newlines::length_ending_at(self.source, stop - 1);
+            stop -= crate::lines::length_ending_at(self.source, stop - 1);
         }
         std::str::from_utf8(self.source.get(start..stop)?).ok()
     }
@@ -773,5 +794,5 @@ impl<'a> Doc<'a> {
 /// 0612) at the start of `index`.
 #[inline]
 pub fn lines_line(index: &[u8], at: u32) -> u32 {
-    crate::newlines::line(index, at) + 1
+    crate::lines::line(index, at) + 1
 }

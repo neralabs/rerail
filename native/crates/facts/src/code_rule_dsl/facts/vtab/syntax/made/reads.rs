@@ -273,7 +273,14 @@ impl Docs {
                 0 => std::ptr::null(),
                 k => (*homes.add(k as usize - 1)).host as *const u8,
             };
-            Some(Doc::new(entry, Tape::new(tape, &row.view, cache), lines, self[i].facts.source.as_bytes()))
+            Some(Doc::new(entry, Tape::new(tape, &row.view, cache), lines, self[i].facts.source.as_bytes(), codes(entry)))
         }
     }
+}
+
+/// A document's language's codes' kind atoms and field atoms (decision 0697), the binary's, as its views' reads take
+/// them (`view_reads::Doc::new`).
+fn codes(entry: &ViewDoc) -> (&'static [u32], &'static [u32]) {
+    let tag = entry.tag as u8;
+    (rerail_tape_format::codes_dir::kinds(tag), rerail_tape_format::codes_dir::fields(tag))
 }

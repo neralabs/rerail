@@ -3437,6 +3437,7 @@ dependencies = [
  "cranelift-module",
  "rerail-blocks",
  "rerail-clif",
+ "rerail-reads",
 ]
 
 [[package]]
@@ -4311,7 +4312,6 @@ dependencies = [
  "metal",
  "objc",
  "rerail-blocks",
- "rerail-clif",
  "rerail-device",
  "rerail-tape-format",
  "rerail-ukl",
@@ -5696,6 +5696,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-reads"
+version = "0.1.0"
+
+[[package]]
 name = "rerail-registry"
 version = "0.1.0"
 
@@ -6529,6 +6533,7 @@ dependencies = [
  "memchr",
  "rerail-clif",
  "rerail-gpu",
+ "rerail-reads",
  "rerail-simd8",
  "rerail-tape-format",
  "rerail-vector",
@@ -7437,6 +7442,7 @@ dependencies = [
  "rerail-tests-lang",
  "rerail-transducer",
  "rerail-tree-watch",
+ "rerail-ukl-rust",
  "rerail-vue-lean",
  "rerail-workspace",
  "roaring",
@@ -8723,6 +8729,7 @@ version = "0.1.0"
 dependencies = [
  "rerail-blocks",
  "rerail-clif",
+ "rerail-reads",
  "rerail-simd",
 ]
 

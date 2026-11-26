@@ -97,7 +97,7 @@ fn site() -> [usize; DEPTH] {
         let mut fp: usize;
         std::arch::asm!("mov {}, x29", out(reg) fp);
         let mut i = 0;
-        while fp != 0 && fp % 8 == 0 && i < DEPTH {
+        while fp != 0 && fp.is_multiple_of(8) && i < DEPTH {
             let ret = *((fp + 8) as *const usize);
             let next = *(fp as *const usize);
             out[i] = ret & 0x0000_ffff_ffff_ffff;

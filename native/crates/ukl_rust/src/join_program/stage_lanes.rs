@@ -188,8 +188,8 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     #[inline(always)]
-    unsafe fn new(d: *const u8, id: R<N>, far: *const u8, sealed: ln::Sealed) -> Self {
-        Row { at: ln::rel_at(d, id, far, sealed), have: Cell::new(0), v: UnsafeCell::new([MaybeUninit::uninit(); 16]) }
+    unsafe fn new(d: *const u8, id: R<N>, far: *const u8) -> Self {
+        Row { at: ln::rel_at(d, id, far), have: Cell::new(0), v: UnsafeCell::new([MaybeUninit::uninit(); 16]) }
     }
 
     /// Column `c` of each lane's row.
@@ -455,7 +455,7 @@ impl Lanes<'_> {
                     } else {
                         ln::rel_group_row(self.d, s.r_index, q)
                     };
-                    let row = Row::new(self.d, id, self.far, self.st.rd.col_sealed());
+                    let row = Row::new(self.d, id, self.far);
                     let mut m = valid.cast::<i64>();
                     if s.r_dead != 0 {
                         m &= !ln::rel_dead(self.dead, id).cast::<i64>();
@@ -616,7 +616,7 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     let s = st.s;
-    let l = Lanes { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize), far: st.far as *const u8 };
+    let l = Lanes { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize), far: st.far };
     let v = if s.mode == 0 { v } else { core::ptr::null_mut() };
     let mut v = Count::<N> {
         counts,
@@ -756,7 +756,7 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     let s = st.s;
-    let l = Lanes { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize), far: st.far as *const u8 };
+    let l = Lanes { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize), far: st.far };
     let o0 = *offsets;
     let end = (*offsets.add(t1 as usize)).wrapping_sub(o0).min(s.cap_out);
     let mut v = Scatter { o, run: (*offsets.add(t0 as usize)).wrapping_sub(o0), end };
@@ -836,7 +836,7 @@ impl Lanes<'_> {
                 } else {
                     ln::rel_group_row(self.d, s.r_index, q)
                 };
-                v.put(self, &b, &Row::new(self.d, id, self.far, self.st.rd.col_sealed()), valid.cast::<i64>());
+                v.put(self, &b, &Row::new(self.d, id, self.far), valid.cast::<i64>());
                 k += N as u32;
             }
         }
