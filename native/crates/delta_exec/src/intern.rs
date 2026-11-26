@@ -79,7 +79,7 @@ pub fn intern(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut 
         InternP { src_at: src.at as u64, src_len: src.len as u64, tape_at: tape.at as u64, tape_len: tape.len as u64 }.write(&mut p);
         run_cpu(reg, dir, ops.intern, &[src.block, tape.block, atoms.0, id], &p, Tiling::WHOLE)?;
         dir.freeze(id)?;
-        blobs.house(dir, Placed { block: id, at: BODY_AT, len: body })
+        blobs.house(reg, dir, Placed { block: id, at: BODY_AT, len: body })
     })();
     match made {
         Ok((s, new)) => {
@@ -112,7 +112,7 @@ impl Interned {
         if let Some(&s) = self.syms.get(&key) {
             return Ok(s);
         }
-        let get = |id: &BlobId| blobs.get(id).ok_or_else(|| format!("{}: a blob nothing holds", doc.path));
+        let get = |id: &BlobId| blobs.get(dir, id)?.ok_or_else(|| format!("{}: a blob nothing holds", doc.path));
         let (src, tape) = (get(&doc.after.source)?, get(&doc.after.tape)?);
         let s = intern(reg, ops, dir, blobs, atoms, src, tape, &doc.path, &doc.module)?;
         self.runs += 1;

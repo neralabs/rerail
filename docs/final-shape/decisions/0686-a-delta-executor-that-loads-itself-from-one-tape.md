@@ -1199,3 +1199,27 @@ Checks (Relax, local, 72 of 72): `a_run_takes_and_returns_pins` covers four runs
 The harness over l0's edits now takes its states from the document set's heads, read by read. The shape script
 holds `boot.rs` to `run` taking and returning `Pins`, refusing other states' pins, and keeping no map of the set's
 rows.
+
+**Blobs housed as the store houses objects**. The store houses an object as a row and its bytes. The row, in its
+objects table, names the object's digest and where its bytes lie: a segment, an offset and a length
+(`object_segments::row_frame`). The bytes are read in place in the segment (`ObjectFrame::bytes`,
+`ObjectBytes::Mapped`). The ports-name-blobs step above kept the placement half of that: bytes housed where they
+lie, a `Placed` (block, offset, length). Its index was still a host `HashMap`, the "own blob map" departure, so
+`files::Blobs` is now rows in a trace:
+
+- Each row is `(name's four words, block, at, len)`, sorted by name (`blobs_shape`).
+- `house` adds a row as a layer, unless a probe of the name finds the bytes already housed.
+- `get` probes the name at the trace's head (`Read::matching`, through each layer's index).
+- A row names a frozen block, as an object's row names its segment.
+
+The store's segments are mapped files and its rows are in SQLite. Neither is brought in: a run's blocks are its
+directory's, and where they reside is the slabs' question below.
+
+Found on the way: `an_unchanged_file_gives_the_identity_with_no_read_past_its_stat` has been flaky since B4. The
+observer hashes one trusted file in 64 again (`VALIDATE_EVERY`), choosing by path and the current second. So on
+about one run in 64 the test saw l0's bytes read, and failed. The test now allows a hash past the stat only as that
+sampled check, which must find no mismatch.
+
+Checks (Relax, local, 72 of 72): every earlier check runs over the trace-held blobs. These include 20 documents'
+60 blobs, with shared tapes and geometric roll-ups, all found by their names, and the same bytes housed twice giving
+one row. The shape script holds `Blobs` to rows in a trace, with no map.

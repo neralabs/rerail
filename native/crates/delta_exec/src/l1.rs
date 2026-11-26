@@ -19,7 +19,7 @@
 //! and L1 has neither. Its Rust beyond `k0_pass` and `drop_parts` is the wiring of these ports.
 
 use crate::contract::{At, CacheW, Cx, DeltaOp, In, Out, Port, Ports, Work};
-use crate::dir::BlockId;
+use crate::dir::{BlockId, Directory};
 use crate::drop::{DropOps, drop_parts};
 use crate::files::{BlobId, Blobs, DocIds};
 use crate::k0::{K0Doc, K0Ops, k0_pass};
@@ -54,10 +54,10 @@ fn cell(v: &View<'_>, id: RowId, c: u16) -> i64 {
 }
 
 /// The document of tape row `id` of `tape`, its blobs where `blobs` has them.
-fn doc_at(blobs: &Blobs, tape: &View<'_>, id: RowId) -> Result<K0Doc, String> {
+fn doc_at(blobs: &Blobs, dir: &Directory, tape: &View<'_>, id: RowId) -> Result<K0Doc, String> {
     let blob = |at: u16| {
         let w: Vec<i64> = (at..at + 4).map(|c| cell(tape, id, c)).collect();
-        blobs.get(&BlobId::of_words(&w)).ok_or("a blob the tape port names, which nothing holds")
+        blobs.get(dir, &BlobId::of_words(&w))?.ok_or_else(|| "a blob the tape port names, which nothing holds".to_string())
     };
     Ok(K0Doc { module: cell(tape, id, 0), src: blob(1)?, tape: blob(5)?, syms: blob(9)?.block })
 }
@@ -69,7 +69,7 @@ fn live<'v>(v: &'v View<'_>) -> impl Iterator<Item = RowId> + 'v {
 impl L1 {
     /// `k0_pass` over the documents of tape rows `ids`, one launch, into the outputs' runs (+1).
     fn pass(&self, cx: &mut Cx<'_>, atoms: BlockId, tape: &View<'_>, ids: impl Iterator<Item = RowId>, out: &Out, work: &mut Work) -> Result<(), String> {
-        let docs = ids.map(|id| doc_at(cx.blobs, tape, id)).collect::<Result<Vec<_>, _>>()?; // copy: derived (the documents' places, from their blobs)
+        let docs = ids.map(|id| doc_at(cx.blobs, cx.dir, tape, id)).collect::<Result<Vec<_>, _>>()?; // copy: derived (the documents' places, from their blobs)
         let runs: Vec<BlockId> = (0..RELATIONS.len()).map(|k| out.block(k)).collect();
         work.rows_read += docs.len() as u64;
         work.rows_written += k0_pass(cx.reg, &self.ops, cx.dir, atoms, &docs, 1, &runs).map_err(|e| e.to_string())?;

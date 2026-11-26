@@ -466,6 +466,9 @@ def b6(failures: list) -> None:
         failures.append("k0.rs: k0_pass does not take every document of the run (one launch)")
     if len(re.findall(r"\brun_cpu\(", strip_rust(k0))) != 1:
         failures.append("k0.rs: k0_pass launched at more than one place")
+    files = (CRATE / "src/files.rs").read_text()
+    if not re.search(r"pub struct Blobs \{[^}]*\brows: Trace\b[^}]*\}", files) or re.search(r"pub struct Blobs \{[^}]*HashMap", files):
+        failures.append("files.rs: the blobs are not rows in a trace, as the store's objects are (P§12 item 1)")
     boot = (CRATE / "src/boot.rs").read_text()
     if not re.search(r"pub fn run\([^)]*last: Option<&Pins>\) -> Result<\(Pins,", boot):
         failures.append("boot.rs: run does not take and return Pins (B§8)")

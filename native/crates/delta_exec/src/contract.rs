@@ -435,7 +435,7 @@ impl Bench {
         let mut reg = Registry::default();
         let traces = TraceOps::declare(&mut reg)?;
         let caches = CacheOps::declare(&mut reg)?;
-        Ok(Bench { reg, dir: Directory::default(), blobs: Blobs::default(), traces, caches })
+        Ok(Bench { reg, dir: Directory::default(), blobs: Blobs::new(&traces), traces, caches })
     }
 
     pub fn cx(&mut self) -> Cx<'_> {

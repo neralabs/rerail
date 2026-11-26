@@ -48,10 +48,10 @@ fn an_unchanged_tape_interns_nothing() {
     let mut files = Files::new(dir_path.clone(), dir_path.join("observer.db"));
     let mut fx = Fx::new();
     let mut interned = Interned::default();
-    let d = files.answer("bootstrap-l0.rerail", &mut fx.blobs, &mut fx.dir).unwrap();
+    let d = files.answer("bootstrap-l0.rerail", &fx.reg, &mut fx.blobs, &mut fx.dir).unwrap();
     let s = interned.of(&fx.reg, &fx.ops, &mut fx.dir, &mut fx.blobs, fx.atoms, &d).unwrap();
     let (runs, atoms) = (interned.runs, fx.atoms.count(&fx.dir));
-    let again = files.answer("bootstrap-l0.rerail", &mut fx.blobs, &mut fx.dir).unwrap();
+    let again = files.answer("bootstrap-l0.rerail", &fx.reg, &mut fx.blobs, &mut fx.dir).unwrap();
     assert!(again.is_identity());
     assert_eq!(interned.of(&fx.reg, &fx.ops, &mut fx.dir, &mut fx.blobs, fx.atoms, &again).unwrap(), s);
     assert_eq!((interned.runs, fx.atoms.count(&fx.dir)), (runs, atoms));

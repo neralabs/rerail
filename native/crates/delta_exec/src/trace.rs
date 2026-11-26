@@ -138,6 +138,7 @@ pub fn facts_of(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
 }
 
 /// The trace operations, declared and their twins registered as references.
+#[derive(Clone, Copy)]
 pub struct TraceOps {
     pub consolidate: OpId,
     pub merge: OpId,

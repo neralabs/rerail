@@ -48,7 +48,7 @@ impl DocSet {
     /// Reads document `path` (B§8's first line): its answer; when it changed, its tape interned into `atoms`, and the
     /// document set's next state, its old row retracted where the set keeps it and its new row added.
     pub fn read(&mut self, bench: &mut Bench, atoms: Atoms, path: &str) -> Result<Doc, String> {
-        let doc = self.files.answer(path, &mut bench.blobs, &mut bench.dir)?;
+        let doc = self.files.answer(path, &bench.reg, &mut bench.blobs, &mut bench.dir)?;
         if doc.is_identity() {
             return Ok(doc);
         }

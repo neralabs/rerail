@@ -49,7 +49,7 @@ impl Fx {
         let caches = CacheOps::declare(&mut reg).unwrap();
         let mut dir = Directory::default();
         let atoms = Atoms::new(&mut dir);
-        Fx { reg, ops, k0, drops, traces, caches, dir, blobs: Blobs::default(), atoms }
+        Fx { reg, ops, k0, drops, traces, caches, dir, blobs: Blobs::new(&traces), atoms }
     }
 
     pub fn l1(&self) -> L1 {
@@ -58,7 +58,7 @@ impl Fx {
 
     /// A document of `src` answered at `path`, interned: its blobs and its symbols blob.
     pub fn doc(&mut self, src: &str, path: &str) -> D {
-        let ids = doc_of(&mut self.dir, &mut self.blobs, src).expect("a document");
+        let ids = doc_of(&self.reg, &mut self.dir, &mut self.blobs, src).expect("a document");
         let module = path.strip_suffix(".rerail").unwrap_or(path);
         let (s, t) = (self.place(&ids.source), self.place(&ids.tape));
         let syms = intern(&self.reg, &self.ops, &mut self.dir, &mut self.blobs, self.atoms, s, t, path, module).expect("interned");
@@ -67,7 +67,7 @@ impl Fx {
 
     /// Where blob `id` lies.
     pub fn place(&self, id: &BlobId) -> Placed {
-        self.blobs.get(id).expect("a blob housed")
+        self.blobs.get(&self.dir, id).unwrap().expect("a blob housed")
     }
 
     /// `f` given document `d`'s reads, its symbols block's bytes and the language's names, each read where it lies.
@@ -355,9 +355,10 @@ fn a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape() {
     let kept: usize = inst.outs.iter().map(|o| rows_at(&fx.dir, o, o.head()).unwrap().len()).sum();
     assert!(kept > 0);
     // The new document's blobs alone.
-    let mut only_b = Blobs::default();
+    let mut only_b = Blobs::new(&fx.traces);
     for id in [b.ids.source, b.ids.tape, b.syms] {
-        only_b.house(&fx.dir, fx.place(&id)).unwrap();
+        let p = fx.place(&id);
+        only_b.house(&fx.reg, &mut fx.dir, p).unwrap();
     }
     let mut cx = Cx { reg: &fx.reg, dir: &mut fx.dir, blobs: &only_b, traces: &fx.traces, caches: &fx.caches };
     let work = inst.step(&l1, &mut cx, &[(&t, Some(h1), Some(h2))], &atoms).unwrap();

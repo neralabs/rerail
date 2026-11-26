@@ -20,6 +20,13 @@ pub(crate) fn racy_window() -> rerail_context::Bound {
     rerail_context::bind(rerail_context::Switches(Arc::new(vec![("RERAIL_RACY_MS".into(), "100".into())])))
 }
 
+/// A registry with the trace's operations, no blob, and a directory.
+fn fresh() -> (crate::op::Registry, Blobs, Directory) {
+    let mut reg = crate::op::Registry::default();
+    let traces = crate::trace::TraceOps::declare(&mut reg).unwrap();
+    (reg, Blobs::new(&traces), Directory::default())
+}
+
 pub(crate) fn past_racy_window() {
     std::thread::sleep(Duration::from_millis(200));
 }
@@ -34,10 +41,10 @@ pub(crate) fn write(path: &std::path::Path, text: &str, ago: u64) {
 #[test]
 fn a_document_is_its_path_its_module_and_a_tape_from_nothing() {
     let (_, mut files) = root("cold");
-    let (mut blobs, mut dir) = (Blobs::default(), Directory::default());
-    let d = files.answer("bootstrap-l0.rerail", &mut blobs, &mut dir).unwrap();
+    let (reg, mut blobs, mut dir) = fresh();
+    let d = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
     assert_eq!((d.path.as_str(), d.module.as_str(), d.before), ("bootstrap-l0.rerail", "bootstrap-l0", None));
-    let (s, t) = (blobs.get(&d.after.source).unwrap(), blobs.get(&d.after.tape).unwrap());
+    let (s, t) = (blobs.get(&dir, &d.after.source).unwrap().unwrap(), blobs.get(&dir, &d.after.tape).unwrap().unwrap());
     let l = dir.read("t", &[t.block]).unwrap();
     assert_eq!(&l.block(0)[s.at..s.at + s.len], crate::L0.as_bytes());
     assert!(reads(l.block(0), s, l.block(0), t).len() > 100, "l0's tape");
@@ -49,9 +56,9 @@ fn a_document_is_its_path_its_module_and_a_tape_from_nothing() {
 fn the_source_and_the_tape_are_blobs_in_the_documents_frozen_tape_block() {
     use sha2::{Digest as _, Sha256};
     let (_, mut files) = root("room");
-    let (mut blobs, mut dir) = (Blobs::default(), Directory::default());
-    let d = files.answer("bootstrap-l0.rerail", &mut blobs, &mut dir).unwrap();
-    let (s, t) = (blobs.get(&d.after.source).unwrap(), blobs.get(&d.after.tape).unwrap());
+    let (reg, mut blobs, mut dir) = fresh();
+    let d = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
+    let (s, t) = (blobs.get(&dir, &d.after.source).unwrap().unwrap(), blobs.get(&dir, &d.after.tape).unwrap().unwrap());
     assert_eq!(s.block, t.block);
     assert!(dir.is_frozen(t.block), "a blob is never versioned");
     assert_eq!(dir.block(t.block).unwrap().header().kind, kind::TAPE);
@@ -61,21 +68,21 @@ fn the_source_and_the_tape_are_blobs_in_the_documents_frozen_tape_block() {
     assert_eq!(d.after.source.0, <[u8; 32]>::from(Sha256::digest(crate::L0.as_bytes())));
     assert_eq!(d.after.tape.0, <[u8; 32]>::from(Sha256::digest(&b[t.at..t.at + t.len])));
     // The same bytes housed again are the first blob, and their block is let go.
-    let again = doc_of(&mut dir, &mut blobs, crate::L0).unwrap();
+    let again = doc_of(&reg, &mut dir, &mut blobs, crate::L0).unwrap();
     assert_eq!(again, d.after);
-    assert_eq!(blobs.len(), 2);
+    assert_eq!(blobs.len(&dir).unwrap(), 2);
 }
 
 /// Two sources of the same shape have the same tape: the second's tape blob is the first's, where it lies, and its
 /// source a new blob in a block of its own. Both are read through `reads`, from their two blocks.
 #[test]
 fn a_new_source_may_share_an_earlier_tape() {
-    let (mut blobs, mut dir) = (Blobs::default(), Directory::default());
-    let a = doc_of(&mut dir, &mut blobs, "e(1, 2).\n").unwrap();
-    let b = doc_of(&mut dir, &mut blobs, "e(3, 4).\n").unwrap();
+    let (reg, mut blobs, mut dir) = fresh();
+    let a = doc_of(&reg, &mut dir, &mut blobs, "e(1, 2).\n").unwrap();
+    let b = doc_of(&reg, &mut dir, &mut blobs, "e(3, 4).\n").unwrap();
     assert_ne!(a.source, b.source);
     assert_eq!(a.tape, b.tape, "the tape holds the shape, not the text");
-    let (s, t) = (blobs.get(&b.source).unwrap(), blobs.get(&b.tape).unwrap());
+    let (s, t) = (blobs.get(&dir, &b.source).unwrap().unwrap(), blobs.get(&dir, &b.tape).unwrap().unwrap());
     assert_ne!(s.block, t.block);
     assert!(dir.is_frozen(s.block));
     let l = dir.read("t", &[s.block, t.block]).unwrap();
@@ -88,32 +95,34 @@ fn an_unchanged_file_gives_the_identity_with_no_read_past_its_stat() {
     let _racy = racy_window();
     let (_, mut files) = root("same");
     past_racy_window();
-    let (mut blobs, mut dir) = (Blobs::default(), Directory::default());
-    let first = files.answer("bootstrap-l0.rerail", &mut blobs, &mut dir).unwrap();
+    let (reg, mut blobs, mut dir) = fresh();
+    let first = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
     let (c0, reads) = (files.counts(), files.reads);
-    let again = files.answer("bootstrap-l0.rerail", &mut blobs, &mut dir).unwrap();
+    let again = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
     assert!(again.is_identity(), "{again:?}");
     assert_eq!(again.after, first.after);
     let c = files.counts().since(&c0);
-    assert_eq!((c.hashed, c.bytes), (0, 0), "no byte read: {c:?}");
-    assert_eq!(c.reused, 1, "the answer reused on its stat: {c:?}");
+    // The observer hashes one trusted file in 64 again (`VALIDATE_EVERY`, a slice by path and the second): the only
+    // bytes read past the stat are that check's, and it finds them unchanged.
+    assert_eq!(c.hashed, c.validated, "no byte read but the observer's sampled check: {c:?}");
+    assert_eq!((c.reused + c.validated, c.mismatched), (1, 0), "the answer trusted on its stat: {c:?}");
     assert_eq!(files.reads, reads);
-    assert_eq!(blobs.len(), 2, "its source and its tape");
+    assert_eq!(blobs.len(&dir).unwrap(), 2, "its source and its tape");
 }
 
 #[test]
 fn an_edited_file_is_read_once_and_placed_once() {
     let (root, mut files) = root("edit");
-    let (mut blobs, mut dir) = (Blobs::default(), Directory::default());
-    let first = files.answer("bootstrap-l0.rerail", &mut blobs, &mut dir).unwrap();
+    let (reg, mut blobs, mut dir) = fresh();
+    let first = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
     write(&root.join("bootstrap-l0.rerail"), &format!("{}\nb4_added(x) :- rule(x).\n", crate::L0), 30);
     let (c0, reads) = (files.counts(), files.reads);
-    let edited = files.answer("bootstrap-l0.rerail", &mut blobs, &mut dir).unwrap();
+    let edited = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
     assert_eq!(edited.before, Some(first.after));
     assert_ne!(edited.after, first.after);
     assert_eq!(files.reads, reads + 1, "read once, placed once (read_placed places what it reads)");
     assert_eq!(files.counts().since(&c0).hashed, 1);
-    let s = blobs.get(&edited.after.source).unwrap();
+    let s = blobs.get(&dir, &edited.after.source).unwrap().unwrap();
     let l = dir.read("t", &[s.block]).unwrap();
     assert!(std::str::from_utf8(&l.block(0)[s.at..s.at + s.len]).unwrap().contains("b4_added"));
 }
@@ -122,9 +131,9 @@ fn an_edited_file_is_read_once_and_placed_once() {
 fn a_file_that_does_not_parse_is_refused_naming_its_path() {
     let (root, mut files) = root("bad");
     write(&root.join("broken.rerail"), "this is not a rule (\n", 30);
-    let (mut blobs, mut dir) = (Blobs::default(), Directory::default());
-    let e = files.answer("broken.rerail", &mut blobs, &mut dir).unwrap_err();
+    let (reg, mut blobs, mut dir) = fresh();
+    let e = files.answer("broken.rerail", &reg, &mut blobs, &mut dir).unwrap_err();
     assert!(e.starts_with("broken.rerail: "), "{e}");
-    let e = files.answer("missing.rerail", &mut blobs, &mut dir).unwrap_err();
+    let e = files.answer("missing.rerail", &reg, &mut blobs, &mut dir).unwrap_err();
     assert!(e.starts_with("missing.rerail: "), "{e}");
 }

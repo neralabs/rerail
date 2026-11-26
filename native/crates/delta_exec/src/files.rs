@@ -11,8 +11,9 @@
 //!   lies; the block is then frozen: the document's source and tape, which an operation reads as a slot (`intern`,
 //!   `k0_pass`) or through a reference to it;
 //! - the source and the tape are each a blob (P§11.4: "source text, tapes: blobs, by content"), housed from their
-//!   placed bytes (`Blobs::house`, P§12 item 1: `house(bytes: Placed) -> BlobId`, "takes bytes where they lie", as
-//!   the store's objects are), named by the sha256 of their bytes and read where they lie (`Blobs::get`), never
+//!   placed bytes (`Blobs::house`, P§12 item 1: `house(bytes: Placed) -> BlobId`, "takes bytes where they lie"), as
+//!   the store houses objects: a row a blob, by its name, naming where its bytes lie, in a trace probed by name
+//!   (`Blobs::get`); the bytes read where they lie, never
 //!   versioned: changed bytes are a new blob. Each is its own blob, so a new source whose tape is the same bytes as
 //!   an earlier document's (the tape holds the shape, not the text) has its tape where that one's lies: a document's
 //!   source and tape may lie in two blocks, and every reader takes the two places (`reads`).
@@ -21,7 +22,12 @@
 //! the old tape → the new one when it changed: the file is the grain. A file that does not parse, is not UTF-8, or
 //! cannot be read is refused, naming its path. Nothing here reads a file itself.
 
+use crate::contract::{push_layer, rows_at};
 use crate::dir::{BlockId, Directory};
+use crate::op::Registry;
+use crate::trace::{Trace, TraceOps};
+use rerail_blocks::bistate::{ColumnIndex, Read};
+use rerail_blocks::layer::{ColType, Shape};
 use crate::tape::Text;
 use rerail_blocks::block::kind;
 use rerail_blocks::maps::InBlock;
@@ -62,21 +68,41 @@ pub struct Placed {
     pub len: usize,
 }
 
-/// The blobs, by name, each where its bytes lie (P§12 item 1's `Blobs`): housed from placed bytes, never copied.
-#[derive(Default)]
+/// The blobs (P§12 item 1's `Blobs`), housed as the store houses objects: a row a blob, named by its bytes' sha256,
+/// that says where they lie (as an object's row names its segment, offset and length: `object_segments`), and the
+/// bytes read in place there, in a frozen block. The rows are a trace, `(name's four words, block, at, len)`, a layer
+/// a housing; a blob is found by a probe of its name at the trace's head.
 pub struct Blobs {
-    by_id: HashMap<BlobId, Placed>,
+    ops: TraceOps,
+    rows: Trace,
+}
+
+/// The blobs' rows: `(name's four words, block, at, len)`, in that order.
+pub fn blobs_shape() -> Shape {
+    let c = vec![ColType::I64, ColType::I64, ColType::I64, ColType::I64, ColType::I32, ColType::I64, ColType::I64];
+    Shape::run(c, (0..7).collect(), None)
 }
 
 impl Blobs {
-    /// Where blob `id`'s bytes lie.
-    pub fn get(&self, id: &BlobId) -> Option<Placed> {
-        self.by_id.get(id).copied()
+    /// No blob, its rows housed by the trace's operations `ops`.
+    pub fn new(ops: &TraceOps) -> Blobs {
+        Blobs { ops: *ops, rows: Trace::new(&blobs_shape()).expect("a storable shape") }
+    }
+
+    /// Where blob `id`'s bytes lie: its row, probed by its name at the rows' head.
+    pub fn get(&self, dir: &Directory, id: &BlobId) -> Result<Option<Placed>, String> {
+        let Some(h) = self.rows.head() else { return Ok(None) };
+        let l = self.rows.read(dir, &[Some(h)])?;
+        let table = l.table();
+        let s = self.rows.state(&table, Some(h))?;
+        let (cols, key) = ([0, 1, 2, 3].map(ColumnIndex::new), id.words());
+        let c = |r, k| Read::get(&s, r, ColumnIndex::new(k));
+        Ok(Read::matching(&s, &cols, &key).next().map(|r| Placed { block: BlockId(c(r, 4) as u32), at: c(r, 5) as usize, len: c(r, 6) as usize }))
     }
 
     /// Houses the bytes at `p` where they lie, named by their sha256 (`house(bytes: Placed) -> BlobId`): the name,
-    /// and whether they are new. A second of the same bytes is the first; its place is not kept.
-    pub fn house(&mut self, dir: &Directory, p: Placed) -> Result<(BlobId, bool), String> {
+    /// and whether they are new (a row added). A second of the same bytes is the first; its place is not kept.
+    pub fn house(&mut self, reg: &Registry, dir: &mut Directory, p: Placed) -> Result<(BlobId, bool), String> {
         if !dir.is_frozen(p.block) {
             return Err(format!("a blob's bytes in {}, a block not frozen (a blob is never versioned)", p.block));
         }
@@ -84,20 +110,17 @@ impl Blobs {
             let l = dir.read("house", &[p.block])?;
             BlobId(Sha256::digest(&l.block(0)[p.at..p.at + p.len]).into())
         };
-        if self.by_id.contains_key(&id) {
+        if self.get(dir, &id)?.is_some() {
             return Ok((id, false));
         }
-        self.by_id.insert(id, p);
+        let row: Vec<i64> = id.words().into_iter().chain([i64::from(p.block.0), p.at as i64, p.len as i64]).collect(); // copy: derived (a blob's row, written once)
+        push_layer(reg, &self.ops, dir, &mut self.rows, &[(row, 1)])?;
         Ok((id, true))
     }
 
     /// How many it holds.
-    pub fn len(&self) -> usize {
-        self.by_id.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.by_id.is_empty()
+    pub fn len(&self, dir: &Directory) -> Result<usize, String> {
+        Ok(rows_at(dir, &self.rows, self.rows.head())?.len())
     }
 }
 
@@ -166,7 +189,7 @@ impl Files {
 
     /// Document `path` (relative to the root): its tape port, the tape housed in `blobs`, a tape block made in `dir`
     /// for a tape the parser writes.
-    pub fn answer(&mut self, path: &str, blobs: &mut Blobs, dir: &mut Directory) -> Result<Doc, String> {
+    pub fn answer(&mut self, path: &str, reg: &Registry, blobs: &mut Blobs, dir: &mut Directory) -> Result<Doc, String> {
         let abs = self.root.join(path);
         let kept = self.kept.get(path).copied();
         let doc = |before: Option<DocIds>, after| Doc { path: path.to_string(), module: module_of(path), before, after };
@@ -205,30 +228,30 @@ impl Files {
             dir.release(block);
             return Ok(doc(Some(b), b));
         }
-        let id = house(dir, blobs, block, b, source).map_err(|e| format!("{path}: {e}"))?;
+        let id = house(reg, dir, blobs, block, b, source).map_err(|e| format!("{path}: {e}"))?;
         self.kept.insert(path.to_string(), (digest, id));
         Ok(doc(kept.map(|k| k.1), id))
     }
 }
 
 /// A document of a source in hand (a test's, the bootstrap's own), in a tape block of its own, as a read places one.
-pub fn doc_of(dir: &mut Directory, blobs: &mut Blobs, src: &str) -> Result<DocIds, String> {
+pub fn doc_of(reg: &Registry, dir: &mut Directory, blobs: &mut Blobs, src: &str) -> Result<DocIds, String> {
     let (block, b) = tape_block(dir, src.len());
     let home = place_in(&b, src.len(), &mut |out| {
         out.copy_from_slice(src.as_bytes()); // copy: load (a source in hand, written into its room)
         Ok(())
     })
     .map_err(|e| e.to_string())?;
-    house(dir, blobs, block, b, home)
+    house(reg, dir, blobs, block, b, home)
 }
 
 /// A document's source in its tape block's room: the tape parsed from it into the same block, the block frozen, and
 /// the two housed as blobs. The block is let go when it holds nothing new (both blobs housed already) or on an error.
-fn house(dir: &mut Directory, blobs: &mut Blobs, block: BlockId, b: Arc<rerail_blocks::block::Block>, source: home::Home) -> Result<DocIds, String> {
+fn house(reg: &Registry, dir: &mut Directory, blobs: &mut Blobs, block: BlockId, b: Arc<rerail_blocks::block::Block>, source: home::Home) -> Result<DocIds, String> {
     let placed = parse(block, b, source).and_then(|(s, t)| {
         dir.freeze(block)?;
-        let (source, new_s) = blobs.house(dir, s)?;
-        let (tape, new_t) = blobs.house(dir, t)?;
+        let (source, new_s) = blobs.house(reg, dir, s)?;
+        let (tape, new_t) = blobs.house(reg, dir, t)?;
         Ok((DocIds { source, tape }, new_s || new_t))
     });
     match placed {
