@@ -1100,8 +1100,12 @@ impl<L: Layout> P<'_, L> {
         } else {
             return self.refuse();
         }
-        while !(self.i >= self.n || self.bit_at(self.i, 1)) && (PUNCTUATION[self.word() as usize] != 0 || self.word() == w::LBRACE_20 || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER) {
-            self.pass_as(true)?;
+        loop {
+            if (PUNCTUATION[self.word() as usize] != 0 || self.word() == w::LBRACE_20) && !(self.i >= self.n || self.bit_at(self.i, 1)) || (self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER) && !(self.i >= self.n || self.bit_at(self.i, 1)) {
+                self.pass_as(true)?;
+            } else {
+                break;
+            }
         }
         if !(self.i >= self.n || self.bit_at(self.i, 1)) {
             return self.refuse();

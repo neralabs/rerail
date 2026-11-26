@@ -342,3 +342,14 @@ statements and blocks end.
     the walk's masks, the token loop's `code_l` or another pass's masks. Python's tier 1 now has 11 passes and
     Kotlin's 4. JSON's and rr's had no masks of regions. A pass is one statement of the walk (`gate_walk`), and makes
     each of its masks.
+65. **Tier 2 asks the marks that end a part only at a token whose word an arm has.** Lean has `NEWLINE`, `INDENT`
+    and `DEDENT` as tokens, so `while self.peek() == T::And` asks one token. Tier 2's marks are questions about the
+    token (`m_newline`, `m_dedent`, its column), and its loops and options asked them first, at every token:
+    `while !(newline || dedent) && word == AND`. Now:
+    - a loop's or an option's word or kind test comes first, and its end's marks are asked after it (`while word == AND
+      && !(…)`). A `match` of the word asks them in each arm's guard, its `_` the loop's end
+      (`moves::exits_after_words`);
+    - a loop that ends an `indented` level (`block = statement+`, `match_block`) ends at the level's ending marks
+      alone, as lean's `while !matches!(peek, Dedent | Eof) { statement }`. It no longer asks a statement's whole first
+      set at every statement. A token that is neither refuses in the statement, as in lean. An expression level is no
+      such loop: its callers' tokens (`)`) end it too.

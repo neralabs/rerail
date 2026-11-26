@@ -1356,17 +1356,36 @@ impl<'a> G<'a> {
                 // A loop only its exit ends (the code after it begins with the exit's marks), of a part that must take a
                 // token: the part until the exit, as the lean parser's `while !end { statement }`. A token neither
                 // begins refuses in the part, as it did after the loop.
+                // So too a loop that ends an `indented` level (`block = statement+`): such a level ends where a line is
+                // less deep or at the file's end, at its ending marks alone, each past a mark just taken (`after_mark`),
+                // as the lean parser's `while !matches!(peek, Dedent | Eof)`. Another level also ends at its callers'
+                // tokens (`)` after a product), which only its part's first tells from its own.
                 let (fr, may_end) = self.rest_first(rest)?;
+                let indented = self.x.tree.iter().any(|s| matches!(s, Stmt::Indented(ns) if ns.iter().any(|n| n == rule)));
+                let level_ends = may_end && indented && self.nested(rule) && self.order.first() != Some(&rule);
                 if arms.len() == 1
                     && d.is_empty()
-                    && unmarked.is_empty()
                     && !ex.is_empty()
-                    && !may_end
-                    && !fr.is_empty()
-                    && fr.iter().all(|(t, f)| f.is_none() && matches!(t, Test::Mark(m) if ex.iter().any(|e| e.0 == *m && !e.1)))
+                    && (!may_end || level_ends)
+                    && (may_end || !fr.is_empty())
+                    && (may_end || unmarked.is_empty())
+                    && self.gated(&ex).is_empty()
+                    && fr.iter().all(|(t, f)| f.is_none() && matches!(t, Test::Mark(m) if ex.iter().any(|e| e.0 == *m && (level_ends || !e.1))))
                     && !self.first(a)?.1
                 {
-                    let exit = Cond::Or(ex.iter().map(|e| self.mark_test(e.0)).collect());
+                    let exit = Cond::Or(
+                        ex.iter()
+                            .map(|e| {
+                                let c = self.mark_test(e.0);
+                                if unmarked.contains(&e.0) {
+                                    self.marked_read.set(true);
+                                    Cond::And(vec![Cond::text("!self.marked"), c])
+                                } else {
+                                    c
+                                }
+                            })
+                            .collect(),
+                    );
                     d.push(Op::If { arms: vec![(exit, vec![Op::Break])], els: None });
                     d.extend(arms[0].1.clone());
                     out.push(Op::Loop(d));

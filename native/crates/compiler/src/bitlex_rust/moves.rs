@@ -1119,6 +1119,17 @@ pub(crate) fn open_first(b: &mut Block) {
     });
 }
 
+/// Whether `c` asks the token's word and kind alone, no mark's or scan's question.
+fn plain(c: &Cond) -> bool {
+    match c {
+        Cond::Word { .. } | Cond::Class { .. } | Cond::Kind { .. } => true,
+        Cond::Text(t) => !t.contains("self.m_") && !t.contains("held") && !t.contains("scan"),
+        Cond::Not(x) | Cond::Group(x) => plain(x),
+        Cond::And(xs) | Cond::Or(xs) => xs.iter().all(plain),
+        Cond::Mark { .. } | Cond::Flag(_) | Cond::Scan { .. } => false,
+    }
+}
+
 /// `a && b`, each that holds an `||` in parentheses.
 fn and(a: Cond, b: Cond) -> Cond {
     // An `||` outside any parentheses in its text (an `Or` itself `And` prints in parentheses).
@@ -1206,7 +1217,9 @@ pub(crate) fn joined(b: &mut Block) {
                 && let [(d, inner)] = arms.as_slice()
                 && matches!(e.as_slice(), [Op::Break])
             {
-                *op = Op::While(and(c.clone(), d.clone()), inner.clone());
+                // The arm's word or kind first, the marks of the loop's end only at a token it holds at, as the lean
+                // parser's `while self.peek() == T::And` asks the token alone.
+                *op = Op::While(if plain(d) && !plain(c) { and(d.clone(), c.clone()) } else { and(c.clone(), d.clone()) }, inner.clone());
             }
         }
         x.retain(|op| !matches!(op, Op::If { arms, els: None } if arms.iter().all(|(_, b)| b.is_empty())));
@@ -1431,6 +1444,62 @@ pub(crate) fn rewrite(b: &mut Block, cx: &Cx<'_>) {
     blocks(b, &mut no_outer_parens);
     blocks(b, &mut loops_as_whiles);
     blocks(b, &mut no_retest_after_while);
+    blocks(b, &mut exits_after_words);
+}
+
+/// A test of the marks that end a part (`!(newline || dedent)`) around a decision of the token's word, which does
+/// nothing at a word none of its arms has: the marks asked in each arm, after its word, as the lean parser's
+/// `if self.peek() == T::Else` asks the token alone. `if !E { if W { … } }` is `if W && !E { … }`, `if !E { match w {
+/// W => … } }` a `match w { W if !E => … }`, and `while !E { match w { W => …, _ => break } }` a `loop` of the `match`
+/// whose every arm asks `!E`, its `_` the loop's end.
+fn exits_after_words(b: &mut Block) {
+    let guarded = |arms: &[(Pat, Block)], not_e: &Cond| -> Vec<(Pat, Block)> {
+        arms.iter()
+            .map(|(p, body)| {
+                let guard = match &p.guard {
+                    Some(g) => and(g.clone(), not_e.clone()),
+                    None => not_e.clone(),
+                };
+                (Pat { words: p.words.clone(), guard: Some(guard) }, body.clone())
+            })
+            .collect()
+    };
+    for op in b.iter_mut() {
+        let new = match op {
+            // `if E {} else { … }`, as the moves hold `if !E { … }`; `if E {} else if W { … }`.
+            Op::If { arms, els } if arms[0].1.is_empty() && !plain(&arms[0].0) => {
+                let not_e = Cond::Not(Box::new(arms[0].0.clone()));
+                match (&arms[1..], els.as_deref()) {
+                    (rest, None) if !rest.is_empty() && rest.iter().all(|(c, _)| plain(c)) => Some(Op::If { arms: rest.iter().map(|(c, x)| (and(c.clone(), not_e.clone()), x.clone())).collect(), els: None }),
+                    ([], Some([Op::If { arms: inner, els: None }])) if inner.iter().all(|(c, _)| plain(c)) => Some(Op::If { arms: inner.iter().map(|(c, x)| (and(c.clone(), not_e.clone()), x.clone())).collect(), els: None }),
+                    ([], Some([Op::Match { subject, arms: inner, default }])) if default.is_empty() && inner.iter().all(|(p, _)| p.guard.as_ref().is_none_or(plain)) => {
+                        Some(Op::Match { subject: subject.clone(), arms: guarded(inner, &not_e), default: Vec::new() })
+                    }
+                    _ => None,
+                }
+            }
+            Op::If { arms, els: None } if arms.len() == 1 && !plain(&arms[0].0) => {
+                let not_e = arms[0].0.clone();
+                match arms[0].1.as_slice() {
+                    [Op::If { arms: inner, els: None }] if inner.iter().all(|(c, _)| plain(c)) => Some(Op::If { arms: inner.iter().map(|(c, x)| (and(c.clone(), not_e.clone()), x.clone())).collect(), els: None }),
+                    [Op::Match { subject, arms: inner, default }] if default.is_empty() && inner.iter().all(|(p, _)| p.guard.as_ref().is_none_or(plain)) => {
+                        Some(Op::Match { subject: subject.clone(), arms: guarded(inner, &not_e), default: Vec::new() })
+                    }
+                    _ => None,
+                }
+            }
+            Op::While(c, body) if !plain(c) => match body.as_slice() {
+                [Op::Match { subject, arms: inner, default }] if matches!(default.as_slice(), [Op::Break]) && inner.iter().all(|(p, _)| p.guard.as_ref().is_none_or(plain)) => {
+                    Some(Op::Loop(vec![Op::Match { subject: subject.clone(), arms: guarded(inner, c), default: vec![Op::Break] }]))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(n) = new {
+            *op = n;
+        }
+    }
 }
 
 /// A leaf of no field and then the field set on the node made last, which is that leaf: one take of the field, as the
