@@ -101,7 +101,7 @@ describe.runIf(process.platform === "win32")("a privilege switch's PowerShell", 
       failure = await startPrivilegeSwitch(WINDOWS_POWERSHELL, 0).then(kept => kept.end(), (error: unknown) => error);
     }, PRIVILEGE_SWITCH_START_BOUND_MS);
 
-    it("ends the switch's start in PowerShell's own words, read out of the CLIXML it writes them in", () => {
+    it("ends the switch's start at once, in PowerShell's own words", () => {
       expect(failure).toBeInstanceOf(Error);
       expect((failure as Error).message).toMatch(/ended \(exit code 1\): OpenProcessToken failed: \d+/u);
       expect((failure as Error).message).not.toContain("CLIXML");
@@ -121,6 +121,7 @@ describe("a privilege switch whose program ends before it is ready", () => {
         '<S S="Error">OpenProcessToken failed: 5_x000D__x000A_</S><S S="Error">At line:9 char:79 &amp; &lt;here&gt;_x000D__x000A_</S></Objs>',
     ].join("\r\n");
     expect(powerShellWords(errorOutput)).toBe("OpenProcessToken failed: 5\r\nAt line:9 char:79 & <here>");
+    expect(powerShellWords(`${errorOutput}\r\nAdd-Type failed\r\n`)).toBe("OpenProcessToken failed: 5\r\nAt line:9 char:79 & <here>\r\n\r\nAdd-Type failed");
   });
 });
 

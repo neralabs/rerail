@@ -16,8 +16,11 @@ export const WINDOWS_POWERSHELL: Program = [
  * input, a state (0 off, 2 on) and the privileges to set to it, sets each and prints `done` and each one that was on
  * before. One the token does not hold is passed over. It reads its input through `$input`, which PowerShell's host feeds
  * line by line as the lines come, and ends when that input ends: when the process that started it closes it or ends.
+ * Any error ends it at once, with PowerShell's text of the error on its error output: a script that stops at an error
+ * leaves Windows PowerShell running until its input ends, since its host goes on reading that input for the script.
  */
 const SWITCH = String.raw`
+trap { [Console]::Error.WriteLine(($_ | Out-String)); [Console]::Error.Flush(); [Environment]::Exit(1) }
 Add-Type -Namespace RerailTest -Name Token -MemberDefinition @'
 [StructLayout(LayoutKind.Sequential, Pack = 4)] public struct One { public uint Count; public uint Low; public int High; public uint Attributes; }
 [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
@@ -51,17 +54,22 @@ foreach ($line in $input) {
 const ERROR_OUTPUT_KEPT = 16_384;
 
 /**
- * What PowerShell wrote to its error output, as text. Started with `-EncodedCommand`, Windows PowerShell writes its
- * error and progress records there as CLIXML (`#< CLIXML`, then `<Objs>`): this gives the text of its error records,
- * with the characters CLIXML escapes as `_xHHHH_` and XML as entities put back.
+ * What PowerShell wrote to its error output, as text. Started with `-EncodedCommand`, Windows PowerShell writes the
+ * error and progress records of its own streams there as CLIXML (`#< CLIXML`, then `<Objs>`), beside the plain text
+ * the switch's script writes: each CLIXML block gives the text of its error records, with the characters CLIXML
+ * escapes as `_xHHHH_` and XML as entities put back, and the plain text stays as it is.
  */
 export function powerShellWords(errorOutput: string): string {
-  if (!errorOutput.startsWith("#< CLIXML")) return errorOutput.trim();
-  const errors = [...errorOutput.matchAll(/<S S="Error">([^<]*)<\/S>/gu)].map(match => match[1] ?? "").join("");
-  return errors
+  return errorOutput.replace(/#< CLIXML\r?\n?(<Objs[\s\S]*?<\/Objs>)?/gu, block => clixmlErrors(block)).trim();
+}
+
+/** The text of the error records in one CLIXML block. */
+function clixmlErrors(block: string): string {
+  return [...block.matchAll(/<S S="Error">([^<]*)<\/S>/gu)]
+    .map(match => match[1] ?? "")
+    .join("")
     .replace(/_x([0-9A-Fa-f]{4})_/gu, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
-    .replace(/&(lt|gt|quot|apos|amp);/gu, (_, name: string) => ({ lt: "<", gt: ">", quot: '"', apos: "'", amp: "&" })[name] ?? "")
-    .trim();
+    .replace(/&(lt|gt|quot|apos|amp);/gu, (_, name: string) => ({ lt: "<", gt: ">", quot: '"', apos: "'", amp: "&" })[name] ?? "");
 }
 
 /** One reply the switch owes: the next line it prints settles the oldest. */
