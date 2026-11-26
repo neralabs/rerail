@@ -1,3 +1,9 @@
+// The phase `py_names` is asked (decision 0705): a module's exports are answered only where a file asks for them. Each file asks for each qualified name it
+// spells through an import (`qn`, "m.x": `spelled_at`), the cross part follows each ask through the files' own
+// re-exports and star imports (`fwd`, `star_of`) to every module it reaches and sends it to that module's file
+// (`ask_in`), and that file answers it in the next round at its own path (`ans_def`, `ans_pub`). Round 2 finds no new
+// ask, so a cold run takes two rounds, and a run from its last run's asks one.
+//
 // The phase `py_names` (decisions 0083, 0677): Python module resolution across the workspace's modules, run over the same
 // files as the program that reads it, in its language. It hands on symbols alone, so a per-file rule reading them stays
 // per-file, and no node crosses into the cross-file part (0677). As `tsx_names`, it reads the modules' definitions and
@@ -69,8 +75,9 @@
 // Keyed in a reader's memo (decision 0705): a file's modules, its asks, its own classes and its own receivers, at its
 // path, each naming a key in column 1; its star-imported public names at its path; each ask's symbols by
 // the ask, naming each symbol in column 1; every fact by the symbol (or module) in column 0.
-.export reads_at by_path 1, asks_at as asked_at by_path 1, own_at by_path 1, own_rcv_at by_path 1, star_public by_path,
-    denotes_k as denotes by_key 1, resolved_k as resolved by_key, h_class as class by_key,
+.rounds ask_in
+.export ask_in by_path, reads_at by_path 1, asks_at as asked_at by_path 1, own_at by_path 1, own_rcv_at by_path 1,
+    star_public by_path, denotes_k as denotes by_key 1, resolved_k as resolved by_key, h_class as class by_key,
     h_class_named as class_named by_key, h_defined as defined by_key, h_ancestor as ancestor by_key,
     h_library_ancestor as library_ancestor by_key, h_anc_call as anc_call by_key, h_anc_kw as anc_kw by_key,
     h_anc_ref as anc_ref by_key, h_anc_method as anc_method by_key, h_member_call as member_call by_key,
@@ -82,6 +89,80 @@
     h_dj_task_def as dj_task_def by_key, h_dj_view_model as dj_view_model by_key,
     h_dj_anc_clean_call as dj_anc_clean_call by_key, dj_model_class by_key, dj_app_defers,
     h_dj_number_fields as dj_number_fields by_key
+
+// ---- the asks (decision 0705) ---------------------------------------------------------------------------------------
+// spelled_at(p, k): the file at path p spells the qualified name k ("m.x") through an import: its own rows, no node.
+.decl spelled_at(p: symbol, k: symbol)
+spelled_at(p, k) :- qn(n, k), docof(n, d), doc(d, p, _).
+// asked(m, x): some file asks module m, a workspace file's, for x, directly or through a re-export or star import
+// that forwards it. A name of a module no file is (an outside package's, or an attribute chain past a module) is
+// asked of no file, so it makes no row. The forwards are each file's own, made whatever is asked (`fwd`, `star_of`),
+// so round 1 follows every ask through every re-export, and round 2 only answers: a cold run takes two rounds, not
+// one more for each re-export an ask passes.
+.decl asked(m: symbol, x: symbol) cross_file
+asked(m, x) :- spelled_at(_, k), split_dot(k, m, x), doc(_, _, m).
+asked(m2, x) :- asked(m, l), fwd(m, l, m2, x), doc(_, _, m2).
+asked(m2, x) :- asked(m, x), star_of(m, m2), doc(_, _, m2).
+// ask_in(p, x): the file at path p, module m's, is asked for x. The rounds hand it back as py_names__ask_in.
+.decl ask_in(p: symbol, x: symbol)
+ask_in(p, x) :- asked(m, x), doc(_, p, m).
+.decl py_names__ask_in(p: symbol, x: symbol)
+// The asked file's answers, in its own part: read at its own path, so each is per-file. python/imports' three rules
+// of exports and exported, for the asked names alone.
+.decl ans_def(m: symbol, x: symbol, q: symbol)
+ans_def(m, x, q) :- doc(d, p, m), py_names__ask_in(p, x), def_name(f, x), docof(f, d), nearest(f, s, scope),
+    kind(s, "module"), qualname(f, q).
+// fwd(m, l, m2, x): module m binds l by `from m2 import x [as l]`, run when m is imported (python/imports'
+// import_time). Each file's part reads its module-level imports (`fwd_any`), its tree alone, whatever is asked; the
+// cross part drops a tuple the file imports only under `if TYPE_CHECKING:` (`tc_only`). That test resolves the
+// condition's name (`qn`), the file's binding analysis, so it reads no ask and is held in the memo entry from
+// round 1.
+.decl fwd_any(m: symbol, l: symbol, m2: symbol, x: symbol)
+fwd_any(m, l, m2, x) :- doc(d, _, m), import_alias(i, _, m2, x, l), docof(i, d), !nearest(i, _, fn_or_lambda), x != "".
+.decl fwd_rt(m: symbol, l: symbol, m2: symbol, x: symbol)
+fwd_rt(m, l, m2, x) :- doc(d, _, m), import_alias(i, _, m2, x, l), docof(i, d), import_time(i), x != "".
+.decl tc_only(m: symbol, l: symbol, m2: symbol, x: symbol)
+tc_only(m, l, m2, x) :- doc(d, _, m), import_alias(i, _, m2, x, l), docof(i, d), !nearest(i, _, fn_or_lambda),
+    x != "", !fwd_rt(m, l, m2, x).
+.decl fwd(m: symbol, l: symbol, m2: symbol, x: symbol) cross_file
+fwd(m, l, m2, x) :- fwd_any(m, l, m2, x), !tc_only(m, l, m2, x).
+// star_of(m, m2): module m has `from m2 import *`, each file's own, whatever is asked; fwd_star(m, x, m2): x is
+// asked of m, so of m2 through it.
+.decl star_of(m: symbol, m2: symbol)
+star_of(m, m2) :- doc(d, _, m), kind(i, "import_from_statement"), docof(i, d), child(i, w, _),
+    kind(w, "wildcard_import"), module_text(i, m2).
+.decl fwd_star(m: symbol, x: symbol, m2: symbol) cross_file
+fwd_star(m, x, m2) :- asked(m, x), star_of(m, m2).
+// all_here(d, x), all_assigned(d): document d's module-level `__all__` lists x; d assigns one, even an empty one.
+// Each file's own, read once, not once for each ask.
+.decl all_here(d: number, x: symbol)
+all_here(d, x) :- kind(a, "assignment"), docof(a, d), field(a, "left", l), text(l, "__all__"), field(a, "right", r),
+    child(r, s, _), value(s, x), nearest(a, sc, scope), kind(sc, "module").
+.decl all_assigned(d: number)
+all_assigned(d) :- kind(a, "assignment"), docof(a, d), field(a, "left", l), text(l, "__all__"), nearest(a, sc, scope),
+    kind(sc, "module").
+.decl ans_pub(m: symbol, x: symbol)
+// python/imports' public_name, read through the file's own nodes: its `__all__` lists x, or it has none and x has no
+// leading `_` (dunder_all and has_all, by the module, would join another file's rows by its module's name).
+ans_pub(m, x) :- doc(d, p, m), py_names__ask_in(p, x), all_here(d, x).
+ans_pub(m, x) :- doc(d, p, m), py_names__ask_in(p, x), !prefix("_", x), !all_assigned(d).
+// The cross part: the answers followed through the forwards, as exports and resolve_export follow them.
+.decl asked_exported(m: symbol, x: symbol)
+asked_exported(m, x) :- ans_def(m, x, _).
+asked_exported(m, l) :- fwd(m, l, _, _).
+asked_exported(m, x) :- fwd_star(m, x, m2), asked_exported(m2, x), ans_pub(m2, x).
+.decl asked_exports(m: symbol, x: symbol, q: symbol)
+asked_exports(m, x, q) :- ans_def(m, x, q).
+asked_exports(m, l, q) :- fwd(m, l, m2, x), asked_exports(m2, x, q).
+asked_exports(m, l, q) :- fwd(m, l, m2, x), !asked_exported(m2, x), q = @dot(m2, x).
+asked_exports(m, x, q) :- fwd_star(m, x, m2), asked_exports(m2, x, q), ans_pub(m2, x).
+
+// ---- what is handed on (python/py-names-handed) ---------------------------------------------------------------------
+// The exports the asks resolve through, and the symbols whose facts are handed on: those some file's asks denote.
+exports_of(m, x, q) :- asked_exports(m, x, q).
+handed_sym(q) :- res(_, q), defined(_, q).
+handed_obj(q) :- obj_at(_, k), res(k, q).
+handed_attr(q) :- attr_at(_, k), res(k, q).
 
 // imported(p, q): an import statement of the file at path p names q: a module (`import a.b`, `from .m import x`'s
 // "pkg.m"), or a name of one ("pkg.m.x").
@@ -102,7 +183,8 @@ named_module(p, m) :- imported(p, q), pkg_above(m, q).
 
 .decl reads_at(p: symbol, m: symbol)
 reads_at(p, m) :- named_module(p, m).
-reads_at(p, m) :- named_module(p, m0), exports(m0, _, r), defined(m, r).
+// The module of each definition the file's own asks resolve to.
+reads_at(p, m) :- spelled_at(p, k), split_dot(k, m0, x), asked_exports(m0, x, r), defined(m, r).
 
 .decl defined(m: symbol, q: symbol)
 defined(m, q) :- qualname(f, q), module_of(f, m).
@@ -126,8 +208,8 @@ base_here(q, b) :- base_expr(q, e), sym_of(e, b).
 .decl base(q: symbol, b: symbol)
 base(q, b) :- base_here(q, b).
 // resolve_export's two rules, for a base's name (its `export_query` is python/imports' own, decision 0263).
-base(q, b) :- base_name(q, q0), split_dot(q0, m, x), exports(m, x, b).
-base(q, q0) :- base_name(q, q0), count : { split_dot(q0, m, x), exported(m, x) } = 0.
+base(q, b) :- base_name(q, q0), split_dot(q0, m, x), asked_exports(m, x, b).
+base(q, q0) :- base_name(q, q0), count : { split_dot(q0, m, x), asked_exported(m, x) } = 0.
 // A class of the run read as an attribute of a class (`class Meta(Named.Meta)`), as python/names' sym_of rule 3 reads
 // it: the object resolved by the file's own binding or through an import, the base its qualname where some module
 // defines it.
@@ -136,7 +218,7 @@ base_attr_here(q, c, a) :- base_expr(q, e), attr_of(e, o, a), sym_of(o, c).
 .decl base_attr_name(q: symbol, c0: symbol, a: symbol)
 base_attr_name(q, c0, a) :- base_expr(q, e), attr_of(e, o, a), qn(o, c0).
 base(q, b) :- base_attr_here(q, c, a), b = @dot(c, a), defined(_, b).
-base(q, b) :- base_attr_name(q, c0, a), split_dot(c0, m, x), exports(m, x, c), b = @dot(c, a), defined(_, b).
+base(q, b) :- base_attr_name(q, c0, a), split_dot(c0, m, x), asked_exports(m, x, c), b = @dot(c, a), defined(_, b).
 // anc(q, b): b is among q's bases, at any depth. Linear (a base's ancestors, not a join of two closures): its rows
 // are each class's ancestors, the depth of the hierarchy, not its square.
 .decl anc(q: symbol, b: symbol)
@@ -164,8 +246,8 @@ own_call_here(q, x, f) :- own_asg(q, x, r), kind(r, "call"), field(r, "function"
 own_call_name(q, x, f0) :- own_asg(q, x, r), kind(r, "call"), field(r, "function", e), qn(e, f0).
 .decl own_call(q: symbol, x: symbol, f: symbol)
 own_call(q, x, f) :- own_call_here(q, x, f).
-own_call(q, x, f) :- own_call_name(q, x, f0), split_dot(f0, m, y), exports(m, y, f).
-own_call(q, x, f0) :- own_call_name(q, x, f0), count : { split_dot(f0, m, y), exported(m, y) } = 0.
+own_call(q, x, f) :- own_call_name(q, x, f0), split_dot(f0, m, y), asked_exports(m, y, f).
+own_call(q, x, f0) :- own_call_name(q, x, f0), count : { split_dot(f0, m, y), asked_exported(m, y) } = 0.
 .decl own_kw(q: symbol, x: symbol, k: symbol, v: symbol)
 own_kw(q, x, k, v) :- own_asg(q, x, r), kind(r, "call"), field(r, "arguments", al), child(al, ka, _),
     kind(ka, "keyword_argument"), field(ka, "name", n), text(n, k), field(ka, "value", w), node_text(w, v).
@@ -175,8 +257,8 @@ own_ref_here(q, x, s) :- own_asg(q, x, r), (e = r ; within(e, r)), sym_of(e, s).
 own_ref_name(q, x, s0) :- own_asg(q, x, r), (e = r ; within(e, r)), qn(e, s0).
 .decl own_ref(q: symbol, x: symbol, s: symbol)
 own_ref(q, x, s) :- own_ref_here(q, x, s).
-own_ref(q, x, s) :- own_ref_name(q, x, s0), split_dot(s0, m, y), exports(m, y, s).
-own_ref(q, x, s0) :- own_ref_name(q, x, s0), count : { split_dot(s0, m, y), exported(m, y) } = 0.
+own_ref(q, x, s) :- own_ref_name(q, x, s0), split_dot(s0, m, y), asked_exports(m, y, s).
+own_ref(q, x, s0) :- own_ref_name(q, x, s0), count : { split_dot(s0, m, y), asked_exported(m, y) } = 0.
 .decl own_method(q: symbol, x: symbol)
 own_method(q, x) :- class_def(c, q), kind(f, "function_definition"), nearest(f, c, scope), def_name(f, x).
 .decl member_call(m: symbol, q: symbol, x: symbol, f: symbol)
@@ -291,7 +373,7 @@ dj_gq_call_name(k, f0) :- class_def(c, k), kind(d, "function_definition"), neare
     def_name(d, "get_queryset"), kind(e, "call"), within(e, d), field(e, "function", fn), qn(fn, f0).
 .decl dj_gq_call(k: symbol, f: symbol)
 dj_gq_call(k, f) :- dj_gq_call_here(k, f).
-dj_gq_call(k, f) :- dj_gq_call_name(k, f0), split_dot(f0, m, y), exports(m, y, f).
+dj_gq_call(k, f) :- dj_gq_call_name(k, f0), split_dot(f0, m, y), asked_exports(m, y, f).
 // dj_mgr_class(s, k): manager class s runs its queries through class k of the run: itself, or the class its
 // get_queryset() (its own, else an ancestor's) calls (`return SlugQuerySet(self.model, using=self._db)`).
 .decl dj_mgr_class(s: symbol, k: symbol)
@@ -352,8 +434,8 @@ dj_rcv_sender_here(p, q) :- dj_rcv_site(k, v, _, _, _), dj_place(k, p), sym_of(v
 dj_rcv_sender_name(p, q0) :- dj_rcv_site(k, v, _, _, _), dj_place(k, p), qn(v, q0).
 .decl dj_rcv_sender(p: symbol, q: symbol)
 dj_rcv_sender(p, q) :- dj_rcv_sender_here(p, q).
-dj_rcv_sender(p, q) :- dj_rcv_sender_name(p, q0), split_dot(q0, m, y), exports(m, y, q).
-dj_rcv_sender(p, q0) :- dj_rcv_sender_name(p, q0), count : { split_dot(q0, m, y), exported(m, y) } = 0.
+dj_rcv_sender(p, q) :- dj_rcv_sender_name(p, q0), split_dot(q0, m, y), asked_exports(m, y, q).
+dj_rcv_sender(p, q0) :- dj_rcv_sender_name(p, q0), count : { split_dot(q0, m, y), asked_exported(m, y) } = 0.
 .decl dj_rcv_fn_here(p: symbol, f: symbol)
 dj_rcv_fn_here(p, fq) :- dj_rcv_site(k, _, _, _, a), dj_place(k, p), kind(a, "function_definition"), qualname(a, fq).
 dj_rcv_fn_here(p, fq) :- dj_rcv_site(k, _, _, _, a), dj_place(k, p), sym_of(a, fq).
@@ -361,7 +443,7 @@ dj_rcv_fn_here(p, fq) :- dj_rcv_site(k, _, _, _, a), dj_place(k, p), sym_of(a, f
 dj_rcv_fn_name(p, f0) :- dj_rcv_site(k, _, _, _, a), dj_place(k, p), qn(a, f0).
 .decl dj_rcv_fn(p: symbol, f: symbol)
 dj_rcv_fn(p, fq) :- dj_rcv_fn_here(p, fq).
-dj_rcv_fn(p, fq) :- dj_rcv_fn_name(p, f0), split_dot(f0, m, y), exports(m, y, fq).
+dj_rcv_fn(p, fq) :- dj_rcv_fn_name(p, f0), split_dot(f0, m, y), asked_exports(m, y, fq).
 // dj_rcv_hook(q, h): a receiver connected for sender q, described: its signals, its name, its place.
 .decl dj_rcv_hook(q: symbol, h: symbol)
 dj_rcv_hook(q, h) :- dj_rcv_sender(p, q), dj_rcv(p, _, fname), s = join x by x sep "/" : { dj_rcv(p, x, fname) },
@@ -437,11 +519,3 @@ dj_model_class(m, q) :- member_call(m, q, x, f), x != "output_field", split_dot(
 dj_expression_class(m, q) :- ancestor(m, q, b), (prefix("django.db.models.expressions.", b) ;
     prefix("django.db.models.functions.", b) ; prefix("django.db.models.aggregates.", b) ;
     prefix("django.db.models.lookups.", b) ; dj_expression_base(b)).
-
-// ---- what is handed on (python/py-names-handed) ---------------------------------------------------------------------
-// Every export and every symbol of the run's facts: the phase asks nothing (py_names.asked.rerail asks).
-exports_of(m, x, q) :- exports(m, x, q).
-handed_sym(q) :- class(_, q).
-handed_sym(q) :- defined(_, q).
-handed_obj(q) :- class(_, q).
-handed_attr(q) :- defined(_, q).

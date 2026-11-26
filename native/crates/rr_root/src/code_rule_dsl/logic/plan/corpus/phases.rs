@@ -166,7 +166,6 @@ pub fn declared(prog: &(impl ProgramFields + ?Sized)) -> Option<Declared> {
     Some(Declared { name, exports, relations, rounds, keyed })
 }
 
-pub use crate::code_rule_dsl::logic::plan::phased::{ASKED_PHASES, asked_phases_on};
 
 /// The most rounds an asked phase runs (decision 0705): a chain of re-exports this deep is an ask that makes a new key
 /// from itself, and a run stopped short would hand on a partial answer, so it fails.
@@ -327,16 +326,9 @@ fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
     candidates(name, dir).into_iter().find(|p| p.exists())
 }
 
-/// Where a phase program `name` is looked for, in order: `dir`, then the engine's own programs: while asked phases
-/// run, its asked program first (`<name>.asked.rerail`, decision 0705), then its eager one.
+/// Where a phase program `name` is looked for, in order: `dir`, then the engine's own programs.
 fn candidates(name: &str, dir: Option<&Path>) -> Vec<PathBuf> {
-    let builtin = builtin_dir();
-    let mut out: Vec<PathBuf> = dir.into_iter().map(|d| d.join(format!("{name}.rerail"))).collect();
-    if asked_phases_on() {
-        out.push(builtin.join(format!("{name}.asked.rerail")));
-    }
-    out.push(builtin.join(format!("{name}.rerail")));
-    out
+    dir.into_iter().map(|d| d.join(format!("{name}.rerail"))).chain(std::iter::once(builtin_dir().join(format!("{name}.rerail")))).collect()
 }
 
 /// The files of every phase program `programs` may read, and of the phases those may read: each phase's `.rerail` and
@@ -643,12 +635,9 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
         let wanted: Vec<String> = reads.iter().map(|(_, e)| e.clone()).collect::<BTreeSet<String>>().into_iter().collect();
         // An asked phase (decision 0705): it runs in rounds, each handed the export `.rounds` names as the last round
         // left it, under its own name (`py_names__ask_in`), until a round leaves it as it was handed. Its exports are
-        // keyed in its readers' memo as it declares (`.export asked_at by_path 1`). Behind `RERAIL_ASKED_PHASES`.
+        // keyed in its readers' memo as it declares (`.export asked_at by_path 1`).
         let keys = keyed(&name, &*program, &declared)?;
         let rounds_of = declared.rounds.clone();
-        if !rounds_of.is_empty() && !asked_phases_on() {
-            return Err(Error::Plan(format!("{name}.rerail is an asked phase (`.rounds`): set {ASKED_PHASES}=1 to run it (decision 0705)")));
-        }
         // Each rounds' export and the name a round reads its last rows under (`py_names__ask_in`).
         let own_reads: Vec<(String, String)> = rounds_of.iter().map(|r| (r.clone(), format!("{name}{SEP}{r}"))).collect();
         for (r, own) in &own_reads {
@@ -696,8 +685,8 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
         // Round 1 starts from the asks the last run over this root ended with: an edit that changes no ask takes one
         // round. A stale ask is made again from nothing (the rounds' exports are derived afresh each round), so where
         // it starts changes no answer.
-        let mut asks: BTreeMap<String, Vec<Vec<Value>>> =
-            untagged(kept_key.as_ref().and_then(|k| super::observe(|o| o.run_record(k))).and_then(|(_, rows)| decode_rows(&rows)).unwrap_or_default(), &rounds_of);
+        let kept_rows: Option<Vec<u8>> = kept_key.as_ref().and_then(|k| super::observe(|o| o.run_record(k))).map(|(_, rows)| rows);
+        let mut asks: BTreeMap<String, Vec<Vec<Value>>> = untagged(kept_rows.as_deref().and_then(decode_rows).unwrap_or_default(), &rounds_of);
         let mut rounds: Vec<Round> = Vec::new();
         let _measured = (!rounds_of.is_empty()).then(|| crate::code_rule_dsl::logic::profile::bind(RoundsMeasured(Some(Default::default()))));
         let (report, rows) = loop {
@@ -735,8 +724,13 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
             }
             asks = got;
         };
+        // Written only when the asks changed: a run that ends with the asks it started from writes nothing (`RERAIL_WARM`).
         if let Some(k) = &kept_key {
-            super::observe(|o| o.put_run_record(k, &super::reuse::encode_lists::<&str>(&[]), &encode_rows(&tagged(&asks))));
+            let was = untagged(kept_rows.as_deref().and_then(decode_rows).unwrap_or_default(), &rounds_of);
+            let same = kept_rows.is_some() && rounds_of.iter().all(|r| row_set(was.get(r).map_or(&[][..], Vec::as_slice)) == row_set(asks.get(r).map_or(&[][..], Vec::as_slice)));
+            if !same {
+                super::observe(|o| o.put_run_record(k, &super::reuse::encode_lists::<&str>(&[]), &encode_rows(&tagged(&asks))));
+            }
         }
         { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&reads, &rows, &mut facts); }
         let exports: Vec<(String, usize)> = wanted.iter().map(|e| (e.clone(), rows.get(e).map_or(0, |v| v.len()))).collect();

@@ -1,6 +1,7 @@
 # 0705: An asked phase answers only what its files ask
 
-Status: built (2026-11-26); the rounds and the asked `py_names` behind `RERAIL_ASKED_PHASES`. Amends 0083 §1 (a
+Status: built (2026-11-26); `py_names` is asked, and its eager program and the switch `RERAIL_ASKED_PHASES` that
+chose between them are removed. Amends 0083 §1 (a
 phase's run) and 0665 (which relations are settings, and how each keys a reader's memo). Follows 0702.
 
 ## Intro
@@ -43,7 +44,9 @@ one run, and asks keyed per file.
 - The project's settings are declared the same way, beside their declarations in the library's `core.rerail`:
   `.keyed package_for by_path 1, tsconfig_for by_path 1, package by_key, package_field by_key, tsconfig by_key,
   tsconfig_path by_key, package_export, env` (an item with no key is read whole by every file).
-- With the switch off, a phase that declares `.rounds` is refused, with an error that names the switch.
+- A phase that declares `.rounds` runs in rounds. While both programs stood, a switch (`RERAIL_ASKED_PHASES`) refused
+  it when off, and ran the eager `py_names.rerail` in place of `py_names.asked.rerail`. The asked program is now
+  `py_names.rerail`, and the switch, the `.asked.rerail` lookup and the refusal are gone.
 
 No list in the engine names a setting. `file_local::SETTINGS_BY_PATH`, `SETTINGS_BY_FOLDER` and `setting_input`'s
 own list are gone: `tsx_names`, `py_names` and `points_to` declare their exports' keys on their `.export` lines,
@@ -60,7 +63,8 @@ and `core.rerail` the project's.
 - Round 1 starts from the asks the last run of the phase over the same root ended with. They are kept in the
   store's run records under the phase, its text's digest and the root (`kept_asks_key`). So an edit that changes no
   ask takes one round. A stale kept ask changes no answer, because `R` is derived afresh each round from the files'
-  own asks.
+  own asks. The record is written only when the run's asks differ from those it started from, as sets: a warm run
+  writes nothing (`RERAIL_WARM`; `the_run_after_a_cold_one_of_a_names_policy_writes_nothing`).
 - `plan::phased::declared_key(rel)`: how `rel` is keyed, from the keys a run's phases declared (bound in the run's
   context once they ran, and by an asked phase's rounds for their own read of `R`), else from the engine's phase
   program's `.export` line (`<phase>__<export>`), else from `core.rerail`'s `.keyed` line. Each file is read once a
@@ -75,7 +79,7 @@ and `core.rerail` the project's.
 In `tests_corpus/…/corpus/phases/tests.rs`, on a small phase `q` and its reader:
 
 - `an_asked_phase_answers_only_what_is_asked`: only `m.x` is answered, not `y` or `z`. Two rounds, and round 2
-  builds `m.py` alone. With the switch off, the phase is refused.
+  builds `m.py` alone.
 - `an_asked_phase_follows_a_reexport_in_rounds`: a star import is followed in three rounds. A cycle ends with no
   answer. The reader's negation reads the closed rounds.
 - `an_asked_phase_past_its_rounds_fails`: asks that grow forever fail after 16 rounds, with the error naming them.
@@ -88,8 +92,8 @@ In `tests_corpus/…/corpus/phases/tests.rs`, on a small phase `q` and its reade
 
 ## The asked `py_names`
 
-`typing/programs/py_names.asked.rerail` runs in place of `py_names.rerail` while the switch is on
-(`phased::builtin_phase_file`, `phases::candidates`). It hands on the same exports, which the same rules read
+`typing/programs/py_names.rerail` (first `py_names.asked.rerail`, run in place of the eager program while the
+switch was on; the comparisons below are of the two). It hands on the same exports, which the same rules read
 (python/names, python/django, python/upgrade), but answers only what is asked:
 
 - `spelled_at(p, k)`: each qualified name the file at `p` spells through an import (`qn`, "m.x").

@@ -2,7 +2,7 @@
 // by file), and what crosses files, read through the phase py_names (decision 0677): no node crosses into the
 // cross-file part.
 //
-// The phase (native/src/code_rule_dsl/typing/programs/py_names.rerail, or py_names.asked.rerail) runs first, over the
+// The phase (native/src/code_rule_dsl/typing/programs/py_names.rerail) runs first, over the
 // same files, and hands on symbols alone, read from the modules' definitions and import statements (never a name's
 // use), as python/py-names-handed states them. A file reads them keyed by its own asks:
 //   py_names__asked_at(p, k)    the file at path p may read a fact of symbol k: a node of it may denote k

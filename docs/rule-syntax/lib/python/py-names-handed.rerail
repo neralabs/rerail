@@ -1,5 +1,5 @@
-// python/py-names-handed: what the phase py_names hands on (decisions 0677, 0705), one definition for
-// typing/programs/py_names.rerail and py_names.asked.rerail. A reader (python/names, python/django) reads it keyed
+// python/py-names-handed: what the phase py_names hands on (decisions 0677, 0705), stated once for
+// typing/programs/py_names.rerail. A reader (python/names, python/django) reads it keyed
 // by its own asks: the symbols its nodes may denote at its own path (`asked_at(p, k)`), what each denotes
 // (`denotes(k, q)`), its own classes and receivers (`own_at(p, q)`, `own_rcv_at(p, f)`), and the facts about each
 // symbol so reached, by that symbol in column 0 (`ancestor(q, m, b)`). Its memo entry is keyed by those rows alone

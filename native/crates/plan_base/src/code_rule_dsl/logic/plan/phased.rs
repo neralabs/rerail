@@ -151,21 +151,9 @@ pub fn builtin_phase_dir() -> std::path::PathBuf {
     rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs")
 }
 
-/// The switch that lets a phase declare `.rounds`, and runs an engine phase's asked program (`<name>.asked.rerail`)
-/// in place of its eager one (decision 0705).
-pub const ASKED_PHASES: &str = "RERAIL_ASKED_PHASES";
-
-/// Whether asked phases run (`ASKED_PHASES`).
-pub fn asked_phases_on() -> bool {
-    rerail_prof::code_rule_dsl::logic::profile::var(ASKED_PHASES).is_ok_and(|v| !v.is_empty() && v != "0" && v != "off")
-}
-
-/// The file of the engine's phase program `name`: its asked program while asked phases run and it has one
-/// (`py_names.asked.rerail`), else `<name>.rerail`.
+/// The file of the engine's phase program `name`.
 pub fn builtin_phase_file(name: &str) -> std::path::PathBuf {
-    let dir = builtin_phase_dir();
-    let asked = dir.join(format!("{name}.asked.rerail"));
-    if asked_phases_on() && asked.exists() { asked } else { dir.join(format!("{name}.rerail")) }
+    builtin_phase_dir().join(format!("{name}.rerail"))
 }
 
 /// How `rel` is keyed as a setting, if it is one: a phase's export as the run's phases declared it (`DeclaredKeys`),
