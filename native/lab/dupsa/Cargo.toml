@@ -1,0 +1,26 @@
+[package]
+name = "rerail-dupsa-lab"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Spike: duplicated code found by suffix arrays (SA-IS), over format 16 tape nodes and over normalised lines."
+
+# Its own workspace, as the tape lab's (native/lab/tape16): it builds optimized in the dev profile without changing
+# the engine's profiles.
+[workspace]
+
+[patch.crates-io]
+rayon-core = { path = "../../vendor/rayon-core-1.13.0" }
+
+[dependencies]
+# The tape's placement and in-place reads (decision 0434): a node's row is read where the tape holds it.
+rerail-tape-format = { path = "../../crates/tape_format" }
+
+[profile.dev]
+opt-level = 3
+debug = 1
+debug-assertions = true
+overflow-checks = true
+
+[profile.dev.package."*"]
+opt-level = 3
