@@ -20,10 +20,11 @@ fn shape() -> Shape {
     Shape::run(vec![ColType::I32, ColType::I64, ColType::I32], vec![0, 1, 2], Some(0))
 }
 
+/// A trace that keeps a layer a run (`RollUp::Never`): its tests read every state it was at, each a head kept.
 fn setup() -> (Registry, TraceOps, Directory, Trace) {
     let mut reg = Registry::default();
     let ops = TraceOps::declare(&mut reg).unwrap();
-    (reg, ops, Directory::default(), Trace::new(&shape()).unwrap())
+    (reg, ops, Directory::default(), Trace::new(&shape()).unwrap().with_roll_up(RollUp::Never))
 }
 
 fn rng(seed: u64) -> impl FnMut() -> u64 {
@@ -392,7 +393,8 @@ fn every_index_kind_answers_its_probes() {
     let mut reg = Registry::default();
     let ops = TraceOps::declare(&mut reg).unwrap();
     let mut dir = Directory::default();
-    let mut t = Trace::new(&s).unwrap();
+    // A layer a run: probes across five layers, then three of them rolled up by hand.
+    let mut t = Trace::new(&s).unwrap().with_roll_up(RollUp::Never);
     let mut r = rng(21);
     let mut set = Rows::new();
     let tilings = [Tiling::WHOLE, Tiling { tile: 1, seed: 5 }, Tiling { tile: 3, seed: 0 }];
@@ -629,6 +631,7 @@ fn is_identity_reads_a_layers_counts_only() {
 /// rows.
 #[test]
 fn a_kill_search_reads_a_search_a_layer() {
+    // A layer a run, eight layers: the search's bound by layer (`a_geometric_trace_keeps_log_layers`, rolled up).
     let mut r = rng(83);
     let mut set = Rows::new();
     let mut all = Vec::new();
@@ -663,4 +666,98 @@ fn a_kill_search_reads_a_search_a_layer() {
     }
     let mean = sum / set.len() as u64;
     eprintln!("kill search: {} layers {layers:?}, {rows_total} rows; reads a key: mean {mean}, max {max}, bound {bound}", layers.len());
+}
+
+/// A first run: `n` new rows.
+fn big_run(r: &mut impl FnMut() -> u64, n: usize) -> (Vec<(Vec<i64>, i32)>, Rows) {
+    let mut set = Rows::new();
+    while set.len() < n {
+        set.insert(vec![(r() % 7) as i64, (r() % 100_000) as i64 - 50_000, (r() % 1000) as i64]);
+    }
+    (set.iter().map(|x| (x.clone(), 1)).collect(), set)
+}
+
+/// A small run against `set`: 1 to `most` changes, a third of them kills of live rows, the rest new rows.
+fn small_run(r: &mut impl FnMut() -> u64, set: &Rows, most: u64) -> (Vec<(Vec<i64>, i32)>, Rows) {
+    let mut next = set.clone();
+    let mut pairs = Vec::new();
+    for _ in 0..(r() % most + 1) {
+        if r().is_multiple_of(3) && !next.is_empty() {
+            let x = next.iter().nth((r() % next.len() as u64) as usize).unwrap().clone();
+            if set.contains(&x) {
+                next.remove(&x);
+                pairs.push((x, -1));
+            }
+        } else {
+            let x = vec![(r() % 7) as i64, (r() % 100_000) as i64 - 50_000, (r() % 1000) as i64];
+            if !set.contains(&x) && next.insert(x.clone()) {
+                pairs.push((x, 1));
+            }
+        }
+    }
+    (pairs, next)
+}
+
+/// O5, the geometric roll-up: a trace committed by the settled policy keeps each layer at most half the one below it,
+/// by its rows and kills (its header's counts), so O(log n) layers; it reads as its set after every commit; and a
+/// live row's probe (consolidate's kill search) reads within its bound of a search a layer, on a few layers.
+#[test]
+fn a_geometric_trace_keeps_log_layers() {
+    let mut reg = Registry::default();
+    let ops = TraceOps::declare(&mut reg).unwrap();
+    let mut dir = Directory::default();
+    let mut t = Trace::new(&shape()).unwrap();
+    let mut r = rng(91);
+    let mut set = Rows::new();
+    let (mut most, mut merged, mut size, mut prev) = (0usize, 0usize, 0u64, 0usize);
+    let rounds = 64;
+    for step in 0..rounds {
+        // An edit's shape: a first run of a few thousand rows, then small runs over it, of 1 to 60 changes.
+        let (pairs, next) = if step == 0 { big_run(&mut r, 3000) } else { small_run(&mut r, &set, 60) };
+        size += pairs.len() as u64;
+        let id = runs(&mut dir, &t, &pairs);
+        t.commit(&reg, &ops, &mut dir, id, Tiling { tile: 3, seed: step }).unwrap_or_else(|e| panic!("step {step}: {e}"));
+        set = next;
+        let l = t.read(&dir, &[t.head()]).unwrap();
+        let table = l.table();
+        let s = t.state(&table, t.head()).unwrap();
+        assert_eq!(rows_of(&s), set, "step {step}: the state is its set");
+        let sizes: Vec<u64> = s.layers().map(|(_, l)| u64::from(l.head.added) + u64::from(l.head.ngone)).collect();
+        for w in sizes.windows(2) {
+            assert!(2 * w[0] <= w[1], "step {step}: a layer is at most half the one below it: {sizes:?}");
+        }
+        let log = (u64::BITS - size.leading_zeros()) as usize;
+        assert!(sizes.len() <= log, "step {step}: {} layers over {size} pushes, past log2 {log}", sizes.len());
+        // A commit adds a layer; one that merged leaves as many or fewer.
+        if sizes.len() <= prev {
+            merged += 1;
+        }
+        prev = sizes.len();
+        most = most.max(sizes.len());
+    }
+    assert!(merged > 0, "the policy merged");
+    eprintln!("geometric: {merged} of {rounds} commits merged");
+    let l = t.read(&dir, &[t.head()]).unwrap();
+    let table = l.table();
+    let whole = t.state(&table, t.head()).unwrap();
+    let layers: Vec<(usize, usize)> = whole.layers().map(|(_, l)| (l.n(), l.kills().len())).collect();
+    let log = |n: usize| (usize::BITS - n.leading_zeros()) as u64;
+    let search: u64 = layers.iter().map(|&(n, _)| 2 * (log(n) + 1)).sum();
+    let kill_search: u64 = layers.iter().map(|&(_, k)| log(k) + 1).sum();
+    let bound = search + layers.len() as u64 * (1 + kill_search);
+    let (_, top) = whole.layers().next().unwrap();
+    let cols: Vec<ColumnIndex> = top.head.shape.order().iter().map(|&c| ColumnIndex::new(u16::from(c))).collect();
+    let reads = std::sync::atomic::AtomicU64::new(0);
+    let s = whole.counted(&reads);
+    let (mut sum, mut max) = (0u64, 0u64);
+    for x in &set {
+        let key: Vec<i64> = cols.iter().map(|c| x[c.get()]).collect();
+        let id = s.matching(&cols, &key).next().expect("a live row's live copy");
+        assert_eq!(row(&whole, id), *x);
+        let n = reads.swap(0, std::sync::atomic::Ordering::Relaxed);
+        assert!(n <= bound, "a kill search read {n}, past {bound} (layers {layers:?})");
+        sum += n;
+        max = max.max(n);
+    }
+    eprintln!("geometric: {rounds} commits, {size} pushes, {} layers now ({most} at most) {layers:?}; a key's kill search: mean {}, max {max}, bound {bound}", layers.len(), sum / set.len().max(1) as u64);
 }

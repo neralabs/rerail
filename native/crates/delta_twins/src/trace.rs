@@ -65,8 +65,8 @@ pub const REFUSED_SUM: u64 = 1;
 pub const REFUSED_GONE: u64 = 2;
 pub const REFUSED_ADDED: u64 = 3;
 
-/// Control's words: the refusal, the new layer's rows, its rows added and gone.
-pub const CONTROL_BYTES: usize = 40;
+/// Control's words: the refusal, the new layer's rows, its rows added and gone, and the newest layers due to merge.
+pub const CONTROL_BYTES: usize = 48;
 
 // ---- the source ---------------------------------------------------------------------------------------------------
 
@@ -932,9 +932,37 @@ fn seal<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         set_word::<u64>(ctl, BODY_AT + 16, n_out);
         set_word::<u64>(ctl, BODY_AT + 24, added);
         set_word::<u64>(ctl, BODY_AT + 32, gone);
+        let due = if refused == 0 { due_to_merge(c.table, O::below(c.params), added + gone) } else { 0 };
+        let ([], [ctl]) = c.views([], [CTL]);
+        set_word::<u64>(ctl, BODY_AT + 40, due);
     } else {
         assert_eq!(refused, 0, "a merge of committed layers refuses nothing");
     }
+}
+
+/// The geometric roll-up (O5, the rebuild plan: "merge a layer into the one below once it reaches a share of it",
+/// at every layer; the share a half): how many of the newest layers, the new one (`size` rows and kills) first, are
+/// due to merge into one. From the newest down, a layer joins while what is merged so far is more than half its size;
+/// so after the merge every layer is at most half the one below it, and a trace of `n` rows has O(log n) layers. 0 or
+/// 1: none due. Read from the layers' headers, through the descriptor table.
+pub fn due_to_merge(table: &Table<'_>, below: u32, size: u64) -> u64 {
+    let (mut acc, mut k, mut id) = (size, 1u64, below);
+    while id != NONE {
+        let l = Layer::new(table.block(id).expect("a layer below, reached by reference")).expect("committed");
+        let n = u64::from(l.head.added) + u64::from(l.head.ngone);
+        if 2 * acc <= n {
+            break;
+        }
+        acc += n;
+        k += 1;
+        id = l.below().map_or(NONE, |(b, _)| b);
+    }
+    k
+}
+
+/// The newest layers due to merge, in control after `consolidate` (`due_to_merge`).
+pub fn due(control: &[u8]) -> u64 {
+    word::<u64>(control, BODY_AT + 40)
 }
 
 /// Control's refusal, after `consolidate`.

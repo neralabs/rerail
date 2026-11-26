@@ -705,3 +705,92 @@ The twins' `clippy.toml` is shown to catch what it names: a call of `std::env::v
 twin that breaks a rule fails the lint rather than warning. The lint is clean over the three crates; the warnings
 left are in crates they depend on (ukl_vec, tape_format, ukl, c_pp). Checks (Relax, local): `rerail-blocks --lib --
 maps:: sketch:: region::` 31 of 31; `rerail-delta-exec --lib` 28 of 28.
+
+## The audit's findings, fixed (2026-11-25)
+
+The audit of what was built against the pages (the user's request: "compare what was built to what we planned")
+found seven gaps. Each is fixed here, in the order fixed.
+
+**A phase runs by its axes** (Operations §4, §6). The executor read only a phase's turn bound before; its other axes
+were labels. Now:
+
+- A phase whose count is `Found::Fixed` has its count from the launch's start, and running it with any other count
+  is an error ("an earlier phase made it (an indirect count)").
+- Only units that share nothing, combine, or make a round (`Across::Nothing | Combine | Rounds`) run in shuffled
+  order. An ordered phase runs its tiles in order.
+- `fits` refuses a twin that runs again where its shape's units do not relate by rounds, and a shape whose units
+  relate by rounds where its twin has no finisher.
+
+consolidate and merge are now twenty phases. Each runs the items its shape declares:
+
+- an ordered scan of chunk counts;
+- the layer opened (one group);
+- the kills sorted, by chunks and merge passes, and placed in the change;
+- a partition an item for parts and gone;
+- a column's range a lane;
+- a hashed index a group;
+- the freeze (one group);
+- a column's sketch a lane;
+- the seal.
+
+Before, six of them ran as one item. Only `open`, `freeze` and `seal` are one item now, each declared `Fixed,
+Threadgroup`. `check_delta_exec_shape.py` checks both: the executor's rules, and the one-item phases.
+
+**The blocks code a twin calls keeps the twins' rules.** A layer is written by `relation::layer_write`, an item a
+call: `open`, `stat`, `index`, `kills_mut`, `seal`, `sketch`. `freeze_layer` and `set_sketches` are gone, and
+`build_indexes` builds one index a call (`build_one_index`). blocks has a `clippy.toml` with the twins' lists, and
+its lints are `deny` in `layer_write` (allowed in the rest of blocks). A `Mutex` added there was refused by clippy,
+and a `static` and a lock by the shape script, which checks the module with the twins' patterns.
+
+**A layer keeps its kills once.** They are in its rows' change (`changed`) and in `gone(part, id)`, read by
+partition. The shape script checks that a Layer is exactly its bytes, head, rows, parts and gone, that `gone` is
+`(I32, 4)` sorted on its partition, and that the twins make two relations and one layer, whatever they are named.
+
+**B2's random chains, at the plan's size.** The plan asks for "24 rounds of pushes and kills, 7 seeds".
+`a_random_trace_reads_as_its_set` now runs them, each seed on a thread of its own, 1.7 s under Relax. Its runs
+include:
+
+- new rows;
+- rows killed and added back in the same run;
+- rows killed in an earlier round and added back.
+
+It checks:
+
+- each round's state is its set;
+- each round's change is the least one, by the values' sets;
+- each partition, restricted;
+- a change across six layers is right by value.
+
+The dedup was turned off two ways: consolidate's kill search reading only the newest layer, and a row's liveness
+reading only the newest layer's kills. The test failed both times, and the code was restored.
+
+What it showed: a change across several layers is by id. A row killed in one layer and added back in a later one
+is gone under its old id and added under its new one, with the same values, so the change is not the least one by
+value. Only a round's change (two adjacent states) is checked as least, and a span's rows gone and added are
+checked less the rows live at both ends. Nothing in P§ asks a span's change to be least by value. Its partitions
+changed are by digest, and are exact.
+
+**The geometric roll-up runs** (O5). consolidate's seal reads the layers' headers through the descriptor table
+(`due_to_merge`). From the new layer down, a layer joins while what is merged so far is more than half its size, by
+its rows and kills. It writes the count to control (now 48 bytes), and `Trace::commit` rolls that many layers up
+(`roll_up`, merge) when it is two or more. After a commit, every layer is at most half the one below it, so a trace
+keeps O(log n) layers.
+
+`RollUp::Never` is for the tests that keep every head they committed, and for merge's version-check case. Measured
+by `trace::tests::a_geometric_trace_keeps_log_layers`, over 64 commits (one first run of 3,000 rows, then small runs
+of 1 to 60 changes, 5,194 pushes):
+
+- 35 commits merged;
+- at most 6 layers;
+- each layer at most half the one below, after every commit;
+- each state is its set;
+- a key's kill search read 43 rows and kills on average and 48 at most, within its bound of 64.
+
+The unmerged eight-layer trace of `a_kill_search_reads_a_search_a_layer` read 62 on average and 165 at most. The
+shape script checks that a new trace rolls up geometrically and that commit runs it.
+
+Checks:
+
+- Clippy over the three crates: clean (the narrow command above).
+- Relax, local: `rerail-delta-exec --lib -- --skip device_table` 30 of 30; `rerail-blocks --lib` 123 of 123.
+- Both check scripts.

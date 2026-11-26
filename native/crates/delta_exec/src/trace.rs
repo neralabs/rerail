@@ -21,7 +21,7 @@ use rerail_blocks::gens::{BODY_AT, Table, word};
 use rerail_blocks::layer::{Layer, NONE, Runs, Shape, ShapeW, init_runs, layer_room, runs_bytes};
 use rerail_blocks::relation::View;
 use rerail_delta_twins::Params;
-use rerail_delta_twins::trace::{CONTROL_BYTES, ConsolidateP, MergeP, out_bytes, refused};
+use rerail_delta_twins::trace::{CONTROL_BYTES, ConsolidateP, MergeP, due, out_bytes, refused};
 
 const fn ph(name: &'static str, found: Found, unit: Unit, inside: Inside, across: Across, output: Output, bounds: &'static [Bound]) -> Phase {
     Phase { name, found, unit, inside, across, output, bounds }
@@ -97,7 +97,7 @@ pub static MERGE: Signature = Signature::new(
 /// is not a fact.
 pub fn facts_of(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     if slot == 2 {
-        return vec![(0..4).map(|i| word::<u64>(bytes, BODY_AT + 8 + 8 * i) as i64).collect()];
+        return vec![(0..5).map(|i| word::<u64>(bytes, BODY_AT + 8 + 8 * i) as i64).collect()];
     }
     let l = Layer::new(bytes).expect("a committed layer");
     let a = l.head.shape.arity();
@@ -152,16 +152,32 @@ impl TraceOps {
     }
 }
 
-/// A trace on the host: its shape, and its newest layer's block id.
+/// When a trace's newest layers are merged (O5).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RollUp {
+    /// Geometric (the settled policy): after each commit, the newest layers `consolidate` found due
+    /// (`due_to_merge`), merged into one.
+    Geometric,
+    /// Never on its own: only by `roll_up` (a test that reads a trace's layers as committed).
+    Never,
+}
+
+/// A trace on the host: its shape, its newest layer's block id, and its roll-up policy.
 pub struct Trace {
     shape: ShapeW,
     head: Option<BlockId>,
+    roll: RollUp,
 }
 
 impl Trace {
     /// An empty trace of `shape`; refused when the shape cannot be stored (P§11.2's grouping, what is not built).
     pub fn new(shape: &Shape) -> Result<Trace, String> {
-        Ok(Trace { shape: shape.encode()?, head: None })
+        Ok(Trace { shape: shape.encode()?, head: None, roll: RollUp::Geometric })
+    }
+
+    /// The trace with roll-up policy `roll`.
+    pub fn with_roll_up(self, roll: RollUp) -> Trace {
+        Trace { roll, ..self }
     }
 
     pub fn head(&self) -> Option<BlockId> {
@@ -182,7 +198,8 @@ impl Trace {
     }
 
     /// Commits the run's δ runs as the trace's new layer: `consolidate` writes it into a new block over the head,
-    /// which is then frozen and becomes the head. The runs block is let go. Refused, with the head as it was, when
+    /// which is then frozen and becomes the head; then, by the trace's roll-up policy, the newest layers due to merge
+    /// are merged (`roll_up`), and the merged layer is the head. The runs block is let go. Refused, with the head as it was, when
     /// the runs overflowed (rerun at the size it names) or `consolidate` refused the change.
     pub fn commit(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, runs: BlockId, tiling: Tiling) -> Result<BlockId, String> {
         let (n, needed) = {
@@ -202,9 +219,9 @@ impl Trace {
         let mut params = vec![0u8; ConsolidateP::SIZE];
         ConsolidateP { below: self.head.map_or(NONE, |h| h.0), pad: 0 }.write(&mut params);
         let run = run_cpu(reg, dir, ops.consolidate, &[runs, out, ctl], &params, tiling);
-        let code = {
+        let (code, due) = {
             let l = dir.read("commit", &[ctl])?;
-            refused(l.block(0))
+            (refused(l.block(0)), due(l.block(0)))
         };
         dir.release(runs);
         dir.release(ctl);
@@ -226,6 +243,9 @@ impl Trace {
             dir.release(h);
         }
         self.head = Some(out);
+        if self.roll == RollUp::Geometric && due >= 2 {
+            return self.roll_up(reg, ops, dir, due as u32, tiling);
+        }
         Ok(out)
     }
 
@@ -307,7 +327,8 @@ pub fn merge_case<'r>(shape: &'r Shape, runs: &'r [Vec<(Vec<i64>, i32)>], count:
     move |dir: &mut Directory| {
         let mut reg = Registry::default();
         let ops = TraceOps::declare(&mut reg).expect("the trace's operations");
-        let mut t = Trace::new(shape).expect("a storable shape");
+        // A layer a run: the merge's input as committed, not rolled up.
+        let mut t = Trace::new(shape).expect("a storable shape").with_roll_up(RollUp::Never);
         let mut heads = Vec::new();
         for rows in runs {
             let id = t.open(dir, rows.len().max(1));
