@@ -928,3 +928,150 @@ fn report_entries() {
         eprintln!("   {} unknown: {}", unknown.len(), unknown.join(", "));
     }
 }
+
+/// What a ranked join did over files (`join_ranked_is_the_serial_run`).
+#[derive(Debug, Default)]
+struct Ranked {
+    chunks: usize,
+    /// Chunks whose outputs the join left unknown somewhere.
+    undecided: usize,
+    /// Chunks the join settled on a start that was not their best state.
+    reextracted: usize,
+    /// Chunks whose start was dropped: run again from their now known start.
+    rerun: usize,
+    /// Per chunk, the states it kept.
+    states: Vec<usize>,
+    bytes: usize,
+}
+
+/// Each file in `chunk`-block chunks, each solving the entries of its best `m` states by
+/// priors measured on `train`, then joined with the dropped run again. Every output bit decided
+/// is the serial run's.
+fn join_ranked_is_the_serial_run(program: &BlockProgram, train: &[Vec<u8>], files: &[Vec<u8>], chunk: usize, cap: usize, m: usize) -> Ranked {
+    let p = Prepared::new(program).expect("a program the chunks run");
+    let comps = crate::starts::components(&p);
+    let priors = crate::rank::Priors::measure(&p, &comps, train);
+    let outputs: Vec<usize> = program.outputs.iter().map(|&o| usize::from(o)).collect();
+    let mut out = Ranked::default();
+    for (k, bytes) in files.iter().enumerate() {
+        if program.run(bytes).totals.iter().any(|&t| t != 0) {
+            continue;
+        }
+        out.bytes += bytes.len();
+        let file = File::new(program, bytes);
+        let (want, _) = program.rounds_values(&[bytes]);
+        let ranges: Vec<std::ops::Range<usize>> = (0..file.count()).step_by(chunk).map(|at| at..(at + chunk).min(file.count())).collect();
+        let mut solved: Vec<crate::solve::Solved> = ranges.iter().map(|r| crate::solve::solve_with(&p, &comps, &file, r.clone(), 2, cap, crate::solve::Entries::Ranked(&priors, m))).collect();
+        for s in &solved {
+            let mut ks: Vec<usize> = s.leaves.iter().map(|l| l.rank).collect();
+            ks.sort_unstable();
+            ks.dedup();
+            out.states.push(ks.len());
+        }
+        let (alive, rerun) = crate::join::join_with(&p, &mut solved, &mut |c, ends| Some(crate::solve::solve_with(&p, &comps, &file, ranges[c].clone(), 2, cap, crate::solve::Entries::Given(ends))));
+        out.rerun += rerun.len();
+        for (c, r) in ranges.iter().enumerate() {
+            out.chunks += 1;
+            assert!(!alive[c].is_empty(), "file {k}, chunk {r:?}: the join kept no leaf");
+            if !rerun.contains(&c) && alive[c].iter().all(|&i| solved[c].leaves[i].rank > 0) {
+                out.reextracted += 1;
+            }
+            let got = crate::join::outputs(&solved[c], &alive[c]).expect("a leaf");
+            let mut decided = true;
+            for (j, &o) in outputs.iter().enumerate() {
+                for (i, w) in got[j].iter().enumerate() {
+                    assert_eq!(w.v, want[o][r.start + i] & w.k, "file {k}, chunk {r:?}: output {o} at block {}", r.start + i);
+                    decided &= w.full();
+                }
+            }
+            out.undecided += usize::from(!decided);
+        }
+    }
+    out
+}
+
+/// The design page's case (§5): a 3 KB JSON array of numbers, and the same bytes as one string.
+/// No refusal ends a middle chunk's ambiguity; the priors rank "outside a string" first, so the
+/// array's chunks take their best start and the string's run again. Both are the serial run.
+#[test]
+fn json_ranked_numbers_and_their_string() {
+    let mut numbers = String::new();
+    let mut i = 0;
+    while numbers.len() < 3_000 {
+        numbers.push_str(&format!("{i}, "));
+        i += 7;
+    }
+    let array = format!("[{numbers}0]\n").into_bytes();
+    let string = format!("[\"{numbers}0\"]\n").into_bytes();
+    let train = json_files(1 << 20, 20);
+    let a = join_ranked_is_the_serial_run(json(), &train, std::slice::from_ref(&array), 4, 1024, 1);
+    let s = join_ranked_is_the_serial_run(json(), &train, std::slice::from_ref(&string), 4, 1024, 1);
+    eprintln!("json, M = 1: the array {a:?}; the string {s:?}");
+    assert_eq!(a.rerun, 0, "the array's chunks start outside a string, the best state");
+    assert!(s.rerun > 0, "the string's middle chunks start inside it, ranked below");
+}
+
+#[test]
+fn rr_ranked_join_is_the_serial_run() {
+    let all = rr_files(6_000, 30);
+    let r = join_ranked_is_the_serial_run(rr(), &all[3..], &all[..3], 4, 1024, 2);
+    eprintln!("rr, M = 2: {r:?}");
+}
+
+#[test]
+#[ignore = "a report: the ranked join over the corpora at M = 2, 4, 8 (RERAIL_FM_MS; RERAIL_FM_RR, RERAIL_FM_JSON, RERAIL_FM_KOTLIN files; priors from the next 100)"]
+fn report_the_ranked_join() {
+    let n = |v: &str, d: usize| std::env::var(v).ok().and_then(|n| n.parse().ok()).unwrap_or(d);
+    for (name, program, all, count) in [
+        ("json", json(), json_files(1 << 20, usize::MAX), n("RERAIL_FM_JSON", 20)),
+        ("rr", rr(), rr_files(65_536, usize::MAX), n("RERAIL_FM_RR", 12)),
+        ("kotlin", kotlin(), kotlin_files(n("RERAIL_FM_MAX", 65_536), usize::MAX), n("RERAIL_FM_KOTLIN", 0)),
+    ] {
+        if count == 0 || all.len() <= count {
+            continue;
+        }
+        let (files, train) = all.split_at(count);
+        let train = &train[..train.len().min(100)];
+        let ms: Vec<usize> = std::env::var("RERAIL_FM_MS").ok().map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect()).unwrap_or_else(|| vec![2, 4, 8]);
+        for &m in &ms {
+            let t0 = std::time::Instant::now();
+            let r = join_ranked_is_the_serial_run(program, train, files, 16, 1024, m);
+            let mut st = r.states.clone();
+            st.sort_unstable();
+            let q = |f: f64| st.get(((st.len() as f64 - 1.0) * f).round() as usize).copied().unwrap_or(0);
+            let mb = r.bytes as f64 / 1e6;
+            eprintln!(
+                "== {name}, M = {m}: {} chunks of 1 KB; states kept median {} p99 {}; {} re-extracted, {} run again ({:.2} / MB), {} undecided; {:.1} s",
+                r.chunks, q(0.5), q(0.99), r.reextracted, r.rerun, r.rerun as f64 / mb.max(1e-9), r.undecided, t0.elapsed().as_secs_f64()
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "a report: rr's chunk states by score against the true state (RERAIL_FM_FILE)"]
+fn report_rr_ranks() {
+    let program = rr();
+    let all = rr_files(65_536, usize::MAX);
+    let p = Prepared::new(program).expect("a program the chunks run");
+    let comps = crate::starts::components(&p);
+    let priors = crate::rank::Priors::measure(&p, &comps, &all[12..all.len().min(112)]);
+    let f = std::env::var("RERAIL_FM_FILE").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let file = File::new(program, &all[f]);
+    let truth = serial_starts(&p, &file, &all[f]);
+    for at in (16..file.count()).step_by(16).take(8) {
+        let s = crate::solve::entries(&p, &comps, &file, at..(at + 16).min(file.count()), 2, 1024);
+        let mut keyed: Vec<(Vec<u8>, f64)> = Vec::new();
+        for e in &s.entry_states {
+            let (k, sc) = (priors.keys.of(&comps, e), priors.score(&p, &comps, &file, at..(at + 16).min(file.count()), e));
+            match keyed.iter_mut().find(|x| x.0 == k) {
+                Some(x) => x.1 = x.1.max(sc),
+                None => keyed.push((k, sc)),
+            }
+        }
+        keyed.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let t = priors.keys.of_start(&comps, &truth[at]);
+        let rank = keyed.iter().position(|x| x.0 == t);
+        eprintln!("== block {at}: truth {t:?} rank {rank:?}; {}", keyed.iter().map(|(k, s)| format!("{k:?} {s:.1}")).collect::<Vec<_>>().join(", "));
+    }
+}

@@ -55,14 +55,38 @@ fn resolve(before: &TStart, leaf: &Leaf) -> TStart {
 /// The leaves each chunk keeps, joined in order from the file's start. Forward, each kept leaf
 /// with its end resolved against the end before it; then backward.
 pub fn join(p: &Prepared<'_>, chunks: &[Solved]) -> Vec<Vec<usize>> {
+    let mut chunks = chunks.to_vec();
+    join_with(p, &mut chunks, &mut |_, _| None).0
+}
+
+/// `join`, settling as it goes: where no leaf of a chunk follows the ends before it (its start
+/// was dropped: `solve::Entries::Ranked`), `again` solves the chunk from those ends, now known,
+/// and its leaves replace the chunk's. With the chunks run again.
+pub fn join_with(p: &Prepared<'_>, chunks: &mut [Solved], again: &mut dyn FnMut(usize, Vec<TStart>) -> Option<Solved>) -> (Vec<Vec<usize>>, Vec<usize>) {
     let zero = {
         let z = p.zero();
         TStart { ops: z.ops.iter().map(|&v| T::known(v)).collect(), groups: z.groups.iter().map(|g| g.iter().map(|&v| T::known(v)).collect()).collect(), backs: z.backs.iter().map(|_| T::X).collect() }
     };
     let n = chunks.len();
+    let mut rerun = Vec::new();
     // Per chunk, the (leaf, resolved end) pairs kept.
     let mut alive: Vec<Vec<(usize, TStart)>> = Vec::with_capacity(n);
-    for (c, s) in chunks.iter().enumerate() {
+    for c in 0..n {
+        if c > 0 && !alive[c - 1].is_empty() && !alive[c - 1].iter().any(|(j, end)| !allowed(end, &chunks[c - 1].leaves[*j].back_in, &chunks[c]).is_empty()) {
+            let mut ends: Vec<TStart> = Vec::new();
+            for (_, end) in &alive[c - 1] {
+                let mut e = end.clone();
+                e.backs.iter_mut().for_each(|x| *x = T::X);
+                if !ends.contains(&e) {
+                    ends.push(e);
+                }
+            }
+            if let Some(s) = again(c, ends) {
+                chunks[c] = s;
+                rerun.push(c);
+            }
+        }
+        let s = &chunks[c];
         let mut keep: Vec<(usize, TStart)> = Vec::new();
         let mut add = |i: usize, before: &TStart| {
             let w = (i, resolve(before, &s.leaves[i]));
@@ -93,7 +117,7 @@ pub fn join(p: &Prepared<'_>, chunks: &[Solved]) -> Vec<Vec<usize>> {
             next.iter().any(|j| ok.contains(j))
         });
     }
-    alive
+    let alive = alive
         .into_iter()
         .map(|ws| {
             let mut leaves: Vec<usize> = ws.into_iter().map(|w| w.0).collect();
@@ -101,7 +125,8 @@ pub fn join(p: &Prepared<'_>, chunks: &[Solved]) -> Vec<Vec<usize>> {
             leaves.dedup();
             leaves
         })
-        .collect()
+        .collect();
+    (alive, rerun)
 }
 
 /// A chunk's outputs from the leaves it keeps: known where every one agrees.

@@ -423,6 +423,8 @@ pub struct Leaf {
     /// The end's components that are the entry's, passed through: the kinds of the stack's
     /// levels the chunk never went below. The join takes them from the end before.
     pub pass: Vec<Place>,
+    /// Its entry's state's place among those the chunk kept (`Entries::Ranked`; 0: the best).
+    pub rank: usize,
 }
 
 /// What a chunk's bytes leave of its start.
@@ -447,6 +449,8 @@ pub struct Solved {
     pub entry_states: Vec<TStart>,
     /// Entries that reached the split budget (their leaves keep what is left unknown).
     pub spent: usize,
+    /// The entries not solved: their states were not among the best `M` (`Entries::Ranked`).
+    pub dropped: Vec<TStart>,
     /// What was still open when an entry reached the budget: refusals, end components, outputs
     /// unknown, and whether a back carry was (ops).
     pub open_at_budget: Vec<(Vec<usize>, Vec<usize>, Vec<usize>, bool)>,
@@ -559,7 +563,8 @@ pub struct Stack {
     pub within: Option<usize>,
 }
 
-pub fn walks(program: &BlockProgram, comps: &[Component]) -> Walks {
+/// The sets of region fills, by component: each walk's kinds, each set apart.
+pub fn regions(program: &BlockProgram, comps: &[Component]) -> Vec<Vec<usize>> {
     let by = carried_by(program, comps);
     let mut sets: Vec<Vec<usize>> = Vec::new();
     for w in &program.walks {
@@ -569,6 +574,13 @@ pub fn walks(program: &BlockProgram, comps: &[Component]) -> Walks {
     for set in &program.apart {
         sets.push(set.iter().filter_map(|&v| by.get(&usize::from(v)).copied()).collect());
     }
+    sets.retain(|s| s.len() > 1);
+    sets
+}
+
+pub fn walks(program: &BlockProgram, comps: &[Component]) -> Walks {
+    let by = carried_by(program, comps);
+    let mut sets = regions(program, comps);
     for st in stacks(program, comps) {
         sets.extend((0..st.levels.len()).map(|j| st.kinds.iter().map(|k| k[j]).collect::<Vec<usize>>()));
     }
@@ -1018,15 +1030,31 @@ struct World {
 /// A refusal with a known bit refutes a world; a back fill's carry into each block is guessed
 /// and checked against the next block's run.
 pub fn solve(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<usize>, look: usize, cap: usize) -> Solved {
-    solve_to(p, comps, file, range, look, cap, true)
+    solve_to(p, comps, file, range, look, cap, true, Entries::All)
 }
 
 /// The run to the chunk's entry only (`solve`'s first phase): `Solved::entry_states`.
 pub fn entries(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<usize>, look: usize, cap: usize) -> Solved {
-    solve_to(p, comps, file, range, look, cap, false)
+    solve_to(p, comps, file, range, look, cap, false, Entries::All)
 }
 
-fn solve_to(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<usize>, look: usize, cap: usize, through: bool) -> Solved {
+/// Which entries a chunk solves through.
+pub enum Entries<'r> {
+    /// Every entry the run to the chunk leaves.
+    All,
+    /// The entries of the best `M` states by the priors (`rank`); the rest are `Solved::dropped`.
+    Ranked(&'r crate::rank::Priors, usize),
+    /// These entries, with no run to the chunk: a chunk run again from its now known start.
+    Given(Vec<TStart>),
+}
+
+/// `solve`, through the entries `how` says.
+pub fn solve_with(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<usize>, look: usize, cap: usize, how: Entries<'_>) -> Solved {
+    solve_to(p, comps, file, range, look, cap, true, how)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn solve_to(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<usize>, look: usize, cap: usize, through: bool, how: Entries<'_>) -> Solved {
     let program = p.program;
     let walks = walks(program, comps);
     let walk_of = walks.fills.iter().enumerate().flat_map(|(w, f)| f.iter().map(move |&c| (c, w))).collect();
@@ -1078,8 +1106,12 @@ fn solve_to(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<usi
     let trace = std::env::var_os("RERAIL_FM_TRACE").is_some();
     let t0 = std::time::Instant::now();
     // To the entry.
-    let mut worlds: Vec<(TStart, Vec<T>)> = vec![(base, vec![T::X; nb])];
-    for b in from..range.start {
+    // Given entries start at the chunk, with no run to it.
+    let (mut worlds, lookback): (Vec<(TStart, Vec<T>)>, Range<usize>) = match &how {
+        Entries::Given(es) => (es.iter().map(|e| (e.clone(), vec![T::X; nb])).collect(), range.start..range.start),
+        _ => (vec![(base, vec![T::X; nb])], from..range.start),
+    };
+    for b in lookback {
         let mut next: Vec<(TStart, Vec<T>)> = Vec::new();
         for (state, pending) in worlds {
             let mut queue = vec![state];
@@ -1146,8 +1178,34 @@ fn solve_to(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<usi
     if !through {
         return out;
     }
+    // The entries of the best `M` states, each its state's place.
+    let mut ranks = vec![0usize; worlds.len()];
+    if let Entries::Ranked(priors, m) = &how {
+        let keyed: Vec<(Vec<u8>, f64)> = worlds.iter().map(|w| (priors.keys.of(comps, &w.0), priors.score(p, comps, file, range.clone(), &w.0))).collect();
+        let mut best: Vec<(Vec<u8>, f64)> = Vec::new();
+        for (k, sc) in &keyed {
+            match best.iter_mut().find(|b| &b.0 == k) {
+                Some(b) => b.1 = b.1.max(*sc),
+                None => best.push((k.clone(), *sc)),
+            }
+        }
+        best.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let mut kept = Vec::new();
+        let mut kept_ranks = Vec::new();
+        for (w, (k, _)) in worlds.into_iter().zip(&keyed) {
+            match best.iter().position(|b| &b.0 == k).filter(|&r| r < *m) {
+                Some(r) => {
+                    kept.push(w);
+                    kept_ranks.push(r);
+                }
+                None => out.dropped.push(w.0),
+            }
+        }
+        worlds = kept;
+        ranks = kept_ranks;
+    }
     // Each entry through the chunk.
-    for (entry, pending0) in worlds {
+    for ((entry, pending0), rank) in worlds.into_iter().zip(ranks) {
         let mut variants = vec![entry];
         let mut splits = 0usize;
         out.splits.push(0);
@@ -1249,7 +1307,7 @@ fn solve_to(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<usi
                         }
                     }
                 }
-                let leaf = Leaf { entry: e.clone(), end: w.state, back_in: w.pending, back_out: w.back_out, outputs: w.outputs, clean: w.clean && end_known, pass };
+                let leaf = Leaf { entry: e.clone(), end: w.state, back_in: w.pending, back_out: w.back_out, outputs: w.outputs, clean: w.clean && end_known, pass, rank };
                 match out.leaves.iter_mut().find(|l| l.end == leaf.end && l.back_in == leaf.back_in && l.entry == leaf.entry && l.pass == leaf.pass) {
                     Some(l) => {
                         l.back_out = merge_all(&l.back_out, &leaf.back_out);
