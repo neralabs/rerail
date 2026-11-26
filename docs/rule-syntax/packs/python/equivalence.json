@@ -3772,26 +3772,6 @@
         }
       }
     },
-    "ruff-pyi057-byte-string-usage": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 5,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pyi058-generator-return-from-iter-method": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
     "ruff-pyi059-generic-not-last-base-class": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -3799,50 +3779,6 @@
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pyi061-redundant-none-literal": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-pyi062-duplicate-literal-member": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-pyi063-pep484-style-positional-only-parameter": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 5
-        },
-        "samples-python": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-pyi064-redundant-final-literal": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
         }
       }
     },
