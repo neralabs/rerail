@@ -549,7 +549,7 @@ fn declared_three_hop(b: &mut B, class: i64) -> Plan {
     let (re, rf, rg, one, few) = (101, 102, 103, 7001, 7002);
     let key = b.rel(3, [vec![rf, 0, 0], vec![rf, 1, 1], vec![rg, 0, 0]]);
     let fanout = b.rel(3, [vec![re, 1, if class == 1 { one } else { few }]]);
-    let decls = Decls { key: Some(3), fanout: Some(4), rels: vec![re, rf, rg, 0, 0], one, few, inferred: Vec::new() };
+    let decls = Decls { srcs: [Some(3), Some(4), None, None], rels: vec![re, rf, rg, 0, 0], one, few, inferred: Vec::new() };
     Plan { srcs: vec![tr(2, e), tr(2, f), tr(2, g), tr(3, key), tr(3, fanout)], docs: Vec::new(), decls, terms: vec![three_hop()] }
 }
 

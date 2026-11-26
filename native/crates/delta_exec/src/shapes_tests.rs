@@ -81,11 +81,18 @@ fn declared_rows_give_each_relations_facts() {
     let (one, few, many) = (70, 71, 72);
     let keys = BTreeSet::from([vec![E, 0, 0], vec![E, 1, 1], vec![E, 1, 2], vec![F, 0, 0]]);
     let fanouts = BTreeSet::from([vec![E, 0, few], vec![F, 1, one], vec![G, 0, many]]);
-    let s = declared(&keys, &fanouts, Some(one), Some(few));
+    let s = declared(&[keys.clone(), fanouts.clone(), BTreeSet::new(), BTreeSet::new()], Some(one), Some(few));
     assert_eq!(s[&E], Facts { keys: vec![0b001, 0b110], caps: vec![(0, FEW)] });
     assert_eq!(s[&F], Facts { keys: vec![0b1], caps: vec![(1, 1.0)] });
     assert!(!s.contains_key(&G));
     assert_eq!(s[&E].cap(0b110), 1.0);
     assert_eq!(s[&E].cap(0b011), 1.0);
     assert_eq!(s[&E].cap(0b010), f64::INFINITY);
+    // A tree's child is a key, and a dense order's column within its group.
+    let trees = BTreeSet::from([vec![G, 0, 1]]);
+    let orders = BTreeSet::from([vec![M, 2, 0], vec![E, 1, 2]]);
+    let s = declared(&[keys, fanouts, trees, orders], Some(one), Some(few));
+    assert_eq!(s[&G].keys, vec![0b10]);
+    assert_eq!(s[&M].keys, vec![0b101]);
+    assert_eq!(s[&E].keys, vec![0b001, 0b110], "an order implying a key already declared");
 }

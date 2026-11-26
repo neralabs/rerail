@@ -116,15 +116,13 @@ pub struct TermPlan {
     pub level: Option<Vec<(usize, usize)>>,
 }
 
-/// The shapes a program's relations declare (decision 0361), as the planner reads them: the sources of the facts
-/// `key(rel, k, col)` (column `col` is in key `k` of `rel`: a probe binding every column of a key returns at most one
-/// row) and `fanout(rel, col, class)` (a probe binding `col` returns at most one row for the class `one`, at most
-/// `FEW` for `few`, any number for any other), read where they lie; each source's relation (0: none, a view's own);
-/// the symbols of `one` and `few`; and the facts inferred for the derived relations it reads (`shapes::infer`).
+/// The shapes a program's relations declare (decision 0361), as the planner reads them: the sources of the
+/// declarations' relations (`shapes::DECLS`: `key`, `fanout`, `tree`, `order`), read where they lie; each source's
+/// relation (0: none, a view's own); the symbols of `one` and `few`; and the facts inferred for the derived relations
+/// it reads (`shapes::infer`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Decls {
-    pub key: Option<usize>,
-    pub fanout: Option<usize>,
+    pub srcs: [Option<usize>; 4],
     pub rels: Vec<i64>,
     pub one: i64,
     pub few: i64,
@@ -235,8 +233,8 @@ impl Plan {
             }
         }
         let d = &self.decls;
-        let at = |x: Option<usize>| x.map_or(-1, |i| i as i64);
-        w.extend([at(d.key), at(d.fanout), d.one, d.few, d.rels.len() as i64]);
+        w.extend(d.srcs.map(|x| x.map_or(-1, |i| i as i64)));
+        w.extend([d.one, d.few, d.rels.len() as i64]);
         w.extend(&d.rels);
         w.push(d.inferred.len() as i64);
         for (rel, f) in &d.inferred {
@@ -314,11 +312,11 @@ impl Plan {
             let level = (nl >= 0).then(|| (0..nl).map(|_| (next() as usize, next() as usize)).collect());
             p.terms.push(TermPlan { head, sign, parts, steps, out, level });
         }
-        let at = |x: i64| (x >= 0).then_some(x as usize);
-        let (key, fanout, one, few) = (at(next()), at(next()), next(), next());
+        let srcs = [(); 4].map(|()| usize::try_from(next()).ok());
+        let (one, few) = (next(), next());
         let rels = (0..next()).map(|_| next()).collect();
         let inferred = (0..next()).map(|_| (next(), Facts::of_words(&mut next))).collect();
-        p.decls = Decls { key, fanout, rels, one, few, inferred };
+        p.decls = Decls { srcs, rels, one, few, inferred };
         p
     }
 
@@ -440,31 +438,16 @@ impl<'t> Env<'t> {
     pub(crate) fn declared(&self, src: usize) -> Facts {
         let d = &self.plan.decls;
         let Some(&rel) = d.rels.get(src).filter(|&&r| r != 0) else { return Facts::default() };
-        let rows = |at: Option<usize>| -> Vec<[i64; 3]> {
+        let rows = |at: Option<usize>| -> BTreeSet<Vec<i64>> {
             match at.map(|i| &self.srcs[i]) {
                 Some(Live::Trace { after, .. }) => {
                     let c = |i: u16| ColumnIndex::new(i);
-                    Read::matching(after, &[c(0)], &[rel]).map(|r| [Read::get(after, r, c(0)), Read::get(after, r, c(1)), Read::get(after, r, c(2))]).collect() // copy: derived (a relation's few declarations, read)
+                    Read::matching(after, &[c(0)], &[rel]).map(|r| vec![Read::get(after, r, c(0)), Read::get(after, r, c(1)), Read::get(after, r, c(2))]).collect() // copy: derived (a relation's few declarations, read)
                 }
-                _ => Vec::new(),
+                _ => BTreeSet::new(),
             }
         };
-        let mut keys: Vec<(i64, u64)> = Vec::new();
-        for [_, k, col] in rows(d.key) {
-            if !(0..64).contains(&col) {
-                continue;
-            }
-            match keys.iter_mut().find(|x| x.0 == k) {
-                Some(x) => x.1 |= 1 << col,
-                None => keys.push((k, 1 << col)),
-            }
-        }
-        let caps = rows(d.fanout)
-            .into_iter()
-            .filter(|r| (0..64).contains(&r[1]))
-            .filter_map(|[_, col, class]| if class == d.one { Some((col as usize, 1.0)) } else if class == d.few { Some((col as usize, FEW)) } else { None })
-            .collect();
-        let own = Facts { keys: keys.into_iter().map(|k| k.1).collect(), caps };
+        let own = crate::shapes::declared(&d.srcs.map(rows), Some(d.one), Some(d.few)).remove(&rel).unwrap_or_default();
         d.inferred.iter().filter(|i| i.0 == rel).fold(own, |f, i| f.and(&i.1))
     }
 

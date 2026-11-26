@@ -769,3 +769,34 @@ fn a_derived_relations_inferred_key_gives_a_later_line_its_default_plan() {
     assert_eq!(plain.planned.declared, 0, "{:?}", plain.planned);
     assert!(keyed.planned.declared >= 1, "p's line, by q's and r's inferred keys: {:?}", keyed.planned);
 }
+
+/// A tree and a dense order declare keys (0361): `tree(f, 1, 0)` gives each of f's first column one second, and
+/// `order(e, 1, 0)` numbers e's second column within its first. The line takes its default plan from them, and an
+/// edit breaking the tree (a second row at one child) is caught as a broken key is.
+#[test]
+fn a_declared_tree_and_order_give_their_keys_and_are_checked() {
+    let base = (0..40).map(|i| format!("e({i}, 0).\nf({i}, {}).\ng({}, {i}).\n", i + 1, i + 1)).collect::<String>();
+    let mut r = Run::new("phase-tree");
+    r.write("base.rerail", &base, 50);
+    r.write("decl.rerail", "order(\"e\", 1, 0).\ntree(\"f\", 1, 0).\ntree(\"g\", 1, 0).\n", 50);
+    r.write("rule.rerail", "p(x, w) :- e(x, n), f(x, z), g(z, w).\n", 50);
+    r.names(&["base.rerail", "base", "decl.rerail", "decl", "rule.rerail", "rule", "rr"]);
+    let rr = r.s("rr");
+    let files = [("base.rerail", "base", 1), ("decl.rerail", "decl", 1), ("rule.rerail", "rule", 2)];
+    let load: Vec<Vec<i64>> = files.iter().map(|(p, m, _)| vec![r.s(p), r.s(m), rr]).collect();
+    let boot: Vec<Vec<i64>> = files.iter().map(|(p, _, k)| vec![r.s(p), *k]).collect();
+    r.fact("load", &load);
+    r.fact("boot", &boot);
+    let cold = r.run();
+    assert!(cold.planned.declared >= 1, "{:?}", cold.planned);
+    assert_eq!(cold.planned.broken, 0, "{:?}", cold.planned);
+    assert_eq!(r.rows(1, "p").len(), 40);
+    // f(3, _) twice: 3 has two parents. The next edit's change to e at 3 probes f by it, f's both rows there.
+    r.write("base.rerail", &format!("{base}f(3, 77).\ng(77, 5).\n"), 40);
+    r.run();
+    assert_eq!(r.rows(1, "p").len(), 41);
+    r.write("base.rerail", &format!("{base}f(3, 77).\ng(77, 5).\ne(3, 1).\n"), 30);
+    let edit = r.run();
+    assert!(edit.planned.broken >= 1, "{:?}", edit.planned);
+    assert_eq!(r.rows(1, "p").len(), 41, "e(3, 1) derives what e(3, 0) does");
+}

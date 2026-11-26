@@ -76,8 +76,16 @@ impl Facts {
 /// The relations' facts: declared, then inferred.
 pub type Shapes = BTreeMap<i64, Facts>;
 
-/// The declared facts of `key` rows `(rel, k, col)` and `fanout` rows `(rel, col, class)`, the classes `one` and `few`.
-pub fn declared(keys: &BTreeSet<Vec<i64>>, fanouts: &BTreeSet<Vec<i64>>, one: Option<i64>, few: Option<i64>) -> Shapes {
+/// The declarations' relations (0361), each of three columns, its first the relation declared:
+/// - `key(rel, k, col)`: column `col` is in key `k` of `rel`;
+/// - `fanout(rel, col, class)`: a probe binding `col` returns at most one row (`one`), or `FEW` (`few`);
+/// - `tree(rel, p, c)`: `p -> c` is a forest, so each `c` has one `p`: a key `c`;
+/// - `order(rel, col, group)`: `col` numbers the rows of each `group` densely from 0: a key `(group, col)`.
+pub const DECLS: [&str; 4] = ["key", "fanout", "tree", "order"];
+
+/// The declared facts of the declarations' rows `rows` (in `DECLS`' order), the classes `one` and `few`.
+pub fn declared(rows: &[BTreeSet<Vec<i64>>; 4], one: Option<i64>, few: Option<i64>) -> Shapes {
+    let [keys, fanouts, trees, orders] = rows;
     let mut s: Shapes = BTreeMap::new();
     let mut by_key: BTreeMap<(i64, i64), u64> = BTreeMap::new();
     for r in keys.iter().filter(|r| r.len() >= 3 && (0..64).contains(&r[2])) {
@@ -90,6 +98,12 @@ pub fn declared(keys: &BTreeSet<Vec<i64>>, fanouts: &BTreeSet<Vec<i64>>, one: Op
         let cap = if Some(r[2]) == one { 1.0 } else if Some(r[2]) == few { crate::body::FEW } else { continue };
         let f = s.entry(r[0]).or_default();
         *f = f.and(&Facts { keys: Vec::new(), caps: vec![(r[1] as usize, cap)] });
+    }
+    let col = |c: i64| (0..64).contains(&c).then(|| 1u64 << c);
+    let implied = trees.iter().filter_map(|r| Some((r[0], col(r[2])?))).chain(orders.iter().filter_map(|r| Some((r[0], col(r[1])? | col(r[2])?))));
+    for (rel, k) in implied {
+        let f = s.entry(rel).or_default();
+        *f = f.and(&Facts { keys: vec![k], caps: Vec::new() });
     }
     s
 }

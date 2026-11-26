@@ -218,11 +218,10 @@ impl<'s> Planner<'s> {
         p.plan.decls.inferred = st.inferred.clone(); // copy: derived (the facts inferred for its reads, its plan's words)
         p.plan.decls.one = st.known.one.unwrap_or(0);
         p.plan.decls.few = st.known.few.unwrap_or(0);
-        if let Some(k) = st.known.key.filter(|&k| st.port_of(k).is_some()) {
-            p.plan.decls.key = Some(p.source(k, 3, Docs::All));
-        }
-        if let Some(f) = st.known.fanout.filter(|&f| st.port_of(f).is_some()) {
-            p.plan.decls.fanout = Some(p.source(f, 3, Docs::All));
+        for (i, d) in st.known.decls.into_iter().enumerate() {
+            if let Some(d) = d.filter(|&d| st.port_of(d).is_some()) {
+                p.plan.decls.srcs[i] = Some(p.source(d, 3, Docs::All));
+            }
         }
         p
     }
@@ -444,7 +443,7 @@ impl Stratum {
         }
         // The shapes its relations declare (0361), read by its planner: the declarations of earlier strata and the
         // facts in.
-        for d in [known.key, known.fanout].into_iter().flatten() {
+        for d in known.decls.into_iter().flatten() {
             if !own.contains(&d) && !ins.iter().any(|i| i.0 == d)
                 && let Some(sh) = shapes.get(&d)
             {
@@ -1213,7 +1212,8 @@ impl Level {
                 None => Ok(BTreeSet::new()),
             }
         };
-        Ok(crate::shapes::declared(&rows(known.key)?, &rows(known.fanout)?, known.one, known.few))
+        let [a, b, c, d] = known.decls;
+        Ok(crate::shapes::declared(&[rows(a)?, rows(b)?, rows(c)?, rows(d)?], known.one, known.few))
     }
 
     /// The level's documents moved to the `load` rows of its facts in and of its program's facts: each path read

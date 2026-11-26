@@ -2067,3 +2067,20 @@ Checks (Relax, local, 127 of 127):
 - `a_derived_relations_inferred_key_gives_a_later_line_its_default_plan`. `q` copies `f` under a filter, `r` copies
   `g`, and a later stratum's three-atom line over `e`, `q` and `r` takes its default plan. With the same facts under
   another relation it is priced, and the rows are the same. Without the level's inference, it fails.
+
+### Trees and orders declare keys (0361; 2026-11-26)
+
+0361's `child` is declared with `tree(p -> c)`, which gives each node one parent, and `order(i dense in p)`, which
+numbers each parent's children 0, 1, 2, …. Each implies a key: `c`, and `(p, i)`. The declarations are now four
+relations (`shapes::DECLS`): `key`, `fanout`, `tree(rel, p, c)` and `order(rel, col, group)`, the last two giving
+those keys. `Known` knows the four, and a stratum reads each one present. `shapes::declared` is the one reader of
+their rows, for the planning operations in place (`Env::declared`) and for the level's inference. So a tree or an
+order plans a line as a key does, and the run-time check catches it broken as it catches a key.
+
+Locality needs no declaration here: it is the form. A single-file rule holds the document at column 0 of every
+literal, its head partitions by it, and its lines run a document's part (0686, the strata).
+
+Checks (Relax, local, 128 of 128): `declared_rows_give_each_relations_facts` (a tree's key, an order's key, one already
+declared kept once). `a_declared_tree_and_order_give_their_keys_and_are_checked`: a line over an ordered `e` and the
+trees `f` and `g` takes its default plan. A second parent of `f`'s node 3, read on the before side by a later
+change to `e` at 3, is caught as broken. With no keys implied, both fail.

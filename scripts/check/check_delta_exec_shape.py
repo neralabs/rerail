@@ -887,9 +887,11 @@ def declared(failures: list) -> None:
             failures.append(f"plan.rs: {what} is missing (0361)")
     if "pub(crate) fn declared(&self, src: usize)" not in body or "Read::matching(after" not in body:
         failures.append("body.rs: the declarations are not read where they lie (0361, 0353)")
-    if 'key: find(atoms,' not in program or 'fanout: find(atoms,' not in program:
+    if 'decls: crate::shapes::DECLS.map(' not in program:
         failures.append("program.rs: the engine does not know the declarations' relations (0361)")
     shapes = strip_rust((CRATE / "src" / "shapes.rs").read_text()) if (CRATE / "src" / "shapes.rs").exists() else ""
+    if '"key", "fanout", "tree", "order"' not in (CRATE / "src" / "shapes.rs").read_text():
+        failures.append("shapes.rs: the declarations are not key, fanout, tree and order (0361)")
     if "pub fn infer(" not in shapes or "fn closure(" not in shapes:
         failures.append("shapes.rs: no inference of derived relations' facts through their rules (0361)")
     phase = strip_rust((CRATE / "src" / "phase.rs").read_text())
@@ -898,7 +900,8 @@ def declared(failures: list) -> None:
     tests = (CRATE / "src" / "plan_tests.rs").read_text() + (CRATE / "src" / "phase_tests.rs").read_text()
     tests += (CRATE / "src" / "shapes_tests.rs").read_text() if (CRATE / "src" / "shapes_tests.rs").exists() else ""
     for t in ("fn a_rules_head_keeps_the_keys_its_body_determines", "fn a_fanout_carries_where_an_atoms_row_determines_the_heads_and_unions_keep_nothing",
-              "fn a_derived_relations_inferred_key_gives_a_later_line_its_default_plan", "fn a_declared_key_or_fanout_bounds_a_probe", "fn a_declared_line_takes_its_default_plan_and_a_broken_declaration_is_planned_from_statistics",
+              "fn a_derived_relations_inferred_key_gives_a_later_line_its_default_plan", "fn a_declared_key_or_fanout_bounds_a_probe",
+              "fn a_declared_tree_and_order_give_their_keys_and_are_checked", "fn a_declared_line_takes_its_default_plan_and_a_broken_declaration_is_planned_from_statistics",
               "fn a_levels_declared_keys_give_its_lines_default_plans"):
         if t not in tests:
             failures.append(f"0361's test {t} is missing")
