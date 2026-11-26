@@ -1732,10 +1732,10 @@ class FoundEntry {
   readonly ctimeMs: number;
   constructor(exact: BigIntStats) {
     this.exact = exact;
-    this.dev = Number(exact.dev);
-    this.ino = Number(exact.ino);
-    this.nlink = Number(exact.nlink);
-    this.size = Number(exact.size);
+    this.dev = unsignedOf(exact.dev);
+    this.ino = unsignedOf(exact.ino);
+    this.nlink = unsignedOf(exact.nlink);
+    this.size = unsignedOf(exact.size);
     this.mtimeMs = msOf(exact.mtimeNs);
     this.ctimeMs = msOf(exact.ctimeNs);
   }
@@ -1748,6 +1748,14 @@ class FoundEntry {
   isSymbolicLink(): boolean {
     return this.exact.isSymbolicLink();
   }
+}
+/**
+ * A field of a `bigint` stat as a stat without `bigint` gives it. Node fills the one from signed 64-bit numbers and the
+ * other from unsigned ones, so an id past 2^63, as an NTFS file id whose sequence number passes 32,767, is negative in
+ * the one and positive in the other.
+ */
+function unsignedOf(value: bigint): number {
+  return Number(BigInt.asUintN(64, value));
 }
 /** What a walk's lstat finds at `absolute`. */
 async function lookAt(absolute: string): Promise<FoundEntry> {

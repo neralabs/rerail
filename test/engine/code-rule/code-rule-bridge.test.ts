@@ -396,7 +396,8 @@ function holdTimes(path: string, earlier: { mtimeMs: number; ctimeMs: number; mt
  * `info`, what `lstat` gave for `path`, with what a case set there: the times `heldTimes` holds, else the stamp
  * `discovery.stamps` holds as both times, and the next ids `discovery.ids` holds. A read with `bigint` gets each time as
  * the nanoseconds that a read without it gives as those milliseconds, and the ids whole; any other read gets each id as
- * the number Node gives for it, which rounds an id past 2^53.
+ * the number Node gives for it, which rounds an id past 2^53. Node fills a stat with `bigint` from signed 64-bit numbers
+ * and one without from unsigned ones, so an id given here as negative, an id past 2^63, reaches the other as positive.
  */
 function standIn<Info extends Stats | BigIntStats>(path: string, info: Info): Info {
   const at = discovery.stamps.get(path);
@@ -420,7 +421,7 @@ function nanosecondsOf(ms: number): bigint {
   return BigInt(seconds) * 1_000_000_000n + BigInt(Math.round((ms - seconds * 1_000) * 1e6));
 }
 function idsAs(id: { dev: bigint; ino: bigint }, exact: boolean): object {
-  return exact ? id : { dev: Number(id.dev), ino: Number(id.ino) };
+  return exact ? id : { dev: Number(BigInt.asUintN(64, id.dev)), ino: Number(BigInt.asUintN(64, id.ino)) };
 }
 
 /** Resolves once the next file handle opened at `path` is closed: a read of the file has ended. */
@@ -1576,6 +1577,24 @@ describe("CodeRuleBridge", () => {
     const { mtimeNs } = await lstat(file, { bigint: true });
     expect(mtimeNs < 0n ? mtimeNs : undefined).toBe(nanoseconds);
     expect(observations.get(root)?.get("src/a.py")?.stamp).toBe(fileStamp(await lstat(file)));
+  });
+
+  // An NTFS file id whose sequence number passes 32,767 is past 2^63: Node gives it negative to a stat with `bigint` and
+  // positive to one without, and the walk's stamp must hold the second, as `fileStamp` of any other reader's `lstat` does.
+  it("stamps a file it walks whose file id is past 2^63 as lstat gives its numbers", async () => {
+    const root = await workspace();
+    const file = join(root, "src", "a.py");
+    await writeFile(file, "a = 1\n");
+    discovery.ids.set(file, [{ dev: 7n, ino: BigInt.asIntN(64, 0x8001_0000_0000_0005n) }]);
+    const observations: SourceObservationCache = new Map();
+    const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
+      discoveryWaitMs: Number.POSITIVE_INFINITY, observations,
+    });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    const info = await lstat(file);
+    expect(info.ino).toBe(Number(0x8001_0000_0000_0005n));
+    expect(observations.get(root)?.get("src/a.py")?.stamp).toBe(fileStamp(info));
   });
 
   // A tool's read takes a file only while its real path still names the file it opened: a link swapped in for a folder
