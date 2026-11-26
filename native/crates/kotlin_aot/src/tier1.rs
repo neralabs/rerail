@@ -4828,47 +4828,142 @@ pub fn lex(src: &[u8]) -> Lexed {
             panic!("code_l is not the regions' code in word {q} ({:#x} against {:#x}) of {:?}", code_l[q], m_code[q], String::from_utf8_lossy(src));
         }
     }
-    let t108: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i])).collect();
-    let t107: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!prev(&t108, i, 1) & lv[i]) & (!prev(&t18, i, 1) & lv[i])).collect();
-    let t109: Vec<u64> = (0..nw).map(|i| !(code_l[i] & (m_word[i] | m_high[i])) & lv[i]).collect();
-    let t106 = fill(&t107, &t109);
-    let t111: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!prev(&t108, i, 1) & lv[i]) & (!prev(&t18, i, 1) & lv[i]) & (!(code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!prev(&t108, i, 1) & lv[i]) & (!prev(&t18, i, 1) & lv[i]) & m_zero[i] & next(&m_x_letter, i, 1)) & lv[i]) & (!(code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!prev(&t108, i, 1) & lv[i]) & (!prev(&t18, i, 1) & lv[i]) & m_zero[i] & next(&m_b_letter, i, 1)) & lv[i])).collect();
-    let t110 = fill(&t111, &t24);
-    let t114: Vec<u64> = (0..nw).map(|i| (code_l[i] & m_dot[i] & prev(&t110, i, 1) & next(&m_digit, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t108, i, 1) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]))).collect();
-    let t113: Vec<u64> = (0..nw).map(|i| prev(&t114, i, 1)).collect();
-    let t112 = fill(&t113, &t24);
-    let t115: Vec<u64> = (0..nw).map(|i| (t110[i] | t112[i])).collect();
-    let t116: Vec<u64> = (0..nw).map(|i| code_l[i] & m_e_letter[i] & prev(&t115, i, 1) & (next(&m_digit, i, 1) | next(&m_sign, i, 1) & next(&m_digit, i, 2))).collect();
-    let t119: Vec<u64> = (0..nw).map(|i| m_sign[i] & prev(&t116, i, 1)).collect();
-    let t118: Vec<u64> = (0..nw).map(|i| (prev(&t116, i, 1) & m_digit[i] | prev(&t119, i, 1))).collect();
-    let t117 = fill(&t118, &t24);
-    let t120: Vec<u64> = (0..nw).map(|i| ((t110[i] | t112[i]) | t117[i])).collect();
-    let t105: Vec<u64> = (0..nw).map(|i| (t106[i] | (((((((t110[i] | code_l[i] & m_dot[i] & prev(&t110, i, 1) & next(&m_digit, i, 1)) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t108, i, 1) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i])) | t112[i]) | code_l[i] & m_e_letter[i] & prev(&t115, i, 1) & (next(&m_digit, i, 1) | next(&m_sign, i, 1) & next(&m_digit, i, 2))) | m_sign[i] & prev(&t116, i, 1)) | t117[i]) | code_l[i] & m_f_letter[i] & prev(&t120, i, 1)))).collect();
-    let t104: Vec<u64> = (0..nw).map(|i| code_l[i] & m_high[i] & prev(&t105, i, 1)).collect();
-    // a name's letter past ASCII touching a number
-    refused |= any(&t104);
-    let t126: Vec<u64> = (0..nw).map(|i| m_lf[i] & code_l[i]).collect();
-    let t127: Vec<u64> = (0..nw).map(|i| (code_l[i] & (!m_ws[i] & lv[i]) | (!code_l[i] & lv[i]) & prev(&code_l, i, 1))).collect();
-    let t125 = fill(&t126, &t127);
-    let t124: Vec<u64> = (0..nw).map(|i| (!code_l[i] & lv[i]) & prev(&code_l, i, 1) & m_slash[i] & prev(&t125, i, 1)).collect();
-    let t128: Vec<u64> = (0..nw).map(|i| (code_l[i] & (!m_ws[i] & lv[i]) | (!code_l[i] & lv[i]) & prev(&code_l, i, 1) & (!m_slash[i] & lv[i]))).collect();
-    let t123 = fill(&t124, &t128);
-    let t122: Vec<u64> = (0..nw).map(|i| code_l[i] & m_semicolon[i] & prev(&t123, i, 1)).collect();
-    // a `;` after a line break and a comment
-    refused |= any(&t122);
-    let t137: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i]) & (!prev(&t108, i, 1) & lv[i]) & (t37[i] | t38[i]) & (!next(&t108, i, 2) & lv[i])).collect();
-    let t136: Vec<u64> = (0..nw).map(|i| prev(&t137, i, 2)).collect();
-    let t138: Vec<u64> = (0..nw).map(|i| !(code_l[i] & ((((((m_word[i] | m_high[i]) | m_dot[i]) | t41[i]) | t42[i]) | t43[i]) | t44[i])) & lv[i]).collect();
-    let t135 = fill(&t136, &t138);
-    let t134: Vec<u64> = (0..nw).map(|i| t135[i] & m_dot[i]).collect();
-    let t139: Vec<u64> = (0..nw).map(|i| !t135[i] & lv[i]).collect();
-    let t133 = fill(&t134, &t139);
-    let t132: Vec<u64> = (0..nw).map(|i| t133[i] & t43[i]).collect();
-    let t140: Vec<u64> = (0..nw).map(|i| (((!t133[i] & lv[i] | t42[i]) | t43[i]) | m_gt[i] & prev(&m_gt, i, 1))).collect();
-    let t131 = fill(&t132, &t140);
-    let t129: Vec<u64> = (0..nw).map(|i| ((t41[i] | m_slash[i]) | t130[i]) & prev(&t131, i, 1) & prev(&m_gt, i, 1)).collect();
-    // a blank, a comment or a `` after a type the lean parser may split
-    refused |= any(&t129);
+    // The escapes made of `code`: one pass over the words, each mask a word (24 masks).
+    let mut t108_v = vec![0u64; nw];
+    let mut t105_p = 0u64;
+    let mut t108_p = 0u64;
+    let mut t110_p = 0u64;
+    let mut t114_p = 0u64;
+    let mut t115_p = 0u64;
+    let mut t116_p = 0u64;
+    let mut t119_p = 0u64;
+    let mut t120_p = 0u64;
+    let mut t123_p = 0u64;
+    let mut t125_p = 0u64;
+    let mut t106_c = 0u64;
+    let mut t110_c = 0u64;
+    let mut t112_c = 0u64;
+    let mut t117_c = 0u64;
+    let mut t125_c = 0u64;
+    let mut t123_c = 0u64;
+    for i in 0..nw {
+        let t108 = code_l[i] & (m_word[i] | m_high[i]);
+        t108_v[i] = t108;
+        let t107 = code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!(t108 << 1 | t108_p >> 63) & lv[i]) & (!prev(&t18, i, 1) & lv[i]);
+        let t109 = !(code_l[i] & (m_word[i] | m_high[i])) & lv[i];
+        let t106 = {
+            let (s, e) = (t107, t109);
+            let b = !e | s;
+            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t106_c) ^ s ^ b));
+            t106_c = f >> 63;
+            f
+        };
+        let t111 = code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!(t108 << 1 | t108_p >> 63) & lv[i]) & (!prev(&t18, i, 1) & lv[i]) & (!(code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!(t108 << 1 | t108_p >> 63) & lv[i]) & (!prev(&t18, i, 1) & lv[i]) & m_zero[i] & next(&m_x_letter, i, 1)) & lv[i]) & (!(code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!(t108 << 1 | t108_p >> 63) & lv[i]) & (!prev(&t18, i, 1) & lv[i]) & m_zero[i] & next(&m_b_letter, i, 1)) & lv[i]);
+        let t110 = {
+            let (s, e) = (t111, t24[i]);
+            let b = !e | s;
+            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t110_c) ^ s ^ b));
+            t110_c = f >> 63;
+            f
+        };
+        let t114 = (code_l[i] & m_dot[i] & (t110 << 1 | t110_p >> 63) & next(&m_digit, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!(t108 << 1 | t108_p >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]));
+        let t113 = (t114 << 1 | t114_p >> 63);
+        let t112 = {
+            let (s, e) = (t113, t24[i]);
+            let b = !e | s;
+            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t112_c) ^ s ^ b));
+            t112_c = f >> 63;
+            f
+        };
+        let t115 = (t110 | t112);
+        let t116 = code_l[i] & m_e_letter[i] & (t115 << 1 | t115_p >> 63) & (next(&m_digit, i, 1) | next(&m_sign, i, 1) & next(&m_digit, i, 2));
+        let t119 = m_sign[i] & (t116 << 1 | t116_p >> 63);
+        let t118 = ((t116 << 1 | t116_p >> 63) & m_digit[i] | (t119 << 1 | t119_p >> 63));
+        let t117 = {
+            let (s, e) = (t118, t24[i]);
+            let b = !e | s;
+            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t117_c) ^ s ^ b));
+            t117_c = f >> 63;
+            f
+        };
+        let t120 = ((t110 | t112) | t117);
+        let t105 = (t106 | (((((((t110 | code_l[i] & m_dot[i] & (t110 << 1 | t110_p >> 63) & next(&m_digit, i, 1)) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!(t108 << 1 | t108_p >> 63) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i])) | t112) | code_l[i] & m_e_letter[i] & (t115 << 1 | t115_p >> 63) & (next(&m_digit, i, 1) | next(&m_sign, i, 1) & next(&m_digit, i, 2))) | m_sign[i] & (t116 << 1 | t116_p >> 63)) | t117) | code_l[i] & m_f_letter[i] & (t120 << 1 | t120_p >> 63)));
+        let t104 = code_l[i] & m_high[i] & (t105 << 1 | t105_p >> 63);
+        // a name's letter past ASCII touching a number
+        refused |= t104 != 0;
+        let t126 = m_lf[i] & code_l[i];
+        let t127 = (code_l[i] & (!m_ws[i] & lv[i]) | (!code_l[i] & lv[i]) & prev(&code_l, i, 1));
+        let t125 = {
+            let (s, e) = (t126, t127);
+            let b = !e | s;
+            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t125_c) ^ s ^ b));
+            t125_c = f >> 63;
+            f
+        };
+        let t124 = (!code_l[i] & lv[i]) & prev(&code_l, i, 1) & m_slash[i] & (t125 << 1 | t125_p >> 63);
+        let t128 = (code_l[i] & (!m_ws[i] & lv[i]) | (!code_l[i] & lv[i]) & prev(&code_l, i, 1) & (!m_slash[i] & lv[i]));
+        let t123 = {
+            let (s, e) = (t124, t128);
+            let b = !e | s;
+            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t123_c) ^ s ^ b));
+            t123_c = f >> 63;
+            f
+        };
+        let t122 = code_l[i] & m_semicolon[i] & (t123 << 1 | t123_p >> 63);
+        // a `;` after a line break and a comment
+        refused |= t122 != 0;
+        t105_p = t105;
+        t108_p = t108;
+        t110_p = t110;
+        t114_p = t114;
+        t115_p = t115;
+        t116_p = t116;
+        t119_p = t119;
+        t120_p = t120;
+        t123_p = t123;
+        t125_p = t125;
+    }
+    // The escapes made of `code`: one pass over the words, each mask a word (11 masks).
+    let mut t131_p = 0u64;
+    let mut t137_p = 0u64;
+    let mut t135_c = 0u64;
+    let mut t133_c = 0u64;
+    let mut t131_c = 0u64;
+    for i in 0..nw {
+        let t137 = code_l[i] & (m_word[i] | m_high[i]) & (!prev(&t108_v, i, 1) & lv[i]) & (t37[i] | t38[i]) & (!next(&t108_v, i, 2) & lv[i]);
+        let t136 = (t137 << 2 | t137_p >> 62);
+        let t138 = !(code_l[i] & ((((((m_word[i] | m_high[i]) | m_dot[i]) | t41[i]) | t42[i]) | t43[i]) | t44[i])) & lv[i];
+        let t135 = {
+            let (s, e) = (t136, t138);
+            let b = !e | s;
+            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t135_c) ^ s ^ b));
+            t135_c = f >> 63;
+            f
+        };
+        let t134 = t135 & m_dot[i];
+        let t139 = !t135 & lv[i];
+        let t133 = {
+            let (s, e) = (t134, t139);
+            let b = !e | s;
+            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t133_c) ^ s ^ b));
+            t133_c = f >> 63;
+            f
+        };
+        let t132 = t133 & t43[i];
+        let t140 = (((!t133 & lv[i] | t42[i]) | t43[i]) | m_gt[i] & prev(&m_gt, i, 1));
+        let t131 = {
+            let (s, e) = (t132, t140);
+            let b = !e | s;
+            let f = s | (!e & (s.wrapping_add(b).wrapping_add(t131_c) ^ s ^ b));
+            t131_c = f >> 63;
+            f
+        };
+        let t129 = ((t41[i] | m_slash[i]) | t130[i]) & (t131 << 1 | t131_p >> 63) & prev(&m_gt, i, 1);
+        // a blank, a comment or a `` after a type the lean parser may split
+        refused |= t129 != 0;
+        t131_p = t131;
+        t137_p = t137;
+    }
     // SAFETY: `len` records written.
     unsafe { recs.set_len(len) };
     Lexed {

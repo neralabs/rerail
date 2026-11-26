@@ -3027,6 +3027,8 @@ impl<'a> G<'a> {
         let mut guards: std::collections::BTreeMap<String, Option<Vec<String>>> = std::collections::BTreeMap::new();
         // Each mark's bit where its test reads only the tokens (`open_mark` asks it with no cache).
         let mut direct: std::collections::BTreeMap<String, Option<usize>> = std::collections::BTreeMap::new();
+        let mut bits_of: HashMap<String, Option<u64>> = HashMap::default();
+        let mut kinds_of: HashMap<String, Option<Vec<String>>> = HashMap::default();
         let peeks = self.peeks();
         for (order, m) in self.x.marks.iter().enumerate() {
             if !done.insert(m.name.as_str()) {
@@ -3052,6 +3054,31 @@ impl<'a> G<'a> {
                 continue;
             }
             let defs: Vec<(usize, &Mark)> = self.x.marks.iter().enumerate().filter(|(_, x)| x.name == m.name).collect();
+            // The code bits one of which must be the token's for the mark to hold (each definition a bit's, at the
+            // token): `open_mark` asks them first, one test.
+            bits_of.insert(n.clone(), defs.iter().try_fold(0u64, |a, (_, d)| match (d.tokens, d.bit) {
+                (None, Some(b)) if !d.end => Some(a | 1 << b),
+                _ => None,
+            }));
+            // The kinds the token must be, each definition's run's first element a kind's (`run_alone`): `open_mark`
+            // asks the marks of one kind behind one test of it, as the lean parser asks a label only at a name.
+            kinds_of.insert(n.clone(), defs.iter().try_fold(Vec::new(), |mut a: Vec<String>, (_, d)| {
+                let (_, seq) = d.tokens.filter(|_| Self::run_alone(d))?;
+                let mut any = false;
+                for x in seq.first()? {
+                    match x {
+                        TokenElem::Kind(k) => {
+                            any = true;
+                            if !a.contains(k) {
+                                a.push(k.clone());
+                            }
+                        }
+                        TokenElem::Without(_) | TokenElem::With(_) | TokenElem::Starting(_) => {}
+                        _ => return None,
+                    }
+                }
+                any.then_some(a)
+            }));
             let mut holds = Vec::new();
             // The words the token must be for any definition to hold: a guard before the mark's cache (`held`).
             let mut firsts: Option<Vec<String>> = Some(Vec::new());
@@ -3178,21 +3205,51 @@ impl<'a> G<'a> {
             Some(Some(o)) => format!("(self.taken >> {o} & 1 == 0 && self.h_{n}())"),
             _ => format!("self.m_{n}()"),
         };
-        let always: Vec<String> = open.iter().filter(|n| !matches!(guards.get(*n), Some(Some(_)))).map(call).collect();
-        let mut by_word: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+        // An arm's marks each of code bits: none of those bits at the token (and none asked of the gap or the bytes,
+        // `tier1::ASKED`, `TESTED`, constants), none of them holds, one test, as the lean parser's token carries a
+        // flag only where something is to be asked.
+        // The marks of one kind behind that kind's test; the others as they are.
+        let calls = |ns: &[&String]| -> String {
+            let mut parts = Vec::new();
+            let bit: Vec<&String> = ns.iter().copied().filter(|n| bits_of.get(*n).copied().flatten().is_some()).collect();
+            if !bit.is_empty() {
+                let bits = bit.iter().fold(0u64, |a, n| a | bits_of[*n].expect("bits"));
+                let chain: Vec<String> = bit.iter().map(|n| call(n)).collect();
+                parts.push(format!("((self.code_at(self.i) >> 16) as u64 & {bits:#x} != 0 || (crate::tier1::ASKED | crate::tier1::TESTED) as u64 & {bits:#x} != 0) && ({})", chain.join(" || ")));
+            }
+            let mut by_kind: Vec<(Vec<String>, Vec<String>)> = Vec::new();
+            for n in ns.iter().copied().filter(|n| !bit.contains(n)) {
+                match kinds_of.get(n).cloned().flatten() {
+                    Some(mut ks) => {
+                        ks.sort();
+                        match by_kind.iter_mut().find(|g| g.0 == ks) {
+                            Some(g) => g.1.push(call(n)),
+                            None => by_kind.push((ks, vec![call(n)])),
+                        }
+                    }
+                    None => parts.push(call(n)),
+                }
+            }
+            for (ks, cs) in by_kind {
+                let test = ks.iter().map(|k| format!("({})", self.kind_test(k, "self.kind()", "self.word()"))).collect::<Vec<_>>().join(" || ");
+                parts.push(format!("({test}) && ({})", cs.join(" || ")));
+            }
+            if parts.is_empty() { "false".to_owned() } else { parts.iter().map(|p| format!("({p})")).collect::<Vec<_>>().join(" || ") }
+        };
+        let always: Vec<&String> = open.iter().filter(|n| !matches!(guards.get(*n), Some(Some(_)))).collect();
+        let mut by_word: std::collections::BTreeMap<String, Vec<&String>> = std::collections::BTreeMap::new();
         for n in &open {
             if let Some(Some(ws)) = guards.get(n) {
                 for w in ws {
-                    by_word.entry(w.clone()).or_default().push(call(n));
+                    by_word.entry(w.clone()).or_default().push(n);
                 }
             }
         }
-        let any = |cs: Vec<String>| if cs.is_empty() { "false".to_owned() } else { cs.join(" || ") };
         let body = if by_word.is_empty() {
-            any(always.clone())
+            calls(&always)
         } else {
-            let mut arms: String = by_word.into_iter().map(|(w, cs)| format!("            {w} => {},\n", any(cs.into_iter().chain(always.iter().cloned()).collect()))).collect();
-            let _ = writeln!(arms, "            _ => {},", any(always.clone()));
+            let mut arms: String = by_word.into_iter().map(|(w, cs)| format!("            {w} => {},\n", calls(&cs.into_iter().chain(always.iter().copied()).collect::<Vec<_>>()))).collect();
+            let _ = writeln!(arms, "            _ => {},", calls(&always));
             format!("match self.word() {{\n{arms}        }}")
         };
         let _ = writeln!(out, "    /// A mark no rule takes holds at the token (a mark not hidden).\n    fn open_mark(&mut self) -> bool {{\n        {body}\n    }}\n");

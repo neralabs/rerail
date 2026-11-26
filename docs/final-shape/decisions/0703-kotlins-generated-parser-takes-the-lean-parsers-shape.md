@@ -44,3 +44,23 @@ them.
    parser has them, so it has no ladder, and neither does JSON. Their code is unchanged. Both of tier 2's Rust forms
    that call methods (`source`, `tier2_calls`) take the ladders; the one loop's form (rr's `tier2_loop`) has none.
    `RERAIL_BITLEX_LADDERS` prints the candidate groups.
+3. **A token pays for the marks no rule takes only where one may hold** (`open_mark`). A mark each of whose
+   definitions is a code bit at the token is asked behind one test of those bits of the token's code (with
+   `tier1::ASKED` and `TESTED`, constants: where a bit is asked of the gap or the bytes, the test folds away). A mark
+   each of whose definitions' runs starts with a kind is asked behind that kind's test, the marks of one kind together.
+   Kotlin's plain token (the `_` arm) was five hold tests, each a `taken` bit and a function: now one code-bit test and
+   two kind compares, as the lean parser asks a label only at a name. rr's arms keep their tests, its bits being asked of
+   the gap; JSON has no such mark.
+4. **The escapes after the token loop are passes over the words** (`one_pass_after`). Each escape made of `code`
+   (`code_escape`) was its own pass over the file per mask, each a vector of the file's: 26 in Kotlin's tier 1, beside
+   the test build's own. Now they are loops over the words, each mask a word: its `prev` its word and the word before's,
+   a `fill` its carry, an `any` the word tested. A mask read past its word (`next`) starts a new loop before the read,
+   and a mask a later loop reads is kept as a vector as well. Kotlin's are two loops, with one vector (`t108`, read two
+   bytes ahead). rr and JSON have no escape made of `code`. A check's reason with a line break in it is written with
+   `\n` in its comment.
+
+What stays: Kotlin's tier 1 keeps its two passes. Stage 1 keeps the 144 masks its token loop reads, for the whole
+file, and tier 1 computes the token's marks into its code (its line breaks, the semicolons, `as_open`, ...). Its
+strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or t_dollar resumes str`),
+a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in parts, from tier 1's
+masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state (`next_*`).

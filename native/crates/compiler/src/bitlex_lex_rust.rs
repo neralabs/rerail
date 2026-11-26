@@ -4743,7 +4743,7 @@ impl Gen<'_> {
         let v = self.val(&x);
         let lines = std::mem::replace(&mut self.body, before);
         let v = v?;
-        let _ = write!(self.code_after, "{lines}    // {why}\n    refused |= any(&{v});\n");
+        let _ = write!(self.code_after, "{lines}    // {}\n    refused |= any(&{v});\n", why.replace('\n', "\\n"));
         Ok(true)
     }
 
@@ -6735,7 +6735,7 @@ impl Gen<'_> {
                 let _ = write!(acc_after, "        if open != usize::MAX {{\n            clear(&mut code_l, s, l);\n        }}\n");
             }
             let code = self.names.get("code").cloned().unwrap_or_default();
-            let _ = write!(span_after, "    for (c, v) in code_l.iter_mut().zip(&lv) {{\n        *c &= v;\n    }}\n    #[cfg(feature = \"test-hooks\")]\n    if !refused {{\n        if let Some(q) = (0..nw).find(|&q| code_l[q] != {code}[q]) {{\n            panic!(\"code_l is not the regions' code in word {{q}} ({{:#x}} against {{:#x}}) of {{:?}}\", code_l[q], {code}[q], String::from_utf8_lossy(src));\n        }}\n    }}\n{}", self.code_after);
+            let _ = write!(span_after, "    for (c, v) in code_l.iter_mut().zip(&lv) {{\n        *c &= v;\n    }}\n    #[cfg(feature = \"test-hooks\")]\n    if !refused {{\n        if let Some(q) = (0..nw).find(|&q| code_l[q] != {code}[q]) {{\n            panic!(\"code_l is not the regions' code in word {{q}} ({{:#x}} against {{:#x}}) of {{:?}}\", code_l[q], {code}[q], String::from_utf8_lossy(src));\n        }}\n    }}\n{}", one_pass_after(&self.code_after).unwrap_or_else(|| self.code_after.clone()));
         }
         // The escapes over each stretch of code: at a region token, the stretch before it; after
         // the loop, the last.
@@ -9235,4 +9235,167 @@ mod tests {
         assert!(!false_at(&name("ws"), b' ', &stmts));
         assert!(!false_at(&name("in_string"), b' ', &stmts), "a carried mask is free");
     }
+}
+
+/// The escapes made of `code` after the token loop (`code_escape`) as passes over the words, each of their masks a
+/// word, not a vector of the file's (decision 0703): a mask's `prev` its word and the word before's, a `fill` its
+/// carry, an `any` the word tested. Each was its own pass over the file, a vector each. A mask read past its word
+/// (`next`) ends the pass before the read, and a mask a later pass reads is kept as a vector too. None where a line is
+/// not one of those forms: the part as it was.
+fn one_pass_after(code: &str) -> Option<String> {
+    enum L<'a> {
+        Note(&'a str),
+        Pass(&'a str, &'a str),
+        Fill(&'a str, &'a str, &'a str),
+        Any(&'a str),
+    }
+    let mut lines = Vec::new();
+    for l in code.lines() {
+        let t = l.trim_start();
+        if t.starts_with("//") {
+            lines.push(L::Note(t));
+        } else if let Some(r) = t.strip_prefix("let ") && let Some((name, r)) = r.split_once(": Vec<u64> = (0..nw).map(|i| ") && let Some(e) = r.strip_suffix(").collect();") {
+            lines.push(L::Pass(name, e));
+        } else if let Some(r) = t.strip_prefix("let ") && let Some((name, r)) = r.split_once(" = fill(&") && let Some((a, b)) = r.strip_suffix(");").and_then(|r| r.split_once(", &")) {
+            lines.push(L::Fill(name, a, b));
+        } else if let Some(x) = t.strip_prefix("refused |= any(&").and_then(|r| r.strip_suffix(");")) {
+            lines.push(L::Any(x));
+        } else if !t.is_empty() {
+            return None;
+        }
+    }
+    let is_id = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    // Each occurrence of `pat` not inside a longer name, replaced.
+    let bounded = |e: &str, pat: &str, to: &str| -> String {
+        let mut out = String::new();
+        let mut rest = e;
+        while let Some(p) = rest.find(pat) {
+            let ok = rest[..p].chars().next_back().is_none_or(|c| !is_id(c));
+            out.push_str(&rest[..p]);
+            out.push_str(if ok { to } else { pat });
+            rest = &rest[p + pat.len()..];
+        }
+        out.push_str(rest);
+        out
+    };
+    let reads = |e: &str, t: &str| e.contains(&format!("&{t}, ")) || { let x = bounded(e, &format!("{t}[i]"), "\u{1}"); x.contains('\u{1}') };
+    // The passes: each line's, a new one where a line reads past its word a mask of the pass.
+    let mut seg = vec![0usize; lines.len()];
+    let mut of: HashMap<&str, usize> = HashMap::new();
+    let mut cur = 0;
+    let mut here: Vec<&str> = Vec::new();
+    for (k, l) in lines.iter().enumerate() {
+        let (name, e) = match l {
+            L::Pass(n, e) => (Some(*n), Some(*e)),
+            L::Fill(n, _, _) => (Some(*n), None),
+            _ => (None, None),
+        };
+        if let Some(e) = e
+            && here.iter().any(|t| e.contains(&format!("next(&{t}, ")))
+        {
+            cur += 1;
+            here.clear();
+        }
+        seg[k] = cur;
+        if let Some(n) = name {
+            of.insert(n, cur);
+            here.push(n);
+        }
+    }
+    let masks: Vec<&str> = of.keys().copied().collect();
+    if masks.len() < 2 {
+        return None;
+    }
+    // A mask a later pass reads, or an `any` in a later pass: kept as a vector too (`_v`).
+    let mut kept: std::collections::HashSet<&str> = Default::default();
+    for (k, l) in lines.iter().enumerate() {
+        let text: Vec<&str> = match l {
+            L::Pass(_, e) => vec![*e],
+            L::Fill(_, a, b) => vec![*a, *b],
+            L::Any(x) => vec![*x],
+            L::Note(_) => vec![],
+        };
+        for t in &masks {
+            if of[t] < seg[k] && text.iter().any(|e| reads(e, t) || e == t) {
+                kept.insert(t);
+            }
+        }
+    }
+    let mut out = String::new();
+    let last = *seg.last().unwrap_or(&0);
+    for p in 0..=last {
+        let mine: Vec<&str> = masks.iter().copied().filter(|t| of[t] == p).collect();
+        let mut body = String::new();
+        let mut prevs: Vec<String> = Vec::new();
+        let mut fills: Vec<&str> = Vec::new();
+        // A mask's word in this pass: its own (this pass's), its vector's (an earlier one's), or the outer vector's.
+        let read = |e: &str, prevs: &mut Vec<String>| -> String {
+            let mut e = e.to_owned();
+            for t in &masks {
+                if of[t] < p {
+                    e = bounded(&e, &format!("{t}[i]"), &format!("{t}_v[i]"));
+                    e = e.replace(&format!("&{t}, "), &format!("&{t}_v, "));
+                } else if of[t] == p {
+                    for k in 1..64 {
+                        let call = format!("prev(&{t}, i, {k})");
+                        if e.contains(&call) {
+                            if !prevs.iter().any(|x| x == t) {
+                                prevs.push((*t).to_owned());
+                            }
+                            e = e.replace(&call, &format!("({t} << {k} | {t}_p >> {})", 64 - k));
+                        }
+                    }
+                    e = bounded(&e, &format!("{t}[i]"), t);
+                }
+            }
+            e
+        };
+        let word = |x: &str| -> String {
+            match of.get(x) {
+                Some(&q) if q == p => x.to_owned(),
+                Some(_) => format!("{x}_v[i]"),
+                None => format!("{x}[i]"),
+            }
+        };
+        for (k, l) in lines.iter().enumerate().filter(|(k, _)| seg[*k] == p) {
+            let _ = k;
+            match l {
+                L::Note(t) => {
+                    let _ = writeln!(body, "        {t}");
+                }
+                L::Pass(n, e) => {
+                    let _ = writeln!(body, "        let {n} = {};", read(e, &mut prevs));
+                }
+                L::Fill(n, a, b) => {
+                    let _ = writeln!(body, "        let {n} = {{\n            let (s, e) = ({}, {});\n            let b = !e | s;\n            let f = s | (!e & (s.wrapping_add(b).wrapping_add({n}_c) ^ s ^ b));\n            {n}_c = f >> 63;\n            f\n        }};", word(a), word(b));
+                    fills.push(n);
+                }
+                L::Any(x) => {
+                    let _ = writeln!(body, "        refused |= {} != 0;", word(x));
+                }
+            }
+            if let L::Pass(n, _) | L::Fill(n, _, _) = l
+                && kept.contains(n)
+            {
+                let _ = writeln!(body, "        {n}_v[i] = {n};");
+            }
+        }
+        let _ = writeln!(out, "    // The escapes made of `code`: one pass over the words, each mask a word ({} masks).", mine.len());
+        for t in mine.iter().filter(|t| kept.contains(*t)) {
+            let _ = writeln!(out, "    let mut {t}_v = vec![0u64; nw];");
+        }
+        prevs.sort();
+        for t in &prevs {
+            let _ = writeln!(out, "    let mut {t}_p = 0u64;");
+        }
+        for f in &fills {
+            let _ = writeln!(out, "    let mut {f}_c = 0u64;");
+        }
+        let _ = write!(out, "    for i in 0..nw {{\n{body}");
+        for t in &prevs {
+            let _ = writeln!(out, "        {t}_p = {t};");
+        }
+        out.push_str("    }\n");
+    }
+    Some(out)
 }
