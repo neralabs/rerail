@@ -5258,7 +5258,7 @@ fn run_observed_within(
         ahead: builders * 8,
         // Beside the one waiting for the main thread, as many projecting as the chunks evaluating at once.
         in_flight: &at_once_allowed,
-        fixed_in_flight: (!memoised).then_some(2),
+        fixed_in_flight: t.is_some().then_some(2),
         resolve: &resolver,
         build: &build,
         project: &project,
@@ -6390,9 +6390,13 @@ fn run_observed_within(
     };
     // One batch's chunks, to its end; false when the builder has ended. With `parallel`, up to `chunks_at_once`
     // chunks evaluate at once as jobs, each on a connection of its own, and are filed here in their order; else each
-    // evaluates here, on the run's connection.
+    // evaluates here, on the run's connection. A run without the memo evaluates them at once too: its exports come
+    // back with its chunks (`Evaluated::export_rows`) and are filed in order as a memoised run's are. On the 300-file
+    // bench one export without a location column (a rank's `rr_rankq`) turned the memo off, and with it every chunk
+    // ran alone on the main thread: 2.2 cores busy of 10 (decision 0254, amended 2026-11-25). T's facts are bound on
+    // the run's connection alone, so a run over them evaluates here.
     let drain = |process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>, parallel: bool| -> Result<bool> {
-        let k = if parallel && memoised { chunks_at_once } else { 1 };
+        let k = if parallel && t.is_none() { chunks_at_once } else { 1 };
         type Slot = Arc<parking_lot::Mutex<Option<(Result<Evaluated>, crate::code_rule_dsl::logic::plan::ChunkPlans)>>>;
         let mut flight: std::collections::VecDeque<(Ctx, Slot)> = std::collections::VecDeque::new();
         // The run's plans as the chunks are filed (Q88): each chunk's view, and what it made taken in in their order.
