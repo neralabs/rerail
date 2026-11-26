@@ -1907,12 +1907,24 @@ pub mod tests {
             .replace(" test_on fixtures_on policy_on decl_on violation_on edit_on functor_on type_on io_on lattice_on pragma_on json_flat paren_term paren_tilde paren_closes count_on agg_call agg_word", "")
             .replace("negation | paren_term term [literal_tail] | paren_tilde paren_subject pattern_tail | group\n                        | term [literal_tail]", "negation | group | term [literal_tail]")
             .replace("paren_closes paren_subject | term", "term")
-            .replace("                        | count_on aggregate | agg_call aggregate | agg_word aggregate\n", "")
+            .replace("'_' as wildcard | count_on aggregate | agg_call aggregate | agg_word aggregate\n                        | call_on ('_' as wildcard | identifier wrap call function arguments: argument_list)\n                        | unless no_named (named_on ('_' as wildcard | identifier wrap named_argument name ':' value: term))\n                        | identifier as variable", "'_' as wildcard | identifier as variable")
             .replace("(json_flat argument: json | argument: word | punctuation)* (newline | argument: json)", "(argument: json | argument: word | punctuation)* newline")
-            .replace("test_on test_block | fixtures_on fixtures_block | directive", "setting")
-            .replace("test_on refused | fixtures_on refused | directive", "setting")
+            .replace("test_on test_block | fixtures_on fixtures_block | plain_statement", "plain_statement")
+            .replace("include | directive | clause", "include | setting | clause")
+            // The lean parser's peeks before a token it writes.
+            .replace(" empty_angle empty_parens code_str safe_on modal_on neg_number call_on named_on by_list", "")
+            .replace("[empty_angle '<' '>' | implied '<' argument: identifier implied '>']", "[implied '<' argument: identifier implied '>']")
+            .replace("[empty_parens parameters: '(' ')' | implied '(' parameters: leaf raw_text io_parameters implied ')']", "[implied '(' parameters: leaf raw_text io_parameters implied ')']")
+            .replace("code_str implied 'code' code: string | code: code_column", "code: code_column")
+            .replace("[safe_on 'safe'] ", "")
+            .replace("[modal_on modal: ('must' | 'may')] ", "")
+            .replace("neg_number '-' (float_at merge float number | merge number number) | unary_expression", "unary_expression")
+            .replace("  implied name_primary ':'\n", "")
+            .replace("  implied aggregate ','\n", "")
+            .replace("(by_list 'by' '(' key: term (',' key: term)* ')' ('sep' separator: string ':' implied '{' | ':' '{')\n                            | ['by'", "(['by'")
+            .replace("test_on refused | fixtures_on refused | plain_statement", "plain_statement")
             .lines()
-            .filter(|l| !["test_on", "fixtures_on", "policy_on", "decl_on", "violation_on", "edit_on", "functor_on", "type_on", "io_on", "lattice_on", "pragma_on", "json_flat", "paren_term", "paren_tilde", "paren_closes", "count_on", "agg_call", "agg_word"].iter().any(|m| l.starts_with(&format!("mark {m} "))))
+            .filter(|l| !["empty_angle", "empty_parens", "code_str", "safe_on", "modal_on", "neg_number", "call_on", "named_on", "by_list", "test_on", "fixtures_on", "policy_on", "decl_on", "violation_on", "edit_on", "functor_on", "type_on", "io_on", "lattice_on", "pragma_on", "json_flat", "paren_term", "paren_tilde", "paren_closes", "count_on", "agg_call", "agg_word"].iter().any(|m| l.starts_with(&format!("mark {m} "))))
             .filter(|l| !(l.starts_with("  choice directive") || l.starts_with("                        | edit_on") || l.starts_with("                        | io_on")))
             .filter(|l| !(l.starts_with("escape ") && l.contains(" at number when ")))
             .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
@@ -3022,7 +3034,9 @@ pub mod tests {
                 "tier2" => batches.iter().zip(&ours).for_each(|(b, f)| {
                     let _ = writing.words(p, b, f.as_bytes());
                 }),
-                other => panic!("RR_FORM={other}: lean, lexer, tier1 or tier2"),
+                // The JIT whole, as `rr_aot_against_jit` times it: tier 1, the tape, tier 2, the image.
+                "image" => ours.iter().for_each(|f| n += c.image(f.as_bytes()).map_or(0, |t| t.len())),
+                other => panic!("RR_FORM={other}: lean, lexer, tier1, tier2 or image"),
             }
             rounds += 1;
         }

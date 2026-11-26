@@ -355,19 +355,58 @@ Steps 8 to 10 had left four differences from the lean parser. Each is now gone.
 rr's `tier2.rs` is 2,791 lines, from 2,949, and `tier2_loop.rs` is 3,330, from 3,484. Kotlin's `tier2.rs` is 7,552, from
 7,999. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
 
+## Step 12: lean's peeks in the grammar; one `aggregate`; every rr mark a peek; lean's take names (done)
+
+The user asked again for every gap to be closed. This step closes the ones still open after step 11.
+
+- **The grammar decides by lean's peeks.** Each of these marks is one token mark and a hidden peek, as the lean parser
+  asks `is_p_at`/`is_id_at` before it takes a token: `empty_angle` (`<` `>`), `empty_parens` (`(` `)`), `code_str`
+  (`code` and a string), `safe_on` (`safe` and an identifier), `modal_on` (`must`/`may` and an identifier),
+  `neg_number` (`-` and a number), `call_on` (an identifier and `(`), `named_on` (an identifier and `:`), and
+  `by_list` (`by` and `(`). The rules that went back to undo a choice (`drop_made`, `retype_moved`, `angle_close`,
+  `paren_close`, `keyed_body`, `agg_body`, `agg_tail`, `aggregate_word`) are gone. A call and a named argument stay
+  `wrap call …` (the machine's `NODE_FIELD m=3` sets a field of the wrap made last); `'_' as wildcard` under each
+  keeps `r(_(y))` refused.
+- **`implied 'A'` inline.** A token the grammar implies may be written where it is (`implied '<'`), as the lean
+  parser's `implied()`; the `implied RULE 'A'` statements for `functor_type`, `io_relation`, `type`, `agg_body` and
+  `keyed_body` are gone.
+- **One `aggregate`.** `count`, the keyed `by (…)` form, `by` and `sep` are one rule, as the lean parser's
+  `aggregate`; its words are one take of their own kinds, `anon()`'s (`anon_words`: a choice of words, each a leaf of
+  its kind, is `self.bump_as(ANON[self.word() as usize])`).
+- **A guarded mark arm.** Where an arm the flags guard (`unless no_named`) is a mark's, a set flag sends the state to
+  its next test, not to its end: the machine's guard jumps to the test after the mark's (`bitlex_tier2.rs`), and the
+  reference steps past a hidden mark that only guarded ways take (`tree.rs`, `first_flagged`).
+- **Every rr mark is a peek.** A gap mark (`line`, `newline`, `float_at`'s check) is a peek too: its bit asked of the
+  token, `(self.i >= self.n || self.bit_at(self.i, 1))`, as the lean parser's `on_line`. A mark is a peek where its
+  taken bit is not read once only the marks that are not peeks are taken, to a fixed point (`peeks`). `json_flat`
+  is a bracket scan (`past_lbrace`), its `}` asking `without line`. rr has no `m_`, `h_`, `take_`, `mark_` or `pat_`
+  function, and no `taken`, `known` or `holds` field (`no_field`).
+- **A rest of line is lean's `while … on_line { word()? }`.** A `while !C` whose body ends `else { break; }`, followed
+  by `if !C { return self.refuse(); }`, refuses at the `break` and has no test after (`no_retest_after_while`).
+- **A directive is decided once.** An `if` chain whose tests share their first test `P` and then ask the next word is
+  `if P { match self.word_at(self.i + 1) { … } }` (`shared_test_as_match`), as the lean parser's `statement` matches
+  the directive's word after its `.`.
+- **The takes have lean's names.** `p(w)` (a punctuation the grammar implies), `p_stored(w, k)` (one stored),
+  `implied()` (a token the grammar implies; `implied_if(ok)` one tested), `id(f)` (an identifier, given its field),
+  and `bump_as(k)` (the token, a leaf of a kind, no field) (`lean_names`), in rr's and Kotlin's code, both forms. The
+  loop form keeps its one loop and stack, the device's shape, which the lean parser has no counterpart of; its
+  places' code is the calls form's, these takes included.
+
+rr's `tier2.rs` is 2,480 lines, from 2,791, and `tier2_loop.rs` is 3,021, from 3,330. Kotlin's `tier2.rs` is 7,267,
+from 7,552. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
+
 ## Where the ten gaps stand
 
-1. Marks: every rr mark of tokens is a peek (steps 1, 5, 10), a bracket scanned once (step 11). The gap marks remain
-   as the lean parser's line tests.
-2. Statements: decided by the `.` and the word after it (step 4).
-3. JSON: a policy document is JSON's grammar read into one leaf (step 6).
-4. Going back: a `(` is decided past its `)` (step 5, the user's option C).
-5. Aggregates: one `aggregate` (step 5).
+1. Marks: every rr mark is a peek, gap marks included, and none has a function or a bit (steps 1, 5, 10, 11, 12).
+2. Statements: decided by the `.` and one match of the word after it (steps 4, 12).
+3. JSON: a policy document is JSON's grammar read into one leaf (step 6); a setting's JSON a bracket scan (step 12).
+4. Going back: none; every choice is a peek before the token (steps 5, 12).
+5. Aggregates: one `aggregate` rule (steps 5, 12).
 6. A bare term fails where it ends (step 5).
-7. Tokens: a kind is `self.kind() == t::K`, a choice of tokens is one take, `punctuation` is `anon()`, and a tested
-   token is taken with no test (steps 2, 9).
+7. Tokens: a kind is `self.kind() == t::K`, a choice of tokens is one take, `punctuation` and the aggregate's words are
+   `anon()`, and a tested token is taken with no test (steps 2, 9, 12).
 8. Numbered arms: none in rr, in either form, or in Kotlin (steps 3, 5, 8, 11).
-9. Helpers: one take, a leaf's refusal checked once, depth counted where the grammar recurses, and no unused helper
-   (step 7).
+9. Helpers: lean's names (`p`, `p_stored`, `implied`, `id`, `bump_as`), one take, a leaf's refusal checked once, depth
+   counted where the grammar recurses, and no unused helper or field (steps 7, 12).
 10. The loop form: its places are in the calls form's shapes, and none only jumps (steps 8, 11). A repetition is a
     `while` (steps 9, 11).

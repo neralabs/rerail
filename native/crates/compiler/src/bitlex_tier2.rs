@@ -256,6 +256,9 @@ pub struct Mark {
     /// `, ends`: hidden, and a level that may end where it holds and does not take it ends
     /// there, its caller to take it.
     pub ends: bool,
+    /// `, deeper`, `, shallower` (decision 0698): it holds only where the column of its token
+    /// is past, or less than, the asking level's indent (`Words::mark_columns`).
+    pub column: Option<::bitlex::syntax::Column>,
 }
 
 impl Mark {
@@ -367,7 +370,7 @@ impl Emit<'_> {
     /// `flags`: the arm's flags (`flags_of`), `i` the call's: with a function a rule, one flag
     /// the call runs with is its `PUSH`'s (`push_flag`), as a parameter, so the callee is entered
     /// at its one entry; else they are the first words after it.
-    fn call(&mut self, ret: u16, callee: u16, flags: &[(u8, u16, bool)], i: usize) {
+    fn call(&mut self, ret: u16, callee: u16, flags: &[(u8, u16, bool)], indents: &[u8], i: usize) {
         let mine: Vec<(u16, bool)> = flags.iter().filter(|f| usize::from(f.0) == i).map(|f| (f.1, f.2)).collect();
         let on_push = self.by_rules && mine.len() == 1;
         let mode = if on_push { push_flag(mine[0].0, mine[0].1) } else { 0 };
@@ -379,6 +382,10 @@ impl Emit<'_> {
         }
         if !on_push {
             self.flags_of(flags, i);
+        }
+        // An `indented` level's indent: its first token's column (decision 0698).
+        if indents.iter().any(|&c| usize::from(c) == i) {
+            self.push("INDENT", 0, Arg::None);
         }
     }
 
@@ -563,6 +570,8 @@ impl Emit<'_> {
         let mut remember = None;
         // Each call's flags (`with F R`), after its `PUSH`: (call, flag, set).
         let mut flags: Vec<(u8, u16, bool)> = Vec::new();
+        // The calls into an `indented` level, each its indent after its `PUSH`.
+        let mut indents: Vec<u8> = Vec::new();
         let a = &self.arms[arm];
         for act in a.acts.clone() {
             let (supers, field) = match act {
@@ -635,6 +644,10 @@ impl Emit<'_> {
                     flags.push((call, flag, set));
                     continue;
                 }
+                Act::Indent { call } => {
+                    indents.push(call);
+                    continue;
+                }
                 Act::Unless { .. } => continue,
                 Act::Relabel { field, moved, inner } => {
                     // Mode 2: the node made last at this level; mode 3: the node its wrap holds
@@ -683,7 +696,7 @@ impl Emit<'_> {
             (Some((&p, outer)), Some(c)) if ends_at_once => {
                 for (i, &o) in outer.iter().enumerate() {
                     let callee = outer.get(i + 1).copied().unwrap_or(p);
-                    self.call(o, callee, &flags, i);
+                    self.call(o, callee, &flags, &indents, i);
                 }
                 let st = st.clone();
                 self.end_closes(&st, c, 1, st.own);
@@ -692,7 +705,7 @@ impl Emit<'_> {
             _ => {
                 for (i, &p) in ret.iter().enumerate() {
                     let callee = ret.get(i + 1).copied().unwrap_or(to);
-                    self.call(p, callee, &flags, i);
+                    self.call(p, callee, &flags, &indents, i);
                 }
                 if let Some(k) = remember {
                     // A keyword's: its kind from the token's word, as a keyword's leaf's.
@@ -1442,8 +1455,12 @@ impl Emit<'_> {
             self.switches[t].words = keep;
         }
         // The marks' arms: their acts, no bytes taken (the next state switches on this token).
+        // A mark's arm the flags guard (`unless F`): where the flag is set, the mark is not asked here, as if the arm were
+        // not there (the reference's `starts_flagged`): the state's next test, after the mark's.
         for (jump, a) in mark_arms {
+            let default = std::mem::replace(&mut self.default, jump + 1);
             let to = self.body(a);
+            self.default = default;
             self.words[jump as usize].2 = Arg::Pc(to);
         }
         Ok(())
@@ -1803,6 +1820,12 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     crate::rir_text::mark_word_rows(&mut text, &mark_words);
     let mark_passes: Vec<(u8, u64)> = marks.iter().enumerate().filter(|(_, m)| m.passes != 0).map(|(k, m)| (k as u8, m.passes)).collect();
     crate::rir_text::mark_pass_rows(&mut text, &mark_passes);
+    let mark_columns: Vec<(u8, u8)> = marks
+        .iter()
+        .enumerate()
+        .filter_map(|(k, m)| m.column.map(|c| (k as u8, if c == ::bitlex::syntax::Column::Deeper { 1 } else { 2 })))
+        .collect();
+    crate::rir_text::mark_column_rows(&mut text, &mark_columns);
     let word_kinds: Vec<(u16, u16)> = e.word_kinds.iter().map(|(&s, &k)| (s, k)).collect();
     crate::rir_text::word_kind_rows(&mut text, &word_kinds);
     crate::rir_text::rule_rows(&mut text, &firsts);

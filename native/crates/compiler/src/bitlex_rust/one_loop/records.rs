@@ -16,6 +16,7 @@
 //!   questions, the comments, the flags, the tree's rewrites (`wrap`, `relabel`, `drop`, `merge`, the readings), the
 //!   regions read in parts. A rule that is no level and calls none is a method of its own, called from each place.
 
+use super::super::moves::{self, Block, Cond, Op, line};
 use super::super::{First, G, Input, upper};
 use ::bitlex::syntax::{Gram, Stmt};
 use std::cell::RefCell;
@@ -25,7 +26,7 @@ use std::fmt::Write;
 struct Rl<'g, 'a> {
     g: &'g G<'a>,
     /// The loop's places' code, by number.
-    places: RefCell<Vec<String>>,
+    places: RefCell<Vec<Block>>,
     /// Each place made of code (`to_place`), by its code.
     placed: RefCell<BTreeMap<String, usize>>,
     /// Each level's first place.
@@ -40,7 +41,7 @@ struct Rl<'g, 'a> {
     refusing: bool,
     /// The rules whose code may run while a level refuses a mark (`refuse M in L`): those levels, and the rules that
     /// are no level their code reaches. The others' code runs with none refused, and takes its tokens without the
-    /// test (`no_refusing`).
+    /// test (`moves::no_refusing`).
     hot: HashSet<String>,
     /// The levels whose call saves its caller's refused marks: a level that refuses one, or one a hot rule calls.
     saves: HashSet<String>,
@@ -90,12 +91,6 @@ fn names<'g>(g: &'g Gram, out: &mut Vec<&'g str>) {
     }
 }
 
-/// `code`, a rule's that runs with no mark refused: its token takes without the test of the refused marks
-/// (`takes`, the `_nf` calls).
-fn no_refusing(code: &str) -> String {
-    ["tk", "word_leaf", "word_skip", "skip", "merge", "pass", "word_pass"].iter().fold(code.to_owned(), |c, t| c.replace(&format!("self.{t}("), &format!("self.{t}_nf(")))
-}
-
 /// What may run while a level refuses a mark (`Rl::hot`), and the levels whose calls save the marks refused
 /// (`Rl::saves`).
 fn refusers(g: &G<'_>) -> (HashSet<String>, HashSet<String>) {
@@ -124,8 +119,14 @@ fn refusers(g: &G<'_>) -> (HashSet<String>, HashSet<String>) {
 }
 
 /// To place `l`.
-fn go(l: usize) -> String {
-    format!("st = {l};\ncontinue 'run;\n")
+fn go(l: usize) -> Block {
+    vec![Op::Goto(l)]
+}
+
+/// `a`, then `b`.
+fn then(mut a: Block, b: Block) -> Block {
+    a.extend(b);
+    a
 }
 
 impl Rl<'_, '_> {
@@ -134,22 +135,23 @@ impl Rl<'_, '_> {
     }
 
     /// A new place, its code `code`.
-    fn place(&self, code: String) -> usize {
+    fn place(&self, code: Block) -> usize {
         let mut p = self.places.borrow_mut();
         p.push(code);
         p.len() - 1
     }
 
     /// Code `k` as a place: code that only goes on to a place is that place, and the same code is one place.
-    fn to_place(&self, k: String) -> usize {
-        if let Some(l) = k.strip_prefix("st = ").and_then(|r| r.strip_suffix(";\ncontinue 'run;\n")).and_then(|l| l.parse().ok()) {
+    fn to_place(&self, k: Block) -> usize {
+        if let [Op::Goto(l)] = k.as_slice() {
+            return *l;
+        }
+        let key = moves::print(&k, "");
+        if let Some(&l) = self.placed.borrow().get(&key) {
             return l;
         }
-        if let Some(&l) = self.placed.borrow().get(&k) {
-            return l;
-        }
-        let l = self.place(k.clone());
-        self.placed.borrow_mut().insert(k, l);
+        let l = self.place(k);
+        self.placed.borrow_mut().insert(key, l);
         l
     }
 
@@ -200,15 +202,15 @@ impl Rl<'_, '_> {
 
     /// A decision's arms among `g`'s alternatives, each before `rest` and going on to `k`: its tests, its code (an
     /// `unless F` alternative's guard is its tests'), and whether it may match nothing (`G::arms`).
-    fn arms(&self, g: &Gram, rest: &[&Gram], rule: &str, k: &str) -> Result<Vec<(Vec<First>, String, bool)>, String> {
+    fn arms(&self, g: &Gram, rest: &[&Gram], rule: &str, k: &Block) -> Result<Vec<(Vec<First>, Block, bool)>, String> {
         let mut alts = Vec::new();
         G::alts(g, &mut alts);
         let mut out = Vec::new();
         for a in alts {
             let (f, e) = self.g.first(a)?;
             let body = match a {
-                Gram::Unless { body, .. } => self.walk(body, rest, rule, k.to_owned())?,
-                _ => self.walk(a, rest, rule, k.to_owned())?,
+                Gram::Unless { body, .. } => self.walk(body, rest, rule, k.clone())?,
+                _ => self.walk(a, rest, rule, k.clone())?,
             };
             out.push((f, body, e));
         }
@@ -217,36 +219,39 @@ impl Rl<'_, '_> {
 
     /// The code of `g` before `rest` in `rule`, then `k`: what holds no level's call is the rules' code (`G::code`);
     /// a level's call ends its place, and the code after it is a place of its own.
-    fn walk(&self, g: &Gram, rest: &[&Gram], rule: &str, k: String) -> Result<String, String> {
+    fn walk(&self, g: &Gram, rest: &[&Gram], rule: &str, k: Block) -> Result<Block, String> {
         if !self.holds_call(g)? {
-            let code = self.g.code(g, rest, rule, "")?;
-            return Ok(if self.hot.contains(rule) { code } else { no_refusing(&code) } + &k);
+            let mut code = self.g.code(g, rest, rule)?;
+            if !self.hot.contains(rule) {
+                moves::no_refusing(&mut code);
+            }
+            return Ok(then(code, k));
         }
         Ok(match g {
             Gram::Sym(n) if self.g.nested(n) => {
                 // The caller's state the level changes, then the place it returns to; the level's own.
                 let ret = self.to_place(k);
-                let mut out = String::new();
+                let mut out = Block::new();
                 if self.asks {
                     let (set, keep, _) = self.g.call_asks(rest, rule)?;
-                    let _ = write!(out, "self.stack.push(self.asks);\nself.asks = self.asks & {keep:#x} | {set:#x};\n");
+                    out.push(line(format!("self.stack.push(self.asks);\nself.asks = self.asks & {keep:#x} | {set:#x};")));
                 }
                 if self.refusing && self.saves.contains(n.as_str()) {
-                    let _ = write!(out, "self.stack.push(u64::from(self.refusing));\nself.refusing = {:#x};\n", self.g.refusing.get(n.as_str()).copied().unwrap_or(0));
+                    out.push(line(format!("self.stack.push(u64::from(self.refusing));\nself.refusing = {:#x};", self.g.refusing.get(n.as_str()).copied().unwrap_or(0))));
                 }
                 // The word, where the level may change it, in one entry with the place: one push a call.
                 if self.word && self.words.contains(n.as_str()) {
-                    let _ = write!(out, "self.stack.push({ret} | u64::from(self.word) << 32);\n{}", go(self.level(n)?));
+                    out.push(line(format!("self.stack.push({ret} | u64::from(self.word) << 32);")));
                 } else {
-                    let _ = write!(out, "self.stack.push({ret});\n{}", go(self.level(n)?));
+                    out.push(line(format!("self.stack.push({ret});")));
                 }
-                out
+                then(out, go(self.level(n)?))
             }
             Gram::Sym(n) => {
                 // A rule that is no level but calls one: its places, written once, as its method would be; the call
                 // saves only the place it returns to.
                 let ret = self.to_place(k);
-                format!("self.stack.push({ret});\n{}", go(self.level(n)?))
+                then(vec![line(format!("self.stack.push({ret});"))], go(self.level(n)?))
             }
             Gram::Seq(gs) => {
                 let mut k = k;
@@ -263,7 +268,7 @@ impl Rl<'_, '_> {
             }
             Gram::Star(a) | Gram::Plus(a) => {
                 let after = go(self.to_place(k));
-                let head = self.place(String::new());
+                let head = self.place(Block::new());
                 let r: Vec<&Gram> = std::iter::once(g).chain(rest.iter().copied()).collect();
                 let arms = self.arms(a, &r, rule, &go(head))?;
                 let code = self.decision(arms, rest, rule, &after, &after, true)?;
@@ -276,78 +281,74 @@ impl Rl<'_, '_> {
                 let empty = arms.iter().position(|a| a.2);
                 let none = match empty {
                     Some(i) => arms[i].1.clone(),
-                    None => "return self.refuse();\n".to_owned(),
+                    None => vec![Op::Refuse],
                 };
                 self.decision(arms, rest, rule, &none, &none, empty.is_some())?
             }
-            Gram::Field(f, a) => self.walk(a, rest, rule, format!("self.field_made({});\n{k}", self.g.field_const(f)?))?,
-            Gram::Retag(kind, a) => format!("self.retag({});\n{}", self.g.kind_const(kind)?, self.walk(a, rest, rule, k)?),
+            Gram::Field(f, a) => self.walk(a, rest, rule, then(vec![Op::Field(self.g.field_const(f)?)], k))?,
+            Gram::Retag(kind, a) => then(vec![line(format!("self.retag({});", self.g.kind_const(kind)?))], self.walk(a, rest, rule, k)?),
             Gram::Wrap { kind, field, moved, body } => {
                 let f = match field {
                     Some(f) if f != "_" => self.g.field_const(f)?,
                     _ => "0".to_owned(),
                 };
-                let mut out = format!("self.wrap({}, {f})?;\n", self.g.kind_const(kind)?);
+                let mut out = vec![line(format!("self.wrap({}, {f})?;", self.g.kind_const(kind)?))];
                 if let Some(m) = moved {
-                    let _ = writeln!(out, "self.retype_moved({});", self.g.moved_kind(m)?);
+                    out.push(line(format!("self.retype_moved({});", self.g.moved_kind(m)?)));
                 }
-                out.push_str(&self.walk(body, rest, rule, format!("self.close()?;\n{k}"))?);
-                out
+                then(out, self.walk(body, rest, rule, then(vec![line("self.close()?;")], k))?)
             }
             Gram::Relabel { field, moved, inner, body } => {
-                let mut out = String::new();
+                let mut out = Block::new();
                 if let Some(gf) = inner.as_deref().filter(|f| *f != "_") {
-                    let _ = writeln!(out, "self.relabel_inner({})?;", self.g.field_const(gf)?);
+                    out.push(line(format!("self.relabel_inner({})?;", self.g.field_const(gf)?)));
                 }
                 if let Some(f) = field.as_deref().filter(|f| *f != "_") {
-                    let _ = writeln!(out, "self.relabel_field({})?;", self.g.field_const(f)?);
+                    out.push(line(format!("self.relabel_field({})?;", self.g.field_const(f)?)));
                 }
                 match moved.as_deref() {
-                    Some(::bitlex::syntax::GONE) => out.push_str("self.drop_made()?;\n"),
-                    Some(m) => {
-                        let _ = writeln!(out, "self.relabel_kind({})?;", self.g.moved_kind(m)?);
-                    }
+                    Some(::bitlex::syntax::GONE) => out.push(line("self.drop_made()?;")),
+                    Some(m) => out.push(line(format!("self.relabel_kind({})?;", self.g.moved_kind(m)?))),
                     None => {}
                 }
-                out.push_str(&self.walk(body, rest, rule, k)?);
-                out
+                then(out, self.walk(body, rest, rule, k)?)
             }
             Gram::Flag { flag, set, body } => {
                 // The flag as it was, saved on the stack across the levels the body calls.
                 let f = format!("FLAG_{}", upper(flag));
                 let op = if *set { format!("self.flags | {f}") } else { format!("self.flags & !{f}") };
-                format!("self.stack.push(u64::from(self.flags));\nself.flags = {op};\n{}", self.walk(body, rest, rule, format!("self.flags = self.stack.pop().unwrap_or(0) as u32;\n{k}"))?)
+                then(vec![line(format!("self.stack.push(u64::from(self.flags));\nself.flags = {op};"))], self.walk(body, rest, rule, then(vec![line("self.flags = self.stack.pop().unwrap_or(0) as u32;")], k))?)
             }
             Gram::Unless { flag, body } => {
                 let after = go(self.to_place(k));
-                format!("if self.flags & FLAG_{} == 0 {{\n{}}}\n{after}", upper(flag), self.walk(body, rest, rule, after.clone())?)
+                then(vec![Op::If { arms: vec![(Cond::Flag(format!("FLAG_{}", upper(flag))), self.walk(body, rest, rule, after.clone())?)], els: None }], after)
             }
             Gram::Reread { reading, body } => {
                 if !self.g.readings.contains_key(reading.as_str()) {
                     return self.err(format!("rule {rule}: no reading `{reading}`"));
                 }
-                format!("self.reread_{}()?;\n{}", super::super::ident(reading), self.walk(body, rest, rule, k)?)
+                then(vec![line(format!("self.reread_{}()?;", super::super::ident(reading)))], self.walk(body, rest, rule, k)?)
             }
             // `leaf K R`: `R` reads the tokens, then one leaf of `K` over them (`leaf_open` holds where it starts).
-            Gram::Leaf { kind, rule: r } => format!("self.leaf_open();\n{}", self.walk(&Gram::Sym(r.clone()), rest, rule, format!("self.leaf_close({})?;\n{k}", self.g.kind_const(kind)?))?),
+            Gram::Leaf { kind, rule: r } => then(vec![line("self.leaf_open();")], self.walk(&Gram::Sym(r.clone()), rest, rule, then(self.g.leaf_end(r, kind)?, k))?),
             other => return self.err(format!("rule {rule}: a level's call inside {other:?} is not written yet")),
         })
     }
 
     /// A decision among `arms` before `rest` in `rule` (`G::decide`, its questions first, `G::asking`): `exit` where a
     /// mark after it leaves it, `none` where no arm passes. `ending`: the level may end at the marks after it.
-    fn decision(&self, arms: Vec<(Vec<First>, String, bool)>, rest: &[&Gram], rule: &str, exit: &str, none: &str, ending: bool) -> Result<String, String> {
+    fn decision(&self, arms: Vec<(Vec<First>, Block, bool)>, rest: &[&Gram], rule: &str, exit: &Block, none: &Block, ending: bool) -> Result<Block, String> {
         let ex = if ending { self.g.exits_ending(rest, rule)? } else { Vec::new() };
         let unmarked = if ending { self.g.after_mark(rest, rule)? } else { Vec::new() };
-        let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
-        Ok(self.g.asking(&arms, &ex, "") + &self.g.decide(&arms, &ex, &unmarked, exit, none, ""))
+        let arms: Vec<(Vec<First>, Block)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
+        Ok(then(self.g.asking(&arms, &ex), self.g.decide(&arms, &ex, &unmarked, exit, none)))
     }
 
     /// A node of rule `n`'s kind opened at the token: one of no tape kind (always retagged inside) a placeholder until
     /// its retag, as the rule's method opens it.
-    fn open(&self, n: &str) -> Result<String, String> {
+    fn open(&self, n: &str) -> Result<Op, String> {
         let id = (self.g.x.kind)(n).ok_or_else(|| format!("no kind `{n}`"))?;
-        Ok(if id > 0x3ff { "self.open(UNSET);\n".to_owned() } else { format!("self.open({});\n", self.g.kind_const(n)?) })
+        Ok(if id > 0x3ff { line("self.open(UNSET);") } else { line(format!("self.open({});", self.g.kind_const(n)?)) })
     }
 
     /// Rule `n`'s first place, a level's or a rule's that calls one: its depth (a level's), its node, its body, then its
@@ -357,7 +358,7 @@ impl Rl<'_, '_> {
         if let Some(&l) = self.levels.borrow().get(n) {
             return Ok(l);
         }
-        let first = self.place(String::new());
+        let first = self.place(Block::new());
         self.levels.borrow_mut().insert(n.to_owned(), first);
         let (body, node) = match self.g.rules[n] {
             Stmt::Node { body, .. } => (body, true),
@@ -365,38 +366,38 @@ impl Rl<'_, '_> {
             _ => unreachable!(),
         };
         let counts = nested && self.g.counts_depth(n);
-        let mut code = String::from(if counts { "self.deeper()?;\n" } else { "" });
+        let mut code = if counts { vec![line("self.deeper()?;")] } else { Block::new() };
         // Its endings first (`ending`), as the rule's method has them before its close.
-        let mut end = self.g.ending_code(n, "")?;
+        let mut end = self.g.ending_code(n)?;
         if node {
-            code.push_str(&self.open(n)?);
-            end.push_str("self.close()?;\n");
+            code.push(self.open(n)?);
+            end.push(line("self.close()?;"));
         }
         if counts {
-            end.push_str("self.depth -= 1;\n");
+            end.push(line("self.depth -= 1;"));
         }
-        end.push_str("self.marked = false;\n");
+        end.push(line("self.marked = false;"));
         // The place the call returns to, then what a level's saved of its caller's: one pop where it saved only the place,
         // as the lean parser's `return`.
         let restores = nested && ((self.refusing && self.saves.contains(n)) || self.asks);
         if nested && self.word && self.words.contains(n) {
-            end.push_str("let top = self.stack.pop().unwrap_or(0);\nlet ret = top as u32 as usize;\nself.word = (top >> 32) as u16;\n");
+            end.push(line("let top = self.stack.pop().unwrap_or(0);\nlet ret = top as u32 as usize;\nself.word = (top >> 32) as u16;"));
         } else if restores {
-            end.push_str("let ret = self.stack.pop().unwrap_or(0) as usize;\n");
+            end.push(line("let ret = self.stack.pop().unwrap_or(0) as usize;"));
         }
         // A level's call saved its caller's state too, a rule's that is no level only the place.
         if nested && self.refusing && self.saves.contains(n) {
-            end.push_str("self.refusing = self.stack.pop().unwrap_or(0) as u32;\n");
+            end.push(line("self.refusing = self.stack.pop().unwrap_or(0) as u32;"));
         }
         if nested && self.asks {
-            end.push_str("self.asks = self.stack.pop().unwrap_or(0);\n");
+            end.push(line("self.asks = self.stack.pop().unwrap_or(0);"));
         }
         if nested && self.word && self.words.contains(n) || restores {
-            end.push_str("st = ret;\ncontinue 'run;\n");
+            end.push(line("st = ret;\ncontinue 'run;"));
         } else {
-            end.push_str("st = self.stack.pop().unwrap_or(0) as usize;\ncontinue 'run;\n");
+            end.push(line("st = self.stack.pop().unwrap_or(0) as usize;\ncontinue 'run;"));
         }
-        code.push_str(&self.walk(body, &[], n, end)?);
+        code.extend(self.walk(body, &[], n, end)?);
         self.places.borrow_mut()[first] = code;
         Ok(first)
     }
@@ -415,27 +416,31 @@ pub(super) fn tier2(x: &Input<'_>) -> Result<(String, u32), String> {
         Stmt::Node { body, whole, padded, .. } => (body, *whole, *padded),
         _ => return rl.err("a root that is no node"),
     };
-    let first = rl.place(String::new());
+    let first = rl.place(Block::new());
     // Where the root recovers (`recover`, decision 0650), the loop is one statement's, from the place 0 to its end, and
     // `run` the statement loop, as the calls form's: a statement that fails returns to it, its stack cut back.
     let one = g.statements(root, body)?;
     let code = match one {
-        Some(one) => rl.walk(one, &[], root, "return Ok(());\n".to_owned())?,
-        None => format!("self.open_root({});\n{}", g.kind_const(root)?, rl.walk(body, &[], root, format!("return self.close_root({whole}, {padded});\n"))?),
+        Some(one) => rl.walk(one, &[], root, vec![line("return Ok(());")])?,
+        None => then(vec![line(format!("self.open_root({});", g.kind_const(root)?))], rl.walk(body, &[], root, vec![line(format!("return self.close_root({whole}, {padded});"))])?),
     };
     rl.places.borrow_mut()[first] = code;
     // The rules that are no level and call none: methods, called from the places.
-    let mut rules = String::new();
+    let mut made = Vec::new();
     for name in &g.order {
         if *name == root || g.nested(name) || rl.rule_calls(name)? {
             continue;
         }
-        let code = g.rule(name)?;
-        rules.push_str(&if rl.hot.contains(*name) { code } else { no_refusing(&code) });
+        made.push(g.rule(name, !rl.hot.contains(*name))?);
     }
+    // Printed once every rule's and place's moves are made (`G::rule`).
+    let n = made.len();
+    made.extend(rl.places.borrow().iter().cloned());
+    let mut printed = g.printed(made);
+    let places = printed.split_off(n);
+    let mut rules: String = printed.concat();
     // A place that only goes to another is that other wherever it is named (decision 0673 step 11): no arm of its own,
     // as the lean parser has no statement that only goes on to the next.
-    let places = rl.places.borrow();
     let jump = |code: &str| code.strip_prefix("st = ").and_then(|r| r.strip_suffix(";\ncontinue 'run;\n")).and_then(|n| n.parse::<usize>().ok());
     let mut to: Vec<usize> = (0..places.len()).collect();
     for (l, code) in places.iter().enumerate() {
@@ -465,7 +470,6 @@ pub(super) fn tier2(x: &Input<'_>) -> Result<(String, u32), String> {
         }
         let _ = write!(arms, "                {l} => {{\n{}                }}\n", super::super::indent(&code, "                    "));
     }
-    drop(places);
     // The stack a local of the loop's, so its length and room stay in registers across the parser's calls.
     let arms = arms.replace("self.stack.", "stack.");
     if one.is_some() {
@@ -495,11 +499,9 @@ pub(super) fn tier2_calls(x: &Input<'_>) -> Result<(String, u32), String> {
     let g = G::new(x);
     let (hot, saves) = refusers(&g);
     *g.call_saves.borrow_mut() = Some((saves, word_setters(&g)));
-    let mut rules = String::new();
-    for name in &g.order {
-        let code = g.rule(name)?;
-        rules.push_str(&if hot.contains(*name) { code } else { no_refusing(&code) });
-    }
+    let made = g.order.iter().map(|name| Ok((super::super::rule_fn(name), g.rule(name, !hot.contains(*name))?))).collect::<Result<Vec<_>, String>>()?;
+    let made = g.inlined(made);
+    let rules: String = g.printed(made).concat();
     let root = *g.order.first().ok_or("tier 2 as calls: no rule")?;
     let out = g.assemble(&rules, &super::super::rule_fn(root), "// Generated by native/crates/compiler/src/bitlex_rust/one_loop/records.rs; do not edit. The Bitlex compiler's Rust from the grammar's tree rules, as calls over tier 1's records.\n\n", false)?;
     Ok((out, g.reads.get()))

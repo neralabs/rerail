@@ -106,6 +106,9 @@ pub enum Act {
     /// The arm is there only where flag `flag` is clear (`unless F A`): where it is set, the
     /// state goes on as if it had no arm on the token (its end, or a refusal).
     Unless { flag: u16 },
+    /// The call `call` of the arm's (its index among them, outermost first) enters an `indented`
+    /// level: after its `PUSH`, the level's indent is the column of the token (decision 0698).
+    Indent { call: u8 },
 }
 
 /// An `Act::Flag` not yet given its call.
@@ -193,6 +196,9 @@ pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                 }
                 Act::Unless { flag } => {
                     let _ = write!(acts, " unless {flag}");
+                }
+                Act::Indent { call } => {
+                    let _ = write!(acts, " indent call {call}");
                 }
             }
         }
@@ -357,6 +363,8 @@ struct Level {
     split: Vec<u16>,
     /// Its endings (`StateRow::endings`).
     endings: Vec<(u16, u16, u16)>,
+    /// It holds an indent of its own (`indented`, decision 0698): set by each call into it.
+    indented: bool,
 }
 
 struct Builder<'a> {
@@ -871,7 +879,8 @@ pub fn saved_states(uses: usize, inner: usize) -> usize {
 ///
 /// A function a rule (`by_rules`): every rule or choice with `RULE_INNER` inner positions or
 /// more is called, however often it is used, as a recursive-descent parser has a function a
-/// rule; one smaller is a switch's arms, inlined.
+/// rule; one smaller is a switch's arms, inlined, and so is a choice used once as an alternative of a level's choice
+/// (its alternatives the level's, grouped).
 /// Each rule's and choice's uses' follows, as Bitlex's reference passes them (`tree.rs`'s
 /// `follow`, doc 24 §2.3): the hidden marks that may come after a use, the enclosing rule's own
 /// follows included where the rest of its body may match nothing. A `nested` rule's body and the
@@ -997,6 +1006,9 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
         called: HashMap<String, bool>,
         /// Inlined for good: what a refusing level reaches.
         kept: Vec<String>,
+        /// Choices used once, as an alternative of a level's choice: its alternatives grouped (`primary`'s by their
+        /// first token), each the level's switch's arm.
+        grouping: Vec<String>,
     }
     let body = |name: &str| -> Option<&Gram> {
         rules.iter().find(|r| r.kind == name).map(|r| &r.body).or_else(|| choices.iter().find(|c| c.0 == name).map(|c| &c.2))
@@ -1016,6 +1028,18 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
     let mut f = Facts { by_rules, ..Facts::default() };
     for g in rules.iter().chain(levels).map(|r| &r.body).chain(choices.iter().map(|c| &c.2)) {
         count(g, 1, &mut f.uses);
+    }
+    for g in rules.iter().filter(|r| r.nested).chain(levels).map(|r| &r.body) {
+        if let Gram::Alt(gs) = g {
+            for x in gs {
+                if let Gram::Sym(n) = x
+                    && f.uses.get(n) == Some(&1)
+                    && choices.iter().any(|c| c.0 == *n)
+                {
+                    f.grouping.push(n.clone());
+                }
+            }
+        }
     }
     // A name's positions where it is used: one for a call or a token, its body's inlined.
     fn size(g: &Gram, f: &mut Facts, ctx: &dyn Fn(&str) -> (Option<Gram>, bool), stack: &mut Vec<String>) -> usize {
@@ -1119,7 +1143,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
         let inner = s.saturating_sub(lasts(b, ctx, &f.called, stack));
         let e = empty(b, ctx, &f.called, stack) || merges_first(b, ctx, &f.called, stack);
         stack.pop();
-        let worth = if f.by_rules { inner >= RULE_INNER } else { saved_states(f.uses.get(n).copied().unwrap_or(0), inner) >= SHARED_STATES };
+        let worth = if f.by_rules { inner >= RULE_INNER && !f.grouping.iter().any(|g| g == n) } else { saved_states(f.uses.get(n).copied().unwrap_or(0), inner) >= SHARED_STATES };
         let c = !e && !f.kept.iter().any(|k| k == n) && worth;
         f.size.insert(n.to_owned(), s);
         f.called.insert(n.to_owned(), c);
@@ -1303,7 +1327,11 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                 });
             }
         }
-        levels.push(Level { kind: id, own: b.rules[r].own, supertype, edges, refuses, follows, split, endings });
+        let indented = stmts.iter().any(|s| matches!(s, Stmt::Indented(n) if n.contains(&b.rules[r].kind)));
+        if indented && l == 0 {
+            return Err(format!("indented {}: the root's indent is 0, no level of its own", b.rules[r].kind));
+        }
+        levels.push(Level { kind: id, own: b.rules[r].own, supertype, edges, refuses, follows, split, endings, indented });
     }
     // Each level a `refuse` names: a nested one.
     for s in stmts {
@@ -1316,6 +1344,11 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
             && !level_rules.iter().any(|&r| &b.rules[r].kind == rule)
         {
             return Err(format!("ending {rule}: no nested level of that name"));
+        }
+        if let Stmt::Indented(names) = s
+            && let Some(n) = names.iter().find(|n| !level_rules.iter().any(|&r| &b.rules[r].kind == *n))
+        {
+            return Err(format!("indented {n}: no nested level of that name"));
         }
     }
     let level_of_rule: HashMap<usize, usize> = level_rules.iter().enumerate().map(|(l, &r)| (r, l)).collect();
@@ -1396,6 +1429,10 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                     // the outer one first, so the inner one returns first.
                     let mut calls = push.clone();
                     calls.push(q);
+                    // An indented level's indent: its first token's column, after its `PUSH`.
+                    if levels[child].indented {
+                        acts.push(Act::Indent { call: push.len() as u8 });
+                    }
                     // A function a rule: a call takes no token. It opens the callee's node and
                     // goes to the callee's start, which switches on the token itself, an arm on
                     // each token the callee may begin with: a mark too (the caller's state keeps

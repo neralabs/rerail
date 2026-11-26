@@ -184,9 +184,11 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
     let block = native.block_programs.first().ok_or("no tier 1 program")?;
     let tier1 = rerail_cpu_block::native_cpu_block::compile(block).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 1 Cranelift");
+    // Tier 2 at the stride of its own tier 1's records, compiled in (decision 0696).
+    let cut = native_cpu_clusters::Cut { stride: Some(native_cpu_stream::cpu_stride(&tier1)), ..cut };
     let tier2 = native_cpu_stream::compile_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 2 Cranelift");
-    let parser = native_cpu_stream::Parser::from_parts(tier1, tier2);
+    let parser = native_cpu_stream::Parser::with_tiers(&native, &cut, tier1, tier2);
     Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone(), numbers: Default::default() })
 }
 

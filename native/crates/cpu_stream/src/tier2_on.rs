@@ -9,7 +9,9 @@ use crate::native_cpu_stream::{CompiledStream, Parser, Tier1View};
 /// (`Parser::tier2`), each node numbered in `lang` (`numbers`), its lines those
 /// `terminators` end; or why it is not one (a word refused the file).
 pub fn image16_on(parser: &Parser, run: &Resident, i: usize, terminators: rerail_tape_format::newlines::Terminators, lang: &rerail_tape_format::f16::Lang, numbers: &crate::native_cpu_stream::Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
-    let t2 = &parser.tier2;
+    // The device's records are its layout's (`RecordLayout::choose`: columns, where the CPU's are rows): the tier 2
+    // that reads that stride (`Parser::tier2_at`).
+    let t2 = parser.tier2_at(run.layout.stride()).ok_or_else(|| "no tier 2 that reads the device's records".to_owned())?;
     let (view, n) = tier1_view(parser, t2, run, i);
     let source = &run.sources[i];
     // The code counts on the program's padding (`BlockNative::pad`): the slab's margin is its.

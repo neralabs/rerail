@@ -433,14 +433,17 @@ pub enum Mem {
     /// at a template's `$`, their parts going on at the next opener of a reader that resumes
     /// (`SplitParts::resumers`).
     Strings,
+    /// The level's indent (`INDENT`, decision 0698): a column, kept beside each call's return.
+    Indent,
 }
 
 impl Mem {
-    pub const COUNT: u32 = 30;
+    pub const COUNT: u32 = 31;
     /// Every field, in order: what a statement's mark keeps (decision 0650).
     pub const ALL: [Mem; Mem::COUNT as usize] = [
         Mem::Supers, Mem::Pending, Mem::Keep, Mem::Moved, Mem::Sel, Mem::Shift, Mem::LastMade, Mem::Word, Mem::Flags, Mem::Next, Mem::Taken, Mem::Lw, Mem::Start, Mem::End, Mem::Limit, Mem::LastEnd,
         Mem::Nodes, Mem::Open, Mem::Ret, Mem::Need, Mem::Live, Mem::Depth, Mem::Coded, Mem::Codes, Mem::PartAt, Mem::PartEnd, Mem::PartClose, Mem::PartRd, Mem::Lost, Mem::Strings,
+        Mem::Indent,
     ];
 }
 
@@ -731,7 +734,7 @@ pub struct SharedRuns {
 pub fn plain(op: &Op) -> bool {
     matches!(
         op,
-        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. } | Op::Count { .. } | Op::Check { .. } | Op::SettleBefore { .. }
+        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Indent | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. } | Op::Count { .. } | Op::Check { .. } | Op::SettleBefore { .. }
     )
 }
 

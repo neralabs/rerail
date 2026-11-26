@@ -454,6 +454,9 @@ pub struct Lowering {
     pub refuses_taken: HashMap<usize, Vec<::bitlex::syntax::GapPattern>>,
     /// The marks a level that may end ends at (`, ends`), by their index in `marks`.
     pub ends: Vec<usize>,
+    /// The marks that ask a token's column against the level's indent (`, deeper`, `, shallower`,
+    /// decision 0698), by their index in `marks`.
+    pub columns: HashMap<usize, ::bitlex::syntax::Column>,
     /// The marks each mark passes too where it is taken (`, passes`), by its index in `marks`.
     pub passes: HashMap<usize, Vec<String>>,
     /// Each token test (`Stmt::TokenEscape`, a mark's, a rule's cut): its kind, whether a
@@ -676,6 +679,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         refuses: HashMap::default(),
         refuses_taken: HashMap::default(),
         ends: Vec::new(),
+        columns: HashMap::default(),
         passes: HashMap::default(),
         token_escapes: Vec::new(),
         tested_only: Vec::new(),
@@ -1326,7 +1330,7 @@ impl Lowering {
                 }
                 Stmt::Tree { body, .. } => self.stmts(body)?,
                 // The grammar's rules: the state machine is built once the token rows are known.
-                Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } | Stmt::Reading { .. } | Stmt::Remember(_) | Stmt::Flags(_) | Stmt::Recover { .. } | Stmt::Ending { .. } => self.tree.push(stmt.clone()),
+                Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } | Stmt::Reading { .. } | Stmt::Remember(_) | Stmt::Indented(_) | Stmt::Flags(_) | Stmt::Recover { .. } | Stmt::Ending { .. } => self.tree.push(stmt.clone()),
                 // Applied by the parser: each token it names marked `A as IMPLIED` in its rule.
                 Stmt::Implied { .. } => {}
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
@@ -1337,7 +1341,10 @@ impl Lowering {
                     self.tree.push(stmt.clone());
                 }
                 Stmt::Untaken(kinds) => self.untaken_kinds.extend(kinds.iter().cloned()),
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken, passes } => {
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken, passes, column } => {
+                    if let Some(c) = column {
+                        self.columns.insert(self.marks.len(), *c);
+                    }
                     if !passes.is_empty() {
                         self.passes.insert(self.marks.len(), passes.clone());
                     }
@@ -4417,7 +4424,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     }
     let boths: Vec<Val> = left.iter().map(|p| p.2).collect();
     let apart = low.either_never_many(&settled, &boths);
+    // `RERAIL_BITLEX_PROOFS`: each pair's answer, on stderr.
+    let trace = std::env::var_os("RERAIL_BITLEX_PROOFS").is_some();
     for ((a, b, both), apart) in left.into_iter().zip(apart) {
+        if trace {
+            eprintln!("rows {} & {}: never {apart}", token_rows[a].0, token_rows[b].0);
+        }
         if !apart {
             low.fallbacks.push(both);
             pairs.push((a, b));
@@ -4575,7 +4587,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 _ => None,
             };
             let words = seq[0].iter().map(|c| if let TokenElem::Word(w) = c { Some(w.clone()) } else { None }).collect();
-            marks.push(bitlex_tier2::Mark { passes: 0, settle: None, drop: None, lose: None, moved: None, moves: vec![], refuse: None, refuse_taken: None, lose_flag: 0, ends: false, drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![], kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: low.mark_next.get(&k).cloned().unwrap_or_default(), unless: vec![] });
+            marks.push(bitlex_tier2::Mark { passes: 0, settle: None, drop: None, lose: None, moved: None, moves: vec![], refuse: None, refuse_taken: None, lose_flag: 0, ends: false, drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![], kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: low.mark_next.get(&k).cloned().unwrap_or_default(), unless: vec![], column: None });
             continue;
         }
         let mut expr = low.mark_exprs[k].clone();
@@ -4808,7 +4820,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             eprintln!("mark {k} {kind}: on starts {on_starts}, word {:?}, {} first bytes, words {:?}", word.as_ref().map(|w| String::from_utf8_lossy(w).into_owned()), first.iter().map(|w| w.count_ones()).sum::<u32>(), words.as_ref().map(|ws| ws.iter().map(|w| String::from_utf8_lossy(w).into_owned()).collect::<Vec<_>>()));
         }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, passes: 0, settle: None, drop: None, lose: None, moved: None, moves: vec![], refuse: None, refuse_taken: None, lose_flag: 0, ends: low.ends.contains(&k), drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![] });
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, passes: 0, settle: None, drop: None, lose: None, moved: None, moves: vec![], refuse: None, refuse_taken: None, lose_flag: 0, ends: low.ends.contains(&k), drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![], column: low.columns.get(&k).copied() });
         // A settling mark: `SETTLE` reads its bit in the pending extras' codes, each the marks
         // of its own gap (`Records::own`), as the lean lexer's `skip` knows a line end before
         // each comment.
