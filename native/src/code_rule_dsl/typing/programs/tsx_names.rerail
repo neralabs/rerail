@@ -26,7 +26,8 @@
 
 // target(d, spec, t): specifier spec in document d names t: a workspace document's module, or a package name.
 // Resolution, in the order TypeScript tries it:
-//   "./a" or "../a"   relative to the importing file's directory, then extensions and index files (resolve_base)
+//   "./a" or "../a"   relative to the importing file's directory, then extensions and index files (resolve_base);
+//                     "./a.js" is a.ts's output, and names a.ts
 //   "@/lib/x"         a tsconfig `paths` pattern ("@/*": ["src/*"]) rewrites it to a path under the tsconfig dir
 //   "react", "@a/b"   anything else is a package; the target is the package specifier itself, not its files
 // So target(d, "./util", "src/util") and target(d, "react", "react").
@@ -54,6 +55,14 @@ resolve_base(b, m) :- doc(d, f, _), ts_module(d, m), ts_ext(ext), k = strlen(f) 
 .decl ts_ext(e: symbol)
 ts_ext(""). ts_ext(".ts"). ts_ext(".tsx"). ts_ext(".js"). ts_ext(".jsx"). ts_ext(".mts").
 ts_ext("/index.ts"). ts_ext("/index.tsx"). ts_ext("/index.js").
+// TypeScript's ESM resolution (`node16`, `nodenext`, `bundler`): a specifier spells the file's output, so "./a.js"
+// names a.ts (or a.tsx, a.d.ts), "./a.jsx" a.tsx, "./a.mjs" a.mts, "./a.cjs" a.cts. Read backwards as above: b is the
+// file's path with its TypeScript ending replaced by the JavaScript one.
+resolve_base(b, m) :- doc(d, f, _), ts_module(d, m), js_spelled(js, ts), k = strlen(f) - strlen(ts), k >= 0,
+    stem = substr(f, 0, k), f = cat(stem, ts), b = cat(stem, js).
+.decl js_spelled(js: symbol, ts: symbol)
+js_spelled(".js", ".ts"). js_spelled(".js", ".tsx"). js_spelled(".js", ".d.ts"). js_spelled(".jsx", ".tsx").
+js_spelled(".mjs", ".mts"). js_spelled(".mjs", ".d.mts"). js_spelled(".cjs", ".cts"). js_spelled(".cjs", ".d.cts").
 // tx_ask(d, t, x): document d may name x of its target t: an import of x (a specifier's name, or "default"), or a
 // member x of a namespace import's name (`import * as RR from "m"; RR.x`: any member chain of the file spelled so, a
 // superset of tsx/names' `ns_target`, which follows the name's scope).

@@ -635,6 +635,23 @@ resolved(k, q) :- answer(k, q).
         assert!(!asked.phase_runs.iter().find(|r| r.name == "py_names").unwrap().rounds.is_empty(), "it ran in rounds");
     }
 
+    /// A relative specifier spelled as the file's output names its TypeScript file, as TypeScript's ESM resolution
+    /// does: "./c.js" is c.ts, "./m.mjs" m.mts, "./n.cjs" n.cts. (A `.tsx` or `.js` file is a document of its own
+    /// dialect's run, not of a `.language typescript` one.)
+    #[test]
+    fn tsx_names_resolves_a_js_specifier_to_its_typescript_file() {
+        let files = [
+            ("a.ts", "import { g } from \"./c.js\";\nimport { k } from \"./m.mjs\";\nimport { w } from \"./n.cjs\";\ng();\nk();\nw();\n"),
+            ("c.ts", "export function g() {}\n"),
+            ("m.mts", "export function k() {}\n"),
+            ("n.cts", "export function w() {}\n"),
+        ];
+        let reader = ".language typescript\n#include \"tsx/names.rerail\"\n.decl s(p: symbol, q: symbol)\ns(p, q) :- sym_of(n, q), docof(n, d), doc(d, p, _).\n.output s\n";
+        let t = AskedTree::new("tsx-js-spelled", &[], &files);
+        t.run(reader).unwrap();
+        assert_eq!(t.rows("s"), [["a.ts", "c#g"], ["a.ts", "m#k"], ["a.ts", "n#w"]]);
+    }
+
     /// The asked `tsx_names` (decision 0705) resolves an import through a re-export (`export { g } from`), a star
     /// (`export * from`) and a namespace import's member, each ask answered by the file of the module that defines it.
     /// An export nobody imports added to `d.ts` builds `d.ts` alone, in the phase and in the reader; an answer that
