@@ -450,7 +450,7 @@ impl<'a> Ev<'a> {
             // Read at the start (`stream`).
             Stmt::Prefix(_) => {}
             // A fact of the token loop: no mask of its own (decision 0607).
-            Stmt::Assume { .. } | Stmt::AssumeEnds { .. } => {}
+            Stmt::Assume { .. } | Stmt::AssumeEnds { .. } | Stmt::Speculate { .. } => {}
             Stmt::Tree { body, .. } => {
                 self.tree.get_or_insert_with(TreeDecl::default);
                 // `leaf K R` as the grammar's other elements say it (`desugar_leaves`).
@@ -590,6 +590,10 @@ impl<'a> Ev<'a> {
             };
             ins.push((self.mask(&k.opener)?, all, second));
         }
+        // A kind that nests itself (`Region::nests`, decision 0625): its openers in it that are no
+        // closer, each a level one byte on, and its `else` past its levels.
+        let inner: Vec<Option<Mask>> = ins.iter().zip(&r.kinds).map(|((o, c, _), k)| k.nests.as_ref().map(|_| o.andnot(c))).collect();
+        let mut too_deep: Vec<Mask> = r.kinds.iter().map(|_| Mask::zeros(n)).collect();
         // The first bit of `m` in `from..to`, a word at a time.
         let next = |m: &Mask, from: usize, to: usize| {
             let (mut i, to) = (from, to.min(n));
@@ -648,7 +652,34 @@ impl<'a> Ev<'a> {
             }
             let Some((t, k)) = best else { break };
             let kind = &r.kinds[k];
-            let closer = next(&ins[k].1, t + 1, n);
+            // Its closer past its opener's bytes (`Region::opens`); one that nests itself, the
+            // first with no level of it open (`Region::nests`): an opener in it at `p` opens one
+            // at `p + 1`, which a closer from `p + 2` on closes, the innermost first.
+            let closer = match (&kind.nests, &inner[k]) {
+                (Some((levels, _)), Some(io)) => {
+                    let (mut lv, mut from_o, mut from_c) = (0u8, t + 1, t + usize::from(kind.opens));
+                    loop {
+                        let c = next(&ins[k].1, from_c, n);
+                        if let Some(p) = next(io, from_o, c.map_or(n, |c| c - 1)).filter(|&p| p + 1 < n) {
+                            if lv == *levels {
+                                too_deep[k].set(p + 1);
+                            } else {
+                                lv += 1;
+                            }
+                            from_o = p + 1;
+                            continue;
+                        }
+                        match c {
+                            Some(c) if lv > 0 => {
+                                lv -= 1;
+                                from_c = c + 1;
+                            }
+                            c => break c,
+                        }
+                    }
+                }
+                _ => next(&ins[k].1, t + usize::from(kind.opens), n),
+            };
             if let (Some((_, m)), None) = (&kind.empty, closer) {
                 empty[k].set(t);
                 set(&mut hidden, t + 1, t + usize::from(*m));
@@ -700,6 +731,9 @@ impl<'a> Ev<'a> {
             self.vars.insert(format!("f_{}", kind.kind), Val::M(fill[k].clone()));
             if let Some((e, _)) = &kind.empty {
                 self.vars.insert(e.clone(), Val::M(empty[k].clone()));
+            }
+            if let Some((_, e)) = &kind.nests {
+                self.vars.insert(e.clone(), Val::M(std::mem::replace(&mut too_deep[k], Mask::zeros(0))));
             }
         }
         self.vars.insert(r.hidden.clone(), Val::M(hidden));
@@ -1466,9 +1500,12 @@ impl<'a> Ev<'a> {
                 let run = follows(g, seq);
                 // `after ~E`: none of `E`'s before, or no token before (the file's first).
                 let after = pre.is_empty() || (g > 0 && is(Some(grammar[g - 1]), pre)) || (g == 0 && matches!(pre.as_slice(), [TokenElem::Not(_)]));
-                // `unless before`: none where one of its runs follows.
-                let kept = self.next.get(&k).is_none_or(|n| nexts_hold(n, &|seq| follows(g, seq)));
-                if run && after && kept {
+                // Its other `before`s: any one of them holds it too (decision 0633); `unless
+                // before`: none where one of its runs follows.
+                let nexts = self.next.get(&k).map_or(&[][..], |n| n.as_slice());
+                let other = nexts.iter().any(|(u, s)| !u && follows(g, s));
+                let kept = !nexts.iter().any(|(u, s)| *u && follows(g, s));
+                if (run && after || other) && kept {
                     before[grammar[g]][k] = true;
                     least[grammar[g]][k] = toks[grammar[g]].start;
                 }
@@ -1590,7 +1627,9 @@ fn seq_holds(g: usize, seq: &[Vec<TokenElem>], n: usize, at: &dyn Fn(usize, &[To
             if depth.iter().all(|&d| d == 0) && ends && seq_holds(q, rest, n, at) {
                 return true;
             }
-            if q >= n || !at(q, set) {
+            // Inside a depth it takes whole (`Nest::whole`), any token.
+            let inside = depth.iter().zip(nests).any(|(&d, nest)| nest.whole && d > 0);
+            if q >= n || !inside && !at(q, set) {
                 return false;
             }
             for (d, nest) in depth.iter_mut().zip(nests) {
@@ -1701,7 +1740,7 @@ mod run_tests {
         use crate::syntax::Nest;
         let w = |s: &str| TokenElem::Word(s.as_bytes().to_vec());
         let set = vec![TokenElem::Kind("name".into()), w("<"), w(">"), w("("), w(")"), w(",")];
-        let nests = vec![Nest { open: vec![w("<")], close: vec![w(">")] }, Nest { open: vec![w("(")], close: vec![w(")")] }];
+        let nests = vec![Nest { open: vec![w("<")], close: vec![w(">")], whole: false }, Nest { open: vec![w("(")], close: vec![w(")")], whole: false }];
         let seq = vec![vec![w("<")], vec![TokenElem::Many(set.clone(), nests, vec![])], vec![w(">")], vec![w("(")]];
         let flat = vec![vec![w("<")], vec![TokenElem::Many(set, vec![], vec![])], vec![w(">")], vec![w("(")]];
         let holds = |seq: &[Vec<TokenElem>], text: &str| {
@@ -1726,6 +1765,13 @@ mod run_tests {
         ] {
             assert_eq!(holds(&seq, text), want, "{text}");
             assert_eq!(holds(&flat, text), flat_want, "{text}, no depths");
+        }
+        // A depth it takes whole (decision 0633): names and parentheses at depth 0, any token
+        // inside them, then `=`.
+        let paren = Nest { open: vec![w("(")], close: vec![w(")")], whole: true };
+        let whole = vec![vec![TokenElem::Kind("name".into())], vec![TokenElem::Many(vec![TokenElem::Kind("name".into()), w("("), w(")")], vec![paren], vec![])], vec![w("=")]];
+        for (text, want) in [("a ( b < c ) =", true), ("a ( ( < ) ) d =", true), ("a < b =", false), ("a ( b =", false), ("a ) =", false)] {
+            assert_eq!(holds(&whole, text), want, "{text}, whole");
         }
     }
 }

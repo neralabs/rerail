@@ -43,12 +43,17 @@ pub fn lang() -> &'static rerail_tape_format::f16::Lang {
 
 /// A key's number in Python's table, as the lean parser's sink numbers it (`lean::sink`, by its names): the grammar's
 /// kinds, fields and supertypes are the lean parser's, so its keys are too. Its supertypes (`SUPERTYPE_IDS`) are one
-/// of the lean parser's sets (`lean::CLASSES`), or the key is none of its.
+/// of the lean parser's sets (`lean::CLASSES`), or the key is none of its; an extra has none.
 fn number(kind: u16, field: u16, classes: &[u16], extra: bool) -> Option<u32> {
     let &(kind, named) = lean::KINDS.get(usize::from(kind))?;
     let field = lean::FIELDS.get(usize::from(field)).copied()?;
     let names: Vec<&str> = classes.iter().map(|&c| c.checked_sub(SUPERTYPE_IDS).and_then(|j| SUPERTYPES.get(usize::from(j))).copied()).collect::<Option<_>>()?;
-    let classes = if names.is_empty() { &[][..] } else { lean::CLASSES.iter().copied().find(|set| set.len() == names.len() && set.iter().all(|s| names.contains(s)))? };
+    // The lean parser's set of these supertypes (`lean::CLASSES`); an extra has none.
+    let classes = match extra {
+        true if names.is_empty() => &[][..],
+        true => return None,
+        false => lean::CLASSES.iter().copied().find(|set| set.len() == names.len() && names.iter().all(|n| set.contains(n)))?,
+    };
     lang().number_named(&rerail_tape_format::KeyNames { kind, named, field, flags: if extra { rerail_tape_format::CODE_EXTRA } else { 0 }, classes })
 }
 
@@ -60,10 +65,22 @@ pub type Proofs = rerail_bitlex::bitlex_prove::Known;
 unsafe impl Send for Compiled {}
 unsafe impl Sync for Compiled {}
 
-/// The grammar compiled, its provers' answers kept on the machine (`answers::answered`): what an
-/// edit asks anew is proved by one compile, and kept for the next.
+/// The provers' answers to the grammar's questions, shipped beside it (`python.answers`, in `bitlex_prove::encode`'s
+/// bytes), as Kotlin's (decision 0669): a compile given them proves only what an edit asks anew. Answers of another
+/// provers' version are none (`decode`), so the seed is never wrong, only slow.
+/// `tests::the_shipped_answers_answer_the_grammar` says when it lacks one, and writes it again
+/// (`RERAIL_BLESS_ANSWERS=1`, `answers::check_shipped`).
+pub const ANSWERS: &[u8] = include_bytes!("../python.answers");
+
+/// [`ANSWERS`], decoded: `compile_timed`'s `known`.
+pub fn shipped_answers() -> Proofs {
+    rerail_bitlex::bitlex_prove::decode(ANSWERS)
+}
+
+/// The grammar compiled from the shipped answers and the machine's (`answers::answered`: what an
+/// edit asks anew is proved by one compile on the machine, and kept for the others).
 pub fn compile_answered(grammar: &str) -> Result<Compiled, String> {
-    rerail_bitlex::answers::answered("python", grammar.as_bytes(), Proofs::default(), |known| {
+    rerail_bitlex::answers::answered("python", grammar.as_bytes(), shipped_answers(), |known| {
         // `RERAIL_PYTHON_LAPS`: each phase's time, as it ends, on stderr.
         let laps = std::env::var_os("RERAIL_PYTHON_LAPS").is_some();
         let c = compile_timed(grammar, known, &mut |name, d| {
@@ -133,7 +150,7 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
         })
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
-    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known)?;
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::No)?;
     lap("bitlex compiler");
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
     lap("assembled");
@@ -148,6 +165,8 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
     let block = native.block_programs.first().ok_or("no tier 1 program")?;
     let tier1 = rerail_cpu_block::native_cpu_block::compile(block).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 1 Cranelift");
+    // Tier 2 at the stride of its own tier 1's records, compiled in (decision 0696).
+    let cut = native_cpu_clusters::Cut { stride: Some(native_cpu_stream::cpu_stride(&tier1)), ..cut };
     let tier2 = native_cpu_stream::compile_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 2 Cranelift");
     let parser = native_cpu_stream::Parser::with_tiers(&native, &cut, tier1, tier2);

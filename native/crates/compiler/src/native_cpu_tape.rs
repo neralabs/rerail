@@ -71,7 +71,7 @@ pub fn kf(f: &mut FunctionBuilder<'_>, key: Value) -> Value {
 pub use crate::stream_ir::ERROR_ROW;
 
 /// Node `i`'s key as the id table's slot (`id_slots`): its `kf`, and its slot (its field's top
-/// bits, `SLOT_SHIFT`) at bit 16. Its classes are its code's (`finish`, `class_bits`).
+/// bits, `SLOT_SHIFT`) at bit 16. Its classes are its number's (`stream_analysis::numbers_by_key`, `class_bits`).
 fn slot_key(f: &mut FunctionBuilder<'_>, rows: Value, i: Value) -> Value {
     let r = row(f, rows, i);
     let key = f.ins().uload32(MemFlags::trusted(), r, AT_KIND);

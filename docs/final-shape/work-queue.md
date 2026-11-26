@@ -6384,7 +6384,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
     `key_of`, taken in `Proofs::ask`). The text, the question's whole cone, was 4.7 KB a key: Kotlin's 2,974 answers
     were 14 MB. They are now 52 KB (`RRANSWER`, 17 bytes a yes or no), so no zstd and no LFS.
   - **The seed** is `kotlin_parser/kotlin.answers`, a tracked file. Its test (`the_shipped_answers_answer_the_grammar`)
-    says when it lacks an answer, and `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes it again.
+    says when it lacks an answer, and `RERAIL_BLESS_ANSWERS=1` (decision 0669) writes it again.
   - **The machine's answers** are `answers::answered` (rerail-compiler): one file a grammar family in the
     temporary directory's `rerail-prover-answers/`, written whole. Its `.done` mark names the text the file answers
     all of: a compile of that text takes no lock; a compile of another takes the family's lock, so compiles that
@@ -8522,7 +8522,7 @@ on an M3 or M5:
     is proved once on a machine and kept there (`answers::answered`, Q234).
     - The quick tier: 44 tests in 14.1 s.
     - `the_shipped_answers_answer_the_grammar` (1.6 s) fails when an edit asks a question they lack;
-      `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes them again.
+      `RERAIL_BLESS_ANSWERS=1` (decision 0669) writes them again.
     - The cold compiles (`a_cold_compile_makes_the_shipped_answers_program`, 45 s, and `walk_lemmas_keep_the_tapes`,
       53 s) are the slow tier's.
     - Still open: about 1.5 s of warm compile in each test's process (0.8 s the Bitlex compiler, the rest Cranelift),
@@ -11651,3 +11651,21 @@ Tests: python-parser 25/25, kotlin-parser 70/70, rr-parser 58/58, cpu-stream 72/
 The one red, `json_tests::simdjson_forms_starts_are_simdjsons_indexes` (word 94 spills a held field to `sp`), is red on the hub's HEAD too (ef401a4cd8, run from its archive) and green on 477afdb869. It is the hub's, not this merge's.
 
 One full kotlin-parser run faulted once, in tier 2 code (`a_string_with_templates_is_one_record`, bus error 14 bytes before a page end). It passed alone, and the next full run passed.
+
+### Q564. Roll-up 136 (Go-C-and-C-support ee94bd5ae3 onto Pulling-it-all-together): what the merge chose
+
+Go-C-and-C-support's commits (t51's preprocessor kernel, 0662–0663, 0669's shipped answers for every grammar, the prover's SAT solver on the circuit, Swift-Kotlin-Scala-support's Kotlin strings merged in), without the uglykl SIMD work: 8a5c9be871 (generated lexers on `rerail-simd`) and the `simd` crate's chunks stay out, `native/crates/simd` is the hub's.
+
+- **One template nesting: the level and depth (decision 0713, the user's choice).** Parser-generators' `regions … level O to C max N nest M depth A B else D` (0698) is kept. Swift-Kotlin-Scala's `nests O .. C depth D` regions (`RegionNest`), the JIT's stack of open records and its copy for a wait (`OPEN_DEPTH`, `OPEN_COPY`, 0621, 0635) are removed from the syntax, the evaluator, the masks compiler and the backends.
+- **Kotlin's grammar is ported to the level**: `regions hidden level lbrace to rbrace max 4 nest 4 depth t_d0 t_d1 else t_deep`. A template's `{` is its closer's last byte (`or t_dollar bytes 2`, `or t2_dollar bytes 3`), so the level does not count it as a bracket; `t_lex`, `t_brace` and their assume go.
+- **The level accepts a kind that resumes** (Kotlin's tails), as well as one with `after`.
+- **A self-nesting kind (0625's block comments) in a level group is the group's rounds**: `bitlex_masks::nesting` writes its levels as carries, and the group pushes no `Walk`, so the CPU runs rounds as it ran 0625's. `eval::walk_regions` reads a closer past its opener's bytes and a nesting kind.
+- **Tier 1 as Rust lowers a level** (`bitlex_lex_rust::Nest`): the walk keeps frames, templates and the depth bits. Its token loop holds open records as the first `opened` of an array `nest M` long, and refuses past `max`/`nest`. The "not lowered to Rust yet" refusal goes.
+- **Decision 0670 (the SAT solver) is 0712** here: the hub's 0670 is project configuration. Every reference is renamed.
+- stream.rs, native_cpu_stream.rs, bitlex_tier2.rs, records.rs, native_cpu_tape.rs, stream_analysis.rs: the hub's, with SKS's TOKEN-state test and python_parser's supertype `classes` match taken.
+- Shipped answers written again for kotlin, python and c_directives' directives (244 questions the merged compiler asks); kotlin_aot's tier1.rs and tier2.rs written again (`RERAIL_BLESS=1`); rr_aot unchanged.
+- `json_escape_checks_are_tier2s` matches tier 1's names by `_`-separated parts, as Go-C's 8a5c9be871 does (`Clone`, "alone"), without its `rerail-simd` changes.
+
+Checked with Relax (no device tests on this Mac): every touched crate checks clean, except `rerail-parser-tests` without `test-hooks`: its `json.rs` imports `ladder`, a test-hooks module. That is the hub's own (both files are unchanged here).
+
+Tests: kotlin-parser 89/89; Kotlin's kt200 corpus 1,252 the same, 0 refused, 0 differ (the parser as Rust the same, tier 1's records differing in 0). python-parser 27/27; its corpus 1,642 the same, 2 refused, 0 differ, 0 whose rounds differ from the walk. bitlex 26/26, compiler 46/46, cpu-stream 74/74, rr-parser 58/58, parser-tests' json and rr 18/18, json-aot 2/2, c-directives' answers 3/3.

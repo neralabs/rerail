@@ -8,6 +8,8 @@ description = "C's and C++'s directives as a Bitlex grammar (decision 0327, mode
 [features]
 # The compiler's and Metal's test hooks, for a build with `--features test-hooks` (scripts/check/check_dev_features.py).
 test-hooks = ["rerail-c-pp/test-hooks", "rerail-c-lean/test-hooks", "rerail-tape-format/test-hooks", "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-pp/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-metal/test-hooks", "rerail-metal-programs/test-hooks"]
+# The evaluator on the device (`eval`, t51): parked (the user, 2026-11-25), as in `rerail-metal`.
+device-pp = ["rerail-metal/device-pp"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler" }

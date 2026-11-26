@@ -633,6 +633,9 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                         2 => el.ending.as_mut().ok_or("an ending's row marks")?.rows = bits,
                         _ => el.rows = bits,
                     }
+                } else if let Some(h) = w.strip_prefix("whole") {
+                    let bits = u8::from_str_radix(h, 16).map_err(|_| format!("a bad `whole` `{w}`"))?;
+                    elems.last_mut().ok_or("a `whole` before its run")?.whole = bits;
                 } else if let Some(h) = w.strip_prefix('w') {
                     let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad `without` `{w}`"))?;
                     elems.last_mut().ok_or("a `without` before its element")?.without = bits;
@@ -759,7 +762,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let group: u16 = line.number("")?;
                 let (opener, closer, open, fill): (u16, u16, u16, u16) = (line.number("%")?, line.number("%")?, line.number("%")?, line.number("%")?);
                 let bytes: u8 = line.number("")?;
-                let (mut outside, mut empty, mut or, mut after, mut resumes) = (false, None, None, 0u16, false);
+                let (mut outside, mut empty, mut or, mut after, mut resumes, mut opens) = (false, None, None, 0u16, false, 1u8);
                 while let Some(w) = line.peek_word() {
                     if w == "outside" {
                         line.word()?;
@@ -776,11 +779,14 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     } else if w == "resumes" {
                         line.word()?;
                         resumes = true;
+                    } else if w == "opens" {
+                        line.word()?;
+                        opens = line.number("")?;
                     } else {
-                        return Err(format!("block {at} region: `outside`, `else %e M`, `or %c M` or `after MASK [resumes]`, not {w}"));
+                        return Err(format!("block {at} region: `outside`, `else %e M`, `or %c M`, `after MASK [resumes]` or `opens N`, not {w}"));
                     }
                 }
-                let kind = crate::block::WalkKind { opener, closer, open, fill, bytes, outside, empty, or, after, resumes };
+                let kind = crate::block::WalkKind { opener, opens, closer, open, fill, bytes, outside, empty, or, after, resumes };
                 match program.walks.last_mut() {
                     Some(w) if w.group == group => w.kinds.push(kind),
                     _ => {
