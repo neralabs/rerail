@@ -478,6 +478,11 @@ the same session as each batch, cold PostHog on m1max, CPU, with the probe off:
 | Batches 1–7 (`5ad1f1d34b`) | 2.573 T (−5.0%) | 243.3 s (−4.2%) | 62.4 s (−7.3%) | 7.22 GB (−0.68 GB) | 29,930 |
 | Batches 1–8 (`7235bb0b07`) | 2.583 T (−4.5%) | 244.2 s (−3.9%) | 59.2 s (−7.1%) | 7.35 GB (−0.53 GB) | 29,930 |
 
+Batch 8's peak against batch 7's (7.35 GB, 7.22 GB) was the run's spread, not the shared logs: run again in one
+session with the merged engine (7.93 GB, 2.704 T), `7235bb0b07` peaked at 7.23 GB (2.579 T), and `7e1e08f940`, its
+logs made at their first entry with a first segment of 8, at 7.29 GB (2.585 T): the two within one run's spread of
+each other.
+
 Batch 5's session ran on a busier host: its merged engine took 263.3 s and 76.8 s there, so its CPU and wall are
 read against that run, not the range above.
 
