@@ -450,7 +450,7 @@ static TOKEN: [(u8, u8, u8); 1024] = {
     t[b'\\' as usize] = (7, 0, 0);
     t[b']' as usize] = (6, 2, 25);
     t[b'^' as usize] = (6, 2, 31);
-    t[b'_' as usize] = (4, 8, 65);
+    t[b'_' as usize] = (4, 8, 51);
     t[b'`' as usize] = (16, 5, 0);
     let mut c = b'a' as usize;
     while c <= b'z' as usize {
@@ -475,10 +475,10 @@ static TOKEN: [(u8, u8, u8); 1024] = {
 const WORD_LIST: [&[u8]; 71] = [
     b"#include", b":-", b"=>", b"!=", b"<=", b">=", b"<:", b"->", b"(", b")", b",", b".",
     b";", b":", b"=", b"<", b">", b"!", b"{", b"}", b"|", b"@", b"*", b"[",
-    b"]", b"-", b"+", b"/", b"%", b"~", b"^", b"&", b"pragma", b"type", b"must", b"may",
-    b"code", b"in", b"tag", b"fix", b"safe", b"suppress", b"over", b"options", b"by", b"sep", b"count", b"min",
-    b"max", b"sum", b"mean", b"join", b"test", b"exactly", b"uses", b"end", b"fixtures", b"input", b"output", b"product",
-    b"true", b"false", b"null", b"at", b"_", b"policy", b"decl", b"violation", b"edit", b"functor", b"lattice",
+    b"]", b"-", b"+", b"/", b"%", b"~", b"^", b"&", b"test", b"fixtures", b"exactly", b"uses",
+    b"end", b"decl", b"violation", b"policy", b"edit", b"functor", b"type", b"input", b"output", b"lattice", b"pragma", b"true",
+    b"false", b"null", b"_", b"must", b"may", b"count", b"min", b"max", b"sum", b"product", b"mean", b"join",
+    b"by", b"at", b"sep", b"code", b"in", b"tag", b"fix", b"safe", b"suppress", b"over", b"options",
 ];
 
 /// Up to 8 bytes as one word of memory: little-endian, zeros past them.

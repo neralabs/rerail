@@ -176,6 +176,15 @@ them.
    (by how many operators it takes, the widest 0), each operator its precedence, binding where `p > min`. A generic
    call binds where `5 > min`, as the lean parser's where `min <= COMPARISON`; `as_kwi`, which only the comparison's
    operand takes, is tested of that level (`matches!(min, 4)`), as the lean parser tests a keyword as a name apart.
+20. **Soft keywords are numbered by class** (`bitlex_tier2::lower`): in their row's order, as the lean parser lists
+   its words (`w`), where they were numbered by their leaf kinds; Kotlin's row lists them by class, the modifiers by
+   their nodes. A word set whose numbers run three or more is tested as ranges (`moves::word_pattern`), and the
+   choice-of-tokens pass (`classes`) counts a set by its tests, a run one. A modifier is one range, where it was
+   `SOFT_WORD[w] != 0 && !matches!(w, …)` of the 17 soft words that are none. The longest word tests left (15 to 17
+   alternatives, ranges among them) are where an expression or a statement may start: punctuation, keywords and
+   names, as the lean parser's `starts_expression` matches 17 token kinds and two word classes. rr's soft words are
+   renumbered too; its code differs only in its numbers and in two tests now one range each
+   (`PUNCTUATION[w] != 0 || w == LBRACE`, `TRUE | FALSE | NULL`).
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`

@@ -3233,7 +3233,7 @@ impl<'a> G<'a> {
                 Some(mut ws) if !ws.is_empty() => {
                     ws.sort();
                     ws.dedup();
-                    format!("matches!(self.word(), {}) && ", ws.join(" | "))
+                    format!("matches!(self.word(), {}) && ", moves::word_pattern(&ws))
                 }
                 _ => String::new(),
             };

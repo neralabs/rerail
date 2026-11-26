@@ -459,15 +459,18 @@ mask p_start    = code & punct & ~second & ~nb & ~pre_at
 token punct     = start p_start pair two_start
 
 # The hard keywords: no name. (`by` and `constructor` are soft, as in tree-sitter-kotlin.)
+# The soft ones by class, as the lean parser numbers its words, so that a class is a run of words, one range: the
+# modifiers by their nodes, then `reified`, then the words that are no modifier, the use-site targets last.
 keywords simple_identifier {
   "as" "break" "class" "continue" "do" "else" "false" "for" "fun" "if" "in" "interface" "is"
   "null" "object" "return" "super" "this" "throw" "true" "try" "typealias" "val" "var" "when"
   "while"
 } soft {
-  "package" "import" "by" "constructor" "L" "u" "U" "uL" "UL" "vararg" "noinline" "crossinline"
-  "expect" "data" "inner" "value" "actual" "set" "get" "override" "suspend" "annotation" "sealed" "lateinit" "tailrec" "operator" "infix" "inline" "external" "public" "private" "internal" "protected" "abstract" "final" "open" "const" "reified" "field" "property" "receiver" "param" "setparam" "delegate" "companion" "init" "dynamic" "where" "catch" "finally" "enum" "file" "out"
+  "package" "import" "by" "file" "out" "L" "u" "U" "uL" "UL"
+  "sealed" "annotation" "data" "inner" "value" "override" "lateinit" "public" "private" "internal" "protected" "tailrec" "operator" "infix" "inline" "external" "suspend" "const" "abstract" "final" "open" "vararg" "noinline" "crossinline" "expect" "actual"
+  "reified" "init" "dynamic" "where" "catch" "finally" "field" "property" "receiver" "param" "setparam" "delegate" "get" "set" "companion" "constructor" "enum"
 }
-keywords interpolated_identifier { } soft { "expect" "data" "inner" "value" "actual" "set" "get" "override" "suspend" "annotation" "sealed" "lateinit" "tailrec" "operator" "infix" "inline" "external" "public" "private" "internal" "protected" "abstract" "final" "open" "const" "vararg" "noinline" "crossinline" "reified" "field" "property" "receiver" "param" "setparam" "delegate" "companion" "constructor" "init" "dynamic" "where" "catch" "finally" "enum" "out" }
+keywords interpolated_identifier { } soft { "sealed" "annotation" "data" "inner" "value" "override" "lateinit" "public" "private" "internal" "protected" "tailrec" "operator" "infix" "inline" "external" "suspend" "const" "abstract" "final" "open" "vararg" "noinline" "crossinline" "expect" "actual" "reified" "init" "dynamic" "where" "catch" "finally" "field" "property" "receiver" "param" "setparam" "delegate" "get" "set" "companion" "constructor" "enum" "out" }
 keywords punct { "." "*" "/" "," ":" "(" ")" "{" "}" "[" "]" ";" "<" ">" "=" "+" "-" "!" "?" "%" "@" "->" "==" "!=" "<=" ">=" "&" "&&" "||" "++" "--" "+=" "-=" "*=" "/=" "%=" "?." "?:" ".." "!!" "::" "===" "!==" "..<" } required
 
 skip ws

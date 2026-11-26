@@ -364,75 +364,75 @@ pub mod w {
     pub const MINUS_MINUS_68: u32 = 68;
     pub const BANG_BANG_69: u32 = 69;
     pub const QUEST_DOT_70: u32 = 70;
-    pub const ANNOTATION_71: u32 = 71;
-    pub const FILE_72: u32 = 72;
-    pub const PACKAGE_73: u32 = 73;
-    pub const IMPORT_74: u32 = 74;
-    pub const ENUM_75: u32 = 75;
-    pub const SUSPEND_76: u32 = 76;
-    pub const BY_77: u32 = 77;
-    pub const WHERE_78: u32 = 78;
-    pub const INIT_79: u32 = 79;
-    pub const COMPANION_80: u32 = 80;
-    pub const GET_81: u32 = 81;
-    pub const SET_82: u32 = 82;
-    pub const CONSTRUCTOR_83: u32 = 83;
-    pub const DYNAMIC_84: u32 = 84;
-    pub const DATA_85: u32 = 85;
-    pub const CATCH_86: u32 = 86;
-    pub const FINALLY_87: u32 = 87;
-    pub const SEALED_88: u32 = 88;
-    pub const INNER_89: u32 = 89;
-    pub const VALUE_90: u32 = 90;
-    pub const OVERRIDE_91: u32 = 91;
-    pub const LATEINIT_92: u32 = 92;
-    pub const PUBLIC_93: u32 = 93;
-    pub const PRIVATE_94: u32 = 94;
-    pub const INTERNAL_95: u32 = 95;
-    pub const PROTECTED_96: u32 = 96;
-    pub const OUT_97: u32 = 97;
-    pub const TAILREC_98: u32 = 98;
-    pub const OPERATOR_99: u32 = 99;
-    pub const INFIX_100: u32 = 100;
-    pub const INLINE_101: u32 = 101;
-    pub const EXTERNAL_102: u32 = 102;
-    pub const CONST_103: u32 = 103;
-    pub const ABSTRACT_104: u32 = 104;
-    pub const FINAL_105: u32 = 105;
-    pub const OPEN_106: u32 = 106;
-    pub const VARARG_107: u32 = 107;
-    pub const NOINLINE_108: u32 = 108;
-    pub const CROSSINLINE_109: u32 = 109;
-    pub const REIFIED_110: u32 = 110;
-    pub const EXPECT_111: u32 = 111;
-    pub const ACTUAL_112: u32 = 112;
+    pub const PACKAGE_71: u32 = 71;
+    pub const IMPORT_72: u32 = 72;
+    pub const BY_73: u32 = 73;
+    pub const FILE_74: u32 = 74;
+    pub const OUT_75: u32 = 75;
+    pub const L_76: u32 = 76;
+    pub const U_77: u32 = 77;
+    pub const U_78: u32 = 78;
+    pub const UL_79: u32 = 79;
+    pub const UL_80: u32 = 80;
+    pub const SEALED_81: u32 = 81;
+    pub const ANNOTATION_82: u32 = 82;
+    pub const DATA_83: u32 = 83;
+    pub const INNER_84: u32 = 84;
+    pub const VALUE_85: u32 = 85;
+    pub const OVERRIDE_86: u32 = 86;
+    pub const LATEINIT_87: u32 = 87;
+    pub const PUBLIC_88: u32 = 88;
+    pub const PRIVATE_89: u32 = 89;
+    pub const INTERNAL_90: u32 = 90;
+    pub const PROTECTED_91: u32 = 91;
+    pub const TAILREC_92: u32 = 92;
+    pub const OPERATOR_93: u32 = 93;
+    pub const INFIX_94: u32 = 94;
+    pub const INLINE_95: u32 = 95;
+    pub const EXTERNAL_96: u32 = 96;
+    pub const SUSPEND_97: u32 = 97;
+    pub const CONST_98: u32 = 98;
+    pub const ABSTRACT_99: u32 = 99;
+    pub const FINAL_100: u32 = 100;
+    pub const OPEN_101: u32 = 101;
+    pub const VARARG_102: u32 = 102;
+    pub const NOINLINE_103: u32 = 103;
+    pub const CROSSINLINE_104: u32 = 104;
+    pub const EXPECT_105: u32 = 105;
+    pub const ACTUAL_106: u32 = 106;
+    pub const REIFIED_107: u32 = 107;
+    pub const INIT_108: u32 = 108;
+    pub const DYNAMIC_109: u32 = 109;
+    pub const WHERE_110: u32 = 110;
+    pub const CATCH_111: u32 = 111;
+    pub const FINALLY_112: u32 = 112;
     pub const FIELD_113: u32 = 113;
     pub const PROPERTY_114: u32 = 114;
     pub const RECEIVER_115: u32 = 115;
     pub const PARAM_116: u32 = 116;
     pub const SETPARAM_117: u32 = 117;
     pub const DELEGATE_118: u32 = 118;
-    pub const L_119: u32 = 119;
-    pub const U_120: u32 = 120;
-    pub const U_121: u32 = 121;
-    pub const UL_122: u32 = 122;
-    pub const UL_123: u32 = 123;
+    pub const GET_119: u32 = 119;
+    pub const SET_120: u32 = 120;
+    pub const COMPANION_121: u32 = 121;
+    pub const CONSTRUCTOR_122: u32 = 122;
+    pub const ENUM_123: u32 = 123;
 }
 
 /// A word's leaf's kind where a choice of tokens written in a rule takes it (the lean parser's `anon()`); 0: none of its words.
-const ANON: [u16; 124] = [0, 0, 0, k::CLASS, 0, k::INTERFACE, k::VAL, k::VAR, 0, k::THIS, k::SUPER, 0, k::IN, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::TRUE, k::FALSE, 0, 0, 0, 0, 0, k::STAR, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::DOT_DOT, k::DOT_DOT_LT, 0, k::BANG, 0, 0, 0, 0, 0, 0, 0, 0, k::BANG_EQ, k::BANG_EQ_EQ, k::EQ_EQ, k::EQ_EQ_EQ, 0, 0, k::PLUS, k::MINUS, k::SLASH, k::PERCENT, k::PLUS_PLUS, k::MINUS_MINUS, k::BANG_BANG, 0, k::ANNOTATION, 0, 0, 0, 0, k::SUSPEND, 0, 0, 0, 0, k::GET, k::SET, 0, 0, k::DATA, 0, 0, k::SEALED, k::INNER, k::VALUE, k::OVERRIDE, k::LATEINIT, k::PUBLIC, k::PRIVATE, k::INTERNAL, k::PROTECTED, k::OUT, k::TAILREC, k::OPERATOR, k::INFIX, k::INLINE, k::EXTERNAL, 0, k::ABSTRACT, k::FINAL, k::OPEN, k::VARARG, k::NOINLINE, k::CROSSINLINE, 0, k::EXPECT, k::ACTUAL, k::FIELD, k::PROPERTY, k::RECEIVER, k::PARAM, k::SETPARAM, k::DELEGATE, 0, 0, 0, 0, 0];
+const ANON: [u16; 124] = [0, 0, 0, k::CLASS, 0, k::INTERFACE, k::VAL, k::VAR, 0, k::THIS, k::SUPER, 0, k::IN, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::TRUE, k::FALSE, 0, 0, 0, 0, 0, k::STAR, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::DOT_DOT, k::DOT_DOT_LT, 0, k::BANG, 0, 0, 0, 0, 0, 0, 0, 0, k::BANG_EQ, k::BANG_EQ_EQ, k::EQ_EQ, k::EQ_EQ_EQ, 0, 0, k::PLUS, k::MINUS, k::SLASH, k::PERCENT, k::PLUS_PLUS, k::MINUS_MINUS, k::BANG_BANG, 0, 0, 0, 0, 0, k::OUT, 0, 0, 0, 0, 0, k::SEALED, k::ANNOTATION, k::DATA, k::INNER, k::VALUE, k::OVERRIDE, k::LATEINIT, k::PUBLIC, k::PRIVATE, k::INTERNAL, k::PROTECTED, k::TAILREC, k::OPERATOR, k::INFIX, k::INLINE, k::EXTERNAL, k::SUSPEND, 0, k::ABSTRACT, k::FINAL, k::OPEN, k::VARARG, k::NOINLINE, k::CROSSINLINE, k::EXPECT, k::ACTUAL, 0, 0, 0, 0, 0, 0, k::FIELD, k::PROPERTY, k::RECEIVER, k::PARAM, k::SETPARAM, k::DELEGATE, k::GET, k::SET, 0, 0, 0];
 
 /// A word's leaf's kind where a choice of tokens written in a rule takes it (the lean parser's `anon()`); 0: none of its words.
-const ANON_2: [u16; 124] = [0, 0, k::SIMPLE_IDENTIFIER, k::SIMPLE_IDENTIFIER, 0, k::SIMPLE_IDENTIFIER, 0, 0, 0, 0, 0, k::SIMPLE_IDENTIFIER, 0, k::SIMPLE_IDENTIFIER, k::SIMPLE_IDENTIFIER, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::SIMPLE_IDENTIFIER, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+const ANON_2: [u16; 124] = [0, 0, k::SIMPLE_IDENTIFIER, k::SIMPLE_IDENTIFIER, 0, k::SIMPLE_IDENTIFIER, 0, 0, 0, 0, 0, k::SIMPLE_IDENTIFIER, 0, k::SIMPLE_IDENTIFIER, k::SIMPLE_IDENTIFIER, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::SIMPLE_IDENTIFIER, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 /// A word's leaf's kind where `assignment_operator` takes it (the lean parser's `anon()`); 0: none of its words.
 const ASSIGNMENT_OPERATOR: [u16; 124] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::EQ, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::PLUS_EQ, k::MINUS_EQ, k::STAR_EQ, k::SLASH_EQ, k::PERCENT_EQ, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 /// A word's leaf's kind where `interp_soft` takes it (the lean parser's `anon()`); 0: none of its words.
-const INTERP_SOFT: [u16; 124] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::ANNOTATION, 0, 0, 0, k::ENUM, k::SUSPEND, 0, k::WHERE, k::INIT, k::COMPANION, k::GET, k::SET, k::CONSTRUCTOR, k::DYNAMIC, k::DATA, k::CATCH, k::FINALLY, k::SEALED, k::INNER, k::VALUE, k::OVERRIDE, k::LATEINIT, k::PUBLIC, k::PRIVATE, k::INTERNAL, k::PROTECTED, k::OUT, k::TAILREC, k::OPERATOR, k::INFIX, k::INLINE, k::EXTERNAL, k::CONST, k::ABSTRACT, k::FINAL, k::OPEN, k::VARARG, k::NOINLINE, k::CROSSINLINE, k::REIFIED, k::EXPECT, k::ACTUAL, k::FIELD, k::PROPERTY, k::RECEIVER, k::PARAM, k::SETPARAM, k::DELEGATE, 0, 0, 0, 0, 0];
+const INTERP_SOFT: [u16; 124] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::OUT, 0, 0, 0, 0, 0, k::SEALED, k::ANNOTATION, k::DATA, k::INNER, k::VALUE, k::OVERRIDE, k::LATEINIT, k::PUBLIC, k::PRIVATE, k::INTERNAL, k::PROTECTED, k::TAILREC, k::OPERATOR, k::INFIX, k::INLINE, k::EXTERNAL, k::SUSPEND, k::CONST, k::ABSTRACT, k::FINAL, k::OPEN, k::VARARG, k::NOINLINE, k::CROSSINLINE, k::EXPECT, k::ACTUAL, k::REIFIED, k::INIT, k::DYNAMIC, k::WHERE, k::CATCH, k::FINALLY, k::FIELD, k::PROPERTY, k::RECEIVER, k::PARAM, k::SETPARAM, k::DELEGATE, k::GET, k::SET, k::COMPANION, k::CONSTRUCTOR, k::ENUM];
 
 /// A word's leaf's kind where `soft_word` takes it (the lean parser's `anon()`); 0: none of its words.
-const SOFT_WORD: [u16; 124] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::ANNOTATION, 0, 0, 0, k::ENUM, k::SUSPEND, 0, k::WHERE, k::INIT, k::COMPANION, k::GET, k::SET, k::CONSTRUCTOR, k::DYNAMIC, k::DATA, k::CATCH, k::FINALLY, k::SEALED, k::INNER, k::VALUE, k::OVERRIDE, k::LATEINIT, k::PUBLIC, k::PRIVATE, k::INTERNAL, k::PROTECTED, 0, k::TAILREC, k::OPERATOR, k::INFIX, k::INLINE, k::EXTERNAL, k::CONST, k::ABSTRACT, k::FINAL, k::OPEN, k::VARARG, k::NOINLINE, k::CROSSINLINE, k::REIFIED, k::EXPECT, k::ACTUAL, k::FIELD, k::PROPERTY, k::RECEIVER, k::PARAM, k::SETPARAM, k::DELEGATE, 0, 0, 0, 0, 0];
+const SOFT_WORD: [u16; 124] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::SEALED, k::ANNOTATION, k::DATA, k::INNER, k::VALUE, k::OVERRIDE, k::LATEINIT, k::PUBLIC, k::PRIVATE, k::INTERNAL, k::PROTECTED, k::TAILREC, k::OPERATOR, k::INFIX, k::INLINE, k::EXTERNAL, k::SUSPEND, k::CONST, k::ABSTRACT, k::FINAL, k::OPEN, k::VARARG, k::NOINLINE, k::CROSSINLINE, k::EXPECT, k::ACTUAL, k::REIFIED, k::INIT, k::DYNAMIC, k::WHERE, k::CATCH, k::FINALLY, k::FIELD, k::PROPERTY, k::RECEIVER, k::PARAM, k::SETPARAM, k::DELEGATE, k::GET, k::SET, k::COMPANION, k::CONSTRUCTOR, k::ENUM];
 
 const FLAG_NO_LAMBDA: u32 = 1 << 0;
 /// The word of a piece of record kind `kind`, its bytes `b`: its kind's keywords'.
@@ -486,50 +486,50 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
             _ => 0,
         },
         6 => match b {
-            b"expect" => w::EXPECT_111,
-            b"data" => w::DATA_85,
-            b"inner" => w::INNER_89,
-            b"value" => w::VALUE_90,
-            b"actual" => w::ACTUAL_112,
-            b"set" => w::SET_82,
-            b"get" => w::GET_81,
-            b"override" => w::OVERRIDE_91,
-            b"suspend" => w::SUSPEND_76,
-            b"annotation" => w::ANNOTATION_71,
-            b"sealed" => w::SEALED_88,
-            b"lateinit" => w::LATEINIT_92,
-            b"tailrec" => w::TAILREC_98,
-            b"operator" => w::OPERATOR_99,
-            b"infix" => w::INFIX_100,
-            b"inline" => w::INLINE_101,
-            b"external" => w::EXTERNAL_102,
-            b"public" => w::PUBLIC_93,
-            b"private" => w::PRIVATE_94,
-            b"internal" => w::INTERNAL_95,
-            b"protected" => w::PROTECTED_96,
-            b"abstract" => w::ABSTRACT_104,
-            b"final" => w::FINAL_105,
-            b"open" => w::OPEN_106,
-            b"const" => w::CONST_103,
-            b"vararg" => w::VARARG_107,
-            b"noinline" => w::NOINLINE_108,
-            b"crossinline" => w::CROSSINLINE_109,
-            b"reified" => w::REIFIED_110,
+            b"sealed" => w::SEALED_81,
+            b"annotation" => w::ANNOTATION_82,
+            b"data" => w::DATA_83,
+            b"inner" => w::INNER_84,
+            b"value" => w::VALUE_85,
+            b"override" => w::OVERRIDE_86,
+            b"lateinit" => w::LATEINIT_87,
+            b"public" => w::PUBLIC_88,
+            b"private" => w::PRIVATE_89,
+            b"internal" => w::INTERNAL_90,
+            b"protected" => w::PROTECTED_91,
+            b"tailrec" => w::TAILREC_92,
+            b"operator" => w::OPERATOR_93,
+            b"infix" => w::INFIX_94,
+            b"inline" => w::INLINE_95,
+            b"external" => w::EXTERNAL_96,
+            b"suspend" => w::SUSPEND_97,
+            b"const" => w::CONST_98,
+            b"abstract" => w::ABSTRACT_99,
+            b"final" => w::FINAL_100,
+            b"open" => w::OPEN_101,
+            b"vararg" => w::VARARG_102,
+            b"noinline" => w::NOINLINE_103,
+            b"crossinline" => w::CROSSINLINE_104,
+            b"expect" => w::EXPECT_105,
+            b"actual" => w::ACTUAL_106,
+            b"reified" => w::REIFIED_107,
+            b"init" => w::INIT_108,
+            b"dynamic" => w::DYNAMIC_109,
+            b"where" => w::WHERE_110,
+            b"catch" => w::CATCH_111,
+            b"finally" => w::FINALLY_112,
             b"field" => w::FIELD_113,
             b"property" => w::PROPERTY_114,
             b"receiver" => w::RECEIVER_115,
             b"param" => w::PARAM_116,
             b"setparam" => w::SETPARAM_117,
             b"delegate" => w::DELEGATE_118,
-            b"companion" => w::COMPANION_80,
-            b"constructor" => w::CONSTRUCTOR_83,
-            b"init" => w::INIT_79,
-            b"dynamic" => w::DYNAMIC_84,
-            b"where" => w::WHERE_78,
-            b"catch" => w::CATCH_86,
-            b"finally" => w::FINALLY_87,
-            b"enum" => w::ENUM_75,
-            b"out" => w::OUT_97,
+            b"get" => w::GET_119,
+            b"set" => w::SET_120,
+            b"companion" => w::COMPANION_121,
+            b"constructor" => w::CONSTRUCTOR_122,
+            b"enum" => w::ENUM_123,
+            b"out" => w::OUT_75,
             _ => 0,
         },
         16 => match b {
@@ -559,59 +559,59 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
             b"var" => w::VAR_7,
             b"when" => w::WHEN_17,
             b"while" => w::WHILE_13,
-            b"package" => w::PACKAGE_73,
-            b"import" => w::IMPORT_74,
-            b"by" => w::BY_77,
-            b"constructor" => w::CONSTRUCTOR_83,
-            b"L" => w::L_119,
-            b"u" => w::U_120,
-            b"U" => w::U_121,
-            b"uL" => w::UL_122,
-            b"UL" => w::UL_123,
-            b"vararg" => w::VARARG_107,
-            b"noinline" => w::NOINLINE_108,
-            b"crossinline" => w::CROSSINLINE_109,
-            b"expect" => w::EXPECT_111,
-            b"data" => w::DATA_85,
-            b"inner" => w::INNER_89,
-            b"value" => w::VALUE_90,
-            b"actual" => w::ACTUAL_112,
-            b"set" => w::SET_82,
-            b"get" => w::GET_81,
-            b"override" => w::OVERRIDE_91,
-            b"suspend" => w::SUSPEND_76,
-            b"annotation" => w::ANNOTATION_71,
-            b"sealed" => w::SEALED_88,
-            b"lateinit" => w::LATEINIT_92,
-            b"tailrec" => w::TAILREC_98,
-            b"operator" => w::OPERATOR_99,
-            b"infix" => w::INFIX_100,
-            b"inline" => w::INLINE_101,
-            b"external" => w::EXTERNAL_102,
-            b"public" => w::PUBLIC_93,
-            b"private" => w::PRIVATE_94,
-            b"internal" => w::INTERNAL_95,
-            b"protected" => w::PROTECTED_96,
-            b"abstract" => w::ABSTRACT_104,
-            b"final" => w::FINAL_105,
-            b"open" => w::OPEN_106,
-            b"const" => w::CONST_103,
-            b"reified" => w::REIFIED_110,
+            b"package" => w::PACKAGE_71,
+            b"import" => w::IMPORT_72,
+            b"by" => w::BY_73,
+            b"file" => w::FILE_74,
+            b"out" => w::OUT_75,
+            b"L" => w::L_76,
+            b"u" => w::U_77,
+            b"U" => w::U_78,
+            b"uL" => w::UL_79,
+            b"UL" => w::UL_80,
+            b"sealed" => w::SEALED_81,
+            b"annotation" => w::ANNOTATION_82,
+            b"data" => w::DATA_83,
+            b"inner" => w::INNER_84,
+            b"value" => w::VALUE_85,
+            b"override" => w::OVERRIDE_86,
+            b"lateinit" => w::LATEINIT_87,
+            b"public" => w::PUBLIC_88,
+            b"private" => w::PRIVATE_89,
+            b"internal" => w::INTERNAL_90,
+            b"protected" => w::PROTECTED_91,
+            b"tailrec" => w::TAILREC_92,
+            b"operator" => w::OPERATOR_93,
+            b"infix" => w::INFIX_94,
+            b"inline" => w::INLINE_95,
+            b"external" => w::EXTERNAL_96,
+            b"suspend" => w::SUSPEND_97,
+            b"const" => w::CONST_98,
+            b"abstract" => w::ABSTRACT_99,
+            b"final" => w::FINAL_100,
+            b"open" => w::OPEN_101,
+            b"vararg" => w::VARARG_102,
+            b"noinline" => w::NOINLINE_103,
+            b"crossinline" => w::CROSSINLINE_104,
+            b"expect" => w::EXPECT_105,
+            b"actual" => w::ACTUAL_106,
+            b"reified" => w::REIFIED_107,
+            b"init" => w::INIT_108,
+            b"dynamic" => w::DYNAMIC_109,
+            b"where" => w::WHERE_110,
+            b"catch" => w::CATCH_111,
+            b"finally" => w::FINALLY_112,
             b"field" => w::FIELD_113,
             b"property" => w::PROPERTY_114,
             b"receiver" => w::RECEIVER_115,
             b"param" => w::PARAM_116,
             b"setparam" => w::SETPARAM_117,
             b"delegate" => w::DELEGATE_118,
-            b"companion" => w::COMPANION_80,
-            b"init" => w::INIT_79,
-            b"dynamic" => w::DYNAMIC_84,
-            b"where" => w::WHERE_78,
-            b"catch" => w::CATCH_86,
-            b"finally" => w::FINALLY_87,
-            b"enum" => w::ENUM_75,
-            b"file" => w::FILE_72,
-            b"out" => w::OUT_97,
+            b"get" => w::GET_119,
+            b"set" => w::SET_120,
+            b"companion" => w::COMPANION_121,
+            b"constructor" => w::CONSTRUCTOR_122,
+            b"enum" => w::ENUM_123,
             _ => 0,
         },
         _ => 0,
@@ -1321,7 +1321,7 @@ impl<L: Layout> P<'_, L> {
     /// `source_file`.
     fn source_file(&mut self) -> R {
         self.open_root(k::SOURCE_FILE);
-        while !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr()) && (self.word() == w::AT_27 && self.word_at(self.i + 1) == w::FILE_72 && self.word_at(self.i + 2) == w::COLON_28) {
+        while !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr()) && (self.word() == w::AT_27 && self.word_at(self.i + 1) == w::FILE_74 && self.word_at(self.i + 2) == w::COLON_28) {
             self.open(k::FILE_ANNOTATION);
             self.bump_as(k::AT)?;
             self.bump_as(k::FILE)?;
@@ -1339,21 +1339,21 @@ impl<L: Layout> P<'_, L> {
             self.mark_semi()?;
         }
         if !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc()) {
-            if self.word() == w::PACKAGE_73 {
+            if self.word() == w::PACKAGE_71 {
                 self.package_header()?;
             }
         }
         if !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc()) {
-            if self.word() == w::IMPORT_74 {
+            if self.word() == w::IMPORT_72 {
                 self.open(k::IMPORT_LIST);
                 self.import_header()?;
-                while !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc()) && self.word() == w::IMPORT_74 {
+                while !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc()) && self.word() == w::IMPORT_72 {
                     self.import_header()?;
                 }
                 self.close()?;
             }
         }
-        while self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 | w::FOR_11 | w::WHILE_13 | w::DO_14 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+        while self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::FOR_11 | w::WHILE_13..=w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::AT_27 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
             self.r_statement()?;
             self.ask_semi(false)?;
             if self.m_semi() {
@@ -1370,13 +1370,13 @@ impl<L: Layout> P<'_, L> {
     /// `name`.
     fn name(&mut self) -> R {
         match self.word() {
-            _ if SOFT_WORD[self.word() as usize] != 0 => {
+            w::SEALED_81..=w::ENUM_123 => {
                 self.open(UNSET);
                 self.retag(k::SIMPLE_IDENTIFIER);
-                self.bump_as(SOFT_WORD[self.word() as usize])?;
+                self.tk_as((w::SEALED_81..=w::ENUM_123).contains(&self.word()), SOFT_WORD[self.word() as usize], 0)?;
                 self.close()?;
             }
-            _ if matches!(self.word(), w::FILE_72 | w::OUT_97 | w::BY_77) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME => {
+            _ if (w::BY_73..=w::OUT_75).contains(&self.word()) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME => {
                 self.bump_as(k::SIMPLE_IDENTIFIER)?;
             }
             _ => {
@@ -1389,13 +1389,13 @@ impl<L: Layout> P<'_, L> {
     /// `type_name`.
     fn type_name(&mut self) -> R {
         match self.word() {
-            _ if SOFT_WORD[self.word() as usize] != 0 => {
+            w::SEALED_81..=w::ENUM_123 => {
                 self.open(UNSET);
                 self.retag(k::TYPE_IDENTIFIER);
-                self.bump_as(SOFT_WORD[self.word() as usize])?;
+                self.tk_as((w::SEALED_81..=w::ENUM_123).contains(&self.word()), SOFT_WORD[self.word() as usize], 0)?;
                 self.close()?;
             }
-            _ if self.word() == w::FILE_72 || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME => {
+            _ if self.word() == w::FILE_74 || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME => {
                 self.bump_as(k::TYPE_IDENTIFIER)?;
             }
             _ => {
@@ -1408,7 +1408,7 @@ impl<L: Layout> P<'_, L> {
     /// `package_header`.
     fn package_header(&mut self) -> R {
         self.open(k::PACKAGE_HEADER);
-        self.p(w::PACKAGE_73)?;
+        self.p(w::PACKAGE_71)?;
         self.open(k::IDENTIFIER);
         self.name()?;
         loop {
@@ -1440,7 +1440,7 @@ impl<L: Layout> P<'_, L> {
     /// `import_header`.
     fn import_header(&mut self) -> R {
         self.open(k::IMPORT_HEADER);
-        self.p(w::IMPORT_74)?;
+        self.p(w::IMPORT_72)?;
         self.open(UNSET);
         self.retag(k::IDENTIFIER);
         self.name()?;
@@ -1487,7 +1487,7 @@ impl<L: Layout> P<'_, L> {
         let level_asks = self.asks;
         self.asks = level_asks & 0x0 | 0x8;
         self.deeper()?;
-        if self.m_label_at() || !self.m_lab_loop() && (self.m_lab_lam() || self.pat_this_at_0_0(self.i, self.n) || self.pat_jump_at_0_0(self.i, self.n) || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.word() == w::LBRACE_33 && self.word_at(self.i + 1) == w::MINUS_GT_44 || self.pat_lam_params_0_0(self.i, self.n) || self.m_ann_expr()) || !(self.m_lab_loop() || (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27))) && ((self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_80)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.word() == w::SUSPEND_76 && self.word_at(self.i + 1) == w::FUN_4 && self.word_at(self.i + 2) == w::LPAREN_35 || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51) || !(self.m_lab_loop() || (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) || self.m_named() || self.word() == w::ENUM_75 && self.word_at(self.i + 1) == w::CLASS_3 || self.m_acc() || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2) || self.word() == w::FOR_11 || self.word() == w::WHILE_13 || self.word() == w::DO_14) && (INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE)) {
+        if self.m_label_at() || !self.m_lab_loop() && (self.m_lab_lam() || self.pat_this_at_0_0(self.i, self.n) || self.pat_jump_at_0_0(self.i, self.n) || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.word() == w::LBRACE_33 && self.word_at(self.i + 1) == w::MINUS_GT_44 || self.pat_lam_params_0_0(self.i, self.n) || self.m_ann_expr()) || !(self.m_lab_loop() || (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123)) && ((self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_121)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.word() == w::SUSPEND_97 && self.word_at(self.i + 1) == w::FUN_4 && self.word_at(self.i + 2) == w::LPAREN_35 || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51) || !(self.m_lab_loop() || (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123) || self.m_named() || self.word() == w::ENUM_123 && self.word_at(self.i + 1) == w::CLASS_3 || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27) || self.word() == w::FOR_11 || self.word() == w::WHILE_13 || self.word() == w::DO_14) && (matches!(self.word(), w::THIS_9 | w::SUPER_10 | w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::NULL_26 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE)) {
             self.r_expression()?;
             self.ask_semi(true)?;
             if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
@@ -1513,7 +1513,7 @@ impl<L: Layout> P<'_, L> {
                     self.do_while_statement()?;
                 }
             }
-        } else if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) {
+        } else if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123) {
             self.declaration()?;
         } else if self.m_named() {
             self.open(k::ASSIGNMENT);
@@ -1524,7 +1524,7 @@ impl<L: Layout> P<'_, L> {
             self.tk_as(ASSIGNMENT_OPERATOR[self.word() as usize] != 0, ASSIGNMENT_OPERATOR[self.word() as usize], 0)?;
             self.r_expression()?;
             self.close()?;
-        } else if self.word() == w::ENUM_75 && self.word_at(self.i + 1) == w::CLASS_3 || self.m_acc() || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2) {
+        } else if self.word() == w::ENUM_123 && self.word_at(self.i + 1) == w::CLASS_3 || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27) {
             self.declaration()?;
         } else if self.word() == w::FOR_11 {
             self.for_statement()?;
@@ -1559,7 +1559,7 @@ impl<L: Layout> P<'_, L> {
                 self.implied()?;
                 self.ask_semi(false)?;
                 if self.m_semi() || self.m_semi_close() {
-                } else if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 | w::FOR_11 | w::WHILE_13 | w::DO_14 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+                } else if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::FOR_11 | w::WHILE_13..=w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::AT_27 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
                     self.r_statement()?;
                 }
             } else {
@@ -1581,7 +1581,7 @@ impl<L: Layout> P<'_, L> {
     /// `block`.
     fn r_block(&mut self) -> R {
         self.p(w::LBRACE_33)?;
-        if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 | w::FOR_11 | w::WHILE_13 | w::DO_14 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+        if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::FOR_11 | w::WHILE_13..=w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::AT_27 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
             self.statements()?;
         }
         self.p(w::RBRACE_34)?;
@@ -1591,7 +1591,7 @@ impl<L: Layout> P<'_, L> {
     /// `control_structure_body`.
     fn control_structure_body(&mut self) -> R {
         self.open(k::CONTROL_STRUCTURE_BODY);
-        if self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_87 | w::MINUS_GT_44) && self.word() == w::LBRACE_33 {
+        if self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_112 | w::MINUS_GT_44) && self.word() == w::LBRACE_33 {
             self.r_block()?;
         } else {
             self.r_statement()?;
@@ -1605,7 +1605,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::FOR_STATEMENT);
         self.p(w::FOR_11)?;
         self.p(w::LPAREN_35)?;
-        if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+        if matches!(self.word(), w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
             self.variable_declaration()?;
         } else {
             self.multi_variable_declaration()?;
@@ -1618,7 +1618,7 @@ impl<L: Layout> P<'_, L> {
         self.p(w::RPAREN_37)?;
         self.ask_semi(true)?;
         if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-        } else if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 | w::FOR_11 | w::WHILE_13 | w::DO_14 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+        } else if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::FOR_11 | w::WHILE_13..=w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::AT_27 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
             self.control_structure_body()?;
         } else {
         }
@@ -1661,7 +1661,7 @@ impl<L: Layout> P<'_, L> {
     fn declaration(&mut self) -> R {
         self.deeper()?;
         self.open(UNSET);
-        if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) {
+        if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123) {
             self.modifiers()?;
         } else if self.m_acc() {
         } else if self.word() == w::AT_27 {
@@ -1675,17 +1675,17 @@ impl<L: Layout> P<'_, L> {
 
     /// `declaration_rest`.
     fn declaration_rest(&mut self) -> R {
-        if self.word() == w::ENUM_75 && self.word_at(self.i + 1) == w::CLASS_3 || self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::INTERFACE_5 {
+        if self.word() == w::ENUM_123 && self.word_at(self.i + 1) == w::CLASS_3 || self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::INTERFACE_5 {
             self.retag(k::CLASS_DECLARATION);
             self.class_rest()?;
         } else if self.m_acc() {
             self.mark_acc()?;
             match self.word() {
-                w::GET_81 => {
+                w::GET_119 => {
                     self.retag(k::GETTER);
                     self.getter_rest()?;
                 }
-                w::SET_82 => {
+                w::SET_120 => {
                     self.retag(k::SETTER);
                     self.setter_rest()?;
                 }
@@ -1758,7 +1758,7 @@ impl<L: Layout> P<'_, L> {
         }
         self.ask_semi(true)?;
         if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::WHERE_78 {
+            if self.word() == w::WHERE_110 {
                 self.type_constraints()?;
             }
         }
@@ -1783,31 +1783,31 @@ impl<L: Layout> P<'_, L> {
         if self.m_recv() {
             self.receiver()?;
         }
-        if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+        if matches!(self.word(), w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
             self.variable_declaration()?;
         } else {
             self.multi_variable_declaration()?;
         }
         self.ask_semi(true)?;
         if !(self.m_by_lf() || self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::WHERE_78 {
+            if self.word() == w::WHERE_110 {
                 self.type_constraints()?;
             }
         }
         self.ask_semi(true)?;
-        if self.m_by_lf() || !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.word() == w::EQ_32) && (self.word() == w::BY_77) {
+        if self.m_by_lf() || !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.word() == w::EQ_32) && (self.word() == w::BY_73) {
             if self.m_by_lf() {
                 self.mark_by_lf()?;
             }
             self.open(k::PROPERTY_DELEGATE);
-            self.p(w::BY_77)?;
+            self.p(w::BY_73)?;
             self.r_expression()?;
             self.close()?;
         } else if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
         } else if self.word() == w::EQ_32 {
             self.implied()?;
             self.r_expression()?;
-        } else if self.word() == w::GET_81 {
+        } else if self.word() == w::GET_119 {
             self.getter_inline()?;
         }
         Ok(())
@@ -1815,7 +1815,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `class_rest`.
     fn class_rest(&mut self) -> R {
-        if self.word() == w::ENUM_75 && self.word_at(self.i + 1) == w::CLASS_3 {
+        if self.word() == w::ENUM_123 && self.word_at(self.i + 1) == w::CLASS_3 {
             self.bump_as(k::ENUM)?;
             self.bump_as(k::CLASS)?;
             self.type_name()?;
@@ -1831,10 +1831,10 @@ impl<L: Layout> P<'_, L> {
             }
             self.ask_semi(true)?;
             if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-            } else if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) {
+            } else if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123) {
                 self.primary_constructor()?;
             } else if self.m_enum_k() {
-            } else if matches!(self.word(), w::AT_27 | w::CONSTRUCTOR_83 | w::LPAREN_35) {
+            } else if matches!(self.word(), w::AT_27 | w::CONSTRUCTOR_122 | w::LPAREN_35) {
                 self.primary_constructor()?;
             }
             self.ask_semi(true)?;
@@ -1876,7 +1876,7 @@ impl<L: Layout> P<'_, L> {
             }
             self.ask_semi(true)?;
             if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-            } else if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) || matches!(self.word(), w::AT_27 | w::CONSTRUCTOR_83 | w::LPAREN_35) {
+            } else if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123) || matches!(self.word(), w::AT_27 | w::CONSTRUCTOR_122 | w::LPAREN_35) {
                 self.primary_constructor()?;
             }
             self.ask_semi(true)?;
@@ -1908,7 +1908,7 @@ impl<L: Layout> P<'_, L> {
             }
             self.ask_semi(true)?;
             if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-            } else if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) || matches!(self.word(), w::AT_27 | w::CONSTRUCTOR_83 | w::LPAREN_35) {
+            } else if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123) || matches!(self.word(), w::AT_27 | w::CONSTRUCTOR_122 | w::LPAREN_35) {
                 self.primary_constructor()?;
             }
             self.ask_semi(true)?;
@@ -1921,7 +1921,7 @@ impl<L: Layout> P<'_, L> {
             }
             self.ask_semi(true)?;
             if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-                if self.word() == w::WHERE_78 {
+                if self.word() == w::WHERE_110 {
                     self.type_constraints()?;
                 }
             }
@@ -1957,7 +1957,7 @@ impl<L: Layout> P<'_, L> {
         } else if self.word() == w::LBRACE_33 {
             self.implied()?;
             if self.m_semi_close() || self.m_enum_k() {
-            } else if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+            } else if matches!(self.word(), w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
                 self.enum_entry()?;
                 while !(self.m_semi_close() || self.word() == w::COMMA_36 && matches!(self.word_at(self.i + 1), w::RPAREN_37 | w::GT_39 | w::RBRACK_30 | w::RBRACE_34 | w::MINUS_GT_44) || self.m_enum_k()) && self.word() == w::COMMA_36 {
                     self.implied()?;
@@ -1979,7 +1979,7 @@ impl<L: Layout> P<'_, L> {
                         self.mark_semi()?;
                     } else if self.m_acc() {
                     }
-                    self.member_ends_1()?;
+                    self.member_ends_2()?;
                 }
                 self.p(w::RBRACE_34)?;
             } else if self.word() == w::COMMA_36 && matches!(self.word_at(self.i + 1), w::RPAREN_37 | w::GT_39 | w::RBRACK_30 | w::RBRACE_34 | w::MINUS_GT_44) {
@@ -2020,11 +2020,11 @@ impl<L: Layout> P<'_, L> {
         }
         if self.m_semi_close() {
             self.enum_end()?;
-        } else if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) || self.word() == w::ENUM_75 && self.word_at(self.i + 1) == w::CLASS_3 || self.m_acc() {
+        } else if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123) || self.word() == w::ENUM_123 && self.word_at(self.i + 1) == w::CLASS_3 || self.m_acc() {
             self.enum_members()?;
         } else {
             match self.word() {
-                w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 | w::COMPANION_80 | w::INIT_79 | w::CONSTRUCTOR_83 => {
+                w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::INIT_108 | w::COMPANION_121 | w::CONSTRUCTOR_122 => {
                     self.enum_members()?;
                 }
                 w::RBRACE_34 => {
@@ -2114,7 +2114,7 @@ impl<L: Layout> P<'_, L> {
     fn function_value_parameters(&mut self) -> R {
         self.open(k::FUNCTION_VALUE_PARAMETERS);
         self.p(w::LPAREN_35)?;
-        if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::FILE_72 | w::BY_77) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+        if matches!(self.word(), w::AT_27 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
             self.list_1(Self::function_value_parameter)?;
         }
         match self.word() {
@@ -2134,7 +2134,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `function_value_parameter`.
     fn function_value_parameter(&mut self) -> R {
-        if matches!(self.word(), w::VARARG_107 | w::NOINLINE_108 | w::CROSSINLINE_109) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27) || self.word() == w::AT_27 {
+        if (w::VARARG_102..=w::CROSSINLINE_104).contains(&self.word()) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27) || self.word() == w::AT_27 {
             self.parameter_modifiers()?;
         }
         self.parameter()?;
@@ -2164,7 +2164,7 @@ impl<L: Layout> P<'_, L> {
     /// `parameter_modifiers`.
     fn parameter_modifiers(&mut self) -> R {
         self.open(k::PARAMETER_MODIFIERS);
-        if matches!(self.word(), w::VARARG_107 | w::NOINLINE_108 | w::CROSSINLINE_109) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27) {
+        if (w::VARARG_102..=w::CROSSINLINE_104).contains(&self.word()) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27) {
             self.parameter_modifier()?;
         } else if self.word() == w::AT_27 {
             self.annotation()?;
@@ -2172,7 +2172,7 @@ impl<L: Layout> P<'_, L> {
             return self.refuse();
         }
         loop {
-            if matches!(self.word(), w::VARARG_107 | w::NOINLINE_108 | w::CROSSINLINE_109) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27) {
+            if (w::VARARG_102..=w::CROSSINLINE_104).contains(&self.word()) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27) {
                 self.parameter_modifier()?;
             } else if self.word() == w::AT_27 {
                 self.annotation()?;
@@ -2206,14 +2206,14 @@ impl<L: Layout> P<'_, L> {
     /// `primary_constructor`.
     fn primary_constructor(&mut self) -> R {
         self.open(k::PRIMARY_CONSTRUCTOR);
-        if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) || matches!(self.word(), w::AT_27 | w::CONSTRUCTOR_83) {
-            if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) || self.word() == w::AT_27 {
+        if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123) || matches!(self.word(), w::AT_27 | w::CONSTRUCTOR_122) {
+            if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123) || self.word() == w::AT_27 {
                 self.modifiers()?;
             }
-            self.p(w::CONSTRUCTOR_83)?;
+            self.p(w::CONSTRUCTOR_122)?;
         }
         self.p(w::LPAREN_35)?;
-        if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::VAL_6 | w::VAR_7 | w::FILE_72 | w::BY_77) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+        if matches!(self.word(), w::VAL_6 | w::VAR_7 | w::AT_27 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
             self.list_1(Self::class_parameter)?;
         }
         match self.word() {
@@ -2237,7 +2237,7 @@ impl<L: Layout> P<'_, L> {
         let level_asks = self.asks;
         self.asks = level_asks & 0x0 | 0x0;
         self.open(k::CLASS_PARAMETER);
-        if SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::VAL_6 || self.word_at(self.i + 1) == w::VAR_7 || self.word_at(self.i + 1) == w::PUBLIC_93 || self.word_at(self.i + 1) == w::PRIVATE_94 || self.word_at(self.i + 1) == w::INTERNAL_95 || self.word_at(self.i + 1) == w::PROTECTED_96 || self.word_at(self.i + 1) == w::ABSTRACT_104 || self.word_at(self.i + 1) == w::FINAL_105 || self.word_at(self.i + 1) == w::OPEN_106 || self.word_at(self.i + 1) == w::OVERRIDE_91 || self.word_at(self.i + 1) == w::LATEINIT_92 || self.word_at(self.i + 1) == w::CONST_103 || self.word_at(self.i + 1) == w::SEALED_88 || self.word_at(self.i + 1) == w::ANNOTATION_71 || self.word_at(self.i + 1) == w::DATA_85 || self.word_at(self.i + 1) == w::INNER_89 || self.word_at(self.i + 1) == w::VALUE_90 || self.word_at(self.i + 1) == w::TAILREC_98 || self.word_at(self.i + 1) == w::OPERATOR_99 || self.word_at(self.i + 1) == w::INFIX_100 || self.word_at(self.i + 1) == w::INLINE_101 || self.word_at(self.i + 1) == w::EXTERNAL_102 || self.word_at(self.i + 1) == w::SUSPEND_76 || self.word_at(self.i + 1) == w::VARARG_107 || self.word_at(self.i + 1) == w::NOINLINE_108 || self.word_at(self.i + 1) == w::CROSSINLINE_109 || self.word_at(self.i + 1) == w::EXPECT_111 || self.word_at(self.i + 1) == w::ACTUAL_112) || self.word() == w::AT_27 {
+        if (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::VAL_6 || self.word_at(self.i + 1) == w::VAR_7 || self.word_at(self.i + 1) == w::PUBLIC_88 || self.word_at(self.i + 1) == w::PRIVATE_89 || self.word_at(self.i + 1) == w::INTERNAL_90 || self.word_at(self.i + 1) == w::PROTECTED_91 || self.word_at(self.i + 1) == w::ABSTRACT_99 || self.word_at(self.i + 1) == w::FINAL_100 || self.word_at(self.i + 1) == w::OPEN_101 || self.word_at(self.i + 1) == w::OVERRIDE_86 || self.word_at(self.i + 1) == w::LATEINIT_87 || self.word_at(self.i + 1) == w::CONST_98 || self.word_at(self.i + 1) == w::SEALED_81 || self.word_at(self.i + 1) == w::ANNOTATION_82 || self.word_at(self.i + 1) == w::DATA_83 || self.word_at(self.i + 1) == w::INNER_84 || self.word_at(self.i + 1) == w::VALUE_85 || self.word_at(self.i + 1) == w::TAILREC_92 || self.word_at(self.i + 1) == w::OPERATOR_93 || self.word_at(self.i + 1) == w::INFIX_94 || self.word_at(self.i + 1) == w::INLINE_95 || self.word_at(self.i + 1) == w::EXTERNAL_96 || self.word_at(self.i + 1) == w::SUSPEND_97 || self.word_at(self.i + 1) == w::VARARG_102 || self.word_at(self.i + 1) == w::NOINLINE_103 || self.word_at(self.i + 1) == w::CROSSINLINE_104 || self.word_at(self.i + 1) == w::EXPECT_105 || self.word_at(self.i + 1) == w::ACTUAL_106) || self.word() == w::AT_27 {
             self.class_parameter_modifiers()?;
         }
         if matches!(self.word(), w::VAL_6 | w::VAR_7) {
@@ -2260,12 +2260,12 @@ impl<L: Layout> P<'_, L> {
         self.open(k::DELEGATION_SPECIFIER);
         self.ds_head()?;
         self.ask_semi(true)?;
-        if self.m_by_lf() || !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_enum_k()) && (self.word() == w::BY_77) {
+        if self.m_by_lf() || !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_enum_k()) && (self.word() == w::BY_73) {
             self.wrap(k::EXPLICIT_DELEGATION, 0)?;
             if self.m_by_lf() {
                 self.mark_by_lf()?;
             }
-            self.p(w::BY_77)?;
+            self.p(w::BY_73)?;
             let flags = self.flags;
             self.flags = self.flags | FLAG_NO_LAMBDA;
             self.r_expression()?;
@@ -2281,7 +2281,7 @@ impl<L: Layout> P<'_, L> {
     fn ds_head(&mut self) -> R {
         if self.past_lparen(self.i).is_some_and(|e| self.word_at(e) == w::MINUS_GT_44) {
             self.function_type()?;
-        } else if self.word() == w::SUSPEND_76 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35) {
+        } else if self.word() == w::SUSPEND_97 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35) {
             self.bump_as(k::SUSPEND)?;
             self.r_type()?;
         } else if self.m_fn_recv() {
@@ -2310,7 +2310,7 @@ impl<L: Layout> P<'_, L> {
                 self.close()?;
             } else if self.m_enum_k() {
             }
-        } else if SOFT_WORD[self.word() as usize] != 0 || self.word() == w::FILE_72 || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+        } else if matches!(self.word(), w::FILE_74 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
             self.user_type()?;
             self.ask_semi(true)?;
             if !(self.m_by_lf() || self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_enum_k()) {
@@ -2358,7 +2358,7 @@ impl<L: Layout> P<'_, L> {
         self.asks = level_asks & 0x0 | 0x8;
         self.deeper()?;
         self.open(UNSET);
-        if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) {
+        if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123) {
             self.modifiers()?;
         } else if self.m_acc() {
         } else if self.word() == w::AT_27 {
@@ -2373,23 +2373,23 @@ impl<L: Layout> P<'_, L> {
 
     /// `member_rest`.
     fn member_rest(&mut self) -> R {
-        if self.word() == w::ENUM_75 && self.word_at(self.i + 1) == w::CLASS_3 || self.m_acc() {
+        if self.word() == w::ENUM_123 && self.word_at(self.i + 1) == w::CLASS_3 || self.m_acc() {
             self.declaration_rest()?;
         } else {
             match self.word() {
-                w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 => {
+                w::TYPEALIAS_2..=w::OBJECT_8 => {
                     self.declaration_rest()?;
                 }
-                w::COMPANION_80 => {
+                w::COMPANION_121 => {
                     self.retag(k::COMPANION_OBJECT);
                     self.companion_rest()?;
                 }
-                w::INIT_79 => {
+                w::INIT_108 => {
                     self.retag(k::ANONYMOUS_INITIALIZER);
                     self.implied()?;
                     self.r_block()?;
                 }
-                w::CONSTRUCTOR_83 => {
+                w::CONSTRUCTOR_122 => {
                     self.retag(k::SECONDARY_CONSTRUCTOR);
                     self.ctor_rest()?;
                 }
@@ -2414,7 +2414,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `getter_rest`.
     fn getter_rest(&mut self) -> R {
-        self.p_stored(w::GET_81, k::GET)?;
+        self.p_stored(w::GET_119, k::GET)?;
         self.ask_semi(true)?;
         if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
             if self.word() == w::LPAREN_35 {
@@ -2435,7 +2435,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `setter_rest`.
     fn setter_rest(&mut self) -> R {
-        self.p(w::SET_82)?;
+        self.p(w::SET_120)?;
         self.ask_semi(true)?;
         if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
             if self.word() == w::LPAREN_35 {
@@ -2458,7 +2458,7 @@ impl<L: Layout> P<'_, L> {
     /// `parameter_with_optional_type`.
     fn parameter_with_optional_type(&mut self) -> R {
         self.open(k::PARAMETER_WITH_OPTIONAL_TYPE);
-        if matches!(self.word(), w::VARARG_107 | w::NOINLINE_108 | w::CROSSINLINE_109) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27) || self.word() == w::AT_27 {
+        if (w::VARARG_102..=w::CROSSINLINE_104).contains(&self.word()) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27) || self.word() == w::AT_27 {
             self.parameter_modifiers()?;
         }
         self.name()?;
@@ -2475,11 +2475,11 @@ impl<L: Layout> P<'_, L> {
 
     /// `companion_rest`.
     fn companion_rest(&mut self) -> R {
-        self.p(w::COMPANION_80)?;
+        self.p(w::COMPANION_121)?;
         self.p(w::OBJECT_8)?;
         self.ask_semi(true)?;
         if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if SOFT_WORD[self.word() as usize] != 0 || self.word() == w::FILE_72 || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+            if matches!(self.word(), w::FILE_74 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
                 self.type_name()?;
             } else {
             }
@@ -2503,7 +2503,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `ctor_rest`.
     fn ctor_rest(&mut self) -> R {
-        self.p(w::CONSTRUCTOR_83)?;
+        self.p(w::CONSTRUCTOR_122)?;
         self.function_value_parameters()?;
         self.ask_semi(true)?;
         if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
@@ -2517,9 +2517,9 @@ impl<L: Layout> P<'_, L> {
         }
         self.ask_semi(true)?;
         if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-        } else if self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_87 | w::MINUS_GT_44) && self.word() == w::LBRACE_33 {
+        } else if self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_112 | w::MINUS_GT_44) && self.word() == w::LBRACE_33 {
             self.implied()?;
-            if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 | w::FOR_11 | w::WHILE_13 | w::DO_14 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+            if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::FOR_11 | w::WHILE_13..=w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::AT_27 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
                 self.statements()?;
             }
             self.p(w::RBRACE_34)?;
@@ -2544,7 +2544,7 @@ impl<L: Layout> P<'_, L> {
     /// `type_parameter`.
     fn type_parameter(&mut self) -> R {
         self.open(k::TYPE_PARAMETER);
-        if self.word() == w::REIFIED_110 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::IN_12 || self.word_at(self.i + 1) == w::OUT_97) || matches!(self.word(), w::IN_12 | w::OUT_97) {
+        if self.word() == w::REIFIED_107 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::IN_12 || self.word_at(self.i + 1) == w::OUT_75) || matches!(self.word(), w::IN_12 | w::OUT_75) {
             self.type_parameter_modifiers()?;
         }
         self.type_name()?;
@@ -2562,7 +2562,7 @@ impl<L: Layout> P<'_, L> {
     /// `type_constraints`.
     fn type_constraints(&mut self) -> R {
         self.open(k::TYPE_CONSTRAINTS);
-        self.p(w::WHERE_78)?;
+        self.p(w::WHERE_110)?;
         self.type_constraint()?;
         loop {
             self.ask_semi(true)?;
@@ -2595,15 +2595,15 @@ impl<L: Layout> P<'_, L> {
     /// `type_parameter_modifiers`.
     fn type_parameter_modifiers(&mut self) -> R {
         self.open(k::TYPE_PARAMETER_MODIFIERS);
-        if self.word() == w::REIFIED_110 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::IN_12 || self.word_at(self.i + 1) == w::OUT_97) {
+        if self.word() == w::REIFIED_107 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::IN_12 || self.word_at(self.i + 1) == w::OUT_75) {
             self.reification_modifier()?;
         } else {
             self.variance_modifier()?;
         }
         loop {
-            if self.word() == w::REIFIED_110 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::IN_12 || self.word_at(self.i + 1) == w::OUT_97) {
+            if self.word() == w::REIFIED_107 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::IN_12 || self.word_at(self.i + 1) == w::OUT_75) {
                 self.reification_modifier()?;
-            } else if matches!(self.word(), w::IN_12 | w::OUT_97) {
+            } else if matches!(self.word(), w::IN_12 | w::OUT_75) {
                 self.variance_modifier()?;
             } else {
                 break;
@@ -2616,7 +2616,7 @@ impl<L: Layout> P<'_, L> {
     /// `reification_modifier`.
     fn reification_modifier(&mut self) -> R {
         self.open(k::REIFICATION_MODIFIER);
-        self.p_stored(w::REIFIED_110, k::REIFIED)?;
+        self.p_stored(w::REIFIED_107, k::REIFIED)?;
         self.close()?;
         Ok(())
     }
@@ -2624,7 +2624,7 @@ impl<L: Layout> P<'_, L> {
     /// `modifiers`.
     fn modifiers(&mut self) -> R {
         self.open(k::MODIFIERS);
-        if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) {
+        if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123) {
             self.modifier()?;
         } else if self.word() == w::AT_27 {
             self.annotation()?;
@@ -2632,7 +2632,7 @@ impl<L: Layout> P<'_, L> {
             return self.refuse();
         }
         loop {
-            if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) {
+            if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123) {
                 self.modifier()?;
             } else if self.m_acc() {
                 break;
@@ -2650,16 +2650,16 @@ impl<L: Layout> P<'_, L> {
     fn class_parameter_modifiers(&mut self) -> R {
         self.open(UNSET);
         self.retag(k::MODIFIERS);
-        if SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::VAL_6 || self.word_at(self.i + 1) == w::VAR_7 || self.word_at(self.i + 1) == w::PUBLIC_93 || self.word_at(self.i + 1) == w::PRIVATE_94 || self.word_at(self.i + 1) == w::INTERNAL_95 || self.word_at(self.i + 1) == w::PROTECTED_96 || self.word_at(self.i + 1) == w::ABSTRACT_104 || self.word_at(self.i + 1) == w::FINAL_105 || self.word_at(self.i + 1) == w::OPEN_106 || self.word_at(self.i + 1) == w::OVERRIDE_91 || self.word_at(self.i + 1) == w::LATEINIT_92 || self.word_at(self.i + 1) == w::CONST_103 || self.word_at(self.i + 1) == w::SEALED_88 || self.word_at(self.i + 1) == w::ANNOTATION_71 || self.word_at(self.i + 1) == w::DATA_85 || self.word_at(self.i + 1) == w::INNER_89 || self.word_at(self.i + 1) == w::VALUE_90 || self.word_at(self.i + 1) == w::TAILREC_98 || self.word_at(self.i + 1) == w::OPERATOR_99 || self.word_at(self.i + 1) == w::INFIX_100 || self.word_at(self.i + 1) == w::INLINE_101 || self.word_at(self.i + 1) == w::EXTERNAL_102 || self.word_at(self.i + 1) == w::SUSPEND_76 || self.word_at(self.i + 1) == w::VARARG_107 || self.word_at(self.i + 1) == w::NOINLINE_108 || self.word_at(self.i + 1) == w::CROSSINLINE_109 || self.word_at(self.i + 1) == w::EXPECT_111 || self.word_at(self.i + 1) == w::ACTUAL_112) {
+        if (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::VAL_6 || self.word_at(self.i + 1) == w::VAR_7 || self.word_at(self.i + 1) == w::PUBLIC_88 || self.word_at(self.i + 1) == w::PRIVATE_89 || self.word_at(self.i + 1) == w::INTERNAL_90 || self.word_at(self.i + 1) == w::PROTECTED_91 || self.word_at(self.i + 1) == w::ABSTRACT_99 || self.word_at(self.i + 1) == w::FINAL_100 || self.word_at(self.i + 1) == w::OPEN_101 || self.word_at(self.i + 1) == w::OVERRIDE_86 || self.word_at(self.i + 1) == w::LATEINIT_87 || self.word_at(self.i + 1) == w::CONST_98 || self.word_at(self.i + 1) == w::SEALED_81 || self.word_at(self.i + 1) == w::ANNOTATION_82 || self.word_at(self.i + 1) == w::DATA_83 || self.word_at(self.i + 1) == w::INNER_84 || self.word_at(self.i + 1) == w::VALUE_85 || self.word_at(self.i + 1) == w::TAILREC_92 || self.word_at(self.i + 1) == w::OPERATOR_93 || self.word_at(self.i + 1) == w::INFIX_94 || self.word_at(self.i + 1) == w::INLINE_95 || self.word_at(self.i + 1) == w::EXTERNAL_96 || self.word_at(self.i + 1) == w::SUSPEND_97 || self.word_at(self.i + 1) == w::VARARG_102 || self.word_at(self.i + 1) == w::NOINLINE_103 || self.word_at(self.i + 1) == w::CROSSINLINE_104 || self.word_at(self.i + 1) == w::EXPECT_105 || self.word_at(self.i + 1) == w::ACTUAL_106) {
             self.modifier()?;
         } else if self.word() == w::AT_27 {
             self.annotation()?;
         } else {
             return self.refuse();
         }
-        while SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::VAL_6 || self.word_at(self.i + 1) == w::VAR_7 || self.word_at(self.i + 1) == w::PUBLIC_93 || self.word_at(self.i + 1) == w::PRIVATE_94 || self.word_at(self.i + 1) == w::INTERNAL_95 || self.word_at(self.i + 1) == w::PROTECTED_96 || self.word_at(self.i + 1) == w::ABSTRACT_104 || self.word_at(self.i + 1) == w::FINAL_105 || self.word_at(self.i + 1) == w::OPEN_106 || self.word_at(self.i + 1) == w::OVERRIDE_91 || self.word_at(self.i + 1) == w::LATEINIT_92 || self.word_at(self.i + 1) == w::CONST_103 || self.word_at(self.i + 1) == w::SEALED_88 || self.word_at(self.i + 1) == w::ANNOTATION_71 || self.word_at(self.i + 1) == w::DATA_85 || self.word_at(self.i + 1) == w::INNER_89 || self.word_at(self.i + 1) == w::VALUE_90 || self.word_at(self.i + 1) == w::TAILREC_98 || self.word_at(self.i + 1) == w::OPERATOR_99 || self.word_at(self.i + 1) == w::INFIX_100 || self.word_at(self.i + 1) == w::INLINE_101 || self.word_at(self.i + 1) == w::EXTERNAL_102 || self.word_at(self.i + 1) == w::SUSPEND_76 || self.word_at(self.i + 1) == w::VARARG_107 || self.word_at(self.i + 1) == w::NOINLINE_108 || self.word_at(self.i + 1) == w::CROSSINLINE_109 || self.word_at(self.i + 1) == w::EXPECT_111 || self.word_at(self.i + 1) == w::ACTUAL_112) || self.word() == w::AT_27 {
+        while (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::VAL_6 || self.word_at(self.i + 1) == w::VAR_7 || self.word_at(self.i + 1) == w::PUBLIC_88 || self.word_at(self.i + 1) == w::PRIVATE_89 || self.word_at(self.i + 1) == w::INTERNAL_90 || self.word_at(self.i + 1) == w::PROTECTED_91 || self.word_at(self.i + 1) == w::ABSTRACT_99 || self.word_at(self.i + 1) == w::FINAL_100 || self.word_at(self.i + 1) == w::OPEN_101 || self.word_at(self.i + 1) == w::OVERRIDE_86 || self.word_at(self.i + 1) == w::LATEINIT_87 || self.word_at(self.i + 1) == w::CONST_98 || self.word_at(self.i + 1) == w::SEALED_81 || self.word_at(self.i + 1) == w::ANNOTATION_82 || self.word_at(self.i + 1) == w::DATA_83 || self.word_at(self.i + 1) == w::INNER_84 || self.word_at(self.i + 1) == w::VALUE_85 || self.word_at(self.i + 1) == w::TAILREC_92 || self.word_at(self.i + 1) == w::OPERATOR_93 || self.word_at(self.i + 1) == w::INFIX_94 || self.word_at(self.i + 1) == w::INLINE_95 || self.word_at(self.i + 1) == w::EXTERNAL_96 || self.word_at(self.i + 1) == w::SUSPEND_97 || self.word_at(self.i + 1) == w::VARARG_102 || self.word_at(self.i + 1) == w::NOINLINE_103 || self.word_at(self.i + 1) == w::CROSSINLINE_104 || self.word_at(self.i + 1) == w::EXPECT_105 || self.word_at(self.i + 1) == w::ACTUAL_106) || self.word() == w::AT_27 {
             self.retag(k::MODIFIERS);
-            if SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::VAL_6 || self.word_at(self.i + 1) == w::VAR_7 || self.word_at(self.i + 1) == w::PUBLIC_93 || self.word_at(self.i + 1) == w::PRIVATE_94 || self.word_at(self.i + 1) == w::INTERNAL_95 || self.word_at(self.i + 1) == w::PROTECTED_96 || self.word_at(self.i + 1) == w::ABSTRACT_104 || self.word_at(self.i + 1) == w::FINAL_105 || self.word_at(self.i + 1) == w::OPEN_106 || self.word_at(self.i + 1) == w::OVERRIDE_91 || self.word_at(self.i + 1) == w::LATEINIT_92 || self.word_at(self.i + 1) == w::CONST_103 || self.word_at(self.i + 1) == w::SEALED_88 || self.word_at(self.i + 1) == w::ANNOTATION_71 || self.word_at(self.i + 1) == w::DATA_85 || self.word_at(self.i + 1) == w::INNER_89 || self.word_at(self.i + 1) == w::VALUE_90 || self.word_at(self.i + 1) == w::TAILREC_98 || self.word_at(self.i + 1) == w::OPERATOR_99 || self.word_at(self.i + 1) == w::INFIX_100 || self.word_at(self.i + 1) == w::INLINE_101 || self.word_at(self.i + 1) == w::EXTERNAL_102 || self.word_at(self.i + 1) == w::SUSPEND_76 || self.word_at(self.i + 1) == w::VARARG_107 || self.word_at(self.i + 1) == w::NOINLINE_108 || self.word_at(self.i + 1) == w::CROSSINLINE_109 || self.word_at(self.i + 1) == w::EXPECT_111 || self.word_at(self.i + 1) == w::ACTUAL_112) {
+            if (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::AT_27 || self.word_at(self.i + 1) == w::VAL_6 || self.word_at(self.i + 1) == w::VAR_7 || self.word_at(self.i + 1) == w::PUBLIC_88 || self.word_at(self.i + 1) == w::PRIVATE_89 || self.word_at(self.i + 1) == w::INTERNAL_90 || self.word_at(self.i + 1) == w::PROTECTED_91 || self.word_at(self.i + 1) == w::ABSTRACT_99 || self.word_at(self.i + 1) == w::FINAL_100 || self.word_at(self.i + 1) == w::OPEN_101 || self.word_at(self.i + 1) == w::OVERRIDE_86 || self.word_at(self.i + 1) == w::LATEINIT_87 || self.word_at(self.i + 1) == w::CONST_98 || self.word_at(self.i + 1) == w::SEALED_81 || self.word_at(self.i + 1) == w::ANNOTATION_82 || self.word_at(self.i + 1) == w::DATA_83 || self.word_at(self.i + 1) == w::INNER_84 || self.word_at(self.i + 1) == w::VALUE_85 || self.word_at(self.i + 1) == w::TAILREC_92 || self.word_at(self.i + 1) == w::OPERATOR_93 || self.word_at(self.i + 1) == w::INFIX_94 || self.word_at(self.i + 1) == w::INLINE_95 || self.word_at(self.i + 1) == w::EXTERNAL_96 || self.word_at(self.i + 1) == w::SUSPEND_97 || self.word_at(self.i + 1) == w::VARARG_102 || self.word_at(self.i + 1) == w::NOINLINE_103 || self.word_at(self.i + 1) == w::CROSSINLINE_104 || self.word_at(self.i + 1) == w::EXPECT_105 || self.word_at(self.i + 1) == w::ACTUAL_106) {
                 self.modifier()?;
             } else if self.word() == w::AT_27 {
                 self.annotation()?;
@@ -2674,42 +2674,42 @@ impl<L: Layout> P<'_, L> {
     /// `modifier`.
     fn modifier(&mut self) -> R {
         match self.word() {
-            w::SEALED_88 | w::ANNOTATION_71 | w::DATA_85 | w::INNER_89 | w::VALUE_90 => {
+            w::SEALED_81..=w::VALUE_85 => {
                 self.open(k::CLASS_MODIFIER);
-                self.tk_as(matches!(self.word(), w::SEALED_88 | w::ANNOTATION_71 | w::DATA_85 | w::INNER_89 | w::VALUE_90), ANON[self.word() as usize], 0)?;
+                self.tk_as((w::SEALED_81..=w::VALUE_85).contains(&self.word()), ANON[self.word() as usize], 0)?;
                 self.close()?;
             }
-            w::OVERRIDE_91 | w::LATEINIT_92 => {
+            w::OVERRIDE_86 | w::LATEINIT_87 => {
                 self.open(k::MEMBER_MODIFIER);
-                self.tk_as(matches!(self.word(), w::OVERRIDE_91 | w::LATEINIT_92), ANON[self.word() as usize], 0)?;
+                self.tk_as(matches!(self.word(), w::OVERRIDE_86 | w::LATEINIT_87), ANON[self.word() as usize], 0)?;
                 self.close()?;
             }
-            w::PUBLIC_93 | w::PRIVATE_94 | w::INTERNAL_95 | w::PROTECTED_96 => {
+            w::PUBLIC_88..=w::PROTECTED_91 => {
                 self.open(k::VISIBILITY_MODIFIER);
-                self.tk_as(matches!(self.word(), w::PUBLIC_93 | w::PRIVATE_94 | w::INTERNAL_95 | w::PROTECTED_96), ANON[self.word() as usize], 0)?;
+                self.tk_as((w::PUBLIC_88..=w::PROTECTED_91).contains(&self.word()), ANON[self.word() as usize], 0)?;
                 self.close()?;
             }
-            w::TAILREC_98 | w::OPERATOR_99 | w::INFIX_100 | w::INLINE_101 | w::EXTERNAL_102 | w::SUSPEND_76 => {
+            w::TAILREC_92..=w::SUSPEND_97 => {
                 self.open(k::FUNCTION_MODIFIER);
-                self.tk_as(matches!(self.word(), w::TAILREC_98 | w::OPERATOR_99 | w::INFIX_100 | w::INLINE_101 | w::EXTERNAL_102 | w::SUSPEND_76), ANON[self.word() as usize], 0)?;
+                self.tk_as((w::TAILREC_92..=w::SUSPEND_97).contains(&self.word()), ANON[self.word() as usize], 0)?;
                 self.close()?;
             }
-            w::CONST_103 => {
+            w::CONST_98 => {
                 self.open(k::PROPERTY_MODIFIER);
                 self.bump_as(k::CONST)?;
                 self.close()?;
             }
-            w::ABSTRACT_104 | w::FINAL_105 | w::OPEN_106 => {
+            w::ABSTRACT_99..=w::OPEN_101 => {
                 self.open(k::INHERITANCE_MODIFIER);
-                self.tk_as(matches!(self.word(), w::ABSTRACT_104 | w::FINAL_105 | w::OPEN_106), ANON[self.word() as usize], 0)?;
+                self.tk_as((w::ABSTRACT_99..=w::OPEN_101).contains(&self.word()), ANON[self.word() as usize], 0)?;
                 self.close()?;
             }
-            w::VARARG_107 | w::NOINLINE_108 | w::CROSSINLINE_109 => {
+            w::VARARG_102..=w::CROSSINLINE_104 => {
                 self.parameter_modifier()?;
             }
             _ => {
                 self.open(k::PLATFORM_MODIFIER);
-                self.tk_as(matches!(self.word(), w::EXPECT_111 | w::ACTUAL_112), ANON[self.word() as usize], 0)?;
+                self.tk_as(matches!(self.word(), w::EXPECT_105 | w::ACTUAL_106), ANON[self.word() as usize], 0)?;
                 self.close()?;
             }
         }
@@ -2719,7 +2719,7 @@ impl<L: Layout> P<'_, L> {
     /// `parameter_modifier`.
     fn parameter_modifier(&mut self) -> R {
         self.open(k::PARAMETER_MODIFIER);
-        self.tk_as(matches!(self.word(), w::VARARG_107 | w::NOINLINE_108 | w::CROSSINLINE_109), ANON[self.word() as usize], 0)?;
+        self.tk_as((w::VARARG_102..=w::CROSSINLINE_104).contains(&self.word()), ANON[self.word() as usize], 0)?;
         self.close()?;
         Ok(())
     }
@@ -2732,7 +2732,7 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         self.open(k::ANNOTATION);
         self.p_stored(w::AT_27, k::AT)?;
-        if self.i > 0 && self.word_at(self.i - 1) == w::AT_27 && matches!(self.word(), w::FIELD_113 | w::PROPERTY_114 | w::GET_81 | w::SET_82 | w::RECEIVER_115 | w::PARAM_116 | w::SETPARAM_117 | w::DELEGATE_118) && self.word_at(self.i + 1) == w::COLON_28 {
+        if self.i > 0 && self.word_at(self.i - 1) == w::AT_27 && (w::FIELD_113..=w::SET_120).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_28 {
             self.open(k::USE_SITE_TARGET);
             self.bump_as(ANON[self.word() as usize])?;
             self.bump_as(k::COLON)?;
@@ -2762,7 +2762,7 @@ impl<L: Layout> P<'_, L> {
     /// `type`.
     fn r_type(&mut self) -> R {
         self.deeper()?;
-        if self.word() == w::SUSPEND_76 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35 || self.word_at(self.i + 1) == w::AT_27) {
+        if self.word() == w::SUSPEND_97 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35 || self.word_at(self.i + 1) == w::AT_27) {
             self.type_modifiers()?;
         } else if self.m_fn_recv() {
         } else if self.word() == w::AT_27 {
@@ -2796,7 +2796,7 @@ impl<L: Layout> P<'_, L> {
                 self.p_stored(w::QUEST_43, k::QUEST)?;
                 self.quests_7()?;
             }
-        } else if SOFT_WORD[self.word() as usize] != 0 || self.word() == w::FILE_72 || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+        } else if matches!(self.word(), w::FILE_74 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
             self.user_type()?;
             self.ask_semi(true)?;
             if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
@@ -2820,7 +2820,7 @@ impl<L: Layout> P<'_, L> {
     fn not_null(&mut self) -> R {
         self.wrap(k::NOT_NULLABLE_TYPE, 0)?;
         self.p(w::AMP_42)?;
-        if self.word() == w::SUSPEND_76 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35 || self.word_at(self.i + 1) == w::AT_27) || self.word() == w::AT_27 {
+        if self.word() == w::SUSPEND_97 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35 || self.word_at(self.i + 1) == w::AT_27) || self.word() == w::AT_27 {
             self.type_modifiers()?;
         }
         if self.word() == w::LPAREN_35 {
@@ -2892,7 +2892,7 @@ impl<L: Layout> P<'_, L> {
     /// `type_modifiers`.
     fn type_modifiers(&mut self) -> R {
         self.open(k::TYPE_MODIFIERS);
-        if self.word() == w::SUSPEND_76 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35 || self.word_at(self.i + 1) == w::AT_27) {
+        if self.word() == w::SUSPEND_97 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35 || self.word_at(self.i + 1) == w::AT_27) {
             self.bump_as(k::SUSPEND)?;
         } else if self.word() == w::AT_27 {
             self.annotation()?;
@@ -2900,7 +2900,7 @@ impl<L: Layout> P<'_, L> {
             return self.refuse();
         }
         loop {
-            if self.word() == w::SUSPEND_76 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35 || self.word_at(self.i + 1) == w::AT_27) {
+            if self.word() == w::SUSPEND_97 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35 || self.word_at(self.i + 1) == w::AT_27) {
                 self.bump_as(k::SUSPEND)?;
             } else if self.m_fn_recv() {
                 break;
@@ -2957,7 +2957,7 @@ impl<L: Layout> P<'_, L> {
         if self.m_generic() || self.m_gen_nav() || self.word() == w::LT_38 {
             self.type_arguments()?;
         }
-        while self.word() == w::DOT_40 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME) && matches!(self.word_at(self.i + 2), w::DOT_40 | w::LT_38 | w::GT_39 | w::COMMA_36) {
+        while self.word() == w::DOT_40 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME) && matches!(self.word_at(self.i + 2), w::COMMA_36 | w::LT_38..=w::DOT_40) {
             self.implied()?;
             self.type_name()?;
             if self.m_generic() || self.m_gen_nav() || self.word() == w::LT_38 {
@@ -3014,12 +3014,12 @@ impl<L: Layout> P<'_, L> {
     /// `type_projection`.
     fn type_projection(&mut self) -> R {
         self.open(k::TYPE_PROJECTION);
-        if self.m_paren_amp() || self.m_fn_recv() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::IN_12 | w::AT_27 | w::LPAREN_35 | w::FILE_72) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+        if self.m_paren_amp() || self.m_fn_recv() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::IN_12 | w::AT_27 | w::LPAREN_35 | w::FILE_74) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
             if !self.m_fn_recv() {
-                if matches!(self.word(), w::IN_12 | w::OUT_97) {
+                if matches!(self.word(), w::IN_12 | w::OUT_75) {
                     self.open(k::TYPE_PROJECTION_MODIFIERS);
                     self.variance_modifier()?;
-                    while !self.m_fn_recv() && matches!(self.word(), w::IN_12 | w::OUT_97) {
+                    while !self.m_fn_recv() && matches!(self.word(), w::IN_12 | w::OUT_75) {
                         self.variance_modifier()?;
                     }
                     self.close()?;
@@ -3041,7 +3041,7 @@ impl<L: Layout> P<'_, L> {
     /// `variance_modifier`.
     fn variance_modifier(&mut self) -> R {
         self.open(k::VARIANCE_MODIFIER);
-        self.tk_as(matches!(self.word(), w::IN_12 | w::OUT_97), ANON[self.word() as usize], 0)?;
+        self.tk_as(matches!(self.word(), w::IN_12 | w::OUT_75), ANON[self.word() as usize], 0)?;
         self.close()?;
         Ok(())
     }
@@ -3061,7 +3061,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::FUNCTION_TYPE_PARAMETERS);
         self.p(w::LPAREN_35)?;
         if self.word() == w::COMMA_36 && matches!(self.word_at(self.i + 1), w::RPAREN_37 | w::GT_39 | w::RBRACK_30 | w::RBRACE_34 | w::MINUS_GT_44) {
-        } else if self.m_paren_amp() || self.m_named() || self.m_fn_recv() || SOFT_WORD[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::LPAREN_35 | w::FILE_72) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+        } else if self.m_paren_amp() || self.m_named() || self.m_fn_recv() || matches!(self.word(), w::AT_27 | w::LPAREN_35 | w::FILE_74 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
             self.list_1(Self::ft_parameter)?;
         }
         match self.word() {
@@ -3084,12 +3084,12 @@ impl<L: Layout> P<'_, L> {
         // The context's questions (`asks`, decision 0703): set where it starts, for every level it calls.
         let level_asks = self.asks;
         self.asks = level_asks & 0x0 | 0x0;
-        if self.past_lparen(self.i).is_some_and(|e| self.word_at(e) == w::MINUS_GT_44) || self.m_paren_amp() || self.word() == w::SUSPEND_76 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35 || self.word_at(self.i + 1) == w::AT_27) {
+        if self.past_lparen(self.i).is_some_and(|e| self.word_at(e) == w::MINUS_GT_44) || self.m_paren_amp() || self.word() == w::SUSPEND_97 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35 || self.word_at(self.i + 1) == w::AT_27) {
             self.r_type()?;
         } else if self.m_named() {
             self.mark_named()?;
             self.parameter()?;
-        } else if self.m_fn_recv() || SOFT_WORD[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::LPAREN_35 | w::FILE_72) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+        } else if self.m_fn_recv() || matches!(self.word(), w::AT_27 | w::LPAREN_35 | w::FILE_74 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
             self.r_type()?;
         } else {
             return self.refuse();
@@ -3138,7 +3138,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 self.bump_as(k::AS)?;
             }
-            if self.word() == w::SUSPEND_76 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35 || self.word_at(self.i + 1) == w::AT_27) {
+            if self.word() == w::SUSPEND_97 && (self.kind_at(self.i + 1) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(self.i + 1)) || self.kind_at(self.i + 1) == t::BACKTICK_NAME || self.word_at(self.i + 1) == w::LPAREN_35 || self.word_at(self.i + 1) == w::AT_27) {
                 self.type_modifiers()?;
             } else if self.m_fn_recv() {
             } else if self.word() == w::AT_27 {
@@ -3184,7 +3184,7 @@ impl<L: Layout> P<'_, L> {
                 self.p_stored(w::QUEST_43, k::QUEST)?;
                 self.quests()?;
             }
-        } else if SOFT_WORD[self.word() as usize] != 0 || self.word() == w::FILE_72 || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+        } else if matches!(self.word(), w::FILE_74 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
             self.as_user_type()?;
             self.ask_semi(true)?;
             if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() {
@@ -3423,7 +3423,7 @@ impl<L: Layout> P<'_, L> {
                     self.postfix_op()?;
                 } else {
                     match self.word() {
-                        w::LPAREN_35 | w::DOT_40 | w::COLON_COLON_51 | w::LBRACK_29 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BANG_BANG_69 => {
+                        w::LBRACK_29 | w::LPAREN_35 | w::DOT_40 | w::COLON_COLON_51 | w::PLUS_PLUS_67..=w::BANG_BANG_69 => {
                             self.postfix_op()?;
                         }
                         w::LBRACE_33 if self.flags & FLAG_NO_LAMBDA == 0 => {
@@ -3473,7 +3473,7 @@ impl<L: Layout> P<'_, L> {
             self.value_arguments()?;
             self.ask_semi(true)?;
             if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_lab_lam() || self.m_as_split() || self.m_is_split() {
-            } else if self.flags & FLAG_NO_LAMBDA == 0 && self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_87 | w::MINUS_GT_44) && self.word() == w::LBRACE_33 {
+            } else if self.flags & FLAG_NO_LAMBDA == 0 && self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_112 | w::MINUS_GT_44) && self.word() == w::LBRACE_33 {
                 self.annotated_lambda()?;
             }
             self.close()?;
@@ -3489,7 +3489,7 @@ impl<L: Layout> P<'_, L> {
             self.trail_brackets()?;
             self.close()?;
             self.close()?;
-        } else if matches!(self.word(), w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BANG_BANG_69) {
+        } else if (w::PLUS_PLUS_67..=w::BANG_BANG_69).contains(&self.word()) {
             self.wrap(k::POSTFIX_EXPRESSION, 0)?;
             self.bump_as(ANON[self.word() as usize])?;
             self.close()?;
@@ -3541,7 +3541,7 @@ impl<L: Layout> P<'_, L> {
         if self.word() == w::LBRACE_33 && self.word_at(self.i + 1) == w::MINUS_GT_44 {
             self.bump_as(k::LBRACE)?;
             self.bump_as(k::MINUS_GT)?;
-            if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 | w::FOR_11 | w::WHILE_13 | w::DO_14 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+            if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::FOR_11 | w::WHILE_13..=w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::AT_27 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
                 self.statements()?;
             }
             self.p(w::RBRACE_34)?;
@@ -3554,13 +3554,13 @@ impl<L: Layout> P<'_, L> {
             }
             self.close()?;
             self.p_stored(w::MINUS_GT_44, k::MINUS_GT)?;
-            if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 | w::FOR_11 | w::WHILE_13 | w::DO_14 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+            if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::FOR_11 | w::WHILE_13..=w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::AT_27 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
                 self.statements()?;
             }
             self.p(w::RBRACE_34)?;
         } else if self.word() == w::LBRACE_33 {
             self.implied()?;
-            if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 | w::FOR_11 | w::WHILE_13 | w::DO_14 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+            if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::FOR_11 | w::WHILE_13..=w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::AT_27 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
                 self.statements()?;
             }
             self.p(w::RBRACE_34)?;
@@ -3574,7 +3574,7 @@ impl<L: Layout> P<'_, L> {
     /// `lambda_parameter`.
     fn lambda_parameter(&mut self) -> R {
         match self.word() {
-            _ if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77) => {
+            w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123 => {
                 self.variable_declaration()?;
             }
             w::LPAREN_35 => {
@@ -3632,7 +3632,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::VALUE_ARGUMENTS);
         self.p(w::LPAREN_35)?;
         if self.word() == w::COMMA_36 && matches!(self.word_at(self.i + 1), w::RPAREN_37 | w::GT_39 | w::RBRACK_30 | w::RBRACE_34 | w::MINUS_GT_44) {
-        } else if self.m_label_at() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_80)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::STAR_31 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+        } else if self.m_label_at() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_121)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || matches!(self.word(), w::THIS_9 | w::SUPER_10 | w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::NULL_26 | w::LBRACK_29 | w::STAR_31 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
             let flags = self.flags;
             self.flags = self.flags & !FLAG_NO_LAMBDA;
             self.value_argument()?;
@@ -3666,7 +3666,7 @@ impl<L: Layout> P<'_, L> {
         let level_asks = self.asks;
         self.asks = level_asks & 0x0 | 0x0;
         self.open(k::VALUE_ARGUMENT);
-        if self.m_label_at() || self.m_lab_lam() || self.pat_this_at_0_0(self.i, self.n) || self.pat_jump_at_0_0(self.i, self.n) || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.word() == w::LBRACE_33 && self.word_at(self.i + 1) == w::MINUS_GT_44 || self.pat_lam_params_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_80)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.word() == w::SUSPEND_76 && self.word_at(self.i + 1) == w::FUN_4 && self.word_at(self.i + 2) == w::LPAREN_35 || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 {
+        if self.m_label_at() || self.m_lab_lam() || self.pat_this_at_0_0(self.i, self.n) || self.pat_jump_at_0_0(self.i, self.n) || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.word() == w::LBRACE_33 && self.word_at(self.i + 1) == w::MINUS_GT_44 || self.pat_lam_params_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_121)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.word() == w::SUSPEND_97 && self.word_at(self.i + 1) == w::FUN_4 && self.word_at(self.i + 2) == w::LPAREN_35 || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 {
             self.r_expression()?;
         } else if self.m_named() {
             self.mark_named()?;
@@ -3678,7 +3678,7 @@ impl<L: Layout> P<'_, L> {
             self.implied()?;
             self.r_expression()?;
             self.close()?;
-        } else if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+        } else if matches!(self.word(), w::THIS_9 | w::SUPER_10 | w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::NULL_26 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
             self.r_expression()?;
         } else {
             return self.refuse();
@@ -3698,15 +3698,15 @@ impl<L: Layout> P<'_, L> {
         } else if self.m_as_kwn() {
             self.mark_as_kwn()?;
             self.kw_name()?;
-        } else if (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_80)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) {
+        } else if (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_121)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) {
             self.object_literal()?;
-        } else if (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.word() == w::SUSPEND_76 && self.word_at(self.i + 1) == w::FUN_4 && self.word_at(self.i + 2) == w::LPAREN_35 {
+        } else if (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.word() == w::SUSPEND_97 && self.word_at(self.i + 1) == w::FUN_4 && self.word_at(self.i + 2) == w::LPAREN_35 {
             self.anonymous_function()?;
         } else if self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 {
             self.callable_reference()?;
         } else {
             match self.word() {
-                _ if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77) => {
+                w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123 => {
                     self.name()?;
                 }
                 w::TRUE_24 | w::FALSE_25 => {
@@ -3733,7 +3733,7 @@ impl<L: Layout> P<'_, L> {
                     self.p(w::RPAREN_37)?;
                     self.close()?;
                 }
-                w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 => {
+                w::THROW_19..=w::BREAK_22 => {
                     self.jump_expression()?;
                 }
                 w::IF_15 => {
@@ -3800,18 +3800,18 @@ impl<L: Layout> P<'_, L> {
 
     /// `kw_name`.
     fn kw_name(&mut self) -> R {
-        self.tk_as(matches!(self.word(), w::FOR_11 | w::WHILE_13 | w::DO_14 | w::CLASS_3 | w::INTERFACE_5 | w::TYPEALIAS_2 | w::PACKAGE_73), ANON_2[self.word() as usize], 0)?;
+        self.tk_as(matches!(self.word(), w::FOR_11 | w::WHILE_13 | w::DO_14 | w::CLASS_3 | w::INTERFACE_5 | w::TYPEALIAS_2 | w::PACKAGE_71), ANON_2[self.word() as usize], 0)?;
         Ok(())
     }
 
     /// `anonymous_function`.
     fn anonymous_function(&mut self) -> R {
         self.open(k::ANONYMOUS_FUNCTION);
-        if self.word() == w::SUSPEND_76 {
+        if self.word() == w::SUSPEND_97 {
             self.bump_as(k::SUSPEND)?;
         }
         self.p_stored(w::FUN_4, k::FUN)?;
-        while SOFT_WORD[self.word() as usize] != 0 || self.word() == w::FILE_72 || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+        while matches!(self.word(), w::FILE_74 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
             self.type_name()?;
             if self.m_generic() || self.m_gen_nav() || self.word() == w::LT_38 {
                 self.type_arguments()?;
@@ -3901,7 +3901,7 @@ impl<L: Layout> P<'_, L> {
                     self.value_arguments()?;
                     self.ask_semi(true)?;
                     if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_lab_lam() || self.m_as_split() || self.m_is_split() {
-                    } else if self.flags & FLAG_NO_LAMBDA == 0 && self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_87 | w::MINUS_GT_44) && self.word() == w::LBRACE_33 {
+                    } else if self.flags & FLAG_NO_LAMBDA == 0 && self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_112 | w::MINUS_GT_44) && self.word() == w::LBRACE_33 {
                         self.annotated_lambda()?;
                     }
                 }
@@ -3934,14 +3934,14 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
             match self.word() {
-                w::L_119 => {
+                w::L_76 => {
                     self.wrap(k::LONG_LITERAL, 0)?;
                     self.implied()?;
                     self.close()?;
                 }
-                w::U_120 | w::U_121 | w::UL_122 | w::UL_123 => {
+                w::U_77..=w::UL_80 => {
                     self.wrap(k::UNSIGNED_LITERAL, 0)?;
-                    if matches!(self.word(), w::U_120 | w::U_121 | w::UL_122 | w::UL_123) {
+                    if (w::U_77..=w::UL_80).contains(&self.word()) {
                         self.implied()?;
                     } else {
                         return self.refuse();
@@ -4086,7 +4086,7 @@ impl<L: Layout> P<'_, L> {
                     self.tk_as(self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()), k::LABEL, 0)?;
                     self.ask_semi(true)?;
                     if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                    } else if self.m_label_at() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_80)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+                    } else if self.m_label_at() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_121)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || matches!(self.word(), w::THIS_9 | w::SUPER_10 | w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::NULL_26 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
                         self.r_expression()?;
                     } else {
                     }
@@ -4115,7 +4115,7 @@ impl<L: Layout> P<'_, L> {
                     self.bump_as(k::RETURN)?;
                     self.ask_semi(true)?;
                     if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                    } else if self.m_label_at() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_80)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+                    } else if self.m_label_at() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_121)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || matches!(self.word(), w::THIS_9 | w::SUPER_10 | w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::NULL_26 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
                         self.r_expression()?;
                     } else {
                     }
@@ -4143,11 +4143,11 @@ impl<L: Layout> P<'_, L> {
     fn try_expression(&mut self) -> R {
         self.open(k::TRY_EXPRESSION);
         self.p(w::TRY_18)?;
-        if !(self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_87 | w::MINUS_GT_44) && self.word() == w::LBRACE_33) {
+        if !(self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_112 | w::MINUS_GT_44) && self.word() == w::LBRACE_33) {
             return self.refuse();
         }
         self.p(w::LBRACE_33)?;
-        if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 | w::FOR_11 | w::WHILE_13 | w::DO_14 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+        if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::FOR_11 | w::WHILE_13..=w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::AT_27 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
             self.statements()?;
         }
         self.p(w::RBRACE_34)?;
@@ -4155,7 +4155,7 @@ impl<L: Layout> P<'_, L> {
             self.ask_semi(true)?;
             if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                 break;
-            } else if self.word() == w::CATCH_86 {
+            } else if self.word() == w::CATCH_111 {
                 self.catch_block()?;
             } else {
                 break;
@@ -4163,14 +4163,14 @@ impl<L: Layout> P<'_, L> {
         }
         self.ask_semi(true)?;
         if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::FINALLY_87 {
+            if self.word() == w::FINALLY_112 {
                 self.open(k::FINALLY_BLOCK);
                 self.implied()?;
-                if !(self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_87 | w::MINUS_GT_44) && self.word() == w::LBRACE_33) {
+                if !(self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_112 | w::MINUS_GT_44) && self.word() == w::LBRACE_33) {
                     return self.refuse();
                 }
                 self.p(w::LBRACE_33)?;
-                if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 | w::FOR_11 | w::WHILE_13 | w::DO_14 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+                if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::FOR_11 | w::WHILE_13..=w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::AT_27 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
                     self.statements()?;
                 }
                 self.p(w::RBRACE_34)?;
@@ -4184,7 +4184,7 @@ impl<L: Layout> P<'_, L> {
     /// `catch_block`.
     fn catch_block(&mut self) -> R {
         self.open(k::CATCH_BLOCK);
-        self.p(w::CATCH_86)?;
+        self.p(w::CATCH_111)?;
         self.p(w::LPAREN_35)?;
         self.name()?;
         self.p(w::COLON_28)?;
@@ -4193,11 +4193,11 @@ impl<L: Layout> P<'_, L> {
         self.r_type()?;
         self.asks = asks;
         self.p(w::RPAREN_37)?;
-        if !(self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_87 | w::MINUS_GT_44) && self.word() == w::LBRACE_33) {
+        if !(self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_112 | w::MINUS_GT_44) && self.word() == w::LBRACE_33) {
             return self.refuse();
         }
         self.p(w::LBRACE_33)?;
-        if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 | w::FOR_11 | w::WHILE_13 | w::DO_14 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+        if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::FOR_11 | w::WHILE_13..=w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::AT_27 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
             self.statements()?;
         }
         self.p(w::RBRACE_34)?;
@@ -4225,13 +4225,13 @@ impl<L: Layout> P<'_, L> {
             self.asks = asks;
             self.p(w::RPAREN_37)?;
             self.close()?;
-            if !(self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_87 | w::MINUS_GT_44) && self.word() == w::LBRACE_33) {
+            if !(self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_37 | w::ELSE_16 | w::DO_14 | w::TRY_18 | w::FINALLY_112 | w::MINUS_GT_44) && self.word() == w::LBRACE_33) {
                 return self.refuse();
             }
         }
         self.p(w::LBRACE_33)?;
         loop {
-            if self.m_label_at() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_80)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || self.pat_w_guard_0_0(self.i, self.n) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::IN_12 | w::IS_23 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29 | w::ELSE_16) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+            if self.m_label_at() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_121)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || self.pat_w_guard_0_0(self.i, self.n) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || matches!(self.word(), w::THIS_9 | w::SUPER_10 | w::IN_12 | w::IF_15..=w::NULL_26 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
                 self.when_entry()?;
             } else {
                 break;
@@ -4245,8 +4245,8 @@ impl<L: Layout> P<'_, L> {
     /// `when_entry`.
     fn when_entry(&mut self) -> R {
         self.open(k::WHEN_ENTRY);
-        if self.m_label_at() || self.m_lab_lam() || self.pat_this_at_0_0(self.i, self.n) || self.pat_jump_at_0_0(self.i, self.n) || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.word() == w::LBRACE_33 && self.word_at(self.i + 1) == w::MINUS_GT_44 || self.pat_lam_params_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_80)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || !self.pat_w_guard_0_0(self.i, self.n) && ((self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::IN_12 | w::IS_23 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29 | w::ELSE_16) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE)) {
-            if self.m_label_at() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_80)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::IN_12 | w::IS_23 | w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || !(self.word() == w::ELSE_16) && (self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE)) {
+        if self.m_label_at() || self.m_lab_lam() || self.pat_this_at_0_0(self.i, self.n) || self.pat_jump_at_0_0(self.i, self.n) || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.word() == w::LBRACE_33 && self.word_at(self.i + 1) == w::MINUS_GT_44 || self.pat_lam_params_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_121)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || !self.pat_w_guard_0_0(self.i, self.n) && ((self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || matches!(self.word(), w::THIS_9 | w::SUPER_10 | w::IN_12 | w::IF_15..=w::NULL_26 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE)) {
+            if self.m_label_at() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_121)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 || self.m_named() || matches!(self.word(), w::THIS_9 | w::SUPER_10 | w::IN_12 | w::IF_15 | w::WHEN_17..=w::NULL_26 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || !(self.word() == w::ELSE_16) && (self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE)) {
                 self.list_1(Self::when_condition)?;
                 if self.word() == w::COMMA_36 && matches!(self.word_at(self.i + 1), w::RPAREN_37 | w::GT_39 | w::RBRACK_30 | w::RBRACE_34 | w::MINUS_GT_44) {
                     self.when_trail()?;
@@ -4319,7 +4319,7 @@ impl<L: Layout> P<'_, L> {
         let level_asks = self.asks;
         self.asks = level_asks & 0x0 | 0x0;
         self.open(k::WHEN_CONDITION);
-        if self.m_label_at() || self.m_lab_lam() || self.pat_this_at_0_0(self.i, self.n) || self.pat_jump_at_0_0(self.i, self.n) || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.word() == w::LBRACE_33 && self.word_at(self.i + 1) == w::MINUS_GT_44 || self.pat_lam_params_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_80)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.word() == w::SUSPEND_76 && self.word_at(self.i + 1) == w::FUN_4 && self.word_at(self.i + 2) == w::LPAREN_35 || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 {
+        if self.m_label_at() || self.m_lab_lam() || self.pat_this_at_0_0(self.i, self.n) || self.pat_jump_at_0_0(self.i, self.n) || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.word() == w::LBRACE_33 && self.word_at(self.i + 1) == w::MINUS_GT_44 || self.pat_lam_params_0_0(self.i, self.n) || self.m_ann_expr() || (self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_121)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.word() == w::SUSPEND_97 && self.word_at(self.i + 1) == w::FUN_4 && self.word_at(self.i + 2) == w::LPAREN_35 || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51 {
             self.r_expression()?;
         } else if self.m_named() {
             self.mark_named()?;
@@ -4334,7 +4334,7 @@ impl<L: Layout> P<'_, L> {
             self.bump_as(k::IS)?;
             self.r_type()?;
             self.close()?;
-        } else if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+        } else if matches!(self.word(), w::THIS_9 | w::SUPER_10 | w::IF_15 | w::WHEN_17..=w::BREAK_22 | w::TRUE_24..=w::NULL_26 | w::LBRACK_29 | w::LBRACE_33 | w::LPAREN_35 | w::BANG_48 | w::COLON_COLON_51 | w::PLUS_63 | w::MINUS_64 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
             self.r_expression()?;
         } else {
             return self.refuse();
@@ -4431,13 +4431,13 @@ impl<L: Layout> P<'_, L> {
                     self.wrap(k::CALL_EXPRESSION, 0)?;
                     self.generic_suffix()?;
                     self.close()?;
-                    self.part_2()?;
+                    self.part_0()?;
                 } else if self.m_gen_nav() {
                     self.mark_gen_nav()?;
                     self.wrap(k::NAVIGATION_EXPRESSION, 0)?;
                     self.generic_nav()?;
                     self.close()?;
-                    self.part_2()?;
+                    self.part_0()?;
                 } else {
                     return self.refuse();
                 }
@@ -4464,7 +4464,7 @@ impl<L: Layout> P<'_, L> {
                         self.range_operand()?;
                         self.close()?;
                     }
-                    _ if (INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77)) && 7 > min => {
+                    w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123 if 7 > min => {
                         self.infix_op()?;
                     }
                     w::QUEST_COLON_47 if 6 > min => {
@@ -4479,9 +4479,9 @@ impl<L: Layout> P<'_, L> {
                     w::LT_38 | w::GT_39 | w::LT_EQ_61 if 4 > min => {
                         self.cmp_op()?;
                     }
-                    w::EQ_EQ_59 | w::BANG_EQ_57 | w::EQ_EQ_EQ_60 | w::BANG_EQ_EQ_58 if 3 > min => {
+                    w::BANG_EQ_57..=w::EQ_EQ_EQ_60 if 3 > min => {
                         self.wrap(k::EQUALITY_EXPRESSION, 0)?;
-                        self.tk_as(matches!(self.word(), w::EQ_EQ_59 | w::BANG_EQ_57 | w::EQ_EQ_EQ_60 | w::BANG_EQ_EQ_58), ANON[self.word() as usize], 0)?;
+                        self.tk_as((w::BANG_EQ_57..=w::EQ_EQ_EQ_60).contains(&self.word()), ANON[self.word() as usize], 0)?;
                         self.eq_operand()?;
                         self.close()?;
                     }
@@ -4510,23 +4510,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// The loop the parser reads in more than one place (decision 0685 step 4).
-    fn member_ends(&mut self) -> R {
-        self.member_ends_1()?;
-        self.p(w::RBRACE_34)?;
-        Ok(())
-    }
-
-    /// The loop the parser reads in more than one place (decision 0685 step 4).
-    fn member_ends_1(&mut self) -> R {
-        while (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) || self.word() == w::ENUM_75 && self.word_at(self.i + 1) == w::CLASS_3 || self.m_acc() || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2 | w::COMPANION_80 | w::INIT_79 | w::CONSTRUCTOR_83) {
-            self.class_member()?;
-            self.member_end()?;
-        }
-        Ok(())
-    }
-
-    /// The loop the parser reads in more than one place (decision 0685 step 4).
-    fn part_2(&mut self) -> R {
+    fn part_0(&mut self) -> R {
         loop {
             self.ask_semi(true)?;
             if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
@@ -4539,7 +4523,7 @@ impl<L: Layout> P<'_, L> {
                 self.postfix_op()?;
             } else {
                 match self.word() {
-                    w::LPAREN_35 | w::DOT_40 | w::COLON_COLON_51 | w::LBRACK_29 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::BANG_BANG_69 => {
+                    w::LBRACK_29 | w::LPAREN_35 | w::DOT_40 | w::COLON_COLON_51 | w::PLUS_PLUS_67..=w::BANG_BANG_69 => {
                         self.postfix_op()?;
                     }
                     w::LBRACE_33 if self.flags & FLAG_NO_LAMBDA == 0 => {
@@ -4550,6 +4534,22 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// The loop the parser reads in more than one place (decision 0685 step 4).
+    fn member_ends(&mut self) -> R {
+        self.member_ends_2()?;
+        self.p(w::RBRACE_34)?;
+        Ok(())
+    }
+
+    /// The loop the parser reads in more than one place (decision 0685 step 4).
+    fn member_ends_2(&mut self) -> R {
+        while (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::SEALED_81..=w::ACTUAL_106 | w::GET_119..=w::ENUM_123) || self.word() == w::ENUM_123 && self.word_at(self.i + 1) == w::CLASS_3 || self.m_acc() || matches!(self.word(), w::TYPEALIAS_2..=w::OBJECT_8 | w::AT_27 | w::INIT_108 | w::COMPANION_121 | w::CONSTRUCTOR_122) {
+            self.class_member()?;
+            self.member_end()?;
         }
         Ok(())
     }
@@ -5003,7 +5003,7 @@ impl<L: Layout> P<'_, L> {
     /// Mark `as_kwn` holds at the token, not taken there; once a token (`held`).
     #[inline]
     fn m_as_kwn(&mut self) -> bool {
-        matches!(self.word(), w::CLASS_3 | w::DO_14 | w::FOR_11 | w::INTERFACE_5 | w::PACKAGE_73 | w::TYPEALIAS_2 | w::WHILE_13) && self.taken >> 21 & 1 == 0 && self.held(21, Self::h_as_kwn)
+        matches!(self.word(), w::CLASS_3 | w::DO_14 | w::FOR_11 | w::INTERFACE_5 | w::PACKAGE_71 | w::TYPEALIAS_2 | w::WHILE_13) && self.taken >> 21 & 1 == 0 && self.held(21, Self::h_as_kwn)
     }
 
     #[inline]
@@ -5216,7 +5216,7 @@ impl<L: Layout> P<'_, L> {
 
     #[inline]
     fn h_acc(&self) -> bool {
-        (((self.pat_acc_0_0(self.i, self.n)) || self.next_acc_0_0_0(self.i, self.n) || self.next_acc_0_1_0(self.i, self.n) || self.next_acc_0_2_0(self.i, self.n) || self.next_acc_0_3_0(self.i, self.n))) || (((self.pat_acc_1_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && matches!(self.word_at(p), w::PRIVATE_94 | w::PROTECTED_96 | w::INTERNAL_95 | w::PUBLIC_93) && self.bit_at(p, 3) }) || self.next_acc_1_0_0(self.i, self.n) || self.next_acc_1_1_0(self.i, self.n) || self.next_acc_1_2_0(self.i, self.n) || self.next_acc_1_3_0(self.i, self.n))) || (((self.pat_acc_2_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::RPAREN_37 || self.word_at(p) == w::GT_39 || self.kind_at(p) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(p)) || self.kind_at(p) == t::BACKTICK_NAME) }) || self.next_acc_2_0_0(self.i, self.n) || self.next_acc_2_1_0(self.i, self.n) || self.next_acc_2_2_0(self.i, self.n) || self.next_acc_2_3_0(self.i, self.n)))
+        (((self.pat_acc_0_0(self.i, self.n)) || self.next_acc_0_0_0(self.i, self.n) || self.next_acc_0_1_0(self.i, self.n) || self.next_acc_0_2_0(self.i, self.n) || self.next_acc_0_3_0(self.i, self.n))) || (((self.pat_acc_1_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && matches!(self.word_at(p), w::PRIVATE_89 | w::PROTECTED_91 | w::INTERNAL_90 | w::PUBLIC_88) && self.bit_at(p, 3) }) || self.next_acc_1_0_0(self.i, self.n) || self.next_acc_1_1_0(self.i, self.n) || self.next_acc_1_2_0(self.i, self.n) || self.next_acc_1_3_0(self.i, self.n))) || (((self.pat_acc_2_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::RPAREN_37 || self.word_at(p) == w::GT_39 || self.kind_at(p) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(p)) || self.kind_at(p) == t::BACKTICK_NAME) }) || self.next_acc_2_0_0(self.i, self.n) || self.next_acc_2_1_0(self.i, self.n) || self.next_acc_2_2_0(self.i, self.n) || self.next_acc_2_3_0(self.i, self.n)))
     }
 
     /// Mark `acc` taken: it and the marks before it passed at this token.
@@ -5263,19 +5263,19 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_head_ctor_0_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CONSTRUCTOR_83 && true
+        self.word_at(j) == w::CONSTRUCTOR_122 && true
     }
 
     #[allow(unused_variables)]
     fn next_head_ctor_0_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        matches!(self.word_at(j), w::PUBLIC_93 | w::PRIVATE_94 | w::INTERNAL_95 | w::PROTECTED_96) && self.next_head_ctor_0_1_1(j + 1, j)
+        matches!(self.word_at(j), w::PUBLIC_88 | w::PRIVATE_89 | w::INTERNAL_90 | w::PROTECTED_91) && self.next_head_ctor_0_1_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn next_head_ctor_0_1_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CONSTRUCTOR_83 && !self.bit_at(j, 3) && true
+        self.word_at(j) == w::CONSTRUCTOR_122 && !self.bit_at(j, 3) && true
     }
 
     #[allow(unused_variables)]
@@ -5292,7 +5292,7 @@ impl<L: Layout> P<'_, L> {
             if depth.iter().all(|&d| d == 0) && true && self.next_head_ctor_0_2_2(j, prev) {
                 return true;
             }
-            if j >= self.n || !(depth[0] > 0 || (j < self.n && !matches!(self.word_at(j), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::LBRACE_33 | w::RBRACE_34 | w::SEMI_41 | w::COLON_28 | w::EQ_32 | w::CONSTRUCTOR_83 | w::PUBLIC_93 | w::PRIVATE_94 | w::INTERNAL_95 | w::PROTECTED_96))) {
+            if j >= self.n || !(depth[0] > 0 || (j < self.n && !matches!(self.word_at(j), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::LBRACE_33 | w::RBRACE_34 | w::SEMI_41 | w::COLON_28 | w::EQ_32 | w::CONSTRUCTOR_122 | w::PUBLIC_88 | w::PRIVATE_89 | w::INTERNAL_90 | w::PROTECTED_91))) {
                 return false;
             }
             if self.word_at(j) == w::LPAREN_35 {
@@ -5311,7 +5311,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_head_ctor_0_2_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CONSTRUCTOR_83 && true
+        self.word_at(j) == w::CONSTRUCTOR_122 && true
     }
 
     #[allow(unused_variables)]
@@ -5325,10 +5325,10 @@ impl<L: Layout> P<'_, L> {
         let (mut j, mut prev) = (j, prev);
         let mut depth = [0u32; 1];
         loop {
-            if depth.iter().all(|&d| d == 0) && prev < self.n && matches!(self.word_at(prev), w::PUBLIC_93 | w::PRIVATE_94 | w::INTERNAL_95 | w::PROTECTED_96) && self.next_head_ctor_0_3_2(j, prev) {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && matches!(self.word_at(prev), w::PUBLIC_88 | w::PRIVATE_89 | w::INTERNAL_90 | w::PROTECTED_91) && self.next_head_ctor_0_3_2(j, prev) {
                 return true;
             }
-            if j >= self.n || !(depth[0] > 0 || (j < self.n && !matches!(self.word_at(j), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::LBRACE_33 | w::RBRACE_34 | w::SEMI_41 | w::COLON_28 | w::EQ_32 | w::CONSTRUCTOR_83))) {
+            if j >= self.n || !(depth[0] > 0 || (j < self.n && !matches!(self.word_at(j), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::LBRACE_33 | w::RBRACE_34 | w::SEMI_41 | w::COLON_28 | w::EQ_32 | w::CONSTRUCTOR_122))) {
                 return false;
             }
             if self.word_at(j) == w::LPAREN_35 {
@@ -5347,7 +5347,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_head_ctor_0_3_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CONSTRUCTOR_83 && !self.bit_at(j, 3) && true
+        self.word_at(j) == w::CONSTRUCTOR_122 && !self.bit_at(j, 3) && true
     }
 
     #[allow(unused_variables)]
@@ -5363,13 +5363,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_by_lf_0_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::BY_77 && true
+        self.word_at(j) == w::BY_73 && true
     }
 
     #[allow(unused_variables)]
     fn next_ann_lf_0_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        matches!(self.word_at(j), w::SEMI_41 | w::RBRACE_34 | w::COMMA_36 | w::DOT_40 | w::DOT_DOT_45 | w::DOT_DOT_LT_46 | w::COLON_28 | w::COLON_COLON_51 | w::STAR_31 | w::STAR_EQ_54 | w::PERCENT_66 | w::PERCENT_EQ_56 | w::GT_39 | w::LT_38 | w::LT_EQ_61 | w::EQ_32 | w::EQ_EQ_59 | w::EQ_EQ_EQ_60 | w::LBRACE_33 | w::LBRACK_29 | w::LPAREN_35 | w::QUEST_43 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::SLASH_65 | w::SLASH_EQ_55 | w::BANG_EQ_57 | w::BANG_EQ_EQ_58 | w::AS_1 | w::WHERE_78 | w::CATCH_86 | w::FINALLY_87 | w::BY_77) && true
+        matches!(self.word_at(j), w::SEMI_41 | w::RBRACE_34 | w::COMMA_36 | w::DOT_40 | w::DOT_DOT_45 | w::DOT_DOT_LT_46 | w::COLON_28 | w::COLON_COLON_51 | w::STAR_31 | w::STAR_EQ_54 | w::PERCENT_66 | w::PERCENT_EQ_56 | w::GT_39 | w::LT_38 | w::LT_EQ_61 | w::EQ_32 | w::EQ_EQ_59 | w::EQ_EQ_EQ_60 | w::LBRACE_33 | w::LBRACK_29 | w::LPAREN_35 | w::QUEST_43 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::SLASH_65 | w::SLASH_EQ_55 | w::BANG_EQ_57 | w::BANG_EQ_EQ_58 | w::AS_1 | w::WHERE_110 | w::CATCH_111 | w::FINALLY_112 | w::BY_73) && true
     }
 
     #[allow(unused_variables)]
@@ -5399,7 +5399,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_semi_0_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        matches!(self.word_at(j), w::SEMI_41 | w::RBRACE_34 | w::COMMA_36 | w::DOT_40 | w::DOT_DOT_45 | w::DOT_DOT_LT_46 | w::COLON_28 | w::COLON_COLON_51 | w::STAR_31 | w::STAR_EQ_54 | w::PERCENT_66 | w::PERCENT_EQ_56 | w::GT_39 | w::LT_38 | w::LT_EQ_61 | w::EQ_32 | w::EQ_EQ_59 | w::EQ_EQ_EQ_60 | w::LBRACE_33 | w::LBRACK_29 | w::LPAREN_35 | w::QUEST_43 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::SLASH_65 | w::SLASH_EQ_55 | w::BANG_EQ_57 | w::BANG_EQ_EQ_58 | w::AS_1 | w::WHERE_78 | w::CATCH_86 | w::FINALLY_87) && true
+        matches!(self.word_at(j), w::SEMI_41 | w::RBRACE_34 | w::COMMA_36 | w::DOT_40 | w::DOT_DOT_45 | w::DOT_DOT_LT_46 | w::COLON_28 | w::COLON_COLON_51 | w::STAR_31 | w::STAR_EQ_54 | w::PERCENT_66 | w::PERCENT_EQ_56 | w::GT_39 | w::LT_38 | w::LT_EQ_61 | w::EQ_32 | w::EQ_EQ_59 | w::EQ_EQ_EQ_60 | w::LBRACE_33 | w::LBRACK_29 | w::LPAREN_35 | w::QUEST_43 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::SLASH_65 | w::SLASH_EQ_55 | w::BANG_EQ_57 | w::BANG_EQ_EQ_58 | w::AS_1 | w::WHERE_110 | w::CATCH_111 | w::FINALLY_112) && true
     }
 
     #[allow(unused_variables)]
@@ -5436,7 +5436,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn drops_semi_1(&self, here: usize) -> bool {
         ({ match self.back(here, 1) { Some((x, j)) => ((x && extra_kind(self.xs[j].code) == k::MULTILINE_COMMENT)), None => false } })
-            && ({ match self.ahead(here, 0) { Some((x, j)) => ((!x && self.recs[j].code >> 8 & 0xff == w::AS_1) || (!x && self.recs[j].code >> 8 & 0xff == w::WHERE_78)), None => false } })
+            && ({ match self.ahead(here, 0) { Some((x, j)) => ((!x && self.recs[j].code >> 8 & 0xff == w::AS_1) || (!x && self.recs[j].code >> 8 & 0xff == w::WHERE_110)), None => false } })
     }
 
     #[allow(unused_variables)]
@@ -5481,7 +5481,7 @@ impl<L: Layout> P<'_, L> {
     fn loses_semi_1(&self, here: usize) -> bool {
         ({ match self.back(here, 2) { Some((x, j)) => !((!x && self.recs[j].code >> 8 & 0xff == w::SEMI_41)), None => true } })
             && ({ match self.back(here, 1) { Some((x, j)) => ((x && extra_kind(self.xs[j].code) == k::MULTILINE_COMMENT)) && self.rec_marks_hold(x, j, 1 << 3), None => false } })
-            && ({ match self.ahead(here, 0) { Some((x, j)) => ((!x && self.recs[j].code >> 8 & 0xff == w::BANG_EQ_57) || (!x && self.recs[j].code >> 8 & 0xff == w::BANG_EQ_EQ_58) || (!x && self.recs[j].code >> 8 & 0xff == w::AS_1) || (!x && self.recs[j].code >> 8 & 0xff == w::WHERE_78) || (!x && self.recs[j].code >> 8 & 0xff == w::BY_77)), None => false } })
+            && ({ match self.ahead(here, 0) { Some((x, j)) => ((!x && self.recs[j].code >> 8 & 0xff == w::BANG_EQ_57) || (!x && self.recs[j].code >> 8 & 0xff == w::BANG_EQ_EQ_58) || (!x && self.recs[j].code >> 8 & 0xff == w::AS_1) || (!x && self.recs[j].code >> 8 & 0xff == w::WHERE_110) || (!x && self.recs[j].code >> 8 & 0xff == w::BY_73)), None => false } })
     }
 
     #[allow(unused_variables)]
@@ -5539,7 +5539,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_open_0_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_open_0_1_1(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_open_0_1_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -5575,7 +5575,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_open_0_2_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_open_0_2_1(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_open_0_2_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -5641,7 +5641,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_open_0_3_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_open_0_3_1(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_open_0_3_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -5689,7 +5689,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_open_0_4_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_open_0_4_1(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_open_0_4_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -5769,7 +5769,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_open_0_5_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_open_0_5_1(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_open_0_5_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -5909,7 +5909,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_open_0_6_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_open_0_6_1(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_open_0_6_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6541,7 +6541,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_open_0_13_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CATCH_86 && self.next_as_open_0_13_5(j + 1, j)
+        self.word_at(j) == w::CATCH_111 && self.next_as_open_0_13_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6667,7 +6667,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_open_0_14_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::FINALLY_87 && self.next_as_open_0_14_5(j + 1, j)
+        self.word_at(j) == w::FINALLY_112 && self.next_as_open_0_14_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6757,7 +6757,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_open_0_15_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CATCH_86 && self.next_as_open_0_15_5(j + 1, j)
+        self.word_at(j) == w::CATCH_111 && self.next_as_open_0_15_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6835,7 +6835,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_open_0_15_11(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::FINALLY_87 && self.next_as_open_0_15_12(j + 1, j)
+        self.word_at(j) == w::FINALLY_112 && self.next_as_open_0_15_12(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -7059,7 +7059,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_0_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_0_0_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_0_0_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -7129,7 +7129,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_1_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_0_1_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_0_1_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -7303,7 +7303,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_2_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_0_2_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_0_2_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -7447,7 +7447,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_3_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_0_3_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_0_3_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -7725,7 +7725,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_4_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_0_4_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_0_4_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -7973,7 +7973,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_5_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_0_5_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_0_5_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -8563,7 +8563,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_9_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_0_9_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_0_9_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -8593,7 +8593,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_9_6(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -8633,7 +8633,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_10_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_0_10_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_0_10_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -8767,7 +8767,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_10_13(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -8807,7 +8807,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_11_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_0_11_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_0_11_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -8911,7 +8911,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_11_11(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -8951,7 +8951,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_12_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_0_12_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_0_12_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9189,7 +9189,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_12_20(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -9229,7 +9229,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_13_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_0_13_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_0_13_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9437,7 +9437,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_13_18(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -9477,7 +9477,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_14_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_0_14_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_0_14_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9685,7 +9685,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_14_18(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -9797,7 +9797,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_15_10(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -9951,7 +9951,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_16_14(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -10027,7 +10027,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_17_7(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -10067,7 +10067,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_18_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_split_0_18_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_split_0_18_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -10137,7 +10137,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_19_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_split_0_19_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_split_0_19_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -10237,7 +10237,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_20_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_split_0_20_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_split_0_20_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -10319,7 +10319,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_21_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_split_0_21_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_split_0_21_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -10433,7 +10433,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_22_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_split_0_22_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_split_0_22_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -10607,7 +10607,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_23_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_split_0_23_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_split_0_23_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -11477,7 +11477,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_30_8(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CATCH_86 && self.next_as_split_0_30_9(j + 1, j)
+        self.word_at(j) == w::CATCH_111 && self.next_as_split_0_30_9(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -11637,7 +11637,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_31_8(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::FINALLY_87 && self.next_as_split_0_31_9(j + 1, j)
+        self.word_at(j) == w::FINALLY_112 && self.next_as_split_0_31_9(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -11761,7 +11761,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_32_8(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CATCH_86 && self.next_as_split_0_32_9(j + 1, j)
+        self.word_at(j) == w::CATCH_111 && self.next_as_split_0_32_9(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -11839,7 +11839,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_0_32_15(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::FINALLY_87 && self.next_as_split_0_32_16(j + 1, j)
+        self.word_at(j) == w::FINALLY_112 && self.next_as_split_0_32_16(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -11973,7 +11973,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_0_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_1_0_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_1_0_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -12049,7 +12049,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_1_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_1_1_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_1_1_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -12229,7 +12229,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_2_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_1_2_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_1_2_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -12379,7 +12379,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_3_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_1_3_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_1_3_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -12663,7 +12663,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_4_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_1_4_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_1_4_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -12917,7 +12917,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_5_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_1_5_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_1_5_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -13531,7 +13531,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_9_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_1_9_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_1_9_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -13561,7 +13561,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_9_7(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -13607,7 +13607,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_10_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_1_10_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_1_10_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -13741,7 +13741,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_10_14(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -13787,7 +13787,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_11_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_1_11_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_1_11_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -13891,7 +13891,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_11_12(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -13937,7 +13937,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_12_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_1_12_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_1_12_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -14175,7 +14175,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_12_21(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -14221,7 +14221,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_13_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_1_13_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_1_13_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -14429,7 +14429,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_13_19(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -14475,7 +14475,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_14_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_as_split_1_14_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_as_split_1_14_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -14683,7 +14683,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_14_19(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -14801,7 +14801,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_15_11(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -14961,7 +14961,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_16_15(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -15043,7 +15043,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_17_8(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -15089,7 +15089,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_18_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_split_1_18_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_split_1_18_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -15165,7 +15165,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_19_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_split_1_19_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_split_1_19_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -15271,7 +15271,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_20_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_split_1_20_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_split_1_20_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -15359,7 +15359,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_21_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_split_1_21_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_split_1_21_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -15479,7 +15479,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_22_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_split_1_22_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_split_1_22_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -15659,7 +15659,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_23_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_split_1_23_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_split_1_23_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -16571,7 +16571,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_30_9(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CATCH_86 && self.next_as_split_1_30_10(j + 1, j)
+        self.word_at(j) == w::CATCH_111 && self.next_as_split_1_30_10(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -16737,7 +16737,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_31_9(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::FINALLY_87 && self.next_as_split_1_31_10(j + 1, j)
+        self.word_at(j) == w::FINALLY_112 && self.next_as_split_1_31_10(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -16867,7 +16867,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_32_9(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CATCH_86 && self.next_as_split_1_32_10(j + 1, j)
+        self.word_at(j) == w::CATCH_111 && self.next_as_split_1_32_10(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -16945,7 +16945,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_split_1_32_16(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::FINALLY_87 && self.next_as_split_1_32_17(j + 1, j)
+        self.word_at(j) == w::FINALLY_112 && self.next_as_split_1_32_17(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -17067,7 +17067,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_0_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_0_0_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_0_0_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -17137,7 +17137,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_1_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_0_1_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_0_1_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -17311,7 +17311,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_2_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_0_2_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_0_2_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -17455,7 +17455,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_3_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_0_3_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_0_3_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -17733,7 +17733,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_4_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_0_4_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_0_4_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -17981,7 +17981,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_5_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_0_5_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_0_5_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -18571,7 +18571,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_9_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_0_9_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_0_9_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -18601,7 +18601,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_9_6(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -18641,7 +18641,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_10_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_0_10_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_0_10_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -18775,7 +18775,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_10_13(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -18815,7 +18815,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_11_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_0_11_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_0_11_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -18919,7 +18919,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_11_11(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -18959,7 +18959,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_12_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_0_12_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_0_12_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -19197,7 +19197,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_12_20(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -19237,7 +19237,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_13_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_0_13_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_0_13_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -19445,7 +19445,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_13_18(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -19485,7 +19485,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_14_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_0_14_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_0_14_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -19693,7 +19693,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_14_18(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -19805,7 +19805,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_15_10(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -19959,7 +19959,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_16_14(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -20035,7 +20035,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_17_7(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -20075,7 +20075,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_18_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_is_split_0_18_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_is_split_0_18_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -20145,7 +20145,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_19_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_is_split_0_19_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_is_split_0_19_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -20245,7 +20245,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_20_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_is_split_0_20_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_is_split_0_20_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -20327,7 +20327,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_21_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_is_split_0_21_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_is_split_0_21_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -20441,7 +20441,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_22_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_is_split_0_22_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_is_split_0_22_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -20615,7 +20615,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_23_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_is_split_0_23_5(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_is_split_0_23_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -21485,7 +21485,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_30_8(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CATCH_86 && self.next_is_split_0_30_9(j + 1, j)
+        self.word_at(j) == w::CATCH_111 && self.next_is_split_0_30_9(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -21645,7 +21645,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_31_8(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::FINALLY_87 && self.next_is_split_0_31_9(j + 1, j)
+        self.word_at(j) == w::FINALLY_112 && self.next_is_split_0_31_9(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -21769,7 +21769,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_32_8(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CATCH_86 && self.next_is_split_0_32_9(j + 1, j)
+        self.word_at(j) == w::CATCH_111 && self.next_is_split_0_32_9(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -21847,7 +21847,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_0_32_15(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::FINALLY_87 && self.next_is_split_0_32_16(j + 1, j)
+        self.word_at(j) == w::FINALLY_112 && self.next_is_split_0_32_16(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -21981,7 +21981,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_0_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_1_0_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_1_0_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -22057,7 +22057,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_1_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_1_1_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_1_1_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -22237,7 +22237,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_2_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_1_2_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_1_2_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -22387,7 +22387,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_3_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_1_3_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_1_3_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -22671,7 +22671,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_4_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_1_4_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_1_4_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -22925,7 +22925,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_5_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_1_5_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_1_5_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -23539,7 +23539,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_9_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_1_9_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_1_9_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -23569,7 +23569,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_9_7(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -23615,7 +23615,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_10_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_1_10_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_1_10_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -23749,7 +23749,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_10_14(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -23795,7 +23795,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_11_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_1_11_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_1_11_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -23899,7 +23899,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_11_12(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -23945,7 +23945,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_12_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_1_12_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_1_12_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -24183,7 +24183,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_12_21(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -24229,7 +24229,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_13_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_1_13_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_1_13_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -24437,7 +24437,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_13_19(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -24483,7 +24483,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_14_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 5) && self.next_is_split_1_14_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 5) && self.next_is_split_1_14_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -24691,7 +24691,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_14_19(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -24809,7 +24809,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_15_11(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -24969,7 +24969,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_16_15(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -25051,7 +25051,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_17_8(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.bit_at(j, 7) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::AT_27 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.bit_at(j, 7) && true
     }
 
     #[allow(unused_variables)]
@@ -25097,7 +25097,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_18_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_is_split_1_18_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_is_split_1_18_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -25173,7 +25173,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_19_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_is_split_1_19_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_is_split_1_19_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -25279,7 +25279,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_20_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_is_split_1_20_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_is_split_1_20_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -25367,7 +25367,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_21_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_is_split_1_21_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_is_split_1_21_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -25487,7 +25487,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_22_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_is_split_1_22_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_is_split_1_22_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -25667,7 +25667,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_23_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_is_split_1_23_6(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_is_split_1_23_6(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -26579,7 +26579,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_30_9(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CATCH_86 && self.next_is_split_1_30_10(j + 1, j)
+        self.word_at(j) == w::CATCH_111 && self.next_is_split_1_30_10(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -26745,7 +26745,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_31_9(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::FINALLY_87 && self.next_is_split_1_31_10(j + 1, j)
+        self.word_at(j) == w::FINALLY_112 && self.next_is_split_1_31_10(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -26875,7 +26875,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_32_9(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CATCH_86 && self.next_is_split_1_32_10(j + 1, j)
+        self.word_at(j) == w::CATCH_111 && self.next_is_split_1_32_10(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -26953,7 +26953,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_is_split_1_32_16(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::FINALLY_87 && self.next_is_split_1_32_17(j + 1, j)
+        self.word_at(j) == w::FINALLY_112 && self.next_is_split_1_32_17(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -27013,13 +27013,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_as_kwn_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        matches!(self.word_at(j), w::FOR_11 | w::WHILE_13 | w::DO_14 | w::CLASS_3 | w::INTERFACE_5 | w::TYPEALIAS_2 | w::PACKAGE_73) && self.bit_at(j, 5) && true
+        matches!(self.word_at(j), w::FOR_11 | w::WHILE_13 | w::DO_14 | w::CLASS_3 | w::INTERFACE_5 | w::TYPEALIAS_2 | w::PACKAGE_71) && self.bit_at(j, 5) && true
     }
 
     #[allow(unused_variables)]
     fn next_as_kwn_0_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_kwn_0_0_1(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_kwn_0_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -27055,7 +27055,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_kwn_0_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_kwn_0_1_1(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_kwn_0_1_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -27121,7 +27121,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_kwn_0_2_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_kwn_0_2_1(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_kwn_0_2_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -27169,7 +27169,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_kwn_0_3_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_kwn_0_3_1(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_kwn_0_3_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -27249,7 +27249,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_kwn_0_4_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_kwn_0_4_1(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_kwn_0_4_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -27389,7 +27389,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_kwn_0_5_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73) && self.next_as_kwn_0_5_1(j + 1, j)
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71) && self.next_as_kwn_0_5_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -28021,7 +28021,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_kwn_0_12_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CATCH_86 && self.next_as_kwn_0_12_5(j + 1, j)
+        self.word_at(j) == w::CATCH_111 && self.next_as_kwn_0_12_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -28147,7 +28147,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_kwn_0_13_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::FINALLY_87 && self.next_as_kwn_0_13_5(j + 1, j)
+        self.word_at(j) == w::FINALLY_112 && self.next_as_kwn_0_13_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -28237,7 +28237,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_kwn_0_14_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::CATCH_86 && self.next_as_kwn_0_14_5(j + 1, j)
+        self.word_at(j) == w::CATCH_111 && self.next_as_kwn_0_14_5(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -28315,7 +28315,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_as_kwn_0_14_11(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::FINALLY_87 && self.next_as_kwn_0_14_12(j + 1, j)
+        self.word_at(j) == w::FINALLY_112 && self.next_as_kwn_0_14_12(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -28363,7 +28363,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_as_kwi_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        matches!(self.word_at(j), w::FOR_11 | w::WHILE_13 | w::DO_14 | w::CLASS_3 | w::INTERFACE_5 | w::TYPEALIAS_2 | w::PACKAGE_73) && !self.bit_at(j, 3) && true
+        matches!(self.word_at(j), w::FOR_11 | w::WHILE_13 | w::DO_14 | w::CLASS_3 | w::INTERFACE_5 | w::TYPEALIAS_2 | w::PACKAGE_71) && !self.bit_at(j, 3) && true
     }
 
     #[allow(unused_variables)]
@@ -28477,7 +28477,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_ann_expr_0_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (j < self.n && !matches!(self.word_at(j), w::AT_27 | w::DOT_40 | w::COLON_28 | w::LPAREN_35 | w::LT_38 | w::COLON_COLON_51 | w::PUBLIC_93 | w::PRIVATE_94 | w::INTERNAL_95 | w::PROTECTED_96 | w::ABSTRACT_104 | w::FINAL_105 | w::OPEN_106 | w::OVERRIDE_91 | w::LATEINIT_92 | w::CONST_103 | w::SEALED_88 | w::ANNOTATION_71 | w::DATA_85 | w::INNER_89 | w::VALUE_90 | w::TAILREC_98 | w::OPERATOR_99 | w::INFIX_100 | w::INLINE_101 | w::EXTERNAL_102 | w::SUSPEND_76 | w::VARARG_107 | w::NOINLINE_108 | w::CROSSINLINE_109 | w::EXPECT_111 | w::ACTUAL_112 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::INIT_79 | w::ENUM_75)) && true
+        (j < self.n && !matches!(self.word_at(j), w::AT_27 | w::DOT_40 | w::COLON_28 | w::LPAREN_35 | w::LT_38 | w::COLON_COLON_51 | w::PUBLIC_88 | w::PRIVATE_89 | w::INTERNAL_90 | w::PROTECTED_91 | w::ABSTRACT_99 | w::FINAL_100 | w::OPEN_101 | w::OVERRIDE_86 | w::LATEINIT_87 | w::CONST_98 | w::SEALED_81 | w::ANNOTATION_82 | w::DATA_83 | w::INNER_84 | w::VALUE_85 | w::TAILREC_92 | w::OPERATOR_93 | w::INFIX_94 | w::INLINE_95 | w::EXTERNAL_96 | w::SUSPEND_97 | w::VARARG_102 | w::NOINLINE_103 | w::CROSSINLINE_104 | w::EXPECT_105 | w::ACTUAL_106 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::COMPANION_121 | w::CONSTRUCTOR_122 | w::INIT_108 | w::ENUM_123)) && true
     }
 
     #[allow(unused_variables)]
@@ -28513,7 +28513,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_ann_expr_0_0_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        matches!(self.word_at(j), w::GET_81 | w::SET_82) && self.next_ann_expr_0_0_3(j + 1, j)
+        matches!(self.word_at(j), w::GET_119 | w::SET_120) && self.next_ann_expr_0_0_3(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -28555,13 +28555,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_ann_expr_0_1_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        matches!(self.word_at(j), w::GET_81 | w::SET_82) && self.next_ann_expr_0_1_3(j + 1, j)
+        matches!(self.word_at(j), w::GET_119 | w::SET_120) && self.next_ann_expr_0_1_3(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn next_ann_expr_0_1_3(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::AT_27 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::LPAREN_35 || self.word_at(j) == w::LBRACK_29 || self.word_at(j) == w::LBRACE_33 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::COLON_COLON_51) && self.bit_at(j, 3) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::AT_27 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::LPAREN_35 || self.word_at(j) == w::LBRACK_29 || self.word_at(j) == w::LBRACE_33 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::COLON_COLON_51) && self.bit_at(j, 3) && true
     }
 
     #[allow(unused_variables)]
@@ -28597,7 +28597,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_ann_expr_0_2_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::GET_81 && self.next_ann_expr_0_2_3(j + 1, j)
+        self.word_at(j) == w::GET_119 && self.next_ann_expr_0_2_3(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -28651,7 +28651,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_ann_expr_0_3_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::SET_82 && self.next_ann_expr_0_3_3(j + 1, j)
+        self.word_at(j) == w::SET_120 && self.next_ann_expr_0_3_3(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -28729,7 +28729,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_ann_expr_0_4_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::SET_82 && self.next_ann_expr_0_4_3(j + 1, j)
+        self.word_at(j) == w::SET_120 && self.next_ann_expr_0_4_3(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -29070,7 +29070,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_imp_same_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::IMPORT_74 && !self.bit_at(j, 3) && true
+        self.word_at(j) == w::IMPORT_72 && !self.bit_at(j, 3) && true
     }
 
     #[allow(unused_variables)]
@@ -29134,13 +29134,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_fn_recv_0_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::SUSPEND_76 && true
+        self.word_at(j) == w::SUSPEND_97 && true
     }
 
     #[allow(unused_variables)]
     fn pat_acc_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        matches!(self.word_at(j), w::GET_81 | w::SET_82) && self.bit_at(j, 3) && self.pat_acc_0_1(j + 1, j)
+        matches!(self.word_at(j), w::GET_119 | w::SET_120) && self.bit_at(j, 3) && self.pat_acc_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -29152,19 +29152,19 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_0_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        matches!(self.word_at(j), w::GET_81 | w::SET_82) && self.bit_at(j, 3) && self.next_acc_0_0_1(j + 1, j)
+        matches!(self.word_at(j), w::GET_119 | w::SET_120) && self.bit_at(j, 3) && self.next_acc_0_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn next_acc_0_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::AT_27 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::LPAREN_35 || self.word_at(j) == w::LBRACK_29 || self.word_at(j) == w::LBRACE_33 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::COLON_COLON_51) && self.bit_at(j, 3) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::AT_27 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::LPAREN_35 || self.word_at(j) == w::LBRACK_29 || self.word_at(j) == w::LBRACE_33 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::COLON_COLON_51) && self.bit_at(j, 3) && true
     }
 
     #[allow(unused_variables)]
     fn next_acc_0_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::GET_81 && self.bit_at(j, 3) && self.next_acc_0_1_1(j + 1, j)
+        self.word_at(j) == w::GET_119 && self.bit_at(j, 3) && self.next_acc_0_1_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -29188,7 +29188,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_0_2_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::SET_82 && self.bit_at(j, 3) && self.next_acc_0_2_1(j + 1, j)
+        self.word_at(j) == w::SET_120 && self.bit_at(j, 3) && self.next_acc_0_2_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -29236,7 +29236,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_0_3_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::SET_82 && self.bit_at(j, 3) && self.next_acc_0_3_1(j + 1, j)
+        self.word_at(j) == w::SET_120 && self.bit_at(j, 3) && self.next_acc_0_3_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -29314,7 +29314,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_acc_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        matches!(self.word_at(j), w::GET_81 | w::SET_82) && !self.bit_at(j, 3) && self.pat_acc_1_1(j + 1, j)
+        matches!(self.word_at(j), w::GET_119 | w::SET_120) && !self.bit_at(j, 3) && self.pat_acc_1_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -29326,19 +29326,19 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_1_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        matches!(self.word_at(j), w::GET_81 | w::SET_82) && !self.bit_at(j, 3) && self.next_acc_1_0_1(j + 1, j)
+        matches!(self.word_at(j), w::GET_119 | w::SET_120) && !self.bit_at(j, 3) && self.next_acc_1_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn next_acc_1_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::AT_27 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::LPAREN_35 || self.word_at(j) == w::LBRACK_29 || self.word_at(j) == w::LBRACE_33 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::COLON_COLON_51) && self.bit_at(j, 3) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::AT_27 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::LPAREN_35 || self.word_at(j) == w::LBRACK_29 || self.word_at(j) == w::LBRACE_33 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::COLON_COLON_51) && self.bit_at(j, 3) && true
     }
 
     #[allow(unused_variables)]
     fn next_acc_1_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::GET_81 && !self.bit_at(j, 3) && self.next_acc_1_1_1(j + 1, j)
+        self.word_at(j) == w::GET_119 && !self.bit_at(j, 3) && self.next_acc_1_1_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -29362,7 +29362,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_1_2_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::SET_82 && !self.bit_at(j, 3) && self.next_acc_1_2_1(j + 1, j)
+        self.word_at(j) == w::SET_120 && !self.bit_at(j, 3) && self.next_acc_1_2_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -29410,7 +29410,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_1_3_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::SET_82 && !self.bit_at(j, 3) && self.next_acc_1_3_1(j + 1, j)
+        self.word_at(j) == w::SET_120 && !self.bit_at(j, 3) && self.next_acc_1_3_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -29488,7 +29488,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_acc_2_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        matches!(self.word_at(j), w::GET_81 | w::SET_82) && self.pat_acc_2_1(j + 1, j)
+        matches!(self.word_at(j), w::GET_119 | w::SET_120) && self.pat_acc_2_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -29500,19 +29500,19 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_2_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        matches!(self.word_at(j), w::GET_81 | w::SET_82) && self.next_acc_2_0_1(j + 1, j)
+        matches!(self.word_at(j), w::GET_119 | w::SET_120) && self.next_acc_2_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn next_acc_2_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::AT_27 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_73 || self.word_at(j) == w::IMPORT_74 || self.word_at(j) == w::LPAREN_35 || self.word_at(j) == w::LBRACK_29 || self.word_at(j) == w::LBRACE_33 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::COLON_COLON_51) && self.bit_at(j, 3) && true
+        (self.kind_at(j) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word_at(j)) || self.kind_at(j) == t::BACKTICK_NAME || self.kind_at(j) == t::INTEGER_LITERAL || self.kind_at(j) == t::HEX_LITERAL || self.kind_at(j) == t::BIN_LITERAL || self.kind_at(j) == t::REAL_LITERAL || matches!(self.kind_at(j), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind_at(j), t::TICK | t::TICK__CLOSE) || self.word_at(j) == w::AT_27 || self.word_at(j) == w::VAL_6 || self.word_at(j) == w::VAR_7 || self.word_at(j) == w::FUN_4 || self.word_at(j) == w::CLASS_3 || self.word_at(j) == w::INTERFACE_5 || self.word_at(j) == w::OBJECT_8 || self.word_at(j) == w::IF_15 || self.word_at(j) == w::WHEN_17 || self.word_at(j) == w::TRY_18 || self.word_at(j) == w::RETURN_20 || self.word_at(j) == w::THROW_19 || self.word_at(j) == w::BREAK_22 || self.word_at(j) == w::CONTINUE_21 || self.word_at(j) == w::FOR_11 || self.word_at(j) == w::WHILE_13 || self.word_at(j) == w::DO_14 || self.word_at(j) == w::THIS_9 || self.word_at(j) == w::SUPER_10 || self.word_at(j) == w::NULL_26 || self.word_at(j) == w::TRUE_24 || self.word_at(j) == w::FALSE_25 || self.word_at(j) == w::TYPEALIAS_2 || self.word_at(j) == w::PACKAGE_71 || self.word_at(j) == w::IMPORT_72 || self.word_at(j) == w::LPAREN_35 || self.word_at(j) == w::LBRACK_29 || self.word_at(j) == w::LBRACE_33 || self.word_at(j) == w::BANG_48 || self.word_at(j) == w::MINUS_64 || self.word_at(j) == w::PLUS_63 || self.word_at(j) == w::PLUS_PLUS_67 || self.word_at(j) == w::MINUS_MINUS_68 || self.word_at(j) == w::COLON_COLON_51) && self.bit_at(j, 3) && true
     }
 
     #[allow(unused_variables)]
     fn next_acc_2_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::GET_81 && self.next_acc_2_1_1(j + 1, j)
+        self.word_at(j) == w::GET_119 && self.next_acc_2_1_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -29536,7 +29536,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_2_2_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::SET_82 && self.next_acc_2_2_1(j + 1, j)
+        self.word_at(j) == w::SET_120 && self.next_acc_2_2_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -29584,7 +29584,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_2_3_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::SET_82 && self.next_acc_2_3_1(j + 1, j)
+        self.word_at(j) == w::SET_120 && self.next_acc_2_3_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -29708,7 +29708,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_recv_0_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        self.word_at(j) == w::BY_77 && true
+        self.word_at(j) == w::BY_73 && true
     }
 
     #[allow(unused_variables)]

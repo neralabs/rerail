@@ -5363,12 +5363,12 @@ const WORD_LIST: [&[u8]; 123] = [
     b"false", b"null", b"@", b":", b"[", b"]", b"*", b"=", b"{", b"}", b"(", b",",
     b")", b"<", b">", b".", b";", b"&", b"?", b"->", b"..", b"..<", b"?:", b"!",
     b"&&", b"||", b"::", b"+=", b"-=", b"*=", b"/=", b"%=", b"!=", b"!==", b"==", b"===",
-    b"<=", b">=", b"+", b"-", b"/", b"%", b"++", b"--", b"!!", b"?.", b"annotation", b"file",
-    b"package", b"import", b"enum", b"suspend", b"by", b"where", b"init", b"companion", b"get", b"set", b"constructor", b"dynamic",
-    b"data", b"catch", b"finally", b"sealed", b"inner", b"value", b"override", b"lateinit", b"public", b"private", b"internal", b"protected",
-    b"out", b"tailrec", b"operator", b"infix", b"inline", b"external", b"const", b"abstract", b"final", b"open", b"vararg", b"noinline",
-    b"crossinline", b"reified", b"expect", b"actual", b"field", b"property", b"receiver", b"param", b"setparam", b"delegate", b"L", b"u",
-    b"U", b"uL", b"UL",
+    b"<=", b">=", b"+", b"-", b"/", b"%", b"++", b"--", b"!!", b"?.", b"package", b"import",
+    b"by", b"file", b"out", b"L", b"u", b"U", b"uL", b"UL", b"sealed", b"annotation", b"data", b"inner",
+    b"value", b"override", b"lateinit", b"public", b"private", b"internal", b"protected", b"tailrec", b"operator", b"infix", b"inline", b"external",
+    b"suspend", b"const", b"abstract", b"final", b"open", b"vararg", b"noinline", b"crossinline", b"expect", b"actual", b"reified", b"init",
+    b"dynamic", b"where", b"catch", b"finally", b"field", b"property", b"receiver", b"param", b"setparam", b"delegate", b"get", b"set",
+    b"companion", b"constructor", b"enum",
 ];
 
 /// Up to 8 bytes as one word of memory: little-endian, zeros past them.
