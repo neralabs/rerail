@@ -4,9 +4,9 @@
  *
  * The tray is a child of the daemon with three pipes. The daemon writes a menu state, one JSON line, at once and again
  * whenever it changes; the tray writes back one JSON line per click (`open`, `settings`, `docs`, `update`, `restart`
- * or `stop`) and its diagnostics on stderr, which go to daemon.log. The tray exits when its stdin closes, so it never outlives the daemon, however the
- * daemon ends. The tray is an extra: nothing it does or fails to do may stop the daemon, so a failure is logged once,
- * and the tray is never started again in that daemon.
+ * or `stop`) and its diagnostics on stderr, which go to daemon.log. The tray exits when its stdin closes, so it never
+ * outlives the daemon, however the daemon ends. The tray is an extra: nothing it does or fails to do may stop the
+ * daemon, so a failure is logged once, and the tray is never started again in that daemon.
  */
 import type { ChildProcess } from "node:child_process";
 import { accessSync, chmodSync, constants, existsSync } from "node:fs";
@@ -52,7 +52,10 @@ export function trayGate(facts: TrayGateFacts): { start: true; trayPath: string 
   return { start: false, log: `rerail tray: not started: this install has no ${nativeTrayFileName(platform, architecture)}` };
 }
 
-/** Whether this daemon should have an icon: a main build or `RERAIL_TRAY=1`, never `RERAIL_TRAY=0`, CI or a remote host. */
+/**
+ * Whether this daemon should have an icon: a main build or `RERAIL_TRAY=1`, never `RERAIL_TRAY=0`, CI or a remote
+ * host.
+ */
 function trayWanted({ env, mainBuild, loopback }: TrayGateFacts): boolean {
   if (env.RERAIL_TRAY === "0" || env.RERAIL_TRAY === "false") return false;
   return (mainBuild || env.RERAIL_TRAY === "1") && env.CI === undefined && loopback;
@@ -299,8 +302,15 @@ export function startTray(options: TrayOptions): TrayHandle {
     settings: () => options.openUrl(daemon.dashboardLink("settings")),
     docs: () => options.openUrl(DOCUMENTATION_URL),
     update,
-    restart: () => daemon.restart(),
-    stop: () => daemon.stop(),
+    // daemon.log says why the daemon went: its own close says nothing of who asked.
+    restart: () => {
+      log("rerail tray: restart requested from the menu");
+      daemon.restart();
+    },
+    stop: () => {
+      log("rerail tray: stop requested from the menu");
+      daemon.stop();
+    },
   };
 
   eachLine(stdout, line => {

@@ -355,11 +355,14 @@ describe("startTray", () => {
     await delay(100);
     expect(calls.restarted).toBe(1);
     expect(calls.stopped).toBe(0);
+    // daemon.log says why the daemon restarted.
+    expect(calls.logs).toEqual(["rerail tray: restart requested from the menu"]);
   });
 
   it("stop calls daemon.stop", async () => {
     const calls = start({ replies: ['{"action":"stop"}\n'] });
     await until(() => calls.stopped === 1, 10_000, "the stop");
+    expect(calls.logs).toEqual(["rerail tray: stop requested from the menu"]);
   });
 
   it("update runs once at a time", async () => {
