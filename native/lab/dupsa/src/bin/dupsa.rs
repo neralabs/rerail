@@ -463,6 +463,8 @@ fn incr_command(o: Opts) -> Result<(), String> {
     use rerail_dupsa_lab::multi::Docs;
     let [kind, base_at, steps] = &o.pos[..] else { return Err("usage: dupsa incr lines|nodes <base> <steps dir>".into()) };
     let steps_dir = Path::new(steps).to_path_buf();
+    // The process's CPU before this command: its start (the loader, the runtime, reading the arguments).
+    let start_ms = 1e3 * cpu();
     let mut names: Vec<String> = std::fs::read_dir(&steps_dir)
         .map_err(|e| format!("{steps}: {e}"))?
         .filter_map(Result::ok)
@@ -630,7 +632,7 @@ fn incr_command(o: Opts) -> Result<(), String> {
             .map(|b| (b.doc, b.first, b.end, b.others))
             .collect()
     };
-    let i3 = instr();
+    let (i3, c_first) = (instr(), cpu());
     // The last findings, per document: computed (a cold run), or the ones the saved index holds (a warm one).
     let mut prev: Vec<Vec<Key>> = match saved {
         Some(bytes) => {
@@ -654,6 +656,13 @@ fn incr_command(o: Opts) -> Result<(), String> {
         None => (0..ix.blocks.len()).map(|d| keyed_doc(&ix, d, &sources)).collect(),
     };
     eprintln!("instructions: base read {i_read}, index {i_built}, blocks {i_blocks}, first findings {}", instr() - i3);
+    eprintln!(
+        "ms: start {start_ms:.3}, base read {:.3}, index {:.3}, blocks {:.3}, first findings {:.3}",
+        1e3 * read_base,
+        1e3 * built,
+        1e3 * first_blocks,
+        1e3 * (cpu() - c_first)
+    );
     if let Some(p) = &o.save {
         let mut out = b"DUPIX004".to_vec();
         out.extend_from_slice(&head);
@@ -777,7 +786,7 @@ fn incr_command(o: Opts) -> Result<(), String> {
         );
     }
     eprintln!("peak {:.0} MB", peak_mb());
-    eprintln!("process: {} instructions, {:.3} s CPU", instr(), cpu());
+    eprintln!("process: {} instructions, {:.3} s CPU ({:.3} ms)", instr(), cpu(), 1e3 * cpu());
     Ok(())
 }
 

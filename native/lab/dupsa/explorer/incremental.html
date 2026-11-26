@@ -81,7 +81,7 @@ svg .muted { fill: var(--muted) }
     <ol>
       <li><b>A suffix array to depth w is enough, and it is local.</b> A finding only depends on which w-unit windows are equal, so the index needs the windows sorted, and nothing past depth w. An edit then changes only the windows that overlap it.</li>
       <li><b>Two levels: an immutable base plus an overlay.</b> Base windows that the edit overlaps get tombstones. The new windows the edit makes are looked up in the base and added to their class. The rest of the edited file stays in the base and only moves. Compaction merges the overlay into a new base in one linear pass.</li>
-      <li><b>About 1,000× fewer instructions than a rebuild.</b> On Jeff's <code>native/src</code> as node symbols (5.6 M windows), an edit costs a median <b>5.7 M instructions</b> (0.6 ms) with the index in memory, against 6.6 G for a run that rebuilds. A fresh process that maps the saved index and applies the edit costs a median 91 M instructions, 0.01–0.02 s, of which 16.5 M is starting and ending the process. All 100 replayed steps (50 per method) gave the rebuild's exact findings.</li>
+      <li><b>About 1,000× faster than a rebuild.</b> On Jeff's <code>native/src</code> as node symbols (5.6 M windows), an edit takes a median <b>0.6 ms</b> CPU with the index in memory, against 0.72 s for a run that rebuilds. A fresh process that maps the saved index and applies the edit takes a median 13 ms, about 4 ms of it starting the process. All 100 replayed steps (50 per method) gave the rebuild's exact findings.</li>
     </ol>
   </section>
 
@@ -422,7 +422,7 @@ svg .muted { fill: var(--muted) }
       <li><b>cold</b> is the first run from nothing: a whole process that reads the base, builds the index and computes its findings, and for the saved index also writes it;</li>
       <li><b>warm</b> is one later edit. For the in-memory incremental designs, it is the median per-edit cost inside a running process (over all 50 steps). For the others, it is a whole new process: one that maps the saved index and applies the edit, or one that rebuilds the edited tree, since a rebuild keeps nothing. Medians over six steps.</li>
     </ul>
-    <p class="text">Both bars start at the axis's origin, on one log axis of instructions with gridlines at 1, 2 and 5 of each decade (labelled at the 1s), so equal costs have equal bars. Each count is shown with its CPU seconds. The bars use instructions because they are the process's own count, which the machine's load doesn't change; CPU time grows with load. Hover a design for both figures.</p>
+    <p class="text">Both bars start at the axis's origin, on one log axis of CPU milliseconds with gridlines at 1, 2 and 5 of each decade (labelled at the 1s), so equal times have equal bars. CPU time grows with the machine's load, which was 14–63 during these runs, so a quiet machine is faster. Hover a design for both figures.</p>
     <div class="legend" style="display:flex; gap:18px; font-size:13px; color:var(--muted)">
       <span style="display:inline-flex; align-items:center; gap:6px"><span style="width:14px; height:10px; border-radius:2px; background:var(--warm)"></span>warm: one edit after it</span>
       <span style="display:inline-flex; align-items:center; gap:6px"><span style="width:14px; height:10px; border-radius:2px; background:var(--cold)"></span>cold: first run from nothing</span>
@@ -432,16 +432,16 @@ svg .muted { fill: var(--muted) }
       <table>
         <thead><tr><th>Design</th><th>What it does</th><th>Result</th></tr></thead>
         <tbody>
-          <tr><td>Rebuild every run</td><td>SA-IS and Kasai LCP over every document, then blocks. With no state kept, a run after an edit costs what the first run did.</td><td>6.6 G instructions a run on nodes (0.47 s for the suffix array, down from 7 s: see below); 2.7 G on lines, most of it reading the files.</td></tr>
+          <tr><td>Rebuild every run</td><td>SA-IS and Kasai LCP over every document, then blocks. With no state kept, a run after an edit costs what the first run did.</td><td>0.66–0.72 s a run on nodes (0.47 s of it the suffix array, down from 7 s: see below); 0.21–0.22 s on lines, most of it reading the files.</td></tr>
           <tr><td>Construction by prefix doubling, to depth w</td><td>Each symbol read once. Each round sorts only the groups still tied (Larsson and Sadakane), and the rounds stop at w.</td><td>Base in 0.38 s on nodes, about the same as SA-IS now that SA-IS reads the symbol relation; 0.02 s on lines against 0.11 s. Same classes (tested).</td></tr>
-          <tr><td>Log-structured, a whole file per insert</td><td>An edited file is tombstoned whole and all its windows are inserted again, as an LSM of per-file runs would do (<code>--whole-doc</code>).</td><td>54 M instructions median on nodes. It grows with the file, not the edit.</td></tr>
-          <tr class="pick"><td>Tombstones plus edit-local delta</td><td>Only the windows the edit overlaps go out and come in; the rest of the file moves.</td><td><b>5.7 M instructions, 0.6 ms median, 5.6 ms worst</b> on nodes; 1.4 M, 0.16 ms on lines.</td></tr>
+          <tr><td>Log-structured, a whole file per insert</td><td>An edited file is tombstoned whole and all its windows are inserted again, as an LSM of per-file runs would do (<code>--whole-doc</code>).</td><td>6.0 ms median on nodes. It grows with the file, not the edit.</td></tr>
+          <tr class="pick"><td>Tombstones plus edit-local delta</td><td>Only the windows the edit overlaps go out and come in; the rest of the file moves.</td><td><b>0.6 ms median, 5.6 ms worst</b> on nodes; 0.08 ms median on lines.</td></tr>
           <tr><td>Compaction</td><td>The overlay merged into a new base, in one pass (<code>--compact-every 10</code>).</td><td>About 230 ms. Lookups don't slow down as the overlay grows (7,347 tombstones and 6,361 added windows after 50 steps), so it is only needed to bound memory.</td></tr>
-          <tr><td>A fresh process with the saved index mapped</td><td>The index file and the tapes are mapped (memmap2) and read where they lie: the file table, the dictionaries, the symbols, the base, the blocks and the last findings. The run applies the edit and reports the changes (<code>--save</code>, <code>--load</code>).</td><td>91 M instructions median on nodes, 55 M on lines; 0.01–0.02 s wall. Writing the index adds 0.6 G to the first run.</td></tr>
+          <tr><td>A fresh process with the saved index mapped</td><td>The index file and the tapes are mapped (memmap2) and read where they lie: the file table, the dictionaries, the symbols, the base, the blocks and the last findings. The run applies the edit and reports the changes (<code>--save</code>, <code>--load</code>).</td><td>13 ms median on nodes, 7 ms on lines, the process included. Writing the index adds 0.07–0.22 s to the first run.</td></tr>
         </tbody>
       </table>
     </div>
-    <p class="note">This Mac's load average was 7–42 during the final runs, which changes CPU and wall times but not instruction counts. The worst updates are the 60-line paste and the 5-file steps, which add 600–1,100 windows each.</p>
+    <p class="note">CPU times, measured while this Mac's load average was 14–63, so a quiet machine is faster. The worst updates are the 60-line paste and the 5-file steps, which add 600–1,100 windows each.</p>
   </section>
 
   <section>
@@ -478,7 +478,7 @@ svg .muted { fill: var(--muted) }
       <ul>
         <li>deriving the symbols takes 0.15 s;</li>
         <li>the SA-IS base takes 0.47 s, down from 7 s;</li>
-        <li>a whole cold process takes 6.6 G instructions, down from 65.6 G;</li>
+        <li>a whole cold process takes 0.66 s CPU, down from about 6.5 s;</li>
         <li>a rebuild inside a running process after edits, over documents from several batches, reads each symbol once into the array it sorts: 0.5–0.9 s, down from 1.7 s.</li>
       </ul>
       <p>The relation is 24 MB. It is a derived fact written once where it is computed, which decision 0353 counts as not a copy. The base's relation is saved with the index, so a run on a saved index reads its symbols where the mapping holds them.</p>
@@ -491,59 +491,63 @@ svg .muted { fill: var(--muted) }
       <p><b>A process that stays up</b> (a watch mode or a language server) keeps the index in memory. After each save it reads the changed files' new versions, which for node symbols means parsing them. Reading a step's new tapes took 0.1–2.4 ms here; the engine's parse of the changed files is a separate cost, not measured here. It sets them in the overlay and recomputes the affected documents. That is milliseconds, and then it reports the changes in the findings.</p>
       <p><b>A CLI run</b> maps the saved index and the base's tapes, applies every document changed since the base, and reports what changed since the last run. The index holds everything such a run reads, so that it reads only what the edit touches:</p>
       <ul>
-        <li>the scoped file table, so the 187 MB capture is not walked for its headers (that was 30 M instructions);</li>
-        <li>the node dictionary sorted, looked up by binary search where it lies, rather than made into a hash map of 5.5 M rows each run (56 M);</li>
-        <li>the base's symbol relation, so the binary searches read symbols rather than derive each one from its tape again (the paste's step: 200 M to 56 M);</li>
+        <li>the scoped file table, so the 187 MB capture is not walked for its headers;</li>
+        <li>the node dictionary sorted, looked up by binary search where it lies, rather than made into a hash map of 5.5 M rows each run;</li>
+        <li>the base's symbol relation, so the binary searches read symbols rather than derive each one from its tape again;</li>
         <li>the last findings by document, and the lines' ids and line dictionary; a tape's header is read only when its document is.</li>
       </ul>
     </div>
     <figure>
       <div class="tscroll" style="border:0; background:none">
-        <svg viewBox="0 0 900 228" width="900" height="228" role="img" aria-label="Instructions of one edit, step 1: nodes 53.9 M as a fresh process with the index mapped, of which 16.5 M is process start and exit, 12.9 M opening the index and 21 M the edit, against 5.7 M for the edit in memory; lines 32.9 M against 1.4 M." style="max-width:100%; height:auto; color:var(--ink)">
+        <svg viewBox="0 0 900 228" width="900" height="228" role="img" aria-label="CPU time of one edit, step 1: nodes 7.7 ms as a fresh process with the index mapped, of which 3.9 ms is process start, 0.9 ms opening the index and 2.6 ms the edit, against 0.6 ms for the edit in memory; lines 6.0 ms against 0.08 ms." style="max-width:100%; height:auto; color:var(--ink)">
 <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
 <marker id="ahn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--new)"/></marker></defs>
 <line x1="250.0" y1="12" x2="250.0" y2="176" stroke="var(--soft)"/>
-<text x="250.0" y="192" font-size="11" text-anchor="middle" class="muted">0 M</text>
-<line x1="350.0" y1="12" x2="350.0" y2="176" stroke="var(--soft)"/>
-<text x="350.0" y="192" font-size="11" text-anchor="middle" class="muted">10 M</text>
-<line x1="450.0" y1="12" x2="450.0" y2="176" stroke="var(--soft)"/>
-<text x="450.0" y="192" font-size="11" text-anchor="middle" class="muted">20 M</text>
+<text x="250.0" y="192" font-size="11" text-anchor="middle" class="muted">0 ms</text>
+<line x1="325.0" y1="12" x2="325.0" y2="176" stroke="var(--soft)"/>
+<text x="325.0" y="192" font-size="11" text-anchor="middle" class="muted">1 ms</text>
+<line x1="400.0" y1="12" x2="400.0" y2="176" stroke="var(--soft)"/>
+<text x="400.0" y="192" font-size="11" text-anchor="middle" class="muted">2 ms</text>
+<line x1="475.0" y1="12" x2="475.0" y2="176" stroke="var(--soft)"/>
+<text x="475.0" y="192" font-size="11" text-anchor="middle" class="muted">3 ms</text>
 <line x1="550.0" y1="12" x2="550.0" y2="176" stroke="var(--soft)"/>
-<text x="550.0" y="192" font-size="11" text-anchor="middle" class="muted">30 M</text>
-<line x1="650.0" y1="12" x2="650.0" y2="176" stroke="var(--soft)"/>
-<text x="650.0" y="192" font-size="11" text-anchor="middle" class="muted">40 M</text>
-<line x1="750.0" y1="12" x2="750.0" y2="176" stroke="var(--soft)"/>
-<text x="750.0" y="192" font-size="11" text-anchor="middle" class="muted">50 M</text>
+<text x="550.0" y="192" font-size="11" text-anchor="middle" class="muted">4 ms</text>
+<line x1="625.0" y1="12" x2="625.0" y2="176" stroke="var(--soft)"/>
+<text x="625.0" y="192" font-size="11" text-anchor="middle" class="muted">5 ms</text>
+<line x1="700.0" y1="12" x2="700.0" y2="176" stroke="var(--soft)"/>
+<text x="700.0" y="192" font-size="11" text-anchor="middle" class="muted">6 ms</text>
+<line x1="775.0" y1="12" x2="775.0" y2="176" stroke="var(--soft)"/>
+<text x="775.0" y="192" font-size="11" text-anchor="middle" class="muted">7 ms</text>
 <line x1="850.0" y1="12" x2="850.0" y2="176" stroke="var(--soft)"/>
-<text x="850.0" y="192" font-size="11" text-anchor="middle" class="muted">60 M</text>
+<text x="850.0" y="192" font-size="11" text-anchor="middle" class="muted">8 ms</text>
 <text x="238" y="35" font-size="12" text-anchor="end">nodes, fresh process, index mapped</text>
-<rect x="250.0" y="20" width="163.0" height="20" rx="2" fill="var(--kept)"><title>process start and exit: 16.5 M instructions</title></rect>
-<rect x="415.0" y="20" width="127.0" height="20" rx="2" fill="var(--accent)"><title>opening the index: 12.9 M instructions</title></rect>
-<rect x="544.0" y="20" width="11.0" height="20" rx="2" fill="var(--cold)"><title>reading the changed file: 1.3 M instructions</title></rect>
-<rect x="557.0" y="20" width="208.0" height="20" rx="2" fill="var(--new)"><title>the edit and its diff: 21.0 M instructions</title></rect>
-<rect x="767.0" y="20" width="20.0" height="20" rx="2" fill="var(--line)"><title>other: 2.2 M instructions</title></rect>
-<text x="795.0" y="35" font-size="12" class="muted">53.9 M</text>
+<rect x="250.0" y="20" width="288.2" height="20" rx="2" fill="var(--kept)"><title>process start: 3.87 ms CPU</title></rect>
+<rect x="540.2" y="20" width="64.8" height="20" rx="2" fill="var(--accent)"><title>opening the index: 0.89 ms CPU</title></rect>
+<rect x="607.0" y="20" width="13.0" height="20" rx="2" fill="var(--cold)"><title>reading the changed file: 0.2 ms CPU</title></rect>
+<rect x="622.0" y="20" width="191.5" height="20" rx="2" fill="var(--new)"><title>the edit and its diff: 2.58 ms CPU</title></rect>
+<rect x="815.5" y="20" width="12.2" height="20" rx="2" fill="var(--line)"><title>other: 0.19 ms CPU</title></rect>
+<text x="835.8" y="35" font-size="12" class="muted">7.73 ms</text>
 <text x="238" y="75" font-size="12" text-anchor="end">nodes, in memory</text>
-<rect x="250.0" y="60" width="55.0" height="20" rx="2" fill="var(--new)"><title>the edit and its diff: 5.7 M instructions</title></rect>
-<text x="313.0" y="75" font-size="12" class="muted">5.7 M</text>
+<rect x="250.0" y="60" width="43.8" height="20" rx="2" fill="var(--new)"><title>the edit and its diff: 0.61 ms CPU</title></rect>
+<text x="301.8" y="75" font-size="12" class="muted">0.61 ms</text>
 <text x="238" y="115" font-size="12" text-anchor="end">lines, fresh process, index mapped</text>
-<rect x="250.0" y="100" width="163.0" height="20" rx="2" fill="var(--kept)"><title>process start and exit: 16.5 M instructions</title></rect>
-<rect x="415.0" y="100" width="26.0" height="20" rx="2" fill="var(--accent)"><title>opening the index: 2.8 M instructions</title></rect>
-<rect x="443.0" y="100" width="77.0" height="20" rx="2" fill="var(--cold)"><title>reading the changed file: 7.9 M instructions</title></rect>
-<rect x="522.0" y="100" width="24.0" height="20" rx="2" fill="var(--new)"><title>the edit and its diff: 2.6 M instructions</title></rect>
-<rect x="548.0" y="100" width="29.0" height="20" rx="2" fill="var(--line)"><title>other: 3.1 M instructions</title></rect>
-<text x="585.0" y="115" font-size="12" class="muted">32.9 M</text>
+<rect x="250.0" y="100" width="307.0" height="20" rx="2" fill="var(--kept)"><title>process start: 4.12 ms CPU</title></rect>
+<rect x="559.0" y="100" width="18.2" height="20" rx="2" fill="var(--accent)"><title>opening the index: 0.27 ms CPU</title></rect>
+<rect x="579.2" y="100" width="80.5" height="20" rx="2" fill="var(--cold)"><title>reading the changed file: 1.1 ms CPU</title></rect>
+<rect x="661.8" y="100" width="17.5" height="20" rx="2" fill="var(--new)"><title>the edit and its diff: 0.26 ms CPU</title></rect>
+<rect x="681.2" y="100" width="15.2" height="20" rx="2" fill="var(--line)"><title>other: 0.23 ms CPU</title></rect>
+<text x="704.5" y="115" font-size="12" class="muted">5.98 ms</text>
 <text x="238" y="155" font-size="12" text-anchor="end">lines, in memory</text>
-<rect x="250.0" y="140" width="12.0" height="20" rx="2" fill="var(--new)"><title>the edit and its diff: 1.4 M instructions</title></rect>
-<text x="270.0" y="155" font-size="12" class="muted">1.4 M</text>
-<rect x="20" y="208" width="12" height="10" rx="2" fill="var(--kept)"/><text x="38" y="217" font-size="12">process start and exit</text>
-<rect x="205.2" y="208" width="12" height="10" rx="2" fill="var(--accent)"/><text x="223.2" y="217" font-size="12">opening the index</text>
-<rect x="357.4" y="208" width="12" height="10" rx="2" fill="var(--cold)"/><text x="375.4" y="217" font-size="12">reading the changed file</text>
-<rect x="555.8" y="208" width="12" height="10" rx="2" fill="var(--new)"/><text x="573.8" y="217" font-size="12">the edit and its diff</text>
-<rect x="734.4" y="208" width="12" height="10" rx="2" fill="var(--line)"/><text x="752.4" y="217" font-size="12">other</text>
+<rect x="250.0" y="140" width="4.0" height="20" rx="2" fill="var(--new)"><title>the edit and its diff: 0.08 ms CPU</title></rect>
+<text x="262.0" y="155" font-size="12" class="muted">0.08 ms</text>
+<rect x="20" y="208" width="12" height="10" rx="2" fill="var(--kept)"/><text x="38" y="217" font-size="12">process start</text>
+<rect x="145.8" y="208" width="12" height="10" rx="2" fill="var(--accent)"/><text x="163.8" y="217" font-size="12">opening the index</text>
+<rect x="298.0" y="208" width="12" height="10" rx="2" fill="var(--cold)"/><text x="316.0" y="217" font-size="12">reading the changed file</text>
+<rect x="496.4" y="208" width="12" height="10" rx="2" fill="var(--new)"/><text x="514.4" y="217" font-size="12">the edit and its diff</text>
+<rect x="675.0" y="208" width="12" height="10" rx="2" fill="var(--line)"/><text x="693.0" y="217" font-size="12">other</text>
         </svg>
       </div>
-      <figcaption>Where a fresh process's instructions go, for one edit (step 1; instructions retired include the kernel's). Process start and exit cost 16.5 M whatever the run does. Opening the index reads the file table, maps the tapes and the index, and reads the lines' paths. The edit costs more mapped than in memory because its lookups touch pages of the mapped base for the first time, about 3 K instructions each. The lines method's changed file is read and normalised from disk.</figcaption>
+      <figcaption>Where a fresh process's CPU time goes, for one edit (step 1; medians of five runs, with the machine's load average about 60, so a quiet machine is faster). Process start is the loader and the runtime before the command runs, about 4 ms whatever the run does. Opening the index reads the file table and maps the tapes and the index. The edit costs more mapped than in memory because its lookups touch pages of the mapped base for the first time. The lines method's changed file is read and normalised from disk.</figcaption>
     </figure>
     <div class="text">
       <p>Still open: each language (tape tag) needs its own base, and the spike runs one.</p>
@@ -562,29 +566,30 @@ svg .muted { fill: var(--muted) }
 
 <div class="tip" id="tip" hidden></div>
 <script>
-// [method, design, cold instructions, warm instructions, cold CPU s, warm CPU s], from coldwarm.py.
+// [method, design, cold instructions, warm instructions, cold CPU s, warm CPU s], from coldwarm.py; the chart shows the CPU times.
 const DATA = [["lines", "Rebuild every run, SA-IS", 2669329213, 2673678906, 0.22, 0.2105], ["lines", "Rebuild every run, doubling", 2364056048, 2390420919, 0.179, 0.2175], ["lines", "Whole file re-inserted", 2364056048, 2983105, 0.179, 0.0002], ["lines", "Tombstones and edit-local delta, in memory", 2364056048, 1445460, 0.179, 8e-05], ["lines", "Tombstones and edit-local delta, saved index mapped", 2939304471, 55208300, 0.248, 0.007], ["nodes", "Rebuild every run, SA-IS", 6618802649, 6655353043, 0.663, 0.7215], ["nodes", "Rebuild every run, doubling", 7244183146, 7285056426, 0.669, 0.8425], ["nodes", "Whole file re-inserted", 7244183146, 54215359, 0.669, 0.006045], ["nodes", "Tombstones and edit-local delta, in memory", 7244183146, 5764408, 0.669, 0.00061], ["nodes", "Tombstones and edit-local delta, saved index mapped", 7836028785, 91013114, 0.892, 0.0125]];
-// One log axis; per design two bars from its origin: warm above, cold below.
-const LO = 1e6, HI = 2e10;
+// One log axis of CPU milliseconds; per design two bars from its origin: warm above, cold below.
+const LO = 0.01, HI = 2000;
 const x = v => Math.max(0.004, Math.min(1, (Math.log10(Math.max(v, LO)) - Math.log10(LO)) / (Math.log10(HI) - Math.log10(LO))));
 const fmt = v => v >= 1e9 ? (v / 1e9).toFixed(1) + " G" : v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + " M" : (v / 1e3).toFixed(0) + " K";
-const ticks = [1e6, 1e7, 1e8, 1e9, 1e10].flatMap(d => [d, 2 * d, 5 * d]).filter(t => t <= HI);
-const major = t => [1e6, 1e7, 1e8, 1e9, 1e10].includes(t);
-const tickLab = v => major(v) ? (v >= 1e9 ? v / 1e9 + " G" : v / 1e6 + " M") : String(v / 10 ** Math.floor(Math.log10(v)));
+const DEC = [0.01, 0.1, 1, 10, 100, 1000];
+const ticks = DEC.flatMap(d => [d, 2 * d, 5 * d]).filter(t => t <= HI);
+const major = t => DEC.includes(t);
+const tickLab = v => v >= 1000 ? v / 1000 + " s" : v + " ms";
 const secs = v => v >= 1 ? v.toFixed(v >= 10 ? 0 : 1) + " s" : v >= 0.01 ? Math.round(v * 1e3) + " ms" : (v * 1e3).toFixed(1) + " ms";
 const titles = { lines: "Lines (0.63 M counted lines, window 30)", nodes: "Node symbols (5.9 M nodes, window 150)" };
 const tip = document.getElementById("tip");
 document.getElementById("charts").innerHTML = ["lines", "nodes"].map(m => {
   const rows = DATA.filter(r => r[0] === m);
   return `<div style="display:grid; gap:6px"><h3>${titles[m]}</h3><div class="tscroll" style="padding:8px 0"><div class="chart">${rows.map(([, name, cold, warm, coldS, warmS], i) => {
-    const b = 100 * x(warm), e = 100 * x(cold);
-    return `<div class="crow${name.includes("in memory") ? " pick" : ""}" data-m="${m}" data-i="${i}"><div class="lab">${name}</div><div class="track">${ticks.map(t => `<span class="gl${major(t) ? " major" : ""}" style="left:${(100 * x(t)).toFixed(2)}%"></span>`).join("")}<span class="seg w" style="width:${b.toFixed(2)}%"></span><span class="seg c" style="width:${e.toFixed(2)}%"></span></div><div class="num">warm <b>${fmt(warm)}</b> · ${secs(warmS)}<br>cold ${fmt(cold)} · ${secs(coldS)}</div></div>`;
-  }).join("")}<div class="ticks"><div class="note" style="text-align:right">instructions, log scale</div><div class="t">${ticks.filter(major).map(t => `<span style="left:${(100 * x(t)).toFixed(2)}%">${tickLab(t)}</span>`).join("")}</div><div></div></div></div></div></div>`;
+    const b = 100 * x(1e3 * warmS), e = 100 * x(1e3 * coldS);
+    return `<div class="crow${name.includes("in memory") ? " pick" : ""}" data-m="${m}" data-i="${i}"><div class="lab">${name}</div><div class="track">${ticks.map(t => `<span class="gl${major(t) ? " major" : ""}" style="left:${(100 * x(t)).toFixed(2)}%"></span>`).join("")}<span class="seg w" style="width:${b.toFixed(2)}%"></span><span class="seg c" style="width:${e.toFixed(2)}%"></span></div><div class="num">warm <b>${secs(warmS)}</b><br>cold ${secs(coldS)}</div></div>`;
+  }).join("")}<div class="ticks"><div class="note" style="text-align:right; padding-right:26px">CPU time, log scale</div><div class="t">${ticks.filter(major).map(t => `<span style="left:${(100 * x(t)).toFixed(2)}%">${tickLab(t)}</span>`).join("")}</div><div></div></div></div></div></div>`;
 }).join("");
 for (const el of document.querySelectorAll(".crow")) {
   const [, name, cold, warm, coldS, warmS] = DATA.filter(r => r[0] === el.dataset.m)[+el.dataset.i];
   const move = e => { const w = tip.offsetWidth; tip.style.left = Math.min(e.clientX + 14, innerWidth - w - 8) + "px"; tip.style.top = (e.clientY + 14) + "px" };
-  el.onmouseenter = e => { tip.innerHTML = `<b>${name}</b><br>${titles[el.dataset.m]}<table style="margin-top:4px;font-variant-numeric:tabular-nums"><tr><td>warm, one edit</td><td style="text-align:right;padding-left:12px">${(warm / 1e6).toLocaleString(undefined, {maximumFractionDigits: 2})} M instr.</td><td style="text-align:right;padding-left:12px">${secs(warmS)} CPU</td></tr><tr><td>cold, first run</td><td style="text-align:right;padding-left:12px">${(cold / 1e6).toLocaleString(undefined, {maximumFractionDigits: 1})} M instr.</td><td style="text-align:right;padding-left:12px">${secs(coldS)} CPU</td></tr><tr><td>warm against cold</td><td style="text-align:right;padding-left:12px">${cold / warm >= 1 ? (cold / warm).toFixed(cold / warm >= 10 ? 0 : 1) + "× less" : (warm / cold).toFixed(1) + "× more"}</td></tr></table>`; tip.hidden = false; move(e) };
+  el.onmouseenter = e => { tip.innerHTML = `<b>${name}</b><br>${titles[el.dataset.m]}<table style="margin-top:4px;font-variant-numeric:tabular-nums"><tr><td>warm, one edit</td><td style="text-align:right;padding-left:12px">${secs(warmS)} CPU</td></tr><tr><td>cold, first run</td><td style="text-align:right;padding-left:12px">${secs(coldS)} CPU</td></tr><tr><td>warm against cold</td><td style="text-align:right;padding-left:12px">${coldS / warmS >= 1 ? Math.round(coldS / warmS).toLocaleString() + "× less" : (warmS / coldS).toFixed(1) + "× more"}</td></tr></table>`; tip.hidden = false; move(e) };
   el.onmousemove = move;
   el.onmouseleave = () => { tip.hidden = true };
 }
