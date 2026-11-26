@@ -345,7 +345,7 @@ function decide(selected: BanditSelection, id: string): PortDecision {
   if (selected.unread !== undefined) return { on: "unknown", because: selected.unread };
   if (selected.tests.size === 0) return { on: true, explicit: false, because: `${selected.labels}: no tests set, so Bandit runs every test` };
   const tested = selected.tests.get(id);
-  return tested === undefined ? { on: false, explicit: false, because: `${selected.labels} tests does not list it` } : { on: true, explicit: true, because: tested };
+  return tested === undefined ? { on: false, explicit: false, because: `not in ${selected.labels} tests` } : { on: true, explicit: true, because: tested };
 }
 
 /** The order a port's decisions over several ids settle in, as across linters. */

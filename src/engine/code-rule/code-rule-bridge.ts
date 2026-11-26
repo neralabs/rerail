@@ -1,8 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
-import { constants, type Dirent, type Stats } from "node:fs";
+import { type BigIntStats, constants, type Dirent } from "node:fs";
 import { access, type FileHandle, lstat, mkdtemp, open, opendir, realpath, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import type {
   AuditorCloseOptions,
   CodeRuleEdit,
@@ -52,7 +53,8 @@ import { type CallPlace, type CallPlacesOf, type CallsAsked, type CallsCounted, 
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
-  stampedSince, storedRegistry, type WatcherWalk, WORKTREE_FULL_WALK_MS, type WorktreeFindings, type WorktreeRecords, type WorktreeScan,
+  type ReadTurn, stampedSince, storedRegistry, tellTakeTurn, type WatcherWalk, WORKTREE_FULL_WALK_MS, type WorktreeFindings, type WorktreeRecords,
+  type WorktreeScan,
   type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks, type WorktreeWatch,
 } from "./worktree-walks.js";
 import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
@@ -530,7 +532,7 @@ function knownDigest(previous: ObservedSource | undefined): Pick<Source, "digest
   return previous?.digest === undefined ? {} : { digest: previous.digest };
 }
 /** A file observed without a read: an unlisted binary one, with no read error, or one too large to be a source. Undefined to read it. */
-async function unreadFile(location: SourceLocation, info: Stats): Promise<Pick<Source, "readError"> | undefined> {
+async function unreadFile(location: SourceLocation, info: FoundEntry): Promise<Pick<Source, "readError"> | undefined> {
   if (location.unlisted && await binaryPrefix(location.absolute)) return {};
   return info.size > MAX_SOURCE_BYTES ? { readError: OVERSIZE_ERROR } : undefined;
 }
@@ -763,12 +765,12 @@ async function openedOrNone(absolute: string): Promise<FileHandle | undefined> {
   }
 }
 /** The opened file as a source: none for an unlisted binary one, a read error for one too large or binary. */
-async function readOpenedSource(handle: FileHandle, location: SourceLocation, info: Stats): Promise<Source | undefined> {
+async function readOpenedSource(handle: FileHandle, location: SourceLocation, info: FoundEntry): Promise<Source | undefined> {
   if (location.unlisted && await binaryPrefix(handle)) return undefined;
   if (info.size > MAX_SOURCE_BYTES) return { path: location.path, language: location.language, readError: OVERSIZE_ERROR };
   return textSource(location, info, await handle.readFile());
 }
-function textSource(location: SourceLocation, info: Stats, source: Buffer): Source | undefined {
+function textSource(location: SourceLocation, info: FoundEntry, source: Buffer): Source | undefined {
   const content = nonText(location, source);
   if (content === undefined)
     return { path: location.path, language: location.language, text: source.toString("utf8"), stamp: fileStamp(info), digest: sha256(source) };
@@ -812,6 +814,12 @@ interface WorktreeDiscovery {
   roots: ReadonlySet<string>;
   /** Those whose first walk is still to finish: as with `SourceDiscovery.baselineRoots`, what it finds is a baseline. */
   readonly fresh: Set<string>;
+  /**
+   * Those of `fresh` a take has read and has yet to apply (`#applyTake`): a walk that starts meanwhile does not list them
+   * for the session as first sights, since their part makes them known before that walk's take reads them. One whose
+   * part did not run is a first sight again for the walks after, and the take that finds it still fresh lists it.
+   */
+  readonly taking: Set<string>;
   /** Subtrees the last walk could not read: what it first finds there is a baseline too. */
   baselineRoots: Set<string>;
   /** The session's watch of the shared walk, from its first request on. */
@@ -851,8 +859,8 @@ const REST_OF_CHECKOUT = "\0checkout";
 
 function worktreeDiscovery(): WorktreeDiscovery {
   return {
-    roots: new Set(), fresh: new Set(), baselineRoots: new Set(), watch: undefined, gaps: [], unread: new Map(), walkedFrom: undefined,
-    unrecorded: new Set(),
+    roots: new Set(), fresh: new Set(), taking: new Set(), baselineRoots: new Set(), watch: undefined, gaps: [], unread: new Map(),
+    walkedFrom: undefined, unrecorded: new Set(),
     listed: new Map(),
     unchecked: new Map(),
   };
@@ -1025,6 +1033,112 @@ function rootHolding(roots: ReadonlySet<string>, path: string): string | undefin
   return undefined;
 }
 
+/** The one of `roots` (session-relative) that `path` is, else the innermost that holds it. */
+function heldBy(roots: ReadonlySet<string>, path: string): string | undefined {
+  return roots.has(path) ? path : rootHolding(roots, path);
+}
+
+/** The entries of `map` by the worktree `holder` names for each key (none: left out), in one pass. */
+function splitBy<V>(map: ReadonlyMap<string, V>, holder: (key: string) => string | undefined): Map<string, Map<string, V>> {
+  const split = new Map<string, Map<string, V>>();
+  for (const [key, value] of map) {
+    const worktree = holder(key);
+    if (worktree === undefined) continue;
+    const part = split.get(worktree) ?? new Map<string, V>();
+    split.set(worktree, part.set(key, value));
+  }
+  return split;
+}
+
+/** `set` split as `splitBy` splits a map. */
+function splitSetBy(set: ReadonlySet<string>, holder: (key: string) => string | undefined): Map<string, Set<string>> {
+  return new Map([...splitBy(new Map([...set].map(key => [key, key])), holder)].map(([worktree, part]) => [worktree, new Set(part.keys())]));
+}
+
+/** A take's entries by the worktree that holds each (`takeParts`), each map and set split once. */
+type TakeSplit = ReturnType<typeof splitTake>;
+
+function splitTake({ walk, scan, views }: WorktreeTake, path: (key: string) => string | undefined, checkout: (key: string) => string | undefined) {
+  return {
+    previous: splitBy(walk.previous, path), heads: splitBy(walk.heads, checkout), unmerged: splitBy(walk.unmerged, checkout),
+    readFrom: splitBy(walk.readFrom, path), records: splitSetBy(walk.records, path),
+    sources: splitBy(scan.sources, path), failedRoots: splitSetBy(scan.failedRoots, path), firstSeen: splitBy(scan.firstSeen, path),
+    checkouts: splitSetBy(scan.checkouts, checkout), passed: splitBy(scan.unmerged, checkout), lateListings: splitBy(scan.lateListings, checkout),
+    views: splitBy(views, path),
+  };
+}
+
+/** A worktree of a take with the snapshot the walk took of it. */
+type Walked = readonly [worktree: string, snapshot: WorktreeSnapshot];
+
+/**
+ * `take` as the parts a session applies on its lane one turn each (`#applyTake`): a part of its own for each worktree
+ * with something to audit, and one part for all those with nothing to audit (`quiet`), placed where the first of them
+ * comes; in order, the worktree around the session folder first when the take holds it, then the walk's order. A walk
+ * that found a few worktrees changed among many costs the session a turn for each of those and one for the rest. A
+ * part holds its worktrees' sources, snapshots, checkouts, records and the reads they answer for (`named` gives a
+ * checkout's session-relative path, `taken` the snapshot the session took last of a worktree); the take's errors and
+ * unread files are the walk's as a whole, so every part reports them as the whole take does. Each entry is looked at
+ * once, so the split costs the size of the take, whatever the number of worktrees.
+ */
+function takeParts(
+  take: WorktreeTake,
+  named: (checkout: string) => string,
+  taken: (worktree: string) => WorktreeSnapshot | undefined,
+): WorktreeTake[] {
+  if (take.snapshots.size <= 1) return [take];
+  const roots = new Set(take.snapshots.keys());
+  const split = splitTake(take, key => heldBy(roots, key), key => heldBy(roots, named(key)));
+  const around = (worktree: string): boolean => worktree.split("/").every(segment => segment === "..");
+  const walked = [...take.snapshots];
+  const ordered = [...walked.filter(([worktree]) => around(worktree)), ...walked.filter(([worktree]) => !around(worktree))];
+  return partsOf(ordered, ([worktree, snapshot]) => taken(worktree) === snapshot && quiet(split, worktree)).map(part => takePart(take, part, split));
+}
+
+/**
+ * Whether the part of `worktree` has nothing to audit: no source changed or seen otherwise by the session, none seen
+ * before, no first-seen text, no listing to ask again. With the snapshot the session took last
+ * (`takeParts`), applying it moves only what the session holds of the worktree's Git state and gaps.
+ */
+function quiet(split: TakeSplit, worktree: string): boolean {
+  return [split.sources, split.previous, split.firstSeen, split.lateListings].every(parts => !parts.has(worktree));
+}
+
+/** `ordered` as parts: one for each entry `still` refuses, and one for all it accepts, where the first of those is. */
+function partsOf(ordered: readonly Walked[], still: (walked: Walked) => boolean): Walked[][] {
+  const parts: Walked[][] = [];
+  let together: Walked[] | undefined;
+  for (const walked of ordered) {
+    if (!still(walked)) parts.push([walked]);
+    else if (together === undefined) parts.push((together = [walked]));
+    else together.push(walked);
+  }
+  return parts;
+}
+
+/** Leaves to the next walk the changes `parts`, parts of a take that never ran, were to record (`leaveRecords`). */
+function leaveUnapplied(discovery: SourceDiscovery, parts: readonly WorktreeTake[]): void {
+  for (const part of parts) leaveRecords(discovery, part.walk, part.walk.records);
+}
+
+function takePart({ walk, scan }: WorktreeTake, walked: readonly Walked[], split: TakeSplit): WorktreeTake {
+  const worktrees = walked.map(([worktree]) => worktree);
+  const of = <V>(parts: ReadonlyMap<string, Map<string, V>>): Map<string, V> => new Map(worktrees.flatMap(worktree => [...(parts.get(worktree) ?? [])]));
+  const ofSet = (parts: ReadonlyMap<string, Set<string>>): Set<string> => new Set(worktrees.flatMap(worktree => [...(parts.get(worktree) ?? [])]));
+  return {
+    walk: {
+      ...walk, worktrees: new Set(worktrees), previous: of(split.previous), heads: of(split.heads), unmerged: of(split.unmerged),
+      readFrom: of(split.readFrom), records: ofSet(split.records),
+    },
+    scan: {
+      ...scan, sources: of(split.sources), failedRoots: ofSet(split.failedRoots), firstSeen: of(split.firstSeen),
+      checkouts: ofSet(split.checkouts), unmerged: of(split.passed), lateListings: of(split.lateListings),
+    },
+    snapshots: new Map(walked),
+    views: of(split.views),
+  };
+}
+
 interface SourceDiscovery {
   /**
    * Filesystem-clock reading taken before the walk; files stamped at or after it may hold this session's shell writes.
@@ -1159,7 +1273,7 @@ interface Refusal {
   /** `refused` is the path examined, so a look again that finds it gone finds the failure's path gone. */
   readonly examined: boolean;
   /** What the walk's lstat found at `refused` before the refusal, when it found it there. */
-  readonly before?: Stats;
+  readonly before?: EntryId;
 }
 /** What a look again at a refused path finds: still there (a denial), gone, going (its delete pending), or another entry than the walk found. */
 type LookedAgain = "there" | "gone" | "going" | "changed";
@@ -1577,14 +1691,14 @@ function discoveryGap(discovery: SourceDiscovery, gaps: readonly WalkGap[]): str
  * ignores case finds `m.py` as `M.py`, and Windows a file by its short name; the whole walk finds such a file under its
  * own name. A linked file no notice named is spelled as a walk found it, which its stamp alone answers ("stamp").
  */
-async function noticedEntry(absolute: string, path: string, how: NoticedRead): Promise<Stats | "gone" | undefined> {
-  const info = await lstat(absolute).catch(goneOrUnknown);
+async function noticedEntry(absolute: string, path: string, how: NoticedRead): Promise<FoundEntry | "gone" | undefined> {
+  const info = await lookAt(absolute).catch(goneOrUnknown);
   if (info === "gone" || info === undefined) return info;
   if (info.isDirectory()) return undefined;
   return how === "stamp" ? info : await asSpelled(absolute, path, info);
 }
 /** `info`, unless it is of a file the folder holds under another spelling than `path` (`spelledAsHeld`). */
-async function asSpelled(absolute: string, path: string, info: Stats): Promise<Stats | undefined> {
+async function asSpelled(absolute: string, path: string, info: FoundEntry): Promise<FoundEntry | undefined> {
   return !info.isFile() || (await spelledAsHeld(absolute, path)) ? info : undefined;
 }
 function goneOrUnknown(error: unknown): "gone" | undefined {
@@ -1662,7 +1776,7 @@ function refusedPath(error: unknown): string | undefined {
  * (`judgeRefusals`) when it refused with EPERM, as Windows refuses a path whose delete is pending and one the user is
  * denied. Not a path the walk starts at that refused itself, which stays a gap, nor one held a gap (`SourceWalk.held`).
  */
-function noteRefusal(walk: SourceWalk, absolute: string, error: unknown, before: Stats | undefined): void {
+function noteRefusal(walk: SourceWalk, absolute: string, error: unknown, before: EntryId | undefined): void {
   if (!hasErrorCode(error, "EPERM")) return;
   const refused = refusedPath(error) ?? absolute;
   const path = sessionPath(walk.discovery.root, absolute);
@@ -1674,7 +1788,7 @@ function startRefused(walk: SourceWalk, absolute: string, refused: string): bool
   return refused === absolute && walk.roots.has(absolute);
 }
 /** What the walk's lstat found (`before`) names `absolute`: it tells whether `refused` is still that entry only when it is `absolute`. */
-function refusalOf(path: string, absolute: string, refused: string, before: Stats | undefined): Refusal {
+function refusalOf(path: string, absolute: string, refused: string, before: EntryId | undefined): Refusal {
   const examined = refused === absolute;
   return { path, refused, examined, ...(examined && before !== undefined ? { before } : {}) };
 }
@@ -1705,13 +1819,69 @@ function deletePending(error: unknown): boolean {
   return hasErrorCode(error, "EPERM");
 }
 /** What an lstat of `path` finds against what the walk's lstat found (`before`). */
-async function sameEntryNow(path: string, before: Stats): Promise<LookedAgain> {
-  const now = await lstat(path).then(info => ({ info }), (error: unknown) => ({ error }));
+async function sameEntryNow(path: string, before: EntryId): Promise<LookedAgain> {
+  const now = await lstat(path, { bigint: true }).then(info => ({ info }), (error: unknown) => ({ error }));
   if ("error" in now) return vanished(now.error) ? "gone" : "there";
   return sameEntry(before, now.info) ? "there" : "changed";
 }
-function sameEntry(before: Stats, now: Stats): boolean {
+function sameEntry(before: EntryId, now: EntryId): boolean {
   return before.dev === now.dev && before.ino === now.ino;
+}
+/** An entry's device and file ids whole, as `lstat` with `bigint` gives them. */
+type EntryId = Pick<BigIntStats, "dev" | "ino">;
+const NS_PER_S = 1_000_000_000n;
+/**
+ * What a walk's lstat, or the stat of a file a tool's read opened, found: the numbers its readers take, each as a stat
+ * without `bigint` gives it, so its stamp (`fileStamp`) is the same, and its ids whole (`exact`). An NTFS file id passes
+ * 2^53, where a number holds only some of the values, so two files' ids can give one number: only the ids whole tell a
+ * file removed and made again from the one found (`sameEntry`).
+ */
+class FoundEntry {
+  readonly exact: BigIntStats;
+  readonly dev: number;
+  readonly ino: number;
+  readonly nlink: number;
+  readonly size: number;
+  readonly mtimeMs: number;
+  readonly ctimeMs: number;
+  constructor(exact: BigIntStats) {
+    this.exact = exact;
+    this.dev = unsignedOf(exact.dev);
+    this.ino = unsignedOf(exact.ino);
+    this.nlink = unsignedOf(exact.nlink);
+    this.size = unsignedOf(exact.size);
+    this.mtimeMs = msOf(exact.mtimeNs);
+    this.ctimeMs = msOf(exact.ctimeNs);
+  }
+  isFile(): boolean {
+    return this.exact.isFile();
+  }
+  isDirectory(): boolean {
+    return this.exact.isDirectory();
+  }
+  isSymbolicLink(): boolean {
+    return this.exact.isSymbolicLink();
+  }
+}
+/**
+ * A field of a `bigint` stat as a stat without `bigint` gives it. Node fills the one from signed 64-bit numbers and the
+ * other from unsigned ones, so an id past 2^63, as an NTFS file id whose sequence number passes 32,767, is negative in
+ * the one and positive in the other.
+ */
+function unsignedOf(value: bigint): number {
+  return Number(BigInt.asUintN(64, value));
+}
+/** What a walk's lstat finds at `absolute`. */
+async function lookAt(absolute: string): Promise<FoundEntry> {
+  return new FoundEntry(await lstat(absolute, { bigint: true }));
+}
+/**
+ * A time in nanoseconds in milliseconds as `lstat` without `bigint` gives it: its whole seconds' milliseconds plus the
+ * nanoseconds past them, from 0 to 999,999,999 for a time before 1970 too.
+ */
+function msOf(ns: bigint): number {
+  const past = ((ns % NS_PER_S) + NS_PER_S) % NS_PER_S;
+  return Number((ns - past) / NS_PER_S) * 1_000 + Number(past) / 1e6;
 }
 /**
  * Looks again at the first `MAX_LOOKED_AGAIN` refusals of `walk` (`noteRefusal`) in path order, those an earlier walk
@@ -3277,10 +3447,10 @@ export class CodeRuleBridge {
    * The repository's other worktrees as they are now, each relative to the session folder in `WorktreeDiscovery.roots`. One
    * first seen now is a baseline but for what changed since the session opened, which Git's verdicts judge. One gone took
    * its files with it, and none of them is an edit. `registry`: the list the walk's learn step gave as stored, in the same
-   * synchronous run (`worktreeRoots`).
+   * synchronous run (`worktreeRoots`); `listedInTurns`: the list `worktreeRootsInTurns` gave for it, when it was asked.
    */
-  #syncWorktrees(discovery: SourceDiscovery, registry?: WorktreeRegistry): readonly string[] {
-    const worktrees = (this.#auditor.worktreeRoots?.(registry) ?? []).filter(worktree => worktree !== discovery.root);
+  #syncWorktrees(discovery: SourceDiscovery, registry?: WorktreeRegistry, listedInTurns?: readonly string[]): readonly string[] {
+    const worktrees = (listedInTurns ?? this.#auditor.worktreeRoots?.(registry) ?? []).filter(worktree => worktree !== discovery.root);
     const current = new Set(worktrees.map(worktree => sessionPath(discovery.root, worktree)));
     const { roots, fresh, listed } = discovery.worktrees;
     for (const worktree of current) {
@@ -3372,7 +3542,7 @@ export class CodeRuleBridge {
       checkout: this.#owningCheckout(discovery.root, ""),
       folder: discovery.root,
       registry: this.#auditor.worktreeRegistry?.(),
-      firstSight: new Set(worktrees.filter(worktree => this.#mayFirstSee(discovery, sessionPath(discovery.root, worktree)))),
+      firstSight: new Set(worktrees.filter(worktree => this.#firstSightAtStart(discovery, sessionPath(discovery.root, worktree)))),
       fresh: new Set(worktrees.filter(worktree => discovery.worktrees.fresh.has(sessionPath(discovery.root, worktree)))),
       startedAt: discovery.startedAt,
       heads: new Set([...discovery.heads.keys()].filter(root => inWorktrees(discovery, root))),
@@ -3380,7 +3550,7 @@ export class CodeRuleBridge {
       scan: request => this.#scanWorktree(discovery, request, rules),
       holdsRefusal: (root, path) => this.#holdsRefusal(inWorktree(sessionPath(discovery.root, root), path === "." ? "" : path)),
       claims: (root, findings) => this.#claimsIn(discovery, root, findings),
-      take: (walk, records) => this.#takeWorktreeWalk(discovery, start, walk, records),
+      take: (walk, records, inTurn) => this.#takeWorktreeWalk(discovery, { start, walk, records, inTurn }),
     };
   }
 
@@ -3424,7 +3594,9 @@ export class CodeRuleBridge {
     const learnt = this.#auditor.learnWorktreeRoots?.(discovery.git);
     const learning = this.#learnWorktrees(discovery, learnt);
     if (learning !== undefined && !(await learning)) return;
-    const worktrees = this.#syncWorktrees(discovery, storedRegistry(learnt));
+    const registry = storedRegistry(learnt);
+    const worktrees = await this.#listWorktrees(discovery, registry);
+    if (worktrees === undefined) return;
     const start: WalkStart = {
       inSession: true, baseline: !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),
       previous: new Map(this.#observed), versions: new Map(discovery.versions),
@@ -3450,6 +3622,18 @@ export class CodeRuleBridge {
    */
   #learnWorktrees(discovery: SourceDiscovery, learnt: WorktreeListLearning | undefined): Promise<boolean> | undefined {
     return learnt?.kind === "learning" ? learnt.done.then(() => !this.#abandoned(discovery)) : undefined;
+  }
+
+  /**
+   * The other worktrees a session walk takes (`#syncWorktrees`). The first list of many worktrees records each one, with
+   * turns between, so other sessions are answered meanwhile; undefined when the auditor was interrupted while it took
+   * them: a list cut short names part of the worktrees, and taken it would forget the rest.
+   */
+  async #listWorktrees(discovery: SourceDiscovery, registry: WorktreeRegistry | undefined): Promise<readonly string[] | undefined> {
+    const inTurns = this.#auditor.worktreeRootsInTurns?.(registry);
+    if (inTurns === undefined) return this.#syncWorktrees(discovery, registry);
+    const listed = await inTurns;
+    return listed === undefined ? undefined : this.#syncWorktrees(discovery, registry, listed);
   }
 
   #abandoned(discovery: SourceDiscovery): boolean {
@@ -3511,7 +3695,7 @@ export class CodeRuleBridge {
       buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
       scan,
       stack: [], roots: new Set([discovery.root]),
-      view: this.#auditor.walkView?.() ?? this.#auditor,
+      view: this.#auditor.walkView?.(discovery.root) ?? this.#auditor,
       held: path => this.#holdsRefusal(path),
       withdrawn: discovery.withdrawn,
     };
@@ -3576,7 +3760,7 @@ export class CodeRuleBridge {
     }
     const prefix = sessionPath(discovery.root, request.root);
     const named = (path: string): string => (path === "" ? prefix : `${prefix}/${path}`);
-    const asked = this.#auditor.walkView?.() ?? this.#auditor;
+    const asked = this.#auditor.walkView?.(request.root) ?? this.#auditor;
     const view: WalkView = {
       acceptsPath: path => asked.acceptsPath(named(path)),
       ignoresPath: (path, directory) => asked.ignoresPath?.(named(path), directory) === true,
@@ -3648,26 +3832,97 @@ export class CodeRuleBridge {
 
   /**
    * Takes a walk of the other worktrees: what changed since the snapshots the session took last is read off the lane,
-   * then audited and kept on it, as the session folder's walk is. What fails is the walk's error, reported at each
-   * boundary.
+   * in the walk's turn for it (`ReadTurn`), then audited and kept on it, as the session folder's walk is. What fails is
+   * the walk's error, reported at each boundary.
    */
-  async #takeWorktreeWalk(discovery: SourceDiscovery, start: WorktreeStart, walk: WorktreeWalk, records: WorktreeRecords): Promise<void> {
+  async #takeWorktreeWalk(
+    discovery: SourceDiscovery,
+    { start, walk, records, inTurn }: { readonly start: WorktreeStart; readonly walk: WorktreeWalk; readonly records: WorktreeRecords; readonly inTurn: ReadTurn },
+  ): Promise<void> {
     if (this.#abandoned(discovery)) return;
     if ("error" in walk) {
       discovery.worktrees.gaps = [{ reason: walk.error }];
       return;
     }
     try {
-      const take = await this.#worktreeTake(discovery, start, walk.found, walk.observedAt, records);
-      if (this.#abandoned(discovery)) return;
-      await this.#enqueue(async () => {
-        if (this.#abandoned(discovery)) return;
-        await this.#applyWalk(discovery, this.#takeSnapshots(discovery, take), take.scan);
-      });
+      const take = await inTurn(() => this.#readTake(discovery, start, walk, records));
+      if (take !== undefined) await this.#applyTake(discovery, take);
     } catch (error) {
       const gaps = await this.#failedWalkGaps(error);
       if (!this.#abandoned(discovery)) discovery.worktrees.gaps = gaps;
     }
+  }
+
+  /**
+   * What a walk found that the session has yet to take (`#worktreeTake`), read in the walk's turn for it while the
+   * session is still open as the turn comes: one closed while it waited reads nothing. The worktrees it shows the session
+   * first are no first sights for a walk that starts while it is applied (`WorktreeDiscovery.taking`).
+   */
+  async #readTake(
+    discovery: SourceDiscovery,
+    start: WorktreeStart,
+    { found, observedAt }: { readonly found: ReadonlyMap<string, WorktreeFindings>; readonly observedAt: number },
+    records: WorktreeRecords,
+  ): Promise<WorktreeTake | undefined> {
+    if (this.#abandoned(discovery)) return undefined;
+    const take = await this.#worktreeTake(discovery, start, found, observedAt, records);
+    for (const worktree of take.snapshots.keys()) if (discovery.worktrees.fresh.has(worktree)) discovery.worktrees.taking.add(worktree);
+    return take;
+  }
+
+  /**
+   * Audits and keeps a take on the session's lane in parts (`takeParts`): one for each worktree with something to audit,
+   * so a hook of the session waits for at most one worktree's audit however many worktrees the take holds (a first sight
+   * hands it every one), and one for all the worktrees with nothing to audit, so a later walk that found little changed
+   * costs few turns. A part that fails leaves the parts after it to the next walk, as the whole take was, with the
+   * changes they were to record for the repository (`leaveRecords`): the walk hands each such change over once.
+   */
+  async #applyTake(discovery: SourceDiscovery, take: WorktreeTake): Promise<void> {
+    const parts = takeParts(take, checkout => sessionPath(discovery.root, checkout), worktree => this.#worktreeView.snapshot(worktree));
+    let next = 0;
+    try {
+      for (const [index, part] of parts.entries()) {
+        if (this.#abandoned(discovery)) return;
+        const place = { begins: index === 0 ? take.walk.worktrees : undefined, last: index === parts.length - 1 };
+        next = index + 1;
+        await this.#enqueue(() => this.#applyTakePart(discovery, part, place));
+      }
+    } catch (error) {
+      // The failed part left its own records (`#auditWalkEdits`); those of the parts that never ran wait with them.
+      leaveUnapplied(discovery, parts.slice(next));
+      throw error;
+    } finally {
+      // Applied, or a first sight again for the walks that start from now on: its part did not run.
+      for (const worktree of take.snapshots.keys()) discovery.worktrees.taking.delete(worktree);
+    }
+  }
+
+  /**
+   * One part of a take (`#applyTake`). The first lists the worktrees again (a worktree removed while its walk ran took
+   * its files with it: the files the walk missed are no deletions) and lets go of the unread subtrees of worktrees the
+   * walk did not read; the last keeps the session's observations for the next session in its folder, once a take.
+   */
+  async #applyTakePart(
+    discovery: SourceDiscovery,
+    part: WorktreeTake,
+    { begins, last }: { readonly begins: ReadonlySet<string> | undefined; readonly last: boolean },
+  ): Promise<void> {
+    if (this.#abandoned(discovery)) return;
+    tellTakeTurn(part.snapshots.size);
+    if (begins !== undefined) this.#beginTake(discovery, begins);
+    await this.#applyWalk(discovery, this.#takeSnapshots(discovery, part), part.scan);
+    if (last) this.#observations?.set(this.#cwd, new Map(this.#observed));
+  }
+
+  #beginTake(discovery: SourceDiscovery, walked: ReadonlySet<string>): void {
+    this.#syncWorktrees(discovery);
+    const left = discovery.worktrees.baselineRoots;
+    discovery.worktrees.baselineRoots = new Set([...left].filter(root => heldBy(walked, root) !== undefined));
+  }
+
+  /** Whether a walk starting now may show the session a source of `worktree` first (`#mayFirstSee`), but for one a read take holds (`taking`). */
+  #firstSightAtStart(discovery: SourceDiscovery, worktree: string): boolean {
+    return !discovery.worktrees.taking.has(worktree) && this.#mayFirstSee(discovery, worktree);
   }
 
   /**
@@ -3960,16 +4215,18 @@ export class CodeRuleBridge {
   /** Audits what a finished scan found, then makes it the walk's new baseline. */
   async #applyWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<void> {
     if (this.#abandoned(discovery)) return;
-    // A worktree removed while its own walk ran took its files with it: the files the walk then missed are no deletions.
-    if (!walk.inSession) this.#syncWorktrees(discovery);
     const uncaptured = new Map<string, string>();
     const edits = this.#discoverEdits(discovery, walk, scan.sources, uncaptured);
     await this.#noteWalkedIgnoreFiles(discovery, walk, scan.sources);
     await this.#auditWalkEdits(discovery, walk, edits, uncaptured);
     this.#keepFirstSeenTexts(scan.firstSeen);
     keepWalkedGit(discovery, walk, scan);
-    if (walk.inSession) this.#finishSessionWalk(discovery, walk, scan);
-    else this.#finishWorktreeWalk(discovery, walk, scan);
+    if (!walk.inSession) {
+      // A take keeps the session's observations once, after its last part (`#applyTakePart`).
+      this.#finishWorktreeWalk(discovery, walk, scan);
+      return;
+    }
+    this.#finishSessionWalk(discovery, walk, scan);
     this.#observations?.set(this.#cwd, new Map(this.#observed));
   }
 
@@ -4076,7 +4333,10 @@ export class CodeRuleBridge {
     // A worktree Git listed again at its path since the walk began is new to the session: its first walk is to come.
     const gone = new Set([...walk.worktrees].filter(worktree => !walkHeld(discovery, walk, worktree)));
     for (const worktree of walk.worktrees) if (!gone.has(worktree)) worktrees.fresh.delete(worktree);
-    worktrees.baselineRoots = scan.failedRoots;
+    // A part of a take (`#applyTake`) replaces the unread subtrees of its own worktree, a worktree nested in it aside;
+    // the others' wait for their parts.
+    const others = [...worktrees.baselineRoots].filter(root => !walk.worktrees.has(heldBy(worktrees.roots, root) ?? ""));
+    worktrees.baselineRoots = new Set([...others, ...scan.failedRoots]);
     // `git worktree remove` takes the worktree's folder before Git stops listing it, so a walk that began with it listed
     // can find the folder gone, or its delete pending, which fails the walk there. A worktree Git did not list for the
     // whole walk (`#applyWalk`) took its folders and files with it: nothing the walk could not read there is a place.
@@ -4661,9 +4921,9 @@ export class CodeRuleBridge {
   }
 
   async #observePath(walk: SourceWalk, absolute: string): Promise<void> {
-    let info: Stats;
+    let info: FoundEntry;
     try {
-      info = await lstat(absolute);
+      info = await lookAt(absolute);
     } catch (error) {
       this.#observationFailed(walk, absolute, error, undefined);
       return;
@@ -4675,7 +4935,7 @@ export class CodeRuleBridge {
    * Observes what a pass of noticed paths found at `absolute` by its own look (`noticedEntry`), as `#observePath` does
    * what the walk finds; a failure to read it is the walk's to record.
    */
-  async #observeFound(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
+  async #observeFound(walk: SourceWalk, absolute: string, info: FoundEntry): Promise<void> {
     try {
       await this.#observeEntry(walk, absolute, info);
     } catch (error) {
@@ -4688,17 +4948,17 @@ export class CodeRuleBridge {
    * nothing for a path gone when examined, which the walk gave up on (`goneWhenExamined`); else the failure, and an
    * EPERM refusal to look at again (`noteRefusal`). A whole walk and a pass of noticed paths keep the same.
    */
-  #observationFailed(walk: SourceWalk, absolute: string, error: unknown, info: Stats | undefined): void {
+  #observationFailed(walk: SourceWalk, absolute: string, error: unknown, info: FoundEntry | undefined): void {
     if (walk.discovery.cancelled) return;
     if (goneWhenExamined(walk, absolute, error)) {
       gaveUpOn(walk.scan);
       return;
     }
     this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
-    noteRefusal(walk, absolute, error, info);
+    noteRefusal(walk, absolute, error, info?.exact);
   }
 
-  async #observeEntry(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
+  async #observeEntry(walk: SourceWalk, absolute: string, info: FoundEntry): Promise<void> {
     if (walk.discovery.cancelled || info.isSymbolicLink()) return;
     if (info.isDirectory()) await this.#expandDirectory(walk, absolute);
     else if (info.isFile()) await this.#observeRegularFile(walk, absolute, info);
@@ -4749,14 +5009,14 @@ export class CodeRuleBridge {
    * A file Git ignores is not observed at all: no baseline entry, so no later read or edit of it is audited. A
    * `.gitignore` is observed by its stamp whatever Git says of it, since it decides what is ignored.
    */
-  async #observeRegularFile(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
+  async #observeRegularFile(walk: SourceWalk, absolute: string, info: FoundEntry): Promise<void> {
     const path = sessionPath(walk.discovery.root, absolute);
     if (basename(path) === GITIGNORE || !walk.view.ignoresPath?.(path, false)) await this.#observeFile(walk, sourceLocation(absolute, path), info);
     else walk.scan.seen?.leftOut.add(path);
   }
 
   /** Observes a file, noting it when it has another name (`SourceScan.linked`). */
-  async #observeFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
+  async #observeFile(walk: SourceWalk, location: SourceLocation, info: FoundEntry): Promise<void> {
     if (info.nlink > 1) walk.scan.linked?.note(location.path);
     const observed = await this.#observedFile(walk, location, info);
     if (observed !== undefined) walk.scan.sources.set(location.path, observed);
@@ -4767,7 +5027,7 @@ export class CodeRuleBridge {
    * digest it had, and one whose stamp holds keeps its observation. An unlisted binary file is observed without a read,
    * nor a read error, so it is not read again while its stamp holds.
    */
-  async #observedFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<Source | undefined> {
+  async #observedFile(walk: SourceWalk, location: SourceLocation, info: FoundEntry): Promise<Source | undefined> {
     const stamped = { path: location.path, language: location.language, stamp: fileStamp(info), observedAt: walk.observedAt };
     const previous = walk.previousSources.get(location.path);
 
@@ -4870,7 +5130,7 @@ export class CodeRuleBridge {
     const handle = await openSource(location.absolute);
     if (handle === undefined) return undefined;
     try {
-      const info = await handle.stat();
+      const info = new FoundEntry(await handle.stat({ bigint: true }));
       if (!info.isFile()) return location.unlisted ? undefined : { path: location.path, language: location.language, readError: "Source is not a regular file" };
       const real = await this.#realPathInPlace(root, location, info);
       return real === undefined ? undefined : judgedWhereItLeads(await readOpenedSource(handle, location, info), real);
@@ -4883,13 +5143,13 @@ export class CodeRuleBridge {
    * The file's real path, `/`-separated from the checkout that owns it, when it stays inside that checkout and still
    * names the file that was opened; undefined otherwise.
    */
-  async #realPathInPlace(root: string, location: SourceLocation, info: Stats): Promise<string | undefined> {
+  async #realPathInPlace(root: string, location: SourceLocation, info: FoundEntry): Promise<string | undefined> {
     const owner = this.#owningCheckout(root, location.path);
     if (owner === undefined) return undefined;
     const canonical = await realpath(location.absolute);
     if (!withinFolder(owner, canonical)) return undefined;
-    const named = await lstat(canonical);
-    return named.dev === info.dev && named.ino === info.ino ? relative(owner, canonical).split(sep).join("/") : undefined;
+    const named = await lstat(canonical, { bigint: true });
+    return sameEntry(named, info.exact) ? relative(owner, canonical).split(sep).join("/") : undefined;
   }
 
   #failedSourceRead(location: SourceLocation, error: unknown): Source {
@@ -4992,8 +5252,13 @@ export class CodeRuleBridge {
     return { owned, unowned };
   }
 
-  /** `#owningCheckout` of the paths a walk found, through a view of the auditor that looks each folder up once. */
+  /**
+   * `#owningCheckout` of the paths a walk found, through a view of the auditor that looks each folder up once. An
+   * auditor that judges one folder owns every path at the session folder, whatever its view says, as it does a path it
+   * is named.
+   */
   #walkedCheckoutOf(root: string): (path: string) => string | undefined {
+    if (this.#auditor.sourceRoot === undefined) return () => root;
     const view = this.#auditor.walkView?.();
     return view?.sourceRoot === undefined ? path => this.#owningCheckout(root, path) : path => view.sourceRoot?.(path);
   }
@@ -5020,8 +5285,25 @@ export class CodeRuleBridge {
     let bytes = this.#firstSightBytes;
     while (listed.length > 0 && bytes < this.#firstSightTextBytes && !this.#abandoned(discovery)) {
       const wave = listed.splice(0, OBSERVATION_CONCURRENCY);
-      bytes += takeFirstSeen(taking, await Promise.all(wave.map(path => this.#readSource(discovery.root, path))));
+      bytes += takeFirstSeen(taking, await Promise.all(await this.#startReads(discovery.root, wave)));
     }
+  }
+
+  /**
+   * Starts a read of each of `paths`, giving the thread back after each start. A read first finds its file's checkout,
+   * which builds that checkout's rules the first time the session asks of it: a take of many worktrees new to a session
+   * built a wave's worth at once, and other sessions' hooks waited seconds for the thread.
+   */
+  async #startReads(root: string, paths: readonly string[]): Promise<Array<Promise<Source | undefined>>> {
+    const reads: Array<Promise<Source | undefined>> = [];
+    for (const path of paths) {
+      const read = this.#readSource(root, path);
+      // Handled where the reads are awaited together; this keeps a failure from counting as unhandled meanwhile.
+      read.catch(() => undefined);
+      reads.push(read);
+      await nextTurn();
+    }
+    return reads;
   }
 
   /**

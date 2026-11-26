@@ -50,5 +50,6 @@ export const TWO_RULES = sceneSteer(NO_EXPLICIT_ANY_FINDING, NO_FLOATING_PROMISE
 /** Hook output as a golden file: the exact JSON the coding agent reads, pretty-printed. */
 export const goldenJson = (output: unknown): string => `${JSON.stringify(output, null, 2)}\n`;
 
-/** What a terminal draws for `text`: each OSC 8 link reduced to its label, as the person reads it. */
-export const drawn = (text: string): string => `${text.replace(/\u001b\]8;;[^\u0007]*\u0007(.*?)\u001b\]8;;\u0007/gu, "$1")}\n`;
+/** What a terminal draws for `text`: each OSC 8 link reduced to its label, underline dropped, as the person reads it. */
+export const drawn = (text: string): string =>
+  `${text.replace(/\u001b\]8;;[^\u0007]*\u0007(?:\u001b\[4m)?(.*?)(?:\u001b\[24m)?\u001b\]8;;\u0007/gu, "$1")}\n`;
