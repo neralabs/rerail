@@ -403,3 +403,11 @@ statements and blocks end.
 
     A test's compile is now 3.7 s: bitlex 1.5 s, Cranelift 2.1 s. nextest runs each test in a process of its own,
     which compiles the grammar again, so Python's suite takes 26 s and Kotlin's 51 s.
+71. **A test binary's processes compile the grammar once.** nextest runs each test in a process of its own. The
+    Bitlex compiler's half of each compile (`bitlex_output`) is now kept in the answers directory
+    (`answers::kept_output`), and the rest of each process reads it. The key is the grammar text and the test
+    binary's path, size and time, since the binary's code is the compiler, so a rebuild misses. The first process to
+    miss compiles under the family's lock, and the others wait, then read. Only `compiled()` reads the kept output:
+    the tests of the shipped answers and of a cold compile call `compile_timed` and still compile.
+
+    A test's own work is now Cranelift's code for both tiers, 2.1 s of its 2.3 s.
