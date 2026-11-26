@@ -1415,6 +1415,14 @@ function generatedClaudeStatus(command: string, platform: NodeJS.Platform): Gene
   return sourced === null ? nodeClaudeStatus(command, platform) : sourcedClaudeStatus(sourced);
 }
 
+/**
+ * The script a Claude Code status line `command` of a shape registration writes or wrote runs, its words unquoted as
+ * the shell Claude Code hands it to reads them; undefined for any other command.
+ */
+export function claudeStatusScript(command: string, platform: NodeJS.Platform = process.platform): string | undefined {
+  return generatedClaudeStatus(command, platform)?.script;
+}
+
 /** `. <claude-status.sh>`, after `set -- <node> <claude-status.js> [<settings>]; ` or not (`STATUS_SCRIPT_COMMAND`). */
 function sourcedClaudeStatus([, node, word]: RegExpExecArray): GeneratedClaudeStatus | undefined {
   const script = unquoteShellWord(word!);

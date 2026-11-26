@@ -1,0 +1,1 @@
+When the version folders of Rerail's managed install are gone, `rerail status` now says to run `npx @neralabs/rerail setup`, which installs a version again, instead of `rerail install --refresh`, which changed nothing; and it names the missing status line script beside the hook scripts, on Windows, macOS and Linux.

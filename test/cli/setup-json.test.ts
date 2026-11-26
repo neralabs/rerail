@@ -13,7 +13,7 @@ import { runSetupCommand, runSetupStepArgs, type SetupIo } from "../../src/cli/s
 import { commandLine } from "../../src/engine/index.js";
 import { CONFIRM_PACKS_ANSWERS, NO_REPO_ANSWERS, READ_REPO_ANSWERS } from "../../src/harness/index.js";
 import type { SetupQuestion, SetupStep } from "../../src/harness/index.js";
-import { ManagedUpdater, type PackStore } from "../../src/setup/index.js";
+import { ManagedUpdater, missingClaudeHookScripts, registerHarnesses, type PackStore } from "../../src/setup/index.js";
 import { directoryPackStore, REPOSITORY_CORE_VERSION, repositoryPackVersions } from "../support/directory-pack-store.js";
 import { removeInstalledPacks } from "../support/installed-packs.js";
 import { fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
@@ -330,6 +330,41 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(reinstall).not.toHaveBeenCalled();
     expect(installed.said.join("\n")).not.toContain("Rerail is installed");
     expect(installed.said.join("\n")).toContain("Find rule packs for acme api?");
+  });
+
+  it("installs a version again once the managed install's version folders are gone, so Claude Code's scripts are back", async () => {
+    const { setup, context, io } = await commandFixture();
+    // The registry as the updater's tests stand it in: each version it serves holds the scripts a registration names.
+    const scripts = [["harness", "hook-launcher.js"], ["hosts", "claude", "claude-hook.js"], ["hosts", "claude", "claude-status.js"], ["hosts", "claude", "claude-status.sh"]];
+    const updater = new ManagedUpdater({
+      home: context.home,
+      packageRoot: context.packageRoot,
+      packageVersion: REPOSITORY_CORE_VERSION,
+      registry: {
+        resolveVersion: async () => REPOSITORY_CORE_VERSION,
+        installVersion: async (version, prefix) => {
+          const root = join(prefix, "node_modules", "@neralabs", "rerail");
+          for (const script of scripts) {
+            mkdirSync(join(root, "dist", ...script.slice(0, -1)), { recursive: true });
+            writeFileSync(join(root, "dist", ...script), "");
+          }
+          writeFileSync(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version }));
+        },
+      },
+      validateInstallation: async () => {},
+    });
+    // Set up and used: a version installed, and Claude Code connected to `current`.
+    await updater.install();
+    const user = join(setup.root, "user");
+    mkdirSync(join(user, ".claude"), { recursive: true });
+    await registerHarnesses({ root: updater.currentLink, home: user, harnesses: ["claude-code"] });
+    expect(missingClaudeHookScripts(user)).toEqual([]);
+    // The version folders deleted by hand or by a clean-up tool: `current` dangles and every script is gone.
+    await removeFolder(updater.versionsRoot);
+    expect(missingClaudeHookScripts(user)).not.toEqual([]);
+
+    expect(await runSetupCommand([], { ...context, updater }, io)).toBe(0);
+    expect(missingClaudeHookScripts(user)).toEqual([]);
   });
 
   it("prints exactly one JSON step and nothing else, the install line inside it", async () => {

@@ -668,8 +668,11 @@ not use, one of another Rerail package or, on Windows, one of Rerail 0.1.4 or ea
 session's start says that nothing is recorded until a daemon from the active package runs, and to run
 `rerail daemon stop`, then `rerail daemon start`. Each event lost beside it goes to the hook failure log above.
 
-If `rerail status` instead names Claude Code hook scripts that are missing, Claude Code's settings point at a Rerail
-that is gone, and every hook fails before Rerail runs. Run `rerail install --refresh` and open a new session.
+If `rerail status` instead names Claude Code hook or status line scripts that are missing, Claude Code's settings point
+at a Rerail that is gone, and every hook fails before Rerail runs. Run the command the line ends with, then open a new
+session: `rerail install --refresh` while `~/.rerail/current` holds an install, as after an update to a version without
+a script the settings name; `npx @neralabs/rerail setup` once the version folders under `~/.rerail/versions` are gone,
+since set-up installs a version again and the `rerail` command itself runs from `current`.
 
 ### Windows: a build from a checkout records nothing
 

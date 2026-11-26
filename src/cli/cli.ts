@@ -420,12 +420,23 @@ async function printCodingAgentDataAccess(home: string): Promise<void> {
 function hookHealthLines(home: string, lookup: DaemonLookup): string[] {
   const missing = missingClaudeHookScripts(codingAgentHome());
   const registration = missing.length === 0 ? [] : [
-    `Claude Code's Rerail hooks run ${missing.join(", ")}, which ${missing.length === 1 ? "is" : "are"} missing, so every hook fails before Rerail runs and nothing is recorded. Run rerail install --refresh.`,
+    `Claude Code's Rerail hooks run ${missing.join(", ")}, which ${missing.length === 1 ? "is" : "are"} missing, so every hook fails before Rerail runs and nothing is recorded. Run ${missingScriptsStep(home)}.`,
   ];
   const log = readHookFailures(home, Date.now() - HOOK_FAILURE_WINDOW_MS);
   const recorded = log.failures.length === 0 ? null : lastObservedEventAt(join(home, RERAIL_DATABASE_FILE));
   const waiting = lookup.status === "absent" ? [] : untakenWaitingLines(home, lookup.state.pid);
   return [...registration, ...hookFailureLines(log, recorded), ...waiting, ...lateCheckLines(log)];
+}
+
+/**
+ * The command that brings back the Rerail scripts Claude Code's settings run. `install --refresh` registers again only
+ * the coding agents connected to the root registrations take (`registrationRoot`): the running package once
+ * `<home>/current` holds no install, as after its version folders were deleted, and no registration of that package can
+ * name a script that is missing, so the refresh changes nothing. Set-up installs a version and points `current` at it
+ * again. It is named through npx, since the `rerail` launcher runs `current` too.
+ */
+function missingScriptsStep(home: string): string {
+  return registrationRoot(home, packageRoot) === join(home, CURRENT_LINK) ? "rerail install --refresh" : "npx @neralabs/rerail setup";
 }
 
 /**
