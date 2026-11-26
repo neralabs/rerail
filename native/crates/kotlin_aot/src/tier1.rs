@@ -5358,12 +5358,12 @@ rerail_simd8::dispatch! {
 }
 /// The words the grammar reads, a word's code its place plus one, as the lean lexer's `WORD_LIST`.
 const WORD_LIST: [&[u8]; 123] = [
-    b"as", b"typealias", b"class", b"fun", b"interface", b"val", b"var", b"object", b"this", b"super", b"for", b"in",
-    b"while", b"do", b"if", b"else", b"when", b"try", b"throw", b"return", b"continue", b"break", b"is", b"true",
-    b"false", b"null", b"@", b":", b"[", b"]", b"*", b"=", b"{", b"}", b"(", b",",
-    b")", b"<", b">", b".", b";", b"&", b"?", b"->", b"..", b"..<", b"?:", b"!",
-    b"&&", b"||", b"::", b"+=", b"-=", b"*=", b"/=", b"%=", b"!=", b"!==", b"==", b"===",
-    b"<=", b">=", b"+", b"-", b"/", b"%", b"++", b"--", b"!!", b"?.", b"package", b"import",
+    b"as", b"is", b"else", b"in", b"this", b"super", b"if", b"when", b"try", b"return", b"throw", b"break",
+    b"continue", b"true", b"false", b"null", b"val", b"var", b"fun", b"object", b"class", b"interface", b"typealias", b"for",
+    b"while", b"do", b".", b",", b":", b")", b"}", b"]", b";", b"/", b"%", b"=",
+    b"?", b"->", b"<", b">", b"<=", b">=", b"&", b"&&", b"||", b"+=", b"-=", b"*=",
+    b"/=", b"%=", b"?.", b"?:", b"..", b"..<", b"!!", b"==", b"!=", b"===", b"!==", b"*",
+    b"(", b"{", b"[", b"+", b"-", b"!", b"++", b"--", b"::", b"@", b"package", b"import",
     b"by", b"file", b"out", b"L", b"u", b"U", b"uL", b"UL", b"sealed", b"annotation", b"data", b"inner",
     b"value", b"override", b"lateinit", b"public", b"private", b"internal", b"protected", b"tailrec", b"operator", b"infix", b"inline", b"external",
     b"suspend", b"const", b"abstract", b"final", b"open", b"vararg", b"noinline", b"crossinline", b"expect", b"actual", b"get", b"set",
@@ -5459,9 +5459,9 @@ pub const DERIVED: u32 = 0x1e;
 pub fn derived(b: u32, marks: u32, before: u32) -> bool {
     match b {
         1 => marks >> 0 & 1 == 1,
-        2 => marks >> 0 & 1 == 1 && !matches!(before, 41),
-        3 => marks >> 0 & 1 == 1 && !matches!(before, 41),
-        4 => marks >> 0 & 1 == 1 && !matches!(before, 41),
+        2 => marks >> 0 & 1 == 1 && !matches!(before, 33),
+        3 => marks >> 0 & 1 == 1 && !matches!(before, 33),
+        4 => marks >> 0 & 1 == 1 && !matches!(before, 33),
         _ => false,
     }
 }
@@ -5481,7 +5481,7 @@ pub const fn carried(before: u32, bits: u32) -> u32 {
     if bits >> 3 & 1 == 1 {
         r |= 1 << 0;
     }
-    if bits >> 4 & 1 == 1 && !matches!(before, 41) {
+    if bits >> 4 & 1 == 1 && !matches!(before, 33) {
         r |= 1 << 0;
     }
     r

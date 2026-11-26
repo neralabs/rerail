@@ -2080,7 +2080,7 @@ impl<'a> G<'a> {
             0 => "true".to_owned(),
             1 => pos.remove(0),
             _ if pos.iter().all(|p| p.starts_with(&word) && !p[word.len()..].contains(' ')) => {
-                format!("matches!(self.word_at({j}), {})", pos.iter().map(|p| &p[word.len()..]).collect::<Vec<_>>().join(" | "))
+                format!("matches!(self.word_at({j}), {})", moves::word_pattern(&pos.iter().map(|p| p[word.len()..].to_owned()).collect::<Vec<_>>()))
             }
             _ => format!("({})", pos.join(" || ")),
         };
