@@ -3079,9 +3079,12 @@ impl<'a> Run<'a, '_> {
             eprintln!("RERAIL_STRATA_LIVE start {scc:?} ({} rules)", rules.len());
             std::time::Instant::now()
         });
-        let solving = solving_of(&self.versions, scc, rules);
-        let sources = if solving.is_some() { column_sources(&self.versions, scc, rules) } else { Sources::new() };
-        let out = self.lent(solving, sources, |this, native_rels| this.native_stratum_(scc, rules, native_rels));
+        // `RERAIL_JOIN_FRAMES`: the stratum runs under frames naming it, for a profiler's samples (setfix's `framed`).
+        let out = super::native::setfix::stratum_framed(&|| stratum_label(scc), &mut || {
+            let solving = solving_of(&self.versions, scc, rules);
+            let sources = if solving.is_some() { column_sources(&self.versions, scc, rules) } else { Sources::new() };
+            self.lent(solving, sources, |this, native_rels| this.native_stratum_(scc, rules, native_rels))
+        });
         if let Some(t0) = t0 {
             eprintln!("RERAIL_STRATA_LIVE end {scc:?} {:.3} s", t0.elapsed().as_secs_f64());
         }

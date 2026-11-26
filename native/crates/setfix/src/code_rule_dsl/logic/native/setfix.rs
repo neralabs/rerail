@@ -2912,6 +2912,13 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     }
     syms.check()?;
     drop(syms);
+    if join_frames() {
+        for (i, p) in probes.iter().enumerate() {
+            if let Body::Join(j) = &p.body {
+                join_frame_line(format!("join-frame {:016x} {name} {i} {}", j.spec, rels.get(p.head).map_or("?", |r| r.table.as_str())));
+            }
+        }
+    }
     let store = Arc::new(RwLock::new(Store { rels, syms: symbols }));
     forgotten_on_close();
     let on = on(conn);
@@ -8691,8 +8698,79 @@ pub fn reads_empty_input(j: &JoinRule) -> bool {
     j.steps.iter().any(|s| matches!(s, Step::Atom { src: Src::In(r, _), neg: false, .. } if { let r = j.bound(r); r.view.as_ref().map_or(r.n == 0, View::known_empty) }))
 }
 
+/// Measurement: whether each join runs under frames that name it (`RERAIL_JOIN_FRAMES`, a file), so a profiler's
+/// samples split by rule: `framed`, and the `join-frame` lines `open_spec_within` writes to that file.
+fn join_frames() -> bool {
+    env_set!("RERAIL_JOIN_FRAMES")
+}
+
+/// Appends a `join-frame` line to the file `RERAIL_JOIN_FRAMES` names (a profiler's launch may drop the run's stderr).
+fn join_frame_line(line: String) {
+    use std::io::Write;
+    let Some(path) = std::env::var_os("RERAIL_JOIN_FRAMES") else { return };
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) { let _ = f.write_all(format!("{line}\n").as_bytes()); }
+}
+
+/// Runs `f` under four frames, `frame_z::<Z>`, `frame_a::<A>`, `frame_b::<B>` and `frame_c::<C>`, whose numbers are
+/// `spec`'s low 20 bits, 5 apiece: a profiler's stacks then show which join a sample is in (the `join-frame` lines map a digest to
+/// its component, probe and head). Measurement only.
+fn framed<K: FrameKind, R>(spec: u64, f: &mut dyn FnMut() -> R) -> R {
+    macro_rules! pick {
+        ($k:expr, $g:ident, $($a:expr),*) => { match $k {
+            0 => $g::<0, K, R>($($a),*), 1 => $g::<1, K, R>($($a),*), 2 => $g::<2, K, R>($($a),*), 3 => $g::<3, K, R>($($a),*),
+            4 => $g::<4, K, R>($($a),*), 5 => $g::<5, K, R>($($a),*), 6 => $g::<6, K, R>($($a),*), 7 => $g::<7, K, R>($($a),*),
+            8 => $g::<8, K, R>($($a),*), 9 => $g::<9, K, R>($($a),*), 10 => $g::<10, K, R>($($a),*), 11 => $g::<11, K, R>($($a),*),
+            12 => $g::<12, K, R>($($a),*), 13 => $g::<13, K, R>($($a),*), 14 => $g::<14, K, R>($($a),*), 15 => $g::<15, K, R>($($a),*),
+            16 => $g::<16, K, R>($($a),*), 17 => $g::<17, K, R>($($a),*), 18 => $g::<18, K, R>($($a),*), 19 => $g::<19, K, R>($($a),*),
+            20 => $g::<20, K, R>($($a),*), 21 => $g::<21, K, R>($($a),*), 22 => $g::<22, K, R>($($a),*), 23 => $g::<23, K, R>($($a),*),
+            24 => $g::<24, K, R>($($a),*), 25 => $g::<25, K, R>($($a),*), 26 => $g::<26, K, R>($($a),*), 27 => $g::<27, K, R>($($a),*),
+            28 => $g::<28, K, R>($($a),*), 29 => $g::<29, K, R>($($a),*), 30 => $g::<30, K, R>($($a),*), _ => $g::<31, K, R>($($a),*),
+        } };
+    }
+    #[inline(never)]
+    fn frame_c<const C: u64, K: FrameKind, R>(f: &mut dyn FnMut() -> R) -> R { std::hint::black_box((C, K::ID)); std::hint::black_box(f()) }
+    #[inline(never)]
+    fn frame_b<const B: u64, K: FrameKind, R>(c: u64, f: &mut dyn FnMut() -> R) -> R { std::hint::black_box((B, K::ID)); std::hint::black_box(pick!(c, frame_c, f)) }
+    #[inline(never)]
+    fn frame_a<const A: u64, K: FrameKind, R>(b: u64, c: u64, f: &mut dyn FnMut() -> R) -> R { std::hint::black_box((A, K::ID)); std::hint::black_box(pick!(b, frame_b, c, f)) }
+    #[inline(never)]
+    fn frame_z<const Z: u64, K: FrameKind, R>(a: u64, b: u64, c: u64, f: &mut dyn FnMut() -> R) -> R { std::hint::black_box((Z, K::ID)); std::hint::black_box(pick!(a, frame_a, b, c, f)) }
+    pick!((spec >> 15) & 31, frame_z, spec & 31, (spec >> 5) & 31, (spec >> 10) & 31, f)
+}
+
+/// Which frames `framed` puts a run under: a join's (`JoinFrames`) or a stratum's (`StratumFrames`), told apart by the
+/// frames' type in a profiler's symbols.
+pub trait FrameKind { const ID: u8; }
+pub struct JoinFrames;
+impl FrameKind for JoinFrames { const ID: u8 = 0; }
+pub struct StratumFrames;
+impl FrameKind for StratumFrames { const ID: u8 = 1; }
+
+/// Measurement (`RERAIL_JOIN_FRAMES`): runs stratum `key`'s `f` under frames that name it, as `framed` does a join's,
+/// and writes a `stratum-frame` line mapping the frames' number to the key.
+pub fn stratum_framed<R>(key: &dyn Fn() -> String, f: &mut dyn FnMut() -> R) -> R {
+    if !join_frames() { return f() }
+    let key = key();
+    let h = { use std::hash::{Hash, Hasher}; let mut h = rustc_hash::FxHasher::default(); key.hash(&mut h); h.finish() };
+    join_frame_line(format!("stratum-frame {h:016x} {key}"));
+    framed::<StratumFrames, R>(h, f)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vector<i64>>,
+                    paired: Option<&level::Paired>, each: Option<(&[usize], &mut dyn FnMut(&mut Vector<i64>, &mut [i64]) -> bool)>, limited: Option<&mut Limited>) -> Result<u64> {
+    if join_frames() {
+        let mut args = Some((syms, fresh, collect, each, limited));
+        return framed::<JoinFrames, _>(j.spec, &mut || {
+            let (syms, fresh, collect, each, limited) = args.take().expect("a join runs once");
+            run_join_in_each_unframed(j, head, store, syms, fresh, preset, collect, paired, each, limited)
+        });
+    }
+    run_join_in_each_unframed(j, head, store, syms, fresh, preset, collect, paired, each, limited)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vector<i64>>,
                     paired: Option<&level::Paired>, each: Option<(&[usize], &mut dyn FnMut(&mut Vector<i64>, &mut [i64]) -> bool)>, mut limited: Option<&mut Limited>) -> Result<u64> {
     // The limit `run` handed this walk (decision 0206). A walk for each value, or from a level's pairs, runs
     // unlimited.
