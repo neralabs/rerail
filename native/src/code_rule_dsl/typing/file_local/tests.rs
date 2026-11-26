@@ -1551,3 +1551,17 @@ pieces(c, n) :- call_fmt(c, v), ok(v), n = count : { rest(v, _, _) }.
     assert!(!split.covered.contains("ok") && !split.local.contains("odd"), "{:?}", split.causes);
 }
 
+
+/// A root's row of the tape has parent -1 (`facts/vtab/syntax.rs`): -1 there is a value the tape holds, not the empty
+/// value no document's row holds (review F1). A rule joining a root with another document's node is cross-file; one
+/// joining a root with its own document's node stays per-file.
+#[test]
+fn a_roots_tape_row_holds_its_parent_minus_one() {
+    let text = ".decl tape(n: number, par: number, size: number, depth: number)\n.input tape\n\
+                .decl node(d: number, n: node, k: symbol, b: number, e: number)\n.input node\n.decl docof(n: node, d: number)\n.input docof\n\
+                .decl pair(r: number, m: node)\npair(r, m) :- tape(r, -1, _, _), node(_, m, \"call\", _, _).\n.output pair\n\
+                .decl own(r: number, m: node)\nown(r, m) :- tape(r, -1, _, _), node(d, m, \"call\", _, _), docof(r, d).\n.output own\n";
+    let split = split_of(&read(text));
+    assert!(!split.local.contains("pair"), "a root and any document's node: {:?} {:?}", split.local, split.causes);
+    assert!(split.local.contains("own"), "a root and its own document's node: {:?} {:?}", split.local, split.causes);
+}

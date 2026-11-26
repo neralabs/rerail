@@ -1000,7 +1000,7 @@ impl<'v> Program<'v> {
     /// not. Asked only of a rule the numbered check fails (and, in a debug build, of each it passes).
     fn why_not_local(&self, rule: RuleRef<'v>, local_now: &[bool], constants: &BTreeSet<String>, filters: &BTreeSet<String>, locations: &BTreeMap<String, Vec<usize>>, nullable: &BTreeMap<String, Vec<usize>>) -> Option<String> {
         let v = self.v;
-        if never_holds(&rule, |r| if self.rels.is_derived(r.0) { Vec::new() } else { self.base_placing(v.rel_name(r)) }) {
+        if never_holds(&rule, |r| if self.rels.is_derived(r.0) { Vec::new() } else { unset_columns(v.rel_name(r), self.base_placing(v.rel_name(r))) }) {
             return None;
         }
         let equal_names: Vec<(String, String)> = super::var_equalities_in(v, rule).into_iter().map(|(a, b)| (v.text(rule.var(a)).to_owned(), v.text(rule.var(b)).to_owned())).collect();
@@ -1084,7 +1084,11 @@ impl<'v> Program<'v> {
             // The empty value -1 (`unset(x)`) in a location column no rule fills with it (not `nullable`): no
             // document's row holds it. A positive read never holds, so the rule makes nothing; a negated one always
             // holds, and an aggregate's reads no row: they place nothing.
-            let unset_at = |c: usize| matches!(args.get(c), Some(TermRef::Int(crate::code_rule_dsl::logic::rr::lower::UNSET))) && !nullable.get(rel).is_some_and(|nc| nc.contains(&c));
+            let unset_at = |c: usize| {
+                matches!(args.get(c), Some(TermRef::Int(crate::code_rule_dsl::logic::rr::lower::UNSET)))
+                    && !nullable.get(rel).is_some_and(|nc| nc.contains(&c))
+                    && (derived || unset_columns(rel, vec![c]) == [c])
+            };
             if columns.iter().any(|&c| unset_at(c)) {
                 if atom.neg() || !plain {
                     continue;
@@ -1575,6 +1579,12 @@ pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>) -> 
     Crossing { exports, base_read, base, projected }
 }
 
+/// The placing columns of base relation `rel` at which -1 is the empty value (`unset`), no row's: all of them but
+/// the tape's parent, which a root's row holds as -1 (`facts/vtab/syntax.rs`; review F1).
+fn unset_columns(rel: &str, placing: Vec<usize>) -> Vec<usize> {
+    if rel == "tape" { placing.into_iter().filter(|&c| c != 1).collect() } else { placing }
+}
+
 /// Whether `rule` never holds, whatever the facts: a comparison of two constants that is false (`-1 != -1`, where
 /// `unset(x)` made `x` the empty value in a rule whose other branch tests `!unset(x)`), or a positive read of a base
 /// relation at the empty value -1 in a column that places a document (`kind(-1, "none")`): no document's row holds
@@ -1651,7 +1661,7 @@ impl<'v> Rels<'v> {
         let p = Program { v, f, rules: Vec::new(), rels: Rels::empty() };
         let name = |r: usize| v.rel_name(RelId(r as u32));
         let base = |r: usize| !derived[r] && read[r];
-        let never: Vec<bool> = rules.iter().map(|r| never_holds(r, |rel| if base(rel.0 as usize) { p.base_placing(name(rel.0 as usize)) } else { Vec::new() })).collect();
+        let never: Vec<bool> = rules.iter().map(|r| never_holds(r, |rel| if base(rel.0 as usize) { unset_columns(name(rel.0 as usize), p.base_placing(name(rel.0 as usize))) } else { Vec::new() })).collect();
         for ks in &mut by_head {
             ks.retain(|&k| !never[k]);
         }
@@ -1913,7 +1923,12 @@ impl Form {
                                 _ => None,
                             })
                             .collect(),
-                        unset: args.iter().map(|t| matches!(t, TermRef::Int(crate::code_rule_dsl::logic::rr::lower::UNSET))).collect(),
+                        // The tape's parent holds -1 at a root: no empty value there (`unset_columns`).
+                        unset: args
+                            .iter()
+                            .enumerate()
+                            .map(|(c, t)| matches!(t, TermRef::Int(crate::code_rule_dsl::logic::rr::lower::UNSET)) && unset_columns(v.rel_name(a.rel()), vec![c]) == [c])
+                            .collect(),
                         binder: placed.by_binder.values().any(|b| *b == index),
                         tapes: stand,
                     }
