@@ -82,10 +82,11 @@ pub fn unescape(body: &str) -> Result<String, String> {
                     chars.by_ref().take(4).collect()
                 };
                 let code = u32::from_str_radix(&hex, 16).map_err(|_| format!("bad \\u escape {hex:?}"))?;
-                // A JSON surrogate pair.
+                // A JSON surrogate pair: a high surrogate, then a low one. Any other `\u` after a high surrogate is
+                // no pair, and the high one alone is no code point.
                 if (0xD800..0xDC00).contains(&code) && chars.peek() == Some(&'\\') {
                     let rest: String = chars.clone().take(6).collect();
-                    if let Some(low) = rest.strip_prefix("\\u").and_then(|h| u32::from_str_radix(h, 16).ok()) {
+                    if let Some(low) = rest.strip_prefix("\\u").and_then(|h| u32::from_str_radix(h, 16).ok()).filter(|low| (0xDC00..0xE000).contains(low)) {
                         chars.by_ref().take(6).for_each(drop);
                         let joined = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
                         out.push(char::from_u32(joined).ok_or("bad surrogate pair")?);
@@ -1620,6 +1621,21 @@ mod punct_tests {
                 let scan = super::PUNCT.iter().copied().find(|p| text.starts_with(p.as_bytes()));
                 assert_eq!(super::punct(c, d), scan, "{text:?}");
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// `\uXXXX` escapes as JSON writes them: a high surrogate and a low one are one code point; a high surrogate before
+    /// any other `\u` (an edited rule's text, `lean_tape_is_the_engines_on_edited_files`) is no pair and no code point,
+    /// an error, not an overflow.
+    #[test]
+    fn a_surrogate_pair_is_joined_and_a_high_surrogate_before_another_escape_is_an_error() {
+        assert_eq!(super::unescape(r"😀").as_deref(), Ok("\u{1F600}"));
+        assert_eq!(super::unescape(r"é").as_deref(), Ok("é"));
+        for text in [r"\uD83DA", r"\uD83D\uD83D", r"\uD83D"] {
+            assert!(super::unescape(text).is_err(), "{text}");
         }
     }
 }
