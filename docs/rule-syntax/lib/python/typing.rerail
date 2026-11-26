@@ -481,7 +481,7 @@ typevar_name(e, x) :- kind(e, "identifier"), text(e, x), within(e, o), kind(o, "
     tparam_named(o, x, "typevar"), count : { within(e, g), within(g, o), kind(g, "function_definition") } = 0.
 // lit_key(m, k): a Literal member compared as Ruff's ComparableExpr does: by kind and value, so "a" and 'a' are
 // one member, and True and 1 are two. Other members compare by tree, so `{1, 3}` and `{1,3}` are one.
-.decl lit_key(m: node, k: symbol)
+.decl lit_key(m: node, k: number)
 lit_key(m, @tree_digest(m)) :- literal_leaf(_, m), !value(m, _).
 // alias_name(n, x): n declares the type alias x: the statement `x: TypeAlias = …` (n is the assignment), or
 // `type x = …` (n is the name).

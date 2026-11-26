@@ -55,6 +55,7 @@
 1	function @package_of/1	not on the device: no computed term	engine 1
 1	function @py_repr/1	not on the device: no computed term	data-layer 1
 1	function @to_precision/2	not on the device: no computed term	lib 1
+1	function @tree_digest_hex/1	not on the device: no computed term	data-layer 1
 1	functor @py_repr/1	not on the device: no computed term	data-layer 1
 1	shipped functor @char/1	not on the device: no computed term	data-layer (engine) 1
 1	shipped functor @class_prefix/1	not native: sqlite: error: no SQL for @class_prefix($a)	data-layer (engine) 1

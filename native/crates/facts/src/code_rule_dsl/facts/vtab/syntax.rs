@@ -425,6 +425,18 @@ impl LongTexts {
         (text.len() > core_rr::TEXT_INLINE).then(|| text.to_owned())
     }
 
+    /// Node `n`'s structural digest's 64 hex digits (`@tree_digest_hex`), read in its projection's hashes
+    /// (`tape_rows::TreeDigest`), the text made only for the node asked; none for a node of a document not in the
+    /// batch. The digest's 64-bit value, `@tree_digest`'s, is its first 16 digits (`core_rr::digest_value`).
+    pub fn digest_hex(&self, n: i64) -> Option<String> {
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        let doc = *self.docs.get(&key)?;
+        let p = &self.batch.docs[doc];
+        let local = p.local_of(low).filter(|&l| l < p.len())?;
+        let at = tape_rows::At { batch: &self.batch, doc };
+        Some(core_rr::hex(&tape_rows::TreeDigest::hashes(&at)[local as usize]))
+    }
+
     /// Node `n`'s exact source text at any length, or a comment span's (a comment no node is: `Extra`'s `node_text`
     /// rows); none for another span or a node of a document not in the batch. It answers `node_text`'s requests
     /// (decision 0174): only the nodes a rule asks for are read and interned.
@@ -548,6 +560,7 @@ impl Source for LongTexts {
             "rr_node_text_any" => self.text_any(n),
             "rr_node_value" => self.value_any(n),
             "rr_node_str" => self.str_any(n),
+            "tree_digest_hex" => self.digest_hex(n),
             // `op_at`'s operator at place `more[0]`, in either shape (`Tree` makes its rows so in both; `""` past the
             // last: an operator is never empty).
             "rr_node_op_at" => {

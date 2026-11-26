@@ -1902,6 +1902,35 @@ same(l, m) :- rhs(l, r), rhs(m, s), l < m, @tree_digest(r) = @tree_digest(s).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `@tree_digest(n)` is a number, the digest's 64-bit value, and `@tree_digest_hex(n)` the same digest's 64 hex
+/// digits, the number's 16 first: equal subtrees have one text, and a node's digest is no atom unless a rule asks its
+/// text.
+#[test]
+fn tree_digest_is_a_number_and_its_hex_the_whole_digest() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("digesthex");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "a = (1, 2)\nb = (1, 2,)\nc = 'x'\n").unwrap();
+    let rule = dir.join("digest.rerail");
+    std::fs::write(&rule, r#"
+.decl dig(l: symbol, h: symbol, v: number)
+dig(l, @tree_digest_hex(r), @tree_digest(r)) :- field(a, "left", x), text(x, l), field(a, "right", r), kind(a, "assignment").
+.output dig
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "dig").unwrap();
+    assert_eq!(rows.iter().map(|r| r[0].as_str()).collect::<Vec<_>>(), ["a", "b", "c"], "{rows:?}");
+    for r in &rows {
+        assert!(r[1].len() == 64 && r[1].bytes().all(|b| b.is_ascii_hexdigit()), "64 hex digits: {r:?}");
+        let v: i64 = r[2].parse().unwrap_or_else(|_| panic!("a number: {r:?}"));
+        assert_eq!(format!("{:016x}", v as u64), r[1][..16], "the number is the digest's first 8 bytes: {r:?}");
+    }
+    assert_eq!(rows[0][1..], rows[1][1..], "(1, 2) and (1, 2,) are one tree");
+    assert_ne!(rows[0][1], rows[2][1]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `def_digest(n, h)` (decision 0083 §0) hashes each definition unit's own code: the module, each class and each
 /// function, a nested unit standing for its kind and name. A comment or a moved line changes nothing; a method's body
 /// changes the method's digest alone, not its class's or its module's.

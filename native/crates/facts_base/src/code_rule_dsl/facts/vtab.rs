@@ -181,7 +181,7 @@ pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 
 /// The functions that read a node's text or value from the run's batch (`Source::node_read`): their values are the run's,
 /// so `functions::eval` gives none.
-pub const NODE_READS: [&str; 11] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_name", "rr_node_comment", "rr_node_strprefix", "rr_node_op_at", "rr_node_intval", "rr_node_op_t", "rr_node_t_text"];
+pub const NODE_READS: [&str; 12] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_name", "rr_node_comment", "rr_node_strprefix", "rr_node_op_at", "rr_node_intval", "rr_node_op_t", "rr_node_t_text", "tree_digest_hex"];
 
 /// A lookup's rows read by position (`Source::lookup_seq`): how many, and the `i`th, where they lie (a list the source
 /// holds, its runs of rows), or a list made of them.

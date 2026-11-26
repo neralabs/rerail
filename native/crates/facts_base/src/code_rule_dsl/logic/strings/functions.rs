@@ -136,6 +136,10 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // A node's string literal's content (the syntax table's `LongTexts::str_any`): `str`'s answer (decisions 0174,
     // 0353 step 3).
     ("rr_node_str", &[Number], Text),
+    // A node's structural digest's 64 hex digits (the syntax table's `LongTexts::digest_hex`), read in its document's
+    // hashes: `@tree_digest_hex(n)`, for a key or a signature over the digest's text; `@tree_digest(n)` is its 64-bit
+    // value, a number.
+    ("tree_digest_hex", &[Number], Text),
     // `core.rerail`'s per-node values of a node (the syntax table's `LongTexts::core_read`), each read where a rule binds
     // the node instead of a row a node (decision 0353 step 3): `name`, `comment`, `strprefix`.
     ("rr_node_name", &[Number], Text),

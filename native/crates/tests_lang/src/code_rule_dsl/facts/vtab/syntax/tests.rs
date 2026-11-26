@@ -4223,8 +4223,7 @@ fn tape_row_views_hold_the_rows_their_makers_made() {
         if !batch.docs.withheld(d) {
             let (hash, _) = super::core_rr::digests(f, dialect, true, false);
             for (_, id, n) in p.node_ids() {
-                let h = store.intern_atoms(&[super::core_rr::hex(&hash[id as usize]).as_str()]).unwrap()[0];
-                want.entry(DIGEST).or_default().insert(vec![n, i64::from(h)]);
+                want.entry(DIGEST).or_default().insert(vec![n, super::core_rr::digest_value(&hash[id as usize])]);
             }
             let (mut order, mut keys) = (Vec::new(), vec![u32::MAX; p.len() as usize]);
             super::tree::visit_order(p, dialect, true, &mut |l, i| {

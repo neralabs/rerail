@@ -3677,14 +3677,15 @@ impl Lowerer {
                     self.prog.edit(|b| b.tapes(), |t| Field::Tapes(t), |t| t.entry(rel.to_owned()).or_default().extend(super::tape_type::tape_columns(rel)));
                 }
             }
-            // `@tree_digest(n)` reads the tree: a variable bound by the engine's `tree_digest(n, h)`.
+            // `@tree_digest(n)` reads the tree: a variable bound by the engine's `tree_digest(n, h)`, the digest's 64-bit
+            // value (a number; `@tree_digest_hex(n)`, a node read, spells all 64 digits).
             T::Call { name, functor: true, args } if name == "tree_digest" && args.len() == 1 => {
                 self.hoist(&args[0], base, sub, out, true);
                 let s = place(self, sub, "digest");
                 out.push(LitAt::Op(n, s));
                 if !self.prog.has_input("tree_digest") {
                     self.prog.fields().add_input("tree_digest");
-                    self.prog.declare_cols("tree_digest", [("n", "node"), ("s", "sym")]);
+                    self.prog.declare_cols("tree_digest", [("n", "node"), ("s", "int")]);
                 }
             }
             T::Call { args, .. } => args.iter().for_each(|x| self.hoist(x, base, sub, out, true)),

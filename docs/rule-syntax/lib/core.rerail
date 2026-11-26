@@ -542,8 +542,12 @@
 // bytes, else 0. With join and @json_str a rule rebuilds the canonical message a repository signs, whatever its
 // layout, and verifies it: lib/data-layer/signing.rerail does this for the data layer's two layouts.
 .functor ed25519_ok(key: symbol, message: symbol, sig: symbol): number
-// @tree_digest(n): a structural tree digest. It does not reproduce CPython AST identity or dump bytes.
-.functor tree_digest(n: node): symbol
+// @tree_digest(n): a structural tree digest, as a 64-bit number: equal subtrees, equal numbers, for comparing and
+// joining. It does not reproduce CPython AST identity or dump bytes.
+.functor tree_digest(n: node): number
+// @tree_digest_hex(n): the same digest's 32 bytes as 64 hex digits (the number's 16 are its first), for a key or a
+// signature over its text: a text made only for the nodes a rule asks.
+.functor tree_digest_hex(n: node): symbol
 // Existing hashes of CPython ast.dump text require exact native serialization and field defaults.
 // A structural digest is a different input contract. Do not re-sign repository inputs to replace those hashes.
 // @unparse(n): n printed canonically by a native printer (comments dropped, quotes and spacing normalised), for
