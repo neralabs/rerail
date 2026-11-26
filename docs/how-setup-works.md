@@ -573,7 +573,10 @@ until you delete it; the managed installation's goes when `rerail install --remo
 - **Any build from a Git checkout** (source, `dist/`, tests, benchmarks, every worktree):
   `<checkout>/.rerail/content-v5.sqlite` (`.rerail/` is gitignored), so a checkout on a newer store schema never
   changes the store the installed version reads.
-- **Neither** (say, an `npx` copy): no store, reported on its first scan.
+- **Neither** (say, an `npx` copy, or a package `npm install` put in a folder of its own): no store, so no code rule
+  runs. The daemon reports its engine unavailable with the reason: `rerail status` prints it and exits 5, the session
+  footer says `engine unavailable`, and `daemon.log` and the support bundle name it
+  ([troubleshooting](troubleshooting.md#engine-unavailable-no-code-rule-can-run-)).
 
 The file name follows the store's compatibility floor (`v5` today) and changes when the floor rises.
 

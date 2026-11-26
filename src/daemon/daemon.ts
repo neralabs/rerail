@@ -47,7 +47,7 @@ import { enabledExperiments, mergeAssistExperimentEnabled, remoteSinkEnabled } f
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { openToOthers, type AccessReader } from "../engine/storage/private-files.js";
 import { holdHomeDaemonLock, type HolderRuns, type HomeDaemonLease } from "../engine/native/home-daemon-lock.js";
-import { acquireMainInstance } from "../engine/native/main-instance.js";
+import { acquireMainInstance, contentStoreProblem } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
 
 export const DEFAULT_DAEMON_HOST = "127.0.0.1";
@@ -126,6 +126,8 @@ export interface RerailDaemonOptions {
    */
   homeLease?: Pick<HomeDaemonLease, "release">;
   nativeHealth?: () => NativeHealth;
+  /** Why this daemon's code rules can open no content store, or undefined when they can (default: `contentStoreProblem`). */
+  contentStoreProblem?: () => string | undefined;
   /** Local IPC endpoint for the engine service; mainly useful for isolated embedding and tests. */
   kernelSocketPath?: string;
   /**
@@ -197,12 +199,17 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".txt": "text/plain; charset=utf-8",
 };
 
-function readNativeStatus(probe: () => NativeHealth): NativeStatus {
+/**
+ * The engine is ok when its kernel loads and its code rules can open a content store: without one, every code rule
+ * audit fails to open its workspace. `rerail status`, `/healthz`, the footer, daemon.log and the support bundle report
+ * this status, so each says why no code rule runs.
+ */
+function readNativeStatus(probe: () => NativeHealth, storeProblem: () => string | undefined): NativeStatus {
   try {
     const health = probe();
-    return health.ok
-      ? { ok: true, kernelVersion: health.kernelVersion }
-      : { ok: false, error: `Native kernel ${health.kernelVersion} reported unhealthy` };
+    if (!health.ok) return { ok: false, error: `Native kernel ${health.kernelVersion} reported unhealthy` };
+    const problem = storeProblem();
+    return problem === undefined ? { ok: true, kernelVersion: health.kernelVersion } : { ok: false, error: `no code rule can run: ${problem}` };
   } catch (error) {
     return { ok: false, error: (error as Error).message };
   }
@@ -619,7 +626,10 @@ export class RerailDaemon {
     const { bindHost, publicHosts, remote } = daemonHosts(options);
     const accessToken = await daemonAccessToken(options, remote);
     const { uiRoot, ui } = daemonUi(options);
-    const native = readNativeStatus(options.nativeHealth ?? loadNativeHealth);
+    // A main build's entry point (`runRerailDaemon`) takes the main-instance lease before this start; a checkout or npx
+    // build takes none and never names the machine-wide store unless RERAIL_CONTENT_STORE_PATH does. Only the main
+    // instance may open that store, so the store question is asked here, once.
+    const native = readNativeStatus(options.nativeHealth ?? loadNativeHealth, options.contentStoreProblem ?? contentStoreProblem);
     const databasePath = resolve(options.databasePath ?? defaultRerailDatabasePath());
     // Anyone on the machine can make `rerail-<uid>` in a shared temp directory first, so a refused one falls back to a
     // `run` folder beside the database, checked the same way. Clients find the socket through the state file, never by

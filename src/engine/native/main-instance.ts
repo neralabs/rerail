@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { replaceFileSync } from "../file-replace.js";
 import { join, resolve } from "node:path";
 import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
-import { isInMainContentStoreDirectory, mainContentStoreDirectory, type RerailBuild } from "./rerail-build.js";
+import { contentStorePath, isInMainContentStoreDirectory, mainContentStoreDirectory, type RerailBuild } from "./rerail-build.js";
 
 /**
  * At most one main Rerail instance runs on a machine: the main daemon, which alone opens the machine-wide
@@ -148,4 +148,28 @@ export function assertContentStoreOwner(storePath: string): void {
     `The machine-wide Rerail content store ${storePath} belongs to the main Rerail daemon, and process ${process.pid} is not it. ` +
       "Main harness processes evaluate policies through the daemon; dev builds use their checkout's own store.",
   );
+}
+
+/**
+ * The content store this process's code rules open: `contentStorePath`, refused by `assertContentStoreOwner` when it is
+ * the machine-wide one and this process is not the main instance. Throws why there is none, such as a Rerail that is
+ * neither the managed installation nor in a Git checkout.
+ */
+export function ownedContentStorePath(): string {
+  const storePath = contentStorePath();
+  assertContentStoreOwner(storePath);
+  return storePath;
+}
+
+/**
+ * Why this process's code rules can open no content store (what `ownedContentStorePath` throws), or undefined when they
+ * can. Every code rule audit opens its workspace on that store, so without one no code rule runs.
+ */
+export function contentStoreProblem(): string | undefined {
+  try {
+    ownedContentStorePath();
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
