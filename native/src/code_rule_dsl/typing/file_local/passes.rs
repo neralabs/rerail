@@ -28,11 +28,12 @@ pub(super) fn t_of<'a>(v: &'a Version, rule: RuleRef<'a>, t: TermRef<'a>) -> T<'
     }
 }
 
-/// `file_local::locate` on the version: every relation the chunks hand on (an export, or a file-local output) given
-/// a location column, so each of its rows names its document (decision 0052). A relation without one, `r(p, l)`, is
-/// derived by the chunks as `r_at(d, p, l)` (`r_at_` where the program has an `r_at` of its own), `d` a document its
-/// rules bind, and the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also
-/// read, a lattice, or one whose rule binds no location is left, and named in `blocked`.
+/// One round of `locate_all`: every relation the chunks hand on (an export, or a file-local output) given a location
+/// column, so each of its rows names its document (decision 0052). A relation without one, `r(p, l)`, is derived by
+/// the chunks as `r_at(d, p, l)` (`r_at_` where the program has an `r_at` of its own), `d` a document its rules bind
+/// (from `node`, `doc`, `tape_line`, …, a document column left unnamed included, a node through `node(d, n, …)`, or a
+/// file's path through `doc(d, p, …)`, decision 0665), and the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
+/// one whose rule binds no location is left, and named in `blocked`: its rows are not attributable.
 #[derive(Default)]
 pub struct Locate {
     pub located: Vec<String>,
@@ -46,9 +47,34 @@ impl Locate {
     }
 }
 
+/// Every relation the chunks hand on made to name its document per row, so a file's rows can be memoised (decision
+/// 0052): `Locate`, and a relation a round leaves (its rows name no document) moved to the cross-file part
+/// (`MoveCrossFile`, decision 0290), with every file-local relation that reads it, and the program located again,
+/// until every row handed on is located. The relations located; the `Err` names the moved relations where a round
+/// blocks one the moves cannot place.
+pub fn locate_all(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline<'_>) -> Result<Vec<String>, Vec<String>> {
+    let mut moved: Vec<String> = Vec::new();
+    let mut located: Vec<String> = Vec::new();
+    loop {
+        let mut locate = Locate::default();
+        p.program(&mut locate);
+        located.extend(locate.located);
+        if locate.blocked.is_empty() {
+            return Ok(located);
+        }
+        let fresh: Vec<String> = locate.blocked.into_iter().filter(|r| !moved.contains(r)).collect();
+        if fresh.is_empty() {
+            moved.sort();
+            return Err(moved);
+        }
+        moved.extend(fresh.iter().cloned());
+        p.program(&mut MoveCrossFile(fresh));
+    }
+}
+
 /// `file_local::locate`'s move on the version: the relations a round of `Locate` left, their rows naming no document,
-/// qualified `CROSS_FILE` (decision 0290). The split then holds them cross-file, with their file-local readers, and the
-/// program is located again (`preparation::run`).
+/// qualified `CROSS_FILE` (decision 0290) and `MOVED_CROSS_FILE` (a move, not a declaration: decision 0652). The split
+/// then holds them cross-file, with their file-local readers, and the program is located again (`preparation::run`).
 pub struct MoveCrossFile(pub Vec<String>);
 
 impl ProgramPass for MoveCrossFile {
@@ -57,7 +83,7 @@ impl ProgramPass for MoveCrossFile {
         self.0.join("\n").into_bytes()
     }
     fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        let words: Vec<(&str, &str)> = self.0.iter().map(|r| (r.as_str(), super::CROSS_FILE)).collect();
+        let words: Vec<(&str, &str)> = self.0.iter().flat_map(|r| [(r.as_str(), super::CROSS_FILE), (r.as_str(), super::MOVED_CROSS_FILE)]).collect();
         w.on()?.add_qualifiers(&words);
         Ok(())
     }
@@ -72,6 +98,9 @@ enum Doc {
     Unnamed(usize, usize),
     /// Through a node it binds: by `docof` (`true`) or `node`.
     Through(Slot, bool),
+    /// Through a file's path it binds or writes out (decision 0665): body literal `.0`'s column `.1`, by
+    /// `doc(d, p, …)` of `.2` columns.
+    ByPath(usize, usize, usize),
 }
 
 /// A rule of the located program, in order: kept, made from a target's rule, or a target read from its located form.
@@ -79,6 +108,10 @@ enum Item<'v> {
     Keep(RuleRef<'v>),
     Made { rule: RuleRef<'v>, at: usize, doc: Doc },
     ReadAt { rel: String, at: usize, width: usize },
+    /// A target its file-local rules also read, keyed by a file's path in column `col` (decision 0665): it stays, and
+    /// `at` is derived beside it, `r_at(d, …) :- r(…), doc(d, p, …)` of `doc_width` columns; the cross-file part
+    /// reads `r_at(_, …)` for it.
+    Relay { rel: String, at: usize, width: usize, col: usize, doc_width: usize },
 }
 
 impl ProgramPass for Locate {
@@ -102,6 +135,17 @@ impl ProgramPass for Locate {
             .map(str::to_owned)
             .collect();
         let docof = f.is_input("docof");
+        // `doc`'s width, where it is an input: a path key's row names its document through it (decision 0665).
+        let doc_width = f.columns("doc").filter(|_| f.is_input("doc")).map(|c| c.len());
+        // The columns a row's document is found through, by `doc(d, p, …)`: `doc`'s path, and the path keys that hold a
+        // path as it is (`FileLocal::paths`). A name built from a path (`cat(p, "::", q)`) is a key the split places by,
+        // but `doc` holds no such name: a row relayed by one was found in no document, and dropped.
+        let path_keys = |rel: &str| -> Vec<usize> {
+            match super::path_key_column(rel) {
+                Some(c) if !f.derives(rel) => vec![c],
+                _ => split.paths.get(rel).cloned().unwrap_or_default(),
+            }
+        };
         let node_declared = f.declared("node");
         let node_typed = |rel: &str, c: usize| f.column_type(rel, c) == Some("node");
         let doc_type = f.column_type("node", 0).unwrap_or("int");
@@ -116,8 +160,37 @@ impl ProgramPass for Locate {
         let mut items: Vec<Item<'_>> = rules.iter().map(|&r| Item::Keep(r)).collect();
         let mut ats: Vec<(String, Vec<(String, String)>)> = Vec::new();
         let mut names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
+        // The relayed targets, by name, with their `at`'s name: the cross-file part's reads of each are made reads of it.
+        // `rewired`: a relay an earlier round made is read by a cross-file rule a later round's move made (0290).
+        let mut relayed: HashMap<String, String> = HashMap::new();
+        let mut rewired = false;
         for rel in &targets {
             let read_locally = readers.get(rel.as_str()).is_some_and(|&n| n > 0);
+            // Read locally but keyed by a path: each row's document is its path's (decision 0665).
+            let key = split.paths.get(rel.as_str()).and_then(|c| c.first().copied()).filter(|_| read_locally && !f.lattice(rel));
+            // A relay made in an earlier round (`r_at…(d, …) :- r(…), doc(…)`) is not made again: a cross-file rule that
+            // reads the target now (a reader a later round's move took to the cross-file part, `MoveCrossFile`) reads it.
+            let earlier = rules.iter().find(|r| head(r).starts_with(&format!("{rel}_at")) && reads(r).contains(rel.as_str()) && reads(r).contains("doc"));
+            if let (Some(_), Some(r)) = (key, earlier) {
+                relayed.insert(rel.clone(), head(r).to_owned());
+                rewired = true;
+                continue;
+            }
+            if let (Some(col), Some(doc_width), Some(cols)) = (key, doc_width, f.columns(rel)) {
+                let mut at = format!("{rel}_at");
+                while names.contains(&at) {
+                    at.push('_');
+                }
+                let mut at_cols = vec![("d".to_owned(), doc_type.to_owned())];
+                at_cols.extend(cols.iter().map(|(n, t)| ((*n).to_owned(), (*t).to_owned())));
+                names.insert(at.clone());
+                let k = ats.len();
+                relayed.insert(rel.clone(), at.clone());
+                ats.push((at, at_cols));
+                items.push(Item::Relay { rel: rel.clone(), at: k, width: cols.len(), col, doc_width });
+                self.located.push(rel.clone());
+                continue;
+            }
             let Some(cols) = f.columns(rel).filter(|_| !read_locally && !f.lattice(rel)) else {
                 self.blocked.push(rel.clone());
                 continue;
@@ -145,9 +218,13 @@ impl ProgramPass for Locate {
                     (None, Some((i, c))) => Doc::Unnamed(i, c),
                     (None, None) => {
                         let node = positive().find_map(|(_, a)| a.args().enumerate().find_map(|(c, t)| t.var().filter(|_| node_typed(v.rel_name(a.rel()), c))));
-                        match node.filter(|_| docof || node_declared) {
-                            Some(n) => Doc::Through(n, docof),
-                            None => break,
+                        let path = || {
+                            positive().find_map(|(i, a)| path_keys(v.rel_name(a.rel())).into_iter().find(|&c| matches!(a.args().nth(c), Some(TermRef::Var(_) | TermRef::Str(_)))).map(|c| (i, c)))
+                        };
+                        match (node.filter(|_| docof || node_declared), doc_width.and_then(|w| path().map(|p| (p, w)))) {
+                            (Some(n), _) => Doc::Through(n, docof),
+                            (None, Some(((i, c), w))) => Doc::ByPath(i, c, w),
+                            (None, None) => break,
                         }
                     }
                 };
@@ -174,7 +251,7 @@ impl ProgramPass for Locate {
             items.push(Item::ReadAt { rel: rel.clone(), at: k, width: cols.len() });
             self.located.push(rel.clone());
         }
-        if self.located.is_empty() {
+        if self.located.is_empty() && !rewired {
             return Ok(());
         }
         let input = w.input().clone();
@@ -183,16 +260,44 @@ impl ProgramPass for Locate {
             let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
             b.declare(at, &cols);
         }
+        // What the cross part reads back from a located form stays there (decision 0665).
+        let read_back: Vec<(&str, &str)> = items.iter().filter_map(|i| if let Item::ReadAt { rel, .. } = i { Some((rel.as_str(), super::READ_LOCATED)) } else { None }).collect();
+        b.add_qualifiers(&read_back);
         const D: &str = "__located_d";
         for item in items {
             match item {
+                Item::Keep(r) if !local.contains(head(&r)) && r.body().filter_map(|l| l.atom()).any(|a| relayed.contains_key(v.rel_name(a.rel()))) => {
+                    // A cross-file rule reading a relayed target reads its located form.
+                    let args: Vec<T<'_>> = r.head().args().map(|t| t_of(&input, r, t)).collect();
+                    let mut rb = b.rule().source(r.id()).head(head(&r), &args);
+                    for l in r.body() {
+                        rb = match l.view() {
+                            L::Atom(a) if relayed.contains_key(v.rel_name(a.rel())) => {
+                                let mut args = vec![T::Wild];
+                                args.extend(a.args().map(|t| t_of(&input, r, t)));
+                                rb.atom_with(relayed[v.rel_name(a.rel())].as_str(), &args, a.neg(), a.gated())
+                            }
+                            _ => rb.lit(&input, r, l),
+                        };
+                    }
+                    rb.finish()?;
+                }
                 Item::Keep(r) => {
                     b.keep(&input, r);
+                }
+                Item::Relay { rel, at, width, col, doc_width } => {
+                    let cols: Vec<String> = (0..width).map(|i| format!("__c{i}")).collect();
+                    let vars: Vec<T<'_>> = cols.iter().map(|c| T::Var(c.as_str())).collect();
+                    let mut args = vec![T::Var(D)];
+                    args.extend(vars.iter().cloned());
+                    let mut doc = vec![T::Var(D), vars[col].clone()];
+                    doc.extend((2..doc_width).map(|_| T::Wild));
+                    b.rule().head(ats[at].0.as_str(), &args).atom(rel.as_str(), &vars).atom("doc", &doc).finish()?;
                 }
                 Item::Made { rule, at, doc } => {
                     let mut args: Vec<T<'_>> = vec![match doc {
                         Doc::Var(s) => T::VarAtom(rule.var(s)),
-                        Doc::Unnamed(..) | Doc::Through(..) => T::Var(D),
+                        Doc::Unnamed(..) | Doc::Through(..) | Doc::ByPath(..) => T::Var(D),
                     }];
                     args.extend(rule.head().args().map(|t| t_of(&input, rule, t)));
                     let mut rb = b.rule().source(rule.id()).head(ats[at].0.as_str(), &args);
@@ -204,6 +309,12 @@ impl ProgramPass for Locate {
                             }
                             _ => rb.lit(&input, rule, l),
                         };
+                    }
+                    if let Doc::ByPath(i, c, width) = doc {
+                        let path = rule.body().nth(i).and_then(|l| l.atom()).and_then(|a| a.args().nth(c)).expect("the path key's term");
+                        let mut args = vec![T::Var(D), t_of(&input, rule, path)];
+                        args.extend((2..width).map(|_| T::Wild));
+                        rb = rb.atom("doc", &args);
                     }
                     if let Doc::Through(n, docof) = doc {
                         let n = T::VarAtom(rule.var(n));

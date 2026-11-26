@@ -2,24 +2,26 @@
 // The statement parsing is adapted from an earlier Datalog prototype of call resolution; multi-dot relative imports use @pkg_up (native string builtin).
 //
 // What it provides
-//   - Raw per-scope import bindings for python/names: rifrom, ribind (and rotgt rows for unresolvable relative
+//   - Raw per-scope import bindings for python/scopes: rifrom, ribind (and rotgt rows for unresolvable relative
 //     imports). names moves them through global/nonlocal into ifrom/ibind.
 //   - Interface: import_stmt, import_alias (one row per imported name), import_site, binds, module_text,
 //     module_of / module_path / workspace_module, loads, runs, reaches (the import-time module graph),
 //     exports / resolve_export (what a module exposes, following re-exports), dunder_all, public_name.
 //
 // Layering: built on lib/core.rerail (doc, pkg, kind, field, child, text, nearest, within). It also reads relations
-// defined in python/names (def_name, qualname, type_checking_block, rotgt) and names reads ribind/rifrom/star from
-// here: the two modules are one mutually dependent unit, loaded together via names' `#include "python/imports.rerail"`.
+// defined in python/scopes (def_name, qualname, type_checking_block, rotgt) and scopes reads ribind/rifrom/star from
+// here: the two modules are one mutually dependent unit, loaded together via scopes' `#include "python/imports.rerail"`.
+// Module resolution (exports, resolve_export, public_name) is cross-file and holds no node. Rules read it through the
+// phase py_names (python/names), never directly: a per-file rule joined to it would carry a node across files (0677).
 //
 // Python background
 //   `import a.b.c` binds only `a` in the current scope, but loads a, a.b and a.b.c.
 //   `from .m import x` is relative: one dot is the current package, each extra dot goes one package up.
 //   `from m import *` binds every public name of m: those in m's `__all__`, else those not starting with "_".
 #include "python/flow.rerail"     // remove_stmt, for the edits at the end of this file
-#include "python/names.rerail"    // def_name, qualname, type_checking_block: the other half of the unit
+#include "python/scopes.rerail"   // def_name, qualname, type_checking_block: the other half of the unit
 
-// `scope` (every node that opens a Python scope) comes from python/names, which includes this file.
+// `scope` (every node that opens a Python scope) comes from python/scopes, which includes this file.
 // Function-like scopes: an import inside one runs only when the function is called, not at module import time.
 .decl fn_or_lambda(kind: symbol)
 fn_or_lambda("function_definition"). fn_or_lambda("lambda").
@@ -51,12 +53,12 @@ ribind(s, a, m) :- kind(i, "import_statement"), field(i, "name", x), kind(x, "al
     field(x, "alias", al), text(al, a), nearest(i, s, scope).
 // A relative import the facts cannot place (one that climbs above the top package, or outside a package): what it binds is unknown.
 // These names are still bound (so lookup stops there and does not fall through to a builtin), but as untracked
-// targets: the rows go into python/names' rotgt, which python/calls treats as an unknown value.
+// targets: the rows go into python/scopes' rotgt, which python/calls treats as an unknown value.
 .decl irel_open(i: node)
 irel_open(i) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"), !impmod(i, _).
 rotgt(s, y) :- irel_open(i), field(i, "name", n), kind(n, "dotted_name"), text(n, y), nearest(i, s, scope).
 rotgt(s, a) :- irel_open(i), field(i, "name", x), kind(x, "aliased_import"), field(x, "alias", al), text(al, a), nearest(i, s, scope).
-// star(s): scope s contains `from m import *`. Declared here; the rule deriving it lives in python/names.
+// star(s): scope s contains `from m import *`. Declared here; the rule deriving it lives in python/scopes.
 .decl star(s: node) extensible
 
 // ==== interface ===================================================================================================
@@ -97,7 +99,7 @@ import_alias(i, n, m, x, l) :- kind(i, "import_from_statement"), module_text(i, 
 .decl dotted(n: node, s: symbol)
 dotted(n, s) :- kind(n, "dotted_name"), text(n, s).
 dotted(n, s) :- kind(n, "aliased_import"), field(n, "name", d), text(d, s).
-// import_site(a, local): alias node a binds local name `local`; the binding site python/names reports on.
+// import_site(a, local): alias node a binds local name `local`; the binding site python/scopes reports on.
 .decl import_site(a: node, local: symbol)
 import_site(a, l) :- import_alias(_, a, _, _, l).
 // binds(i, site): statement i owns binding site `site` (to go from a reported alias back to its statement).
@@ -177,9 +179,9 @@ exported(m, x) :- star_from(m, m2), exported(m2, x), public_name(m2, x).
 resolve_export(@dot(m, x), r) :- exports(m, x, r).
 resolve_export(q, q) :- export_query(q), count : { split_dot(q, m, x), exported(m, x) } = 0.
 // export_query(q): the names resolve_export is asked about. Rule 2 above needs them: a q that only appears under
-// `!` would not be bound. Each comes from a qualified name in the code or a from-import.
+// `!` would not be bound. Each is a from-import's: the chains of re-exports exports follows. A name's use is resolved
+// in its own file, against the modules' exports (python/names' export_at, through the phase py_names), never here.
 .decl export_query(q: symbol)
-export_query(q) :- qn(_, q).
 export_query(@dot(m2, x)) :- import_alias(_, _, m2, x, _), x != "".
 // dunder_all(m, x): module m's top-level `__all__ = [...]` (or a tuple) lists the string x.
 .decl dunder_all(m: symbol, x: symbol)

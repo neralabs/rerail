@@ -162,6 +162,47 @@ describe("Rerail daemon", () => {
     expect(existsSync(join(root, "rerail.sqlite"))).toBe(false);
   });
 
+  // A Rerail with no content store loads its kernel, but every code rule audit fails to open its workspace.
+  it("reports the engine unavailable, and why, on /healthz and in the footer when its code rules can open no content store", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const databasePath = join(root, "rerail.sqlite");
+    const folder = join(root, "status");
+    await mkdir(folder);
+    setUpTestRepository(root, {}, databasePath);
+    const session = { host: "claude-code" as const, sessionId: "claude-session", cwd: root };
+    const store = new SqliteSessionStore(databasePath);
+    const why = "Rerail at /opt/rerail is neither the managed installation under /home/me/.rerail/versions nor in a Git checkout, so it has no content store";
+    try {
+      store.openSession(session);
+      store.startHudTracking(session, true);
+      const daemon = await start({
+        contentStoreProblem: () => why,
+        statusLines: stores => keepClaudeStatusFiles({ stores, folder, checkEveryMs: 20 }),
+      });
+      // `/api/presentation` carries only whether the engine is ok; `/healthz` carries the reason.
+      expect((await getJson<DaemonHealth>(daemon, "/healthz")).body).toMatchObject({ native: { ok: false, error: `no code rule can run: ${why}` }, healthy: false });
+      // The footer's line for a terminal with no colour.
+      const line = async (): Promise<string> => (await readFile(join(folder, session.sessionId), "utf8")).split("\n")[2]!;
+      await vi.waitFor(async () => expect(await line()).toContain("engine unavailable"), { timeout: 10_000 });
+      await daemon.close();
+    } finally {
+      store.close();
+    }
+  }, 60_000);
+
+  // A kernel that does not load, or loads unhealthy, is the first thing to fix: its own error is the one reported, and no
+  // store is asked.
+  it.each([
+    { kernel: "does not load", nativeHealth: (): never => { throw new Error("addon missing"); }, error: "addon missing" },
+    { kernel: "reports itself unhealthy", nativeHealth: () => ({ ok: false, kernelVersion: "1" }), error: "Native kernel 1 reported unhealthy" },
+  ])("reports a kernel that $kernel before a content store its code rules cannot open", async ({ nativeHealth, error }) => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const storeProblem = vi.fn(() => "no content store");
+    const daemon = await start({ nativeHealth, contentStoreProblem: storeProblem });
+    expect((await getJson<DaemonHealth>(daemon, "/healthz")).body).toMatchObject({ native: { ok: false, error }, healthy: false });
+    expect(storeProblem).not.toHaveBeenCalled();
+  });
+
   it("requires the private capability for every native session and protects its ownership", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const workspaceRoot = join(root, "daemon-workspace");

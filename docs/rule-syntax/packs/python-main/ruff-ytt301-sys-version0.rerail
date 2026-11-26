@@ -18,7 +18,7 @@ YTT301(C, n) :- ytt301_in_string(n, C).
 
 // zero_literal(n): the JSON util `zero-literal`, used where the JSON says `matches: "zero-literal"`
 .decl ytt301_zero_literal(n: node)
-ytt301_zero_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 0.
+ytt301_zero_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 0.
 ytt301_zero_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     ytt301_zero_literal(c2).
 

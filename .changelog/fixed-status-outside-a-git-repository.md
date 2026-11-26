@@ -1,0 +1,1 @@
+`rerail status` outside a Git repository now says Rerail works in a Git repository, and that `rerail start --repo <folder>` starts it in one from where you are; set-up's question in such a folder says Git repository too, instead of "No repo found here".

@@ -493,12 +493,15 @@ impl Emitter {
         match p {
             PatternNode::MetaVar { meta_var } => match meta_var {
                 MetaVariable::Capture(name, _) => match captures.get(name).cloned() {
-                    // Bound before: the same name, as ast-grep compares their text.
+                    // Bound before: the same name, as ast-grep compares their text. Both are nodes of one match, so
+                    // of one document (decision 0652): a helper of the comparison alone joins no two files.
                     Some(prior) if prior != n => {
                         self.approx.insert("a metavariable twice: equal names".into());
-                        let t = self.var();
+                        let (t, d) = (self.var(), self.var());
                         body.push(format!("text({prior}, {t})"));
                         body.push(format!("text({n}, {t})"));
+                        body.push(format!("docof({prior}, {d})"));
+                        body.push(format!("docof({n}, {d})"));
                     }
                     Some(_) => {}
                     None => {
@@ -848,6 +851,7 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl file_name(d: int, s: sym)
 .decl value(n: node, v: sym)
 .decl static_value(n: node, v: sym)
+.decl static_value_type_of(n: node, t: sym)
 .decl value_type_of(n: node, t: sym)
 .decl value_type(v: sym, t: sym)
 .decl comment(n: node, s: sym)
@@ -1059,11 +1063,14 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
             if !authored.decls.contains_key(rel) {
                 return err(format!("{rel} is read and not declared"));
             }
-            // A bridged relation (`typing_<program>__<output>`, the library's calls) is the runner's to give; so are
-            // decision 0055's settings (`guest_policy`, the lowering's facts, empty where the program sets none), which
-            // the library reads (`python/names.rerail`).
-            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel) || super::plan::corpus::bridge::is_bridged(rel)
-                || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY) {
+            // An earlier phase's export (`<phase>__<export>`, which python/points-to reads) is the runner's to give; so
+            // are decision 0055's settings (`guest_policy`, the lowering's facts, empty where the program sets none),
+            // which the library reads (`python/names.rerail`), the run's settings (`env`, core.rerail's) and the file system's
+            // answers (`file_line`, `dir_entry`), which python/conditions and python/env read.
+            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel)
+                || super::plan::corpus::phases::is_phased(rel)
+                || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY || rel == "env"
+                || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(answer, _)| *answer == rel)) {
                 return err(format!("{rel} is read, and nothing derives or inputs it"));
             }
         }

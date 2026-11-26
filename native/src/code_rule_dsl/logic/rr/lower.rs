@@ -1407,7 +1407,13 @@ impl Lowerer {
                     self.three.insert(name.clone());
                 }
                 // Open to the rules and facts of the files that include its own (decision 0263): checked on reading.
-                "extensible" => {}
+                // A library's (not core's, whose `env`, `option` and `load` the engine gives) is kept as a word of the
+                // relation's, as the qualifiers are: where the whole program is known (`plan::corpus::combine_read`),
+                // one that nothing states is stated empty (decision 0677).
+                "extensible" if self::core::is_core(&name) => {}
+                "extensible" => {
+                    self.prog.qualifiers.entry(name.clone()).or_default().insert("extensible".to_owned());
+                }
                 "widen" => widen = Some(words.next().and_then(|k| k.parse::<u32>().ok()).ok_or_else(|| Error::Syntax(format!("{name}: `widen` needs a count")))?),
                 // What the relation keeps (decision 0099): an override of the planner's choice.
                 q if crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q) => {
@@ -2644,14 +2650,17 @@ impl Lowerer {
     /// `name(s, g_…)`: the matches of `re` over the texts of `input` (a unary relation), each named group a column
     /// (and the match's ordinal, start and end with `positions`), made natively (`front::Native::MatchAll`). Its one
     /// rule orders it after its input; the evaluator makes its rows.
-    fn match_all_native(&mut self, name: &str, input: &str, re: &str, gs: &[String], positions: bool) {
+    /// With `places`, the input's other columns place each text in its file (a node or span, `text_matches`): read,
+    /// not kept, as the native reads the texts alone (column 0).
+    fn match_all_native(&mut self, name: &str, input: &str, re: &str, gs: &[String], positions: bool, places: usize) {
         let mut cols: Vec<_> = std::iter::once("s".to_owned()).chain(gs.iter().map(|g| format!("g_{g}"))).map(|c| (c, "sym".to_owned())).collect();
         if positions {
             cols.extend(["ordinal", "start", "end"].map(|c| (c.to_owned(), "int".to_owned())));
         }
         self.prog.decls.insert(name.to_owned().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         let x = |n: &str| Term::Var(n.to_owned().into());
-        let mut body = vec![Literal::Atom(Atom { rel: input.to_owned().into(), args: [x("s")].into(), neg: false, gated: false })];
+        let read: Vec<Term> = std::iter::once(x("s")).chain(std::iter::repeat_n(Term::Wild, places)).collect();
+        let mut body = vec![Literal::Atom(Atom { rel: input.to_owned().into(), args: read.into(), neg: false, gated: false })];
         body.extend(gs.iter().map(|g| Literal::Cmp { l: x(&format!("g_{g}")), op: "=", r: x("s") }));
         let mut head_args: Vec<_> = std::iter::once(x("s")).chain(gs.iter().map(|g| x(&format!("g_{g}")))).collect();
         if positions {
@@ -2672,7 +2681,10 @@ impl Lowerer {
             return true;
         }
         let ([h], [Lit::Atom { rel: input, args: of, neg: false }, Lit::Atom { rel: m, args, neg: false }]) = (heads, body) else { return false };
-        let ([STerm::Var(s)], Some(STerm::Str(re)), Some(STerm::Var(scanned))) = (of.as_slice(), args.first(), args.get(1)) else { return false };
+        let ([STerm::Var(s), places @ ..], Some(STerm::Str(re)), Some(STerm::Var(scanned))) = (of.as_slice(), args.first(), args.get(1)) else { return false };
+        if !places.iter().all(|a| matches!(a, STerm::Wild)) {
+            return false;
+        }
         if m != "match_all" || scanned != s || h.modal.is_some() || self.prog.natives.contains_key(&h.rel) {
             return false;
         }
@@ -2685,18 +2697,18 @@ impl Lowerer {
         if h.args != want {
             return false;
         }
-        // Over texts, as print writes it: a relation of one text column read, and the head declared (if it is) with
-        // the native's columns. Over a node or span (`piece(t: loc)`) the matches are spans placed in the file,
-        // which `text_matches` makes.
+        // Over texts, as print writes it: a relation of a text column read (and the nodes that place each text, left
+        // unread), and the head declared (if it is) with the native's columns. Over a node or span (`piece(t: loc)`)
+        // the matches are spans placed in the file, which `text_matches` makes.
         let types = |rel: &str| self.prog.decls.get(rel).map(|cols| cols.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>());
-        if types(input).as_deref() != Some(&["sym"][..]) {
+        if !types(input).is_some_and(|t| t.len() == 1 + places.len() && t[0] == "sym" && t[1..].iter().all(|t| matches!(*t, "node" | "loc"))) {
             return false;
         }
         let made: Vec<&str> = std::iter::repeat_n("sym", 1 + gs.len()).chain(std::iter::repeat_n("int", coordinates.len())).collect();
         if types(&h.rel).is_some_and(|t| t != made) {
             return false;
         }
-        self.match_all_native(&h.rel, input, re, &gs, !coordinates.is_empty());
+        self.match_all_native(&h.rel, input, re, &gs, !coordinates.is_empty(), places.len());
         true
     }
 
@@ -2770,13 +2782,42 @@ impl Lowerer {
         let reads_capture = |l: &Lit| body_vars(std::slice::from_ref(l)).iter().any(|x| produced.contains(x));
         self.siblings.retain(|l| !reads_capture(l) && !matches!(l, Lit::Atom { rel, .. } if rel == "match_all"));
         // The text a pattern scans keeps the derived atoms that say which nodes or spans it is (decision 0081).
+        // The context also holds a node that places each text in its file: the nearest the text's literals reach
+        // through shared variables (`strip_arg(c, v)`'s c; era_line(n, l)'s n, for a capture of l). Keyed by the
+        // text alone, the context was a table of every file's texts, cross-file wherever its text came from
+        // (decision 0677); placed, it and the matches (a function of its texts) are derived in each file. The native
+        // reads the texts, column 0, once each. With no node reached, the context is the text's alone, as it was.
+        let place = {
+            let mut reach: BTreeSet<String> = BTreeSet::from([v.clone()]);
+            loop {
+                let mut new: Vec<String> = Vec::new();
+                for l in &self.siblings {
+                    let lv = body_vars(std::slice::from_ref(l));
+                    if !lv.is_disjoint(&reach) {
+                        for x in lv {
+                            if !reach.contains(&x) && !new.contains(&x) {
+                                new.push(x);
+                            }
+                        }
+                    }
+                }
+                if new.is_empty() {
+                    break None;
+                }
+                if let Some(x) = new.iter().find(|x| self.siblings.iter().any(|l| self.node_in(l, x))) {
+                    break Some(x.clone());
+                }
+                reach.extend(new);
+            }
+        };
+        let asked: Vec<String> = std::iter::once(v.clone()).chain(place).collect();
         self.span_context = true;
-        let ctx = self.context(std::slice::from_ref(v));
+        let ctx = self.context(&asked);
         self.span_context = false;
         self.siblings = saved;
         let ctx = ctx?;
         let name = self.fresh("mall");
-        self.match_all_native(&name, &ctx.rel, re, &gs, !positions.is_empty());
+        self.match_all_native(&name, &ctx.rel, re, &gs, !positions.is_empty(), asked.len() - 1);
         let args = std::iter::once(Term::Var(v.clone().into())).chain(gs.iter().map(|g| Term::Var(g.clone().into())))
             .map(Ok).chain(positions.iter().map(|p| self.term(p))).collect::<Result<Vec<_>, Error>>()?;
         Ok(vec![vec![Literal::Atom(Atom { rel: name.into(), args: args.into(), neg: false, gated: false })]])
@@ -2891,8 +2932,8 @@ impl Lowerer {
                 ("kind", [Term::Var(y), Term::Str(k)]) if y == x => Some([SpanIn::Kind(k.to_string())].into()),
                 ("rx_span", [Term::Str(p), _, _, Term::Str(g), Term::Var(y)]) if y == x => Some([SpanIn::Capture(p.to_string(), g.to_string())].into()),
                 // A child of a node whose kinds the body gives (a `kind` atom, or a column of nodes of known kinds):
-                // the children of nodes of those kinds.
-                ("child", [Term::Var(par), Term::Var(y), _]) if y == x && par != x => {
+                // the children of nodes of those kinds. A field's node is such a child (`field(e, "value", v)`).
+                ("child", [Term::Var(par), Term::Var(y), _]) | ("field", [Term::Var(par), _, Term::Var(y)]) if y == x && par != x => {
                     let atoms: BTreeSet<SpanIn> = body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "kind").filter_map(|a| match a.args.as_slice() {
                         [Term::Var(z), Term::Str(k)] if z == par => Some(SpanIn::ChildOf(k.to_string())),
                         _ => None,
@@ -2900,7 +2941,7 @@ impl Lowerer {
                     if !atoms.is_empty() {
                         return Some(atoms);
                     }
-                    body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel != "child").find_map(|a| {
+                    body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel != "child" && a.rel != "field").find_map(|a| {
                         a.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(z) if z == par).then(|| columns.get(of(&a.rel), i)).flatten())
                     }).and_then(|set| set.iter().map(|s| match s { SpanIn::Kind(k) => Some(SpanIn::ChildOf(k.to_string())), _ => None }).collect::<Option<BTreeSet<_>>>())
                 }
@@ -3693,11 +3734,15 @@ impl Lowerer {
                 vs
             })
             .collect();
+        // A test (`a != b`, `a < b`) ties nothing: it filters rows the other literals join. Kept where they reach all
+        // its variables; reached through it, a context was the cross product of two groups (SIM109's `SECOND != FIRST`
+        // paired every comparison of the corpus with every node, decision 0652).
+        let test = |l: &Lit| matches!(l, Lit::Cmp { op, .. } if *op != "=");
         let mut keep = vec![false; context.len()];
         loop {
             let mut grew = false;
             for (k, vs) in of.iter().enumerate() {
-                if !keep[k] && !vs.is_disjoint(&reach) {
+                if !keep[k] && !test(&context[k]) && !vs.is_disjoint(&reach) {
                     keep[k] = true;
                     reach.extend(vs.iter().cloned());
                     grew = true;
@@ -3705,6 +3750,11 @@ impl Lowerer {
             }
             if !grew {
                 break;
+            }
+        }
+        for (k, vs) in of.iter().enumerate() {
+            if test(&context[k]) && vs.is_subset(&reach) {
+                keep[k] = true;
             }
         }
         context.into_iter().zip(keep).filter(|(_, k)| *k).map(|(l, _)| l).collect()
@@ -4515,7 +4565,7 @@ pub(super) fn float_key(f: f64) -> i64 {
 /// The empty value `unset(x)` binds (`core.rerail`): the id -1, which no node has, so no tree relation holds of it.
 /// Each `unset(x)` is taken out and `x` replaced by it in the rule; `!unset(x)` is `x != -1`. Its text is "":
 /// `text(x, t)` of it is `t = ""` (O77). (A `@place` with no valid line is `unset` too: `PLACE`.)
-pub(super) const UNSET: i64 = -1;
+pub const UNSET: i64 = -1;
 
 fn unset(mut head: Vec<Term>, body: Vec<Literal>) -> Result<(Vec<Term>, Vec<Literal>), Error> {
     let mut vars = BTreeSet::new();
@@ -5353,7 +5403,7 @@ pub const SUPPRESS_TOOLS: [(&str, &str, &str); 12] = [
     ("psalm", "psalm", "issues"),
 ];
 
-pub const WORLD: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
+pub const WORLD: [(&str, &str); 4] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req"), ("module_target", "rr_module_req")];
 
 fn world_demand(rel: &str) -> Option<&'static str> {
     WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d)
@@ -5586,7 +5636,7 @@ fn printf_pieces(format: &str, args: &[Term]) -> Option<Term> {
 }
 
 /// `prog` reading the base relation `rel` (`child`, `node`): declared as the engine declares it, and an input unless a
-/// rule makes it. For rules added to a program already read (`corpus::bridge`), as lowering adds them for its own.
+/// rule makes it. For rules added to a program already read, as lowering adds them for its own.
 pub fn base_relation(prog: &mut Program, rel: &str) {
     let cols: &[(&str, &str)] = match rel {
         "child" => &[("p", "node"), ("c", "node"), ("i", "int")],

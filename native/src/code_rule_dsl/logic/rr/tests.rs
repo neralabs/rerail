@@ -791,7 +791,7 @@ out_of_loop(c) :- callee(n, c), !inside(n, _, stop).
 fn_with_call(f) :- fname(a, f), has(a, n, stop), node(_, n, "block", _, _).
 .decl own(c: symbol, f: symbol)
 own(c, f) :- callee(n, c), fname(a, f), within_stop(n, a, stop).
-.decl lonely(c: symbol)
+.decl lonely(c: symbol) cross_file   // a name called in one file, defined in none (decision 0652)
 lonely(c) :- callee(_, c), !(callee(m, c), fname(f, c)), !(c = "h", callee(_, "f")).
 .output near, out_of_loop, fn_with_call, own, lonely
 "#;
@@ -1837,6 +1837,43 @@ NQ(m, c) :- hit(m, c).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `match_all` over a text a derived relation binds (`piece(c, v)`), or a capture of one: the context of the texts it
+/// scans holds a node that places each (decision 0677), so it and the matches, a function of its texts, are derived in each file. Keyed
+/// by the text alone, they were a table of every file's texts, in the cross-file part (B005's strip arguments). The
+/// program prints back as itself, and each text is scanned as before.
+#[test]
+fn a_match_all_over_a_derived_text_is_placed_by_its_node() {
+    let src = r#"
+.decl piece(c: node, v: symbol)
+piece(c, v) :- kind(c, "string_content"), text(c, v).
+.decl chars(c: node, i: number, x: symbol)
+chars(c, i, x) :- piece(c, v), match_all("(?<x>(?s:.))", v, i, _, _).
+.decl twice(x: symbol)
+twice(x) :- chars(c, i, x), chars(c, j, x), i < j.
+.decl tail(x: symbol)
+tail(x) :- piece(c, v), match("a(?<w>[\\s\\S]*)", v), match_all("(?<x>(?s:.))", w, _, _, _).
+.output twice, tail
+"#;
+    let v = parse(src).unwrap();
+    let contexts: Vec<Vec<String>> =
+        v.decls.iter().filter(|(name, _)| name.starts_with("rr_ctx")).map(|(_, cols)| cols.iter().map(|(_, t)| t.to_string()).collect()).collect();
+    assert_eq!(contexts.len(), 2, "a context of the texts each scans: {contexts:?}");
+    assert!(contexts.iter().all(|c| c.get(1).map(String::as_str) == Some("node")), "each context places its texts by a node: {contexts:?}");
+    let printed = crate::code_rule_dsl::logic::rr::print(&v).and_then(|t| parse(&t)).unwrap();
+    assert_eq!(difference(&v, &printed), None);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("placedmatch");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "s = \"aba\"\nt = \"xyz\"\n").unwrap();
+    let rule = dir.join("m.rerail");
+    std::fs::write(&rule, src).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "twice").unwrap(), [["a"]]);
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "tail").unwrap(), [["a"], ["b"]]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A text test of a capture in the body that captured it tests the capture's text: `match_all("(?<w>…)", t),
 /// match("…", w)` over a string's content (RUF001's words). It once tested the span's id as a text, and never held.
 #[test]
@@ -1942,7 +1979,7 @@ g(d)
 comma(l, c) :- kind(n, "argument_list"), match_all(",", n, m), line(m, l), col(m, c).
 .decl in_node(t: symbol, k: number)
 in_node(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", n, _) }.
-.decl in_text(t: symbol, k: number)
+.decl in_text(t: symbol, k: number) cross_file   // texts and counts: values of the corpus (decision 0652)
 in_text(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", t, _, _, _) }.
 .output comma, in_node, in_text
 "#).unwrap();
@@ -2376,7 +2413,7 @@ objects(x, l, c) :- guest(g, _, _, "sql"), node(g, n, "object_reference", _, _),
 unscoped(k) :- node(_, _, k, _, _).
 .decl qualified(x: symbol)
 qualified(x) :- kind(n, "sql:object_reference"), text(n, x).
-.decl counted(c: number)
+.decl counted(c: number) cross_file   // the corpus's count (decision 0652)
 counted(c) :- c = count : { kind(_, "sql:object_reference") }.
 .output sqlkinds, docs, objects, unscoped, qualified, counted
 "#;
@@ -2991,7 +3028,7 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
         crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap()
     };
     let a = policy("a", "a", ".violation Fn(at: node) \"a def\"\nFn(f) :- def_at(f, _).");
-    let b = policy("b", "b", ".violation Dup(at: node) \"two defs\"\nDup(f) :- def_at(f, s), def_at(g, s), f != g.");
+    let b = policy("b", "b", ".decl twice(s: symbol) cross_file\ntwice(s) :- def_at(f, s), def_at(g, s), f != g.\n.violation Dup(at: node) \"two defs\"\nDup(f) :- def_at(f, s), twice(s).");
     let run = |programs: &[&str], out: &str| -> Vec<String> {
         let out = dir.join(out);
         crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -3030,7 +3067,7 @@ fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
     }
     let policy = |name: &str, scope: &str, body: &str| format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rerail\"\n.scope dirs \"{scope}\"\n{body}\n");
     let a = policy("a", "a", ".violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).");
-    let b = policy("b", "b", ".violation Dup(at: node) \"two calls\"\nDup(c) :- call_name(c, s), call_name(d, s), c != d.");
+    let b = policy("b", "b", ".decl twice(s: symbol) cross_file\ntwice(s) :- call_name(c, s), call_name(d, s), c != d.\n.violation Dup(at: node) \"two calls\"\nDup(c) :- call_name(c, s), twice(s).");
     let run = |programs: &[&str], out: &str| -> Vec<String> {
         let out = dir.join(out);
         crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -3101,9 +3138,9 @@ fn ordering_nodes_follows_preorder_across_granules() {
 xs(n) :- node(_, n, "identifier", _, _), text(n, "x").
 .decl before(a: number, b: number)
 before(la, lb) :- xs(a), xs(b), a < b, line(a, la), line(b, lb).
-.decl last(l: number)
+.decl last(l: number) cross_file
 last(l) :- m = max k : { xs(k) }, line(m, l).
-.decl first(l: number)
+.decl first(l: number) cross_file
 first(l) :- m = min k : { xs(k) }, line(m, l).
 .output before, last, first
 "#;
@@ -4195,7 +4232,7 @@ fn a_cone_is_taken_without_the_attributes_requests() {
 fn an_attribute_a_cross_file_reader_asks_for_is_eager() {
     let rule = r#"
 .policy "t:values" revision 1
-.decl pick(n: node)
+.decl pick(n: node) cross_file   // a node with its twin in another document (decision 0652)
 pick(n) :- kind(n, "integer"), kind(m, "integer"), docof(n, d), docof(m, e), d != e.
 .decl cv(v: symbol)
 cv(v) :- pick(n), value(n, v).
@@ -4216,48 +4253,61 @@ ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
 const SPLIT_MODULES: usize = 32;
 const SPLIT_REFERENCES: usize = 4;
 
-/// python/calls over `SPLIT_MODULES` modules of `SPLIT_REFERENCES` builtin references each: no demand split's rows grow
-/// as the references times the modules (`plan::demand::over::disconnected`). `builtin_ref`'s split with `docof` cut
-/// was every reference against every module (8,801 rows of work in its `pre_<i>` here, over the 4,096 of references
-/// times modules; 129.7M rows on edx-platform's 4,459 files). The profile is the process's, so the run is a child
-/// process of its own (`demand_split_child`), its rows read from its `heads.tsv`.
+/// python/calls over `SPLIT_MODULES` modules of `SPLIT_REFERENCES` builtin references each, and over half as many: no
+/// demand split's rows grow faster than the modules (`plan::demand::over::disconnected`). `builtin_ref`'s split with
+/// `docof` cut was every reference against every module (8,801 rows of work in its `pre_<i>` at 32 modules, four times
+/// its rows at 16; 129.7M rows on edx-platform's 4,459 files). A phase's splits do work per node of each file (py_names'
+/// `nameref`, every identifier), linear in the modules, which a bound on the references alone took for growth. The
+/// profile is the process's, so each run is a child process of its own (`demand_split_child`), its rows read from its
+/// `heads.tsv`.
 #[test]
 fn a_demand_split_stays_linear_in_the_modules() {
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().join("src");
-    std::fs::create_dir_all(&root).unwrap();
     // Plain nodes make the program's rarer kinds anchors (fewer than 1/32 of the nodes), so `docof` is a candidate.
     let filler = (1..=300).map(|i| i.to_string()).collect::<Vec<_>>().join(", ");
     let source = format!("x = len([1])\nprint(x)\ny = len(\"ab\")\nprint(y)\nDATA = [{filler}]\n");
     assert_eq!(source.matches("len(").count() + source.matches("print(").count(), SPLIT_REFERENCES);
-    for m in 0..SPLIT_MODULES {
-        std::fs::write(root.join(format!("m{m}.py")), &source).unwrap();
-    }
-    let rule = directory.path().join("calls.rerail");
-    std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
-    let profile = directory.path().join("profile");
-    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
-    child
-        .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])
-        .env("RERAIL_PROFILE", &profile)
-        .env("RERAIL_TAPE_CACHE", "off")
-        .env("DEMAND_SPLIT_RULE", &rule)
-        .env("DEMAND_SPLIT_ROOT", &root)
-        .env("DEMAND_SPLIT_OUT", directory.path().join("out"));
-    let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
-    assert!(status.success());
-    // part, head, cpu_s, work (rows into the head's steps), plans
-    let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
-    let rows: Vec<(&str, &str, u64)> = heads.lines().skip(1).map(|l| {
-        let c: Vec<&str> = l.split('\t').collect();
-        (c[0], c[1], c[3].parse().unwrap())
-    }).collect();
-    assert!(rows.iter().any(|(part, _, _)| part.contains("typing programs")), "the typing program ran: {heads}");
-    let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
-    for (part, head, work) in &rows {
-        if head.starts_with("pre_") || head.starts_with("demand_") {
-            assert!(*work < product / 4, "{head} ({part}): {work} rows, against {product} for every reference times every module");
+    // Per part, its largest split's rows into its steps and the split, of a run over `modules` modules.
+    let run = |modules: usize| -> std::collections::BTreeMap<String, (u64, String)> {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("src");
+        std::fs::create_dir_all(&root).unwrap();
+        for m in 0..modules {
+            std::fs::write(root.join(format!("m{m}.py")), &source).unwrap();
         }
+        let rule = directory.path().join("calls.rerail");
+        std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, \"nothing.has.this.symbol\").\n").unwrap();
+        let profile = directory.path().join("profile");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("RERAIL_TAPE_CACHE", "off")
+            .env("DEMAND_SPLIT_RULE", &rule)
+            .env("DEMAND_SPLIT_ROOT", &root)
+            .env("DEMAND_SPLIT_OUT", directory.path().join("out"));
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success());
+        // part, head, cpu_s, work (rows into the head's steps), plans
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
+        // The typing program runs as the run's phases (decision 0083): the bridge's job of its own is gone.
+        assert!(heads.lines().any(|l| l.contains("phase types: run")), "the typing phases ran: {heads}");
+        let mut rows: std::collections::BTreeMap<String, (u64, String)> = std::collections::BTreeMap::new();
+        for l in heads.lines().skip(1) {
+            let c: Vec<&str> = l.split('\t').collect();
+            let work = c[3].parse::<u64>().unwrap();
+            if (c[1].starts_with("pre_") || c[1].starts_with("demand_")) && rows.get(c[0]).is_none_or(|(w, _)| work > *w) {
+                rows.insert(c[0].to_owned(), (work, c[1].to_owned()));
+            }
+        }
+        rows
+    };
+    let (half, whole) = (run(SPLIT_MODULES / 2), run(SPLIT_MODULES));
+    // Splits are numbered as each run's plan made them, so a part's largest is compared. Twice the modules, a linear
+    // split's rows about twice (a fixed cost besides: the slack); every reference against every module's, four times.
+    let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
+    for (part, (work, head)) in &whole {
+        let (before, was) = half.get(part).cloned().unwrap_or((0, String::new()));
+        assert!(*work <= 5 * before / 2 + product / 16, "{head} ({part}): {work} rows over {SPLIT_MODULES} modules, against {was}'s {before} over {}", SPLIT_MODULES / 2);
     }
 }
 
@@ -4284,7 +4334,7 @@ fn a_run_on_two_threads_ends() {
         std::fs::write(root.join(format!("m{m}.py")), format!("def f{m}(x):\n    return len(x)\n\n\ndef g{m}():\n    print(f{m}([1]))\n")).unwrap();
     }
     let rule = directory.path().join("calls.rerail");
-    std::fs::write(&rule, ".policy \"two-threads\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
+    std::fs::write(&rule, ".policy \"two-threads\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, \"nothing.has.this.symbol\").\n").unwrap();
     let mut child = std::process::Command::new(std::env::current_exe().unwrap());
     child
         .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])

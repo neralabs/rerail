@@ -44,7 +44,7 @@ up036_version_compare(n) :- kind(n, "comparison_operator"), up036_test_value(n),
 
 // int_elem(n): the JSON util `int-elem`, used where the JSON says `matches: "int-elem"`
 .decl up036_int_elem(n: node)
-up036_int_elem(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+up036_int_elem(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int").
 up036_int_elem(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), up036_int_elem(c2).
 
 // first(n): the JSON util `first`, used where the JSON says `matches: "first"`
@@ -72,21 +72,21 @@ up036_int_tuple(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), up03
 
 // int23(n): the JSON util `int23`, used where the JSON says `matches: "int23"`
 .decl up036_int23(n: node)
-up036_int23(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"),
-    (value_type(v1, "int") ; value_type(v1, "float")), to_number(v1) >= 2,
+up036_int23(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"),
+    (value_type_of(n, "int") ; value_type_of(n, "float")), to_number(v1) >= 2,
     to_number(v1) <= 3.
 up036_int23(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), up036_int23(c2).
 
 // int_big(n): the JSON util `int-big`, used where the JSON says `matches: "int-big"`
 .decl up036_int_big(n: node)
-up036_int_big(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"),
-    (value_type(v1, "int") ; value_type(v1, "float")), to_number(v1) > 255.
+up036_int_big(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"),
+    (value_type_of(n, "int") ; value_type_of(n, "float")), to_number(v1) > 255.
 up036_int_big(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), up036_int_big(c2).
 
 // tuple_major(n): the JSON util `tuple-major`, used where the JSON says `matches: "tuple-major"`
 .decl up036_tuple_major(n: node)
 up036_tuple_major(n) :- kind(n, "tuple"), up036_int_tuple(n),
-    ( child(n, c1, _), up036_first(c1), value(c1, v1), (value_type(v1, "int") ; value_type(v1, "float")), to_number(v1) < 3
+    ( child(n, c1, _), up036_first(c1), value(c1, v1), (value_type_of(c1, "int") ; value_type_of(c1, "float")), to_number(v1) < 3
     ; child(n, c2, _), up036_first(c2), value(c2, "3"), count : { child(n, c3, _), up036_second(c3) } = 0
     ).
 
@@ -103,8 +103,8 @@ up036_tuple_invalid(n) :- kind(n, "parenthesized_expression"), child(n, c11, _),
 .decl up036_tuple_3(n: node)
 up036_tuple_3(n) :- kind(n, "tuple"), up036_int_tuple(n), child(n, c1, _), up036_first(c1),
     value(c1, "3"), child(n, c2, _), up036_second(c2), value(c2, v3),
-    (value_type(v3, "int") ; value_type(v3, "float")), to_number(v3) <= 255,
-    count : { child(n, c4, _), up036_third(c4), value(c4, v5), (value_type(v5, "int") ; value_type(v5, "float")), to_number(v5) > 255 } = 0.
+    (value_type_of(c2, "int") ; value_type_of(c2, "float")), to_number(v3) <= 255,
+    count : { child(n, c4, _), up036_third(c4), value(c4, v5), (value_type_of(c4, "int") ; value_type_of(c4, "float")), to_number(v5) > 255 } = 0.
 up036_tuple_3(n) :- kind(n, "parenthesized_expression"), child(n, c6, _), up036_tuple_3(c6).
 
 // minor_below(n): the JSON util `minor-below`, used where the JSON says `matches: "minor-below"`
@@ -119,15 +119,16 @@ up036_minor_below(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
 up036_minor_at(n) :- up036_tuple_3(n), child(n, c1, _), up036_second(c1), value(c1, v2),
     option("python-minor-version", o_python_minor_version), v2 <= "o_python_minor_version",
     ( child(n, c2, _), up036_second(c2), value(c2, v1), option("python-minor-version", o_python_minor_version), v1 < "o_python_minor_version"
-    ; count : { child(n, c3, _), up036_third(c3), value(c3, v3), (value_type(v3, "int") ; value_type(v3, "float")), to_number(v3) > 0 } = 0
+    ; count : { child(n, c3, _), up036_third(c3), value(c3, v3), (value_type_of(c3, "int") ; value_type_of(c3, "float")), to_number(v3) > 0 } = 0
     ).
 
 up036_minor_at(n) :- kind(n, "parenthesized_expression"), child(n, c7, _), up036_minor_at(c7).
 
 // int_other_than_23(n): the JSON util `int-other-than-23`, used where the JSON says `matches: "int-other-than-23"`
 .decl up036_int_other_than_23(n: node)
-up036_int_other_than_23(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"),
-    (value_type(v1, "int") ; value_type(v1, "float")), to_number(v1) <= 255, !up036_int23(n).
+up036_int_other_than_23(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"),
+    (value_type_of(n, "int") ; value_type_of(n, "float")), to_number(v1) <= 255,
+    !up036_int23(n).
 up036_int_other_than_23(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     up036_int_other_than_23(c2).
 
@@ -317,14 +318,14 @@ up036_alt_5(n) :- up036_int_elem(n).
 // alt_7(n): the JSON `any`: n matches if any one of these rules does
 .decl up036_alt_7(n: node)
 up036_alt_7(n) :- child(n, c1, _), up036_first(c1), value(c1, v2),
-    (value_type(v2, "int") ; value_type(v2, "float")), to_number(v2) > 255.
+    (value_type_of(c1, "int") ; value_type_of(c1, "float")), to_number(v2) > 255.
 up036_alt_7(n) :- child(n, c3, _), up036_first(c3), value(c3, "3"), child(n, c4, _), up036_second(c4),
-    value(c4, v5), (value_type(v5, "int") ; value_type(v5, "float")),
+    value(c4, v5), (value_type_of(c4, "int") ; value_type_of(c4, "float")),
     to_number(v5) > 255.
 up036_alt_7(n) :- child(n, c6, _), up036_first(c6), value(c6, "3"), child(n, c7, _), up036_second(c7),
-    value(c7, v8), (value_type(v8, "int") ; value_type(v8, "float")),
+    value(c7, v8), (value_type_of(c7, "int") ; value_type_of(c7, "float")),
     to_number(v8) <= 255, child(n, c9, _), up036_third(c9), value(c9, v10),
-    (value_type(v10, "int") ; value_type(v10, "float")), to_number(v10) > 255.
+    (value_type_of(c9, "int") ; value_type_of(c9, "float")), to_number(v10) > 255.
 
 // stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl up036_stop_10(n: node)

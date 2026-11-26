@@ -342,7 +342,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
 
     const asked = agentIo();
     expect(await runSetup(asked, request(setup, environment, { cwd: plain }))).toEqual({ status: "waiting" });
-    expect(asked.text()).toContain("No repo found here.");
+    expect(asked.text()).toContain("No Git repository here.");
     expect(asked.text()).toContain("rerail setup --answer skip");
 
     const skipped = agentIo();

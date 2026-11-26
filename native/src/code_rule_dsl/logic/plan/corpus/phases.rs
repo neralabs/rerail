@@ -187,7 +187,7 @@ pub(super) fn phase_files(read: &[crate::code_rule_dsl::logic::rr::TextNames], d
         let phases: BTreeSet<&str> = names
             .iter()
             .filter_map(|rel| rel.split_once(SEP))
-            .filter(|(phase, export)| !phase.is_empty() && !export.is_empty() && own.as_deref() != Some(*phase) && !phase.starts_with("typing_") && !phase.starts_with("rr_"))
+            .filter(|(phase, export)| !phase.is_empty() && !export.is_empty() && own.as_deref() != Some(*phase) && !phase.starts_with("rr_"))
             .map(|(phase, _)| phase)
             .collect();
         for name in phases {
@@ -211,14 +211,37 @@ pub(super) fn phase_files(read: &[crate::code_rule_dsl::logic::rr::TextNames], d
 
 /// The relations `prog` reads from earlier phases, by phase: `(the reader's relation, the export)`. A relation named
 /// `<phase>__<x>` that no rule of `prog` makes, where `<phase>` is a phase program.
+///
+/// Only the reads an output reaches: a library a program includes for one rule may hold rules that read a phase no
+/// output needs (`lib/django.rerail` includes python/calls.rerail for `call_arg`, and calls.rerail's points-to reads
+/// `points_to`), and that phase would run at every run and every edit for nothing. A phase's run names as outputs the
+/// exports its reader reads (`facts`); a phase program read as it is, with none, reaches from all its exports. A
+/// program that names neither reads all.
 pub(super) fn wanted(prog: &Program, dir: Option<&Path>) -> Result<BTreeMap<String, Vec<(String, String)>>> {
     let made: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
     let read: BTreeSet<&str> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str())).collect();
-    let own = declared(prog).map(|d| d.name);
+    let declared_here = declared(prog);
+    let roots: Vec<&str> = if prog.outputs.is_empty() { declared_here.iter().flat_map(|d| d.exports.iter().map(String::as_str)).collect() } else { prog.outputs.iter().map(String::as_str).collect() };
+    let reached: Option<BTreeSet<&str>> = (!roots.is_empty()).then(|| {
+        let mut reads_of: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for r in &prog.rules {
+            reads_of.entry(r.head.rel.as_str()).or_default().extend(r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()));
+        }
+        let (mut seen, mut todo) = (BTreeSet::new(), roots);
+        while let Some(r) = todo.pop() {
+            if seen.insert(r)
+                && let Some(reads) = reads_of.get(r)
+            {
+                todo.extend(reads.iter().copied());
+            }
+        }
+        seen
+    });
+    let own = declared_here.as_ref().map(|d| d.name.clone());
     let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
-    for rel in read.into_iter().filter(|r| !made.contains(r) && prog.decls.contains_key(*r)) {
+    for rel in read.into_iter().filter(|r| !made.contains(r) && prog.decls.contains_key(*r) && reached.as_ref().is_none_or(|s| s.contains(r))) {
         let Some((phase, export)) = rel.split_once(SEP) else { continue };
-        if phase.is_empty() || export.is_empty() || own.as_deref() == Some(phase) || phase.starts_with("typing_") || phase.starts_with("rr_") {
+        if phase.is_empty() || export.is_empty() || own.as_deref() == Some(phase) || phase.starts_with("rr_") {
             continue;
         }
         if source(phase, dir)?.is_some() {
@@ -228,10 +251,10 @@ pub(super) fn wanted(prog: &Program, dir: Option<&Path>) -> Result<BTreeMap<Stri
     Ok(out)
 }
 
-/// Whether `rel` names an earlier phase's export (`<phase>__<export>`): shared by every program of a run, as bridged
-/// relations are (`corpus::combine` does not prefix it).
-pub(crate) fn is_phased(rel: &str) -> bool {
-    rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("typing_") && !p.starts_with("rr_") && !e.contains(SEP))
+/// Whether `rel` names an earlier phase's export (`<phase>__<export>`): shared by every program of a run
+/// (`corpus::combine` does not prefix it).
+pub fn is_phased(rel: &str) -> bool {
+    rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("rr_") && !e.contains(SEP))
 }
 
 /// A batch of policies run one after another over one tree (`tools::run_policies`): while it is held, phase 1's runs
@@ -350,7 +373,7 @@ pub(super) fn batch_plans(root: &str, plan: [u8; 32], also: &[[u8; 32]]) -> Opti
 pub struct PhaseRun {
     pub name: String,
     pub report: Report,
-    /// Each export's rows.
+    /// The rows of each export its reader read (the run made no other).
     pub exports: Vec<(String, usize)>,
 }
 
@@ -414,14 +437,25 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
                 return Err(Error::Plan(format!("{rel}: {} columns, where phase {name}'s {export} has {}", have.len(), want.len())));
             }
         }
-        // The phase's run: its own program, its own scratch, its exports written as its outputs. The earlier phases it
-        // reads run first (struct, then types), and are listed with the reader's, in the order they ran, each once.
+        // The phase's run: its own program, its own scratch, the exports its reader reads written as its outputs
+        // (decision 0702). An export no rule of the reader reads is no output, so preparation drops it and every rule
+        // only it reached, and an earlier phase only it read does not run. The earlier phases it reads run first
+        // (struct, then types), and are listed with the reader's, in the order they ran, each once.
+        let wanted_exports: Vec<String> = reads.iter().map(|(_, e)| e.clone()).collect::<BTreeSet<String>>().into_iter().collect();
         let out = scratch.join(format!("phase-{name}"));
         // Its exports are its outputs: the program read, given them (decision 0249), not its text with an `.output`
-        // after it read again.
+        // after it read again. A phase naming no language runs in its reader's (as phase 1 does): a library read by
+        // programs of several languages (tsx/names.rerail, by TypeScript's and Vue's) resolves over the reader's
+        // documents (decision 0665). The reader's dialect is in the options both runs share.
         let mut handed = program.clone();
-        handed.outputs.extend(declared.exports.iter().cloned());
-        let (upstream, upstream_runs) = self::facts(&program, root, scratch, modes, binding, chunk_nodes, typing, options)?;
+        if !handed.settings.iter().any(|(k, _)| k == "language")
+            && let Some(language) = prog.settings.iter().find(|(k, _)| k == "language")
+        {
+            handed.settings.push(language.clone());
+        }
+        handed.outputs.extend(wanted_exports.iter().cloned());
+        // The phases it reads, as far as its wanted exports reach.
+        let (upstream, upstream_runs) = self::facts(&handed, root, scratch, modes, binding, chunk_nodes, typing, options)?;
         for r in upstream_runs {
             if !runs.iter().any(|x: &PhaseRun| x.name == r.name) {
                 runs.push(r);
@@ -433,9 +467,9 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
             let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: run"));
             super::run_read(&handed, root, &out, modes, binding, chunk_nodes, typing, options)?
         };
-        let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &program, &declared, &out)? };
+        let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &program, &wanted_exports, &out)? };
         { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&name, &program, &reads, &rows, &mut facts)?; }
-        let exports = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, Vec::len))).collect();
+        let exports = wanted_exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, Vec::len))).collect();
         runs.push(PhaseRun { name, report, exports });
     }
     Ok((facts, runs))
@@ -526,7 +560,7 @@ pub(super) fn sources(
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: run"));
         super::run_read_handing(&handed, Some(texts), root, &out, modes, binding, chunk_nodes, typing, &options)?
     };
-    let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &program, &declared, &out)? };
+    let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &program, &declared.exports, &out)? };
     let text = |v: &Value| match v {
         Value::Str(s) => Some(s.to_string()),
         // A path is text: an atom (decision 0270) is none.
@@ -578,11 +612,11 @@ fn loads_documents(program: &Program, dir: Option<&Path>, seen: &mut BTreeSet<St
 
 /// A phase's exports, as its run wrote them in `out` (which goes): each row's values as the export's columns are
 /// declared, read from the outputs' image (`output::Outputs`), nothing parsed.
-fn read_exports(name: &str, program: &Program, declared: &Declared, out: &Path) -> Result<BTreeMap<String, Vec<Vec<Value>>>> {
+fn read_exports(name: &str, program: &Program, exports: &[String], out: &Path) -> Result<BTreeMap<String, Vec<Vec<Value>>>> {
     use crate::code_rule_dsl::logic::plan::output;
     let outputs = output::Outputs::open(out).map_err(|e| Error::Plan(format!("phase {name}: {}: {e}", out.display())))?;
     let mut rows: BTreeMap<String, Vec<Vec<Value>>> = BTreeMap::new();
-    for export in &declared.exports {
+    for export in exports {
         let rel = outputs.get(export).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not in its outputs (in {}, which holds {:?})", out.display(), outputs.names())))?;
         let types: Vec<&str> = program.decls[export.as_str()].iter().map(|(_, t)| t.as_str()).collect();
         if rel.width() != types.len() {

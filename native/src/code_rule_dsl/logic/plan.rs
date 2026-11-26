@@ -2397,8 +2397,20 @@ impl Model {
         if let Some(k) = &kept && let Some(got) = self.budget_takes(k, b, first, &sizes) {
             plan_cache(8);
             super::profile::decision("plan cache (decision 0038)", || format!("a kept plan taken as it is: its rule did {} rows of work when it last ran, less than a search costs (decision 0122)", k.5.unwrap_or(0.0)));
-            // Its sizes now, against which the next run's growth is measured.
-            remember(&key, &got);
+            // Its rows now, against which the next run's growth is measured. It read no distributions (decision 0123:
+            // a line not priced requests none, so a relation bound lazily reads as one distinct value), so its price's
+            // stay those it was last priced at: else a run that took the plan kept it again with distributions it never
+            // read, and the next run, reading them measured, again (decision 0104: a warm run writes nothing).
+            let cards = (1 + usize::from(first.is_some()) + b.read_count()).min(sizes.len());
+            let misses_at = sizes.len().saturating_sub(b.len()).max(cards);
+            match k.4.as_ref().filter(|p| p.sizes.len() == sizes.len()) {
+                Some(previous) => {
+                    let mut now = sizes.clone();
+                    now[cards..misses_at].copy_from_slice(&previous.sizes[cards..misses_at]);
+                    plans_learnt(&key, Learnt::Priced(Arc::new(Priced { sizes: now, got: got.clone() })));
+                }
+                None => remember(&key, &got),
+            }
             return Ok(got);
         }
         // Why a kept plan was not taken as it is (`RERAIL_PLAN_CACHE_COUNTS`).
@@ -4650,7 +4662,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &[&["n"], &["s", "n"]],
         // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" | "rr_value_lit" => &[&["n"], &["v", "n"]],
-        "value_type_of" => &[&["n"], &["t", "n"]],
+        "value_type_of" | "static_value_type_of" => &[&["n"], &["t", "n"]],
         "value_type" => &[&["v"], &["t", "v"]],
         "fstring_piece" => &[&["n"], &["v", "n"]],
         "fstring_template" => &[&["n"], &["v", "n"]],

@@ -715,7 +715,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &["n", "s"],
         // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" | "rr_value_lit" => &["n", "v"],
-        "value_type_of" => &["n", "t"],
+        "value_type_of" | "static_value_type_of" => &["n", "t"],
         "value_type" => &["v", "t"],
         // W's f-string trees (`facts::vtab::syntax::fstring`).
         "fstring_piece" => &["n", "i", "kind", "v"],
@@ -785,6 +785,8 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "tsconfig" => &["dir", "base_url"],
         "tsconfig_for" => &["path", "dir"],
         "tsconfig_path" => &["dir", "pattern", "target"],
+        "npm_ignored" => &["path"],
+        "py_unpackaged" => &["path"],
         "pkg" => &["d", "p"],
         "path_part" | "file_name" => &["d", "s"],
         "tape" => &["n", "par", "size", "depth"],

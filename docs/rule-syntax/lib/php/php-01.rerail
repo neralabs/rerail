@@ -18,8 +18,8 @@
 //
 // What a rule gets from this library:
 //   php_fmt_string(n, s)   n is a string expression whose value is s at n
-// And php/format's relations (printf_needs, scanf_assigns, …) hold for these strings too: php_format gets a row for
-// each format argument php_fmt_string knows.
+// And php/format's relations (printf_needs, scanf_assigns, …) hold for these format arguments too: php_format gets a
+// row for each format argument php_fmt_string knows, keyed by the argument.
 //
 // Builds on php/format.rerail (php_format, php_format_arg) and php/values.rerail (php_value, php_occ, php_write).
 
@@ -41,7 +41,7 @@ php_fmt_literal(n, cat(a, b)) :- kind(n, "binary_expression"), op(n, "."), field
 php_fmt_piece(n, s) :- php_fmt_literal(n, s).
 php_fmt_piece(n, s) :- php_value(n, "int", s).
 
-php_format(s, style) :- php_format_arg(_, f, style), php_fmt_string(f, s).
+php_format(f, s, style) :- php_format_arg(_, f, style), php_fmt_string(f, s).
 
 // php_last_write(u, e): u reads a variable whose last write, `$x = e;` (statement st), dominates u.
 .decl php_last_write(u: node, e: node)

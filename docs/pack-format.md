@@ -93,9 +93,10 @@ packs/<id>/
 
 - **`peerDependencies`**: the core range. A pack has no `dependencies`. A pack that ships a rule in a language core first
   reads in a later release (`LANGUAGE_SINCE` in `scripts/release/core.mjs`), whose ast rule uses a key core first
-  reads in a later release (`RULE_KEY_SINCE` there), or that ships a rule written in `.rerail` (`RERAIL_DOCUMENTS_SINCE`:
-  0.2.1), leaves older cores out from that release on, as for `heldOff` below: they refuse the document and would drop
-  the whole pack. Once core is at that release the pack validation fails a range that admits them, and the Release pull
+  reads in a later release (`RULE_KEY_SINCE` there), that ships a rule written in `.rerail` (`RERAIL_DOCUMENTS_SINCE`:
+  0.2.1), or that gives a rule `dimensions` (`DIMENSIONS_SINCE`: 0.2.2), leaves older cores out from that release on,
+  as for `heldOff` below: they refuse the document, or `pack.json` for `dimensions`, and would drop the whole pack.
+  Once core is at that release the pack validation fails a range that admits them, and the Release pull
   request raises the range of each such pack it releases ([release](release.md#release-pull-request)). The Release pull
   request also has each released core from 0.1.5 check the pack's rules, so a rule an older core refuses for any other
   reason raises the range too; the pack validation reads only the maps.
@@ -802,7 +803,7 @@ conformance check (`npm run test:conformance`), not here.
    - `files` publishes `pack.json`, `rules`, `LICENSE` and, when present, `licenses`. No entry may cover
      `conformance.json`, `divergences.json`, `upstream` or `candidates`.
    - Once core is at the release that first reads what the pack ships (`heldOff`, a language added since 0.1.0, a rule
-     written in `.rerail`), the core range leaves every older core out.
+     written in `.rerail`, `dimensions`), the core range leaves every older core out.
    - Some way to satisfy `license` names exactly Apache-2.0 plus, per `licenses/<project>/UPSTREAM.md`, one way to
      satisfy the SPDX expression its `License:` line records. An `OR` there lets the package elect either side
      (`MIT OR Apache-2.0` with `Apache-2.0 AND MIT`); an `AND` must be named whole.

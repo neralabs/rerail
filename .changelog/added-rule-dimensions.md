@@ -1,1 +1,0 @@
-Rule packs can say what each rule guards against (security, data safety, availability, correctness, performance, maintainability or test quality), where its code lives and how badly a violation can go. A pack's page in the dashboard filters its rules by risk and shows each rule's, and the rule packs API returns them.

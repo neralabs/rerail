@@ -1,0 +1,1 @@
+A Rerail run from a package outside `~/.rerail/versions` and outside any Git checkout, with no `RERAIL_CONTENT_STORE_PATH`, has no content store, so it runs no code rule. `rerail status` now says so and why, and exits 5, where it said `Engine: ok`; the session footer says `engine unavailable`, and `daemon.log` and the support bundle give the reason.

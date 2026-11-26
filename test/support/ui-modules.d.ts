@@ -264,7 +264,14 @@ declare module "*/ui/rule-remove.js" {
 
 declare module "*/ui/pack-model.js" {
   type Stored = { rule: { id: string }; enabled: boolean; addedAt?: number | null };
-  type Pack = { id: string; name: string; category: string; covers?: string; rules: Array<{ id: string; title: string; group?: string; on?: boolean }> };
+  type Pack = { id: string; name: string; category: string; covers?: string; published?: boolean; rules: Array<{ id: string; title: string; group?: string; on?: boolean }> };
+  /** A pack as the catalog lists it, installed or only published. */
+  type Listed = { id: string; name: string; category: string; published?: boolean };
+  /** One entry of `GET /api/rule-packs/published`. */
+  type PublishedPack = {
+    id: string; name: string; category: string; covers: string; publisher: string; packageName: string; version: string;
+    ruleCount: number; installedVersion: string | null; reason?: string; folder?: string;
+  };
   export const PAGE_FILTERS: ReadonlyArray<readonly [string, string]>;
   export const PAGE_SORTS: ReadonlyArray<readonly [string, string]>;
   export function pageRiskFilters(rules: readonly Stored[]): Array<[string, string]>;
@@ -276,14 +283,19 @@ declare module "*/ui/pack-model.js" {
   export function packSwitch(rules: readonly Stored[]): { on: number; total: number; state: "true" | "false" | "mixed" };
   export function switchTurnsOn(state: "true" | "false" | "mixed"): boolean;
   export function enforcementCounts(rules: ReadonlyArray<Stored & { rule: { mode: string }; configError?: string | null }>): string;
-  export function catalogKinds(packs: readonly Pack[]): Array<[string, string]>;
-  export function catalogPacks<P extends Pack>(packs: readonly P[], kind: string): P[];
+  export function catalogKinds(packs: readonly Listed[]): Array<[string, string]>;
+  export function catalogPacks<P extends Listed>(packs: readonly P[], kind: string): P[];
+  export function catalogEntries<P extends Pack>(installed: readonly P[], published: { packs: readonly PublishedPack[]; unread: string | null } | null): Array<P | (PublishedPack & { published: true })>;
+  export function catalogSuggestions(recommendations: readonly Recommendation[] | null, entries: ReadonlyArray<Listed & { reason?: string }>): Recommendation[] | null;
+  export function installCommand(pack: { id: string; packageName: string; version: string }): string;
   export const SHEET_FILTER_AT: number;
   export function sheetRules(pack: Pack, query: string): Pack["rules"];
   type Recommendation = { packId: string; reason?: string };
   export function suggestedReason(recommendations: readonly Recommendation[] | null, packId: string): string | null;
-  export function suggestedSplit<P extends Pack>(packs: readonly P[], recommendations: readonly Recommendation[] | null): { suggested: P[]; others: P[] } | null;
+  export function suggestedSplit<P extends Listed>(packs: readonly P[], recommendations: readonly Recommendation[] | null): { suggested: P[]; others: P[] } | null;
   export function startGroups<R extends { on?: boolean }>(rows: readonly R[]): { on: R[]; off: R[] };
+  /** What the toast after adding `pack` says it turns on, and which rules it starts on that do not run. */
+  export function addedRulesText(pack: { rules: ReadonlyArray<{ on: boolean; inactive?: unknown }> } | undefined): string;
 }
 
 declare module "*/ui/routes.js" {

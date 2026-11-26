@@ -42,11 +42,14 @@ lazy_terminal(c) :- terminal_call(c, o), possible_type(o, t), lazy_class(t).
 .decl terminal_unknown(c: node)
 terminal_unknown(c) :- terminal_call(c, o), !lazy_terminal(c), possible_open(o).
 
-// eager(f): function f makes a lazy-terminal call itself, or calls a function of its own file that is eager.
-.decl eager(f: node)
-eager(f) :- lazy_terminal(c), owner(c, f).
-eager(f) :- calls(f, g), docof(f, d), docof(g, d), eager(g).
+// eager(q): function q (its symbol, python/calls' call graph's) makes a lazy-terminal call itself, or calls a function
+// of its own file that is eager. A function's file is its document key (`def_doc`), which may cross (decision 0677).
+.decl def_doc(q: symbol, d: number)
+def_doc(q, d) :- kind(f, "function_definition"), pt_tm(f, q), docof(f, d).
+.decl eager(q: symbol)
+eager(q) :- lazy_terminal(c), owner(c, f), pt_tm(f, q).
+eager(q) :- calls(q, g), def_doc(q, d), def_doc(g, d), eager(g).
 
 .violation LEG_083_TYPED(at: node)
     "This function reaches an eager lazy-terminal resolve() through calls in this file."
-LEG_083_TYPED(f) :- eager(f).
+LEG_083_TYPED(f) :- kind(f, "function_definition"), pt_tm(f, q), eager(q).

@@ -67,7 +67,7 @@ pub const GROUPS: &str = "matchgroup_";
 
 /// The relations a text test's string can come from, and their text columns: the batch interns these strings, so a
 /// test over them is answered from the batch's vocabulary (`facts::vtab::syntax`).
-pub const TEXT_COLUMNS: [(&str, &[usize]); 33] = [
+pub const TEXT_COLUMNS: [(&str, &[usize]); 34] = [
     ("text", &[1]),
     ("name", &[1]),
     ("str", &[1]),
@@ -86,6 +86,7 @@ pub const TEXT_COLUMNS: [(&str, &[usize]); 33] = [
     ("static_value", &[1]),
     ("rr_value_lit", &[1]),
     ("value_type_of", &[1]),
+    ("static_value_type_of", &[1]),
     ("value_type", &[0, 1]),
     ("comment", &[1]),
     ("str_part", &[2]),
@@ -639,7 +640,7 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     }
     let alone: HashSet<String> = heads
         .into_iter()
-        .filter(|(h, n)| *n == 1 && !prog.outputs.contains(h) && !prog.inputs.contains(h) && !prog.facts.contains_key(h) && !prog.natives.get(h).is_some_and(|n| !matches!(n, super::front::Native::TextTest { .. })))
+        .filter(|(h, n)| *n == 1 && !prog.outputs.contains(h) && !prog.inputs.contains(h) && !prog.facts.contains_key(h) && prog.natives.get(h).is_none_or(|n| matches!(n, super::front::Native::TextTest { .. })))
         .map(|(h, _)| h)
         .collect();
     for rule in &mut prog.rules {

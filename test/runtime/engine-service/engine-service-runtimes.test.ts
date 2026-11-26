@@ -474,15 +474,25 @@ function quietAuditor(): CodeRuleAuditor {
 
 /**
  * An evaluator that checks nothing and records every batch of edits it is given (`batches`) and the paths a walk asked
- * it about (`looked`); its scans (`scans`) complete with no finding once `auditing` settles, each recorded in the audit
- * store as a real scan is. Every evaluator after the first opens once `reopening` settles, as one compiling its rules
- * does, and `reopened` settles as the second begins to. The first evaluator to close does so once `closing` settles, and
- * fails to with `closeFails`; `closeBegun` settles as it begins to.
+ * it about (`looked`); `lookedAt(path)` settles once a walk has asked about `path` since `looked` was last cleared, at
+ * once if one already has. Its scans (`scans`) complete with no finding once `auditing` settles, each recorded in the
+ * audit store as a real scan is; `scanBegun` settles as the first begins. Every evaluator after the first opens once
+ * `reopening` settles, as one compiling its rules does, and `reopened` settles as the second begins to. The first
+ * evaluator to close does so once `closing` settles, and fails to with `closeFails`; `closeBegun` settles as it begins to.
  */
 function recordingAuditor(options: { reopening?: Promise<void>; closing?: Promise<void>; closeFails?: boolean; auditing?: Promise<void> } = {}) {
   const batches: CodeRuleEditBatch[] = [];
   const scans: string[] = [];
   const looked = new Set<string>();
+  // The test's waits for a walk's look, by path: each settles at that look, so no clock decides whether the walk came.
+  const lookWaits = new Map<string, PromiseWithResolvers<void>>();
+  const lookedAt = (path: string): Promise<void> => {
+    if (looked.has(path)) return Promise.resolve();
+    const wait = lookWaits.get(path) ?? Promise.withResolvers<void>();
+    lookWaits.set(path, wait);
+    return wait.promise;
+  };
+  const scanBegun = Promise.withResolvers<void>();
   const reopened = Promise.withResolvers<void>();
   const closeBegun = Promise.withResolvers<void>();
   let opened = 0;
@@ -496,6 +506,8 @@ function recordingAuditor(options: { reopening?: Promise<void>; closing?: Promis
     },
     acceptsPath: (path) => {
       looked.add(path);
+      lookWaits.get(path)?.resolve();
+      lookWaits.delete(path);
       return true;
     },
     auditGeneratedEdits: async (_sessionId, batch) => {
@@ -504,6 +516,7 @@ function recordingAuditor(options: { reopening?: Promise<void>; closing?: Promis
     },
     audit: async (sessionId, input) => {
       scans.push(input.scope);
+      scanBegun.resolve();
       await options.auditing;
       const auditId = audits.start({
         sessionId, workspaceRoot, scope: input.scope, mode: input.mode, revision: 0, catalogRevision: "test", ruleRevisions: [], paths: [],
@@ -519,7 +532,7 @@ function recordingAuditor(options: { reopening?: Promise<void>; closing?: Promis
       if (options.closeFails === true) throw new Error("close failed");
     },
   });
-  return { create, batches, scans, looked, reopened: reopened.promise, closeBegun: closeBegun.promise };
+  return { create, batches, scans, looked, lookedAt, scanBegun: scanBegun.promise, reopened: reopened.promise, closeBegun: closeBegun.promise };
 }
 
 /** Each audited edit of `path`: the text it left, and the text it was measured from, or why there was none. */
@@ -717,12 +730,12 @@ describe("the engine service's idle close", () => {
   // stand. A close that went on then would cut the scan off: "Session closed during scan".
   it("keeps a quiet session open when it takes a scan while the idle close reads its walks, and runs the scan", async () => {
     const auditing = Promise.withResolvers<void>();
-    const { create, scans, looked } = recordingAuditor({ auditing: auditing.promise });
+    const { create, scans, lookedAt } = recordingAuditor({ auditing: auditing.promise });
     const { first, clock, service, start, ended, databasePath } = await idleService({ createAuditor: create });
     await writeFile(join(first, "app.py"), "x = 1\n");
     await start("a");
     // The evaluator is open, so the idle close reads where the walks stand.
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     const reading = holdWalkResume();
     const controls = new SqliteAuditControlStore(databasePath);
     try {
@@ -1069,12 +1082,12 @@ describe("the engine service's idle close", () => {
   // close had finished.
   it("runs a scan asked for a quiet session while its close runs", async () => {
     const closing = Promise.withResolvers<void>();
-    const { create, scans, looked, closeBegun } = recordingAuditor({ closing: closing.promise });
+    const { create, scans, lookedAt, closeBegun } = recordingAuditor({ closing: closing.promise });
     const { first, clock, service, start, databasePath } = await idleService({ createAuditor: create });
     await writeFile(join(first, "app.py"), "x = 1\n");
     await start("a");
     // The evaluator is open, so the sweep's close waits for it.
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     clock.now += 60_000;
     const sweeping = service.closeIdleSessions();
     await closeBegun;
@@ -1099,11 +1112,11 @@ describe("the engine service's idle close", () => {
   it("closes no runtime a scan opened its session in again during the session's close, once the daemon needs the room", async () => {
     const closing = Promise.withResolvers<void>();
     const room = { short: false };
-    const { create, looked, closeBegun, scans } = recordingAuditor({ closing: closing.promise });
+    const { create, lookedAt, closeBegun, scans } = recordingAuditor({ closing: closing.promise });
     const { first, second, clock, service, start, databasePath } = await idleService({ createAuditor: create, needsRoom: () => room.short });
     await writeFile(join(first, "app.py"), "x = 1\n");
     await start("a");
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     clock.now += 60_000;
     const sweeping = service.closeIdleSessions();
     await closeBegun;
@@ -1306,12 +1319,12 @@ describe("the engine service's idle close", () => {
   // A suspension whose close failed was kept by nobody: its next event could not open it, its owner still active, and
   // its record stayed open and owned after the daemon stopped.
   it("keeps a quiet session suspended when its close fails, so its next event opens it again", async () => {
-    const { create, looked } = recordingAuditor({ closeFails: true });
+    const { create, lookedAt } = recordingAuditor({ closeFails: true });
     const { first, clock, service, start, prompt, ended, live } = await idleService({ createAuditor: create });
     await writeFile(join(first, "app.py"), "x = 1\n");
     await start("a");
     // The evaluator is open, so the sweep's close waits for it, and fails.
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     clock.now += 60_000;
     await service.closeIdleSessions();
     expect(ended("a")).toBeNull();
@@ -1321,11 +1334,11 @@ describe("the engine service's idle close", () => {
   });
 
   it("ends a quiet session whose close failed when the service stops", async () => {
-    const { create, looked } = recordingAuditor({ closeFails: true });
+    const { create, lookedAt } = recordingAuditor({ closeFails: true });
     const { first, clock, service, start, ended, live } = await idleService({ createAuditor: create });
     await writeFile(join(first, "app.py"), "x = 1\n");
     await start("a");
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     clock.now += 60_000;
     await service.closeIdleSessions();
     expect(ended("a")).toBeNull();
@@ -1378,7 +1391,7 @@ describe("the engine service's idle close", () => {
   // At base the quiet session's next walk found another writer's change to a file the session had edited and recorded
   // it in Log; after the idle close the reopened session's first walk took it as its baseline and recorded nothing.
   it("records another writer's change to a file the session edited, made while the session was quiet, as its open walk did", async () => {
-    const { create, batches, looked } = recordingAuditor();
+    const { create, batches, lookedAt } = recordingAuditor();
     const { first, clock, service, start, prompt, writes, turnEnd } = await idleService({ createAuditor: create });
     const [changed, removed, untouched] = [join(first, "app.py"), join(first, "gone.py"), join(first, "other.py")];
     await writeFile(changed, "x = 1\n");
@@ -1386,7 +1399,7 @@ describe("the engine service's idle close", () => {
     await writeFile(untouched, "z = 1\n");
     await start("a");
     // The evaluator is open once the session's first walk has asked about the files, so the edits below are checked.
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     // The agent edits two files with its own tools, and its turn ends.
     await writes("a", "t1", "Write", changed, "x = 2\n");
     await writes("a", "t2", "Write", removed, "y = 2\n");
@@ -1416,13 +1429,13 @@ describe("the engine service's idle close", () => {
   // that text and only the lines the write changed were the agent's. The reopened session had lost the text, so every
   // line of the file read as the agent's (`previousReadError`), and a rule judging the agent's lines judged them all.
   it("measures a shell write to a file the session edited before it went quiet from the text the session left there", async () => {
-    const { create, batches, looked } = recordingAuditor();
+    const { create, batches, lookedAt } = recordingAuditor();
     // A repository whose Git does not hold the session's text of the file, as with any edit not yet committed.
     const { first, clock, service, start, prompt, writes, turnEnd } = await idleService({ createAuditor: create }, { gitFirst: true });
     const app = join(first, "app.py");
     await writeFile(app, "x = 1\n");
     await start("a");
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     await writes("a", "t1", "Write", app, "x = 2\n");
     await turnEnd("a", "turn1");
     clock.now += 60_000;
@@ -1442,12 +1455,12 @@ describe("the engine service's idle close", () => {
   // wait has run out.
   it("measures it so too when the write lands while the reopened session's rules compile", async () => {
     const reopening = Promise.withResolvers<void>();
-    const { create, batches, looked, reopened } = recordingAuditor({ reopening: reopening.promise });
+    const { create, batches, lookedAt, reopened } = recordingAuditor({ reopening: reopening.promise });
     const { first, clock, service, start, prompt, writes, turnEnd } = await idleService({ createAuditor: create }, { host: "omp" });
     const app = join(first, "app.py");
     await writeFile(app, "x = 1\n");
     await start("a");
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     await writes("a", "t1", "Write", app, "x = 2\n");
     await turnEnd("a", "turn1");
     clock.now += 60_000;
@@ -1464,12 +1477,12 @@ describe("the engine service's idle close", () => {
   // before the reopened session had read the file's text back, so a command that ran first left nothing to measure from.
   // In Claude Code the call also waits for the reopened session's rules, which open after the read back; OMP's does not.
   it.each(["claude-code", "omp"] as const)("answers the event that opens a quiet session again once the text of the files its agent edited is read back, in %s", async (host) => {
-    const { create, batches, looked } = recordingAuditor();
+    const { create, batches, lookedAt } = recordingAuditor();
     const { first, clock, service, session, send, start, writes, turnEnd } = await idleService({ createAuditor: create }, { host });
     const app = join(first, "app.py");
     await writeFile(app, "x = 1\n");
     await start("a");
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     await writes("a", "t1", "Write", app, "x = 2\n");
     await turnEnd("a", "turn1");
     clock.now += 60_000;
@@ -1493,7 +1506,7 @@ describe("the engine service's idle close", () => {
   // command runs while the rules compile again, as in OMP (above).
   it("takes the agent's removal of a file it made, in its first command after the quiet, as its own, as the open session did", async () => {
     const reopening = Promise.withResolvers<void>();
-    const { create, batches, looked, reopened } = recordingAuditor({ reopening: reopening.promise });
+    const { create, batches, looked, lookedAt, reopened } = recordingAuditor({ reopening: reopening.promise });
     const { first, clock, service, session, send, start, writes, turnEnd } = await idleService({ createAuditor: create }, { gitFirst: true, host: "omp" });
     const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Rerail Test", "-c", "user.email=test@example.invalid", ...args], { cwd: first });
     git("commit", "--quiet", "--allow-empty", "-m", "start");
@@ -1502,7 +1515,7 @@ describe("the engine service's idle close", () => {
     const [other, made] = [join(first, "other.py"), join(first, "made.py")];
     await writeFile(other, "z = 1\n");
     await start("a");
-    await vi.waitFor(() => expect(looked.has("other.py")).toBe(true));
+    await lookedAt("other.py");
     await writes("a", "t1", "Write", made, "x = 1\n");
     await turnEnd("a", "turn1");
     clock.now += 60_000;
@@ -1515,7 +1528,7 @@ describe("the engine service's idle close", () => {
     // The rules have compiled once the reopened session's first walk looks at the files, which finds the removal.
     looked.clear();
     reopening.resolve();
-    await vi.waitFor(() => expect(looked.has("other.py")).toBe(true));
+    await lookedAt("other.py");
     await turnEnd("a", "turn2");
     // Checked as the session's own edit, in the session's mode, not recorded in Log as another writer's.
     const removals = batches.filter(batch => batch.edits.some(edit => edit.path === "made.py" && edit.deleted === true));
@@ -1542,10 +1555,11 @@ describe("the engine service's idle close", () => {
   it("lets a quiet session's checkout audit finish before it suspends the session", async () => {
     vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const auditing = Promise.withResolvers<void>();
-    const { create, scans } = recordingAuditor({ auditing: auditing.promise });
+    const { create, scans, scanBegun } = recordingAuditor({ auditing: auditing.promise });
     const { clock, service, start } = await idleService({ createAuditor: create });
     await start("a");
-    await vi.waitFor(() => expect(scans).toEqual(["repository"]));
+    await scanBegun;
+    expect(scans).toEqual(["repository"]);
     clock.now += 60_000;
     const sweeping = service.closeIdleSessions();
     await Promise.race([sweeping, delay(2_000)]);

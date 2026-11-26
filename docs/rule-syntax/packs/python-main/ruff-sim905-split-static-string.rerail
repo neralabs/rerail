@@ -62,8 +62,8 @@ sim905_receiver(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), sim9
 
 // int32(n): the JSON util `int32`, used where the JSON says `matches: "int32"`
 .decl sim905_int32(n: node)
-sim905_int32(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"),
-    (value_type(v1, "int") ; value_type(v1, "float")), to_number(v1) <= 2147483647.
+sim905_int32(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"),
+    (value_type_of(n, "int") ; value_type_of(n, "float")), to_number(v1) <= 2147483647.
 sim905_int32(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), sim905_int32(c2).
 
 // maxsplit(n): the JSON util `maxsplit`, used where the JSON says `matches: "maxsplit"`

@@ -50,7 +50,7 @@ pth208_number(n) :- pth208_bool_typed(n).
 
 // int_typed(n): the JSON util `int-typed`, used where the JSON says `matches: "int-typed"`
 .decl pth208_int_typed(n: node)
-pth208_int_typed(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+pth208_int_typed(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int").
 pth208_int_typed(n) :- kind(n, "unary_operator"), field(n, "argument", c2), pth208_number(c2).
 pth208_int_typed(n) :- kind(n, "binary_operator"), !pth208_tok_has_4(n), field(n, "left", c11),
     pth208_number(c11), field(n, "right", c12), pth208_number(c12).
@@ -87,7 +87,7 @@ pth208_int_attribute(n) :- kind(n, "attribute"), field(n, "attribute", c1),
 
 // file_descriptor(n): the JSON util `file-descriptor`, used where the JSON says `matches: "file-descriptor"`
 .decl pth208_file_descriptor(n: node)
-pth208_file_descriptor(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+pth208_file_descriptor(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int").
 pth208_file_descriptor(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     pth208_file_descriptor(c2).
 pth208_file_descriptor(n) :- pth208_name_root(n).

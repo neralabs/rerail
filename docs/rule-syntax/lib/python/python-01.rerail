@@ -75,10 +75,10 @@ rt_tupled(t) :- rt_raw(t, _, 1, _).
 .decl rt_last(t: node, i: number)
 rt_last(t, i) :- rt_app(t, _, i, _), !rt_app(t, _, i + 1, _).
 .decl rt_q(t: node, q: symbol)
-rt_q(t, q) :- rt_strip(t, m), (kind(m, "identifier") ; kind(m, "attribute")), ruff_qual(m, q0), typing_name(q0, q).
+rt_q(t, q) :- rt_strip(t, m), (kind(m, "identifier") ; kind(m, "attribute")), typing_q(m, q).
 .decl rt_head_q(t: node, q: symbol)
 rt_head_q(t, q) :- rt_q(t, q).
-rt_head_q(t, q) :- rt_app(t, h, 0, _), ruff_qual(h, q0), typing_name(q0, q).
+rt_head_q(t, q) :- rt_app(t, h, 0, _), typing_q(h, q).
 
 .decl rt_immutable(t: node)
 rt_immutable(t) :- rt_strip(t, m), (kind(m, "identifier") ; kind(m, "attribute")), ruff_qual(m, q),

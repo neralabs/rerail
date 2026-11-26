@@ -40,7 +40,7 @@ allowed(h, v) :- useless(h, l, _), literal_key(l, v), kind(h, "pair_pattern").
 allowed(h, v) :- useless(h, l, _), literal_key(l, v), class_member(h), kind(h, "method_definition"),
     (is_static(h), v != "prototype" ; !is_static(h), v != "constructor").
 allowed(h, v) :- useless(h, l, _), literal_key(l, v), class_member(h), !kind(h, "method_definition"),
-    v != "constructor", !(is_static(h), v = "prototype").
+    v != "constructor", (!is_static(h) ; v != "prototype").
 .decl in_object(h: node)
 in_object(h) :- (kind(h, "pair") ; kind(h, "method_definition")), child(o, h, _), kind(o, "object").
 

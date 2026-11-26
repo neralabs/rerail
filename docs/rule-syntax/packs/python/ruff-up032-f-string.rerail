@@ -30,8 +30,8 @@
 .violation UP032(at: node) code "UP032"
     "Replace this `.format()` call with an f-string, putting each argument inside its `{{}}` placeholder; keep `.format()` when the string is passed to a translation function."
     suppress ruff "UP032"
-UP032(c) :- format_call(c, v), brace_ok(v), !brace_nested(v, _, _, _, _, _), !mixed(v), up_args_ok(c),
-    count : { brace_name(v, k, _, _), !refers(c, k, _) } = 0, !split_field(c),
+UP032(c) :- brace_ok(c), !brace_nested(c, _, _, _, _, _), !mixed(c), up_args_ok(c),
+    count : { brace_name(c, k, _, _), !refers(c, k, _) } = 0, !split_field(c),
     count : { refers(c, k1, e), refers(c, k2, e), k1 != k2, same_piece(c, k1, k2), effect(e) } = 0,
     !translated(c).
 
@@ -55,30 +55,33 @@ bad_arg(e) :- up_arg_node(_, e), line(e, l), !end_line(e, l).
 
 // refers(c, k, e): field k of c's string takes argument e.
 .decl refers(c: node, k: number, e: node)
-refers(c, k, e) :- format_call(c, v), brace_arg(v, k, ""), r = count : { brace_arg(v, k2, ""), k2 < k },
+refers(c, k, e) :- brace_arg(c, k, ""), r = count : { brace_arg(c, k2, ""), k2 < k },
     call_pos(c, r, e).
-refers(c, k, e) :- format_call(c, v), brace_arg(v, k, a), match("[0-9]+", a), call_pos(c, to_number(a), e).
-refers(c, k, e) :- format_call(c, v), brace_arg(v, k, x), x != "", !match("[0-9]+", x), call_kwarg(c, x, e).
-.decl mixed(v: symbol)  // `{}` and `{0}` together: a ValueError
-mixed(v) :- brace_arg(v, _, ""), brace_arg(v, _, a), match("[0-9]+", a).
+refers(c, k, e) :- brace_arg(c, k, a), match("[0-9]+", a), call_pos(c, to_number(a), e).
+refers(c, k, e) :- brace_arg(c, k, x), x != "", !match("[0-9]+", x), call_kwarg(c, x, e).
+.decl mixed(c: node)  // `{}` and `{0}` together: a ValueError
+mixed(c) :- brace_arg(c, _, ""), brace_arg(c, _, a), match("[0-9]+", a).
 // split_field(c): a piece of c's adjacent literals has unbalanced braces (`'{' '0}'`): Ruff converts each piece
 // on its own, so a field across two pieces stops it.
 .decl split_field(c: node)
 split_field(c) :- fmt_str(c, s), lit_piece(s, p), str(p, x), @count_matches("[{]", x) != @count_matches("[}]", x).
 .decl fmt_str(c: node, s: node)  // the literal of format call c
 fmt_str(c, s) :- format_call(c, _), field(c, "function", f0), unparen(f0, f), attr_of(f, s0, _), unparen(s0, s).
-// same_piece(c, k1, k2): fields k1 and k2 of c's literal are in the same piece of it. Each piece of adjacent
-// literals is parsed too (brace_value seeds the parser), to number its fields: field_ord counts top-level fields
-// (no nested ones get this far), piece_first gives the first ordinal of each piece.
-brace_value(x) :- fmt_str(_, s), kind(s, "concatenated_string"), child(s, p, _), kind(p, "string"), str(p, x).
+// same_piece(c, k1, k2): fields k1 and k2 of c's literal are in the same piece of it. Each piece p of adjacent
+// literals is parsed too, keyed by the piece (brace_value and brace_rest seed the parser; decision 0677), to number
+// its fields: field_ord counts top-level fields (no nested ones get this far), piece_first gives the first ordinal
+// of each piece.
+.decl fmt_piece(c: node, j: number, p: node)  // p is the j-th piece of c's adjacent literals
+fmt_piece(c, j, p) :- fmt_str(c, s), kind(s, "concatenated_string"), child(s, p, j), kind(p, "string").
+brace_value(p) :- fmt_piece(_, _, p).
+brace_rest(p, x, 0) :- fmt_piece(_, _, p), str(p, x).
 .decl piece_nf(c: node, j: number, n: number)
-piece_nf(c, j, n) :- fmt_str(c, s), kind(s, "concatenated_string"), child(s, p, j), kind(p, "string"), str(p, x),
-    n = count : { brace_field(x, _, _, _, _, _) }.
+piece_nf(c, j, n) :- fmt_piece(c, j, p), n = count : { brace_field(p, _, _, _, _, _) }.
 .decl piece_first(c: node, j: number, f: number)
 piece_first(c, j, f) :- piece_nf(c, j, _), f = sum n : { piece_nf(c, j2, n), j2 < j }.
 .decl field_ord(c: node, k: number, r: number)
-field_ord(c, i * 1000, r) :- format_call(c, v), brace_field(v, i, _, _, _, _),
-    r = count : { brace_field(v, i2, _, _, _, _), i2 < i }.
+field_ord(c, i * 1000, r) :- format_call(c, _), brace_field(c, i, _, _, _, _),
+    r = count : { brace_field(c, i2, _, _, _, _), i2 < i }.
 .decl field_piece(c: node, k: number, j: number)
 field_piece(c, k, 0) :- fmt_str(c, s), kind(s, "string"), field_ord(c, k, _).
 field_piece(c, k, j) :- field_ord(c, k, r), piece_nf(c, j, n), piece_first(c, j, f), r >= f, r < f + n.

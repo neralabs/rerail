@@ -183,6 +183,7 @@ const STATE: &[(&str, &str)] = &[
     // What a crate above registers at load, as the crate split made them (a function or a device, set once).
     ("code_rule_dsl/logic/device.rs", "SOLVER"),
     ("code_rule_dsl/logic/plan/corpus.rs", "CROSS_FILE"),
+    ("code_rule_dsl/logic/plan/corpus/world.rs", "MODULE_RESOLVER"),
     ("code_rule_dsl/logic/strings.rs", "FUNCTORS"),
     ("code_rule_dsl/logic/strings/functions.rs", "PY_REPR"),
     ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),
@@ -297,6 +298,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SINKS"),
     // The stores this process owns or was refused, with their held locks, and the slot it took of each base store
     // (`corpus::owner`): which files are this process's, not results.
     ("code_rule_dsl/logic/plan/corpus/owner.rs", "CLAIMS"),

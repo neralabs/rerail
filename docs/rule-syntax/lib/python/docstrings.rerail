@@ -42,7 +42,7 @@
 #include "python/pyflakes.rerail"
 //   all_entry(s, x)  string s in the module's `__all__` names x
 #include "python/naming.rerail"
-//   dec_target(f, e), typing_dec(f, x), dunder(x)
+//   dec_target(f, e), typing_dec(f, x), dunder(n, x)
 
 // ---- 1. definitions ----------------------------------------------------------------------------------------------
 .decl doc_def(o: node, k: symbol)
@@ -61,8 +61,10 @@ doc_parent(o, p) :- doc_def(o, k), k != "module", nearest(o, p, scope).
 
 // doc_public(o): Ruff's Visibility::Public. A module is private when a segment of its package path is private:
 // starts with `_` and is not a dunder (`_impl`, `__x`; `__init__`, `__main__` and `___` are public). The package
-// path is Ruff's: the directories up from the file while each holds an `__init__.py`, then the file's stem; a
-// file outside any package has only its stem. A class or function at module level is private when its module is,
+// path is Ruff's (`doc`'s module, made at ingestion): the directories up from the file while each holds an
+// `__init__.py`, then the file's stem; a file outside any package has only its stem. Read from `doc`, it is the
+// file's own: walked here over `file`, the walk read other directories' files, and every relation of nodes over
+// it moved to the cross-file part (decision 0677). A class or function at module level is private when its module is,
 // when the module binds `__all__` and does not list it, or when its name starts with `_`. A nested class needs a
 // public class around it. A nested function is always private. A method needs a public class; it is public unless
 // its name starts with `_` and it is not a dunder, and a `@x.setter` / `@x.deleter` method is private.
@@ -74,21 +76,18 @@ doc_public(o) :- doc_def(o, k), (k = "class" ; k = "function"), doc_parent(o, m)
     !prefix("_", x), !doc_unlisted(m, x).
 doc_public(o) :- doc_def(o, "nested_class"), doc_parent(o, p), kind(p, "class_definition"), doc_public(p),
     doc_name(o, _, x), !prefix("_", x).
-doc_public(o) :- doc_def(o, "method"), doc_parent(o, p), doc_public(p), doc_name(o, _, x),
-    (!prefix("_", x) ; dunder(x)), !doc_accessor(o, x).
-// doc_pkg_dir(d, dir): dir is the file's directory or one above it, and it and every directory between hold an
-// `__init__.py` (a path relative to the scanned root).
-.decl doc_pkg_dir(d: number, dir: symbol)
-doc_pkg_dir(d, r) :- doc(d, p, _), contains("/", p), r = @replace_all(p, "/[^/]*$", ""), file(cat(r, "/__init__.py")).
-doc_pkg_dir(d, r) :- doc_pkg_dir(d, c), contains("/", c), r = @replace_all(c, "/[^/]*$", ""), file(cat(r, "/__init__.py")).
-// doc_mod_seg(d, x): a segment of d's package path: the file's stem, and each package directory's name.
-.decl doc_mod_seg(d: number, x: symbol)
-doc_mod_seg(d, x) :- doc(d, p, _), x = @replace_all(p, "^.*/|\\.[^.]*$", "").
-doc_mod_seg(d, x) :- doc_pkg_dir(d, r), x = @replace_all(r, "^.*/", "").
-.decl doc_private_module(d: number)  // Ruff's is_private_module on some segment
-doc_private_module(d) :- doc_mod_seg(d, x), prefix("_", x), !doc_dunder_seg(x).
-.decl doc_dunder_seg(x: symbol)  // a segment that starts and ends with `__` (`__main__`; `__` itself too)
-doc_dunder_seg(x) :- doc_mod_seg(_, x), prefix("__", x), suffix("__", x).
+doc_public(o) :- doc_def(o, "method"), doc_parent(o, p), doc_public(p), doc_name(o, nm, x),
+    (!prefix("_", x) ; dunder(nm, x)), !doc_accessor(o, x).
+// doc_private_module(d): Ruff's is_private_module: a segment of d's module path starts with `_` and is no dunder.
+// A file outside every regular package (`py_unpackaged`, the repository's, read at the file's own path) is named by
+// its stem alone, where `doc`'s module is its dotted path.
+// py_unpackaged(path): the repository's: the Python file at path is in no regular package (a file of the root, or its
+// folder has no `__init__.py`).
+.decl py_unpackaged(path: symbol)
+.input py_unpackaged
+.decl doc_private_module(d: number)
+doc_private_module(d) :- doc(d, p, q), !py_unpackaged(p), match("(.*\\.)?_([^_.][^.]*|_[^.]*[^_.]|_[^.]*[^_.]_)?(\\..*)?", q).
+doc_private_module(d) :- doc(d, p, _), py_unpackaged(p), file_name(d, n), match("_([^_.][^.]*|_[^.]*[^_.]|_[^.]*[^_.]_)?\\.pyi?", n).
 .decl doc_unlisted(m: node, x: symbol)  // the module binds `__all__` and does not list x
 doc_unlisted(m, x) :- doc_def(o, _), doc_parent(o, m), kind(m, "module"), doc_name(o, _, x), doc_exports(m), docof(m, d),
     !doc_listed(d, x).

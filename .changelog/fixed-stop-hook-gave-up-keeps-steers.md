@@ -1,1 +1,0 @@
-In Claude Code, Codex and Cursor, when a turn end's hook gives up waiting for Rerail's checks after a command rewrote many files, the next prompt and tool calls no longer wait up to 30 seconds each, and the checks' steers reach the agent with the first prompt, tool call or turn end after they finish instead of being lost.

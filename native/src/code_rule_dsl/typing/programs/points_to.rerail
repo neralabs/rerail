@@ -1,0 +1,44 @@
+// `points_to` (P3 of decision 0083 §1; decision 0677, note t55): Python's points-to across files, to its fixed point,
+// over terms and symbols alone. Its rules are python/points-to-solve's, over python/points-to-file's per-file part;
+// this program names what it hands on. It reads struct.'s and types.'s exports, so those phases run first.
+//
+// Each export is keyed by the path of the file whose node a row is about (column 0) and that node's term (column 1,
+// `pt_tm`). A rule reads its own file's rows (python/points-to; `file_local::SETTINGS_BY_PATH`), so an edit misses
+// the files whose rows changed: an edit of a definition's body, its own file and the callers whose answers it changed.
+//
+// ```text
+// # m.py                     # n.py
+// class C:                   from m import make
+//     def run(self): ...     make().run()      call_target_at("n.py", "n@19+12^1", "m.C.run").
+// def make(): return C()                       type_of_at("n.py", "n@19+6^0", "m.C").
+// ```
+//
+// Exports (p: the file's path, t: the node's term)
+//   call_target_at(p, t, f)   call t may run definition f (its symbol)
+//   call_open_at(p, t)        call t may run something no definition of the run is
+//   type_of_at(p, t, u)       value position t may hold an instance of class u (a workspace class's qualified name,
+//                             or a builtin's name), and so on for the rest of python/points-to's types
+.phase points_to
+.export call_target_at, call_open_at, type_of_at, type_open_at, proven_type_at, possible_type_at, possible_open_at
+
+#include "python/points-to-solve.rerail"
+
+// pt_at(t, p): t is the term of a node the exports are about, in the file at path p: a call, or a value position.
+.decl pt_at(t: symbol, p: symbol)
+pt_at(t, p) :- kind(n, "call"), pt_tm(n, t), docof(n, d), doc(d, p, _).
+pt_at(t, p) :- pt_vpos(n), pt_tm(n, t), docof(n, d), doc(d, p, _).
+
+.decl call_target_at(p: symbol, t: symbol, f: symbol)
+call_target_at(p, t, f) :- call_target(t, f), pt_at(t, p).
+.decl call_open_at(p: symbol, t: symbol)
+call_open_at(p, t) :- call_open(t), pt_at(t, p).
+.decl type_of_at(p: symbol, t: symbol, u: symbol)
+type_of_at(p, t, u) :- type_of(t, u), pt_at(t, p).
+.decl type_open_at(p: symbol, t: symbol)
+type_open_at(p, t) :- type_open(t), pt_at(t, p).
+.decl proven_type_at(p: symbol, t: symbol, u: symbol)
+proven_type_at(p, t, u) :- proven_type(t, u), pt_at(t, p).
+.decl possible_type_at(p: symbol, t: symbol, u: symbol)
+possible_type_at(p, t, u) :- possible_type(t, u), pt_at(t, p).
+.decl possible_open_at(p: symbol, t: symbol)
+possible_open_at(p, t) :- possible_open(t), pt_at(t, p).

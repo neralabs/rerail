@@ -89,6 +89,8 @@
 // the type of n's own value. value_type cannot say it: its key is the value's text, which "12" and 12 share, and a
 // container or bytes has no text in `value`.
 .decl value_type_of(n: node, t: symbol)                  // the type of n's value, containers and bytes included
+// static_value_type_of(n, t): the type of static_value's value of n, as value_type_of names it.
+.decl static_value_type_of(n: node, t: symbol)
 // fstring_piece(n, i, kind, v): the pieces of f-string n (a Python string, concatenated_string or format_specifier
 // whose value is a JoinedStr), in order from 0: in f'a{x!r:>10}b{y=}', (0, "literal", "a"), (1, "interpolation",
 // "x"), (1, "format_spec", ">10"), (2, "literal", "by="), (3, "interpolation", "y"), (3, "debug", "y="). A literal
@@ -99,7 +101,7 @@
 // interpolation replaced by the marker, a constant; a debug field's `x = ` stays literal text. The same hosts.
 .decl fstring_template(n: node, marker: symbol, v: symbol)
 .input doc, pkg, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
-.input value, str, strprefix, name, comment, static_value, value_type, value_type_of, fstring_piece, fstring_template
+.input value, str, strprefix, name, comment, static_value, static_value_type_of, value_type, value_type_of, fstring_piece, fstring_template
 
 // ---- text tests (built-in constraints) -----------------------------------------------------------------------
 // Most tests on text are not regexes: exact names, sets of names, prefixes, suffixes, path shapes. They are
@@ -295,6 +297,10 @@
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
 .decl file_line(path: symbol, i: number, text: symbol)
 .decl file_digest(path: symbol, c: symbol)
+// module_target(k, f): the file module specifier k resolves to, k being "<importing path>\n<specifier>\n<style>" (style
+// "require", "import" or "type"), as Node resolves it with eslint-plugin-n's options; no row where it fails. Asked as
+// dir_entry is, by a rule binding k (the phase node_resolve).
+.decl module_target(k: symbol, f: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol) extensible
 .decl loaded(path: symbol, module: symbol, grammar: symbol)
 // ---- a coding agent's tool calls (`tool-calls.md`) ----

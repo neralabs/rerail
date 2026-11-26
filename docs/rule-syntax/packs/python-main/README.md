@@ -163,10 +163,12 @@ them, its findings and UP032's on probes with known answers equal the hand-writt
   translator now lists the captures a `host` rule reads (`// Guest captures a host rule reads …`), and the
   same-document constraint skips them.
 
-**Left: FAST003 is heavy.** It takes 488 MB on a 14-line probe and 934 MB on 10 files. The helpers that now take
-K (`fast003_param_eq`, `fast003_alt_2`) get no demand relation, so they are evaluated for every node as K. The
-fix is the translator's demand pass (`demand()`), which gives up on a helper called from a util's parameter; it
-is the same item as ANN401's.
+- **Translator: a guest capture is passed by its text** (decision 0691, fix 17). The helpers FAST003 passes K to
+  (`fast003_fn_has`, `fast003_param_eq`, `fast003_alt_2`, …) read K by text alone. Taking the node, each was
+  evaluated for every node as K (no demand reaches a util's parameter), and joined any file's guest node of that text
+  with its own nodes, so the chain was cross-file. They take K's text now (`key_captures_by_text`); the clause and the
+  demands join `text(K, K_text)` where they pass it. On a 3-file probe, the same 7 findings as before, and the
+  program prepares in 4.5 s of CPU instead of 11.4.
 
 ### Against Ruff's own findings (Ruff's fixtures)
 

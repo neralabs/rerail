@@ -28,7 +28,7 @@ up015_open_call(n, M) :- kind(n, "call"), field(n, "function", c1), up015_callee
 
 // redundant_mode(n): the JSON util `redundant-mode`, used where the JSON says `matches: "redundant-mode"`
 .decl up015_redundant_mode(n: node)
-up015_redundant_mode(n) :- up015_plain_string(n), value(n, v1), value_type(v1, "str"),
+up015_redundant_mode(n) :- up015_plain_string(n), value(n, v1), value_type_of(n, "str"),
     match("[rwaxbtU+]+", v1), value(n, v2), glob("**[rUwax]**", v2),
     count : { value(n, v3), match(".*(.).*\\1.*", v3) } = 0,
     count : { value(n, v4), glob("**{t**b,b**t,[rU]**[wax],[wax]**[rU],[wax]**[wax]}**", v4) } = 0,

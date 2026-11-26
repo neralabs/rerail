@@ -19,7 +19,7 @@ B505(n) :- node(_, K, _, _, _), kind(n, "call"),
     ; child(n, c5_3, _), (kind(c5_3, "identifier") ; kind(c5_3, "attribute")), sym_of(c5_3, "cryptography.hazmat.primitives.asymmetric.ec.generate_private_key"), kind(n, "call"), b505_arg_curve_3(n, a6_3), C = a6_3, unset(K), count : { child(n, c1_1_e0, _),(kind(c1_1_e0, "identifier") ; kind(c1_1_e0, "attribute")),sym_of(c1_1_e0, "cryptography.hazmat.primitives.asymmetric.dsa.generate_private_key"),kind(n, "call"),b505_arg_key_size_1(n, a2_1_e0),K_e0 = a2_1_e0 } = 0, count : { child(n, c3_2_e1, _),(kind(c3_2_e1, "identifier") ; kind(c3_2_e1, "attribute")),sym_of(c3_2_e1, "cryptography.hazmat.primitives.asymmetric.rsa.generate_private_key"),kind(n, "call"),b505_arg_key_size_2(n, a4_2_e1),K_e1 = a4_2_e1 } = 0
     ; child(n, c7_4, _), (kind(c7_4, "identifier") ; kind(c7_4, "attribute")), (sym_of(c7_4, "Crypto.PublicKey.DSA.generate") ; sym_of(c7_4, "Crypto.PublicKey.RSA.generate") ; sym_of(c7_4, "Cryptodome.PublicKey.DSA.generate") ; sym_of(c7_4, "Cryptodome.PublicKey.RSA.generate")), kind(n, "call"), b505_arg_bits_4(n, a8_4), K = a8_4, unset(C), count : { child(n, c5_3_e2, _),(kind(c5_3_e2, "identifier") ; kind(c5_3_e2, "attribute")),sym_of(c5_3_e2, "cryptography.hazmat.primitives.asymmetric.ec.generate_private_key"),kind(n, "call"),b505_arg_curve_3(n, a6_3_e2),C_e2 = a6_3_e2 } = 0
     ),
-    value(K, v9), (value_type(v9, "int") ; value_type(v9, "float")),
+    value(K, v9), (value_type_of(K, "int") ; value_type_of(K, "float")),
     to_number(v9) < 2048,
     ( kind(C, "attribute"), glob("**.{SECP192R1,SECT163K1,SECT163R2}", C)
     ; kind(C, "identifier"), glob("{SECP192R1,SECT163K1,SECT163R2}", C)
