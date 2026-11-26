@@ -25,12 +25,16 @@ vi.mock("node:fs", async importOriginal => {
 const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
 
 const cleanups: Array<() => Promise<void>> = [];
+// The clock and the file reads are real again before any clean-up, so none runs under the fakes and one that rejects
+// leaves them to no later case; every clean-up runs though one rejects, and the first rejection is the one reported.
 afterEach(async () => {
-  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   vi.useRealTimers();
   vi.mocked(fstatSync).mockReset().mockImplementation(realFs.fstatSync);
   vi.mocked(readFileSync).mockReset().mockImplementation(realFs.readFileSync);
   vi.mocked(readSync).mockReset().mockImplementation(realFs.readSync);
+  const failures: unknown[] = [];
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup().catch((error: unknown) => failures.push(error));
+  if (failures.length > 0) throw failures[0];
 });
 
 function git(cwd: string, ...args: string[]): void {
