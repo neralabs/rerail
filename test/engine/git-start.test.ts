@@ -23,7 +23,7 @@ import {
   type GitRunLimits,
   type GitRunResult,
 } from "../../src/engine/git-start.js";
-import { startGitInThread } from "../../src/engine/git-thread.js";
+import { startGitInThread } from "../../src/engine/git-starter/git-thread.js";
 import { readGitInstallation } from "../../src/engine/native/git-access.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import { removeFolder } from "../support/platform/remove-folder.js";

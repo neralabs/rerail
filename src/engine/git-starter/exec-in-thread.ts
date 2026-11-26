@@ -1,13 +1,13 @@
 /**
  * A program run to its end as Node's `execFile` runs it, started in a starter thread where this process starts Git in
- * them (`../git-thread.ts`, the daemon on Windows): Windows' own programs the daemon runs while it answers hooks, such as
+ * them (`git-thread.ts`, the daemon on Windows): Windows' own programs the daemon runs while it answers hooks, such as
  * `icacls` on a session's records folder, start there as slowly as Git does on a machine whose process starts stall,
  * and Node makes each start on the thread that asks. Elsewhere it is Node's `execFile` on this thread, as before.
  */
 import { promisify } from "node:util";
 import { execFile } from "../child-process.js";
 import type { GitProcess } from "../git-start.js";
-import { threadStart } from "../git-thread.js";
+import { threadStart } from "./git-thread.js";
 
 /** What a run that ended with code 0 printed, as UTF-8. */
 export interface Printed {

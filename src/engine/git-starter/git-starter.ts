@@ -1,5 +1,5 @@
 /**
- * What a starter thread does (`../git-thread.ts` asks, `git-starter-thread.ts` runs it): it starts each child it is asked
+ * What a starter thread does (`git-thread.ts` asks, `git-starter-thread.ts` runs it): it starts each child it is asked
  * for through `child-process.ts`, keeps it by the id the asking thread gave, relays its pid, output, error, exit and
  * close in the order Node emits them, reads its output no further ahead of the reader than {@link RELAY_WINDOW}, and
  * writes, ends, kills, closes the reading end of its stdio or ends its whole tree when asked. The thread holds the child's handle until Node has handled its exit, so whether the child still

@@ -1972,7 +1972,7 @@ function lookPastTimeLimit(child: GitProcess, limitMs: number, end: () => void):
 /**
  * {@link lookPastTimeLimit} from the moment `child` exists: at once for a child that has its pid, else at its `spawn`.
  * A start on the asking thread returns only once Windows has made the process, so a read's limit has always counted
- * Git's run; a child the starter thread makes (`git-thread.ts`) may first wait there behind the starts asked before it,
+ * Git's run; a child the starter thread makes (`git-starter/git-thread.ts`) may first wait there behind the starts asked before it,
  * and that wait is not its run.
  */
 function lookOnceStarted(child: GitProcess, limitMs: number, end: () => void): () => void {

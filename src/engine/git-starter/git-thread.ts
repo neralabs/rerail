@@ -5,7 +5,7 @@
  * process start stalls in slices of about 0.83 s, 1.1 to 1.3 s at the median), each start holds the asking thread that
  * long, and the dozen or two reads a worktree asks of Git hold the daemon's event loop past the 30 s a hook waits for
  * the engine's answer: no hook, status or health probe is read meanwhile. Started here, a slow start holds only a
- * starter thread (`git-starter/git-starter.ts`); the daemon's thread hands it the program, its arguments and environment and goes
+ * starter thread (`git-starter.ts`); the daemon's thread hands it the program, its arguments and environment and goes
  * on answering, and gets back the child's pid, output and end as Node's child gives them. A blocking run
  * (`runGitSync`) still starts on the thread that waits for its end anyway.
  */
@@ -14,10 +14,10 @@ import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { Worker } from "node:worker_threads";
 import type { ChildProcess } from "node:child_process";
-import { assertProgramPath } from "./child-process.js";
-import type { GitProcess } from "./git-start.js";
-import { applyAsked, type ChildAsked, type ChildRelayed, claimed, DROPPED, type DescribedError, type Relayed, startAsked, type StartAsked, type ThreadPosted } from "./git-starter/git-starter.js";
-import { ENTRY_POINTS, PACKAGE_ROOT } from "./package-root.js";
+import { assertProgramPath } from "../child-process.js";
+import type { GitProcess } from "../git-start.js";
+import { applyAsked, type ChildAsked, type ChildRelayed, claimed, DROPPED, type DescribedError, type Relayed, startAsked, type StartAsked, type ThreadPosted } from "./git-starter.js";
+import { ENTRY_POINTS, PACKAGE_ROOT } from "../package-root.js";
 
 /**
  * A starter thread, the children it holds for this thread by id, how many starts it is still making (the end of a tree
@@ -133,7 +133,7 @@ function starterFor(): Starter | undefined {
  */
 function starterWorker(): Worker {
   if (!import.meta.url.endsWith(".ts")) return new Worker(join(PACKAGE_ROOT, ENTRY_POINTS.gitStarter));
-  return new Worker(new URL("./git-starter/git-starter-thread.ts", import.meta.url), { execArgv: ["--import", "tsx"] });
+  return new Worker(new URL("./git-starter-thread.ts", import.meta.url), { execArgv: ["--import", "tsx"] });
 }
 
 /**

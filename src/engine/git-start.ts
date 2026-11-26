@@ -8,7 +8,7 @@
  * which runs the child in this process's memory until `exec` and copies nothing (`native/src/git_start.rs`). Git gets
  * the same program, arguments, environment, working folder, stdio, signal state and descriptors as Node gives it, and
  * the reader gets a child with the events, streams and kill of Node's. On Windows the daemon starts a read's Git in a
- * starter thread (`git-thread.ts`), where a slow process start holds no hook's answer. Elsewhere, and for any start
+ * starter thread (`git-starter/git-thread.ts`), where a slow process start holds no hook's answer. Elsewhere, and for any start
  * the engine cannot make, Git starts through `child-process.ts` as before.
  */
 import type { ChildProcess } from "node:child_process";
@@ -19,7 +19,7 @@ import { constants } from "node:os";
 import type { Readable, Writable } from "node:stream";
 import { getSystemErrorName } from "node:util";
 import { endProcessTree, spawn, spawnSync } from "./child-process.js";
-import { endInThread, startGitOnCallingThread, threadStart } from "./git-thread.js";
+import { endInThread, startGitOnCallingThread, threadStart } from "./git-starter/git-thread.js";
 
 /** A Git process as its readers use it: Node's child, or one the engine or the starter thread started. */
 export interface GitProcess<Stderr extends Readable | null = Readable | null> extends EventEmitter {
@@ -116,7 +116,7 @@ export function startGit(executable: string, args: readonly string[], env: NodeJ
 
 /**
  * Ends `child`, a Git {@link startGit} started, with every process it started (`endProcessTree`), where it still runs.
- * A child a starter thread holds is ended there, the one thread that knows whether it still runs (`git-thread.ts`).
+ * A child a starter thread holds is ended there, the one thread that knows whether it still runs (`git-starter/git-thread.ts`).
  */
 export function endGitTree(child: GitProcess): void {
   if (!endInThread(child)) endProcessTree(child);

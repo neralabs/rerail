@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { defaultRerailHome, STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
 import { startGitWithoutCopying } from "../engine/git-start.js";
-import { startGitInThread } from "../engine/git-thread.js";
+import { startGitInThread } from "../engine/git-starter/git-thread.js";
 import { loadNativeBinding } from "../engine/native/native.js";
 import { scrubWrites } from "../engine/secret-scrub.js";
 import { runHomeDaemon } from "../daemon/daemon.js";

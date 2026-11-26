@@ -206,7 +206,7 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   Windows gives up on the server, about 21 s, where a hook or a command lives a second or less.
 - Node makes a child process on the thread that asks for it, and on Windows it returns only once Windows has made the
   process: a second or more each on a busy machine where every process start stalls. The daemon starts each Git that
-  does not block, and each `icacls` it does not wait for, in a starter thread (`src/engine/git-thread.ts`), up to four
+  does not block, and each `icacls` it does not wait for, in a starter thread (`src/engine/git-starter/git-thread.ts`), up to four
   at once, so its own thread goes on answering hooks, `rerail status` and health probes while those starts wait. A Git
   that blocks, such as the worktree list or a clone's remote where the daemon keeps no answer for it, and the `icacls`
   that makes a new session records folder outside the profile folder private before its first record, still start on

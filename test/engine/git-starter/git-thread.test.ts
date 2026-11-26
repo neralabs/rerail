@@ -41,7 +41,7 @@ import { endProcessTree, spawn } from "../../../src/engine/child-process.js";
 import { execFileInThread } from "../../../src/engine/git-starter/exec-in-thread.js";
 import { runGitAsync } from "../../../src/engine/git.js";
 import { startGit, startGitThroughNode, type GitProcess } from "../../../src/engine/git-start.js";
-import { startGitInThread } from "../../../src/engine/git-thread.js";
+import { startGitInThread } from "../../../src/engine/git-starter/git-thread.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { until } from "../../support/processes/daemon-home.js";
 
