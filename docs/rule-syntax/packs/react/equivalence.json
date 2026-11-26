@@ -94,78 +94,12 @@
       }
     },
     "react-hooks-rules-of-hooks": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "5 keys, all translation-only on samples-react, are calls ESLint reports and the original misses: a top-level `use(chaiAsPromised)` imported from chai (cypress parse-changelog-spec.ts:6), a top-level `Md.use(...)` (lepton markdown/index.js:13), and Playwright fixtures calling `use` in async functions (polar e2e/utils/test.ts:48, 54, 57). NOTES-react-02.md. (The 23 keys under suppression comments that react-02 recorded are gone: the suite now applies the suppressions the translation declares.)",
+      "right": "translation",
       "counts": {
         "samples-react": {
           "originalOnly": 0,
-          "translationOnly": 23
-        }
-      }
-    },
-    "react-hooks-set-state-in-effect": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "examples": {
-          "originalOnly": 2,
-          "translationOnly": 0
-        },
-        "fixtures": {
-          "originalOnly": 8,
-          "translationOnly": 0
-        },
-        "samples-react": {
-          "originalOnly": 155,
-          "translationOnly": 0
-        }
-      }
-    },
-    "react-hooks-set-state-in-render": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 1,
-          "translationOnly": 2
-        }
-      }
-    },
-    "react-hooks-static-components": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "examples": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        },
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 2
-        },
-        "samples-react": {
-          "originalOnly": 4,
-          "translationOnly": 40
-        }
-      }
-    },
-    "react-jsx-key": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 36
-        }
-      }
-    },
-    "react-jsx-no-comment-textnodes": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 0,
-          "translationOnly": 1
+          "translationOnly": 5
         }
       }
     },
