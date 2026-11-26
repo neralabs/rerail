@@ -724,6 +724,56 @@ const INDEXED: usize = 8;
 /// A group's index of one column of one relation (an index in its relation's block, decision 0353): nothing where
 /// the group's rows are in the column's order, else its rows in that order (stable: equal values in row order). A
 /// probe is a binary search. A hash map of a row list a value was most of a made relation's first probes' time.
+/// A made relation's node ids in one group as bits: each document's ids, by the key in their high half, a bit an id
+/// from the document's least (`Group::holds`). Built only where the words are at most twice the rows: a document's
+/// rows are a few of its nodes, near each other.
+pub(super) struct NodeBits {
+    /// Each document's key, its least low half, and its words' start in `words`, by key.
+    docs: Vec<(u32, u32, u32)>,
+    words: Vec<u64>,
+}
+
+impl NodeBits {
+    fn new(values: impl Iterator<Item = i64>) -> Option<Self> {
+        let mut ids: Vec<i64> = values.collect();
+        if ids.iter().any(|&v| v < 0) {
+            return None;
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        let (mut docs, mut words) = (Vec::new(), Vec::new());
+        let mut i = 0;
+        while i < ids.len() {
+            let key = (ids[i] >> 32) as u32;
+            let base = ids[i] as u32;
+            let start = words.len();
+            docs.push((key, base, start as u32));
+            while i < ids.len() && (ids[i] >> 32) as u32 == key {
+                let at = (ids[i] as u32 - base) as usize;
+                if start + at / 64 >= words.len() {
+                    words.resize(start + at / 64 + 1, 0);
+                }
+                words[start + at / 64] |= 1 << (at % 64);
+                i += 1;
+            }
+            if words.len() > 2 * ids.len() + 8 {
+                return None;
+            }
+        }
+        Some(NodeBits { docs, words })
+    }
+    fn has(&self, value: i64) -> bool {
+        let key = (value >> 32) as u32;
+        let d = self.docs.partition_point(|e| e.0 < key);
+        let Some(&(k, base, start)) = self.docs.get(d).filter(|e| e.0 == key) else { return false };
+        let end = self.docs.get(d + 1).map_or(self.words.len(), |e| e.2 as usize);
+        let Some(at) = (value as u32).checked_sub(base) else { return false };
+        let w = start as usize + at as usize / 64;
+        debug_assert_eq!(k, key);
+        w < end && self.words[w] >> (at % 64) & 1 != 0
+    }
+}
+
 pub(super) enum ColIndex {
     /// Runs of rows each in the column's order, whose values do not overlap, by their values: a group's documents'
     /// rows, each document's in node order (its node ids' high half is the document's key). A probe finds its run,
@@ -797,6 +847,32 @@ fn partition_near(lo: usize, hi: usize, near: usize, below: impl Fn(usize) -> bo
 }
 
 #[cfg(test)]
+mod node_bits_tests {
+    use super::NodeBits;
+
+    /// A membership by bits answers as the rows do: each document's ids, none of another document's, none outside.
+    #[test]
+    fn bits_hold_exactly_the_rows_ids() {
+        let id = |doc: i64, low: i64| doc << 32 | low;
+        let rows = [id(7, 1000), id(7, 1003), id(7, 1130), id(7, 1003), id(9, 5), id(9, 70)];
+        let bits = NodeBits::new(rows.iter().copied()).expect("dense ids take bits");
+        for &v in &rows {
+            assert!(bits.has(v), "{v:#x}");
+        }
+        for v in [id(7, 999), id(7, 1001), id(7, 1131), id(7, 1 << 20), id(8, 1000), id(9, 4), id(9, 71), id(10, 5)] {
+            assert!(!bits.has(v), "{v:#x}");
+        }
+    }
+
+    /// Ids too sparse for their words, or negative, take no bits: the probe reads the rows.
+    #[test]
+    fn sparse_or_negative_ids_take_no_bits() {
+        assert!(NodeBits::new([1i64 << 32, (1i64 << 32) | 1 << 20].into_iter()).is_none());
+        assert!(NodeBits::new([-1i64].into_iter()).is_none());
+    }
+}
+
+#[cfg(test)]
 mod partition_tests {
     use super::{partition, partition_near, ColIndex, Group, Relation, Source};
 
@@ -860,6 +936,10 @@ pub(super) struct Group {
     /// Each slot boxed once built: most are never probed, and an index held in place made a group's slots 16 KB
     /// (2,439 GB·s on cold PostHog).
     index: Box<[std::sync::OnceLock<Box<ColIndex>>]>,
+    /// Per relation, its rows' nodes as bits over each document's node ids (layer c of the joins' design, decision
+    /// 0694's set form for a made relation): a membership test of the document column is one bit. Made at the first
+    /// such test, an index in its relation's block as `index` is; `None` where the bits would outweigh the rows.
+    bits: Box<[std::sync::OnceLock<Option<Box<NodeBits>>>]>,
     /// The strings its rows used (`Made::used`), where its batch keeps them: a renewed batch's vocabulary is its
     /// groups' (decision 0616).
     /// The list as made (`Made::used`), shared, not copied into a slice (1.18 M copies on cold PostHog).
@@ -869,7 +949,8 @@ pub(super) struct Group {
 impl Group {
     fn new(docs: rerail_blocks::vector::Vector<usize>, ranges: Vec<Range<usize>>, strings: Option<Arc<Vec<u32>>>) -> Self {
         let index = (0..ranges.len() * INDEXED).map(|_| std::sync::OnceLock::new()).collect();
-        Group { docs, ranges, index, strings }
+        let bits = (0..ranges.len()).map(|_| std::sync::OnceLock::new()).collect();
+        Group { docs, ranges, index, bits, strings }
     }
 
     /// The group's rows of relation `rel` (held in `r`) whose `column` is a key of the index, made if it is not.
@@ -904,6 +985,16 @@ impl Group {
             let fence = pairs.iter().step_by(ORDER_FENCE).map(|p| p.0).collect();
             ColIndex::Order { order: pairs.into_iter().map(|(_, row)| row).collect(), fence }
         })()))
+    }
+    /// Whether the group's rows of `rel` (in `r`) hold `value` in `column`, the document column, by its bits
+    /// (`NodeBits`): `None` where it has none.
+    fn holds(&self, rel: usize, column: usize, r: &Relation, value: i64) -> Option<bool> {
+        let bits = self.bits[rel].get_or_init(|| {
+            let range = self.ranges[rel].clone();
+            let read = r.range_reader(range.clone(), column);
+            NodeBits::new(range.map(|row| read.as_ref().map_or_else(|| Source::value(r, row, column), |c| c.get(row as u32)))).map(Box::new)
+        });
+        bits.as_ref().map(|b| b.has(value))
     }
     /// The group's rows of `rel` (in `r`) whose `column` is `value`, in row order, each given to `each`.
     /// `near`: the row the last probe's search ended at (a cursor's), searched out from and left at this one's.
@@ -2056,6 +2147,10 @@ impl Source for MadeRows {
         // A document the batch has not: no rows.
         let Some(p) = self.group_of(column, value, &mut cursor.hint)? else { return Some(false) };
         let (g, r) = (&p.group, &p.rels[self.rel]);
+        // A membership alone (no other column tested): one bit, where the group has its bits.
+        if columns.is_empty() && let Some(held) = g.holds(self.rel, column, r, value) {
+            return Some(held);
+        }
         let mut found = false;
         g.each_match(self.rel, column, r, value, &mut cursor.hint[1], |row| {
             found = found || columns.iter().zip(want).all(|(&c, &w)| Source::value(r.as_ref(), row, c) == w);

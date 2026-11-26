@@ -4863,10 +4863,11 @@ impl View {
             && (cols.len() == 1 || !self.src.looks_up_columns())
             && !(dc.is_some_and(|dc| cols.iter().any(|&k| self.cols[k] == dc)) && cols.iter().any(|&k| self.src.kept_to_doc(self.cols[k])))
     }
-    /// Whether a probe binding every key column `cols` (two or more, nothing else read) is a test of the source
-    /// (`tests_keys`): a whole view, no constants, each key read with the lead's matches.
+    /// Whether a probe binding every key column `cols` (nothing else read) is a test of the source (`tests_keys`): a
+    /// whole view, no constants, each key read with the lead's matches. One key is a membership: the source's own test
+    /// of the value (a made relation's bits, layer c of the joins' design), else its matches read.
     fn keys_tested(&self, cols: &[usize]) -> bool {
-        self.eqs.is_empty() && self.ids.is_none() && (2..=READ).contains(&cols.len())
+        self.eqs.is_empty() && self.ids.is_none() && (1..=READ).contains(&cols.len())
     }
     /// Whether some row of the view has values `key` in view columns `cols`: the source's matches by the lead column
     /// read with the other key columns and compared as found, the first equal one ending it (a membership step's

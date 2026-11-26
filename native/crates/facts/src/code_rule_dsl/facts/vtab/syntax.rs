@@ -5123,7 +5123,14 @@ impl Source for Viewed {
         // Each hint is checked against this document's tables: another document's gives the same answer.
         let Some((doc, local)) = b.node_nearer(value, &mut cursor.hint[0], &mut cursor.near[0]) else { return Some(false) };
         let p = &b.docs[doc];
-        let x = if plan.needs & NEED_X != 0 { p.node_near(local, &mut cursor.near[1]) } else { NONE };
+        // Ids that are tape positions carry their tape node: no select of the local id.
+        let x = if plan.needs & NEED_X == 0 {
+            NONE
+        } else if p.tape_ids() {
+            (value & 0xffff_ffff) as u32
+        } else {
+            p.node_near(local, &mut cursor.near[1])
+        };
         let up = if plan.needs & NEED_UP != 0 { Self::parent_id_of(p, local, x) } else { 0 };
         Some(plan.ops[..usize::from(plan.len)].iter().zip(want).all(|(&op, &w)| Self::op_value(b, p, local, x, value, up, Known::default(), op) == w))
     }
