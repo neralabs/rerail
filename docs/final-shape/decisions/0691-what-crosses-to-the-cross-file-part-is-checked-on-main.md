@@ -296,6 +296,35 @@ Found on the way and fixed:
      and a dynamic import. Every specifier but the missing one resolves, and the missing one is `spec_failed` until
      its file is added, on the next run. The Node pack's lists are unchanged: its 11 node entries come from
      `node_module` and `node_global`, not from resolution.
+12. **Python's points-to is the phase `points_to`** (b754ec6c93, the branch's 0677 fix 3e).
+   - Main's P3 (`calls_p3.rerail`, 1,625 lines, calls_cx's lineage) joined nodes of different files. It is replaced by
+     the branch's split: per-file rules (`python/points-to-file`), and the phase `points_to` over terms and symbols
+     (`python/points-to-solve`, `typing/programs/points_to.rerail`). `calls_p3` keeps only what it hands on. The four
+     Django call-graph policies take the branch's symbol-only walk. `corpus/bridge.rs` goes with the old P3.
+   - Main has neither t32 stage 8 nor 0597's annotation context (`python/annotation`), which the branch's rules read
+     a quoted annotation's code through. Hiding (decision 0058) lets a guest's nodes reach a relation only along a
+     variable a guest relation binds, so solve's lifts saw no guest. `points-to-file` states the guests' nodes
+     (`pt_gnode`), and `points-to-solve` lifts their names from there.
+   - Forced edit in the data layer: `python/calls`' call graph is now by symbol, so `leg-083-typed.rerail` walks it
+     by symbol (`eager(q)`, a function's file as `def_doc`) and reports the function whose term is `q`.
+   - Found on the way, on main:
+     - The constants' run (decision 0094 §6) required a run's settings (`env`) to have rows before it folded what
+       reads them. A run with no settings adds none (`added::Added`), so `py_version` did not fold, and per-file
+       `pt_` relations went to the cross part "under py_version" (data layer +68, Django +73). `env` is now given
+       whole, rows or none, as decision 0665 §5 states.
+     - With it folded, phase 1's cone became load-only, and two latent gaps showed in the warm tests
+       (`the_run_after_a_cold_one_writes_nothing`):
+       - The cone-rounds record was asked inside the waves, where a store's records are not read (decision 0104),
+         so a warm run never found it and wrote it again. It is now asked before the first wave, and a record whose
+         journal named no change, with the same roots and world, is not written again.
+       - A plan taken on budget (decision 0122) reads no distributions (decision 0123), yet remembered the sizes it
+         read: a lazily bound relation's distinct values as one. The next run, priced with them measured, kept the
+         plan again. A plan taken on budget now remembers its rows, and the distributions it was last priced at.
+     - Fix 11's resolver (`world::MODULE_RESOLVER`) is listed with 0104's state (`facts_only`).
+   - Lists: split 35 → 33, node 394 → 273 (Django 155 → 34). Nothing added. The executors' coverage
+     (`gate/executor-coverage/packs.tsv`) moves rules from `engine` to `lib` with the library.
+   - Tests: Django's 27 rule tests; the typing oracle tests; `quoted_annotations_are_read_as_their_code`;
+     `leg_083_typed_counts_resolve_by_the_receivers_type`; every pack's split test.
 
 ## Consequences
 
@@ -308,7 +337,5 @@ Found on the way and fixed:
 
 - The split's gaps still to port: 0652's follow-up (`same_document_ties`: SIM113).
 - A lowering's value view (`match_all`'s `rr_ctx`/`rr_mall`) is not covered by its readers (React's `sandbox_token`).
-- The branch's fix 3e (b754ec6c93, points-to as the phase `points_to`) is not ported yet. Main's points-to is the
-  typing program's P3 (`calls_p3`), a lineage apart from the branch's `python/points-to`, and lacks t32 stage 8. Of
-  Django's 155 node entries, 85 are that program's relations; most of the rest are the four call-graph policies fix
-  3e rewrites. Decided (2026-11-25): ported in this pull request, which does not merge until every rule works.
+- Django's 34 node entries and 3 crossings left after fix 12, and the data layer's (not in this pull request's
+  scope, 2026-11-25).

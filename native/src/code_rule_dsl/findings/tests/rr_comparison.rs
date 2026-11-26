@@ -64,7 +64,6 @@ fn run(root: &Path, out: &Path) -> (Value, Keys) {
             "crossChanged":report.cross_changed,"crossAgain":report.cross_again,
             "crossDeltaCounts":report.cross_delta_counts,
             "typing":format!("{:?}",report.typing),
-            "typingRunNames":report.typing_runs.iter().map(|(name,_)|name).collect::<Vec<_>>(),
             "phaseRunCount":report.phase_runs.len(),
             "observed":{"stats":report.files_observed.stats,"hashed":report.files_observed.hashed,
                 "bytes":report.files_observed.bytes,"reused":report.files_observed.reused,

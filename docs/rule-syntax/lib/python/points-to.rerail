@@ -1,0 +1,41 @@
+// python/points-to: Python's call targets and value types, as a rule reads them (P3 of decision 0083 §1; decision 0677,
+// note t55). The analysis is the phase `points_to` (typing/programs/points_to.rerail, over python/points-to-solve):
+// its fixpoint across files runs first, over symbols, and hands on its answers by each file's path and each node's
+// term. A rule reads them here, at its own nodes: each relation below is per file.
+//
+// Interface (python/calls reads the calls, python/types the types):
+//   call_target(c, f)    call c may run definition f, f its symbol (`m.C.run`; `m.f#1`, a name's second definition
+//                        in its scope). The definition's node is in its own file: `pt_tm(g, f)` there.
+//   call_open(c)         c may run something else too (unknown). Rules must not read a missing call_target as "calls
+//                        nothing" when call_open holds.
+//   type_of(n, t)        value position n may hold an instance of class t: a workspace class's qualified name, or a
+//                        builtin's name (`int`, `str`, `None`, ...)
+//   type_open(n)         n may also hold a value of a class not listed
+//   proven_type(n, t)    `isinstance(n, t)` is true: every class n may hold is t or a subclass of it, none unlisted
+//   possible_type(n, t)  `isinstance(n, t)` may be true
+//   possible_open(n)     possible_type is incomplete
+// A rule's `possible: t` is `possible_type(n, t)` or `possible_open(n)`; `not proven: t` is `!proven_type(n, t)`.
+#include "python/points-to-file.rerail"
+
+.decl points_to__call_target_at(p: symbol, t: symbol, f: symbol)
+.decl points_to__call_open_at(p: symbol, t: symbol)
+.decl points_to__type_of_at(p: symbol, t: symbol, u: symbol)
+.decl points_to__type_open_at(p: symbol, t: symbol)
+.decl points_to__proven_type_at(p: symbol, t: symbol, u: symbol)
+.decl points_to__possible_type_at(p: symbol, t: symbol, u: symbol)
+.decl points_to__possible_open_at(p: symbol, t: symbol)
+
+.decl call_target(c: node, f: symbol)
+call_target(c, f) :- kind(c, "call"), docof(c, d), doc(d, p, _), pt_tm(c, t), points_to__call_target_at(p, t, f).
+.decl call_open(c: node)
+call_open(c) :- kind(c, "call"), docof(c, d), doc(d, p, _), pt_tm(c, t), points_to__call_open_at(p, t).
+.decl type_of(n: node, u: symbol)
+type_of(n, u) :- pt_vpos(n), docof(n, d), doc(d, p, _), pt_tm(n, t), points_to__type_of_at(p, t, u).
+.decl type_open(n: node)
+type_open(n) :- pt_vpos(n), docof(n, d), doc(d, p, _), pt_tm(n, t), points_to__type_open_at(p, t).
+.decl proven_type(n: node, u: symbol)
+proven_type(n, u) :- pt_vpos(n), docof(n, d), doc(d, p, _), pt_tm(n, t), points_to__proven_type_at(p, t, u).
+.decl possible_type(n: node, u: symbol)
+possible_type(n, u) :- pt_vpos(n), docof(n, d), doc(d, p, _), pt_tm(n, t), points_to__possible_type_at(p, t, u).
+.decl possible_open(n: node)
+possible_open(n) :- pt_vpos(n), docof(n, d), doc(d, p, _), pt_tm(n, t), points_to__possible_open_at(p, t).

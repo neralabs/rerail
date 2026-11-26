@@ -68,7 +68,6 @@ pub mod supports;
 pub mod retain;
 pub mod keptstats;
 pub mod input_delta;
-pub mod bridge;
 pub mod phases;
 pub mod constants;
 pub mod inputs;
@@ -277,8 +276,6 @@ pub struct Report {
     pub typing: TypingReport,
     /// Text tests (decision 0037): relations, distinct strings tested, and the CPU testing them (seconds).
     pub text: (usize, usize, f64),
-    /// The typing programs run for the rule's bridged relations (`bridge`), with their reports.
-    pub typing_runs: bridge::Runs,
     /// The earlier phases this run read (decision 0083 §1), each its own run.
     pub phase_runs: Vec<phases::PhaseRun>,
     /// The plans this run and the runs nested in it used (its memo plan, its prepared programs, its phases', its
@@ -1982,8 +1979,8 @@ fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr
 }
 
 /// A program's relations that take its prefix (`p<i>_`) when programs are combined: what it declares, holds facts of
-/// or derives, other than the base inputs, the shared outputs, `core.rerail`'s (decision 0141), the bridged and the
-/// guests' shared relations. A repository file a policy reads (`.input r(IO=…)`) is its own.
+/// or derives, other than the base inputs, the shared outputs, `core.rerail`'s (decision 0141), the earlier phases'
+/// exports and the guests' shared relations. A repository file a policy reads (`.input r(IO=…)`) is its own.
 fn own_names(prog: &front::Program, core: &BTreeSet<String>) -> BTreeSet<String> {
     // `violation`, and each finding's relation (`rr::is_diagnostic`, named by its policy).
     let shared_outputs = |r: &str| r == "violation" || crate::code_rule_dsl::logic::rr::is_diagnostic(r);
@@ -1993,7 +1990,7 @@ fn own_names(prog: &front::Program, core: &BTreeSet<String>) -> BTreeSet<String>
         .map(|r| r.as_str())
         .chain(prog.facts.keys().map(String::as_str))
         .chain(prog.rules.iter().map(|r| r.head.rel.as_str()))
-        .filter(|r| (!prog.inputs.iter().any(|i| i == r) || file_inputs.contains(*r)) && !shared_outputs(r) && !core.contains(*r) && !bridge::is_bridged(r) && !phases::is_phased(r) && !guests::SHARED.contains(r))
+        .filter(|r| (!prog.inputs.iter().any(|i| i == r) || file_inputs.contains(*r)) && !shared_outputs(r) && !core.contains(*r) && !phases::is_phased(r) && !guests::SHARED.contains(r))
         .map(str::to_owned)
         .collect()
 }
@@ -3032,7 +3029,7 @@ fn run_observed(
     };
     // A profiled run holds the profile (`profile::one_run`), and asks again once it does: a test that turned
     // profiling on may have turned it off meanwhile.
-    // A run nested in another on this thread (phase 0's, a phase's, the constants', a bridged program's) and phase
+    // A run nested in another on this thread (phase 0's, a phase's, the constants') and phase
     // 0's own run hold it only when no run does: nested, the profile is the outer run's, and such a run neither
     // resets nor writes it. Waiting for it would wait for the outer run, which waits for this one. So does a run
     // behind the run on another thread (`profile::behind`: the test store's template, filled while a profiled test
@@ -3066,10 +3063,6 @@ fn run_observed(
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
     let (mut prog, mut texts) = combine_keyed(programs, masked, &given.graphs, &added, read, &lists)?;
     drop(combining);
-    // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
-    // They run as a job on the pool beside phase 1 (decision 0192): neither reads the other's results, each writes in
-    // its own directory, and the job runs in this run's context (`run_state`), so its runs are nested in this one.
-    let bridged_slot = parking_lot::Mutex::new(None);
     // Earlier phases' exports it reads (`phases`, decision 0083 §1): each phase runs first, in its own fact space.
     // The constants' own run runs no phase: a constant reads no input (`constants::foldable`), and a phase export is
     // one. Run here, a phase took the constants' option for its own, and wrote none of its exports.
@@ -3084,10 +3077,8 @@ fn run_observed(
     // borrows them.
     let own_sources = texts::Sources::default();
     let source_texts = texts::Given { own: &own_sources, handed: given.sources };
-    let phase_one = crate::threads::scope(|jobs| {
+    let phase_one = (|| {
         let prog = &prog;
-        let bridged_slot = &bridged_slot;
-        jobs.spawn("typing programs", move |_| *bridged_slot.lock() = Some(bridge::facts(prog, root, out, modes, binding, chunk_nodes, typing)));
         Ok::<_, Error>(if t_facts.is_none()
             && options.get("inputFiles").is_none()
             && phases::declared(prog).is_none()
@@ -3131,8 +3122,7 @@ fn run_observed(
         } else {
             None
         })
-    });
-    let (bridged, typing_runs) = bridged_slot.into_inner().expect("the typing programs' job ran")?;
+    })();
     let _phase_one = phase_one?;
     let (phased, mut phase_runs) = if options.get(constants::OWN).is_some() {
         (Default::default(), Vec::new())
@@ -3143,17 +3133,14 @@ fn run_observed(
     // A phase's exports are the run's inputs, not its facts: their rows are bound as relations once the program is
     // prepared, so an edit that changes them leaves the program, its prepared plans and its keys as they were.
     // The split takes them as constants of the run (`file_local::run_constant`).
-    let add_bridged = |prog: &mut front::Program| {
-        for (rel, rows) in &bridged {
-            prog.facts.entry(rel.clone()).or_default().extend(rows.iter().map(crate::code_rule_dsl::logic::front::List::from));
-        }
+    let add_phased = |prog: &mut front::Program| {
         for rel in phased.keys() {
             if !prog.inputs.contains(rel) {
                 prog.inputs.push(rel.clone());
             }
         }
     };
-    add_bridged(&mut prog);
+    add_phased(&mut prog);
     // The Git functors answer from the repository holding this run's root (`strings::git`), for this run only.
     let _git = crate::code_rule_dsl::logic::strings::git::scope(root);
     // The run's constants (`constants`): derived first, over no documents, and given as facts. In the constants' own
@@ -3276,7 +3263,7 @@ fn run_observed(
         if !facts.is_empty() {
             added = added.with("declared_ret", facts.into_iter().map(|(q, t)| vec![front::Value::Str(q.into()), front::Value::Str(t.into())]));
             (prog, texts) = combine_keyed(programs, masked, &given.graphs, &added, read, &lists)?;
-            add_bridged(&mut prog);
+            add_phased(&mut prog);
             (folded, constants_plans) = fold_constants(&mut prog, &added)?;
         }
         declared = d;
@@ -4246,7 +4233,7 @@ fn run_observed(
             .collect()
     };
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the phases' exports".into()));
-    // The phases' exports the program reads, as relations of atoms (`add_bridged`).
+    // The phases' exports the program reads, as relations of atoms (`add_phased`).
     let repository = {
         let mut repository = repository;
         let phased_read: BTreeSet<&String> = phased.keys().filter(|rel| read.contains(*rel)).collect();
@@ -5041,6 +5028,27 @@ fn run_observed(
             crate::code_rule_dsl::logic::profile::decision("frames read before the first wave (decision 0104)", || format!("{frames} frames, {:.1} MB encoded", bytes as f64 / 1048576.0));
         }
     }
+    // The cone's per-file reads and its rounds (decision 0145), made before the first wave, where the rounds' record
+    // is asked (decision 0104): asked inside the waves it was absent, and every warm run made the rounds from their
+    // frames again and wrote the record.
+    let mut cone_made: Option<(Vec<String>, Option<cone_rounds::RoundProgram>)> = match &loading {
+        Some((load, _)) => {
+            let load_placed = super::body::Placed::whole(load.clone());
+            let per_file = cone_per_file(&load_placed.fields()?, &split.exports, prog);
+            // With a store to keep them in; `RERAIL_CONE_ROUNDS=off` runs the gated fixpoint alone.
+            let wanted = durable.is_some()
+                && std::env::var("RERAIL_CONE_ROUNDS").map_or(true, |v| v != "off" && v != format!("off-{}", phases::current().as_deref().unwrap_or("none")));
+            let round = wanted.then(|| cone_rounds::RoundProgram::of(load, &per_file, &lowered.domains)).flatten();
+            if let Some(r) = &round {
+                let record = cone_rounds_record(root, &retain::key(&[0; 32], r.placed.digest()));
+                observe(|o| {
+                    let _ = o.run_record(&record);
+                });
+            }
+            Some((per_file, round))
+        }
+        None => None,
+    };
     let mut waves = Some(crate::code_rule_dsl::logic::profile::waves());
     // A file's memo entry when the run is memoised and the memo has it, else its document, built. An entry
     // without the base rows this run's cross-file part reads is a miss.
@@ -6789,15 +6797,8 @@ fn run_observed(
         let load_placed = super::body::Placed::whole(load.clone());
         let load_f = load_placed.fields()?;
         let load_answers: Vec<(&str, &str)> = load_f.answers().iter().map(|&(q, a)| (load_f.rel_name(q), load_f.rel_name(a))).collect();
-        // The per-file relations the cone reads: those a load answers, and those it reads as inputs whatever it asks.
-        // A cone of file-system requests alone (a phase keying `module_target` by its files' own rows) loads nothing,
-        // and its per-file reads were bound to nothing (no statistics, no rows).
-        let mut per_file: Vec<String> = load_answers.iter().filter(|(q, a)| *q == world::LOAD && split.exports.iter().any(|e| e == a)).map(|(_, a)| (*a).to_owned()).collect();
-        for rel in split.exports.iter().filter(|e| load_f.is_input(e) && !crate::code_rule_dsl::typing::file_local::run_constant(prog, e)) {
-            if !per_file.contains(rel) {
-                per_file.push(rel.clone());
-            }
-        }
+        // The per-file relations the cone reads (`cone_per_file`) and its rounds, made before the first wave.
+        let (per_file, round) = cone_made.take().expect("the cone made before the first wave");
         let world_rels: Vec<(String, usize)> = load_answers.iter().map(|(_, a)| *a).filter(|r| !split.exports.iter().any(|e| e == r)).filter_map(|r| load_f.arity(r).map(|w| (r.to_owned(), w))).collect();
         // Those the cone takes as inputs start empty; the others are its own tables.
         let world_inputs: Vec<(String, usize)> = world_rels.iter().filter(|(r, _)| load_f.is_input(r)).cloned().collect();
@@ -6851,20 +6852,14 @@ fn run_observed(
         let cone_space = kept_strata::part_space(root, "cone");
         // Each of the cone's relations' width, for the job's thread.
         let widths: BTreeMap<String, usize> = load_f.decls().into_iter().map(|d| (load_f.text(d.name()).to_owned(), d.arity())).collect();
-        // The cone as rounds of its stratified program, maintained by delta (decision 0145): with a store to keep
-        // them in. `RERAIL_CONE_ROUNDS=off` runs the gated fixpoint alone.
-        let rounds_wanted = cone_store.is_some()
-            && std::env::var("RERAIL_CONE_ROUNDS").map_or(true, |v| v != "off" && v != format!("off-{}", phases::current().as_deref().unwrap_or("none")));
-        let round = rounds_wanted.then(|| cone_rounds::RoundProgram::of(load, &per_file, &lowered.domains)).flatten();
         let lowered_round = round.as_ref().map(|r| part_of(r.placed.v.clone()));
         let per_file_at: Vec<usize> = per_file.iter().map(|rel| split.locations.get(rel).and_then(|l| l.first().copied()).unwrap_or(0)).collect();
         let corpus_docs: std::collections::HashSet<i64> = docs.iter().map(|(k, _)| *k).collect();
         let world_answer_rels: BTreeSet<String> = world_rels.iter().map(|(r, _)| r.clone()).collect();
         // The rounds' frames: a fact space of their own, by phase and program (a phase may run several cones, whose
         // inputs share names), as the cross part's is by phase (`kept_strata::space`).
-        let rounds_phase = phases::current().map_or_else(|| "cone/rounds".to_owned(), |phase| format!("cone/{phase}"));
         let rounds_root = root.to_path_buf();
-        let rounds_space_of = move |key: &[u8; 32]| kept_strata::part_space(&rounds_root, &format!("{rounds_phase}/{}", crate::content_store::observe::hex(key)));
+        let rounds_space_of = move |key: &[u8; 32]| cone_rounds_space(&rounds_root, key);
         // What the journal names as changed since the last run kept its rounds (decision 0105): the roots and cursors
         // recorded with them, the paths named since, and the digest of the file system's answers kept with them.
         // The rounds' key: the cone's round program's digest (`Placed::digest`), made once.
@@ -6872,7 +6867,7 @@ fn run_observed(
         // A kept manifest names the rounds' key, which keeps their frames (decision 0227); their record names it too,
         // and goes with it (decision 0252, `observe::collect`).
         part_keys.lock().expect("the parts' keys").extend(rounds_key);
-        let rounds_record = rounds_key.as_ref().map(|k| format!("cone-rounds:{}", crate::content_store::observe::hex(&rounds_space_of(k))));
+        let rounds_record = rounds_key.as_ref().map(|k| cone_rounds_record(root, k));
         let rounds_journal: Option<(Vec<(std::path::PathBuf, String)>, Vec<std::path::PathBuf>, u64)> = rounds_record.as_ref().and_then(|key| {
             observe(|o| {
                 // The record: the cursors and the roots they are of (`reuse::encode_lists`), and the world's digest.
@@ -7355,7 +7350,16 @@ fn run_observed(
         }
         // The rounds kept: the journal's cursors of the roots read this run are recorded with them (a root not read
         // this run keeps the cursor it was recorded with: what changed since is still named from there).
-        if let (Some(key), Some(world)) = (&rounds_record, *rounds_world.lock().unwrap_or_else(|e| e.into_inner())) {
+        // A record whose journal named no change, kept with the same roots and world, stands as it is: its cursors
+        // still name every change since (a warm run writes nothing).
+        let unchanged = |world: u64| {
+            rounds_journal.as_ref().is_some_and(|(old, named, was)| {
+                named.is_empty() && *was == world && observe(|o| o.watched().iter().all(|(r, _)| old.iter().any(|(o, _)| o == r)))
+            })
+        };
+        if let (Some(key), Some(world)) = (&rounds_record, *rounds_world.lock().unwrap_or_else(|e| e.into_inner()))
+            && !unchanged(world)
+        {
             observe(|o| {
                 let mut at = o.watched();
                 for (root, cursor) in rounds_journal.iter().flat_map(|(old, _, _)| old) {
@@ -9406,7 +9410,7 @@ fn run_observed(
     if !nested && !phase0::active() {
         crate::code_rule_dsl::logic::profile::run_ends(crate::code_rule_dsl::logic::profile::snapshot());
     }
-    let report = Report { settings: (!settings_scopes.is_empty()).then(|| settings.all()), phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { settings: (!settings_scopes.is_empty()).then(|| settings.all()), phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }
@@ -11318,6 +11322,36 @@ fn stats_key(root: &str) -> crate::content_store::write_back::Key {
 pub(super) fn made_from<T>(had: bool, made: Option<T>, edit: &str) -> Option<T> {
     debug_assert!(!had || made.is_some(), "{edit}: no version was made from the part's");
     made
+}
+
+/// The per-file relations a cone of requests reads (`load_f`, its version's fields): those a load answers, and those
+/// it reads as inputs whatever it asks. A cone of file-system requests alone (a phase keying `module_target` by its
+/// files' own rows) loads nothing, and its per-file reads were bound to nothing (no statistics, no rows).
+fn cone_per_file(load_f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>, exports: &[String], prog: &front::Program) -> Vec<String> {
+    let mut per_file: Vec<String> = load_f
+        .answers()
+        .iter()
+        .filter(|&&(q, a)| load_f.rel_name(q) == world::LOAD && exports.iter().any(|e| e == load_f.rel_name(a)))
+        .map(|&(_, a)| load_f.rel_name(a).to_owned())
+        .collect();
+    for rel in exports.iter().filter(|e| load_f.is_input(e) && !crate::code_rule_dsl::typing::file_local::run_constant(prog, e)) {
+        if !per_file.contains(rel) {
+            per_file.push(rel.clone());
+        }
+    }
+    per_file
+}
+
+/// The fact space of a cone's rounds (decision 0145), by phase and round program (`key`): a phase may run several
+/// cones, whose inputs share names, as the cross part's is by phase (`kept_strata::space`).
+fn cone_rounds_space(root: &Path, key: &[u8; 32]) -> [u8; 32] {
+    let phase = phases::current().map_or_else(|| "cone/rounds".to_owned(), |phase| format!("cone/{phase}"));
+    kept_strata::part_space(root, &format!("{phase}/{}", crate::content_store::observe::hex(key)))
+}
+
+/// The record of a cone's rounds (`cone_rounds_space`): the journal's cursors they were kept at, and the world's digest.
+fn cone_rounds_record(root: &Path, key: &[u8; 32]) -> String {
+    format!("cone-rounds:{}", crate::content_store::observe::hex(&cone_rounds_space(root, key)))
 }
 
 /// The cone of requests of the cross-file part `cross`, answered inside the fixpoint (decision 0065 §2a): a load's

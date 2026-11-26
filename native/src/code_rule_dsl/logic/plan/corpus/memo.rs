@@ -240,7 +240,7 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
         let own: HashSet<_> = atoms.iter().filter(|a| v.rel_name(a.rel()) == "doc").filter_map(|a| a.args().nth(1).and_then(|t| t.var())).collect();
         let mut folders: HashSet<_> = atoms
             .iter()
-            .filter_map(|a| setting_by_path(v.rel_name(a.rel())).map(|c| (a, c)))
+            .filter_map(|a| setting_by_path(v.rel_name(a.rel())).flatten().map(|c| (a, c)))
             .filter(|(a, _)| a.args().next().and_then(|t| t.var()).is_some_and(|p| own.contains(&p)))
             .filter_map(|(a, c)| a.args().nth(c).and_then(|t| t.var()))
             .collect();
@@ -347,8 +347,10 @@ impl SettingsDigests {
             for row in &rows {
                 row.iter().for_each(|x| hash.update(x.to_le_bytes()));
             }
-            let keyed = if let Some(c) = setting_by_path(name) {
-                out.hop.insert(k, c);
+            let keyed = if let Some(hop) = setting_by_path(name) {
+                if let Some(c) = hop {
+                    out.hop.insert(k, c);
+                }
                 Some(&mut out.by_path)
             } else if SETTINGS_BY_FOLDER.contains(name) {
                 Some(&mut out.by_folder)

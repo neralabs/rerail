@@ -34,7 +34,7 @@
 // What a dispatch is, and which ones stay, is lib/django's side-effect vocabulary, shared with
 // django-practice-enqueue-on-commit; a call in a transaction its own function opens (dj_in_transaction) is that
 // rule's.
-DispatchInAtomicRequest(c, w) :- dar_on(), dj_side_effect(c, w), owner(c, f), dar_live(f), !dar_after_commit(c),
+DispatchInAtomicRequest(c, w) :- dar_on(), dj_side_effect(c, w), owner(c, f), pt_tm(f, fq), dar_live(fq), !dar_after_commit(c),
     !dj_task_waits_for_commit(c), !dj_dispatch_in_failing_handler(c), !dj_dispatch_result_used(c),
     !dj_in_transaction(c), docof(c, d), !dj_test_doc(d).
 
@@ -48,15 +48,18 @@ dar_true(v) :- kind(v, "true").
 dar_true(v) :- kind(v, "identifier"), text(v, x), nearest(v, f, fdef), sig_param(f, _, nm, _, _, _, dv), text(nm, x),
     kind(dv, "true").
 
-// dar_view(f): f is a sync view that ATOMIC_REQUESTS wraps; dar_live(f): f runs inside one, by calls.
-.decl dar_view(f: node)
-dar_view(f) :- param(f, "request", 0), nearest(f, s, scope), !kind(s, "class_definition"), !is_async(f),
-    !dar_middleware(f), !dar_non_atomic(f), !dar_non_atomic_wrapped(f), docof(f, d), !dj_test_doc(d).
-dar_view(f) :- dj_view_class(k), kind(f, "function_definition"), nearest(f, k, scope), !is_async(f),
-    !dar_non_atomic(k), !dar_non_atomic_member(k), docof(f, d), !dj_test_doc(d).
-.decl dar_live(f: node)
-dar_live(f) :- dar_on(), dar_view(f).
-dar_live(g) :- dar_live(f), owner(c, f), call_target(c, g), !dar_after_commit(c).
+// dar_view(f): def f is a sync view that ATOMIC_REQUESTS wraps; dar_live(f): f runs inside one, by calls. Both by the
+// def's symbol (decision 0677), as `call_target` names it; dar_call is each file's own calls.
+.decl dar_view(f: symbol)
+dar_view(fq) :- param(f, "request", 0), nearest(f, s, scope), !kind(s, "class_definition"), !is_async(f),
+    !dar_middleware(f), !dar_non_atomic(f), !dar_non_atomic_wrapped(f), docof(f, d), !dj_test_doc(d), pt_tm(f, fq).
+dar_view(fq) :- dj_view_class(k), kind(f, "function_definition"), nearest(f, k, scope), !is_async(f),
+    !dar_non_atomic(k), !dar_non_atomic_member(k), docof(f, d), !dj_test_doc(d), pt_tm(f, fq).
+.decl dar_live(f: symbol)
+dar_live(fq) :- dar_on(), dar_view(fq).
+dar_live(gq) :- dar_live(fq), dar_call(fq, gq).
+.decl dar_call(f: symbol, g: symbol)
+dar_call(fq, gq) :- owner(c, f), call_target(c, gq), !dar_after_commit(c), pt_tm(f, fq).
 // dar_middleware(f): f is the inner def of a function-style middleware, `def m(get_response): def middleware(request)`.
 // Django wraps only the resolved view in the request's transaction (BaseHandler.make_view_atomic).
 .decl dar_middleware(f: node)

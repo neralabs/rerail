@@ -49,7 +49,9 @@ pub(super) fn foldable(prog: &Program) -> BTreeSet<String> {
     }
     let inputs: std::collections::HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
     let world = |rel: &str| crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
-    let given = |rel: &str| !heads.contains_key(rel) && (option_input(rel) || world(rel) || (prog.facts.contains_key(rel) && !inputs.contains(rel)));
+    // The run's settings (`env`) are given whole, rows or none (decision 0665 §5): a run with no settings adds no
+    // `env` row (`added::Added`), and `py_version` read through it is still one value for the run, its default.
+    let given = |rel: &str| !heads.contains_key(rel) && (option_input(rel) || rel == "env" || world(rel) || (prog.facts.contains_key(rel) && !inputs.contains(rel)));
     let mut fold: std::collections::HashSet<&str> =
         heads.keys().copied().filter(|r| !prog.natives.contains_key(*r) && !prog.lattice.contains_key(*r) && !inputs.contains(r)).collect();
     loop {
