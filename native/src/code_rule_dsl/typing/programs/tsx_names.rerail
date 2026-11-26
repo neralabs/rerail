@@ -9,7 +9,7 @@
 // statements (`ans_def`). Round 2 finds no new ask, so a cold run takes two rounds, and a run from its last run's asks
 // one.
 //   target_at(p, spec, t)  specifier spec in the file at path p names t: a workspace document's module, or a package
-//   asked_at(p, k)         the file at path p asks for k = t#x: name x of its target t
+//   asked_at(p, k)         the file at path p asks for k = t#x: name x of its target t, a workspace module
 //   resolved(k, q)         asked k is symbol q, followed through re-exports
 //   module(m)              m is a workspace document's module (a target that is none is a package)
 // tsx/names.rerail reads them as `tsx_names__target_at`, `tsx_names__asked_at`, `tsx_names__resolved` and
@@ -71,8 +71,10 @@ tx_ask(d, t, x) :- import_binding(sp, _, s, x), x != "*", docof(sp, d), target(d
 tx_ask(d, t, x) :- import_binding(ns, l, s, "*"), docof(ns, d), target(d, s, t), kind(n, k),
     (k = "member_expression" ; k = "nested_identifier"), docof(n, d), field(n, "object", o), text(o, l),
     field(n, "property", r), text(r, x).
+// asks_at(p, k): the file at p asks for k = t#x of a workspace module t. A package is asked of no file (tsx/names
+// names a package's symbol by its target alone), so its names are no ask.
 .decl asks_at(p: symbol, k: symbol)
-asks_at(p, @qname(t, x)) :- tx_ask(d, t, x), doc(d, p, _).
+asks_at(p, @qname(t, x)) :- tx_ask(d, t, x), module(t), doc(d, p, _).
 // asked(m, x): workspace module m is asked for x, by a file or through a re-export of a module asked. A package is
 // asked of no file: tsx/names names its exports by the package.
 .decl asked(m: symbol, x: symbol) cross_file
