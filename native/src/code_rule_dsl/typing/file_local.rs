@@ -2263,7 +2263,12 @@ pub fn crossings_checked(p: &Programs, strict: bool) -> Result<(), String> {
     if refused.is_empty() {
         return Ok(());
     }
-    if let Some(path) = std::env::var_os("RERAIL_CROSSINGS") {
+    // A test's own list (`test_store::Sinks`), else the process's.
+    #[cfg(any(test, feature = "test-hooks"))]
+    let own = crate::code_rule_dsl::logic::plan::corpus::test_store::sinks().map(|s| s.crossings.into_os_string());
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    let own = None;
+    if let Some(path) = own.or_else(|| std::env::var_os("RERAIL_CROSSINGS")) {
         use std::io::Write as _;
         let v = &p.program;
         let lines: String = refused.iter().map(|(rel, _)| format!("{}\n", node_crossings::unprefixed(&lowering_source(v, rel).unwrap_or_else(|| rel.clone())))).collect();

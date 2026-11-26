@@ -393,7 +393,11 @@ pub fn run_policies(
     // The policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated once
     // (decisions 0051, 0089), each policy's findings split back by its id. The rest run alone.
     // `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
-    let packed = std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
+    #[cfg(test)]
+    let alone = pack_split_tests::ALONE.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    let alone = false;
+    let packed = !alone && std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
     let texts = if packed { program_texts(&paths.iter().map(|p| p.as_path()).collect::<Vec<_>>()).ok() } else { None };
     let groups = texts.as_deref().map(|texts| policy_groups(texts, root, options)).unwrap_or_default();
     let mut done: Vec<Option<(Vec<serde_json::Value>, serde_json::Value)>> = paths.iter().map(|_| None).collect();
@@ -1670,19 +1674,22 @@ mod pack_split_tests {
         dir.trim_end_matches("/rules").rsplit('/').next().unwrap_or(dir)
     }
 
+    thread_local! {
+        /// This test's runs take each policy alone (`RERAIL_BATCH_PACK=off`, for this thread's test only).
+        pub(super) static ALONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
     fn pack_runs_as(dir: &str, shard: Option<(usize, usize)>, batch: &str) {
-        // SAFETY: nextest runs each test in a process of its own.
-        unsafe { std::env::set_var("RERAIL_BATCH_PACK", batch) };
+        // Every setting is this test's own, never the process's environment: the tests of one process (`cargo test`)
+        // run at once, and each would take the others' store and lists.
+        ALONE.with(|a| a.set(batch == "off"));
         let from = crate::source_tree::native().join("..").join(dir);
         let tmp = tempfile::tempdir().unwrap();
         let (crossings, nodes) = (tmp.path().join("crossings"), tmp.path().join("node-crossings"));
-        // SAFETY: as above. A store of the test's own: a prepared program read back from a store was checked when it
-        // was prepared, and its split keeps no crossings (`prepared_of`), so every program is prepared here.
-        unsafe {
-            std::env::set_var("RERAIL_CROSSINGS", &crossings);
-            std::env::set_var("RERAIL_NODE_CROSSINGS", &nodes);
-            std::env::set_var("RERAIL_TAPE_CACHE", tmp.path().join("store.sqlite"));
-        }
+        // A store of the test's own: a prepared program read back from a store was checked when it was prepared, and
+        // its split keeps no crossings (`prepared_of`), so every program is prepared here.
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(tmp.path().join("store.sqlite")));
+        let _sinks = crate::code_rule_dsl::logic::plan::corpus::test_store::with_sinks(crate::code_rule_dsl::logic::plan::corpus::test_store::Sinks { crossings: crossings.clone(), nodes: nodes.clone() });
         let rules = tmp.path().join("rules").join(dir);
         let mut policies = Vec::new();
         let mut walk = vec![from.clone()];

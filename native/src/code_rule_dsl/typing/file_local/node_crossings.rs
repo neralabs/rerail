@@ -341,7 +341,12 @@ pub fn nodes_checked(crossings: &[NodeCrossing], strict: bool) -> Result<(), Str
     if crossings.is_empty() {
         return Ok(());
     }
-    if let Some(path) = std::env::var_os("RERAIL_NODE_CROSSINGS") {
+    // A test's own list (`test_store::Sinks`), else the process's.
+    #[cfg(any(test, feature = "test-hooks"))]
+    let own = crate::code_rule_dsl::logic::plan::corpus::test_store::sinks().map(|s| s.nodes.into_os_string());
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    let own = None;
+    if let Some(path) = own.or_else(|| std::env::var_os("RERAIL_NODE_CROSSINGS")) {
         use std::io::Write as _;
         let lines: String = crossings.iter().map(|c| format!("{} {}\n", c.named(), c.under.as_deref().unwrap_or("-"))).collect();
         if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
