@@ -1,0 +1,22 @@
+[
+  {
+    "id": "ruff-pth201-path-constructor-current-directory",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pth202-os-path-getsize",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pth203-os-path-getatime",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pth204-os-path-getmtime",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pth205-os-path-getctime",
+    "status": "same"
+  }
+]

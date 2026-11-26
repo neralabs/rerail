@@ -2914,56 +2914,6 @@
         }
       }
     },
-    "ruff-pth201-path-constructor-current-directory": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pth202-os-path-getsize": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pth203-os-path-getatime": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pth204-os-path-getmtime": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pth205-os-path-getctime": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
     "ruff-pth206-os-sep-split": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
