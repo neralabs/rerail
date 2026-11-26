@@ -888,6 +888,38 @@ describe("CodeRuleBridge", () => {
     }
   });
 
+  it("reads no file of the session folder once the session closed while its list of the other worktrees took its turns", async () => {
+    const root = await twoBranches();
+    const { roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    let held: PromiseWithResolvers<readonly string[] | undefined> | undefined;
+    const asked = Promise.withResolvers<void>();
+    const worktreeRootsInTurns = vi.fn(async (): Promise<readonly string[] | undefined> => {
+      if (held === undefined) return roots;
+      asked.resolve();
+      return await held.promise;
+    });
+    const acceptsPath = vi.fn(() => true);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), ...extra, acceptsPath, worktreeRootsInTurns }, { worktreeWalkGapMs: 60_000 });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    // A file the walk has not seen: a scan that reads the folder asks whether to read it.
+    await writeFile(join(root, "late.py"), "late = 1\n");
+    held = Promise.withResolvers();
+    const turn = bridge.checkpoint("turn").catch(() => undefined);
+    await asked.promise;
+    const closed = bridge.close();
+    const looked = acceptsPath.mock.calls.length;
+    // The whole list, given once the session closed: the walk takes it and goes on to its scan, which reads nothing.
+    held.resolve([]);
+    await closed;
+    await turn;
+    await bridge.settleWalk();
+
+    expect(acceptsPath.mock.calls.length).toBe(looked);
+  });
+
   it("keeps first-sight text only within its budget, and measures a shell edit past it as before", async () => {
     const root = await workspace();
     const [first, second] = [join(root, "src", "a.py"), join(root, "src", "b.py")];
