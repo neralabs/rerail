@@ -566,7 +566,7 @@ const KERNEL: [(&str, &str); 13] = [
 
 /// The compiler (B§6, L4; B§10 step 9): the full lowerer, written in the language the kernel lowers. L3 reads it into
 /// P4, which reads the user's files at L4.
-const COMPILER: [(&str, &str); 25] = [
+const COMPILER: [(&str, &str); 27] = [
     ("compiler/c-1-read.rerail", include_str!("../rerail/compiler/c-1-read.rerail")),
     ("compiler/c-2-shared.rerail", include_str!("../rerail/compiler/c-2-shared.rerail")),
     ("compiler/c-3-rank.rerail", include_str!("../rerail/compiler/c-3-rank.rerail")),
@@ -592,6 +592,8 @@ const COMPILER: [(&str, &str); 25] = [
     ("compiler/c-23-phase-map.rerail", include_str!("../rerail/compiler/c-23-phase-map.rerail")),
     ("compiler/c-24-live.rerail", include_str!("../rerail/compiler/c-24-live.rerail")),
     ("compiler/c-25-dead.rerail", include_str!("../rerail/compiler/c-25-dead.rerail")),
+    ("compiler/c-26-fold.rerail", include_str!("../rerail/compiler/c-26-fold.rerail")),
+    ("compiler/c-27-folded.rerail", include_str!("../rerail/compiler/c-27-folded.rerail")),
 ];
 
 /// What L3 reads: the stand-in for the compiler's files (Bootstrap §6: "P3 loads the full compiler"), a K0 file of
@@ -793,19 +795,27 @@ fn the_compiler_lowers_as_the_kernel_does_and_reads_itself_into_itself() {
             assert_eq!(named(&c, c.rows(3, rel)), named(&k, k.rows(2, rel)), "{name}: {rel}, run");
         }
     }
-    // The self-hosting check: L4 reads the compiler's files, and P4's K-form of them is P4's own.
-    let ask: String = COMPILER.iter().map(|(p, _)| format!("root(\"{p}\", \"{}\").\n", p.trim_end_matches(".rerail"))).chain(["p0_lib(\"lib\").\n".to_string()]).collect();
-    let mut c = compiler_files("phase-compiler-self", &ask, &[]);
+    // The self-hosting check, GCC's three stages (B§2): P3 makes P4 of the compiler's files (stage 1); P4 reading them
+    // makes P4′ (stage 2), and P4′ reading them makes P4″ (stage 3), which is P4′. P4′ is not P4 where the compiler
+    // lowers past the kernel (its passes: constant folding). P4 reads the compiler's files and `c-again`, whose roots
+    // are the compiler's files alone: so P4′ reads them once more, and P4″ reads nothing, which ends the loop.
+    let roots: String = COMPILER.iter().map(|(p, _)| format!("root(\"{p}\", \"{}\").\n", p.trim_end_matches(".rerail"))).chain(["p0_lib(\"lib\").\n".to_string()]).collect();
+    let ask = format!("{roots}root(\"c-again.rerail\", \"c-again\").\n");
+    let mut c = compiler_files("phase-compiler-self", &ask, &[("c-again.rerail", &roots)]);
     c.run();
     let p4 = kform_rows(&c, 1);
-    let again = kform_rows(&c, 2);
-    let modules: BTreeSet<String> = again.iter().flat_map(|(_, rows)| rows.iter().map(|r| r[0].clone())).collect();
-    assert_eq!(modules.len(), COMPILER.len(), "every compiler file read at L4");
-    for ((rel, a), (_, b)) in p4.into_iter().zip(again) {
-        let a: BTreeSet<Vec<String>> = a.into_iter().filter(|r| modules.contains(&r[0])).collect();
-        assert!(!a.is_empty() || matches!(rel, "k_wild" | "k_decl" | "k_num"), "{rel}: P4 holds rows");
-        assert_eq!(b, a, "{rel}: P4 reading the compiler gives P4");
+    let (stage2, stage3) = (kform_rows(&c, 2), kform_rows(&c, 3));
+    let modules: BTreeSet<String> = stage3.iter().flat_map(|(_, rows)| rows.iter().map(|r| r[0].clone())).collect();
+    assert_eq!(modules.len(), COMPILER.len(), "every compiler file read at stage 3");
+    let only = |rows: BTreeSet<Vec<String>>| -> BTreeSet<Vec<String>> { rows.into_iter().filter(|r| modules.contains(&r[0])).collect() };
+    let mut differs = false;
+    for (((rel, a), (_, b)), (_, c3)) in p4.into_iter().zip(stage2).zip(stage3) {
+        let (a, b) = (only(a), only(b));
+        assert!(!b.is_empty() || matches!(rel, "k_wild" | "k_decl" | "k_num"), "{rel}: P4′ holds rows");
+        assert_eq!(c3, b, "{rel}: P4′ reading the compiler gives P4′");
+        differs |= a != b;
     }
+    assert!(differs, "the compiler lowers past the kernel: P4′ is not P4");
 }
 
 /// Includes and the module plan (B§6, L4; L4-g option 1), as the compiler's rules at L4. An include resolves to its
@@ -1043,6 +1053,41 @@ load(\"extra.rerail\", \"extra\", \"rr\").\nhas_extra(p) :- doc(_, p, _), p = \"
     r.last = None;
     r.run();
     check(&r, "cold again", true);
+}
+
+/// The passes' per-rule rewrite group (the program-bistate page's §4), constant folding: a variable a body equates to
+/// one constant is that constant in the head and every step, and the equation goes; one equated to two, or with a
+/// term another rule shares (a disjunction's), is left. The rows are the program's either way; a negation of a
+/// variable only its equation binds now runs.
+#[test]
+fn equations_of_one_constant_fold_by_the_compilers_pass() {
+    const F: &str = "e(\"a\", \"b\").\ne(\"a\", \"c\").\ne(\"b\", \"b\").\nn(1).\nn(2).\nn(3).\nm(5).\n";
+    const U: &str = "p(x, y) :- e(x, y), y = \"b\".\nq(x, k) :- n(x), k = 7.\nr(x) :- n(x), x = 1, x = 2.\ns(x) :- n(x), 1 = x.\n\
+t(x) :- n(x), !m(y), y = 2.\nw(x) :- n(x), x = 2 ; n(x), x = 3.\n";
+    let mut r = compiler_files("phase-fold", ROOTS, &[("u-facts.rerail", F), ("u.rerail", U)]);
+    r.run();
+    let nums = |xs: &[&[i64]]| -> BTreeSet<Vec<i64>> { xs.iter().map(|x| x.to_vec()).collect() };
+    let check = |r: &Run, what: &str| {
+        assert_eq!(r.rows(3, "p"), [vec![r.s("a"), r.s("b")], vec![r.s("b"), r.s("b")]].into_iter().collect(), "{what}: p");
+        assert_eq!(r.rows(3, "q"), nums(&[&[1, 7], &[2, 7], &[3, 7]]), "{what}: a constant in the head");
+        assert!(r.rows(3, "r").is_empty(), "{what}: two constants, two filters");
+        assert_eq!(r.rows(3, "s"), nums(&[&[1]]), "{what}: the constant on the left");
+        assert_eq!(r.rows(3, "t"), nums(&[&[1], &[2], &[3]]), "{what}: a negation of the constant");
+        assert_eq!(r.rows(3, "w"), nums(&[&[2], &[3]]), "{what}: a disjunction's shared terms, not folded");
+        // The equations left: r's two and w's two rules' one each.
+        let eqs = r.rows(2, "k_step").into_iter().filter(|s| s[4] == r.s("cmp") && s[5] == r.s("=")).count();
+        assert_eq!(eqs, 4, "{what}: the equations left");
+    };
+    check(&r, "cold");
+    r.write("u.rerail", &U.replace("k = 7", "k = 8"), 40);
+    r.run();
+    assert_eq!(r.rows(3, "q"), nums(&[&[1, 8], &[2, 8], &[3, 8]]), "an edit of the constant");
+    r.write("u.rerail", U, 30);
+    r.run();
+    check(&r, "back");
+    r.last = None;
+    r.run();
+    check(&r, "cold again");
 }
 
 /// Lattices (B§6, L4; `core.rerail`; L4-i): a relation whose last column is a lattice keeps one row a key, the join

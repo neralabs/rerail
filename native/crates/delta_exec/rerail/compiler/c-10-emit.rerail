@@ -2,15 +2,18 @@
 // its last variable, t its turn there, every other step where it was read, at (k, -1): steps run in (k, j) order,
 // and (p, t) sorts after (p, -1) and before (p + 1, -1).
 // A phase's file (c-21..c-23) is written through its map: its relations renamed, its fact space its own.
-// A dead rule (c-25: no output reads its relation) is not written.
+// A dead rule (c-25: no output reads its relation) is not written, nor a folded equation (c-27), whose variable's
+// terms are its constant.
 k_rule(d, r, h) :- rule_head(d, r, h), read_rule(d, r, _), !dead(d, r).
-k_step(d, r, p, n, s, x) :- at(d, r, f, p), turn(d, r, f, n), read_step(d, r, f, -1, s, x), !ph_module(d), !dead(d, r).
-k_step(d, r, p, n, s, y) :- at(d, r, f, p), turn(d, r, f, n), read_step(d, r, f, -1, s, x), ph_step(d, s, x, y), !dead(d, r).
-k_step(d, r, k, -1, s, x) :- read_step(d, r, k, -1, s, x), !placed(d, r, k), !ph_module(d), !dead(d, r).
-k_step(d, r, k, -1, s, y) :- read_step(d, r, k, -1, s, x), !placed(d, r, k), ph_step(d, s, x, y), !dead(d, r).
-k_arg(d, r, p, n, i, t) :- at(d, r, f, p), turn(d, r, f, n), read_arg(d, r, f, -1, i, t), !dead(d, r).
-k_arg(d, r, k, j, i, t) :- read_arg(d, r, k, j, i, t), !placed(d, r, k), !dead(d, r).
-k_var(d, t, v) :- read_var(d, t, v), !is_text(d).
+k_step(d, r, p, n, s, x) :- at(d, r, f, p), turn(d, r, f, n), read_step(d, r, f, -1, s, x), !ph_module(d), !dead(d, r), !folded(d, r, f).
+k_step(d, r, p, n, s, y) :- at(d, r, f, p), turn(d, r, f, n), read_step(d, r, f, -1, s, x), ph_step(d, s, x, y), !dead(d, r), !folded(d, r, f).
+k_step(d, r, k, -1, s, x) :- read_step(d, r, k, -1, s, x), !placed(d, r, k), !ph_module(d), !dead(d, r), !folded(d, r, k).
+k_step(d, r, k, -1, s, y) :- read_step(d, r, k, -1, s, x), !placed(d, r, k), ph_step(d, s, x, y), !dead(d, r), !folded(d, r, k).
+k_arg(d, r, p, n, i, t) :- at(d, r, f, p), turn(d, r, f, n), read_arg(d, r, f, -1, i, t), !dead(d, r), !folded(d, r, f).
+k_arg(d, r, k, j, i, t) :- read_arg(d, r, k, j, i, t), !placed(d, r, k), !dead(d, r), !folded(d, r, k).
+k_var(d, t, v) :- read_var(d, t, v), !is_text(d), !fold_var(d, t).
+k_str(d, t, s) :- fold_term(d, t, c), read_str(d, c, s).
+k_num(d, t, n) :- fold_term(d, t, c), read_num(d, c, n).
 k_str(d, t, s) :- read_str(d, t, s), !is_text(d).
 k_str(d, t, s) :- agg_rel(d, t, s), !is_text(d), !ph_module(d).
 k_str(d, t, y) :- agg_rel(d, t, s), ph_rel(d, s, y).
