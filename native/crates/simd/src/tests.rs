@@ -123,3 +123,75 @@ fn a_mask_of_eight_64_bit_lanes_is_all_only_where_every_lane_is() {
     let raw = (Simd::<u64, 8>::from_array(words) & Simd::splat(1)).simd_eq(Simd::splat(0));
     assert_eq!((raw.all(), raw.to_bitmask()), (false, 0x7f));
 }
+
+/// Every lane type's operations, each lane its scalar operation's, at a chunk's width and past it: the target's
+/// chunk code (NEON, SSE2 to AVX2), and the per-lane fallback where it has none.
+#[test]
+fn every_lane_types_chunks_are_their_scalar_operations() {
+    macro_rules! check {
+        ($($t:ty)*) => {$({
+            const N: usize = 16;
+            let mut x = [0 as $t; N];
+            let mut y = [0 as $t; N];
+            let mut h = 0x9E37_79B9_7F4A_7C15u64;
+            for i in 0..N {
+                h = h.wrapping_mul(0x5851_F42D_4C95_7F2D).wrapping_add(1442695040888963407);
+                x[i] = (h >> 7) as $t;
+                y[i] = if i % 3 == 0 { x[i] } else { (h >> 29) as $t };
+            }
+            x[1] = <$t>::MAX;
+            x[2] = <$t>::MIN;
+            y[5] = 0;
+            let (a, b) = (Simd::<$t, N>::from_array(x), Simd::<$t, N>::from_array(y));
+            let each = |f: &dyn Fn($t, $t) -> $t| -> [$t; N] { core::array::from_fn(|i| f(x[i], y[i])) };
+            assert_eq!((a + b).to_array(), each(&|p, q| p.wrapping_add(q)), "{}", stringify!($t));
+            assert_eq!((a - b).to_array(), each(&|p, q| p.wrapping_sub(q)), "{}", stringify!($t));
+            assert_eq!((a * b).to_array(), each(&|p, q| p.wrapping_mul(q)), "{}", stringify!($t));
+            assert_eq!((a & b).to_array(), each(&|p, q| p & q));
+            assert_eq!((a | b).to_array(), each(&|p, q| p | q));
+            assert_eq!((a ^ b).to_array(), each(&|p, q| p ^ q));
+            assert_eq!((!a).to_array(), x.map(|p| !p));
+            // Shifts by each lane's amount, and by one amount (SSE2's shift by a register).
+            assert_eq!((a << b).to_array(), each(&|p, q| p.wrapping_shl(q as u32)), "{} <<", stringify!($t));
+            assert_eq!((a >> b).to_array(), each(&|p, q| p.wrapping_shr(q as u32)), "{} >>", stringify!($t));
+            for k in [0 as $t, 1, 5, (<$t>::BITS - 1) as $t] {
+                let s = Simd::<$t, N>::splat(k);
+                assert_eq!((a << s).to_array(), x.map(|p| p.wrapping_shl(k as u32)), "{} << {k}", stringify!($t));
+                assert_eq!((a >> s).to_array(), x.map(|p| p.wrapping_shr(k as u32)), "{} >> {k}", stringify!($t));
+            }
+            assert_eq!(a.simd_eq(b).to_array(), core::array::from_fn(|i| x[i] == y[i]), "{} ==", stringify!($t));
+            assert_eq!(a.simd_lt(b).to_array(), core::array::from_fn(|i| x[i] < y[i]), "{} <", stringify!($t));
+            assert_eq!(a.simd_le(b).to_array(), core::array::from_fn(|i| x[i] <= y[i]), "{} <=", stringify!($t));
+            assert_eq!(a.simd_ge(b).to_array(), core::array::from_fn(|i| x[i] >= y[i]), "{} >=", stringify!($t));
+            assert_eq!(a.simd_min(b).to_array(), each(&|p, q| p.min(q)), "{} min", stringify!($t));
+            assert_eq!(a.simd_max(b).to_array(), each(&|p, q| p.max(q)), "{} max", stringify!($t));
+            assert_eq!(a.leading_zeros().to_array().map(|v| v as $t), x.map(|p| p.leading_zeros() as $t), "{} clz", stringify!($t));
+            let m = a.simd_lt(b);
+            assert_eq!(m.to_bitmask(), (0..N).fold(0, |s, i| s | ((x[i] < y[i]) as u64) << i), "{} bitmask", stringify!($t));
+            assert_eq!(m.any(), x.iter().zip(&y).any(|(p, q)| p < q));
+            assert!(!(a.simd_ne(a)).any() && a.simd_eq(a).all());
+            assert_eq!(m.select(a, b).to_array(), each(&|p, q| if p < q { p } else { q }));
+        })*};
+    }
+    check!(u8 i8 u16 i16 u32 i32 u64 i64 usize isize);
+}
+
+/// The cast's chunk code: 4 bytes to 8 (signed: extended), 8 to 4 (truncated).
+#[test]
+fn casts_widen_and_narrow_as_as_does() {
+    let s = i32x8::from_array([-1, 2, i32::MIN, 7, i32::MAX, -9, 0, 1 << 20]);
+    assert_eq!(s.cast::<i64>().to_array(), s.to_array().map(i64::from));
+    let u = u32x8::from_array([u32::MAX, 2, 0x8000_0000, 7, 9, 0, 1, 3]);
+    assert_eq!(u.cast::<u64>().to_array(), u.to_array().map(u64::from));
+    let w = u64x8::from_array([u64::MAX, 1 << 33 | 5, 7, 0x8000_0000_0000_0001, 9, 0, 1, 3]);
+    assert_eq!(w.cast::<u32>().to_array(), w.to_array().map(|v| v as u32));
+}
+
+/// A 64-byte table looked up by 64 indices, those past it 0: NEON's `tbl`s, x86's `pshufb`s, or each lane's.
+#[test]
+fn a_dynamic_swizzle_of_64_bytes_is_each_lanes_index() {
+    let t: [u8; 64] = core::array::from_fn(|i| (i as u8).wrapping_mul(37).wrapping_add(11));
+    let ix: [u8; 64] = core::array::from_fn(|i| (i as u8).wrapping_mul(53) ^ if i % 5 == 0 { 0x80 } else { 0 });
+    let r = Simd::<u8, 64>::from_array(t).swizzle_dyn(Simd::from_array(ix));
+    assert_eq!(r.to_array(), core::array::from_fn(|i| if (ix[i] as usize) < 64 { t[ix[i] as usize] } else { 0 }));
+}
