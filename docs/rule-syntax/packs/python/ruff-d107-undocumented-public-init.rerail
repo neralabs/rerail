@@ -1,4 +1,4 @@
-.policy "ruff-d107-undocumented-public-init" revision 2
+.policy "ruff-d107-undocumented-public-init" revision 3
 .description "Add a docstring to the __init__ method of each public class, describing its arguments and side effects."
 .language python
 .mode steer
@@ -9,7 +9,7 @@
 //   class C:
 //       """Doc."""
 //       def __init__(self): …    ← D107 at `__init__`
-#include "python/docstrings.rerail"
+#include "python/python-17.rerail"
 
 .violation D107(at: node) code "D107"
     "Add a docstring to `__init__` describing its arguments, side effects and raised exceptions."
