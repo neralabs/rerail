@@ -35,11 +35,17 @@
 //                                                                                  rather than lose data
 //   if [ "$VERCEL_ENV" = "preview" ]; then npx prisma migrate reset --force; fi   not reported: a guard for a
 //                                                                                  preview/test/CI/dev database
+//   if [ "$NODE_ENV" != "production" ]; then …                                     not reported: the same guard
+//   if [ "$NODE_ENV" != "development" ]; then npx prisma migrate reset --force; fi   reported: a negated
+//                                                                                  non-production word guards nothing
 //   a workflow's `test` job running `prisma migrate reset --force` on its service database   not reported
 //   a script reached only from dev scripts, a Dockerfile.dev, docker-compose.yml   not reported
+// Job and workflow names are read by word (`-`, `_` and the like split them): `deploy-web` is a deploy job,
+// `product-checks` is not; a `unit_tests` job is a test job, `special-build` is not.
 // Gaps: commands built in variables or Makefiles; `cd dir && npm run x` (resolved in the package.json beside the file
-// and those above it, not in dir); a guard that names a non-production word in a negation (`!= "development"`); a
-// workflow whose jobs are indented other than two spaces; Heroku app.json, Kubernetes manifests, AWS/GCP deploy files.
+// and those above it, not in dir); a workflow whose jobs are indented other than two spaces; Heroku app.json,
+// Kubernetes manifests, AWS/GCP deploy files; an opt-in flag (`if [ "$FORCE_UPDATE_DB" = "1" ]`) guards nothing
+// the rule can read, so a destructive command behind one is reported.
 
 .violation DevMigrationInDeploy(at: loc, where: symbol, cmd: symbol, via: symbol, why: symbol, fix: symbol) "{where} runs `{cmd}`{via} on deploy, against the deployed database. {why} {fix} If this path only ever runs against a throwaway database (a test, CI or per-branch preview database rebuilt on every run), leave it."
 
@@ -49,9 +55,20 @@
 DevMigrationInDeploy(@place(p, i), w, c, v, why, fix) :- dmid_src(p, i, w, t, x), dmid_run(p, i, x, t, _, t2, leaf),
     dmid_danger(t2, c), dmid_follow(t2), !dmid_guard_text(t), !dmid_guard_text(t2), !dmid_guarded(p, i),
     dmid_says(c, why, fix), dmid_via(leaf, v), dmid_scope(p).
+// dmid_guard_text(t): t's condition names a non-production database (`= "preview"`, `-n "$CI"`) or rules out
+// production (`!= "production"`); a non-production word after `!=`/`!==` is the opposite and does not count.
 .decl dmid_guard_text(t: symbol)
-dmid_guard_text(t) :- dmid_text(t),
-    match("(?is).*(?:\\bif\\b[^\\n]*|\\[\\[?\\s[^\\]]*)\\b(?:preview|tests?|testing|e2e|ci|demo|dev|development|local)\\b.*", t).
+dmid_guard_text(t) :- dmid_text(t), dmid_guard_cond(t).
+.decl dmid_guard_cond(t: symbol)
+dmid_guard_cond(t) :- dmid_cond_text(t),
+    match("(?is).*(?:\\bif\\b[^\\n]*|\\[\\[?\\s[^\\]]*)\\b(?:preview|tests?|testing|e2e|ci|dev|development|local)\\b.*", t),
+    !match("(?is).*!==?\\s*[\"']?\\$?\\{?(?:preview|tests?|testing|e2e|ci|dev|development|local)\\b.*", t).
+dmid_guard_cond(t) :- dmid_cond_text(t),
+    match("(?is).*(?:\\bif\\b[^\\n]*|\\[\\[?\\s[^\\]]*)!==?\\s*[\"']?(?:prod|production)\\b.*", t).
+// dmid_cond_text(t): a command, or the `if` line of a script or workflow the rule reads.
+.decl dmid_cond_text(t: symbol)
+dmid_cond_text(t) :- dmid_text(t).
+dmid_cond_text(t) :- dmid_file(p, _), file_line(p, _, t), match("\\s*if\\b.*", t).
 
 // ---- the destructive commands -----------------------------------------------------------------------------------
 .decl dmid_danger(t: symbol, cmd: symbol)
@@ -203,9 +220,10 @@ dmid_deploy_line(p, i, cat("This line of ", k), t) :- dmid_line(p, k, i, t), k !
     k != "workflow", k != "sh", k != "compose".
 dmid_deploy_line(p, i, "This line of a production compose file", t) :- dmid_line(p, "compose", i, t).
 dmid_deploy_line(p, i, cat("This step of the `", j, "` job"), t) :- dmid_wf_job(p, i, j, t),
-    match("(?i).*(?:deploy|release|prod).*", j).
+    match("(?i)(?:.*[^a-z0-9])?(?:deploy\\w*|release\\w*|prod|production)(?:[^a-z0-9].*)?", j).
 dmid_deploy_line(p, i, cat("This step of the `", j, "` job"), t) :- dmid_wf_job(p, i, j, t),
-    !match("(?i).*(?:deploy|release|prod).*", j), !match("(?i).*(?:test|e2e|ci|check|lint|integration|spec).*", j),
+    !match("(?i)(?:.*[^a-z0-9])?(?:deploy\\w*|release\\w*|prod|production)(?:[^a-z0-9].*)?", j),
+    !match("(?i)(?:.*[^a-z0-9])?(?:tests?|e2e|ci|checks?|lint|integration|specs?)(?:[^a-z0-9].*)?", j),
     match(".github/workflows/(?<wn>.*)", p), match("(?i).*\\b(?:deploy|deployment|release|prod|production|cd|publish)\\b.*", wn).
 // A .sh script a deploy command names (by file name) runs on deploy, unless it starts a dev server.
 dmid_deploy_line(p, i, cat("This line of `", b, "` (a script a deploy path runs)"), t) :- dmid_sh_named(p, b),
@@ -225,13 +243,16 @@ dmid_wf_job(p, i, j, t) :- dmid_line(p, "workflow", i, t),
     jl = max jj : { file_line(p, jj, tj), jj < i, match("  [A-Za-z0-9_-]+:\\s*", tj) },
     file_line(p, jl, tjob), match("  (?<j>[A-Za-z0-9_-]+):\\s*", tjob).
 
-// dmid_guarded(path, line): the line sits in an `if` block (still open there) whose condition names a non-production
-// database (preview, test, CI, demo, dev, local).
+// dmid_guarded(path, line): the line sits in an `if` block (still open there: no `fi` at the `if`'s own indentation
+// in between) whose condition names a non-production database (preview, test, CI, dev, local) or rules out
+// production (dmid_guard_cond).
 .decl dmid_guarded(p: symbol, i: number)
 dmid_guarded(p, i) :- dmid_line(p, _, i, _), file_line(p, j, tj), j < i, match("\\s*if\\b.*", tj), !match(".*\\bfi\\b.*", tj),
-    match("(?i).*\\b(?:preview|tests?|testing|e2e|ci|demo|dev|development|local)\\b.*", tj),
-    no = count : { file_line(p, k, tk), k > j, k < i, match("\\s*if\\b.*", tk), !match(".*\\bfi\\b.*", tk) },
-    nf = count : { file_line(p, k, tk), k > j, k < i, match("\\s*fi\\b.*", tk) }, nf <= no.
+    dmid_guard_cond(tj), dmid_indent(p, j, ind, "if"),
+    count : { dmid_indent(p, k, ind, "fi"), k > j, k < i } = 0.
+// dmid_indent(p, k, ind, w): line k of file p opens (`if`) or closes (`fi`) a block at indentation ind.
+.decl dmid_indent(p: symbol, k: number, ind: symbol, w: symbol)
+dmid_indent(p, k, ind, w) :- dmid_file(p, _), file_line(p, k, t), match("(?<ind>[ \\t]*)(?<w>if|fi)\\b.*", t).
 
 // The cases, `cases/prisma-practice-dev-migration-in-deploy/`, read as one repository. Shell, YAML and TOML lines the
 // rule reports end in `# caught`; JSON, Dockerfile and Procfile lines cannot carry a comment, so the list below is the
@@ -259,6 +280,7 @@ dmid_guarded(p, i) :- dmid_line(p, _, i, _), file_line(p, j, tj), j < i, match("
     .fixture "scripts/seed-local.sh" from "../cases/prisma-practice-dev-migration-in-deploy/scripts/seed-local.sh"
     .expect _ at ".github/workflows/ci.yml":11
     .expect _ at ".github/workflows/deploy.yml":18
+    .expect _ at ".github/workflows/deploy.yml":27
     .expect _ at "Procfile":2
     .expect _ at "apps/api/Dockerfile":10
     .expect _ at "apps/api/package.json":5
@@ -271,7 +293,8 @@ dmid_guarded(p, i) :- dmid_line(p, _, i, _), file_line(p, j, tj), j < i, match("
     .expect _ at "package.json":9
     .expect _ at "package.json":13
     .expect _ at "packages/db/package.json":10
-    .expect _ at "scripts/docker-entrypoint.sh":6
+    .expect _ at "scripts/docker-entrypoint.sh":10
+    .expect _ at "scripts/docker-entrypoint.sh":12
 .end
 
 // The pack's examples (pack.json).

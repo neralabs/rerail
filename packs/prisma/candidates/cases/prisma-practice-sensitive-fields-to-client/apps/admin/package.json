@@ -1,0 +1,8 @@
+{
+  "name": "admin",
+  "private": true,
+  "dependencies": {
+    "@acme/db": "workspace:*",
+    "next": "15.3.0"
+  }
+}

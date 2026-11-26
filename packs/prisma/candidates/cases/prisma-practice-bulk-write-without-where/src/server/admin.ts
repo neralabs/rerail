@@ -43,3 +43,15 @@ export async function readAllThenTag(id: string) {
   await prisma.notification.updateMany({ data: { read: true } }); // caught
   await prisma.notification.update({ where: { id }, data: { kind: "tagged" } });
 }
+
+// Two tables emptied together: a reset of the user's inbox, not a forgotten filter.
+export async function clearInbox() {
+  await prisma.notification.deleteMany();
+  await prisma.draft.deleteMany();
+}
+
+// The same table cleared twice is still one table: each call empties Session.
+export async function clearSessionsTwice() {
+  await prisma.session.updateMany({ data: { active: false } }); // caught
+  await prisma.session.deleteMany(); // caught
+}

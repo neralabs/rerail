@@ -18,21 +18,28 @@
 //   export async function GET() { const prisma = new PrismaClient(); ... prisma.user.count() }   reported (per call)
 //   async function action() { await new PrismaClient().post.create(...) }                         reported (per call)
 //   handler(req, res) { const db = new PrismaClient(); try { ... } finally { await db.$disconnect() } }  reported
-//   export const db = new PrismaClient()   in a Next.js app (package.json lists next), no globalThis in the file  reported
+//   export const db = new PrismaClient()   in a Next.js app (the file's nearest package.json lists next; the root's
+//                                          when none is nearer), no globalThis in the file   reported
 //   export const db = makeClient()         the same, through a factory in the file that returns the new client   reported
 //   const prisma = globalForPrisma.prisma ?? new PrismaClient(); globalForPrisma.prisma = prisma    not reported
 //   function createClient() { return new PrismaClient(...) }   (also `const c = new ...; return c.$extends(...)`)  not reported: a factory; its caller decides
 //   if (!client) client = new PrismaClient(); this.prisma = new PrismaClient(); clients.set(k, new PrismaClient())  not reported: stored
 //   class Service { prisma = new PrismaClient() }   not reported: one per instance, which DI makes once
 //   async function main() { const prisma = new PrismaClient() ... } main()   not reported: runs once per process
-//   files under scripts/, bin/, cli/, tools/, harness/, integration/, or named *seed*, *migrat*, *test*, *bench*,
-//   *mock*, *backfill*, oneoff*: one-shot or test code                                              not reported
-//   a module-level client in a package whose package.json does not list next (a worker, a NestJS API)  not reported
-//   a module-level client in a file that exports nothing (`prisma/set-default-agent.ts` running `main()`)  not reported
+//   a path with a folder or file named for scripts or tests: scripts/, bin/, cli/, tools/, playwright/, cypress/,
+//   or a word test(s), e2e, spec, mock(s), seed(s), seeder(s), migrate, migration(s), bench, benchmark(s),
+//   fixture(s) between `-`, `_`, `.` or at a camelCase boundary (`seed-users.ts`, `test-utils/`, `__mocks__/`, not
+//   `latest/` or `contest.ts`): one-shot or test code                                          not reported
+//   a module-level client in a package whose package.json does not list next (a worker, a NestJS API, a
+//   `packages/db` that a Next.js app depends on)                                                   not reported
+//   a module-level client in a file that exports nothing (a script running `main()`)                 not reported
+//   a client over an HTTP driver adapter or Accelerate (`@prisma/adapter-planetscale`, `-d1`, `-libsql`,
+//   `PrismaNeonHTTP`, `@prisma/extension-accelerate`): no connection pool to exhaust              not reported
 //   two modules each making their own cached client                                                 not reported
-// Gaps: a Next.js app whose client lives in a workspace package (packages/db, no next in its package.json) is not
-// checked for the globalThis cache; a factory called per request from another file (`createClient()` in a
-// handler) is not followed across files; a client kept in a local that is passed to a helper counts as stored.
+// Gaps: a factory called per request from another file (`createClient()` in a handler) is not followed across
+// files; a client kept in a local that is passed to a helper counts as stored; a one-off script that exports a
+// function and sits outside the folders above (`lib/backfill.ts`) is checked like app code; a module-level client
+// in a workspace package that a Next.js app bundles (`packages/db`) is not checked for the globalThis cache.
 // Prisma 8 (a release candidate, a TypeScript rewrite with a new client API) is not matched; revisit when it ships.
 
 #include "tsx/modules.rerail"   // deparen; tsx/names: ref_site, import_binding, pattern_name
@@ -45,11 +52,18 @@ PerCallClient(n) :- poc_ctor(n, d), !poc_offline(d), nearest(n, f, fn_scope), ki
 .violation UncachedNextClient(at: node)
     "This module creates a PrismaClient at module level in a Next.js app without caching it on globalThis: in development, `next dev` evaluates the module again on every hot reload and each copy opens its own connection pool, until the local Postgres refuses connections (a production server evaluates the module once, so this does not bite there). Use Prisma's Next.js pattern: `const globalForPrisma = globalThis as unknown as {{ prisma?: PrismaClient }}; export const prisma = globalForPrisma.prisma ?? new PrismaClient(...); if (process.env.NODE_ENV !== \"production\") globalForPrisma.prisma = prisma`. Leave it when this module never runs inside the Next.js server (a worker or script started on its own)."
 UncachedNextClient(n) :- poc_ctor(n, d), !poc_offline(d), poc_next_doc(d), !poc_global_cache(d), poc_exports(d),
-    poc_module_made(n).
+    poc_module_made(n), !poc_http_driver(d).
+
+// poc_http_driver(d): d builds its client on a driver adapter that speaks HTTP, or on Prisma Accelerate, which keep
+// no connection pool open: a copy per hot reload costs nothing.
+.decl poc_http_driver(d: number)
+poc_http_driver(d) :- poc_ctor(_, d), import_binding(sp, _, s, x), docof(sp, d),
+    (s = "@prisma/adapter-planetscale" ; s = "@prisma/adapter-d1" ; s = "@prisma/adapter-libsql" ;
+     s = "@prisma/extension-accelerate" ; (s = "@prisma/adapter-neon", x = "PrismaNeonHTTP")).
 
 // poc_exports(d): d exports something (`export …`, `module.exports`, `exports.x =`): a module the app imports. A file
-// that exports nothing is an entry point run on its own (`prisma/set-default-agent.ts` with `main()`), not part of
-// the Next.js server's module graph.
+// that exports nothing is an entry point run on its own (a script running `main()`), not part of the Next.js
+// server's module graph.
 .decl poc_exports(d: number)
 poc_exports(d) :- poc_ctor(_, d), kind(e, "export_statement"), docof(e, d).
 poc_exports(d) :- poc_ctor(_, d), kind(m, "member_expression"), docof(m, d), field(m, "object", o), text(o, x),
@@ -123,23 +137,32 @@ poc_returned(e, f) :- poc_root(_, e), field(f, "body", e), kind(f, "arrow_functi
 poc_in_class(n) :- poc_ctor(n, _), within(n, b), kind(b, "class_body").
 poc_in_class(f) :- poc_fn(_, f), within(f, b), kind(b, "class_body").
 
-// poc_next_doc(d): the package.json nearest d lists next.
+// poc_next_doc(d): d's package is a Next.js app: its nearest package.json lists next (the root's, when no
+// package.json is nearer). A workspace package that a Next.js app depends on (`packages/db`) is not: its package.json
+// does not say which servers load it.
 .decl poc_next_doc(d: number)
-poc_next_doc(d) :- poc_ctor(_, d), doc(d, p, _), package_for(p, dir),
-    (package_field(dir, "dependencies/next", _) ; package_field(dir, "devDependencies/next", _)).
+poc_next_doc(d) :- poc_ctor(_, d), doc(d, p, _), package_for(p, dir), poc_next_pkg(dir).
+poc_next_doc(d) :- poc_ctor(_, d), doc(d, p, _), !poc_has_pkg(p), poc_next_pkg("").
+.decl poc_has_pkg(p: symbol)
+poc_has_pkg(p) :- poc_ctor(_, d), doc(d, p, _), package_for(p, _).
+.decl poc_next_pkg(dir: symbol)
+poc_next_pkg(dir) :- package_field(dir, "dependencies/next", _).
+poc_next_pkg(dir) :- package_field(dir, "devDependencies/next", _).
 // poc_global_cache(d): d reads the global object (`globalThis`, Node's `global`), where the cached client lives.
 .decl poc_global_cache(d: number)
 poc_global_cache(d) :- poc_ctor(_, d), kind(r, "identifier"), docof(r, d), (text(r, "globalThis") ; text(r, "global")),
     !ref_site(r, _).
-// poc_offline(d): d is one-shot or test code by its path: a directory or file name below.
+// poc_offline(d): d is one-shot or test code by its path: a folder or file named for scripts or tools, or holding a
+// test, seed, migration, mock or benchmark word at a `-`/`_`/`.` or camelCase boundary.
 .decl poc_offline(d: number)
-poc_offline(d) :- poc_ctor(_, d), path_part(d, s), poc_offline_name(g), iglob(g, s).
-.decl poc_offline_name(g: symbol)
+poc_offline(d) :- poc_ctor(_, d), path_part(d, s), poc_offline_name(s).
+poc_offline(d) :- poc_ctor(_, d), path_part(d, s),
+    match("(?:.*[-_.])?_*(?:tests?|testing|e2e|specs?|mocks?|seeds?|seeders?|migrate|migrations?|bench|benchmarks?|fixtures?)_*(?:[-_.A-Z].*)?", s).
+poc_offline(d) :- poc_ctor(_, d), path_part(d, s),
+    match(".*[a-z0-9](?:Tests?|Spec|Mocks?|Seeds?|Seeder|Migrate|Migrations?|Bench|Benchmarks?|Fixtures?)(?:[-_.A-Z].*)?", s).
+.decl poc_offline_name(s: symbol)
 poc_offline_name("script"). poc_offline_name("scripts"). poc_offline_name("bin"). poc_offline_name("cli").
-poc_offline_name("tools"). poc_offline_name("harness"). poc_offline_name("integration").
-poc_offline_name("playwright"). poc_offline_name("cypress"). poc_offline_name("*seed*").
-poc_offline_name("*migrat*"). poc_offline_name("*test*"). poc_offline_name("*bench*"). poc_offline_name("*mock*").
-poc_offline_name("*backfill*"). poc_offline_name("oneoff*"). poc_offline_name("one-off*").
+poc_offline_name("tools"). poc_offline_name("playwright"). poc_offline_name("cypress").
 
 // The cases, `cases/prisma-practice-one-client/`, read as one repository: each line ending in `// caught` is
 // reported, and no other line.
@@ -161,10 +184,16 @@ poc_offline_name("*backfill*"). poc_offline_name("oneoff*"). poc_offline_name("o
     .fixture "src/server/legacy-handler.js" from "../cases/prisma-practice-one-client/src/server/legacy-handler.js"
     .fixture "worker/package.json" from "../cases/prisma-practice-one-client/worker/package.json"
     .fixture "worker/src/db.ts" from "../cases/prisma-practice-one-client/worker/src/db.ts"
+    .fixture "src/lib/latest/feed.ts" from "../cases/prisma-practice-one-client/src/lib/latest/feed.ts"
+    .fixture "src/lib/edge-db.ts" from "../cases/prisma-practice-one-client/src/lib/edge-db.ts"
+    .fixture "packages/db/package.json" from "../cases/prisma-practice-one-client/packages/db/package.json"
+    .fixture "packages/db/src/client.ts" from "../cases/prisma-practice-one-client/packages/db/src/client.ts"
+    .fixture "apps/web/package.json" from "../cases/prisma-practice-one-client/apps/web/package.json"
     .expect _ at "src/app/api/users/route.ts":4
     .expect _ at "src/app/actions.ts":7
     .expect _ at "src/pages/api/legacy.ts":7
     .expect _ at "src/server/legacy-handler.js":4
     .expect _ at "src/lib/reports-db.ts":3
     .expect _ at "src/lib/analytics-db.ts":4
+    .expect _ at "src/lib/latest/feed.ts":5
 .end

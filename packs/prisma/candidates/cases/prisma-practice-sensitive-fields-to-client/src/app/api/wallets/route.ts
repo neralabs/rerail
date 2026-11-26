@@ -6,7 +6,7 @@ export async function GET() {
   return Response.json(wallets);
 }
 
-// Usage has secret columns only in the schema under examples/, which is not read.
+// Usage has secret columns only in the schema of an example app no package depends on, which is not read.
 export async function POST() {
   return Response.json(await prisma.usage.findMany());
 }

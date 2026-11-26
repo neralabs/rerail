@@ -1,7 +1,7 @@
 {
   "name": "@neralabs/rerail-pack-prisma",
   "version": "0.1.0",
-  "description": "Rerail rule pack: Prisma practice rules for transactions, bulk writes, raw SQL, client set-up and data sent to clients.",
+  "description": "Rerail rule pack: Prisma practice rules, off by default, for queries in loops and raw SQL built from values.",
   "keywords": [
     "rerail",
     "rerail-pack",

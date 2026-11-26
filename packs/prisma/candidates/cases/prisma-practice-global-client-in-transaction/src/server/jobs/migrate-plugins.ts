@@ -14,3 +14,23 @@ export async function upgradePlugins() {
     }
   });
 }
+
+// A session-level advisory lock is the same mutex.
+export async function reindexPlugins() {
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_lock(${LOCK_KEY})`;
+    const rows = await tx.installedPlugin.findMany();
+    for (const row of rows) {
+      await prisma.installedPlugin.update({ where: { id: row.id }, data: { indexedAt: new Date() } });
+    }
+    await tx.$executeRaw`SELECT pg_advisory_unlock(${LOCK_KEY})`;
+  });
+}
+
+// A row lock is no mutex: the outer client's write waits on the row the transaction locked.
+export async function bumpLocked(id: string) {
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "InstalledPlugin" WHERE id = ${id} FOR UPDATE`;
+    await prisma.installedPlugin.update({ where: { id }, data: { indexedAt: new Date() } }); // caught
+  });
+}

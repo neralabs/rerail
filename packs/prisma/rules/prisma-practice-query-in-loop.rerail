@@ -9,7 +9,7 @@
 .scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
 .scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
 .scope exclude "**/seed.*", "**/seed/**", "**/seeds/**", "**/seeders/**", "**/scripts/**", "**/migrations/**"
-.scope exclude "**/prisma/*.ts", "**/prisma/*.mts", "**/prisma/*.js", "**/seed-*", "**/*-seed.*"
+.scope exclude "**/seed-*", "**/*-seed.*"
 // Rerail's own rule, not a port. A Prisma query per item of a list is the n+1 problem Prisma's performance guide
 // names ("looping through query results and performing one additional query per result"): N round trips per
 // request, and under `Promise.all(xs.map(…))` N queries at once, which queue for the connection pool and fail with
@@ -17,8 +17,8 @@
 // Prisma 8's `tx.orm.<schema>.<Model>.<op>(…)` delegates (one member level more) are not matched yet.
 // A query is `<r>.<model>.<op>(…)` (findMany … groupBy, their OrThrow and AndReturn forms) where the receiver r reads
 // as a Prisma client by name: its text contains "prisma" (`prisma`, `ctx.prisma`, `this.prismaService`,
-// `prisma.client`), or it ends in `db`, `tx`, `trx` or `database` (`db`, `ctx.db`, `this.db`). It is reported when
-// it runs once per item of a list and its arguments read the item:
+// `prisma.client`), or it is the identifier or ends in the property `db`, `tx`, `trx`, `database` or `_db` (`db`,
+// `ctx.db`, `this.db`). It is reported when it runs once per item of a list and its arguments read the item:
 //   for (const o of orders) await prisma.item.findMany({ where: { orderId: o.id } })            reported (read)
 //   rows.map((r) => prisma.product.update({ where: { sku: r.sku }, data: { price: r.price } }))   reported (write)
 //   ids.forEach(async (id) => { await db.user.delete({ where: { id } }) })                        reported
@@ -28,7 +28,8 @@
 //   ids.map((id) => prisma.user.findUnique({ where: { id } }))   Prisma's dataloader batches findUnique calls made
 //                                                                 in one tick into one query
 //   for (const chunk of chunks) await prisma.x.createMany({ data: chunk })   createMany per chunk is the batch fix
-//   a loop over a `chunk`/`batch`/`page` list                                each iteration already is a batch
+//   for (const ids of groups) await prisma.x.updateMany({ where: { id: { in: ids } }, … })   the query filters `in`
+//                                                                 on the item: each iteration already is a batch
 //   for (const s of ["a", "b"] as const) …, REGIONS.map(…) with `const REGIONS = [...]`, Object.values(Provider)
 //                                                                 a list fixed in the code ([...spread] is not)
 //   prisma.$transaction(xs.map((x) => prisma.y.update(…)))        the batch the fix asks for
@@ -39,20 +40,54 @@
 //   while / do / for (;;) loops                                               cursor and batch pagination loops
 //   a query in a function nested in the loop body (other than the iteration callbacks above)
 //   stripe.customers.create(…), openai.chat.completions.create(…)            not a Prisma client by name
-//   seed files, scripts, `prisma/*.ts`, migrations (scope), tests and stories
-// Gaps: a client under another name (umami's `client`, `this.repo`) is not seen, nor a client passed in as a
+//   a file that exports nothing and calls its own function at its top level (`main()`, `main().catch(…)`, an IIFE):
+//   a script run on its own; a module that exports a function `up` (the migration API of knex, Kysely, umzug,
+//   TypeORM, MikroORM): a data migration that runs once per database
+//   seed files, scripts, migrations (scope), tests and stories
+// Gaps: a client under another name (`client`, `dbWrite`, `this.repo`) is not seen, nor a client passed in as a
 // parameter of another name; a query in a helper the loop calls (`for (…) await loadUser(id)`); `while`/classic
 // `for` loops over a list (`for (let i = 0; i < xs.length; i++)`); the item read only through a variable derived
 // from it in the loop body (`const key = x.id;` then `where: { id: key }`); a validation loop that returns early on
-// a missing row is left alone; a list small by business rule but read from data, per-row guarded claims
-// (`updateMany({ where: { id, status } })` under a lease) and a write after a per-item external call are reported,
-// hence log mode.
+// a missing row is left alone; a list small by business rule but read from data (an input keyed by a fixed set of
+// categories), a one-off data migration that is an ordinary exported function run from a script, per-row guarded
+// claims (`updateMany({ where: { id, status } })` under a lease) and a write after a per-item external call are
+// reported, hence log mode. `Object.values(X)` counts as a fixed list when X is capitalised (an enum by naming
+// convention), whatever X is.
 
 #include "tsx/eslint-a-common.rerail"
 
 .violation QueryInLoop(at: node, call: symbol, list: symbol, l: number, fix: symbol) "`{call}(…)` runs once per item of `{list}` (the loop at line {l}): N database round trips for N items (the n+1 problem), and when the calls run together under `Promise.all` they queue for the connection pool until requests fail with P2024. {fix} Leave it when the list is small and bounded by the code (a handful of fixed items), or when each iteration must see the previous one's write or must run one at a time on purpose (a job that processes rows singly with its own error handling)."
 QueryInLoop(q, call, lt, l, fix) :- prq_report(q, it), callee(q, m), text(m, call), text(it, lt), line(it, l),
-    prq_query(q, _, op), prq_fix(op, fix).
+    prq_query(q, _, op), prq_fix(op, fix), docof(q, d), !prq_offline_doc(d).
+
+// prq_offline_doc(d): d runs outside the app's request and job paths by its shape. A file that exports nothing and
+// calls a function of its own at its top level (`main()`, `main().catch(…)`, `(async () => …)()`) is a script run on
+// its own; a module exporting a function `up` is a migration (knex, Kysely, umzug, TypeORM and MikroORM migrations
+// export `up`), which runs once per database.
+.decl prq_offline_doc(d: number)
+prq_offline_doc(d) :- prq_doc(d), !prq_exports(d), prq_top_called(d).
+prq_offline_doc(d) :- prq_doc(d), kind(e, "export_statement"), docof(e, d), field(e, "declaration", dc),
+    ((kind(dc, "function_declaration"), field(dc, "name", nm)) ;
+     (kind(dc, "lexical_declaration"), child(dc, v, _), kind(v, "variable_declarator"), field(v, "name", nm))),
+    text(nm, "up").
+.decl prq_doc(d: number)
+prq_doc(d) :- prq_report(q, _), docof(q, d).
+// prq_exports(d): d exports something (`export …`, `module.exports`, `exports.x =`).
+.decl prq_exports(d: number)
+prq_exports(d) :- prq_doc(d), kind(e, "export_statement"), docof(e, d).
+prq_exports(d) :- prq_doc(d), kind(m, "member_expression"), docof(m, d), field(m, "object", o), text(o, x),
+    (x = "module" ; x = "exports"), field(a, "left", l), kind(a, "assignment_expression"), (l = m ; within(m, l)).
+// prq_top_called(d): d calls, at its top level, a function it declares (`function main() {}` or
+// `const main = async () => {}`), or an IIFE.
+.decl prq_top_called(d: number)
+prq_top_called(d) :- prq_doc(d), kind(c, "call_expression"), docof(c, d), field(c, "function", cf), deparen(cf, id),
+    kind(id, "identifier"), ref_site(id, s), prq_fn_site(s), nearest(c, p, fn_scope), kind(p, "program").
+prq_top_called(d) :- prq_doc(d), kind(c, "call_expression"), docof(c, d), field(c, "function", cf), deparen(cf, f),
+    (kind(f, "arrow_function") ; kind(f, "function_expression")), nearest(c, p, fn_scope), kind(p, "program").
+.decl prq_fn_site(s: node)
+prq_fn_site(s) :- kind(s, "function_declaration").
+prq_fn_site(s) :- kind(s, "variable_declarator"), field(s, "value", v), deparen(v, f),
+    (kind(f, "arrow_function") ; kind(f, "function_expression")).
 
 // prq_report(q, it): query q runs once per item of list it and reads the item; the innermost such loop wins.
 .decl prq_report(q: node, it: node)
@@ -60,7 +95,13 @@ prq_report(q, it) :- prq_hit(q, it, _), !prq_inner(q, it).
 .decl prq_hit(q: node, it: node, b: node)
 prq_hit(q, it, b) :- prq_loop(it, b, l, how), prq_query(q, _, op), (q = b ; within_stop(q, b, prq_fn)),
     prq_reads(q, l), !prq_batched(op, how), !prq_fixed_list(it), !prq_per_group(q, op), !prq_exits(b),
-    !prq_guarded(q, b).
+    !prq_guarded(q, b), !prq_item_list(q, l).
+// prq_item_list(q, l): q filters `in` on the item (`where: { id: { in: chunk } }`, `{ in: ids.map(…) }`): each
+// iteration already loads or writes a group of rows in one query (a chunk, or the ids grouped under one key).
+.decl prq_item_list(q: node, l: node)
+prq_item_list(q, l) :- prq_loop(_, _, l, _), prq_bound(l, x), prq_query(q, _, _), field(q, "arguments", al),
+    within(p, al), kind(p, "pair"), field(p, "key", k), text(k, "in"), field(p, "value", v), (i = v ; within(i, v)),
+    kind(i, "identifier"), text(i, x).
 // prq_per_group(q, op): a top-N or newest-row query per item (`findMany({ take })`, `findFirst({ orderBy })`): one
 // `in` query does not express a limit or an order per key.
 .decl prq_per_group(q: node, op: symbol)
@@ -112,19 +153,137 @@ prq_tx_batch(k) :- kind(t, "call_expression"), callee(t, m), kind(m, "member_exp
 prq_iter("map"). prq_iter("forEach"). prq_iter("flatMap"). prq_iter("reduce"). prq_iter("filter").
 prq_iter("some"). prq_iter("every"). prq_iter("find").
 
-// prq_query(q, r, op): call q is `<r>.<model>.<op>(…)` and r reads as a Prisma client.
+// prq_query(q, r, op): call q is `<r>.<model>.<op>(…)` and r is a Prisma client (pcg_client).
 .decl prq_query(q: node, r: node, op: symbol)
-prq_query(q, r, op) :- kind(q, "call_expression"), callee(q, m), kind(m, "member_expression"), field(m, "property", p),
+prq_query(q, r, op) :- prq_shape(q, r, op), pcg_client(r).
+.decl prq_shape(q: node, r: node, op: symbol)
+prq_shape(q, r, op) :- kind(q, "call_expression"), callee(q, m), kind(m, "member_expression"), field(m, "property", p),
     text(p, op), prq_op(op), field(m, "object", mo0), deparen(mo0, mo), kind(mo, "member_expression"),
     field(mo, "property", mp), kind(mp, "property_identifier"), text(mp, model), !prefix("$", model),
-    field(mo, "object", r0), deparen(r0, r), prq_client(r).
-.decl prq_client(r: node)
-prq_client(r) :- (kind(r, "identifier") ; kind(r, "member_expression")), text(r, t), icontains("prisma", t).
-prq_client(r) :- kind(r, "identifier"), text(r, x), prq_client_name(x).
-prq_client(r) :- kind(r, "member_expression"), field(r, "property", p), text(p, x), prq_client_name(x).
-.decl prq_client_name(x: symbol)
-prq_client_name("db"). prq_client_name("tx"). prq_client_name("trx"). prq_client_name("database").
-prq_client_name("_db"). prq_client_name("prismaTx").
+    field(mo, "object", r0), deparen(r0, r).
+.decl pcg_ask(r: node)
+pcg_ask(r) :- prq_shape(_, r, _).
+// ---- the Prisma client gate (the same block in each rule of the pack that matches `<r>.<model>.<op>(…)`) ----------
+// pcg_client(r): receiver r (pcg_ask) is a Prisma client. Resolved Prisma: r's root name is the parameter of a
+// `$transaction` callback; a parameter, variable or class member typed with a Prisma client type (`PrismaClient`,
+// `Prisma.TransactionClient`, `PrismaService`); a variable whose value makes or extends one (`new PrismaClient(…)`,
+// `prisma.$extends(…)`); or an import from a Prisma module: `@prisma/client`, a generated client, a specifier with a
+// path part naming prisma (`@/lib/prisma`, `@acme/prisma`), or a file of the run that makes a PrismaClient. Resolved
+// otherwise: an import from Drizzle, Kysely, Knex, TypeORM, Sequelize, Mongoose, Objection or MikroORM, a file of the
+// run that imports one, or a variable made by one (`drizzle(…)`, `new Kysely(…)`): never Prisma. Not resolved (`ctx.db`
+// of a tRPC context, an import from a file the run reads in another lane): accepted only under the client names of
+// pcg_named, and only when a package.json of the repository lists Prisma and the file's package and the root list
+// no other ORM.
+.decl pcg_root(r: node, o: node)
+pcg_root(r, x) :- pcg_ask(r), deparen(r, x).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "non_null_expression"), child(e, o0, 0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "call_expression"), field(e, "function", o0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "await_expression"), child(e, o0, 0), deparen(o0, o).
+// pcg_base(r, o): o is the identifier or `this` r's chain starts from.
+.decl pcg_base(r: node, o: node)
+pcg_base(r, o) :- pcg_root(r, o), (kind(o, "identifier") ; kind(o, "this")).
+.decl pcg_prisma(r: node)
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_prisma_site(s).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _),
+    pcg_prisma_spec(src).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _), docof(o, d),
+    pcg_target(d, src, dt), pcg_prisma_mod(dt).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "this"), pcg_this_prop(r, o, x), kind(cb, "class_body"), within(o, cb),
+    within(s, cb), pcg_member_named(s, x), pcg_prisma_site(s).
+.decl pcg_other(r: node)
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_other_site(s).
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _),
+    pcg_other_spec(src).
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _), docof(o, d),
+    pcg_target(d, src, dt), pcg_other_mod(dt).
+.decl pcg_client(r: node)
+pcg_client(r) :- pcg_prisma(r), !pcg_other(r).
+pcg_client(r) :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), pcg_named(r), docof(r, d), pcg_prisma_repo(d).
+// pcg_this_prop(r, o, x): r's chain reads `this.x` (o the `this`).
+.decl pcg_this_prop(r: node, o: node, x: symbol)
+pcg_this_prop(r, o, x) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o),
+    kind(o, "this"), field(e, "property", p), text(p, x).
+// pcg_member_named(s, x): s declares class member x: a field `x = …` / `x: T`, or a constructor parameter property
+// `private x: T`.
+.decl pcg_member_named(s: node, x: symbol)
+pcg_member_named(s, x) :- kind(s, "public_field_definition"), field(s, "name", n), text(n, x).
+pcg_member_named(s, x) :- kind(p, "required_parameter"), child(p, m, _), kind(m, "accessibility_modifier"),
+    field(p, "pattern", s), text(s, x).
+pcg_member_named(s, x) :- kind(p, "required_parameter"), child(p, m, _), kind(m, "readonly"),
+    field(p, "pattern", s), text(s, x).
+// pcg_prisma_site(s): the binding or member at s is a Prisma client by its type or its value, or is the parameter of
+// a `$transaction` callback.
+.decl pcg_prisma_site(s: node)
+pcg_prisma_site(s) :- pcg_site_type(s, t), match("(?s).*(?:PrismaClient|TransactionClient|PrismaService|PrismaTx).*", t).
+pcg_prisma_site(s) :- pcg_site_value(s, v), text(v, t), (contains("PrismaClient", t) ; contains("$extends", t)).
+pcg_prisma_site(s) :- kind(t, "call_expression"), callee(t, m), static_prop(m, _, "$transaction"), call_arg(t, a, 0),
+    deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")),
+    (field(f, "parameter", s) ; field(f, "parameters", ps), within(s, ps)).
+.decl pcg_other_site(s: node)
+// The parameter of a callback given to `<x>.transaction(…)`, without Prisma's `$`: Drizzle's, Knex's, TypeORM's and
+// Sequelize's transactions.
+pcg_other_site(s) :- kind(t, "call_expression"), callee(t, m), static_prop(m, _, "transaction"), call_arg(t, a, 0),
+    deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")),
+    (field(f, "parameter", s) ; field(f, "parameters", ps), within(s, ps)).
+pcg_other_site(s) :- pcg_site_value(s, v), text(v, t),
+    match("(?s)\\s*(?:await\\s+)?(?:drizzle|knex|Knex)\\s*\\(.*|.*\\bnew\\s+(?:Kysely|Sequelize|DataSource|MikroORM)\\b.*", t).
+pcg_other_site(s) :- pcg_site_type(s, t), !contains("Prisma", t),
+    match("(?s).*\\b(?:\\w+Database|Kysely|Knex|DataSource|EntityManager|Repository|Sequelize|MikroORM)\\b.*", t).
+// pcg_site_type(s, t): the annotation text of a parameter, variable or class field at s.
+.decl pcg_site_type(s: node, t: symbol)
+pcg_site_type(s, t) :- field(p, "pattern", s), field(p, "type", a), text(a, t).
+pcg_site_type(s, t) :- (kind(s, "variable_declarator") ; kind(s, "public_field_definition")), field(s, "type", a),
+    text(a, t).
+.decl pcg_site_value(s: node, v: node)
+pcg_site_value(s, v) :- (kind(s, "variable_declarator") ; kind(s, "public_field_definition")), field(s, "value", v).
+// pcg_prisma_spec(s), pcg_other_spec(s): an import specifier of a Prisma module, of another ORM.
+.decl pcg_prisma_spec(s: symbol)
+pcg_prisma_spec(s) :- import_binding(_, _, s, _), match("(?i)(?:.*/)?[^/]*prisma[^/]*(?:/.*)?", s).
+.decl pcg_other_spec(s: symbol)
+pcg_other_spec(s) :- import_binding(_, _, s, _),
+    match("(?:drizzle-orm|kysely|knex|typeorm|sequelize|sequelize-typescript|mongoose|objection|@mikro-orm/[^/]+)(?:/.*)?", s).
+// pcg_prisma_mod(d), pcg_other_mod(d): file d makes a PrismaClient or imports a Prisma module; imports another ORM.
+.decl pcg_prisma_mod(d: number)
+pcg_prisma_mod(d) :- kind(n, "new_expression"), field(n, "constructor", c), text(c, "PrismaClient"), docof(n, d).
+pcg_prisma_mod(d) :- import_binding(sp, _, s, _), pcg_prisma_spec(s), docof(sp, d).
+.decl pcg_other_mod(d: number)
+pcg_other_mod(d) :- import_binding(sp, _, s, _), pcg_other_spec(s), docof(sp, d).
+// pcg_target(d, s, d2): specifier s imported by d names file d2 of the run: relative to d, or `@/x`, `~/x`, `#/x`
+// matched by the path's end (tsconfig `paths` are not read), or `@scope/pkg/x` as /pkg/x or /pkg/src/x.
+.decl pcg_spec(d: number, s: symbol)
+pcg_spec(d, s) :- pcg_base(_, o), ref_site(o, sp), import_binding(sp, _, s, _), docof(o, d).
+.decl pcg_target(d: number, s: symbol, d2: number)
+pcg_target(d, s, d2) :- pcg_spec(d, s), prefix(".", s), doc(d, p, _), b = @join(@dir(p), s), pcg_ext(e),
+    doc(d2, cat(b, e), _).
+pcg_target(d, s, d2) :- pcg_spec(d, s), match("[@~#]/(?<r>.+)", s), pcg_ext(e), t = cat("/", r, e), doc(d2, f, _),
+    (suffix(t, f) ; f = cat(r, e)).
+pcg_target(d, s, d2) :- pcg_spec(d, s), match("@[^/]+/(?<k>[^/]+)/(?<r>.+)", s), pcg_ext(e), doc(d2, f, _),
+    (suffix(cat("/", k, "/", r, e), f) ; suffix(cat("/", k, "/src/", r, e), f)).
+.decl pcg_ext(e: symbol)
+pcg_ext(".ts"). pcg_ext(".tsx"). pcg_ext(".js"). pcg_ext(".jsx"). pcg_ext(".mts"). pcg_ext(".mjs").
+pcg_ext("/index.ts"). pcg_ext("/index.tsx"). pcg_ext("/index.js").
+// pcg_prisma_repo(d): a package.json of the repository lists Prisma, and neither d's package nor the root lists
+// another ORM.
+.decl pcg_prisma_repo(d: number)
+pcg_prisma_repo(d) :- pcg_ask(r), docof(r, d), pcg_lists_prisma(1), !pcg_orm_doc(d).
+.decl pcg_lists_prisma(k: number)
+pcg_lists_prisma(1) :- package_field(_, k, _),
+    (k = "dependencies/@prisma~1client" ; k = "devDependencies/@prisma~1client" ; k = "dependencies/prisma" ;
+     k = "devDependencies/prisma").
+.decl pcg_orm_doc(d: number)
+pcg_orm_doc(d) :- pcg_ask(r), docof(r, d), doc(d, p, _), package_for(p, dir), (pcg_orm_pkg(dir) ; pcg_orm_pkg("")).
+.decl pcg_orm_pkg(dir: symbol)
+pcg_orm_pkg(dir) :- package_field(dir, k, _),
+    match("(?:dev)?[dD]ependencies/(?:drizzle-orm|kysely|knex|typeorm|sequelize|mongoose|objection|@mikro-orm~1core)", k).
+// pcg_named(r): the client names an unresolved receiver must have: its text contains "prisma" (`ctx.prisma`,
+// `this.prismaService`), or it is, or ends in the property, `db`, `tx`, `trx`, `database` or `_db` (`ctx.db`).
+.decl pcg_named(r: node)
+pcg_named(r) :- pcg_ask(r), (kind(r, "identifier") ; kind(r, "member_expression")), text(r, t), icontains("prisma", t).
+pcg_named(r) :- pcg_ask(r), kind(r, "identifier"), text(r, x), pcg_name(x).
+pcg_named(r) :- pcg_ask(r), kind(r, "member_expression"), field(r, "property", p), text(p, x), pcg_name(x).
+.decl pcg_name(x: symbol)
+pcg_name("db"). pcg_name("tx"). pcg_name("trx"). pcg_name("database"). pcg_name("_db").
 .decl prq_op(op: symbol)
 prq_op("findUnique"). prq_op("findUniqueOrThrow"). prq_op("findFirst"). prq_op("findFirstOrThrow").
 prq_op("findMany"). prq_op("create"). prq_op("createMany"). prq_op("createManyAndReturn"). prq_op("update").
@@ -148,8 +307,8 @@ prq_type_part(i, l) :- prq_loop(_, _, l, _), within(i, t), within(t, l), kind(t,
 prq_batched(op, how) :- (op = "createMany" ; op = "createManyAndReturn"), (how = "for" ; how = "callback").
 prq_batched("findUnique", "callback").
 prq_batched("findUniqueOrThrow", "callback").
-// prq_fixed_list(it): the list is written in the code (`["a", "b"]`, also `as const`, and a const bound to one),
-// is the values of an enum-like object (`Object.values(Provider)`, capitalised), or names batches (`chunks`).
+// prq_fixed_list(it): the list is written in the code (`["a", "b"]`, also `as const`, and a const bound to one), or
+// is the values of an enum-like object (`Object.values(Provider)`, capitalised).
 .decl prq_fixed_list(it: node)
 prq_fixed_list(it) :- prq_loop(it, _, _, _), prq_fixed_value(it).
 // A const bound to a non-empty array literal that nothing pushes to (`const out = []; out.push(…)` is data).
@@ -160,7 +319,6 @@ prq_fixed_list(it) :- prq_loop(it, _, _, _), kind(it, "identifier"), ref_site(it
 prq_grown(s) :- prq_loop(it, _, _, _), ref_site(it, s), kind(k, "call_expression"), callee(k, m),
     kind(m, "member_expression"), field(m, "property", p), text(p, x), (x = "push" ; x = "unshift" ; x = "splice"),
     field(m, "object", o), kind(o, "identifier"), ref_site(o, s).
-prq_fixed_list(it) :- prq_loop(it, _, _, _), text(it, t), match("(?i).*(chunk|batch|page).*", t).
 .decl prq_fixed_value(v: node)
 prq_fixed_value(v) :- prq_unwrap(v, a), kind(a, "array"), !prq_spread(a).
 prq_fixed_value(v) :- prq_unwrap(v, c), kind(c, "call_expression"), callee(c, m), text(m, mt),
@@ -200,6 +358,14 @@ prq_fix(op, "Write them in one query when every item gets the same change (`upda
     .fixture "src/lib/billing/stripe-sync.ts" from "../cases/prisma-practice-query-in-loop/src/lib/billing/stripe-sync.ts"
     .fixture "prisma/seed.ts" from "../cases/prisma-practice-query-in-loop/prisma/seed.ts"
     .fixture "src/app/orders/__tests__/actions.test.ts" from "../cases/prisma-practice-query-in-loop/src/app/orders/__tests__/actions.test.ts"
+    .fixture "src/queries/prisma/website.ts" from "../cases/prisma-practice-query-in-loop/src/queries/prisma/website.ts"
+    .fixture "prisma/assign-default-plan.ts" from "../cases/prisma-practice-query-in-loop/prisma/assign-default-plan.ts"
+    .fixture "src/db/code-migrations/3-split-names.ts" from "../cases/prisma-practice-query-in-loop/src/db/code-migrations/3-split-names.ts"
+    .fixture "src/server/jobs/nightly.ts" from "../cases/prisma-practice-query-in-loop/src/server/jobs/nightly.ts"
+    .fixture "src/db/drizzle.ts" from "../cases/prisma-practice-query-in-loop/src/db/drizzle.ts"
+    .fixture "src/db/sequelize.ts" from "../cases/prisma-practice-query-in-loop/src/db/sequelize.ts"
+    .fixture "src/server/reports/drizzle-sync.ts" from "../cases/prisma-practice-query-in-loop/src/server/reports/drizzle-sync.ts"
+    .fixture "src/server/reports/legacy-sync.ts" from "../cases/prisma-practice-query-in-loop/src/server/reports/legacy-sync.ts"
     .expect _ at "src/app/orders/actions.ts":7
     .expect _ at "src/app/orders/actions.ts":13
     .expect _ at "src/app/orders/actions.ts":24
@@ -211,4 +377,8 @@ prq_fix(op, "Write them in one query when every item gets the same change (`upda
     .expect _ at "src/server/catalog/sync.ts":57
     .expect _ at "src/server/catalog/sync.ts":63
     .expect _ at "src/server/catalog/sync.ts":68
+    .expect _ at "src/queries/prisma/website.ts":6
+    .expect _ at "src/queries/prisma/website.ts":12
+    .expect _ at "src/queries/prisma/website.ts":33
+    .expect _ at "src/server/jobs/nightly.ts":7
 .end

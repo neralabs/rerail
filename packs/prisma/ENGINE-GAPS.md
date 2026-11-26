@@ -6,6 +6,8 @@ around it. Two engine branches made since close some of them, without a rerun of
 branch (`409baf3a61`: a dialect's run reads the other dialects' files of its language as text documents, path and
 lines with no syntax tree) and the engine-tsconfig branch (`27c35a7edb`: the runner makes `tsconfig`, `tsconfig_for`,
 `tsconfig_path` and `package_export`, and an ECMAScript document's module is its path). The last column says which.
+Only raw-unsafe-interpolation and query-in-loop ship; the other rules named here are candidates
+(`candidates/rules/`).
 
 | # | Gap | Rules affected | Closed by |
 |---|---|---|---|
@@ -26,7 +28,9 @@ lines with no syntax tree) and the engine-tsconfig branch (`27c35a7edb`: the run
 | 15 | The content store's hard limit stops a run on a large repository | raw-unsafe-interpolation (zoonk/zoonk) | open |
 | 16 | `deparen` yields two nodes for one pair value; `field(p, "operator", o)` gives nothing | find-first-without-order-by (dropped) | open |
 | 17 | Planner: "no statistics for <relation>.c0" on a demand relation | global-client-in-transaction, side-effect-in-transaction | open |
-| 18 | Syntax guide: `match` is a whole-string match; aggregate bodies share outer variables | raw-unsafe-interpolation | documentation |
+| 18 | Syntax guide: `match` is a whole-string match; aggregate bodies share outer variables; `package_field` keys are JSON pointers | raw-unsafe-interpolation, sensitive-fields-to-client | documentation |
+| 19 | A variable bound by a `match` named group cannot be used inside an aggregate body | dev-migration-in-deploy | open |
+| 20 | Memory on large repositories: the whole pack did not finish on three large monorepos of the test set | every rule (the pack run together) | open |
 
 ---
 
@@ -222,6 +226,11 @@ of the same text, one of kind `object` and one not. Probably the two `deparen` d
 `tsx/eslint-a-common.rerail`) disagree. The rule keyed its check on the key instead (`fff_object_key`). Separately,
 `field(p, "operator", o)` gives nothing for `unary_expression`/`binary_expression`; the builtin `op(p, "!")` works.
 
+sensitive-fields-to-client met what is most likely the same disagreement (not traced further): including
+`tsx/eslint-a-common.rerail` (for `static_prop` and `callee`, which the Prisma client gate wanted) added findings on
+queries whose argument has a `select`. The rule includes only `tsx/modules.rerail` and writes its few member tests
+itself (`pcg_tx_call`).
+
 ## 17. "no statistics for <relation>.c0"
 
 A demand relation the planner makes can lack statistics: `file_line(f, 1, _)` over candidate tsconfig paths derived
@@ -236,3 +245,27 @@ rules moved to walks from the root (gap 4).
 - A variable used inside a `join … : { … }` aggregate body and outside it is shared, not local to the aggregate
   (Soufflé semantics): `pre = join x by k : { child(t, f, k), … }, child(t, f, i - 1)` silently restricts the
   aggregate to one row. Rename the inner variable.
+- `package_field(dir, key, v)` keys are JSON pointers: a scoped dependency `@acme/db` is the key
+  `dependencies/@acme~1db` (`/` is `~1`, `~` is `~0`). sensitive-fields-to-client unescapes them (`sfc_dep`).
+
+## 19. A `match` named group inside an aggregate
+
+`dmid_guarded` wanted the closing `fi` at the `if`'s own indentation: `match("(?<ind>[ \\t]*)if\\b.*", tj), count : {
+file_line(p, k, tk), k > j, k < i, prefix(cat(ind, "fi"), tk) } = 0` fails with "unplaced literals
+[\"@prefix($tk, @concat($ind, …)) = 1\"] in rr_agg23($i, $j, $p)": `ind` is not carried into the aggregate. Binding
+the indentation in a relation of its own (`dmid_indent(p, k, ind, w)`) and joining on it inside the aggregate works.
+
+## 20. Memory on large repositories
+
+Found on the frozen test set (2026-11-26): one `run-policies` of the whole pack per app, its 11 rules then on, on a
+profiling build of the engine (`628c1f905f`) on a remote workspace. Three apps gave no result for memory:
+
+- lobehub/lobe-chat: an earlier attempt was OOM-killed together with the shared 12 GiB pod; the rerun skipped it as
+  too large for the workspace.
+- dittofeed/dittofeed: the run OOM-killed the pod; the rerun skipped it as too large for the workspace.
+- webstudio-is/webstudio: stopped (exit 137) when the engine passed 7 GB, after 449 s.
+
+The held-out teableio/teable rerun after the generalization round stopped the same way (past 7 GB after 332 s), where
+the run before the round had finished. The finished apps took up to 544 s (AmruthPillai/Reactive-Resume). Which rule or
+relation holds the memory was not traced: the runs measured the pack together, not each rule. A fourth app,
+polarsource/polar, gave no result for another reason: its result store was deleted by a duplicate queue run.

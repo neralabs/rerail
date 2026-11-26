@@ -36,19 +36,27 @@
 //   or mapped to a DTO first (`toPublicUser(user)`, `users.map(...)`, `{ id: user.id }`)   not reported
 //   a prop of a server component, or of a component defined in the same file         not reported
 //   protectedProcedure.output(UserOut).query(...): tRPC strips what UserOut does not name   not reported
-//   a display copy (`displaySecretKey`, `maskedToken`, `tokenHint`, `keyPrefix`), a token or secret column with a
-//   short literal default (`token String @default("usdt")`), a model of a schema under examples/, templates/,
-//   docs/ or samples/                                                                 not secret, not read
+//   a display copy (`displaySecretKey`, `maskedToken`, `tokenHint`, `keyPrefix`, `token_last4`: the word at a
+//   camelCase or snake_case boundary), a token or secret column with a literal default (`token String
+//   @default("usdt")` names a currency, not a credential: a credential differs per row)   not secret, not read
+//   a model of a schema that belongs to another app of the monorepo                   not read (below)
+// Which schemas a query reads: the schemas of its own package (the nearest package.json), and of the workspace
+// packages its package.json depends on; a query whose package reaches no schema that way reads the schemas of the
+// root package and of the packages some workspace package depends on, not those of another app nobody depends on
+// (an example app with a `User` model of its own).
 // Gaps: a row passed through more than one local (`const result = { user }; return result`), a destructured
 // Promise.all, helpers that return a row to an action in another file, NestJS controllers, tRPC handlers kept in
-// their own files (cal.diy), barrel re-exports of a client component, a global omit held in a variable, `$extends`
+// their own files, barrel re-exports of a client component, a global omit held in a variable, `$extends`
 // result fields. A client component in another package of a monorepo is matched by path suffix, not by its
 // package.json. The engine runs .ts, .tsx and .js files apart (the schema, read as text, is seen by all): a .tsx
 // page and a .jsx client component do not meet, nor a .tsx query and a global omit in a .ts file. Models are joined by
-// name across the schemas read, so two app schemas that both declare `User` merge their columns. A JSON reply to
-// another server (a webhook subscription) is reported like one to a browser. Prisma 8 (release candidate,
-// `tx.orm.public.User.findMany`) is not matched yet; its rows also carry every column, so a later revision should add
-// its accessor shape.
+// name across the schemas a query reads. A JSON reply to another server (a webhook subscription) is reported like
+// one to a browser, and so is a row returned to its own owner by design (a settings page showing the user's own
+// record). Secret column names are the list above: a credential under another name (`credentials Json`, a bare
+// `key`, `otp`, `pin`) is missed. Prisma 8 (release candidate, `tx.orm.public.User.findMany`) is not matched yet;
+// its rows also carry every column, so a later revision should add its accessor shape.
+
+#include "tsx/modules.rerail"   // deparen; tsx/names: ref_site, import_binding
 
 .violation SensitiveFieldsToClient(at: node, op: symbol, model: symbol, fields: symbol, sink: symbol)
     "This {model}.{op}() returns whole rows with secret columns ({fields}), and its result is sent to the browser ({sink}), where anyone with the page can read them in devtools, caches and logs. Pick the columns the client needs with `select: {{ ... }}`, or drop the secret ones with `omit: {{ <column>: true }}` (Prisma 6.2+, or the omitApi preview feature from 5.13; nested under `include: {{ <relation>: {{ omit: ... }} }}` for a related row), or omit them for every query with `new PrismaClient({{ omit: {{ <model>: {{ <column>: true }} }} }})`. If the client really must receive one of them (a new API key shown once to its owner), select it explicitly so the intent is visible."
@@ -57,11 +65,9 @@ SensitiveFieldsToClient(c, op, acc, fs, sink) :- sfc_sent(c, _), k = min k0 : { 
 
 // ---- the schema: models, their secret columns and relations (schema.prisma read as text) ----
 // library candidate: pr_schema_model / pr_schema_field
-// sfc_line(d, l, t): line l of a schema. Schemas of examples, templates, docs and samples are left out: their models
-// share names with the app's (`User`) but not its columns, and models are joined by name.
+// sfc_line(d, l, t): line l of a schema.
 .decl sfc_line(d: number, l: number, t: symbol)
-sfc_line(d, l, t) :- doc(d, p, _), suffix(".prisma", p),
-    !match("(.*/)?(examples?|templates?|fixtures|docs|samples?|starters?)/.*", p), split_line(d, l, t).
+sfc_line(d, l, t) :- doc(d, p, _), suffix(".prisma", p), split_line(d, l, t).
 // sfc_open(d, l, kw, m): line l opens a block `model User {` (also view, type, enum, generator, datasource).
 .decl sfc_open(d: number, l: number, kw: symbol, m: symbol)
 sfc_open(d, l, kw, m) :- sfc_line(d, l, t),
@@ -80,18 +86,58 @@ sfc_field(m, f, ty) :- sfc_field_at(_, _, m, f, ty).
 // sfc_model(acc, m): the client's accessor for model m: `User` is `prisma.user`, `APIKey` is `prisma.aPIKey`.
 .decl sfc_model(acc: symbol, m: symbol)
 sfc_model(cat(@lower(substr(m, 0, 1)), substr(m, 1, strlen(m) - 1)), m) :- sfc_open(_, _, kw, m), (kw = "model" ; kw = "view").
-// sfc_secret(m, f): a String or Bytes column of m whose name says it is a credential. Not one whose name says it is
-// a display copy (`displaySecretKey`, `maskedToken`, `tokenHint`, `keyPrefix`), nor a token or secret column with a
-// short literal default (`token String @default("usdt")` names a currency, not a credential).
-.decl sfc_secret(m: symbol, f: symbol)
-sfc_secret(m, f) :- sfc_field(m, f, ty), (ty = "String" ; ty = "Bytes"), sfc_secret_name(f), !sfc_literal_default(m, f).
+// sfc_secret(d, m, f): a String or Bytes column of m in schema d whose name says it is a credential. Not one whose
+// name says it is a display copy (`displaySecretKey`, `maskedToken`, `tokenHint`, `keyPrefix`), nor a column with
+// a literal default (`token String @default("usdt")` names a currency: a credential is not one value shared by rows).
+.decl sfc_secret(d: number, m: symbol, f: symbol)
+sfc_secret(d, m, f) :- sfc_field_at(d, l, m, f, ty), (ty = "String" ; ty = "Bytes"), sfc_secret_name(f),
+    !sfc_literal_default(d, l).
 .decl sfc_secret_name(f: symbol)
 sfc_secret_name(f) :- sfc_field(_, f, _), n = @lower(@replace_all(f, "_", "")),
     match("(.*password.*|.*salt|.*secret|.*secretkey|.*token|.*apikey|.*privatekey|.*(backup|recovery)codes?|.*(key|token|secret)hash|hashed(api)?(key|token|secret).*)", n),
-    !match(".*(display|masked|partial|preview|hint|last4|prefix|redacted).*", n).
-.decl sfc_literal_default(m: symbol, f: symbol)
-sfc_literal_default(m, f) :- sfc_field_at(d, l, m, f, _), n = @lower(f), !contains("password", n), sfc_line(d, l, t),
-    match(".*@default\\(\\s*\"[^\"]{1,24}\"\\s*\\).*", t).
+    !sfc_display_name(f).
+// sfc_display_name(f): f has a display word at a camelCase or snake_case boundary: `displaySecretKey`,
+// `maskedToken`, `partial_token`, `tokenHint`, `keyPrefix`, `cardLast4`, `redactedSecret`; not `prefixedSecret`.
+.decl sfc_display_name(f: symbol)
+sfc_display_name(f) :- sfc_field(_, f, _),
+    match("(?:(?:.*_)?(?:display|masked|partial|hint|last4|prefix|redacted)|(?:.*[a-z0-9])?(?:Display|Masked|Partial|Hint|Last4|Prefix|Redacted))(?:[A-Z0-9_].*)?", f).
+.decl sfc_literal_default(d: number, l: number)
+sfc_literal_default(d, l) :- sfc_field_at(d, l, _, f, _), n = @lower(f), !contains("password", n), sfc_line(d, l, t),
+    match(".*@default\\(\\s*\"[^\"]+\"\\s*\\).*", t).
+
+// ---- which schemas a query reads ----
+// sfc_reads(dq, ds): a query in file dq reads schema ds: one of its own package, or of a workspace package its
+// package.json depends on; with neither, one of the root package or of a package some workspace package depends on.
+.decl sfc_reads(dq: number, ds: number)
+sfc_reads(dq, ds) :- sfc_reach(dq, ds).
+sfc_reads(dq, ds) :- sfc_query_doc(dq, _), !sfc_reaches(dq), sfc_schema_pkg(ds, ""), sfc_schema_doc(ds).
+sfc_reads(dq, ds) :- sfc_query_doc(dq, _), !sfc_reaches(dq), sfc_schema_pkg(ds, dir), sfc_pkg_name(dir, n),
+    sfc_any_dep(n).
+.decl sfc_reach(dq: number, ds: number)
+sfc_reach(dq, ds) :- sfc_query_doc(dq, dir), sfc_schema_pkg(ds, dir).
+sfc_reach(dq, ds) :- sfc_query_doc(dq, dir), sfc_dep(dir, n), sfc_pkg_name(dir2, n), sfc_schema_pkg(ds, dir2).
+.decl sfc_reaches(dq: number)
+sfc_reaches(dq) :- sfc_reach(dq, _).
+.decl sfc_schema_doc(ds: number)
+sfc_schema_doc(ds) :- doc(ds, p, _), suffix(".prisma", p).
+// sfc_schema_pkg(ds, dir), sfc_query_doc(dq, dir): the package (directory of the nearest package.json, "" at the
+// root) of a schema, of a file with a query.
+.decl sfc_schema_pkg(ds: number, dir: symbol)
+sfc_schema_pkg(ds, dir) :- sfc_schema_doc(ds), doc(ds, p, _), package_for(p, dir).
+.decl sfc_query_doc(dq: number, dir: symbol)
+sfc_query_doc(dq, dir) :- sfc_query(c, _, _), docof(c, dq), doc(dq, p, _), package_for(p, dir).
+.decl sfc_pkg_name(dir: symbol, n: symbol)
+sfc_pkg_name(dir, n) :- sfc_schema_pkg(_, dir), package_field(dir, "name", n).
+// sfc_dep(dir, n): the package.json in dir lists n in dependencies, devDependencies or peerDependencies. The key is a
+// JSON pointer, so `@acme/db` comes as `dependencies/@acme~1db`.
+.decl sfc_dep(dir: symbol, n: symbol)
+sfc_dep(dir, @replace_all(@replace_all(r, "~1", "/"), "~0", "~")) :- package_field(dir, k, _), sfc_dep_key(k, r).
+.decl sfc_any_dep(n: symbol)
+sfc_any_dep(n) :- sfc_dep(_, n).
+.decl sfc_dep_key(k: symbol, r: symbol)
+sfc_dep_key(k, substr(k, 13, strlen(k) - 13)) :- package_field(_, k, _), prefix("dependencies/", k).
+sfc_dep_key(k, substr(k, 16, strlen(k) - 16)) :- package_field(_, k, _), prefix("devDependencies/", k).
+sfc_dep_key(k, substr(k, 17, strlen(k) - 17)) :- package_field(_, k, _), prefix("peerDependencies/", k).
 // sfc_rel(m, f, m2): field f of m is a relation to model m2 (`author User @relation(...)`, `posts Post[]`).
 .decl sfc_rel(m: symbol, f: symbol, m2: symbol)
 sfc_rel(m, f, m2) :- sfc_field(m, f, m2), sfc_model(_, m2).
@@ -105,11 +151,140 @@ sfc_row_op("createManyAndReturn"). sfc_row_op("updateManyAndReturn").
 // sfc_query(c, acc, op): c is `<receiver>.<acc>.<op>(...)` on a schema model; Drizzle's `db.query.users.findMany()`
 // is left out.
 .decl sfc_query(c: node, acc: symbol, op: symbol)
-sfc_query(c, acc, op) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
+sfc_query(c, acc, op) :- sfc_shape_call(c, acc, op, r), pcg_client(r).
+.decl sfc_shape_call(c: node, acc: symbol, op: symbol, r: node)
+sfc_shape_call(c, acc, op, r) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
     field(fn, "property", p), text(p, op), sfc_row_op(op), field(fn, "object", mo), kind(mo, "member_expression"),
-    field(mo, "property", mp), text(mp, acc), sfc_model(acc, _), field(mo, "object", r), !sfc_drizzle(r).
-.decl sfc_drizzle(r: node)
-sfc_drizzle(r) :- kind(r, "member_expression"), field(r, "property", p), text(p, "query").
+    field(mo, "property", mp), text(mp, acc), sfc_model(acc, _), field(mo, "object", r).
+.decl pcg_ask(r: node)
+pcg_ask(r) :- sfc_shape_call(_, _, _, r).
+// ---- the Prisma client gate (the same block in each rule of the pack that matches `<r>.<model>.<op>(…)`) ----------
+// pcg_client(r): receiver r (pcg_ask) is a Prisma client. Resolved Prisma: r's root name is the parameter of a
+// `$transaction` callback; a parameter, variable or class member typed with a Prisma client type (`PrismaClient`,
+// `Prisma.TransactionClient`, `PrismaService`); a variable whose value makes or extends one (`new PrismaClient(…)`,
+// `prisma.$extends(…)`); or an import from a Prisma module: `@prisma/client`, a generated client, a specifier with a
+// path part naming prisma (`@/lib/prisma`, `@acme/prisma`), or a file of the run that makes a PrismaClient. Resolved
+// otherwise: an import from Drizzle, Kysely, Knex, TypeORM, Sequelize, Mongoose, Objection or MikroORM, a file of the
+// run that imports one, or a variable made by one (`drizzle(…)`, `new Kysely(…)`): never Prisma. Not resolved (`ctx.db`
+// of a tRPC context, an import from a file the run reads in another lane): accepted only under the client names of
+// pcg_named, and only when a package.json of the repository lists Prisma and the file's package and the root list
+// no other ORM.
+.decl pcg_root(r: node, o: node)
+pcg_root(r, x) :- pcg_ask(r), deparen(r, x).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "non_null_expression"), child(e, o0, 0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "call_expression"), field(e, "function", o0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "await_expression"), child(e, o0, 0), deparen(o0, o).
+// pcg_base(r, o): o is the identifier or `this` r's chain starts from.
+.decl pcg_base(r: node, o: node)
+pcg_base(r, o) :- pcg_root(r, o), (kind(o, "identifier") ; kind(o, "this")).
+.decl pcg_prisma(r: node)
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_prisma_site(s).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _),
+    pcg_prisma_spec(src).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _), docof(o, d),
+    pcg_target(d, src, dt), pcg_prisma_mod(dt).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "this"), pcg_this_prop(r, o, x), kind(cb, "class_body"), within(o, cb),
+    within(s, cb), pcg_member_named(s, x), pcg_prisma_site(s).
+.decl pcg_other(r: node)
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_other_site(s).
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _),
+    pcg_other_spec(src).
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _), docof(o, d),
+    pcg_target(d, src, dt), pcg_other_mod(dt).
+.decl pcg_client(r: node)
+pcg_client(r) :- pcg_prisma(r), !pcg_other(r).
+pcg_client(r) :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), pcg_named(r), docof(r, d), pcg_prisma_repo(d).
+// pcg_this_prop(r, o, x): r's chain reads `this.x` (o the `this`).
+.decl pcg_this_prop(r: node, o: node, x: symbol)
+pcg_this_prop(r, o, x) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o),
+    kind(o, "this"), field(e, "property", p), text(p, x).
+// pcg_member_named(s, x): s declares class member x: a field `x = …` / `x: T`, or a constructor parameter property
+// `private x: T`.
+.decl pcg_member_named(s: node, x: symbol)
+pcg_member_named(s, x) :- kind(s, "public_field_definition"), field(s, "name", n), text(n, x).
+pcg_member_named(s, x) :- kind(p, "required_parameter"), child(p, m, _), kind(m, "accessibility_modifier"),
+    field(p, "pattern", s), text(s, x).
+pcg_member_named(s, x) :- kind(p, "required_parameter"), child(p, m, _), kind(m, "readonly"),
+    field(p, "pattern", s), text(s, x).
+// pcg_prisma_site(s): the binding or member at s is a Prisma client by its type or its value, or is the parameter of
+// a `$transaction` callback.
+.decl pcg_prisma_site(s: node)
+pcg_prisma_site(s) :- pcg_site_type(s, t), match("(?s).*(?:PrismaClient|TransactionClient|PrismaService|PrismaTx).*", t).
+pcg_prisma_site(s) :- pcg_site_value(s, v), text(v, t), (contains("PrismaClient", t) ; contains("$extends", t)).
+pcg_prisma_site(s) :- pcg_tx_call(t, "$transaction"), field(t, "arguments", as), child(as, a, 0),
+    deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")),
+    (field(f, "parameter", s) ; field(f, "parameters", ps), within(s, ps)).
+.decl pcg_other_site(s: node)
+// The parameter of a callback given to `<x>.transaction(…)`, without Prisma's `$`: Drizzle's, Knex's, TypeORM's and
+// Sequelize's transactions.
+pcg_other_site(s) :- pcg_tx_call(t, "transaction"), field(t, "arguments", as), child(as, a, 0),
+    deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")),
+    (field(f, "parameter", s) ; field(f, "parameters", ps), within(s, ps)).
+// pcg_tx_call(t, x): t is a call `<…>.x(…)`.
+.decl pcg_tx_call(t: node, x: symbol)
+pcg_tx_call(t, x) :- kind(t, "call_expression"), field(t, "function", m), kind(m, "member_expression"),
+    field(m, "property", p), text(p, x), (x = "$transaction" ; x = "transaction").
+pcg_other_site(s) :- pcg_site_value(s, v), text(v, t),
+    match("(?s)\\s*(?:await\\s+)?(?:drizzle|knex|Knex)\\s*\\(.*|.*\\bnew\\s+(?:Kysely|Sequelize|DataSource|MikroORM)\\b.*", t).
+pcg_other_site(s) :- pcg_site_type(s, t), !contains("Prisma", t),
+    match("(?s).*\\b(?:\\w+Database|Kysely|Knex|DataSource|EntityManager|Repository|Sequelize|MikroORM)\\b.*", t).
+// pcg_site_type(s, t): the annotation text of a parameter, variable or class field at s.
+.decl pcg_site_type(s: node, t: symbol)
+pcg_site_type(s, t) :- field(p, "pattern", s), field(p, "type", a), text(a, t).
+pcg_site_type(s, t) :- (kind(s, "variable_declarator") ; kind(s, "public_field_definition")), field(s, "type", a),
+    text(a, t).
+.decl pcg_site_value(s: node, v: node)
+pcg_site_value(s, v) :- (kind(s, "variable_declarator") ; kind(s, "public_field_definition")), field(s, "value", v).
+// pcg_prisma_spec(s), pcg_other_spec(s): an import specifier of a Prisma module, of another ORM.
+.decl pcg_prisma_spec(s: symbol)
+pcg_prisma_spec(s) :- import_binding(_, _, s, _), match("(?i)(?:.*/)?[^/]*prisma[^/]*(?:/.*)?", s).
+.decl pcg_other_spec(s: symbol)
+pcg_other_spec(s) :- import_binding(_, _, s, _),
+    match("(?:drizzle-orm|kysely|knex|typeorm|sequelize|sequelize-typescript|mongoose|objection|@mikro-orm/[^/]+)(?:/.*)?", s).
+// pcg_prisma_mod(d), pcg_other_mod(d): file d makes a PrismaClient or imports a Prisma module; imports another ORM.
+.decl pcg_prisma_mod(d: number)
+pcg_prisma_mod(d) :- kind(n, "new_expression"), field(n, "constructor", c), text(c, "PrismaClient"), docof(n, d).
+pcg_prisma_mod(d) :- import_binding(sp, _, s, _), pcg_prisma_spec(s), docof(sp, d).
+.decl pcg_other_mod(d: number)
+pcg_other_mod(d) :- import_binding(sp, _, s, _), pcg_other_spec(s), docof(sp, d).
+// pcg_target(d, s, d2): specifier s imported by d names file d2 of the run: relative to d, or `@/x`, `~/x`, `#/x`
+// matched by the path's end (tsconfig `paths` are not read), or `@scope/pkg/x` as /pkg/x or /pkg/src/x.
+.decl pcg_spec(d: number, s: symbol)
+pcg_spec(d, s) :- pcg_base(_, o), ref_site(o, sp), import_binding(sp, _, s, _), docof(o, d).
+.decl pcg_target(d: number, s: symbol, d2: number)
+pcg_target(d, s, d2) :- pcg_spec(d, s), prefix(".", s), doc(d, p, _), b = @join(@dir(p), s), pcg_ext(e),
+    doc(d2, cat(b, e), _).
+pcg_target(d, s, d2) :- pcg_spec(d, s), match("[@~#]/(?<r>.+)", s), pcg_ext(e), t = cat("/", r, e), doc(d2, f, _),
+    (suffix(t, f) ; f = cat(r, e)).
+pcg_target(d, s, d2) :- pcg_spec(d, s), match("@[^/]+/(?<k>[^/]+)/(?<r>.+)", s), pcg_ext(e), doc(d2, f, _),
+    (suffix(cat("/", k, "/", r, e), f) ; suffix(cat("/", k, "/src/", r, e), f)).
+.decl pcg_ext(e: symbol)
+pcg_ext(".ts"). pcg_ext(".tsx"). pcg_ext(".js"). pcg_ext(".jsx"). pcg_ext(".mts"). pcg_ext(".mjs").
+pcg_ext("/index.ts"). pcg_ext("/index.tsx"). pcg_ext("/index.js").
+// pcg_prisma_repo(d): a package.json of the repository lists Prisma, and neither d's package nor the root lists
+// another ORM.
+.decl pcg_prisma_repo(d: number)
+pcg_prisma_repo(d) :- pcg_ask(r), docof(r, d), pcg_lists_prisma(1), !pcg_orm_doc(d).
+.decl pcg_lists_prisma(k: number)
+pcg_lists_prisma(1) :- package_field(_, k, _),
+    (k = "dependencies/@prisma~1client" ; k = "devDependencies/@prisma~1client" ; k = "dependencies/prisma" ;
+     k = "devDependencies/prisma").
+// A Prisma schema in the repository is the same evidence.
+pcg_lists_prisma(1) :- doc(_, p, _), suffix(".prisma", p).
+.decl pcg_orm_doc(d: number)
+pcg_orm_doc(d) :- pcg_ask(r), docof(r, d), doc(d, p, _), package_for(p, dir), (pcg_orm_pkg(dir) ; pcg_orm_pkg("")).
+.decl pcg_orm_pkg(dir: symbol)
+pcg_orm_pkg(dir) :- package_field(dir, k, _),
+    match("(?:dev)?[dD]ependencies/(?:drizzle-orm|kysely|knex|typeorm|sequelize|mongoose|objection|@mikro-orm~1core)", k).
+// pcg_named(r): the client names an unresolved receiver must have: its text contains "prisma" (`ctx.prisma`,
+// `this.prismaService`), or it is, or ends in the property, `db`, `tx`, `trx`, `database` or `_db` (`ctx.db`).
+.decl pcg_named(r: node)
+pcg_named(r) :- pcg_ask(r), (kind(r, "identifier") ; kind(r, "member_expression")), text(r, t), icontains("prisma", t).
+pcg_named(r) :- pcg_ask(r), kind(r, "identifier"), text(r, x), pcg_name(x).
+pcg_named(r) :- pcg_ask(r), kind(r, "member_expression"), field(r, "property", p), text(p, x), pcg_name(x).
+.decl pcg_name(x: symbol)
+pcg_name("db"). pcg_name("tx"). pcg_name("trx"). pcg_name("database"). pcg_name("_db").
 // sfc_key(o, k, v): object literal o has key k with value v (`k: v`, `"k": v`, shorthand `{ k }`, where v is k).
 .decl sfc_key(o: node, k: symbol, v: node)
 sfc_key(o, k, v) :- kind(o, "object"), child(o, pr, _), kind(pr, "pair"), field(pr, "key", kn), field(pr, "value", v),
@@ -142,8 +317,8 @@ sfc_global_omit(acc, f) :- kind(n, "new_expression"), field(n, "constructor", k)
     kind(t, "true").
 // sfc_leak(c, label): secret column f of a whole row in c's result, labelled with its relation path.
 .decl sfc_leak(c: node, label: symbol)
-sfc_leak(c, cat(path, f, " of ", m)) :- sfc_whole(c, m, path, o), sfc_secret(m, f), !sfc_omitted(o, f),
-    sfc_model(acc, m), !sfc_global_omit(acc, f).
+sfc_leak(c, cat(path, f, " of ", m)) :- sfc_whole(c, m, path, o), docof(c, dq), sfc_reads(dq, ds), sfc_secret(ds, m, f),
+    !sfc_omitted(o, f), sfc_model(acc, m), !sfc_global_omit(acc, f).
 
 // ---- where the result goes ----
 // sfc_strip(e, x): e with await, parentheses, `as`, `satisfies` and `!` taken off.
@@ -215,17 +390,21 @@ sfc_root(v, k) :- sfc_entry(f, k), kind(r, "return_statement"), nearest(r, f, sf
 sfc_root(v, k) :- sfc_entry(f, k), kind(f, "arrow_function"), field(f, "body", v), !kind(v, "statement_block").
 .decl sfc_entry(f: node, k: number)
 // A server action: a top-level function of a 'use server' module inside an export (next-safe-action's
-// `export const a = client.action(async () => ...)` too), or a function whose body starts with 'use server'.
+// `export const a = client.action(async () => ...)` too), or a function whose body starts with 'use server'; in a
+// Next.js app (sfc_next_doc).
 sfc_entry(f, 2) :- kind(p, "program"), sfc_directive(p, "use server"), docof(p, d), kind(f, k), sfc_fn(k), k != "program",
-    docof(f, d), nearest(f, p, sfc_fn), inside(f, e, "export_statement").
-sfc_entry(f, 2) :- kind(f, k), sfc_fn(k), field(f, "body", b), sfc_directive(b, "use server").
+    docof(f, d), nearest(f, p, sfc_fn), inside(f, e, "export_statement"), sfc_next_doc(d).
+sfc_entry(f, 2) :- kind(f, k), sfc_fn(k), field(f, "body", b), sfc_directive(b, "use server"), docof(f, d),
+    sfc_next_doc(d).
 // tRPC: the resolver of `<...procedure...>.query(fn)` or `.mutation(fn)`, unless the chain has `.output(schema)`:
 // tRPC then parses the result with that schema and strips every key it does not name.
 sfc_entry(f, 3) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
     field(fn, "property", p), (text(p, "query") ; text(p, "mutation")), field(fn, "object", o), match("(?s).*[Pp]rocedure.*", o),
     !match("(?s).*\\.\\s*output\\s*\\(.*", o), sfc_arg0(c, f), (kind(f, "arrow_function") ; kind(f, "function_expression")).
-// Remix / React Router `loader` and `action` exports under routes/, Next's getServerSideProps and getStaticProps.
-sfc_entry(f, 4) :- sfc_exported_fn(f, x), (x = "getServerSideProps" ; x = "getStaticProps").
+// Remix / React Router `loader` and `action` exports under routes/, Next's getServerSideProps and getStaticProps (in
+// a Next.js app).
+sfc_entry(f, 4) :- sfc_exported_fn(f, x), (x = "getServerSideProps" ; x = "getStaticProps"), docof(f, d),
+    sfc_next_doc(d).
 sfc_entry(f, 4) :- sfc_exported_fn(f, x), (x = "loader" ; x = "action"), docof(f, d), doc(d, p, _), contains("routes/", p).
 .decl sfc_exported_fn(f: node, x: symbol)
 sfc_exported_fn(f, x) :- kind(e, "export_statement"), field(e, "declaration", f), kind(f, "function_declaration"),
@@ -233,11 +412,22 @@ sfc_exported_fn(f, x) :- kind(e, "export_statement"), field(e, "declaration", f)
 sfc_exported_fn(f, x) :- kind(e, "export_statement"), field(e, "declaration", l), child(l, dcl, _),
     kind(dcl, "variable_declarator"), field(dcl, "name", n), text(n, x), field(dcl, "value", f),
     (kind(f, "arrow_function") ; kind(f, "function_expression")).
-// 5. A JSX attribute value or spread `{...v}` on a component whose module is 'use client', in a file that is not.
+// 5. A JSX attribute value or spread `{...v}` on a component whose module is 'use client', in a file that is not, of a
+// Next.js app.
 sfc_root(v, 5) :- sfc_client_tag(el), (child(el, a, _), kind(a, "jsx_attribute"), child(a, j, _) ; child(el, j, _)),
     kind(j, "jsx_expression"), child(j, v, 0), !kind(v, "comment").
 .decl sfc_client_tag(el: node)
-sfc_client_tag(el) :- sfc_tag(el, d, x, s), sfc_target(d, s, d2), sfc_use_client(d2), !sfc_use_client(d).
+sfc_client_tag(el) :- sfc_tag(el, d, x, s), sfc_target(d, s, d2), sfc_use_client(d2), !sfc_use_client(d), sfc_next_doc(d).
+// sfc_next_doc(d): d's nearest package.json lists next (the root's when none is nearer): the server actions, 'use
+// client' boundaries and getServerSideProps the sinks above name are Next.js's.
+.decl sfc_next_doc(d: number)
+sfc_next_doc(d) :- doc(d, p, _), package_for(p, dir), sfc_next_pkg(dir).
+sfc_next_doc(d) :- doc(d, p, _), !sfc_has_pkg(p), sfc_next_pkg("").
+.decl sfc_has_pkg(p: symbol)
+sfc_has_pkg(p) :- doc(_, p, _), package_for(p, _).
+.decl sfc_next_pkg(dir: symbol)
+sfc_next_pkg(dir) :- package_field(dir, "dependencies/next", _).
+sfc_next_pkg(dir) :- package_field(dir, "devDependencies/next", _).
 .decl sfc_tag(el: node, d: number, x: symbol, s: symbol)  // <X ...> with X imported from s in document d
 sfc_tag(el, d, x, s) :- (kind(el, "jsx_opening_element") ; kind(el, "jsx_self_closing_element")), field(el, "name", t),
     kind(t, "identifier"), text(t, x), match("[A-Z].*", x), docof(el, d), sfc_imports(d, x, s).
@@ -300,6 +490,18 @@ sfc_ext("/index.tsx"). sfc_ext("/index.ts"). sfc_ext("/index.jsx"). sfc_ext("/in
     .fixture "src/lib/db.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/lib/db.ts"
     .fixture "src/server/routers/user.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/server/routers/user.ts"
     .fixture "tsconfig.json" from "../cases/prisma-practice-sensitive-fields-to-client/tsconfig.json"
+    .fixture "package.json" from "../cases/prisma-practice-sensitive-fields-to-client/package.json"
+    .fixture "examples/demo/package.json" from "../cases/prisma-practice-sensitive-fields-to-client/examples/demo/package.json"
+    .fixture "packages/db/package.json" from "../cases/prisma-practice-sensitive-fields-to-client/packages/db/package.json"
+    .fixture "packages/db/prisma/schema.prisma" from "../cases/prisma-practice-sensitive-fields-to-client/packages/db/prisma/schema.prisma"
+    .fixture "apps/admin/package.json" from "../cases/prisma-practice-sensitive-fields-to-client/apps/admin/package.json"
+    .fixture "apps/admin/src/app/api/sessions/route.ts" from "../cases/prisma-practice-sensitive-fields-to-client/apps/admin/src/app/api/sessions/route.ts"
+    .fixture "packages/features/package.json" from "../cases/prisma-practice-sensitive-fields-to-client/packages/features/package.json"
+    .fixture "packages/features/src/sessions.ts" from "../cases/prisma-practice-sensitive-fields-to-client/packages/features/src/sessions.ts"
+    .fixture "src/app/api/payouts/route.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/app/api/payouts/route.ts"
+    .fixture "src/db/drizzle.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/db/drizzle.ts"
+    .fixture "src/drizzle/users.ts" from "../cases/prisma-practice-sensitive-fields-to-client/src/drizzle/users.ts"
+    .fixture "packages/features/src/actions.ts" from "../cases/prisma-practice-sensitive-fields-to-client/packages/features/src/actions.ts"
     .expect _ at "app/routes/settings.tsx":6
     .expect _ at "pages/api/legacy.ts":6
     .expect _ at "pages/profile/[id].tsx":5
@@ -310,4 +512,7 @@ sfc_ext("/index.tsx"). sfc_ext("/index.ts"). sfc_ext("/index.jsx"). sfc_ext("/in
     .expect _ at "src/app/team/page.tsx":7
     .expect _ at "src/app/team/page.tsx":8
     .expect _ at "src/server/routers/user.ts":7
+    .expect _ at "apps/admin/src/app/api/sessions/route.ts":5
+    .expect _ at "packages/features/src/sessions.ts":6
+    .expect _ at "src/app/api/payouts/route.ts":5
 .end

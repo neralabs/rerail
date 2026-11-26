@@ -17,24 +17,29 @@
 //   fetch(url, …)                                  the global fetch
 //   stripe.paymentIntents.create(…)                any call on a client made at the top of a module, in this file or
 //   resend.emails.send(…)  queue.add(…)            imported from another: `new Stripe|Resend|Queue|Inngest|WebClient|
-//   transporter.sendMail(…)  inngest.send(…)       SQSClient|SNSClient|SESClient|ServerClient(…)`, nodemailer's
-//                                                  createTransport, `axios.create`, also `globalThis.x ?? new X()`
-//   axios.post(…)  axios(…)  sgMail.send(…)        the axios and @sendgrid/mail imports themselves
+//   transporter.sendMail(…)  inngest.send(…)       SQSClient|SNSClient|SESClient|ServerClient|OpenAI|Anthropic|
+//   openai.chat.completions.create(…)              PostHog|Pusher|Twilio(…)`, @upstash/qstash's Client, twilio(…),
+//                                                  nodemailer's createTransport, `axios.create`, also
+//                                                  `globalThis.x ?? new X()`
+//   axios.post(…)  got(…)  sgMail.send(…)          the axios, got, ky and @sendgrid/mail imports themselves,
+//   tasks.trigger(…)                               node-fetch and undici's fetch/request, @trigger.dev/sdk's tasks
 //   revalidatePath(…)  revalidateTag(…)            from next/cache
 //   sendReceipt(…)                                 a function of the workspace (a top-level function or const arrow,
 //                                                  in this file or imported, through re-exports and workspace
 //                                                  packages) whose body reaches one of the above, at any depth
 // Not reported:
 //   the same calls after `await prisma.$transaction(…)` returns, or before it
-//   stripe.webhooks.constructEvent(…), sgMail.setApiKey(…)        stay in the process
+//   stripe.webhooks.constructEvent(…), sgMail.setApiKey(…)        stay in the process (`<client>.webhooks.*` is
+//                                                                  local signature work)
 //   afterCommit.push(() => sendReceipt(…)), after(() => …)         only defined in the callback, run later
 //   a helper that only queries through the `tx` it is given; a pure helper of a mail module (`renderReceipt`)
 //   the array form `$transaction([q1, q2])`; `fetch` that is a parameter or local, not the global
 //   test files (*.test.*, *.spec.*, __tests__, test/, tests/, e2e/)
 // Gaps: a callback passed by name (`$transaction(work)`); wrappers around $transaction (`withTransaction(fn)`);
 // clients held in class fields or made by a getter (`this.stripe`, `getStripe()`); calls through methods of an
-// object or class (`emailService.send()`, NestJS `this.mailer.send()`); SDKs outside the table; a .tsx file calling
-// a helper in a .ts file (the engine's lanes, see the notes); the Prisma 8 `db.transaction` form.
+// object or class (`emailService.send()`, NestJS `this.mailer.send()`); SDKs outside the lists above (a Redis
+// client, firebase-admin); a .tsx file calling a helper in a .ts file (the engine's lanes, see the notes); the
+// Prisma 8 `db.transaction` form.
 
 #include "tsx/names.rerail"
 #include "tsx/eslint-a-common.rerail"
@@ -77,16 +82,22 @@ ses_ctor("inngest#Inngest").
 ses_ctor("@aws-sdk/client-sqs#SQSClient"). ses_ctor("@aws-sdk/client-sns#SNSClient").
 ses_ctor("@aws-sdk/client-ses#SESClient"). ses_ctor("@aws-sdk/client-sesv2#SESv2Client").
 ses_ctor("postmark#ServerClient"). ses_ctor("@slack/web-api#WebClient").
+ses_ctor("openai#default"). ses_ctor("openai#OpenAI"). ses_ctor("@anthropic-ai/sdk#default").
+ses_ctor("@anthropic-ai/sdk#Anthropic"). ses_ctor("posthog-node#PostHog"). ses_ctor("pusher#default").
+ses_ctor("twilio#Twilio"). ses_ctor("@upstash/qstash#Client").
 // ses_factory(q): a call of q returns such a client.
 .decl ses_factory(q: symbol)
-ses_factory("nodemailer#createTransport"). ses_factory("nodemailer#default").
+ses_factory("nodemailer#createTransport"). ses_factory("nodemailer#default"). ses_factory("twilio#default").
 // ses_module_client(q): the import itself is the client.
 .decl ses_module_client(q: symbol)
 ses_module_client("axios#default"). ses_module_client("@sendgrid/mail#default").
+ses_module_client("got#default"). ses_module_client("ky#default").
+ses_module_client("@trigger.dev/sdk#tasks"). ses_module_client("@trigger.dev/sdk/v3#tasks").
 // ses_func(q): a function that leaves the process (or, revalidate*, acts outside the transaction).
 .decl ses_func(q: symbol)
 ses_func("next/cache#revalidatePath"). ses_func("next/cache#revalidateTag").
-ses_func("axios#default").
+ses_func("axios#default"). ses_func("got#default"). ses_func("ky#default"). ses_func("node-fetch#default").
+ses_func("undici#fetch"). ses_func("undici#request").
 
 // ses_client_value(v): expression v makes a client.
 .decl ses_client_value(v: node)
@@ -120,12 +131,25 @@ ses_effect(c, "fetch") :- ses_call_in(c, _), callee(c, f), kind(f, "identifier")
 // stripe.paymentIntents.create(…), resend.emails.send(…), queue.add(…)
 ses_effect(c, w) :- ses_call_in(c, _), callee(c, f), kind(f, "member_expression"), ses_root(f, r), ses_sym(r, q),
     ses_client_sym(q), !ses_pure_call(f), text(f, w).
-// revalidatePath(…), axios(…)
-ses_effect(c, w) :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), ses_sym(f, q), ses_func(q), text(f, w).
-// ses_pure_call(f): calls on a client that stay in the process.
+// revalidatePath(…), axios(…); next/cache's functions only in a file whose nearest package.json lists next (the
+// root's when none is nearer).
+ses_effect(c, w) :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), ses_sym(f, q), ses_func(q),
+    !prefix("next/", q), text(f, w).
+ses_effect(c, w) :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), ses_sym(f, q), ses_func(q),
+    prefix("next/", q), docof(c, d), ses_next_doc(d), text(f, w).
+.decl ses_next_doc(d: number)
+ses_next_doc(d) :- doc(d, p, _), package_for(p, dir), ses_next_pkg(dir).
+ses_next_doc(d) :- doc(d, p, _), !ses_has_pkg(p), ses_next_pkg("").
+.decl ses_has_pkg(p: symbol)
+ses_has_pkg(p) :- doc(_, p, _), package_for(p, _).
+.decl ses_next_pkg(dir: symbol)
+ses_next_pkg(dir) :- package_field(dir, "dependencies/next", _).
+ses_next_pkg(dir) :- package_field(dir, "devDependencies/next", _).
+// ses_pure_call(f): calls on a client that stay in the process: `<client>.webhooks.<method>` (Stripe's signature
+// helpers, constructEvent and the like) and @sendgrid/mail's setApiKey.
 .decl ses_pure_call(f: node)
-ses_pure_call(f) :- static_prop(f, _, x), (x = "setApiKey" ; x = "constructEvent" ; x = "constructEventAsync" ;
-    x = "generateTestHeaderString").
+ses_pure_call(f) :- static_prop(f, o, _), static_prop(o, _, "webhooks").
+ses_pure_call(f) :- static_prop(f, _, "setApiKey").
 
 // ---- helpers that reach one --------------------------------------------------------------------------------------
 // ses_fn_sym(q, g): top-level function g is symbol q.
@@ -258,6 +282,8 @@ ses_pkg_dir(n, x) :- ses_walk(x, k), k > 0, dir_entry(x, "package.json", 0), f =
     .fixture "src/lib/stripe.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/lib/stripe.ts"
     .fixture "src/server/billing.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/server/billing.ts"
     .fixture "tsconfig.json" from "../cases/prisma-practice-side-effect-in-transaction/tsconfig.json"
+    .fixture "src/server/ai/summaries.ts" from "../cases/prisma-practice-side-effect-in-transaction/src/server/ai/summaries.ts"
+    .fixture "packages/emails/src/digest.ts" from "../cases/prisma-practice-side-effect-in-transaction/packages/emails/src/digest.ts"
     .expect _ at "src/app/admin/actions.tsx":10
     .expect _ at "src/app/orders/actions.ts":16
     .expect _ at "src/app/orders/actions.ts":17
@@ -269,4 +295,6 @@ ses_pkg_dir(n, x) :- ses_walk(x, k), k > 0, dir_entry(x, "package.json", 0), f =
     .expect _ at "src/server/billing.ts":11
     .expect _ at "src/server/billing.ts":12
     .expect _ at "src/server/billing.ts":19
+    .expect _ at "src/server/ai/summaries.ts":11
+    .expect _ at "src/server/ai/summaries.ts":12
 .end

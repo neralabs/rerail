@@ -1,0 +1,7 @@
+{
+  "name": "@acme/db",
+  "private": true,
+  "dependencies": {
+    "@prisma/client": "^6.10.0"
+  }
+}

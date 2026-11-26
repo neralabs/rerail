@@ -17,3 +17,11 @@ jobs:
     steps:
       - run: npx prisma migrate dev  # caught
       - run: npx prisma migrate deploy
+  unit_tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx prisma migrate reset --force
+  deploy-web:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx prisma db push --accept-data-loss  # caught

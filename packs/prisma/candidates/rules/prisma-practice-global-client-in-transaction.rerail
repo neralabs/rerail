@@ -37,9 +37,10 @@
 //     which is the deliberate out-of-transaction write. Other nested functions (`.then(…)`, event handlers) are not
 //     followed either, a gap (below).
 //   - a helper whose query goes through a parameter, defaulted to the client or not (`client = prisma`).
-//   - a callback that takes a Postgres advisory transaction lock (`tx.$queryRaw\`SELECT pg_try_advisory_xact_lock(…)\``):
-//     the transaction is a mutex, and work on the outer client is chosen so it holds no row locks under it
-//     (nextcrm-app's plugin upgrade).
+//   - a callback that takes a Postgres advisory lock (`tx.$queryRaw\`SELECT pg_try_advisory_xact_lock(…)\``, also
+//     pg_advisory_lock and the _shared forms): the transaction is a mutex that locks no row, and work on the outer
+//     client under it is chosen to run outside it. `SELECT … FOR UPDATE` is no such mutex: it locks rows, which an
+//     outer-client write to them then waits on.
 // Gaps: a callback passed by name (`$transaction(work)`); helpers reached through a method (`this.svc.f()`), an
 // object (`repo.f()`), two hops or more, or a default export of a function; a helper that defaults to the client
 // and is called without `tx` (`recordEvent("x")`); the outer client passed to a helper (`f(prisma)`); a client from
@@ -101,10 +102,11 @@ gct_raw("$queryRawTyped"). gct_raw("$runCommandRaw"). gct_raw("$transaction").
 // gct_direct(q, c, r): query q, in the callback of transaction c, goes through r itself.
 .decl gct_direct(q: node, c: node, r: node)
 gct_direct(q, c, r) :- gct_in_tx(q, c, r, f), !gct_lock_tx(f), gct_query(q, r2), gct_same(r, r2).
-// gct_lock_tx(f): callback f takes an advisory transaction lock with a raw query: the transaction is a mutex.
+// gct_lock_tx(f): callback f takes a Postgres advisory lock with a raw query: the transaction is a mutex.
 .decl gct_lock_tx(f: node)
 gct_lock_tx(f) :- gct_in_tx(q, _, _, f), callee(q, m), kind(m, "member_expression"), field(m, "property", p),
-    text(p, x), gct_raw(x), x != "$transaction", field(q, "arguments", a), text(a, t), contains("advisory_xact_lock", t).
+    text(p, x), gct_raw(x), x != "$transaction", field(q, "arguments", a), text(a, t),
+    match("(?is).*\\bpg_(?:try_)?advisory_(?:xact_)?lock(?:_shared)?\\b.*", t).
 
 // gct_same(r, r2): two client expressions of the same text whose root names the same thing: the same declaration,
 // the same `this`, or (neither declared in the file) the same global name.
@@ -236,6 +238,7 @@ gct_anc(p, a) :- gct_anc(p, b), match("(?<a>.*)/[^/]*", b).
     .expect _ at "src/server/api/routers/post.ts":8
     .expect _ at "src/server/billing/refunds.ts":7
     .expect _ at "src/server/jobs/sync.ts":7
+    .expect _ at "src/server/jobs/migrate-plugins.ts":34
     .expect _ at "src/app/admin/orders/page.tsx":9
     .expect _ at "src/app/admin/orders/close-button.tsx":8
 .end

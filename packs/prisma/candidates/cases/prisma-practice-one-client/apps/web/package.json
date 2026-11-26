@@ -1,0 +1,8 @@
+{
+  "name": "@crm/web",
+  "private": true,
+  "dependencies": {
+    "@crm/db": "workspace:*",
+    "next": "^15.5.0"
+  }
+}

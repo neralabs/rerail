@@ -26,8 +26,11 @@
 //   ... data: { total: p.price * qty }                                                       not reported (other field)
 //   ... where: { id: otherId }, data: { position: p.position + 1 }                           not reported (other row)
 //   a function that runs `SELECT ... FOR UPDATE` or a pg advisory lock through $queryRaw     not reported (row locked)
-//   `await lockAssetForQuantityUpdate(tx, id)` (a call named lock… or …ForUpdate) before the write   not reported
+//   `await lockRow(tx, id)` before the write, the write's client passed to a function of the run whose body runs
+//   `FOR UPDATE` or an advisory lock                                                          not reported
 //   ... where: { id, armedCouponId: c }, data: { armedCouponId: null, ... } (compare-and-set) not reported
+//   ... where: { id, lockId }, lockId a column some write of the model clears (`lockId: null`) not reported (claim)
+//   `if (job.lockId !== lockId) return` then data: { …, lockId: null } (claim released)     not reported
 //   inside $transaction(fn, { isolationLevel: Serializable | RepeatableRead })               not reported
 //   a different model, or a row made by create()                                             not reported
 // No type checker: the client is any receiver of `<x>.<model>.<op>(...)` with Prisma's op names and an object
@@ -36,7 +39,10 @@
 // Gaps: a read in one function and the write in another (a helper taking the row), a row passed in as a parameter,
 // destructured reads (`const { stock } = await ...`), `.map(r => db.x.update(...))` over a findMany, Prisma 8
 // delegates; single-writer rows (a record only its owner's one request touches) are reported though they cannot race;
-// an isolation level passed in a variable (`$transaction(fn, opts)`) is not seen, so that write is reported.
+// an isolation level passed in a variable (`$transaction(fn, opts)`) is not seen, so that write is reported. A lock
+// helper is found by its name among the functions the run declares (not through the import), so a same-named
+// function elsewhere stands in for it. Version guard names are the column names `version`, `revision`, `etag`,
+// `updatedAt`, `updated_at`, alone or ending a camelCase or snake_case name (`rowVersion`, `lock_version`).
 
 #include "tsx/names.rerail"
 #include "tsx/eslint-a-common.rerail"
@@ -50,9 +56,134 @@ ReadModifyWrite(pr, o, x, m) :- rmwp_read(site, o, m, rc), rmwp_write(w, m, dobj
 rmwp_before(a, b) :- rmwp_read(_, _, m, a), rmwp_write(b, m, _), node(d, a, _, s, _), node(d, b, _, t, _), s < t.
 
 // ---- Prisma calls ---------------------------------------------------------------------------------------------------
-// rmwp_model_call(c, m, op): c is `<x>.<m>.<op>(...)`, `this.prisma.<m>.<op>(...)` too.
+// rmwp_model_call(c, m, op): c is `<r>.<m>.<op>(...)` (`this.prisma.<m>.<op>(...)` too), r a Prisma client (pcg_client).
 .decl rmwp_model_call(c: node, m: symbol, op: symbol)
-rmwp_model_call(c, m, op) :- called(c, f), static_prop(f, d, op), rmwp_op(op), static_prop(d, _, m).
+rmwp_model_call(c, m, op) :- rmwp_shape(c, m, op, r), pcg_client(r).
+.decl rmwp_shape(c: node, m: symbol, op: symbol, r: node)
+rmwp_shape(c, m, op, r) :- called(c, f), static_prop(f, d, op), rmwp_op(op), static_prop(d, r, m).
+.decl pcg_ask(r: node)
+pcg_ask(r) :- rmwp_shape(_, _, _, r).
+// ---- the Prisma client gate (the same block in each rule of the pack that matches `<r>.<model>.<op>(…)`) ----------
+// pcg_client(r): receiver r (pcg_ask) is a Prisma client. Resolved Prisma: r's root name is the parameter of a
+// `$transaction` callback; a parameter, variable or class member typed with a Prisma client type (`PrismaClient`,
+// `Prisma.TransactionClient`, `PrismaService`); a variable whose value makes or extends one (`new PrismaClient(…)`,
+// `prisma.$extends(…)`); or an import from a Prisma module: `@prisma/client`, a generated client, a specifier with a
+// path part naming prisma (`@/lib/prisma`, `@acme/prisma`), or a file of the run that makes a PrismaClient. Resolved
+// otherwise: an import from Drizzle, Kysely, Knex, TypeORM, Sequelize, Mongoose, Objection or MikroORM, a file of the
+// run that imports one, or a variable made by one (`drizzle(…)`, `new Kysely(…)`): never Prisma. Not resolved (`ctx.db`
+// of a tRPC context, an import from a file the run reads in another lane): accepted only under the client names of
+// pcg_named, and only when a package.json of the repository lists Prisma and the file's package and the root list
+// no other ORM.
+.decl pcg_root(r: node, o: node)
+pcg_root(r, x) :- pcg_ask(r), deparen(r, x).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "non_null_expression"), child(e, o0, 0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "call_expression"), field(e, "function", o0), deparen(o0, o).
+pcg_root(r, o) :- pcg_root(r, e), kind(e, "await_expression"), child(e, o0, 0), deparen(o0, o).
+// pcg_base(r, o): o is the identifier or `this` r's chain starts from.
+.decl pcg_base(r: node, o: node)
+pcg_base(r, o) :- pcg_root(r, o), (kind(o, "identifier") ; kind(o, "this")).
+.decl pcg_prisma(r: node)
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_prisma_site(s).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _),
+    pcg_prisma_spec(src).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _), docof(o, d),
+    pcg_target(d, src, dt), pcg_prisma_mod(dt).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "this"), pcg_this_prop(r, o, x), kind(cb, "class_body"), within(o, cb),
+    within(s, cb), pcg_member_named(s, x), pcg_prisma_site(s).
+.decl pcg_other(r: node)
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_other_site(s).
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _),
+    pcg_other_spec(src).
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _), docof(o, d),
+    pcg_target(d, src, dt), pcg_other_mod(dt).
+.decl pcg_client(r: node)
+pcg_client(r) :- pcg_prisma(r), !pcg_other(r).
+pcg_client(r) :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), pcg_named(r), docof(r, d), pcg_prisma_repo(d).
+// pcg_this_prop(r, o, x): r's chain reads `this.x` (o the `this`).
+.decl pcg_this_prop(r: node, o: node, x: symbol)
+pcg_this_prop(r, o, x) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o),
+    kind(o, "this"), field(e, "property", p), text(p, x).
+// pcg_member_named(s, x): s declares class member x: a field `x = …` / `x: T`, or a constructor parameter property
+// `private x: T`.
+.decl pcg_member_named(s: node, x: symbol)
+pcg_member_named(s, x) :- kind(s, "public_field_definition"), field(s, "name", n), text(n, x).
+pcg_member_named(s, x) :- kind(p, "required_parameter"), child(p, m, _), kind(m, "accessibility_modifier"),
+    field(p, "pattern", s), text(s, x).
+pcg_member_named(s, x) :- kind(p, "required_parameter"), child(p, m, _), kind(m, "readonly"),
+    field(p, "pattern", s), text(s, x).
+// pcg_prisma_site(s): the binding or member at s is a Prisma client by its type or its value, or is the parameter of
+// a `$transaction` callback.
+.decl pcg_prisma_site(s: node)
+pcg_prisma_site(s) :- pcg_site_type(s, t), match("(?s).*(?:PrismaClient|TransactionClient|PrismaService|PrismaTx).*", t).
+pcg_prisma_site(s) :- pcg_site_value(s, v), text(v, t), (contains("PrismaClient", t) ; contains("$extends", t)).
+pcg_prisma_site(s) :- kind(t, "call_expression"), callee(t, m), static_prop(m, _, "$transaction"), call_arg(t, a, 0),
+    deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")),
+    (field(f, "parameter", s) ; field(f, "parameters", ps), within(s, ps)).
+.decl pcg_other_site(s: node)
+// The parameter of a callback given to `<x>.transaction(…)`, without Prisma's `$`: Drizzle's, Knex's, TypeORM's and
+// Sequelize's transactions.
+pcg_other_site(s) :- kind(t, "call_expression"), callee(t, m), static_prop(m, _, "transaction"), call_arg(t, a, 0),
+    deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")),
+    (field(f, "parameter", s) ; field(f, "parameters", ps), within(s, ps)).
+pcg_other_site(s) :- pcg_site_value(s, v), text(v, t),
+    match("(?s)\\s*(?:await\\s+)?(?:drizzle|knex|Knex)\\s*\\(.*|.*\\bnew\\s+(?:Kysely|Sequelize|DataSource|MikroORM)\\b.*", t).
+pcg_other_site(s) :- pcg_site_type(s, t), !contains("Prisma", t),
+    match("(?s).*\\b(?:\\w+Database|Kysely|Knex|DataSource|EntityManager|Repository|Sequelize|MikroORM)\\b.*", t).
+// pcg_site_type(s, t): the annotation text of a parameter, variable or class field at s.
+.decl pcg_site_type(s: node, t: symbol)
+pcg_site_type(s, t) :- field(p, "pattern", s), field(p, "type", a), text(a, t).
+pcg_site_type(s, t) :- (kind(s, "variable_declarator") ; kind(s, "public_field_definition")), field(s, "type", a),
+    text(a, t).
+.decl pcg_site_value(s: node, v: node)
+pcg_site_value(s, v) :- (kind(s, "variable_declarator") ; kind(s, "public_field_definition")), field(s, "value", v).
+// pcg_prisma_spec(s), pcg_other_spec(s): an import specifier of a Prisma module, of another ORM.
+.decl pcg_prisma_spec(s: symbol)
+pcg_prisma_spec(s) :- import_binding(_, _, s, _), match("(?i)(?:.*/)?[^/]*prisma[^/]*(?:/.*)?", s).
+.decl pcg_other_spec(s: symbol)
+pcg_other_spec(s) :- import_binding(_, _, s, _),
+    match("(?:drizzle-orm|kysely|knex|typeorm|sequelize|sequelize-typescript|mongoose|objection|@mikro-orm/[^/]+)(?:/.*)?", s).
+// pcg_prisma_mod(d), pcg_other_mod(d): file d makes a PrismaClient or imports a Prisma module; imports another ORM.
+.decl pcg_prisma_mod(d: number)
+pcg_prisma_mod(d) :- kind(n, "new_expression"), field(n, "constructor", c), text(c, "PrismaClient"), docof(n, d).
+pcg_prisma_mod(d) :- import_binding(sp, _, s, _), pcg_prisma_spec(s), docof(sp, d).
+.decl pcg_other_mod(d: number)
+pcg_other_mod(d) :- import_binding(sp, _, s, _), pcg_other_spec(s), docof(sp, d).
+// pcg_target(d, s, d2): specifier s imported by d names file d2 of the run: relative to d, or `@/x`, `~/x`, `#/x`
+// matched by the path's end (tsconfig `paths` are not read), or `@scope/pkg/x` as /pkg/x or /pkg/src/x.
+.decl pcg_spec(d: number, s: symbol)
+pcg_spec(d, s) :- pcg_base(_, o), ref_site(o, sp), import_binding(sp, _, s, _), docof(o, d).
+.decl pcg_target(d: number, s: symbol, d2: number)
+pcg_target(d, s, d2) :- pcg_spec(d, s), prefix(".", s), doc(d, p, _), b = @join(@dir(p), s), pcg_ext(e),
+    doc(d2, cat(b, e), _).
+pcg_target(d, s, d2) :- pcg_spec(d, s), match("[@~#]/(?<r>.+)", s), pcg_ext(e), t = cat("/", r, e), doc(d2, f, _),
+    (suffix(t, f) ; f = cat(r, e)).
+pcg_target(d, s, d2) :- pcg_spec(d, s), match("@[^/]+/(?<k>[^/]+)/(?<r>.+)", s), pcg_ext(e), doc(d2, f, _),
+    (suffix(cat("/", k, "/", r, e), f) ; suffix(cat("/", k, "/src/", r, e), f)).
+.decl pcg_ext(e: symbol)
+pcg_ext(".ts"). pcg_ext(".tsx"). pcg_ext(".js"). pcg_ext(".jsx"). pcg_ext(".mts"). pcg_ext(".mjs").
+pcg_ext("/index.ts"). pcg_ext("/index.tsx"). pcg_ext("/index.js").
+// pcg_prisma_repo(d): a package.json of the repository lists Prisma, and neither d's package nor the root lists
+// another ORM.
+.decl pcg_prisma_repo(d: number)
+pcg_prisma_repo(d) :- pcg_ask(r), docof(r, d), pcg_lists_prisma(1), !pcg_orm_doc(d).
+.decl pcg_lists_prisma(k: number)
+pcg_lists_prisma(1) :- package_field(_, k, _),
+    (k = "dependencies/@prisma~1client" ; k = "devDependencies/@prisma~1client" ; k = "dependencies/prisma" ;
+     k = "devDependencies/prisma").
+.decl pcg_orm_doc(d: number)
+pcg_orm_doc(d) :- pcg_ask(r), docof(r, d), doc(d, p, _), package_for(p, dir), (pcg_orm_pkg(dir) ; pcg_orm_pkg("")).
+.decl pcg_orm_pkg(dir: symbol)
+pcg_orm_pkg(dir) :- package_field(dir, k, _),
+    match("(?:dev)?[dD]ependencies/(?:drizzle-orm|kysely|knex|typeorm|sequelize|mongoose|objection|@mikro-orm~1core)", k).
+// pcg_named(r): the client names an unresolved receiver must have: its text contains "prisma" (`ctx.prisma`,
+// `this.prismaService`), or it is, or ends in the property, `db`, `tx`, `trx`, `database` or `_db` (`ctx.db`).
+.decl pcg_named(r: node)
+pcg_named(r) :- pcg_ask(r), (kind(r, "identifier") ; kind(r, "member_expression")), text(r, t), icontains("prisma", t).
+pcg_named(r) :- pcg_ask(r), kind(r, "identifier"), text(r, x), pcg_name(x).
+pcg_named(r) :- pcg_ask(r), kind(r, "member_expression"), field(r, "property", p), text(p, x), pcg_name(x).
+.decl pcg_name(x: symbol)
+pcg_name("db"). pcg_name("tx"). pcg_name("trx"). pcg_name("database"). pcg_name("_db").
 .decl rmwp_op(op: symbol)
 rmwp_op("findUnique"). rmwp_op("findUniqueOrThrow"). rmwp_op("findFirst"). rmwp_op("findFirstOrThrow").
 rmwp_op("findMany"). rmwp_op("update"). rmwp_op("updateMany"). rmwp_op("upsert").
@@ -139,38 +270,66 @@ rmwp_same_row(w, site, rc) :- rmwp_read(site, _, m, rc), rmwp_write(w, m, _), rm
 .decl rmwp_where_ref(c: node, d: node)
 rmwp_where_ref(c, d) :- rmwp_arg_prop(c, "where", wo), (r = wo ; within(r, wo)),
     (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")), ref_site(r, d).
-// rmwp_guarded(w, x): the write's `where` also tests x or a version / timestamp / lock-holder field, so a lost race
-// updates nothing.
+// rmwp_guarded(w, x): the write's `where` also tests x, a version / timestamp field, or a claim column of the model,
+// so a lost race updates nothing.
 .decl rmwp_guarded(w: node, x: symbol)
 rmwp_guarded(w, x) :- rmwp_model_call(w, _, _), rmwp_arg_prop(w, "where", wo), rmwp_where_key(wo, x, x).
 rmwp_guarded(w, x) :- rmwp_model_call(w, _, _), rmwp_arg_prop(w, "where", wo), rmwp_where_key(wo, k, x),
     rmwp_version_key(k).
+rmwp_guarded(w, x) :- rmwp_write(w, m, _), rmwp_arg_prop(w, "where", wo), rmwp_where_key(wo, k, x), k != "id",
+    docof(w, d), rmwp_claim_key(d, m, k).
 // rmwp_where_key(wo, k, x): `where` object wo has key k at any depth (AND/OR lists too), x a field some write sets.
 .decl rmwp_where_key(wo: node, k: symbol, x: symbol)
 rmwp_where_key(wo, k, x) :- rmwp_set(_, x, _, _), rmwp_arg_prop(_, "where", wo), (o = wo ; within(o, wo)),
     rmwp_pair(o, k, _, _).
 .decl rmwp_version_key(k: symbol)
-rmwp_version_key(k) :- rmwp_pair(_, k, _, _), iglob("*{version,revision,updatedAt,updated_at,etag}*", k).
-rmwp_version_key(k) :- rmwp_pair(_, k, _, _), iprefix("lock", k).
-// rmwp_locked(w): w runs inside a $transaction with Serializable or RepeatableRead isolation, or in a function that
-// takes a row lock or an advisory lock through raw SQL (`SELECT ... FOR UPDATE`, pg_advisory_xact_lock) or, before
-// w, through a helper named for it (`lockAssetForQuantityUpdate(tx, id)`, `selectForUpdate(…)`), or w releases a
-// claim on the row (its data sets `lockedAt`, `lockId`, `lockedBy`, ...): a worker that claimed the row is its only
-// writer. Also a compare-and-set: w's `where` pins, beside the id, a column its own data sets
+rmwp_version_key(k) :- rmwp_pair(_, k, _, _),
+    match("(?:version|revision|etag|updatedAt|updated_at)|[a-z][\\w$]*(?:Version|Revision|Etag|ETag|UpdatedAt)|\\w+_(?:version|revision|etag|updated_at)", k).
+// rmwp_claim_key(d, m, k): a write of model m in file d clears column k (`data: { lockId: null }`): k holds a claim
+// or lease, which a worker sets when it takes the row and clears when it lets go of it.
+.decl rmwp_claim_key(d: number, m: symbol, k: symbol)
+rmwp_claim_key(d, m, k) :- rmwp_write(w, m, dobj), rmwp_pair(dobj, k, _, v), kind(v, "null"), docof(w, d).
+// rmwp_locked(w): w runs inside a $transaction with Serializable or RepeatableRead isolation; or in a function that
+// takes a row lock or an advisory lock through raw SQL (`SELECT ... FOR UPDATE`, pg_advisory_xact_lock), or that
+// first passes w's client to a function of the run doing so (`lockRow(tx, id)`); or w releases a claim the function
+// checked on the row (`if (job.lockId !== lockId) return` … `data: { lockId: null }`): the claim holder is the row's
+// only writer. Also a compare-and-set: w's `where` pins, beside the id, a column its own data sets
 // (`where: { id, armedCouponId: couponId }, data: { armedCouponId: null, … }`), so a second writer matches no row.
 .decl rmwp_locked(w: node)
 rmwp_locked(w) :- rmwp_write(w, _, _), within(w, fa), called(t, f), static_prop(f, _, "$transaction"),
     call_arg(t, fa0, 0), deparen(fa0, fa), call_arg(t, opts0, 1), deparen(opts0, opts),
     rmwp_pair(opts, "isolationLevel", _, lv), text(lv, s), (contains("Serializable", s) ; contains("RepeatableRead", s)).
 rmwp_locked(w) :- rmwp_write(w, _, _), nearest(w, f, fn_scope), within(s, f),
-    (kind(s, "template_string") ; kind(s, "string")), text(s, t),
-    (icontains("for update", t) ; icontains("advisory_xact_lock", t) ; icontains("advisory_lock", t)).
-rmwp_locked(w) :- rmwp_write(w, _, d), rmwp_pair(d, k, _, _), iprefix("lock", k).
-rmwp_locked(w) :- rmwp_write(w, _, _), nearest(w, f, fn_scope), kind(k, "call_expression"), within(k, f),
-    callee(k, n), (kind(n, "identifier"), text(n, x) ; static_prop(n, _, x)), (iprefix("lock", x) ; icontains("forupdate", x)),
-    node(dd, k, _, s, _), node(dd, w, _, t, _), s < t.
+    (kind(s, "template_string") ; kind(s, "string")), text(s, t), rmwp_lock_text(t).
+rmwp_locked(w) :- rmwp_lock_call(w, x), rmwp_lock_fn(x).
+rmwp_locked(w) :- rmwp_write(w, _, d), rmwp_pair(d, k, _, v), kind(v, "null"), within(w, f), kind(f, fk),
+    rmwp_fn(fk), kind(b, "binary_expression"), within(b, f), (op(b, "!==") ; op(b, "===") ; op(b, "!=") ; op(b, "==")),
+    (field(b, "left", s) ; field(b, "right", s)), static_prop(s, o, k), kind(o, "identifier").
 rmwp_locked(w) :- rmwp_write(w, _, d), rmwp_arg_prop(w, "where", wo), rmwp_pair(wo, k, _, _), k != "id",
     rmwp_pair(d, k, _, _).
+.decl rmwp_fn(k: symbol)
+rmwp_fn("function_declaration"). rmwp_fn("function_expression"). rmwp_fn("arrow_function"). rmwp_fn("method_definition").
+.decl rmwp_lock_text(t: symbol)
+rmwp_lock_text(t) :- rmwp_lock_src(t),
+    match("(?is).*\\b(?:for\\s+(?:no\\s+key\\s+)?update|pg_(?:try_)?advisory_(?:xact_)?lock(?:_shared)?)\\b.*", t).
+.decl rmwp_lock_src(t: symbol)
+rmwp_lock_src(t) :- rmwp_write(w, _, _), nearest(w, f, fn_scope), within(s, f),
+    (kind(s, "template_string") ; kind(s, "string")), text(s, t).
+rmwp_lock_src(t) :- rmwp_lock_call(_, x), rmwp_fn_decl(g, x), within(s, g),
+    (kind(s, "template_string") ; kind(s, "string")), text(s, t).
+// rmwp_lock_call(w, x): before w, in the function around it, a call of x passes w's client (`lockRow(tx, id)`).
+.decl rmwp_lock_call(w: node, x: symbol)
+rmwp_lock_call(w, x) :- rmwp_write(w, _, _), called(w, wf), static_prop(wf, wd, _), static_prop(wd, r, _), text(r, rt),
+    nearest(w, f, fn_scope), kind(k, "call_expression"), within(k, f), callee(k, n), kind(n, "identifier"),
+    text(n, x), call_arg(k, a, _), deparen(a, ai), text(ai, rt), node(dd, k, _, s, _), node(dd, w, _, t, _), s < t.
+// rmwp_lock_fn(x): a function named x, declared in a file of the run, runs `FOR UPDATE` or an advisory lock.
+.decl rmwp_lock_fn(x: symbol)
+rmwp_lock_fn(x) :- rmwp_lock_call(_, x), rmwp_fn_decl(g, x), within(s, g),
+    (kind(s, "template_string") ; kind(s, "string")), text(s, t), rmwp_lock_text(t).
+.decl rmwp_fn_decl(g: node, x: symbol)
+rmwp_fn_decl(g, x) :- kind(g, "function_declaration"), field(g, "name", n), text(n, x).
+rmwp_fn_decl(g, x) :- kind(s, "variable_declarator"), field(s, "name", n), kind(n, "identifier"), text(n, x),
+    field(s, "value", v), deparen(v, g), (kind(g, "arrow_function") ; kind(g, "function_expression")).
 
 // The cases, `cases/prisma-practice-read-modify-write/`, read as one repository: each line ending in `// caught` is
 // reported, and no other line.
@@ -185,6 +344,10 @@ rmwp_locked(w) :- rmwp_write(w, _, d), rmwp_arg_prop(w, "where", wo), rmwp_pair(
     .fixture "src/server/jobs.ts" from "../cases/prisma-practice-read-modify-write/src/server/jobs.ts"
     .fixture "src/server/stock.ts" from "../cases/prisma-practice-read-modify-write/src/server/stock.ts"
     .fixture "src/server/wallet.test.ts" from "../cases/prisma-practice-read-modify-write/src/server/wallet.test.ts"
+    .fixture "src/server/locks.ts" from "../cases/prisma-practice-read-modify-write/src/server/locks.ts"
+    .fixture "src/server/inventory.ts" from "../cases/prisma-practice-read-modify-write/src/server/inventory.ts"
+    .fixture "src/db/drizzle.ts" from "../cases/prisma-practice-read-modify-write/src/db/drizzle.ts"
+    .fixture "src/drizzle/stock.ts" from "../cases/prisma-practice-read-modify-write/src/drizzle/stock.ts"
     .expect _ at "src/app/api/orders/route.ts":13
     .expect _ at "src/app/api/orders/route.ts":25
     .expect _ at "src/server/board.ts":8
@@ -193,4 +356,5 @@ rmwp_locked(w) :- rmwp_write(w, _, d), rmwp_arg_prop(w, "where", wo), rmwp_pair(
     .expect _ at "src/server/stock.ts":21
     .expect _ at "src/server/wallet.ts":13
     .expect _ at "src/server/wallet.ts":23
+    .expect _ at "src/server/inventory.ts":18
 .end
