@@ -1,1 +1,0 @@
-Git worktrees added while a coding-agent session runs no longer hold its hooks up when Git lists their files as unchanged. Each session compared every file against Git, one process at a time: on Windows a hook could wait 3 to 16 seconds after 51 appeared. A worktree whose newest change is a commit is still compared.

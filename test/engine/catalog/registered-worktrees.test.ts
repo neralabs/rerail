@@ -12,6 +12,7 @@ import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { checkouts } from "../../../src/engine/storage/schema.js";
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
+import { runProgram } from "../../support/processes/run-program.js";
 
 vi.mock("../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../src/engine/git.js")>();
@@ -24,7 +25,7 @@ afterEach(async () => {
 });
 
 function git(cwd: string, ...args: string[]): void {
-  execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, stdio: "ignore" });
+  runProgram("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd });
 }
 
 /** A started repository's main checkout, recorded, with one `.git` file naming its Git folder. */

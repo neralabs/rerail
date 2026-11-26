@@ -80,6 +80,12 @@ export const data = {
   followGitignore: null,
   /** Recommended packs for the scoped repository, each with its folder; fetched only when needed. */
   recommendations: null,
+  /**
+   * The rule packs published on npm, matched to the scoped repository (`GET /api/rule-packs/published`), read when Add
+   * rule packs opens: `null` until then, else `{ packs, unread }`, `unread` saying why they could not be read (`null`
+   * when they were, or when the daemon reads no npm, as a checkout's build does not).
+   */
+  publishedPacks: null,
   /** Merge Assist for the scoped checkout (`GET /api/merge-assist`, `MergeAssistStatus`); `null` until loaded. */
   mergeAssist: null,
   /** Why the last Merge Assist read failed; `null` once one succeeds. */

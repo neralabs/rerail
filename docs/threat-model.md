@@ -303,9 +303,17 @@ without hooks or network.
   repository Git refused stays refused until the process's owner of Git reads changes: where Rerail's Git did not
   answer its asks, the process asks again after a minute, and only an answer that differs makes a new owner, under
   which lanes open their rules again. The store's walk and status after the open, and an ignore question, run on the
-  caller's thread with no limit of their own: a walk asks one or two ignore questions per file, and a question's disk
-  reads are a stat of the index and the `.gitignore` of a folder the walk has just listed. The repository index walk
-  opens its rules under the same 10 s limit.
+  caller's thread with no limit of their own: a question's disk reads are a stat of the index and the `.gitignore` of a
+  folder the walk has just listed. A walk asks the engine about a path only where no answer is kept for its checkout
+  (`GitIgnoreAnswers`), and reads on the same thread, once per walk, the end of each checkout's index (all of it where
+  Git writes no checksum there, until a walk reads it 2 s or more after it last changed) and the `.gitignore` of each
+  folder it asks about. Those 2 s take the index file's times to come from the clock the daemon reads, within a tick.
+  Where a server sets them (a network file system, some shared folders), a time ahead of the daemon's clock has the
+  next walk read the index whole again; a server clock more than about 2 s behind the daemon's can let a walk keep the
+  file's stamp right after a write, and a later write of the same size, with the same times on a reused inode, then
+  keeps the answers learnt under the old index (a file `git add --force` added still read as ignored) until the index
+  next changes. An index with Git's checksum is told by its bytes, whatever its times. The repository index walk opens
+  its rules under the same 10 s limit.
 - **SQL** uses bound parameters (Drizzle, `better-sqlite3`, `rusqlite`); raw SQL is only constants and quoted
   migration DDL.
 - **Embedding model** SHA-256 is checked against `model/manifest.json` before loading (`native/src/model.rs`).
@@ -375,6 +383,10 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600 (ex
 - A steer's receipt the daemon took while another process held the database waits in `rerail.sqlite-receipts/`
   beside it, 0700 with files 0600, until its record is made; the next daemon records what is left
   (`keepReceipt` in `src/runtime/session-store.ts`).
+- An event a hook left while the daemon ran but did not read (a prompt, a reply or a tool's input, its recognized
+  secrets redacted and a tool's output left out) waits in `untaken-events/` in the home, 0700 with files 0600, until
+  the daemon takes it (`src/engine/storage/untaken-events.ts`). A process that can write there can already read
+  `daemon.json`'s capability and send events itself.
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch, and a

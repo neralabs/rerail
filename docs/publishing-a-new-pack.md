@@ -36,7 +36,7 @@ Confirm the pack is ready and your accounts can publish it.
 - **npm:** `npm whoami` prints a `neralabs` member with publish rights; else `npm login` interactively with 2FA.
 - **GitHub:** `gh auth status` shows write access to `neralabs/rerail`.
 - **Rust** on `PATH`, for the native build: `export PATH="$HOME/.cargo/bin:$PATH"`.
-- **Package missing:** this prints a 404:
+- **Package missing:** this prints a 404 for a name never published (a 401 when npm is not logged in):
   ```sh
   npm dist-tag ls @neralabs/rerail-pack-<id>
   ```
@@ -101,17 +101,23 @@ npm dist-tag add @neralabs/rerail-pack-<id>@<version> latest
 ```
 
 Approve the "Authenticate your account at: <url>" link in the browser. One approval covers every pack in the run.
-Reruns after a failure are safe. The publish script publishes under `next`, as every release does; the last command
-points `latest` at the first version too, so set-up fetches it on the default channel. A first version has no
+Run the commands in a terminal, not piped or redirected: npm otherwise fails with `EOTP` instead of waiting for the
+approval. Reruns after a failure are safe. The publish script publishes under `next`, as every release does; the last
+command points `latest` at the first version too, so set-up fetches it on the default channel. A first version has no
 release candidate to test: the publish gate is its test.
+
+Each publish ends with "Your package is being processed and may take a few minutes to become available." Until it is,
+`npm dist-tag ls` shows `latest: 0.0.0-stage` or a similar placeholder version.
 
 <details>
 <summary>What the scripts do, and how reruns work</summary>
 
 - **The tag script** pushes each release tag to GitHub. On a rerun, a version already tagged is skipped.
-- **The publish script** publishes each pack public under the `next` dist-tag. It waits on nothing npm does, so it
-  doesn't check the package is public: step 4 does. On a rerun, a version npm already has is not published again. A
-  version older than the pack's `latest` or `next` is never published, since `next` would trail `latest` or move back.
+- **The publish script** publishes each pack public under the `next` dist-tag. It reads each pack's dist-tags
+  first, without a login; npm answers 401, not 404, for a scoped name it has never had, and the script reads both as
+  never published. It waits on nothing npm does, so it doesn't check the package is public: step 4 does. On a rerun,
+  a version npm already has is not published again. A version older than the pack's `latest` or `next` is never
+  published, since `next` would trail `latest` or move back.
 - If the publish fails after tagging, run the publish script again. Later versions don't depend on it: the release
   workflow publishes any version that is tagged but not on npm.
 
@@ -119,24 +125,25 @@ release candidate to test: the publish gate is its test.
 
 ## 4. Check the result
 
-Confirm the publish, then give the package the same access as core.
+Confirm the publish, and that the package has the same access as core.
 
 ```sh
-npm dist-tag ls @neralabs/rerail-pack-<id>        # latest: <version>, next: <version>
+npm dist-tag ls @neralabs/rerail-pack-<id>        # latest: <version>, next: <version>, once npm has processed it
 npm access get status @neralabs/rerail-pack-<id>  # public
 git ls-remote --tags origin "refs/tags/@neralabs/rerail-pack-<id>@*"
 ```
 
 `npm view` can 404 for several minutes after a first publish; `npm dist-tag ls` sees the package at once.
 
-Whoever reads core must read every pack, or set-up can't fetch it for them. Give the new package core's teams with
-the same permission (today `developers`, read-write, as on every pack), then compare the lists:
+Whoever reads core must read every pack, or set-up can't fetch it for them. Compare the lists; they must match:
 
 ```sh
-npm access grant read-write neralabs:developers @neralabs/rerail-pack-<id>
 npm access list collaborators @neralabs/rerail
 npm access list collaborators @neralabs/rerail-pack-<id>
 ```
+
+npm gives the organization's `developers` team read-write on every package created under `@neralabs`, which is the
+access core has, so the lists match with no grant. If they ever differ, see Troubleshooting.
 
 <details>
 <summary>Later versions and the CI read token</summary>
@@ -168,18 +175,23 @@ In the npmjs.com web UI, open `https://www.npmjs.com/package/@neralabs/rerail-pa
 Save. Under **Publishing access**, choose **Require two-factor authentication and disallow tokens**, then **Update
 Package Settings**. Each save asks for 2FA.
 
-Verify (each run asks for browser approval):
+Verify; npm asks for one browser approval. The new pack's entry must equal Django's. Run it in a terminal,
+without `--json` and not piped: `--json`, or output that is not a terminal, makes npm fail with `EOTP` instead of
+waiting for the approval.
 
 ```sh
-npx -y npm@latest trust list @neralabs/rerail-pack-<id> --json
+for name in @neralabs/rerail-pack-django @neralabs/rerail-pack-<id>; do
+  echo "== $name"
+  npx -y npm@latest trust list "$name"
+done
 ```
 
 <details>
 <summary>What to expect, and why not the CLI</summary>
 
-The output must show `"repository": "neralabs/rerail"`, `"file": "release-packs.yml"` and
-`"environment": "release"`, with permissions including `createPackage` and `manageDistTags`. No npm command reads
-the Publishing access setting, so check that on the web page.
+Each entry must show `type: github`, `file: release-packs.yml`, `repository: neralabs/rerail`, `environment: release`
+and `permissions: publish, stage publish, manageDistTags`, as Django's does; only its `id` differs. No npm
+command reads the Publishing access setting, so check that on the web page.
 
 Use the web UI, not `npm trust github` (npm 12): the CLI can't grant the dist-tag permission, and the workflow's
 promote job needs it.
@@ -230,7 +242,10 @@ Find the message you see in the table; the fix is beside it.
 | `commit <sha> is not on GitHub, or gh cannot read the repository` | Not on a pushed commit, or `gh` isn't logged in. Use `origin/main` as in step 1; check `gh auth status`. |
 | `npm access get status` in step 4 prints `private` | npm keeps the package private. Run `npm access set status=public <name>`, then check again. |
 | `Superseded: <name>@<version> was not published: <version> is older than latest …` or `… older than next …` | A newer version is already `latest` or `next` and supersedes this one. Nothing to do; publishing it would move `next` back. |
-| `EOTP` or an "Authenticate your account" URL | npm needs 2FA. Approve the URL in the browser; the command carries on. |
+| An "Authenticate your account" URL | npm needs 2FA. Approve the URL in the browser; the command carries on. |
+| `EOTP`, "This operation requires a one-time password" | npm could not wait for the approval: the command ran with `--json`, or its output was piped or redirected. Run it again in a terminal without either. |
+| `npm dist-tag ls` shows `latest: 0.0.0-stage` | npm is still processing the publish. Wait a few minutes and check again. |
+| The new pack's collaborators differ from core's | The `developers` team lacks read-write on it. An owner of the organization runs `npm access grant read-write neralabs:developers @neralabs/rerail-pack-<id>`; for anyone else npm answers `E403`. |
 | The gate fails to load the native engine | Run `npm run build:native` with `~/.cargo/bin` on `PATH`. |
 | The gate says a tool-pack's test data is missing and to run `npm run fixtures:pull` | The worktree has no pack data. Run `npm run fixtures:pull -- --pack <id>` with read access to the bucket, then step 2 again. |
 | `npm view` returns 404 just after publishing | The registry hasn't caught up. Use `npm dist-tag ls`. |

@@ -12,6 +12,7 @@ export {
   daemonFetch,
   daemonLeftEventUntaken,
   type DaemonHealth,
+  type DaemonLookup,
   type DaemonMachine,
   type DaemonLaunchOptions,
   type EngineEndpoint,
