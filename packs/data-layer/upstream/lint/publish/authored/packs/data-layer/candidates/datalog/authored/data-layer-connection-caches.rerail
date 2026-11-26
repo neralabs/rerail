@@ -68,7 +68,7 @@ cc_keyed(n) :- node(_, n, "assignment", _, _), field(n, "type", t), node_text(t,
 
 // ---- pattern-0: connection-level branch/revision tip cache -----------------------------------------------------
 // A `self.<attr>` attribute, attr matching the name regex, followed by `=`, `:`, `==` or `:=` (the policy's
-// `precedes` a token `^(?:=|:|==|:=)$`). The tape stores none of those but `==` (RER-131); each marks a place in the
+// `precedes` a token `^(?:=|:|==|:=)$`). The tape stores none of those but `==` (decision 0161); each marks a place in the
 // named structure: an assignment's left side (`=`, and `:` before an annotation), a dict pair's key (`:`), or a
 // comparison's first operand before `==`. A `:=` names a plain identifier, never an attribute.
 .decl cc_p0_next(a: node)
@@ -88,7 +88,7 @@ violation("data-layer-connection-caches", "pattern-1", "CC001", p, l) :- cc_p1_h
 // ---- pattern-2: module-level dict keyed by BranchId/RevisionId -------------------------------------------------
 // The assignment branch (any depth, as the rule has no `inside`), and a typed_parameter with a direct identifier
 // child `^_\w+$`, such a type, and `layout: {before: {to: token, breaks: {min: 1}}}`: the token before it (a `(`
-// or `,`, comments passed over) ends on an earlier line. The tape stores neither (RER-131); the token before it ends
+// or `,`, comments passed over) ends on an earlier line. The tape stores neither (decision 0161); the token before it ends
 // on an earlier line exactly when nothing but space comes before the parameter on its own line.
 .decl cc_p2_hit(n: node)
 cc_p2_hit(n) :- cc_keyed(n), field(n, "left", x), node(_, x, "identifier", _, _), node_text(x, s), match("_\\w+", s).

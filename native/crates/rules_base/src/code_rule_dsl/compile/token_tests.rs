@@ -1,4 +1,4 @@
-//! Token tests (RER-131, t31), checked as a rule compiles. A named-only tape leaves out every
+//! Token tests (decision 0161, t31), checked as a rule compiles. A named-only tape leaves out every
 //! token the grammar implies, so a test of such a token can no longer hold. A *token test* is a
 //! sub-rule with a `regex` and no `kind` or `pattern` on its node, whose regex matches some token
 //! of the dialect's grammar. Where it sits says where the token would be:

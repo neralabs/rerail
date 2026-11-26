@@ -91,7 +91,7 @@ impl Language for GrammarDialect {
 
     /// A dialect whose patterns are its parser's own trees (Blade's, Forte's) builds them so
     /// (`tape::TreeParser::build_pattern`); every other dialect's are tapes of tree-sitter trees, written as
-    /// documents are: no token the grammar implies (`tape::pattern_doc`, RER-131).
+    /// documents are: no token the grammar implies (`tape::pattern_doc`, decision 0161).
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
         match crate::code_rule_dsl::tape::tree_parser(*self)
             .and_then(|parser| parser.build_pattern(builder))
@@ -452,7 +452,7 @@ pub fn rule_pattern(
 }
 
 /// The patterns one compilation of a query has compiled, by language and text (`pattern_key`). A pattern's tree is
-/// tree-sitter's parse of its text written as a tape (`tape::pattern_doc`, RER-131): a parse, an encode and a
+/// tree-sitter's parse of its text written as a tape (`tape::pattern_doc`, decision 0161): a parse, an encode and a
 /// restore. A query asks for the same pattern several times (the comparisons' captures for each of its dialects,
 /// its declared captures, the matcher), so its compilation compiles each once and hands out copies. The table is
 /// the compilation's and goes with it: nothing outlives the query (no process-wide memo, decision 0104). One that

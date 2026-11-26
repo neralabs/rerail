@@ -1,0 +1,51 @@
+// tsx/exports: what a file's import and export statements name, read off its own tree (no other file): the
+// specifiers' names, each statement's module, and the names an export statement exports or re-exports. Included by
+// tsx/names.rerail and by the phase `tsx_names` (typing/programs/tsx_names.rerail), which resolves them across files.
+
+// ts_module(d, m): document d's module, the name its symbols are qualified by ("src/util#f"): the one core names, else
+// (core names none for TypeScript or JavaScript) its path without its extension, `src/util.ts` -> "src/util". Each
+// file's is its own: every workspace file's module was "" and resolution read every file's exports as one module's.
+.decl ts_module(d: number, m: symbol)
+ts_module(d, m) :- doc(d, _, m), m != "".
+ts_module(d, @rx_replace(p, "\\.[cm]?[jt]sx?$", "")) :- doc(d, p, "").
+
+// spec_name(n, x): a name in an import or export list, an identifier or (ES2022) a string, `{ "a-b" as c }`,
+// read as its value.
+.decl spec_name(n: node, x: symbol)
+spec_name(n, x) :- (field(sp, "name", n) ; field(sp, "alias", n)), (kind(sp, "import_specifier") ;
+    kind(sp, "export_specifier")), (kind(n, "string"), str(n, x) ; !kind(n, "string"), text(n, x)).
+// import_spec(i, s): statement i names module s. Covers `import … from "s"` and `export … from "s"`, since a
+// re-export has to resolve its source the same way an import does.
+.decl import_spec(i: node, s: symbol)
+import_spec(i, s) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", n), str(n, s).
+
+
+// exported_decl(e, x): the export statement e exports a local name x (no `from`).
+.decl exported_decl(e: node, x: symbol)  // export function f / export const x / export default
+// `export function f`, `export class C`, `export const x`: the name of the attached declaration.
+exported_decl(e, x) :- field(e, "declaration", d), def_of(d, x).
+// `export default <expression>`: exported under the name "default".
+exported_decl(e, "default") :- child(e, v, _), field(e, "value", v).
+// `export { a, b as c }` with no source: exports a and c.
+exported_decl(e, x) :- !field(e, "source", _), child(e, c, _), kind(c, "export_clause"), child(c, s, _),
+    kind(s, "export_specifier"), export_name(s, x).
+// def_of(d, x): the name declared by declaration d, for the declaration kinds that can follow `export`.
+.decl def_of(d: node, x: symbol)
+def_of(d, x) :- kind(d, k),
+    (k = "function_declaration" ; k = "class_declaration" ; k = "interface_declaration" ; k = "type_alias_declaration"),
+    field(d, "name", n), text(n, x).
+// `export const a = 1, b = 2` declares a and b: one row per declarator.
+def_of(d, x) :- kind(d, "lexical_declaration"), child(d, v, _), kind(v, "variable_declarator"), field(v, "name", n), text(n, x).
+// export_from(e, s, y, x): e re-exports s's name y under the name x.
+.decl export_from(e: node, s: symbol, y: symbol, x: symbol)  // export { y as x } from "s"
+export_from(e, s, y, x) :- field(e, "source", src), str(src, s), child(e, c, _), kind(c, "export_clause"),
+    child(c, sp, _), kind(sp, "export_specifier"), field(sp, "name", n), spec_name(n, y), export_name(sp, x).
+// export_name: the name the outside world sees: the alias if present (`y as x` -> x), else the name itself.
+.decl export_name(sp: node, x: symbol)
+export_name(sp, x) :- field(sp, "alias", a), spec_name(a, x).
+export_name(sp, x) :- !field(sp, "alias", _), field(sp, "name", n), spec_name(n, x).
+// star_export: an export statement with a source and no `{ … }` clause is `export * from "s"` (or `export * as
+// ns from "s"`). An import statement has a source too and is never one.
+.decl star_export(e: node, s: symbol)  // export * from "s"
+star_export(e, s) :- kind(e, "export_statement"), field(e, "source", src), str(src, s),
+    count : { child(e, c, _), kind(c, "export_clause") } = 0.

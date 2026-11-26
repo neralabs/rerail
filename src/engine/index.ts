@@ -12,6 +12,8 @@ export {
   type AdapterEvent,
   type AdapterSample,
   type AdapterSession,
+  type EventAnswerFacts,
+  type HeldSession,
   type RerailEventLoop,
   type RerailHost,
   RULE_MESSAGE_TYPE,
@@ -66,6 +68,7 @@ export {
   rulePackPackageName,
   rulePackPackageOf,
   rulePackPackageSchema,
+  RULE_RISKS,
 } from "./catalog/rule-packs.js";
 export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";
 export { engineRegexIssues, type RegexIssue } from "./catalog/rule-regexes.js";
@@ -109,9 +112,11 @@ export {
   encodeCodeRuleWorkspaceRequest,
   RESULT_PAGE_BYTES,
   loadNativeBinding,
+  NATIVE_ENGINE_SYSTEMS,
   type NativeBinding,
   type NativeCodeRuleDslWorkspace,
   type NativeCompiledCodeRuleDsl,
+  nativeEnginePackageName,
   nativePlatformSuffix,
   resolveNativeBindingPath,
 } from "./native/native.js";
@@ -126,8 +131,9 @@ export { listAnalysisStores, retireAnalysisStore } from "./native/analysis-store
 export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
 export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";
-export { processStartedAt } from "./process-liveness.js";
+export { endProcessStartedByPowerShell, ENGINE_READER_ANSWER_MS, processStartedAt } from "./process-liveness.js";
 export { agentTranscriptPayload, callNamesDeniedPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD } from "./transcript-boundary.js";
+export { leaveUntaken, UNTAKEN_EVENTS_DIR, UNTAKEN_MOST_EVENTS, UNTAKEN_WATCH_MARK, untakenFolderId, type UntakenPass } from "./storage/untaken-events.js";
 export { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "./stable-json.js";
 export { commandLine, shellWord, type Shell } from "./command-line.js";
 export {

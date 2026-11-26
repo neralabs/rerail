@@ -39,7 +39,7 @@ pub fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Option<&Pat
 /// The run's key: everything it is a function of besides what it consults.
 /// Switches that change how a run is measured or held, never what it outputs: left out of the key. A profile's path
 /// differs every run, so with it in the key no profiled run ever found the last run's record.
-const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE",
+const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_W_JOINS", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE",
     // A profile's and the heap sampler's (`profile::memory`, `rerail_prof`): a measurement's cold runs sample the heap
     // and its warm runs do not, so with these in the key no warm run found the cold run's record (decision 0376).
     "RERAIL_PROF", "RERAIL_PROFILE_EACH", "RERAIL_HEAP_SAMPLE", "RERAIL_HEAP_AT", "RERAIL_HEAP_FRAMES", "RERAIL_PROF_MEMORY_MS", "RERAIL_TIMELINE",
@@ -126,7 +126,7 @@ fn key_parts(programs: &[&str], root: &Path, options: &serde_json::Value, typing
     if std::env::var_os("RERAIL_REUSE_TRACE").is_none() {
         return String::new();
     }
-    let short = |b: &[u8]| Sha256::digest(b).iter().take(3).map(|b| format!("{b:02x}")).collect::<String>();
+    let short = |b: &[u8]| rerail_prof::code_rule_dsl::prof::lower_hex(&Sha256::digest(b)[..3]);
     let texts: Vec<u8> = programs.iter().flat_map(|p| p.bytes()).collect();
     format!(
         "texts {}, root {} ({}), typing {}, handed down {}, switches {}, options {}",
@@ -178,7 +178,7 @@ fn graphs_line(graphs: &[Option<[u8; 32]>]) -> String {
             None => h.update([0]),
         }
     }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&h.finalize()[..])
 }
 
 /// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249).

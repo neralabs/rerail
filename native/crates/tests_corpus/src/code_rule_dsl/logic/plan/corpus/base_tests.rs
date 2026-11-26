@@ -957,7 +957,7 @@ ops(k, l, i, s) :- op_at(n, i, s), kind(n, k), line(n, l).
 }
 
 /// `prev_token(n, s)` is the text of the child right before n among its parent's stored children, and `token(p, i, s,
-/// start, end)` p's stored children in order. A named-only tape stores no token the grammar implies (RER-131), and
+/// start, end)` p's stored children in order. A named-only tape stores no token the grammar implies (decision 0161), and
 /// no relation holds one: the call's `(`, `)` and `,`, the `from` and the import list's `,` are in neither. A keyword
 /// some other word of its gap holds is stored where implied too: `from m import (a, b)` makes `import` one.
 #[test]
@@ -1123,12 +1123,13 @@ calls(n) :- later(n, _).
 
 /// A recursive relation with facts whose every rule joins an empty relation of a lower stratum keeps its facts: the
 /// stratum has no rule to run, but its relations are not held empty (`native_stratum_`; the data-layer pack's
-/// `conditional_derived`, a fact and a rule over the classes' bases, where no class has one).
+/// `conditional_derived`, a fact and a rule over the classes' bases, where no class has one). `e` pairs values of any
+/// two files: a crossing, declared (decisions 0652, 0680).
 #[test]
 fn a_stratum_whose_rules_join_nothing_keeps_its_facts() {
     let dir = corpus("facts-empty-joins", &[TREE]);
     let program = ".decl s(x: number)\ns(n) :- node(_, _, k, n, _), k = \"no_such_kind\".\n\
-                   .decl e(x: number, y: number)\ne(x, y) :- s(x), s(y).\n\
+                   .decl e(x: number, y: number) cross_file\ne(x, y) :- s(x), s(y).\n\
                    .decl d(x: number)\nd(7).\nd(y) :- d(x), e(x, y).\n\
                    .decl out(x: number)\nout(x) :- d(x).\n.output out\n";
     assert_eq!(run(&dir, program, &["out"]), [[["7"]]]);
@@ -1752,5 +1753,41 @@ fn str_answered_on_request_holds_the_eager_rows() {
     let eager = run(&dir, &format!("{decls}.decl all(n: node, s: symbol)\nall(n, s) :- str(n, s).\nout(s) :- all(n, s), node(_, n, \"string\", _, _).\n"), &["out"]);
     assert_eq!(asked[0].len(), 7, "string rows: {:?}", asked[0]);
     assert_eq!(asked, eager);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// t57 E6: a test `kind(n, #k)` of a node the atom before it bound is read in that atom's row program, a chunk's nodes
+/// at once off the tape (`rowcode::Word::Holds`, `Source::holds_each`), not a membership step's probe a row. Its rows
+/// are those of the same rules written so that no test is fused (each kind bound, then compared): positive and
+/// negated, a node a row holds and one bound before, a kind constant and a kind another atom bound.
+#[test]
+fn a_kind_test_of_a_node_the_atom_bound_is_read_in_its_row_program() {
+    let dir = corpus("view-tests", &[TREE]);
+    let program = r#"
+.decl pair(n: node, p: node)
+pair(n, p) :- child(p, n, _).
+.decl named(n: node, p: node)
+named(n, p) :- pair(n, p), kind(n, "identifier"), kind(p, "call").
+.decl named_bound(n: node, p: node)
+named_bound(n, p) :- pair(n, p), kind(n, a), a = "identifier", kind(p, b), b = "call".
+.decl unnamed(n: node)
+unnamed(n) :- pair(n, p), !kind(n, "identifier"), kind(p, "expression_statement").
+.decl unnamed_bound(n: node)
+unnamed_bound(n) :- pair(n, p), kind(n, a), a != "identifier", kind(p, b), b = "expression_statement".
+.decl same(n: node, m: node)
+same(n, m) :- pair(n, p), pair(m, p), n < m, kind(n, k), kind(m, k).
+.decl same_bound(n: node, m: node)
+same_bound(n, m) :- pair(n, p), pair(m, p), n < m, kind(n, k), kind(m, j), j = k.
+.output named, named_bound, unnamed, unnamed_bound, same, same_bound
+"#;
+    // The run's own scope, held here: its counts are read before it ends.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let got = run(&dir, program, &["named", "named_bound", "unnamed", "unnamed_bound", "same", "same_bound"]);
+    let tested = crate::code_rule_dsl::logic::native::setfix::run_counts().view_tests.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(tested > 0, "a row program tested nodes by a view");
+    assert!(got.iter().all(|rows| !rows.is_empty()), "{got:?}");
+    for k in [0, 2, 4] {
+        assert_eq!(got[k], got[k + 1], "rule {k}: fused against bound");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

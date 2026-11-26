@@ -243,8 +243,24 @@ describe("audit controls", () => {
       expect(controls.claimRepositoryAudit("a", checkout, ranAgainst)).toBe(true);
       controls.finishRepositoryAudit("a", checkout, auditId, "failed", "Evaluation failed");
       sessionStore.openSession({ host: "omp", sessionId: "later", cwd: root });
-      return { checkout, controls, close: () => { controls.close(); sessionStore.close(); } };
+      return { checkout, controls, path: sessionStore.path, auditId, close: () => { controls.close(); sessionStore.close(); } };
     }
+
+    // Text an audit record reads as an adapter error: a damaged file's, and a list past the CHECK on `audits`; then
+    // failures with no string message or code, which Rerail never writes.
+    it.each([
+      '[{"clauseId":"source"', "[null]", '[{"path":"a","code":"source-incomplete"}]',
+      '[{"path":"a","code":"source-incomplete","message":1}]', '[{"path":"a","blind":"syntax","message":"m"}]',
+    ])("does not run again when its stored failures read as %s, until the catalog is another one", async text => {
+      const { checkout, controls, path, auditId, close } = await failedAudit([sourceGap]);
+      const database = openRerailDatabase(path);
+      database.$client.pragma("ignore_check_constraints = ON");
+      database.$client.prepare("UPDATE audits SET failures_json = ? WHERE audit_id = ?").run(text, auditId);
+      database.$client.close();
+      expect(controls.claimRepositoryAudit("later", checkout, "catalog-1")).toBe(false);
+      expect(controls.claimRepositoryAudit("later", checkout, "catalog-2")).toBe(true);
+      close();
+    });
 
     it("runs again when it failed only for files read in part, which the old rule counted", async () => {
       const { checkout, controls, close } = await failedAudit([sourceGap, scanLimit]);

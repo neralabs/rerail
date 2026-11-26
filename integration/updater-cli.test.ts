@@ -1,10 +1,12 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { text } from "node:stream/consumers";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+import { nativePlatformSuffix } from "../src/engine/index.js";
 import { runNpm } from "../src/runtime/index.js";
 import { thirdPartyPack } from "../test/support/installed-packs.js";
 import { removeFolder } from "../test/support/platform/remove-folder.js";
@@ -72,13 +74,20 @@ async function run(command: readonly string[], environment: NodeJS.ProcessEnv, c
   return { exitCode, stdout, stderr };
 }
 
-async function createPackageFixture(source: string, root: string, version: string, valid: boolean): Promise<string> {
+/**
+ * A core package as a registry holds it. Like a released core, it pins `enginePackage`, the engine package of this
+ * machine, in the shrinkwrap it ships: the updater holds the engine npm installed to that integrity.
+ */
+async function createPackageFixture(source: string, root: string, version: string, valid: boolean, enginePackage: string): Promise<string> {
   const packageRoot = join(root, version);
   await mkdir(packageRoot, { recursive: true });
   await writeFile(join(packageRoot, "package.json"), `${JSON.stringify({
     name: valid ? "@neralabs/rerail" : "@fixture/rejected-rerail",
     version,
     type: "module",
+  })}\n`);
+  await writeFile(join(packageRoot, "npm-shrinkwrap.json"), `${JSON.stringify({
+    packages: { [`node_modules/${enginePackage}`]: { version, integrity: `sha512-engine-of-${version}` } },
   })}\n`);
   if (!valid) return packageRoot;
 
@@ -155,7 +164,7 @@ async function createLocalRegistry(root: string): Promise<string> {
   const bin = join(root, "bin");
   await mkdir(bin, { recursive: true });
   const fixture = join(bin, "npm-fixture.mjs");
-  await writeFile(fixture, `import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+  await writeFile(fixture, `import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 // Rerail puts npm's own options (fetch retries) ahead of the command, as npm accepts them: the command is the first
 // argument that is not an option.
@@ -200,11 +209,25 @@ if (args[0] === "view") {
 }
 if (args[0] === "install") {
   const prefix = args[args.indexOf("--prefix") + 1];
-  const version = args.at(-1).split("@").at(-1);
+  const { name } = JSON.parse(readFileSync(join(process.env.RERAIL_ACCEPTED_PACKAGE, "package.json"), "utf8"));
+  // The specs: core's, and with it the engine package's of this machine (installVersion in src/setup/updater.ts).
+  const specs = args.filter(argument => argument.startsWith("@"));
+  const version = specs.find(spec => spec.startsWith(name + "@")).slice(name.length + 1);
   const source = version === process.env.RERAIL_ACCEPTED_VERSION ? process.env.RERAIL_ACCEPTED_PACKAGE : process.env.RERAIL_REJECTED_PACKAGE;
   // Both packages install where the accepted package's name says, so a rejected one is caught by its identity.
-  const { name } = JSON.parse(readFileSync(join(process.env.RERAIL_ACCEPTED_PACKAGE, "package.json"), "utf8"));
   cpSync(source, join(prefix, "node_modules", ...name.split("/")), { recursive: true });
+  // An engine package installs beside core, and npm records it in a lockfile of its own with the integrity of the
+  // tarball the registry served: here the one core pins in its shrinkwrap.
+  const pinned = JSON.parse(readFileSync(join(source, "npm-shrinkwrap.json"), "utf8")).packages;
+  const installed = {};
+  for (const spec of specs.filter(spec => !spec.startsWith(name + "@"))) {
+    const enginePackage = spec.slice(0, spec.lastIndexOf("@"));
+    const location = "node_modules/" + enginePackage;
+    mkdirSync(join(prefix, location), { recursive: true });
+    writeFileSync(join(prefix, location, "package.json"), JSON.stringify({ name: enginePackage, version }));
+    installed[location] = pinned[location];
+  }
+  writeFileSync(join(prefix, "node_modules", ".package-lock.json"), JSON.stringify({ packages: installed }));
   process.exit(0);
 }
 if (args[0] === "audit" && args[1] === "signatures") {
@@ -225,22 +248,33 @@ process.exit(1);
 
 describe("Rerail managed launcher", () => {
   let packageRoot: string | undefined;
-  /** This checkout, packed and installed into a consumer directory as `npm install @neralabs/rerail` would install it. */
-  let packaged: { manifest: PackageManifest; root: string } | undefined;
+  /**
+   * This checkout, packed and installed into a consumer directory as `npm install @neralabs/rerail` would install it:
+   * core, and beside it the engine package of this machine, which core names at its own version.
+   */
+  let packaged: { manifest: PackageManifest; root: string; enginePackage: string } | undefined;
 
-  // The pack and the install take the registry's and the runner's time, not the updater's: about 13s locally and
+  // The packs and the install take the registry's and the runner's time, not the updater's: about 13s locally and
   // twice that in CI, so they have their own budget and the tests' limits cover the CLI alone.
   beforeAll(async () => {
     packageRoot = await mkdtemp(join(tmpdir(), "rerail-launcher-package-"));
     const manifest = await packageManifest();
+    // Core's tarball carries no engine. The checkout's engines (native/) are packed as engine packages, and core
+    // against them, so it names each at its exact version as a release names all six.
+    const engines = join(packageRoot, "engines");
+    await promisify(execFile)(process.execPath, ["scripts/release/engine/packages.mjs", "pack", "--out", engines]);
+    const packed = JSON.parse(await readFile(join(engines, "engine-packages.json"), "utf8")) as { packages: Array<{ suffix: string; name: string; file: string }> };
+    const engine = packed.packages.find(({ suffix }) => suffix === nativePlatformSuffix());
+    if (engine === undefined) throw new Error(`native/ has no engine for ${nativePlatformSuffix()}: npm run build:native builds it`);
     // npm as Rerail starts it: on Windows npm is a npm.cmd script, which only a shell runs.
-    await runNpm(["pack", "--pack-destination", packageRoot]);
+    await runNpm(["pack", "--pack-destination", packageRoot], { env: { ...process.env, RERAIL_ENGINE_PACKAGES: engines } });
     const archive = join(packageRoot, `${manifest.name.slice(1).replace("/", "-")}-${manifest.version}.tgz`);
     const consumer = join(packageRoot, "consumer");
     // A clean install from the tarball's declared dependencies, so one missing from package.json fails here; packages
-    // already in the npm cache (CI restores it and runs npm ci first) are taken from it instead of the registry.
-    await runNpm(["install", "--prefer-offline", "--prefix", consumer, "--no-audit", "--no-fund", archive]);
-    packaged = { manifest, root: join(consumer, "node_modules", ...manifest.name.split("/")) };
+    // already in the npm cache (CI restores it and runs npm ci first) are taken from it instead of the registry. The
+    // engine package is on no registry at this version, so its tarball is installed in the same command.
+    await runNpm(["install", "--prefer-offline", "--prefix", consumer, "--no-audit", "--no-fund", archive, join(engines, engine.file)]);
+    packaged = { manifest, root: join(consumer, "node_modules", ...manifest.name.split("/")), enginePackage: engine.name };
   }, 120_000);
 
   afterAll(async () => {
@@ -249,13 +283,13 @@ describe("Rerail managed launcher", () => {
 
   test("installs the packaged launcher and accepts then rejects deterministic local updates", async () => {
     if (packaged === undefined) throw new Error("The launcher was not packaged and installed");
-    const { manifest, root: launcherRoot } = packaged;
+    const { manifest, root: launcherRoot, enginePackage } = packaged;
     const root = await mkdtemp(join(tmpdir(), "rerail-launcher-"));
     temporaryDirectories.push(root);
     const acceptedVersion = laterPatch(manifest.version, 1);
     const rejectedVersion = laterPatch(manifest.version, 2);
-    const accepted = await createPackageFixture(launcherRoot, join(root, "registry"), acceptedVersion, true);
-    const rejected = await createPackageFixture(launcherRoot, join(root, "registry"), rejectedVersion, false);
+    const accepted = await createPackageFixture(launcherRoot, join(root, "registry"), acceptedVersion, true, enginePackage);
+    const rejected = await createPackageFixture(launcherRoot, join(root, "registry"), rejectedVersion, false, enginePackage);
     const bin = await createLocalRegistry(root);
     const home = join(root, "home");
     const userHome = join(root, "user");

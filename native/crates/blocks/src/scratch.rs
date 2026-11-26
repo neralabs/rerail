@@ -128,8 +128,10 @@ impl Stack {
         h.state.store(state, Relaxed);
         self.last.store(head, Relaxed);
         self.top.store(end, Relaxed);
-        if end > self.touched.load(Relaxed) {
+        let touched = self.touched.load(Relaxed);
+        if end > touched {
             self.touched.store(end, Relaxed);
+            RESIDENT.fetch_add(end - touched, Relaxed);
         }
         // The device wraps a block's used bytes: they reach every region handed out.
         self.block.reach(end);
@@ -173,7 +175,23 @@ impl Stack {
             self.given[0].store(from, Relaxed);
             self.given[1].store(to, Relaxed);
             self.touched.store(keep, Relaxed);
+            RESIDENT.fetch_sub(touched - keep, Relaxed);
         }
+    }
+}
+
+/// The bytes every thread's stack has touched above its floor and not given back: what the stacks hold in memory,
+/// for the profile's account of a footprint (their blocks are no allocator's, so no other count holds them).
+static RESIDENT: AtomicUsize = AtomicUsize::new(0);
+
+/// What the threads' stacks hold in memory now (`RESIDENT`).
+pub fn resident() -> usize {
+    RESIDENT.load(Relaxed)
+}
+
+impl Drop for Stack {
+    fn drop(&mut self) {
+        RESIDENT.fetch_sub(self.touched.load(Relaxed) - self.floor, Relaxed);
     }
 }
 

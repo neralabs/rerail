@@ -220,4 +220,39 @@ describe("the page's rule setting writes", () => {
     expect(stored("eslint:no-var").enabled).toBe(false);
     expect(stored("eslint:radix").enabled).toBe(false);
   });
+
+  describe("at three folders", () => {
+    const folders = () => writes().map(w => (w.body as { folder: string }).folder);
+
+    beforeEach(() => {
+      data.rules = toStoredRules([entry("eslint:no-var", ""), entry("eslint:no-var", "web"), entry("eslint:no-var", "api")]);
+    });
+
+    it("sends the folder after one the daemon changed but could not confirm on the disk, and says so once", async () => {
+      const saving = page().setEnabled(["eslint:no-var"], false, "Off.");
+      await vi.waitFor(() => expect(writes()).toHaveLength(1));
+      writes()[0]!.answer(200, {});
+      await vi.waitFor(() => expect(writes()).toHaveLength(2));
+      writes()[1]!.answer(503, { error: "not-on-disk", message: "the change was made, but Rerail could not confirm it is on the disk (EIO)" });
+      await vi.waitFor(() => expect(writes()).toHaveLength(3));
+      writes()[2]!.answer(200, {});
+      await saving;
+
+      expect(folders()).toEqual(["", "web", "api"]);
+      expect(stored("eslint:no-var").enabled).toBe(false);
+      expect(toast).toHaveBeenCalledExactlyOnceWith("The change was made, but Rerail could not confirm it is on the disk (EIO).");
+    });
+
+    it("sends no folder after one whose write fails", async () => {
+      const saving = page().setEnabled(["eslint:no-var"], false, "Off.");
+      await vi.waitFor(() => expect(writes()).toHaveLength(1));
+      writes()[0]!.answer(200, {});
+      await vi.waitFor(() => expect(writes()).toHaveLength(2));
+      writes()[1]!.answer(500, { error: "disk full" });
+      await saving;
+
+      expect(folders()).toEqual(["", "web"]);
+      expect(toast).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/^Couldn’t save\. PUT \/api\/repository\/settings answered 500/u));
+    });
+  });
 });

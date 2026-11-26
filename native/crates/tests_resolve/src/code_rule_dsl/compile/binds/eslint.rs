@@ -186,7 +186,7 @@ fn no_unused_vars(options: &Value, typescript: bool) -> Value {
 fn declaration_file_marks() -> Value {
     let direct = |kind: &str| json!({ "has": { "stopBy": "neighbor", "kind": kind } });
     // `export =`, `export *` and `export default` read from the statement's source: an alternative
-    // implies its `=` (the tape keeps none, RER-131).
+    // implies its `=` (the tape keeps none, decision 0161).
     let overriding = json!({ "kind": "export_statement", "any": [
         direct("export_clause"), direct("namespace_export"), { "regex": "^export\\s*(=|\\*)" },
         { "all": [{ "regex": "^export\\s+default\\b" }, direct("identifier")] },

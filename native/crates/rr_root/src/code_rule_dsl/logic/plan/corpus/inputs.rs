@@ -292,7 +292,7 @@ fn blob_id(bytes: &[u8]) -> String {
     let mut hash = sha1::Sha1::new();
     hash.update(format!("blob {}\0", bytes.len()).as_bytes());
     hash.update(bytes);
-    hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&hash.finalize()[..])
 }
 
 /// The files of `root` the corpus sees (`corpus_paths`: Git's listing in a work tree, so none Git ignores, else the
@@ -328,7 +328,7 @@ pub(in crate::code_rule_dsl) fn inputs_digest(root: &Path, globs: &[String]) -> 
         hash.update(blob_id(&bytes).as_bytes());
         hash.update(*b"\n");
     }
-    Ok(format!("sha256:{}", hash.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>()))
+    Ok(format!("sha256:{}", rerail_prof::code_rule_dsl::prof::lower_hex(&hash.finalize()[..])))
 }
 
 /// A stamped artifact's `data`, if it is there, well formed, ok and fresh against `digest`.
@@ -412,7 +412,7 @@ pub fn take_consulted() -> Vec<(String, String, String)> {
 
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::Digest as _;
-    sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&sha2::Sha256::digest(bytes)[..])
 }
 
 pub(super) fn of_result(result: &ReadResult<String>) -> String {
@@ -937,7 +937,7 @@ grew(e) :- now_entry(e), !was(_, e).
         let globs = vec!["**/*.py".to_owned()];
         let first = inputs_digest(&root, &globs).unwrap();
         let line = format!("pkg/a.py\0{}\n", blob_id(b"x = 1\n"));
-        let named = sha2::Sha256::digest(line.as_bytes()).iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let named = rerail_prof::code_rule_dsl::prof::lower_hex(&sha2::Sha256::digest(line.as_bytes()));
         assert_eq!(first, format!("sha256:{named}"), "pkg/a.py, named with `/`");
         std::fs::write(root.join("README.md"), "two\n").unwrap();
         std::fs::write(root.join(".rerail/facts/x.py"), "hidden\n").unwrap();

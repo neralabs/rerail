@@ -765,6 +765,7 @@ impl Snapshot {
                 base_files: inventory.files.clone(),
                 overlays: Vec::new(),
                 nested_roots: Vec::new(),
+                volume_answers: Default::default(),
             })
         }).map_err(|error| error.to_string())?
     }

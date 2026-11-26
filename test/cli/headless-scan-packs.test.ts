@@ -56,13 +56,15 @@ function writePack(directory: string, packageName: string, version: string, rule
 }
 
 /** A registry of published packs, `<package>@<version>` → folder: installs link the folder, as npm installs a version. */
-function registry(versions: Record<string, string>): { store: (home: string) => PackStore; installs: string[][] } {
+function registry(versions: Record<string, string>): { store: (home: string) => PackStore; installs: string[][]; offline: boolean[] } {
   const installs: string[][] = [];
+  const offline: boolean[] = [];
   const store = (home: string): PackStore => ({
     home,
     fetch: async () => ({ fetched: [], problems: [], release: async () => {} }),
-    async install(specs) {
+    async install(specs, options) {
       installs.push([...specs]);
+      offline.push(options?.preferOffline === true);
       for (const spec of specs) {
         const directory = versions[spec];
         if (directory === undefined) throw new Error(`npm error code E404\nnpm error 404 Not Found - ${spec}`);
@@ -72,7 +74,7 @@ function registry(versions: Record<string, string>): { store: (home: string) => 
     },
     remove: async () => {},
   });
-  return { store, installs };
+  return { store, installs, offline };
 }
 
 const published = realpathSync(mkdtempSync(join(tmpdir(), "rerail-published-packs-")));
@@ -138,6 +140,8 @@ describe("rerail scan with the packs a repository declares in .rerail/packs.json
     const second = await scanIn(busy, root);
 
     expect(ruleShape(second)).toEqual(ruleShape(first));
+    // A scan may run with no network, so a version npm has cached installs from there (the store asks the registry when not).
+    expect(npm.offline.slice(-2)).toEqual([true, true]);
     expect(first.status).toBe("completed");
     expect(first.rulesSource).toEqual({ kind: "worktree" });
     expect(first.rules.map(rule => rule.ruleId)).toEqual(["needles-alpha", "own-rule"]);

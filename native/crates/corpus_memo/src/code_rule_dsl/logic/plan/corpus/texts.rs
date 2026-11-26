@@ -81,9 +81,9 @@ mod tests {
         std::fs::write(&b, "y = 2\n").unwrap();
         let stat = |p: &Path| FileStat::of(&std::fs::metadata(p).unwrap());
         let outer = Sources::default();
-        outer.keep(&a, stat(&a), Home::Own((&b"x = 1\n"[..]).into()));
-        outer.keep(&b, stat(&b), Home::Own((&b"y = 2\n"[..]).into()));
-        outer.keep(&dir.join("c.bin"), stat(&a), Home::Own([0xffu8, 0xfe].into()));
+        outer.keep(&a, stat(&a), Home::from(rerail_blocks::vector::Vector::from(&b"x = 1\n"[..])));
+        outer.keep(&b, stat(&b), Home::from(rerail_blocks::vector::Vector::from(&b"y = 2\n"[..])));
+        outer.keep(&dir.join("c.bin"), stat(&a), Home::from(rerail_blocks::vector::Vector::from(&[0xffu8, 0xfe][..])));
         let inner_own = Sources::default();
         let inner = Given { own: &inner_own, handed: Some(&outer) };
         let mine = Given { own: &outer, handed: None };
@@ -97,7 +97,7 @@ mod tests {
         std::fs::write(&b, "y = 3\n").unwrap();
         assert_eq!(mine.text(&b, true), None);
         std::fs::write(&b, "y = 2\n").unwrap();
-        outer.keep(&b, stat(&b), Home::Own((&b"y = 2\n"[..]).into()));
+        outer.keep(&b, stat(&b), Home::from(rerail_blocks::vector::Vector::from(&b"y = 2\n"[..])));
         assert_eq!(outer.release(), (1, 6), "what no wave took");
         assert_eq!(inner.text(&b, false), None, "released");
         let _ = std::fs::remove_dir_all(&dir);

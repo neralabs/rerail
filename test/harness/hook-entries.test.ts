@@ -9,8 +9,9 @@ import { serveHookEntry, type HookStreams } from "../../src/harness/hook-adapter
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /**
- * The hooks a coding agent starts through a parent it may kill on a timeout: cmd.exe (Cursor), PowerShell (Codex) or the
- * hook launcher (Claude Code). On Windows killing that parent leaves node running, holding its session's lock.
+ * The hooks a coding agent starts through a parent it may kill on a timeout: cmd.exe (Claude Code), PowerShell (Codex
+ * and Cursor) or the hook launcher (a Claude Code `node` entry whose PATH finds another node). On Windows killing that
+ * parent leaves node running, holding its session's lock.
  */
 const ENTRIES = ["src/hosts/claude/claude-hook.ts", "src/hosts/codex/codex-hook.ts", "src/hosts/cursor/cursor-hook.ts"];
 

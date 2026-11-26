@@ -125,7 +125,7 @@ fn cache_file() -> Option<std::path::PathBuf> {
     use sha2::Digest as _;
     let exe = std::env::current_exe().ok()?;
     let key = sha2::Sha256::digest(format!("{}\0{}\0{}", ROOF_LOOPS, build_profile(&exe), cfg!(debug_assertions)).as_bytes());
-    let name: String = key.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    let name: String = crate::code_rule_dsl::prof::lower_hex(&key[..8]);
     Some(std::env::temp_dir().join("rerail-roofs").join(format!("{name}.json")))
 }
 

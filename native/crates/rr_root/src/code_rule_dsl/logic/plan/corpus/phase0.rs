@@ -47,6 +47,10 @@ fn bootstrap_spelling(s: &str) -> std::borrow::Cow<'_, str> {
     s.into()
 }
 
+/// A path bootstrap.rerail gives, as the host spells it. A pack's table beside the library keeps its include's
+/// spelling (`lib/../packs/…`): bootstrap takes a file under the library for a module (`p0_seed_reaches`), and the
+/// table is one (decision 0639 §2). Where a module's files meet a program's canonical list (`Library::scope`), both
+/// are spelled once (`rr::one_spelling`).
 fn host_spelling(s: &str) -> String {
     #[cfg(windows)]
     if s.contains('/') && std::path::Path::new(s).is_absolute() {
@@ -180,7 +184,7 @@ impl Graph {
     /// Its includes, missing names and absent candidates, for a test's message.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn describe(&self) -> String {
-        let digests: Vec<String> = self.digests.iter().map(|(p, d)| format!("{} {}", p.display(), d.iter().take(6).map(|b| format!("{b:02x}")).collect::<String>())).collect();
+        let digests: Vec<String> = self.digests.iter().map(|(p, d)| format!("{} {}", p.display(), rerail_prof::code_rule_dsl::prof::lower_hex(&d[..6]))).collect();
         format!("includes {:#?}\nmissing {:?}\nabsent {:?}\ndigests {digests:#?}", self.includes, self.missing, self.absent)
     }
 
@@ -824,7 +828,7 @@ impl Images {
         use crate::code_rule_dsl::logic::front::Value;
         let s = |x: String| Value::Str(x.into());
         let p = |p: &PathBuf| s(self.rel(&p.to_string_lossy()));
-        let hex = |d: &[u8; 32]| s(d.iter().map(|b| format!("{b:02x}")).collect::<String>());
+        let hex = |d: &[u8; 32]| s(rerail_prof::code_rule_dsl::prof::lower_hex(&d[..]));
         let mut f = crate::code_rule_dsl::logic::program_facts::Facts::new();
         let mut put = |rel: &str, row: Vec<Value>| f.entry(rel.to_owned()).or_default().push(row.into());
         for (from, to) in &g.includes {
@@ -919,7 +923,7 @@ impl Images {
 
     fn encode(&self, g: &Graph) -> Vec<u8> {
         let p = |p: &PathBuf| self.rel(&p.to_string_lossy());
-        let hex = |d: &[u8; 32]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let hex = |d: &[u8; 32]| rerail_prof::code_rule_dsl::prof::lower_hex(&d[..]);
         let includes: Vec<String> = g.includes.iter().flat_map(|(from, to)| to.iter().flat_map(move |(at, n, path)| [self.rel(from), at.to_string(), n.clone(), p(path)])).collect();
         let missing: Vec<String> = g.missing.iter().flat_map(|(from, at, n)| [self.rel(from), at.to_string(), n.clone()]).collect();
         let absent: Vec<String> = g.absent.iter().map(p).collect();
@@ -1152,7 +1156,7 @@ impl Graph {
         let is_core = |p: &PathBuf| lib.as_deref().is_some_and(|l| *p == candidate_path(l, "core.rerail"));
         let core_seed = matches!(seed, Seed::File(p) if is_core(p));
         let variant = if core_seed || g.includes.get(&if matches!(seed, Seed::Text { .. }) { TEXT.to_owned() } else { start.clone() }).is_some_and(|to| to.iter().any(|(at, n, _)| *at == -1 && n == "core.rerail")) { "core:" } else { "bare:" };
-        let hex = |d: &[u8; 32]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let hex = |d: &[u8; 32]| rerail_prof::code_rule_dsl::prof::lower_hex(&d[..]);
         let reached: std::collections::BTreeSet<String> = g.digests.values().map(hex).collect();
         // A library file or a phase program as a seed is a module of the programs that include it
         // (`p0_seed_reaches(f, f)`): its graph holds its own module, which a text including it is composed with.

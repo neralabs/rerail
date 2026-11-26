@@ -1,1 +1,0 @@
-Rules that read facts from other files, such as the Django rules, report the same findings on every run: a run could miss findings, or report extra ones, when the engine evaluated part of a rule before those facts were loaded.

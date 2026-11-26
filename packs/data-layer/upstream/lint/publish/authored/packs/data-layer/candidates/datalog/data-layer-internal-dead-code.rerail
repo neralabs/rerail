@@ -197,7 +197,7 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl rf_head_open(h: node)
 .decl rf_hit(q: symbol, p: symbol, r: symbol, h: number)
 .decl rf_import_target(site: node, q: symbol)
-.decl rf_imported(m: symbol, x: symbol, q: symbol)
+.decl rf_imported(m: symbol, x: symbol, q: symbol) cross_file
 .decl rf_in(n: node, g: node)
 .decl rf_in_annot(n: node)
 .decl rf_in_graph(t: node)
@@ -247,7 +247,7 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl rf_opaque_site(m: node, x: symbol, site: node)
 .lattice shortlex_min<symbol> { Lub -> @shortlex_min }
 .decl rf_order(c: symbol, b: symbol, route: shortlex_min<>) widen 64
-.decl rf_own_fn(c: symbol, x: symbol)
+.decl rf_own_fn(c: symbol, x: symbol) cross_file
 .decl rf_owner(n: node, t: node)
 .decl rf_owner_class(t: node, c: node, q: symbol)
 .decl rf_param_of(i: node, f: node)

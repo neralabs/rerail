@@ -163,10 +163,11 @@ fn module_text(
     let from = path.to_string_lossy().into_owned();
     let mut out = String::with_capacity(text.len());
     for line in text.lines() {
-        let name = line.trim_start().strip_prefix("#include").and_then(|rest| rest.split('"').nth(1));
+        // As phase 0's graph names it (`rr::include_switched`: the reference graph's file under RERAIL_REFERENCES).
+        let name = line.trim_start().strip_prefix("#include").and_then(|rest| rest.split('"').nth(1)).map(super::rr::include_switched);
         match name {
             Some(name) => {
-                let found = graph.includes.get(&from).into_iter().flatten().find(|(_, n, _)| n == name).map(|(_, _, p)| p.clone());
+                let found = graph.includes.get(&from).into_iter().flatten().find(|(_, n, _)| *n == name).map(|(_, _, p)| p.clone());
                 let Some(found) = found else {
                     return Err(format!("{}: #include {name:?}: no such file", path.display()));
                 };

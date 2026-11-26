@@ -327,7 +327,7 @@ and each line span's place.
 - `intval` and `op_t` are read by no core.rr library rule; in core.rr's shape `NodeRows` runs only where a program
   reads them. In T's shape they come with `NodeRows`' eager `text`, `name` and `str`, deferred with Q121.
 - What row 7 keeps: `core_rr`'s and `NodeRows`' eager derived values (`text`, `name`, `value`'s literals, T's
-  rows), deferred (Q121).
+  rows), deferred (Q121). T's rows of a bound node are read since 2026-11-23 (below).
 - core.rerail's tape answers that `core_rr` made as rows are views (2026-11-22): `op` (`View::Op`: a numbered node's
   anonymous children, the rank item `Item::Op`, zero-width ones included; a Python two-word operator is one child,
   the grammar's alias, so no row is made for it or for any other), `end_point` (`View::End`: a node's position among `Locs::ends`),
@@ -404,7 +404,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 0: gone | Done (step 4, 2026-11-22) |
 | 5 | Views and flat relations uploaded from the host. Symbols' names no longer (0478 step 2e, 2026-11-19: every text kernel reads them through the atoms directory; `texts` and `DevText` are deleted). `tape`, `ast_depth` and `node_order` are read in place since 2026-11-20 (`view_tape`, `view_depth`, `view_order`, written once in CLIF: a node's parent, its numbered nodes under it by `view_end`'s rank, its depth by a climb, its order key by `num_order_of`): on the M3's 300-file run they were 69.8 MB (`ast_depth`) and 13.7 MB (`tape`) of 176.3 MB uploaded (ab111). Each upload is counted by why it was not read in place and by its columns (`device.upload (...)`) | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident` | 0: gone. On cold hogql its last 39 calls were relations of no rows | Done (step 6, 2026-11-22) |
 | 6 | Gone (step 5, 2026-11-18): an axis's pairs copied into the chunk, then expanded to ids. The solve writes ids once into a relation of its own, which every reader reads where it lies; `put_pairs` and `VIEW_AXIS` are deleted. `has` probed by its node or its ancestor is walked on the tape on the device (6fdbc1eb2, `DevRel::has`); read whole or by both columns it is still uploaded (row 5). Measured (ab98, 2026-11-20, the M3, 300 files, `--metal`, 1 GB, load 5–9; each arm with 960374749f's planner fix): 463 violations each run; instructions 544 G without the walk, 554 G with it (means of three runs, within their spread of about 30 G), wall 24 s each; `has` walked 6 times a run; row 5's uploads rose from 312.1 MB in 863 calls to 454.3 MB in 949, since strata a keyed `has` kept on the CPU now run on the device and upload their other inputs | — | — | Done |
-| 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`). In core.rerail's shape a node's `text` is read in place (2026-11-22); left: T's shape's `NodeRows` (Q121) and `text` of a span or of a node only a cross-file relation binds | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.0 MB, 0.3 ms on cold hogql (0.45–0.49 s of CPU a run before) | Step 3 |
+| 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`). In core.rerail's shape a node's `text` is read in place (2026-11-22); left: T's shape's `NodeRows` where a rule does not bind the node (bound, read since 2026-11-23, Q121), and `text` of a match's span (a line's is read off the source, 2026-11-24), by its text, or of a node only a cross-file relation binds; a node's `structural_*`, `name`, `comment` and `strprefix` are read where a rule binds it, `op_at` at a known place, and `op` is a view of `Item::Op`, read in place on the host and the kernels (2026-11-23) | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.0 MB, 0.3 ms on cold hogql (0.45–0.49 s of CPU a run before) | Step 3 |
 | 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | 0: gone (21 MB in 972 calls on cold hogql before: push_fresh 15.6, absorb 5.3, the device's staged 0.1) | Done (step 6, 2026-11-22) |
 | 9 | A relation of many parts merged for the device (`in_block`). The key's copy is gone (step 6, 2026-11-22), and a relation alone in a block has room for its whole directory. Before: a second key's index copied the relation (`DevIndex::moved`). Gone (step 6, 2026-11-22): parts in two blocks are bound through links, a key past a full directory goes in a block beside it (`Relation::try_link`, `FAR_BASE`, `Part::far_link`), a chain reads down its jumps with no compaction, and parts in more blocks are read by part. Since 0384 (steps 1–8, 2026-11-18) a relation is one relation or a chain of continuations read in place, so the merge is left only where a part is appended after another relation's rows (`append_part`, counted), with a chain's newest two segments compacted past `MAX_SEGMENTS`. A recursive component's deltas on the device are made with room for an index of each key its plans probe them by (`Own::keyed`, `Part::for_device_indexed`, 2026-11-20), and its totals grow in a block with room for theirs (row 10). That was not most of the row: on the M3's 300-file run it copied 852.4 MB in 279 copies before (ab108) and 901.8 MB in 322 after (ab109). The site now says where the relation copied lies, the device's own (an upload, a delta) or in a block of the run's with no room left, and the device's report counts each (`moved`): 766.4 MB in 247 copies were in a block with no room (ab110). A head relation the device writes of 4,096 rows or more is now alone in a block with room for its indexes (`head_room`, `Part::with_index_room`, anonymous memory taken as written): 621.7 MB in 114 copies left (ab111), each about 5 MB, of relations not yet told apart | `metal_join.rs`; `facts/rows.rs`; `device.rs` | Q85 counts them; 0 merges on cold 300-file runs; 0 on cold hogql since 2026-11-22 (8.3 MB in 2 before: the axis relation, room for 2 indexes, probed by 3 keys) | Done |
 | 10 | Gone (2026-11-20): a device fixpoint's total copied into a run's block at its end, and each round's total made anew with the last round's rows copied into it (rounds × rows). A set head's relation is now one relation in a block of the run's life from its first round, each round's new rows written past its rows, its indexes forgotten as it grows, taken by the store as it lies (`SetHead`), as a lattice head's is (decision 0384 step 5). Measured before: 187.4 MB in 225 copies at the end on the M3's 300-file run (ab109); the rounds' copies were not counted | `device.rs` (0325 step 4) | 0 | Done |
@@ -414,7 +414,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 0: gone | Done (step 4, 2026-11-22) |
 | 15 | Gone (step 4b, 2026-11-18): a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went first (the CPU reads 16z in place); then the transducer's residency's (`unblock_into` into its slab, for the kernels: the label and program kernels read the stored bytes through the batch's cache), and a 16z batch's views made on the device (they are read in place through a cache). `unblock_into` is deleted. | — | — | Done |
 | 16 | Gone (0446, 2026-11-19): a label level's fact rows, uploaded as `(node, label)` pairs for the pattern kernels (`Pass::Fact`). The host writes the findings once into the batch's fact block, and the CPU and the kernels read them there | — | — | Done |
-| 17 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`, and `TapeImage::housed` for an image restored from a vector); a queued tape not in a room read into a vector (`queued_image`); a source made in memory (a test's literal, an edit's text) written into its room (`placed::housed`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image`; `tape/placed.rs`, `housed` | 4.1 MB a run on hogql 16z | Step 4a |
+| 17 | Gone (step 4a, 2026-11-23): a parser's tape copied into its room, a queued tape read into a vector, a source in hand written into its room. A format 16 writer writes its tape in a region of a tape slab and gives it out where it lies (`home::Rooms`, `placed::rooms`); a tape's own bytes are shared, not cloned (`Home::Own`); a guest's text that is one stretch of its host's source reads in the host's room (`placed::within`); a rule's pattern is not housed. Left, marked and 0 on hogql and the bench: format 15's columns, a gathered segment's entry, and a guest text with escapes, each written into a room only where a device reads it | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image`; `tape/placed.rs`, `housed` | 0: gone (4.1 MB a run on hogql 16z before) | Done (step 4a, 2026-11-23) |
 | 18 | Gone (2026-11-22, t52 step 4): each chunk's export rows written again into the export's relation (`Exports::add`, decision 0384 step 1). An export now holds the chunk's parts where they lie (`Rows::append_segment`), and a repeat or a dead row is dead in it. The memo's hits (warm runs, `append_own`) still write their rows, under row 12 | `plan/corpus/exports.rs`, `Exports::add` | 2,264 MB of 10.1 GB on 3,089 files (102 exports) | t52 step 4 |
 
 ## The plan
@@ -1016,6 +1016,31 @@ T's shape kept), the warm and made-batch tests, and the quick tiers of rerail-lo
 rerail-tests-lang on Linux. Cold hogql gives the same 1,629 findings at 80.1 B instructions (88 B before; this Mac at
 a load of about 11), and row 7 counts 0.0 MB and 0.3 ms.
 
+**Row 7: a line's text is read off the source** (2026-11-24, 0287 §2's span sibling). A document's `source` span and
+its `src_line` spans were the last spans whose `text` was made as rows: each line's bytes interned, for every line
+of every file a rule read the text of. Now `text(sp, t)` of such a span, bound in a base column (`source`'s,
+`src_line`'s) or a file-local column that only ever holds those spans or nodes (`node_columns` with `LINE_SPANS`), is
+the read `t = @rr_node_text_any(sp)`, as a node's is. `LongTexts::text_any` reads a `Line` span's id
+(`granules::line_of`): line 0 is the whole source, line `l` is `LineTable::text_of(l)` in the document's own source,
+the bytes `Extra::document` made the rows from. The other per-node reads (`name`, `comment`, `strprefix`) still
+take nodes alone, and T's shape's read (`t_value`) nodes alone. The spans whose text is read as rows
+(`span_text_demand`) are now found in the split's two parts, not the source program, so the rows are made only where
+a rule still reads them as rows (a span only a cross-file relation binds). A match's span (`rx_span`, `match_all`) keeps its `text` rows: its range is the regex's, which no
+read of the source gives.
+
+Tests: `text_of_a_bound_node_is_read_in_place` (the source, a line, a file-local relation of lines; a match kept),
+and `a_line_spans_text_is_read_off_the_source_as_its_rows_give_it` (every span's read equals its row: an empty
+line, a CRLF one, a last one with no terminator, an empty file). On the 300-file bench (M1 Max, CPU, strict): 463
+violations, each of the 661 relations' row counts as before; the "text read as rows" line names 6 heads, from 8 (p297's
+`after` and its span aggregate read their lines off the source; p279's `coding` reads a regex capture's span). On
+the device the same read runs where the source lies (0287 §2, `view_line_span`).
+
+**Row 7 in the cross part: `text` read by node** (2026-11-25, decision 0689). The cross part's `text` was the last
+`text` made as rows on the bench: the corpus batch made every document's, for the 6 heads whose rules read a node a
+cross-file relation binds. Where every cross-part `text` atom reads a bound node or line, the corpus batch makes none
+(`ProbedText`): a probe reads the row off the tape, as a group would make it. The bench's 661 relations are the same
+row for row, and its decision line names the 6 heads.
+
 **Step 4: the GPU reads every view in place** (2026-11-22). The chunk is gone: `device_chunk::build`, its node
 columns and codes (row 3), `expand_view` and the views made from them (row 4), and the line starts and spans copied
 beside them (row 14). `chunk_views.uglykl` is deleted. A view the batch's directory does not read in place is not
@@ -1255,6 +1280,123 @@ transducer's Metal and in-place tests on the M1 Max (232), and the tape, text, s
 tapes placed by their parse, 5 sources in hand housed; row 7: 2,018 node-row calls, 0.0 MB); the 300-file bench 463
 violations, copies 52.9 MB (row 7's node rows 49.9 MB; row 17 3.0 MB, 20 sources housed). Row 13 copies nothing:
 its site is deleted. The copies left are rows 7 (step 3) and 17 (step 4a).
+
+### Step 4a, row 17: a parser writes its tape in its room (2026-11-23)
+
+The format 16 writer (`f16::ops::Writer`) is given rooms (`home::Rooms`): its tape part is a region of a tape slab
+(`placed::rooms`, the engine's; `Region::free`), which its ops write as the parser goes, and `finish` gives the tape
+out of the region where it lies (`Region::give`), its presence laid after it there. The region grows as a vector does
+(a larger region, the bytes moved: the writer's working room, `copy: growth`), and a refused region leaves the tape in
+a vector of the writer's own. A region's bytes never given out go back to the slab where no room came after it
+(`Slab::give_back`, zeroed first). Tree-sitter's writer (`TreeOps`), the Bitlex parsers' (`Sixteen::rooms`) and
+simdjson's are given the rooms.
+
+- `Home::Own` holds its bytes shared (`Arc<Vec<u8>>`): a tape's image and the store's queue hold one tape, so
+  `place_stored` gives a tape its own home where no device reads tapes or no room is given, and copies only into a room
+  a device needs.
+- `queued_image` reads a queued tape in its home, whatever it is, and a decompressed frame as it is where no device
+  reads tapes.
+- A guest's text that is one stretch of its host's source copied whole (`SegmentMap::whole_copy`) is a room within
+  the host's (`placed::within`). A rule's pattern document, read by the matchers' compiler alone, is not housed: the 5
+  sources housed on hogql and 18 on the bench were patterns.
+
+Tests: `a_writer_with_rooms_writes_the_references_tape` (R13's cases, with regions grown and refused) and
+`a_writer_with_rooms_gives_its_tape_out_where_it_lies`; `a_parse_writes_its_tape_in_its_room` (Python, JSON, Go and
+Rust parses placed where their writer wrote them); the tape, guest and pattern tests on spark1 (CUDA: 193).
+Measured on the M1 Max, Metal, cold: hogql 1,629 findings with the CPU run's digest, row 17 0 MB (602 tapes written
+in place); the 300-file bench 463 violations, row 17 0 MB. Row 7 is the one copy left.
+
+### Step 3, row 7: a bound node's per-node values are read, not made rows (2026-11-23)
+
+The profile now names row 7's bytes by relation (`row 7 (decision 0353) bytes: <relation>`, `CoreRows::relations`).
+On the 300-file bench they were 49.9 MB: `text` 19.6, `structural_before` and `structural_after` 13.7 each, `name`
+5.2, `value` 1.3, `op` 0.9, `op_at` 0.8, `strprefix` 0.6, `comment` 0.1. Two rule files read `structural_*`, of nodes
+`child` binds.
+
+What `text`'s pass did for `text` (`t = @rr_node_text_any(v)`) the same pass, `NodeReads`, now does for every
+single-valued per-node relation of `core.rerail` (`NODE_READ_OF`): `r(v, x)` of a node `v` the rest of the body binds
+reads `x = @rr_node_<r>(v)`, through the run's binding of the batch (`LongTexts::core_read`): `rr_node_name`,
+`rr_node_comment`, `rr_node_strprefix` (and `rr_node_before`, `rr_node_after` until the hub's merge, below). Each value
+has one definition, which the walk makes its row with and the read answers (`core_rr::node_name`, `node_comment`,
+`node_strprefix`).
+A per-node atom binds no node for this (`name(n, "x")` alone is a lookup by value), and the rules the pass leaves
+(their node bound by no other atom, or only cross-file) are named per relation in the profile, as `text`'s were. A
+relation no rule reads as rows any more is not made: the walk's skips follow the projection.
+
+With `strprefix` no longer read, `rr_value_lit` is the only reader of literal values, so a document whose values W
+reads makes none (`value_lit_only`): the 1.3 MB of `value` rows the walk made and `relations` dropped are gone too.
+
+Tests: `a_node_read_answers_the_row_the_walk_makes` (every node of two Python files, each read against the walk's row),
+`per_node_values_of_a_bound_node_are_read_in_place`, and the core relations' and text tests, on spark1. On the M1
+Max: the bench 463 violations, CPU and Metal, row 7 49.9 MB to 15.4 MB (`text` 19.6 MB before rounding, `op` and
+`op_at` the rest); hogql 1,629 findings (d82234cb), row 7 0.0 MB.
+
+Then two more of `text`'s readers read it in place. A node bound through `n = a` (a lowering's alias) is bound
+(`node_bound`): `alias_name`, F407, PYI047, UP028's `read_elsewhere`. And a relation that only tests a per-node
+relation of its node, `h(v) :- r(v, _)` with guards of `v` against constants, read by positive atoms alone
+(`node_tests`), is read in its readers' place, its guards with it, and its rule goes: an aggregate's cover
+(`rr_cover360(e) :- text(e, _), e < …`, `rr::lower`'s cover of a group that only reads `e`'s text) made every node's
+`text` rows for a test every node passes. Test: `a_node_test_and_an_alias_are_read_in_place`. Row 7 on the bench
+15.0 MB, 463 violations; hogql 1,629 (d82234cb).
+
+Left in row 7: `text` read as rows by 26 rules on the bench, each binding its node only through a relation the split
+puts in the cross part (`node_columns`: there an edit's old document is not the batch's, so a retraction's read
+would read the edited file), or not at all (a source line's `text`, p297); and T's shape's `NodeRows`.
+
+`op_at` had two definitions: `core_rr`'s (a node's anonymous children that are no punctuation, Python's two-word
+operators joined) and `tree::Tree`'s (its children in field `operator` or `operators`), which the batch binds in
+`core_rr`'s place whenever a program reads `op_at`, so `core_rr`'s 0.8 MB were made and dropped. It has one now,
+`tree::node_operators`, and `core_rr` makes no `op_at`. A rule that reads `op_at(n, i, o)` of a bound node at a known
+place (a constant, or a variable another atom binds) reads `o = @rr_node_op_at(n, i), o != ""`, and `!op_at(n, i, _)`
+reads `@rr_node_op_at(n, i) = ""`: the read answers `""` past the last operator, which no operator is. A node read
+takes its further arguments (`Source::node_read`'s `more`; SQLite's function takes the entry's arity). Every
+library and bench rule reads `op_at` so; a place nothing binds is read as rows, and named in the profile. Tests:
+`a_node_read_answers_the_row_the_walk_makes` reads every node's operator at each place against `op_at`'s rows,
+`per_node_values_of_a_bound_node_are_read_in_place` the four forms. Bench 463, row 7 14.2 MB (`op` 0.9, `text` 16.0);
+hogql 1,629 (d82234cb).
+
+`op` was made a view of the tokens here (`Item::Token`, its names a table per entry, `view_op` in CLIF), while the
+hub made it one of its own rank item (`View::Op` on `Item::Op`, c6129a7d93: every anonymous child, zero-width ones
+included, its name `Batch::op_atom`). The merge of the hub (2026-11-23) keeps the hub's, one `op`; this branch's
+token view, its names table and its kernel read are superseded by it. The hub's `op` is read on the host alone; its
+read on the kernels follows as its own step. The merge also takes the hub's `structural_before` and
+`structural_after`, views of the tape (`tape_rows`' `Gap`, a derived column made on first read): a lookup by node
+reads them in place, so their node reads (`rr_node_before`, `rr_node_after`) and `core_rr::node_structural` go.
+`core_rr` makes no `op_at` (one definition, `tree::node_operators`), so the hub's narrowing of `core_rr`'s `op_at` to
+the nodes rules read (`op_nodes`) goes with it: `Projection::op_nodes` and `TextDemand`'s `op` and `op_wide` are
+removed (2026-11-23), and the kept demand's version is 3.
+
+The hub's `op` on the kernels (2026-11-23): `view_op` in CLIF (`view_reads::op`, kind 13 in the views' directory,
+`device_chunk::VIEW_OP`), row `i` the document's `i`-th `Item::Op` child (`num_select` of item 9), column 0 its
+parent's id, column 1 the name atom of its tape code. The names are a table of the entry (`ViewDoc::names`, a u32 per
+code beside the kinds and fields, interned once where the entry is made, where the batch reads `op`), and the host
+reads the same table (`Batch::op_atom`, `Doc::op`): one definition, so the per-tag table of names the host interned
+on its own goes. The batch's vocabulary takes the names too (`tape_rows::strings`), so a text test of `op`'s `s` finds
+them. Tests: `the_view_reads_are_the_hosts_rows` (Rust, JIT and projection alike), `views_read_on_the_device_are_
+the_hosts_rows` (Metal, core.rerail's shape), `a_text_test_of_an_operator_finds_its_name`. Bench 463, rows per rule
+as before; hogql 1,629 (d82234cb).
+
+After the merge, two walks that `name` and `comment` as node reads had left empty: core's walk of the nodes made a
+literal's value (`rr_value_lit`, `value`'s eager half) only where a rule also read one of its other relations, so a
+`.rerail` file's `value` had no rows (`rule_files_have_text_facts`). `scalar_nodes` and `CoreRows::visits` now count
+the literal values.
+
+T's shape's `NodeRows` (Q121, 2026-11-23). T's per-node relations (`syntax::TRel`: `text`, `name`, `str`,
+`strprefix`, `intval`, `op`, which is `op_t` in core.rerail's shape) have one definition, `syntax::t_value`: the
+value `NodeRows` makes and the value a node read answers. The rule pass that reads a bound node's values in place
+(`NodeReads`) takes its relations from the program's shape (`node_reads_of`): core.rerail's, with `intval` and
+`op_t`, or T's, each of them only where the program takes it as an input (a program that derives `text` itself keeps
+its rule). T's `text` has its own read, `@rr_node_t_text`: `@rr_node_text_any` answers `node_text` on request, any
+node's whole text, where T's `text` holds a simple token's alone, and a comment, declared a node, by its span's text.
+`@rr_node_intval` returns a number (`node_read_value` types a read by its signature, in SQLite and setfix alike).
+`@rr_node_op_at` answers in either shape, as `Tree` makes `op_at`'s rows in both: in T's shape the pass first read it
+in core's shape alone, and `sys.version_info` tests in a loaded stub lost their operator
+(`calls_into_the_standard_library_reach_its_stubs`). `NodeRows` makes only the relations a rule still reads as
+rows (`projection.wants`): on the bench `intval` and `op_t` are 0 bytes. Tests:
+`t_shape_node_reads_answer_the_rows_node_rows_makes` (each relation and `op_at`, every node, both shapes, against
+the rows) and `text_of_a_bound_node_is_read_in_place` (T's reads, and a derived `text` kept). Bench 463, each rule's
+count as before; hogql 1,629 (d82234cb).
+Bench 463 (each rule's count as before), row 7 13.3 MB, `text` alone; hogql 1,629 (d82234cb).
 
 ## What it replaces
 

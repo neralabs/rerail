@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import type * as FileSystem from "node:fs/promises";
 import { cp, lstat, mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,7 +11,8 @@ import type * as WalkReads from "../../../../src/engine/code-rule/walk-read-buff
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
 import { lookMoved, WorktreeLooks } from "../../../../src/engine/code-rule/worktree-look.js";
 import { WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
-import { RepositoryWorktreeWalks, type WatcherWalk, WorktreeWalks, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
+import { RepositoryWorktreeWalks, type WatcherWalk, WorktreeWalks, type WorktreeWatch, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
+import type { WorktreeListLearning } from "../../../../src/engine/catalog/repository-identity.js";
 import { GitReads } from "../../../../src/engine/git.js";
 import type * as Git from "../../../../src/engine/git.js";
 import { StampTreeWatch } from "./support/stamp-tree-watch.js";
@@ -19,8 +20,9 @@ import { StampTreeWatch } from "./support/stamp-tree-watch.js";
 /**
  * How many times a walk read each file whole (`WalkReadBuffers.lend`), by the path it was read at; each path `lstat` was
  * asked about; the listings held back until a test lets them go, by folder; the openings held back the same way, by
- * file; how many times Git listed each checkout's changed files; and the files whose next opening fails as one another
- * process holds does.
+ * file; how many times Git listed each checkout's changed files, and read blobs there; what runs just before and just
+ * after the next such listing of a checkout, by checkout; and the files whose next opening fails as one another process
+ * holds does.
  */
 const counted = vi.hoisted(() => ({
   reads: new Map<string, number>(),
@@ -28,6 +30,8 @@ const counted = vi.hoisted(() => ({
   held: new Map<string, () => Promise<void>>(),
   heldOpenings: new Map<string, () => Promise<void>>(),
   listings: new Map<string, number>(),
+  blobReads: new Map<string, number>(),
+  aroundListing: new Map<string, { readonly before: () => void; readonly after: () => void }>(),
   busy: new Set<string>(),
   heads: 0,
 }));
@@ -68,9 +72,18 @@ vi.mock("../../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof Git>();
   return {
     ...actual,
-    gitModifiedOrUntrackedPaths: async (...args: Parameters<typeof actual.gitModifiedOrUntrackedPaths>) => {
+    gitFirstSightListing: async (...args: Parameters<typeof actual.gitFirstSightListing>) => {
       counted.listings.set(args[0], (counted.listings.get(args[0]) ?? 0) + 1);
-      return await actual.gitModifiedOrUntrackedPaths(...args);
+      const around = counted.aroundListing.get(args[0]);
+      counted.aroundListing.delete(args[0]);
+      around?.before();
+      const listing = await actual.gitFirstSightListing(...args);
+      around?.after();
+      return listing;
+    },
+    readGitBlobs: async (...args: Parameters<typeof actual.readGitBlobs>) => {
+      counted.blobReads.set(args[0], (counted.blobReads.get(args[0]) ?? 0) + 1);
+      return await actual.readGitBlobs(...args);
     },
     // Each question of `HEAD` that starts Git: `gitHead`, or a `rev-parse` naming `HEAD`.
     gitHead: async (...args: Parameters<typeof actual.gitHead>) => {
@@ -83,7 +96,7 @@ vi.mock("../../../../src/engine/git.js", async importOriginal => {
     },
   };
 });
-const { reads, stats, listings } = counted;
+const { reads, stats, listings, blobReads } = counted;
 
 // Each test opens several sessions and walks four or five checkouts many times over.
 vi.setConfig({ testTimeout: 60_000 });
@@ -92,14 +105,19 @@ const bridges: CodeRuleBridge[] = [];
 const directories: string[] = [];
 const releases: Array<() => void> = [];
 afterEach(async () => {
+  // A case that timed out never reached its own `finally`: no fake clock or spy it made reaches the cases after it.
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   releases.splice(0).forEach(release => release());
   counted.held.clear();
   counted.heldOpenings.clear();
   counted.busy.clear();
+  counted.aroundListing.clear();
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
   reads.clear();
   stats.length = 0;
   listings.clear();
+  blobReads.clear();
   await Promise.all(directories.splice(0).map(async path => await removeFolder(path)));
 });
 
@@ -161,6 +179,8 @@ interface SessionOptions {
    * the other worktrees whose folder is there.
    */
   readonly registry?: string;
+  /** What the auditor learns before each walk lists the other worktrees, as the router learns Git's list. */
+  readonly learn?: (git: GitReads) => WorktreeListLearning | undefined;
 }
 
 /**
@@ -172,11 +192,13 @@ async function opened(
   folder: string,
   checkouts: readonly string[],
   walks: WorktreeWalks,
-  { rules, ignores, nested = [], registry }: SessionOptions = {},
+  { rules, ignores, nested = [], registry, learn }: SessionOptions = {},
 ) {
   const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => ({
     revision: batch.revision, disposition: "continue" as const, violations: [], failures: [],
   }));
+  // As the router does: the session's own checkout is never one of the other worktrees.
+  const worktreeRoots = vi.fn(() => checkouts.filter(checkout => checkout !== innermost(checkouts, folder) && (registry === undefined || existsSync(checkout))));
   let known = new Set(rules?.extensions);
   const auditor: CodeRuleAuditor = {
     openWorkspace: async () => undefined,
@@ -187,15 +209,15 @@ async function opened(
     auditGeneratedEdits,
     close: async () => undefined,
     sourceRoot: path => innermost([...checkouts, ...nested], resolve(folder, path)),
-    // As the router does: the session's own checkout is never one of the other worktrees.
-    worktreeRoots: () => checkouts.filter(checkout => checkout !== innermost(checkouts, folder) && (registry === undefined || existsSync(checkout))),
+    worktreeRoots,
     ...(ignores === undefined ? {} : { ignoresPath: ignores }),
     ...(registry === undefined ? {} : { worktreeRegistry: () => registry }),
+    ...(learn === undefined ? {} : { learnWorktreeRoots: learn }),
   };
   const bridge = new CodeRuleBridge(folder, auditor, { worktreeWalks: walks });
   bridges.push(bridge);
   await bridge.openWorkspace(`session-${bridges.length}`);
-  return { bridge, auditGeneratedEdits };
+  return { bridge, auditGeneratedEdits, worktreeRoots };
 }
 
 /** A session whose first turn, and the walk of the other worktrees after it, are done. */
@@ -559,9 +581,9 @@ describe("WorktreeWalks", () => {
     const second = await opened(worktrees[1]!, checkouts, walks);
     await second.bridge.checkpoint("turn");
     const firstWalk = await within(second.bridge.settleWorktreeWalk(), 10_000);
-    // Its own gap holds: a walk it asks for again at once waits for it.
+    // Its own gap holds: a walk it asks for again at once waits for it. A settle would start that walk now.
     await shell(second.bridge, "shell-1", () => writeFile(join(worktrees[2]!, "src", "a.py"), "old\nmine\n"));
-    const again = await within(second.bridge.settleWorktreeWalk(), 2_000);
+    const again = await within(walks.idle(), 2_000);
     expect({ firstWalk, again }).toEqual({ firstWalk: true, again: false });
   });
 
@@ -709,6 +731,71 @@ describe("a walk of the other worktrees with change notices", () => {
     stats.length = 0;
     await turn(watching);
     expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([0, 0, 0]);
+  });
+
+  // A walk keeps what it read of a worktree while no notice tells of a change there, and hands that read to a session
+  // that first sees the worktree at a later walk: here one whose list of the repository's worktrees names it only after
+  // another session's walk read it. Git added the worktree after that session opened, so each of its files is stamped
+  // since, and the walk lists the kept read's index against `HEAD` for that first sight.
+  it("reads no blob of a worktree's files for a session that first sees it from a kept read, Git having added it after the session opened", async () => {
+    const { main, worktrees, checkouts } = await repository(["w1"]);
+    const walks = noticedWalks();
+    const named = [main];
+    const seer = await session(main, named, walks);
+    const other = await session(worktrees[0]!, checkouts, walks);
+    const added = join(dirname(main), "w2");
+    git(main, "worktree", "add", "--quiet", "--detach", added);
+    checkouts.push(added);
+    await turn(other);
+    named.push(added);
+    reads.clear();
+    await turn(seer);
+    expect({ read: reads.get(join(added, "src", "a.py")) ?? 0, blobs: blobReads.get(added) ?? 0, audits: seer.auditGeneratedEdits.mock.calls.length })
+      .toEqual({ read: 0, blobs: 0, audits: 0 });
+  });
+
+  // A kept read pairs what the walk read before with Git's listing of the worktree now. A file the session's command
+  // changed there before that read, put back to HEAD's text for the listing and written again after it (`git stash`,
+  // then `git stash pop`), is one Git names as holding that text, though the kept read and the file hold the command's.
+  // The command still runs as the session first sees the worktree, so no walk of the session answered for it before.
+  it("records a file its command changed in a worktree it first sees from a kept read, put back for the walk's listing and written again", async () => {
+    const { main, worktrees, checkouts } = await repository(["w1"]);
+    const walks = noticedWalks();
+    const named = [main];
+    const seer = await session(main, named, walks);
+    const other = await session(worktrees[0]!, checkouts, walks);
+    const added = join(dirname(main), "w2");
+    git(main, "worktree", "add", "--quiet", "--detach", added);
+    const file = join(added, "src", "a.py");
+    await seer.bridge.begin("shell-1", "shell", { command: "./run.sh" }, undefined, added);
+    await writeFile(file, "old\nmine\n");
+    checkouts.push(added);
+    await turn(other);
+    named.push(added);
+    counted.aroundListing.set(added, { before: () => writeFileSync(file, "old\n"), after: () => writeFileSync(file, "old\nmine\n") });
+    await seer.bridge.finish("shell-1");
+    await turn(seer);
+    expect(audited(seer).flatMap(([paths]) => paths)).toContain("written ../w2/src/a.py");
+  });
+
+  // A stamp proves a file unchanged since a walk read it only where the walk read a stamp older than its own start: a
+  // write in the clock tick of the read can leave the stamp as it was. So a file written after the walk began goes to
+  // Git's reading, though Git names it as holding HEAD's text and its stamp holds after the listing.
+  it("reads Git's verdict of a file written after the walk began, for a session that first sees its worktree", async () => {
+    const { main } = await repository([]);
+    const walks = noticedWalks();
+    const named = [main];
+    const seer = await session(main, named, walks);
+    const added = join(dirname(main), "w2");
+    git(main, "worktree", "add", "--quiet", "--detach", added);
+    named.push(added);
+    const listing = holdListing(join(added, "src"));
+    const walked = turn(seer);
+    await listing.entered;
+    await writeFile(join(added, "src", "a.py"), "old\n");
+    listing.release();
+    await walked;
+    expect(blobReads.get(added) ?? 0).toBe(1);
   });
 
   it("stats no entry when a file Git ignores changes after a walk that read no worktree", async () => {
@@ -1329,6 +1416,112 @@ describe("the reread of a worktree no notice told of a change in", () => {
   });
 });
 
+describe("the time between a session's walks", () => {
+  /**
+   * The wait the walk after one of the worktree in `roots` is timed for (`setTimeout`'s delay, in ms), its session
+   * asking for it as that walk ends. That walk works `work` ms on every clock, then the time of day moves on `stood` ms
+   * while the clock timers run on stands still: a suspend inside the walk on Linux, or the system's clock set on.
+   */
+  async function waitAfter(roots: readonly string[], { work, stood }: { work: number; stood: number }): Promise<unknown[]> {
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    let walked = 0;
+    const watch = walks.watch(scanning(watcherOf(roots, []), () => {
+      if (walked++ > 0) return;
+      vi.advanceTimersByTime(work);
+      vi.setSystemTime(Date.now() + stood);
+    }));
+    const timed = vi.spyOn(globalThis, "setTimeout");
+    try {
+      vi.useFakeTimers({ toFake: ["Date", "performance"] });
+      watch.request();
+      await walks.idle();
+      timed.mockClear();
+      watch.request();
+      return timed.mock.calls.map(([, ms]) => ms);
+    } finally {
+      timed.mockRestore();
+      vi.useRealTimers();
+      await watch.close();
+    }
+  }
+
+  it("waits as long after a walk as the walk took", async () => {
+    const { worktrees } = await repository(["w1"]);
+    expect(await waitAfter(worktrees, { work: 300, stood: 0 })).toEqual([300]);
+  });
+
+  it("waits as long after a walk as the walk took though the time of day moved on an hour more inside it", async () => {
+    const { worktrees } = await repository(["w1"]);
+    expect(await waitAfter(worktrees, { work: 300, stood: 3_600_000 })).toEqual([300]);
+  });
+
+  // What settles a session is what the walk it asked for finds. Its gap is the walks' pace, and a machine that stood
+  // still inside the walk before it lengthens that gap by as long as it stood.
+  it("settles a session's ask once the walk for it has run, with no wait for its gap", async () => {
+    const { worktrees } = await repository(["w1"]);
+    const scans: string[] = [];
+    const watch = new WorktreeWalks({ gapMs: 3_600_000 }).watch(watcherOf(worktrees, scans));
+    try {
+      watch.request();
+      await watch.settled();
+      watch.request();
+      await watch.settled();
+      expect(scans).toHaveLength(2);
+    } finally {
+      await watch.close();
+    }
+  });
+
+  it("keeps the gap of a session that settles while it takes a walk it did not ask for", async () => {
+    const { worktrees } = await repository(["w1"]);
+    const walks = new WorktreeWalks({ gapMs: 3_600_000 });
+    const held = Promise.withResolvers<void>();
+    const taking = Promise.withResolvers<void>();
+    let takes = 0;
+    const first = walks.watch(taken(watcherOf(worktrees, []), async () => {
+      if (takes++ === 0) return;
+      taking.resolve();
+      await held.promise;
+    }));
+    const timed = vi.spyOn(globalThis, "setTimeout");
+    let second: WorktreeWatch | undefined;
+    try {
+      first.request();
+      await first.settled();
+      // The second session's first walk reads the worktree the first watches, so the first takes it too.
+      second = walks.watch(watcherOf(worktrees, []));
+      second.request();
+      await taking.promise;
+      const settled = first.settled();
+      held.resolve();
+      await settled;
+      timed.mockClear();
+      first.request();
+      const delays = timed.mock.calls.map(([, ms]) => Number(ms));
+      expect(delays.filter(ms => ms > 3_000_000)).toHaveLength(1);
+    } finally {
+      timed.mockRestore();
+      await Promise.all([first.close(), second?.close()]);
+    }
+  });
+});
+
+/** `watcher`, calling `during` as each read of a worktree begins. */
+function scanning(watcher: WorktreeWatcher, during: () => void): WorktreeWatcher {
+  return { ...watcher, start: () => {
+    const walk = watcher.start()!;
+    return { ...walk, scan: async request => {
+      during();
+      return await walk.scan(request);
+    } };
+  } };
+}
+
+/** `watcher`, taking each walk through `take`. */
+function taken(watcher: WorktreeWatcher, take: () => Promise<void>): WorktreeWatcher {
+  return { ...watcher, start: () => ({ ...watcher.start()!, take }) };
+}
+
 describe("the walks of each repository", () => {
   it("drops a repository's walk once no session watches it, and takes it back for a session it was handed to", async () => {
     const repositories = new RepositoryWorktreeWalks();
@@ -1342,6 +1535,53 @@ describe("the walks of each repository", () => {
     // Dropped again, then watched by a session it was handed to before that.
     handed.watch(watcherOf([], []));
     expect(repositories.of("r")).toBe(handed);
+  });
+});
+
+describe("what a session learns before a walk lists the other worktrees", () => {
+  it("takes a throw of a session's learn step as nothing to learn, and walks once while the event loop turns", async () => {
+    const { worktrees } = await repository(["w1"]);
+    const scans: string[] = [];
+    let learnt = 0;
+    const watcher: WorktreeWatcher = {
+      ...watcherOf([worktrees[0]!], scans),
+      // Throws at its first 49 calls only, so walks begun again at each throw still end.
+      prepare: () => {
+        learnt += 1;
+        if (learnt < 50) throw new Error("the checkout's placement cannot be read");
+        return undefined;
+      },
+    };
+    const watch = new WorktreeWalks({ gapMs: 0 }).watch(watcher);
+    watch.request();
+    const atFirstTurn = await new Promise<number>(turned => {
+      setImmediate(() => turned(learnt));
+    });
+    await watch.settled();
+    expect({ atFirstTurn, learnt, scans }).toEqual({ atFirstTurn: 1, learnt: 1, scans: [worktrees[0]] });
+    await watch.close();
+  });
+
+  it("stops the session folder's walk once the list is learnt when the session closed meanwhile, and lists no worktree for it", async () => {
+    const { worktrees, checkouts } = await repository(["w1"]);
+    const entered = Promise.withResolvers<void>();
+    const learnt = Promise.withResolvers<void>();
+    releases.push(learnt.resolve);
+    const { bridge, worktreeRoots } = await opened(worktrees[0]!, checkouts, new WorktreeWalks({ gapMs: 0 }), {
+      learn: () => {
+        entered.resolve();
+        return { kind: "learning", done: learnt.promise };
+      },
+    });
+    void bridge.checkpoint("turn").catch(() => undefined);
+    await entered.promise;
+    await bridge.close();
+    learnt.resolve();
+    // A walk that went on would list the worktrees in the steps that run before the event loop turns.
+    await new Promise(turn => {
+      setImmediate(turn);
+    });
+    expect(worktreeRoots).not.toHaveBeenCalled();
   });
 });
 

@@ -13,6 +13,9 @@
 //   node scripts/host/azure/matrix.mjs affected --base <commit> --head <commit>     true when the matrix should run
 //   node scripts/host/azure/matrix.mjs sweep [--run-id <id> | --older-than-hours <n>]
 //
+// A tarball is core's as package.yml packs it, in a folder that also holds the engine packages it pins and their
+// manifest (scripts/release/engine/packages.mjs): the release's `rerail-package` artifact, downloaded whole.
+//
 // The Azure environments go through the `az` CLI, signed in (`az login` locally, OIDC in CI) to the subscription
 // holding the resource group that scripts/host/azure/bootstrap.sh made. No VM accepts inbound connections: scripts go
 // in through Azure Run Command, the package and results move through short-lived blob SAS URLs, and each VM reaches
@@ -21,12 +24,13 @@
 // same guest on the machine `local` runs on, a fresh GitHub-hosted runner in CI, and needs no Azure.
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
 import { matrixChanges } from "../../release/core-paths.mjs";
+import { releaseTarballs } from "../../release/engine/release.mjs";
 import { PACKS, publishedPacks } from "../../release/packs.mjs";
 
 const run = promisify(execFile);
@@ -121,11 +125,14 @@ async function storage() {
   };
 }
 
-// The package under test and every published rule pack from this checkout, in one tar the VM unpacks: the guest serves
-// them from a local registry, as npmjs will. A private pack is left out: npm refuses to publish it to any registry.
+// The package under test, the engine packages it was packed against (they lie beside it with their manifest, as
+// package.yml uploads them: releaseTarballs) and every published rule pack from this checkout, in one tar the VM
+// unpacks: the guest serves them from a local registry, as npmjs will. Core carries no engine, so an install from a
+// registry that lacks the engine packages has none. A private pack is left out: npm refuses to publish it to any
+// registry.
 async function makeBundle(tarball) {
   const directory = mkdtempSync(join(tmpdir(), "rerail-env-bundle-"));
-  writeFileSync(join(directory, basename(tarball)), readFileSync(tarball));
+  for (const file of releaseTarballs(tarball)) copyFileSync(file, join(directory, basename(file)));
   for (const { id } of publishedPacks()) {
     await run("npm", ["pack", join(PACKS, id), "--pack-destination", directory, "--ignore-scripts", "--silent"]);
   }
@@ -333,8 +340,8 @@ function checkRunId(runId) {
   return runId;
 }
 
-// Bundles a tarball (and every published rule pack in packs/) into the run's container, where each environment's VM
-// fetches it. Done once per run: CI's environment jobs all run --staged against it.
+// Bundles a tarball (with its engine packages and every published rule pack in packs/) into the run's container, where
+// each environment's VM fetches it. Done once per run: CI's environment jobs all run --staged against it.
 async function stage(store, container, tarball) {
   if (!existsSync(tarball)) throw new Error(`No tarball at ${tarball}`);
   const { bundle, contents } = await makeBundle(tarball);

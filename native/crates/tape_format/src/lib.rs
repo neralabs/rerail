@@ -334,6 +334,8 @@ pub struct Sixteen {
     /// writer given those very bytes takes none of its own (`f16::Document::sha256`). A parser that writes from
     /// another text (a template's masked view) still hashes its own.
     pub sha256: Option<f16::SourceDigest>,
+    /// Where the tape goes: rooms every reader reads it in (decision 0353 step 4a), or `None`, a vector of its own.
+    pub rooms: Option<std::sync::Arc<dyn home::Rooms>>,
 }
 
 /// Each language's keys' numbers in its table, by the names a lean crate gives them (`f16::Lang::number_named`): the
@@ -405,9 +407,17 @@ impl Writers {
     pub fn take(&self) -> Option<f16::Writer> {
         self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).pop()
     }
-    /// `w` given back.
-    pub fn give(&self, w: f16::Writer) {
+    /// `w` given back, holding no run's rooms (`f16::Writer::release_rooms`).
+    pub fn give(&self, mut w: f16::Writer) {
+        w.release_rooms();
         self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(w);
+    }
+    /// A writer for the next document, its tapes going to `rooms` (decision 0353 row 17): one of `writers` not in
+    /// use, else a new one (with no `writers`, always a new one).
+    pub fn take_for(writers: Option<&Writers>, rooms: Option<std::sync::Arc<dyn home::Rooms>>) -> f16::Writer {
+        let mut w = writers.and_then(Writers::take).unwrap_or_else(f16::Writer::empty);
+        w.place_in(rooms);
+        w
     }
 }
 
@@ -441,6 +451,7 @@ impl Named {
             number: std::sync::Arc::new(move |key| lang.number_named(&name(key)?)),
             writers: None,
             sha256: None,
+            rooms: None,
         });
         Named { target }
     }
@@ -520,6 +531,7 @@ impl<T> Sink<()> for Kept<'_, T> {
 
 /// The format 16 writer the nodes are passed to as they are committed (`Writer::pass`).
 struct Passing {
+    /// The machine's format 16 writer (`Writers::take_for`), given back when the parse is done.
     w: f16::Writer,
     number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
     /// Each code id's number, as far as resolved.
@@ -719,7 +731,8 @@ impl<L: Layout> Writer<L> {
             }
         };
         let doc = f16::Document { lang: t.lang, source: src, tag: t.tag, z: t.z, blocks: t.blocks, nodes: self.cap, sha256: t.sha256.and_then(|d| d.of_source(src)) };
-        let mut w = t.writers.as_ref().and_then(|writers| writers.take()).unwrap_or_else(f16::Writer::empty);
+        // The machine's writer, used again, its tape written in the target's rooms (0353 row 17).
+        let mut w = Writers::take_for(t.writers.as_deref(), t.rooms.clone());
         w.begin_with(&doc, |out| newlines::index_into(out, src, t.terminators));
         self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default(), writers: t.writers }));
         // The columns hold the window: the nodes since the last commit (more grow it).
@@ -1593,6 +1606,11 @@ impl<L: Layout> Writer<L> {
     /// size and end exactly; `Ok(Err)` where the writer writes no tape, or the nodes are not a format 16 tape (a code
     /// the language's table lacks, an edit before a commit, a node past format 16's bounds).
     pub fn finish_16(&mut self) -> Result<Result<f16::Finished, String>, Redo> {
+        self.finish_16_with(None)
+    }
+
+    /// `finish_16`, the tape's auxiliary index made by `aux` and laid where the tape lies (`f16::Writer::finish_with`).
+    pub fn finish_16_with(&mut self, aux: Option<f16::AuxMaker<'_>>) -> Result<Result<f16::Finished, String>, Redo> {
         debug_assert!(self.chains.is_empty(), "a chain not ended");
         self.commit();
         let w = self.layout.widths();
@@ -1618,7 +1636,7 @@ impl<L: Layout> Writer<L> {
             return Ok(Err(format!("node {node} read after its commit")));
         }
         s.close_to(self.n);
-        Ok(s.w.finish())
+        Ok(s.w.finish_with(aux))
     }
 }
 
@@ -1646,7 +1664,7 @@ mod tests {
             let (kind, field) = (k & 0x3ff, k >> KIND_BITS & 0x3f);
             (k >> 16 == 0 && kind < 16 && field < 8).then_some(kind + 16 * field)
         };
-        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number), writers: None, sha256: None })
+        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number), writers: None, sha256: None, rooms: None })
     }
 
     /// The rows of the tape `w` finishes.
@@ -1750,7 +1768,7 @@ mod tests {
             f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).unwrap()
         });
         let number = |k: u32| (k >> 16 == 0 && k & 0x3ff < 16 && k >> 10 < 8).then(|| (k & 0x3ff) + 16 * (k >> 10));
-        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number), writers: None, sha256: None });
+        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number), writers: None, sha256: None, rooms: None });
         let src = vec![b' '; 200_000];
         // 0: the calls joined; 1: the joined calls; 2: the plain ones (no chain, no node passed on).
         let build = |way: u8| {

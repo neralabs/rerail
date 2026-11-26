@@ -5,7 +5,7 @@ import { join, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { physicalPath, storedPath } from "../../../../src/engine/catalog/checkout-control.js";
 import { linkFolder } from "../../../support/platform/links.js";
-import { removeFolder } from "../../../support/platform/remove-folder.js";
+import { removeFolder, removeFolderSync } from "../../../support/platform/remove-folder.js";
 
 /** The paths whose `lstat` fails with `EPERM`, as it does for a path the system will not describe. */
 const lstatRefused = vi.hoisted(() => new Set<string>());
@@ -47,6 +47,21 @@ function refuseNativeRealpath(refused: string, code = "EPERM"): void {
   }) as typeof realpathSync.native);
 }
 
+/**
+ * Makes the native realpath of `going` remove it, as another process does while the realpath reads, then fail as
+ * Windows's does when the removal comes between its open of the folder and its read of the folder's final path.
+ */
+function removeAsRealpathReads(going: string): void {
+  const native = realpathSync.native;
+  // The cast drops the overloads that take an encoding: the paths asked here are strings.
+  vi.spyOn(realpathSync, "native").mockImplementation(((path: PathLike) => {
+    const named = String(path);
+    if (named !== going) return native(path);
+    removeFolderSync(going);
+    throw Object.assign(new Error(`EBADF: bad file descriptor, realpath '${named}'`), { code: "EBADF", syscall: "realpath", path: named });
+  }) as typeof realpathSync.native);
+}
+
 describe("a path whose real path the system refuses", () => {
   it("is the real path of the folder holding it, plus its name, for a file the user is denied", async () => {
     const root = await temporaryRoot();
@@ -83,6 +98,28 @@ describe("a path whose real path the system refuses", () => {
     await writeFile(going, "x = 1\n");
     refuseNativeRealpath(going, "ENOENT");
     expect(physicalPath(going, "win32")).toBe(join(realpathSync.native(root), "going.py"));
+  });
+
+  it("is the real path of the folder above it, plus each name below, for a folder removed as its real path is read", async () => {
+    const root = await temporaryRoot();
+    const going = join(root, "churn", "d11");
+    await mkdir(join(root, "churn"));
+    const above = realpathSync.native(join(root, "churn"));
+    for (const lookup of [(path: string) => physicalPath(path, "win32"), storedPath]) {
+      await mkdir(going);
+      removeAsRealpathReads(going);
+      // A lookup of the file the folder held, which went first: the folder is the deepest part `existsSync` finds.
+      expect(lookup(join(going, "m.py"))).toBe(join(above, "d11", "m.py"));
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("stays refused for EBADF from a folder still there", async () => {
+    const root = await temporaryRoot();
+    const kept = join(root, "kept");
+    await mkdir(kept);
+    refuseNativeRealpath(kept, "EBADF");
+    expect(() => physicalPath(join(kept, "m.py"), "win32")).toThrow(expect.objectContaining({ code: "EBADF" }));
   });
 
   it("stays refused for a link, whose target the refusal hides", async () => {

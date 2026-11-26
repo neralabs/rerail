@@ -1061,10 +1061,7 @@ fn batch_scope(
                     #[cfg(feature = "code-rule-profile")]
                     consumers: _consumers,
                     #[cfg(feature = "code-rule-profile")]
-                    identity: layout.identities[&node]
-                        .iter()
-                        .map(|b| format!("{b:02x}"))
-                        .collect(),
+                    identity: rerail_prof::code_rule_dsl::prof::lower_hex(&layout.identities[&node][..]),
                 },
             )
         })

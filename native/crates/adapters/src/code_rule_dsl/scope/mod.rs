@@ -288,12 +288,60 @@ pub enum Import {
     Definition,
 }
 
+/// A name's bindings in a scope, in order: the first held in place, a list from the second on. Most names are bound
+/// once: a list a name was half of a Python document's scope arrays (`Builder::bind`, 4.9 M on cold PostHog).
+#[derive(Clone, Debug)]
+pub enum Chain {
+    One(Binding),
+    Many(Vec<Binding>),
+}
+
+impl Chain {
+    pub fn push(&mut self, binding: Binding) {
+        match self {
+            Chain::Many(list) => list.push(binding),
+            Chain::One(_) => {
+                let Chain::One(first) = std::mem::replace(self, Chain::Many(Vec::with_capacity(2))) else { unreachable!() };
+                let Chain::Many(list) = self else { unreachable!() };
+                list.extend([first, binding]);
+            }
+        }
+    }
+}
+
+impl std::ops::Deref for Chain {
+    type Target = [Binding];
+    fn deref(&self) -> &[Binding] {
+        match self {
+            Chain::One(b) => std::slice::from_ref(b),
+            Chain::Many(list) => list,
+        }
+    }
+}
+
+impl std::ops::DerefMut for Chain {
+    fn deref_mut(&mut self) -> &mut [Binding] {
+        match self {
+            Chain::One(b) => std::slice::from_mut(b),
+            Chain::Many(list) => list,
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a Chain {
+    type Item = &'a Binding;
+    type IntoIter = std::slice::Iter<'a, Binding>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 pub struct Scope {
     pub kind: ScopeKind,
     #[allow(dead_code)]
     pub range: Range<usize>,
     pub parent: Option<u32>,
-    pub bindings: HashMap<Box<str>, Vec<Binding>>,
+    pub bindings: HashMap<Box<str>, Chain>,
     /// Python `nonlocal` declarations of this scope.
     pub nonlocals: BTreeSet<Box<str>>,
     /// Python: where each `from m import *` of this scope takes effect, in order. Rust: where each
@@ -722,6 +770,8 @@ impl ScopeTable {
     /// Sorts the references by start. A node visited twice keeps its first reference, and is a write
     /// if either visit wrote.
     pub fn sort_references(&mut self) {
+        let n = self.references.len() as u64;
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::ScopeSortReferences, n * u64::from(64 - n.leading_zeros()), n);
         self.references.sort_by_key(|reference| reference.start);
         let mut references: Vec<Reference> = Vec::with_capacity(self.references.len());
         for reference in std::mem::take(&mut self.references) {
@@ -828,6 +878,7 @@ impl ScopeTable {
 
     /// The reference whose identifier spans exactly `range`, if that node is in a reference position.
     pub fn reference(&self, range: &Range<usize>) -> Option<&Reference> {
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::ReferenceSearch, u64::from(64 - (self.references.len() as u64).leading_zeros()), 1);
         let index = self
             .references
             .binary_search_by_key(&range.start, |reference| reference.start)
@@ -1043,6 +1094,7 @@ impl ScopeTable {
     /// reads such a name as an unbound local), otherwise it is passed over too (`lookup_symbol`).
     /// A `nonlocal` statement finds a bare annotation.
     pub fn walk(&self, reference: &Reference, name: &str, load: bool) -> Walk {
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::ResolveWalk, 1, 0);
         let mut walk = Walk::default();
         if let Some(found) = self.forward_module(reference, name) {
             walk.found = Some(((0, found), None));
@@ -1054,6 +1106,7 @@ impl ScopeTable {
         let mut first = true;
         while let Some(index) = current {
             let scope = &self.scopes[index as usize];
+            rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::ResolveProbe, 1, u64::from(scope.bindings.contains_key(name)));
             let hidden =
                 scope.kind == ScopeKind::Class && !first && previous != Some(ScopeKind::TypeParams);
             let function = matches!(scope.kind, ScopeKind::Function | ScopeKind::Lambda);
@@ -1259,6 +1312,7 @@ pub struct Walk {
 /// The index of the binding with the greatest offset among those `keep` passes (the last one on a
 /// tie, as `max_by_key`).
 fn latest(bindings: &[Binding], keep: impl Fn(&Binding) -> bool) -> Option<usize> {
+    rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::ResolveChain, bindings.len() as u64, 1);
     bindings
         .iter()
         .enumerate()
@@ -1386,6 +1440,7 @@ pub struct Builder<'d> {
 impl Builder<'_> {
     /// Accounts for one visited node and one level of recursion; `leave` undoes the level.
     pub fn enter(&mut self) -> Result<(), BuildError> {
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::ScopeVisit, 1, 0);
         self.table.cost += 1;
         if self.table.cost > self.cap {
             return Err(BuildError::Budget);
@@ -1437,12 +1492,13 @@ impl Builder<'_> {
 
     pub fn bind(&mut self, scope: u32, name: &str, binding: Binding) {
         let bindings = &mut self.table.scopes[scope as usize].bindings;
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::ScopeBind, 1, 1);
         // Most names are bound once: a chain starts with room for one binding, and a name already
         // bound allocates no key.
         match bindings.get_mut(name) {
             Some(chain) => chain.push(binding),
             None => {
-                bindings.insert(name.into(), vec![binding]);
+                bindings.insert(name.into(), Chain::One(binding));
             }
         }
     }
@@ -1464,6 +1520,7 @@ impl Builder<'_> {
         mutates: bool,
         access: Access,
     ) {
+        rerail_prof::code_rule_dsl::w_joins::count(rerail_prof::code_rule_dsl::w_joins::Site::ScopeReference, 1, 1);
         self.table.references.push(Reference {
             start: range.start,
             end: range.end,

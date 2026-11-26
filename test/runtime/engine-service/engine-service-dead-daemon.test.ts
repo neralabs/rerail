@@ -83,7 +83,7 @@ async function records(): Promise<{ root: string; databasePath: string; checkout
 async function service(root: string, databasePath: string, now: () => number): Promise<EngineService> {
   const started = await startEngineService({
     socketPath: socketIn(root), storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, idleSessionMs: IDLE_MS,
-    idleRuntimeMs: 0, now, createAuditor: quietAuditor,
+    needsRoom: () => true, now, createAuditor: quietAuditor,
   });
   services.push(started);
   return started;

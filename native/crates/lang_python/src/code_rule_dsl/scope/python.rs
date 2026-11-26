@@ -578,7 +578,7 @@ impl Visitor<'_, '_> {
                     }
                 };
                 if head.is_some_and(|head| {
-                    member(last_segment(&head).as_str()) || self.imports_member(&head, &member)
+                    member(&last_segment(&head)) || self.imports_member(&head, &member)
                 }) {
                     self.builder.type_roots.push(TypeRoot {
                         node: NodeRef::of(node),

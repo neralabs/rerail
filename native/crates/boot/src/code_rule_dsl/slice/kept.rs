@@ -86,7 +86,7 @@ pub(super) fn last(store: &ContentStore, space: &[u8; 32]) -> StoreResult<Last> 
 /// (in `temp.slice_fresh`), with the memo's rows of this run's reused documents (`REUSED_*`). None of them when
 /// `cold`.
 pub(super) fn views(lease: &Lease<'_>, space: &[u8; 32], fresh: &[i64], cold: bool) -> StoreResult<()> {
-    let hex: String = space.iter().map(|b| format!("{b:02x}")).collect();
+    let hex: String = rerail_prof::code_rule_dsl::prof::lower_hex(&space[..]);
     let kept = if cold { "0" } else { "part NOT IN (SELECT d FROM temp.slice_fresh)" };
     lease.execute_batch(&format!(
         "DROP VIEW IF EXISTS {KEPT_MATCH}; DROP TABLE IF EXISTS {KEPT_MATCH};

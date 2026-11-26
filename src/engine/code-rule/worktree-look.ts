@@ -116,6 +116,14 @@ export class WorktreeLooks {
     return { folder: folderIdentity(root), nested, forced, ignores: await this.#ignores(git, files, root), mounts: this.#mountsIn(files, root) };
   }
 
+  /**
+   * The ignore files' text for `root` (`WorktreeLook.ignores`), each file read now: what the walk of a session's own
+   * folder weighs, since a change to one changes what that walk reads with no change notice in the folder.
+   */
+  async ignoresOf(git: GitReads, root: string): Promise<string | undefined> {
+    return await this.#ignores(git, { texts: new Map(), mounts: [] }, root);
+  }
+
   /** Forgets each worktree not in `roots`. */
   retain(roots: ReadonlySet<string>): void {
     for (const root of this.#ignoreFiles.keys()) if (!roots.has(root)) this.#ignoreFiles.delete(root);

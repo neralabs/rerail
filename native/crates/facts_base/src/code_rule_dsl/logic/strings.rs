@@ -179,17 +179,25 @@ impl Matcher {
     }
 }
 
+/// The matchers by op, then pattern: found by the borrowed texts, so a test of a matcher made already makes no key
+/// (a key of two strings a test was 2.76 M on cold PostHog).
 #[derive(Default)]
-struct Matchers(Mutex<HashMap<(String, String), Option<Arc<Matcher>>>>);
+struct Matchers(Mutex<HashMap<String, HashMap<String, Option<Arc<Matcher>>>>>);
 
 /// Test `op` of `s` against `pattern`, a set's patterns joined by `SET_SEP`. An invalid glob matches nothing.
 pub fn test(op: &str, s: &str, pattern: &str) -> bool {
-    let m = crate::code_rule_dsl::logic::profile::shared::<Matchers>().0
-        .lock()
-        .unwrap()
-        .entry((op.to_owned(), pattern.to_owned()))
-        .or_insert_with(|| Matcher::new(op, &pattern.split(SET_SEP).map(str::to_owned).collect::<Vec<_>>()).ok().map(Arc::new))
-        .clone();
+    let m = {
+        let held = crate::code_rule_dsl::logic::profile::shared::<Matchers>();
+        let mut by_op = held.0.lock().unwrap();
+        match by_op.get(op).and_then(|p| p.get(pattern)) {
+            Some(m) => m.clone(),
+            None => {
+                let m = Matcher::new(op, &pattern.split(SET_SEP).map(str::to_owned).collect::<Vec<_>>()).ok().map(Arc::new);
+                by_op.entry(op.to_owned()).or_default().insert(pattern.to_owned(), m.clone());
+                m
+            }
+        }
+    };
     m.is_some_and(|m| m.is_match(s))
 }
 

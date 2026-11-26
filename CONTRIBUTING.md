@@ -226,12 +226,16 @@ On Windows, see [Developing on Windows](#developing-on-windows).
 
 ### Without Rust
 
-`npm run engine:pull` puts a released engine in `native/` instead of building one: it runs
-`npm pack @neralabs/rerail@<version>` for the version `package.json` names (`-- --version <version>` for another) and
-copies its `native/rerail_engine.<platform>.node`. When `native/`, `Cargo.toml`, `Cargo.lock` or `languages/` changed
-since that release's tag (`git diff --stat v<version> -- native/ Cargo.toml Cargo.lock languages/`), it warns and
-lists the changes: the engine is older than the checkout, and tests of those changes need `npm run build:native`.
-`RERAIL_ENGINE_PATH` makes the runtime load an engine from another path instead.
+`npm run engine:pull` puts a released engine in `native/` instead of building one, for the version `package.json`
+names (`-- --version <version>` for another). A release ships each platform's engine in a package of its own,
+`@neralabs/rerail-engine-<platform>`, which `@neralabs/rerail` names as an optional dependency: the command runs
+`npm pack` on your platform's engine package at that version and copies its `rerail_engine.<platform>.node`. A
+release from before the engine packages carries the engines itself: for one, the command runs
+`npm pack @neralabs/rerail@<version>` and copies the tarball's `native/rerail_engine.<platform>.node`. When `native/`,
+`Cargo.toml`, `Cargo.lock` or `languages/` changed since that release's tag
+(`git diff --stat v<version> -- native/ Cargo.toml Cargo.lock languages/`), it warns and lists the changes: the engine
+is older than the checkout, and tests of those changes need `npm run build:native`. `RERAIL_ENGINE_PATH` makes the
+runtime load an engine from another path instead.
 
 ### Windows
 
@@ -304,7 +308,7 @@ The root [`Justfile`](Justfile) wraps the day-to-day operations; `just` lists th
 | `just rerail-setup` | Reserves this checkout's dev instance (`.rerail/dev/instance.json`: a stable loopback port in 35000–35999 and the home `.rerail/dev/home`) without starting anything. |
 | `just rerail-dev [--install-bridge] [--restore [dir]]` | Rebuilds whatever is stale and (re)starts this checkout's dev daemon on its own home and port, serving `ui/` live. `--install-bridge` registers this checkout's build with every coding agent (`rerail install --root`); hooks always use the default home, so a bridged checkout's dev daemon runs on `~/.rerail` until another `rerail setup` replaces the bridge. `--restore` loads a `nuke-rerail` backup's database. |
 | `just rerail-status`, `just rerail-down`, `just rerail-reset` | Shows the dev instance and build freshness; stops its daemon (state kept); deletes this repository's session history from the dev database (rules kept). |
-| `just rerail-smoke` | Packs this checkout, publishes it to a throwaway authenticated local registry, and drives install, update, `nuke-rerail`/`--restore`, `install --remove` and `install --remove --delete-data` in a sandbox `HOME` (`KEEP=1` keeps it). |
+| `just rerail-smoke` | Packs this checkout and its engine package, publishes them to a throwaway authenticated local registry, and drives install, update, `nuke-rerail`/`--restore`, `install --remove` and `install --remove --delete-data` in a sandbox `HOME` (`KEEP=1` keeps it). |
 | `just rerail-env-matrix run --tarball <file> [--env <ids>]` | Installs a package on throwaway Azure VMs (Linux and Windows, x64 and arm64) and checks it there as a user meets it; `--npm <spec>` installs from npmjs instead, `list` names the environments, `sweep` deletes leftovers. Needs `az login` ([docs/environment-matrix.md](docs/environment-matrix.md)). |
 | `just rerail-language-conformance` | Language-pack conformance (`--pack <id>`, `--check`). |
 | `just rerail-query-parity --corpus <dir> --manifest <paths.json>` | Compares a reference native addon (`RERAIL_QUERY_PARITY_REFERENCE_ADDON`) with this checkout's on a corpus. |
@@ -412,14 +416,18 @@ every pull request from a branch of this repository, so a test that fails there 
 **PowerShell scripts.** `scripts/host/windows-install-smoke.ps1`, the release gate on Windows, runs under PowerShell 7
 in `release.yml`. It dot-sources `scripts/host/windows-host.ps1`, which the environment matrix's Windows VMs also run
 under Windows PowerShell 5.1, so keep that file working in both. Install PowerShell 7 with
-`winget install --id Microsoft.PowerShell -e`, then run the smoke on a package you packed:
+`winget install --id Microsoft.PowerShell -e`, then run the smoke on packages you packed (Git Bash). The core package
+carries no engine: pack your machine's engine package first and core against it, into one folder, and the smoke serves
+the engine package it finds beside core's tarball:
 
 ```sh
-npm run build && npm pack
-pwsh -NoProfile -File scripts/host/windows-install-smoke.ps1 -Tarball neralabs-rerail-<version>.tgz
+npm run build
+node scripts/release/engine/packages.mjs pack --out .rerail/package
+RERAIL_ENGINE_PACKAGES=.rerail/package npm pack --pack-destination .rerail/package
+pwsh -NoProfile -File scripts/host/windows-install-smoke.ps1 -Tarball .rerail/package/neralabs-rerail-<version>.tgz
 ```
 
-Delete the tarball afterwards; git does not ignore it. The smoke installs into a sandbox profile whose folder name has
+Git ignores `.rerail/`, so the tarballs can stay there. The smoke installs into a sandbox profile whose folder name has
 an accent and a space. It puts back your user `Path`, which set-up writes and the sandbox cannot redirect, and reads
 every child's output as UTF-8, so it passes on a console whose code page is 437, an en-US install's default.
 
@@ -507,11 +515,11 @@ traces or transcripts you attach or paste from, for:
 - anything about research participants or the people whose prompts or sessions a study read.
 
 Replace each with a neutral description or a generic example (`/Users/me`, "a private web application"), keeping what
-a test case tests. `npm run check:internal-refs` fails on internal ticket IDs and on any `nera-` identifier outside
-its public list (`PUBLIC_NAMES` in `scripts/check/check-internal-refs.mjs`), in tracked paths and text. It sees only
-that hyphenated form: the same name written with an underscore, a slash or as a scoped package passes, and so do
-pull request text, links and personal details, so those are yours to check. A squash-merged commit message can't be
-changed afterwards.
+a test case tests. `npm run check:internal-refs` fails on internal ticket IDs (`NER-`, `RER-`, `RES-` or `TES-` and
+digits, any case) and on any `nera-` identifier outside its public list (`PUBLIC_NAMES` in
+`scripts/check/check-internal-refs.mjs`), in tracked paths and text. It sees only that hyphenated form: the same name
+written with an underscore, a slash or as a scoped package passes, and so do pull request text, links and personal
+details, so those are yours to check. A squash-merged commit message can't be changed afterwards.
 
 ## Reporting a bug
 

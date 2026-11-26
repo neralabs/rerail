@@ -322,7 +322,7 @@ its commits this tree has not taken. Worktrees idle since 2026-11-20, and detach
 
 **The assistant's own choices (c), and the goal each served:**
 
-- [0161](decisions/0161-the-tape-format-from-11-to-15.md) The tape format from 11 to 15: named-only tapes, and no stored digest (built). Served: tapes store only named nodes (RER-131), from "Please help me to figure out if we need all of the treesitter node types, or if we can remove some from the tapes".
+- [0161](decisions/0161-the-tape-format-from-11-to-15.md) The tape format from 11 to 15: named-only tapes, and no stored digest (built). Served: tapes store only named nodes (decision 0161), from "Please help me to figure out if we need all of the treesitter node types, or if we can remove some from the tapes".
 
 <a id="edit-cost"></a>
 ## An edit costs what it changes

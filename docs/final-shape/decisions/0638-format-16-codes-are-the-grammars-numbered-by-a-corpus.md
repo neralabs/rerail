@@ -29,14 +29,17 @@ C's and 0.89% of C++'s. The format, the readers and the CLIF reads stay as they 
   from it: a changed grammar is written by a run without counts first, then numbered.
 - A counts file names the table revision its numbers are of (a `revision` line per tag), and the lab refuses
   counts of another revision than the shipped table's.
-- The tables' revision is 4 (3 was the spike's counts alone). A tape of an older revision is refused, not misread,
-  and is made again.
+- The tables' revision is 5. A tape of an older revision is refused, not misread, and is made again.
 - The counts, summed:
-  - the ast-index-spike sample corpus: 21 languages, 305,166 files, 244 million nodes;
-  - 520 repositories' bare mirrors (the sampo corpus): 225,326 files, 469 million nodes. Each repository's HEAD
+  - 520 repositories' bare mirrors (the sampo corpus): 578,677 files, 971 million nodes. Each repository's HEAD
     tree is read from its object store through gix, with nothing checked out (`code-counts <dir of mirrors>
-    --per-repo 200`: at most 200 files of each language per repository, spread evenly over the tree);
+    --per-repo 1000`: at most 1,000 files of each language per repository, spread evenly over the tree);
   - this tree's rule files (`docs/rule-syntax`), for the rule language, JSON and Markdown.
+- Not the ast-index-spike sample corpus (revisions 3 and 4). It is a few large projects per language, many of them
+  compilers and runtimes with their test suites, and the user does not want the tables specialized "for just
+  compiling the compiler fast". Each repository weighs about the same: no project's size outweighs the rest.
+- Sampo has few Scala (86 files) and Swift (1,821) sources, so those two tables' order is the least settled. A
+  larger corpus of them changes only their order.
 
 ## How each corpus fares
 
@@ -54,7 +57,12 @@ The nodes past the cutoff, by the spike's counts alone (revision 3) and by both 
 | Scala | 1.08% | 1.20% | 27.03% | 9.61% |
 
 One corpus alone fits itself: the spike's numbering left a third of the sampo corpus's TypeScript past the cutoff.
-Both together cost the spike a fraction of a point.
+
+Held out: numbered by half of sampo's repositories (every other batch, at 1,000 files per language per repository)
+and read on the other half, the nodes past the cutoff are 0.57% for Python, 2.49% TypeScript, 1.23% JavaScript,
+0.59% C, 2.70% C++, 2.84% C#, 1.28% Rust, 0.07% Go. Adding the spike's counts to that half changes them by at most
+0.3 points either way. So the code people write predicts itself, and the spike corpus adds nothing to it: revision
+5 is numbered by sampo alone.
 
 ## Measured
 
@@ -66,5 +74,6 @@ Revision 3 (the spike's counts), on the data layer's 334-file history, step 00 p
 | field / lookup on (p, f) | 318 | 278 | 255 |
 | kind / anti-join on (c0, c1) | 158 | 145 | 408 |
 
-The session's steps took 3.54 s before and 3.25 s after. The findings are identical. Revision 4 measures the same
-on this Python history (kind 181 ns, field 272 ns on the quieter of two runs), and its findings are identical too.
+The session's steps took 3.54 s before and 3.25 s after. The findings are identical. Revisions 4 and 5 measure
+within the M3's noise of it, with identical findings. The nodes of this history's own files (342 Python files, in
+none of the corpora) past the cutoff: 62.92% in the grammar's order, 1.22% by revision 3, 0.91% by 4, 0.80% by 5.

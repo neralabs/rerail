@@ -85,31 +85,114 @@ pub fn home_of(room: Option<&std::sync::Arc<dyn Room>>, bytes: &[u8]) -> HomeOf 
     }
 }
 
+/// Whether a device reads tapes, so a tape it reads lies in a slab's room (`place`, `rooms`).
+pub fn reads_tapes() -> bool {
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    return device().is_some();
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    false
+}
+
 /// `len` bytes written by `fill` into their home: a slab's room where the run reads tapes on a device (`device`) and
 /// its pool gives one, else a vector.
 pub fn place(len: usize, fill: impl FnOnce(&mut [u8]) -> std::io::Result<()>) -> std::io::Result<Home> {
+    let mut fill = Some(fill);
+    if let Some(home) = place_in_room(len, |out| fill.take().expect("filled once")(out))? {
+        return Ok(home);
+    }
+    // A device that refused the room (its budget spent): the tape is read apart, and a batch of it makes its views
+    // (`device_chunk::views_in_place`).
+    let mut v = rerail_tape_format::Vector::with_capacity(len);
+    v.resize(len, 0);
+    fill.take().expect("filled once")(&mut v)?;
+    Ok(Home::from(v))
+}
+
+/// `len` bytes written by `fill` into a slab's room, where there is a device and its pool gives one; else `None`, and
+/// `fill` is not called.
+pub fn place_in_room(len: usize, fill: impl FnOnce(&mut [u8]) -> std::io::Result<()>) -> std::io::Result<Option<Home>> {
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    if device().is_some()
+    if device().is_some() {
         // A word of room past the tape: the device's reads load a whole word where a value ends (`clif_word`).
-        && let Ok((slab, at)) = rerail_slabs::tape_room(len + 16)
-    {
+        let Ok((slab, at)) = rerail_slabs::tape_room(len + 16) else {
+            crate::code_rule_dsl::prof::count("tape.room_refused", 1);
+            return Ok(None);
+        };
         // SAFETY: `at..at + len` is this room's alone, inside the slab's mapping; nothing reads it before `fill`
         // returns.
         let out = unsafe { std::slice::from_raw_parts_mut(slab.host().add(at), len) };
         fill(out)?;
         crate::code_rule_dsl::prof::count("tape.placed", 1);
-        return Ok(Home::Placed(std::sync::Arc::new(SlabRoom { slab, at, len })));
+        return Ok(Some(Home::Placed(std::sync::Arc::new(SlabRoom { slab, at, len }))));
     }
-    // A device that refused the room (its budget spent): the tape is read apart, and a batch of it makes its views
-    // (`device_chunk::views_in_place`).
+    let _ = (len, fill);
+    Ok(None)
+}
+
+/// Where a writer writes its tapes where a device reads them (decision 0353 step 4a, row 17): regions of the tape
+/// slabs, which a parser writes its tape into as it goes and gives the tape out of where it lies (`Region::give`).
+/// `None` without a device: a writer's tape is its own vector, as `place`'s is.
+pub fn rooms() -> Option<std::sync::Arc<dyn rerail_tape_format::home::Rooms>> {
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if device().is_some() {
-        crate::code_rule_dsl::prof::count("tape.room_refused", 1);
+        return Some(std::sync::Arc::new(SlabRooms));
     }
-    let mut v = rerail_tape_format::Vector::with_capacity(len);
-    v.resize(len, 0);
-    fill(&mut v)?;
-    Ok(Home::Own(v))
+    None
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+struct SlabRooms;
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl rerail_tape_format::home::Rooms for SlabRooms {
+    fn region(&self, len: usize) -> Option<Box<dyn rerail_tape_format::home::Region>> {
+        // With a word of room past its last tape (`give`).
+        match rerail_slabs::tape_room(len + 16) {
+            Ok((slab, at)) => Some(Box::new(SlabRegion { slab, at, len: len + 16, given: 0 })),
+            Err(_) => {
+                crate::code_rule_dsl::prof::count("tape.room_refused", 1);
+                None
+            }
+        }
+    }
+}
+
+/// A writer's region of a tape slab: `len` bytes at `at`, its first `given` given out as rooms, its last 16 the room
+/// past its last tape.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+struct SlabRegion {
+    slab: std::sync::Arc<rerail_slabs::Slab>,
+    at: usize,
+    len: usize,
+    given: usize,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl rerail_tape_format::home::Region for SlabRegion {
+    fn free(&mut self) -> &mut [u8] {
+        // SAFETY: the region's bytes past those given out are its writer's alone, inside the slab's mapping.
+        unsafe { std::slice::from_raw_parts_mut(self.slab.host().add(self.at + self.given), (self.len - 16).saturating_sub(self.given)) }
+    }
+
+    fn give(&mut self, len: usize) -> std::sync::Arc<dyn Room> {
+        let room = SlabRoom { slab: std::sync::Arc::clone(&self.slab), at: self.at + self.given, len };
+        // A word of room past the tape, as `place` leaves it: the device's reads load a whole word where a value ends
+        // (`clif_word`). The next room starts aligned.
+        self.given = (self.given + rerail_slabs::aligned(len + 16)).min(self.len);
+        crate::code_rule_dsl::prof::count("tape.placed", 1);
+        crate::code_rule_dsl::prof::count("tape.written_in_place", 1);
+        std::sync::Arc::new(room)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl Drop for SlabRegion {
+    /// The bytes never given out, given back where no room came after the region's.
+    fn drop(&mut self) {
+        if self.given < self.len {
+            self.slab.give_back(self.at, self.len, self.given);
+        }
+    }
 }
 
 /// `place` as the store's reads take it (`snapshot::Placer`): a file read straight into its home.
@@ -128,6 +211,23 @@ pub fn slab_room(room: &std::sync::Arc<dyn Room>) -> Option<(std::sync::Arc<rera
 pub fn read_text(path: &std::path::Path) -> std::io::Result<crate::code_rule_dsl::tape::Text> {
     let home = rerail_observe::git_workspace::snapshot::read_placed(path, &placer)?;
     crate::code_rule_dsl::tape::Text::new(home).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
+
+/// `range` of `text`, read where it lies (decision 0353 step 4a): a room within `text`'s, where `text` is in a slab's
+/// room and `range` holds whole characters of it; else `None`.
+pub fn within(text: &crate::code_rule_dsl::tape::Text, range: std::ops::Range<usize>) -> Option<crate::code_rule_dsl::tape::Text> {
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    {
+        let r = text.home().room()?.as_any().downcast_ref::<SlabRoom>()?;
+        text.as_str().get(range.clone())?;
+        let room = SlabRoom { slab: std::sync::Arc::clone(&r.slab), at: r.at + range.start, len: range.len() };
+        return crate::code_rule_dsl::tape::Text::new(Home::Placed(std::sync::Arc::new(room))).ok();
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    {
+        let _ = (text, range);
+        None
+    }
 }
 
 /// `source` where a device reads it: as it is where it lies in a room already (a loader's, `read_text`) or where

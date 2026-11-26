@@ -4333,11 +4333,29 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             // numbers change) are compared by their stem; every other rule exactly, its helpers' numbers masked. A
             // widened copy (`rr_wide_node_text_rr_up9`) is compared by its rules.
             let numbered = |rel: &str| helper.is_match(rel) && !rel.starts_with("rr_wide_");
+            // A helper the walk's end names (`rr_h_{stem}_{digest}` by its content, `rr_m_{stem}_{digest}` by its module;
+            // decision 0639 §4; a policy's copy too, `p3_rr_h_ctx_…`) is one helper for every clause that makes it, and
+            // its variables and columns keep the names of the clause that made it first, which an unreached clause
+            // dropped can change. Its rules are compared with their variables renamed in the order they appear, and its
+            // columns by their types.
+            let walk_named = regex::Regex::new(r"(?:^|_)rr_[hm]_[a-z_]*_[0-9a-f]{32}$").unwrap();
+            let var = regex::Regex::new(r"\$([A-Za-z_]\w*)").unwrap();
+            let renamed = |shown: &str| {
+                let mut order: Vec<String> = Vec::new();
+                var.replace_all(shown, |c: &regex::Captures| {
+                    let i = order.iter().position(|v| *v == c[1]).unwrap_or_else(|| {
+                        order.push(c[1].to_owned());
+                        order.len() - 1
+                    });
+                    format!("$v{i}")
+                })
+                .into_owned()
+            };
             let mut rules: Vec<String> = p
                 .rules()
                 .map(|r| (head(r), p.show_rule(r)))
                 .filter(|(_, shown)| !place_variant(shown))
-                .map(|(h, shown)| if numbered(&h) { format!("helper {}", mask(&h)) } else { mask(&shown) })
+                .map(|(h, shown)| if numbered(&h) { format!("helper {}", mask(&h)) } else if walk_named.is_match(&h) { mask(&renamed(&shown)) } else { mask(&shown) })
                 .collect();
             rules.sort();
             let named: BTreeSet<String> = p.rules().flat_map(|r| std::iter::once(head(r)).chain(reads(r))).collect();
@@ -4347,7 +4365,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 .filter(|r| named.contains(r))
                 .map(|r| {
                     let c = p.columns_of(&r).unwrap_or_default();
-                    if numbered(&r) { format!("{}/{}", mask(&r), c.len()) } else { mask(&format!("{r}{c:?}")) }
+                    if numbered(&r) { format!("{}/{}", mask(&r), c.len()) } else if walk_named.is_match(&r) { mask(&format!("{r}{:?}", c.iter().map(|(_, ty)| ty).collect::<Vec<_>>())) } else { mask(&format!("{r}{c:?}")) }
                 })
                 .collect();
             decls.sort();
@@ -6683,13 +6701,17 @@ fn every_module_lowers_alike_against_its_scopes_headers() {
 fn every_library_file_a_pack_includes_is_a_planned_module() {
     let lib = crate::code_rule_dsl::logic::rr::library();
     let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
+    // A program that does not read is no evidence either way: named, with its error, where the tables are missed.
+    let mut unread: Vec<String> = Vec::new();
     for path in walk_rr(&lib.join("../packs/python")) {
         let Ok(src) = std::fs::read_to_string(&path) else { continue };
-        if let Ok(Some(m)) = super::modules(&src) {
-            paths.extend(m.files.into_iter().map(|(p, _, _)| p));
+        match super::modules(&src) {
+            Ok(Some(m)) => paths.extend(m.files.into_iter().map(|(p, _, _)| p)),
+            Ok(None) => {}
+            Err(e) => unread.push(format!("{}: {e}", path.display())),
         }
     }
-    assert!(paths.iter().any(|p| p.to_string_lossy().ends_with(".stdlib.rerail")), "a pack's table among the library files: {paths:?}");
+    assert!(paths.iter().any(|p| p.to_string_lossy().ends_with(".stdlib.rerail")), "a pack's table among the library files: {paths:?}\nprograms that do not read: {unread:#?}");
     let plan = super::planned_library(&paths.iter().cloned().collect::<Vec<_>>()).unwrap();
     let canonical = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let planned: BTreeSet<PathBuf> = plan.iter().flat_map(|m| m.files.lines().filter(|f| !f.is_empty()).map(|f| canonical(Path::new(f))).collect::<Vec<_>>()).collect();

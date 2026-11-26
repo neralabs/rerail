@@ -13,13 +13,16 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
-import { worktreeRegistry } from "../catalog/repository-identity.js";
+import { placeWorktrees, placingWorktrees } from "../catalog/checkouts/checkout-placement.js";
+import { learnWorktreeList, worktreeRegistry, type WorktreeListLearning, type WorktreeRegistry } from "../catalog/repository-identity.js";
+import type { GitReads } from "../git.js";
 import { GIT_OPEN_AGAIN_MS, gitReadTimedOut, nativeGitAccess } from "../native/git-access.js";
 import type { NativeGitAccess, NativeGitIgnoreMatcher } from "../native/native.js";
 import type { NativeAnalysisScopeRun, NativeGitRevisionSource } from "../native/native.js";
 import { acquireDirectoryAnalysisRegistration, analysisScopeHome } from "../native/analysis-scope.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import { GitIgnoreMatchers } from "../native/git-ignore-matchers.js";
+import type { GitIgnoreLook } from "../native/git-ignore-answers.js";
 import type {
   AuditorCloseOptions,
   CodeRuleEdit,
@@ -32,6 +35,7 @@ import type {
   IgnoredEditMatch,
   WalkView,
 } from "./code-rule.js";
+import { appendToGroup } from "./code-rule.js";
 import type { CheckoutCatalogs, CheckoutCodeRuleCatalog, CheckoutEligibility } from "./code-rule-dsl-catalog.js";
 import type { AuditRecorder, AuditMode } from "../audit/audit.js";
 import type { SteerShell } from "./rerail-steer.js";
@@ -343,10 +347,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * `acceptsPath` and `ignoresPath` for one walk. A path's full lookup (`#owner`) resolves its real path and looks for
-   * `.git` on disk, about 0.4 ms on Windows, and the walk asks two questions of every file. A file the walk found is
-   * no link, so its checkout is its folder's: each folder gets the full lookup once, for itself and its files. A
-   * checkout recorded while the walk runs owns its files from the next walk.
+   * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk. A path's full lookup (`#owner`) resolves its real path
+   * and looks for `.git` on disk, about 0.4 ms on Windows, and the walk asks two questions of every file, and the
+   * grouping of what it found by checkout a third. A file the walk found is no link, so its checkout is its folder's:
+   * each folder gets the full lookup once, for itself and its files. A checkout recorded while the walk runs owns its
+   * files from the next walk.
    */
   walkView(): Required<WalkView> {
     const folders = new Map<string, CheckoutOwner | undefined>();
@@ -360,9 +365,14 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       const name = path.slice(slash + 1);
       return owner === undefined ? undefined : { checkoutRoot: owner.checkoutRoot, path: owner.path === "" ? name : `${owner.path}/${name}` };
     };
+    // Git's ignore answers come from those every session's walks learnt of the checkout, checked once per walk against
+    // the facts that end them (`GitIgnoreMatchers.look`); while they hold, a file's second question, whether a lane
+    // reads it, takes the answer its first learnt.
+    const look = this.#gitIgnoreMatchers.look();
     return {
-      acceptsPath: path => this.#accepts(fileOwner(path)),
-      ignoresPath: (path, directory) => this.#ignores(directory ? folderOwner(path) : fileOwner(path), directory),
+      acceptsPath: path => this.#accepts(fileOwner(path), look),
+      ignoresPath: (path, directory) => this.#ignores(directory ? folderOwner(path) : fileOwner(path), directory, look),
+      sourceRoot: path => fileOwner(path)?.checkoutRoot,
     };
   }
 
@@ -373,25 +383,28 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * rules. A lane holds a native workspace and its checkout's index, so opening one in every worktree to answer took
    * the daemon's memory to gigabytes with one session in a repository of many.
    */
-  #accepts(owner: CheckoutOwner | undefined): boolean {
+  #accepts(owner: CheckoutOwner | undefined, look?: GitIgnoreLook): boolean {
     if (owner === undefined) return false;
     const root = owner.checkoutRoot;
     // A lane of its own reads its rules again first at its first use after an event (`#lane`).
     const lane = this.#lanes.has(root) ? this.#lane(root) : this.#laneWithRulesOf(root) ?? this.#lane(root);
-    return lane !== undefined && this.#readsIn(lane, owner);
+    return lane !== undefined && this.#readsIn(lane, owner, look);
   }
 
-  /** Whether `lane` reads `owner`'s path: its own checkout's answer, or another's by the same rules and that checkout's Git ignore rules. */
-  #readsIn(lane: Lane, owner: CheckoutOwner): boolean {
-    if (lane.root === owner.checkoutRoot) return lane.enforcer.acceptsPath(owner.path);
-    return lane.enforcer.readsPath(owner.path) && !this.#gitIgnores(owner, false);
+  /**
+   * Whether `lane` reads `owner`'s path: its own checkout's answer, or another's by the same rules and that checkout's
+   * Git ignore rules. `look`: a walk's questions of the answers kept (`walkView`).
+   */
+  #readsIn(lane: Lane, owner: CheckoutOwner, look: GitIgnoreLook | undefined): boolean {
+    if (lane.root === owner.checkoutRoot) return lane.enforcer.acceptsPath(owner.path, look);
+    return lane.enforcer.readsPath(owner.path) && !this.#gitIgnores(owner, false, look);
   }
 
   /** A lane follows its own checkout's Git ignore rules, as `#gitIgnores` does, so a checkout needs no lane to answer. */
-  #ignores(owner: CheckoutOwner | undefined, directory: boolean): boolean {
+  #ignores(owner: CheckoutOwner | undefined, directory: boolean, look?: GitIgnoreLook): boolean {
     if (owner === undefined) return false;
     const lane = this.#lanes.get(owner.checkoutRoot);
-    return lane === undefined ? this.#gitIgnores(owner, directory) : lane.enforcer.ignoresPath(owner.path, directory);
+    return lane === undefined ? this.#gitIgnores(owner, directory, look) : lane.enforcer.ignoresPath(owner.path, directory, look);
   }
 
   /**
@@ -451,12 +464,14 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * Only a failed open leaves the checkout without a matcher: one path's failed read (an unreadable nested
    * `.gitignore`, the index caught mid-rewrite) used to drop it too, and every later walk then entered the checkout's
    * ignored folders. As a lane does, rules that cannot be read leave the path in, so a broken `.gitignore` never hides
-   * sources.
+   * sources. A walk's question (`look`) takes the answer the walks learnt.
    */
-  #gitIgnores(owner: CheckoutOwner, directory: boolean): boolean {
+  #gitIgnores(owner: CheckoutOwner, directory: boolean, look?: GitIgnoreLook): boolean {
     if (this.#options.followGitignore !== true) return false;
     try {
-      return this.#gitIgnoreMatcher(owner)?.ignored(owner.path, directory) ?? false;
+      const matcher = this.#gitIgnoreMatcher(owner);
+      if (matcher === null) return false;
+      return look === undefined ? matcher.ignored(owner.path, directory) : look.ignored(matcher, owner.path, directory);
     } catch (error) {
       this.#reportGitIgnoreError(owner, error, "question");
       return false;
@@ -549,17 +564,32 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * The other worktrees Git registers for the session's checkout that may run rules: a shell write in one is an edit
    * like any other, wherever the worktree sits and whatever the session's checkout ignores. The walk cannot tell which
-   * session wrote a file, so what it finds there is recorded under the repository and steers no session.
+   * session wrote a file, so what it finds there is recorded under the repository and steers no session. `registry` is
+   * the list `learnWorktreeRoots` gave as stored, in the same synchronous run; without it the registry is read now.
    */
-  worktreeRoots(): string[] {
+  worktreeRoots(registry: WorktreeRegistry | undefined = worktreeRegistry(this.#options.startingCheckout)): string[] {
     const starting = this.#options.startingCheckout;
-    const registry = worktreeRegistry(starting);
     this.#registryFolder = registry === undefined ? undefined : join(registry.commonDirectory, "worktrees");
     const listed = (registry?.worktrees ?? []).map(worktree => storedPath(worktree)).filter(root => root !== starting && existsSync(root));
     // Git's list, read now, is a point for the folders it names (`CheckoutOwners.lookAgain`): a folder looked up while
     // it was plain, or before Git wrote its `.git` file, is a worktree from here on.
     if (!this.#closing) this.#options.owners.lookAgain(listed);
     return listed.filter(root => this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+  }
+
+  /**
+   * Git's list of the worktrees `worktreeRoots` reads, learnt through `git` as a process no thread waits on and kept as
+   * the registry keeps it (`learnWorktreeList`): a worktree added since the last list costs the daemon's thread no Git.
+   * While the stored list stands, that list, for a `worktreeRoots` in the same synchronous run to take; but where a
+   * session opening there is placing the listed worktrees (`placeWorktrees`), that pass, joined through `git`, so the
+   * walk after it asks Git for none of them itself. Undefined for a checkout placed by a kept acceptance, whose list the
+   * registry reads as before.
+   */
+  learnWorktreeRoots(git: GitReads): WorktreeListLearning | undefined {
+    const learnt = learnWorktreeList(this.#options.startingCheckout, git);
+    if (learnt?.kind !== "stored" || !placingWorktrees(learnt.registry)) return learnt;
+    const { registry } = learnt;
+    return { kind: "learning", done: git.run(signal => placeWorktrees(registry, { signal })) };
   }
 
   /** The folder where Git registers the worktrees `worktreeRoots` last named (`worktrees` in the common Git folder). */
@@ -588,8 +618,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     const partitioned = new Map<Lane, CodeRuleEdit[]>();
     for (const edit of batch.edits) {
       const routed = this.#route(edit.path);
-      if (routed === undefined) continue;
-      partitioned.set(routed.lane, [...(partitioned.get(routed.lane) ?? []), { ...edit, path: routed.path }]);
+      if (routed !== undefined) appendToGroup(partitioned, routed.lane, { ...edit, path: routed.path });
     }
     const responses: CodeRuleResponse[] = [];
     for (const lane of [...this.#lanes.values()]) {

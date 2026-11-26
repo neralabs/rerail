@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
-import { RULE_PACK_CATEGORIES } from "../engine/catalog/rule-packs.js";
+import { RULE_PACK_CATEGORIES, ruleDimensionsSchema } from "../engine/catalog/rule-packs.js";
 import { RULE_KINDS } from "../engine/storage/schema.js";
 import { approvalSubjectSchema, inactiveRuleSchema } from "./repository-contracts.js";
 
@@ -37,6 +37,8 @@ export const rulePackSchema = z.object({
     heldOff: z.string().optional().describe("Why a reviewer holds the rule off though upstream turns it on; set-up never turns it on from the repository's lint config."),
     examples: z.object({ caught: ruleExampleSchema, passes: ruleExampleSchema }).strict().optional()
       .describe("One example the rule catches and one it lets pass, where the pack has them."),
+    dimensions: ruleDimensionsSchema.optional()
+      .describe("Where the pack gives them: what goes wrong when the rule is broken (risk), where its code lives (layer), the worst realistic outcome (severity), and the hazard id packs share when they catch the same thing in different stacks."),
     inactive: inactiveRuleSchema.optional(),
   }).strict()),
 }).strict();
@@ -51,6 +53,26 @@ export const skippedRulePackSchema = z.object({
 export const rulePackListSchema = z.object({
   packs: z.array(rulePackSchema),
   skipped: z.array(skippedRulePackSchema).describe("Installed packs left out because they failed a check; the others load."),
+});
+
+export const publishedRulePacksSchema = z.object({
+  repositoryKey: z.string(),
+  checkoutPath: z.string().describe("The checkout the packs were matched against, as for the recommendations."),
+  readAt: z.number().int().nullable().describe("When npm listed the packs (epoch ms); null when they could not be read."),
+  unread: z.string().optional().describe("Why the published packs could not be read, for example npm could not reach its registry; set exactly when readAt is null."),
+  packs: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    category: z.enum(RULE_PACK_CATEGORIES),
+    covers: z.string(),
+    publisher: z.string().describe("As for an installed pack: rerail for Rerail's own, else the npm scope or package name."),
+    packageName: z.string(),
+    version: z.string().describe("The version offered: npm's under the update channel's tag, or the installed one where it stands in (npm cannot give the pack, or the one installed is newer)."),
+    ruleCount: z.number().int().positive().describe("The rules on once the pack is added."),
+    installedVersion: z.string().nullable().describe("The version of this package this Rerail loads now; null when it is not installed."),
+    reason: z.string().optional().describe("Why the pack is suggested for the checkout; absent when it does not fit it."),
+    folder: z.string().optional().describe("Folder to add the pack in, as for the recommendations; absent when it does not fit."),
+  }).strict()),
 });
 
 export const rulePackRecommendationsSchema = z.object({

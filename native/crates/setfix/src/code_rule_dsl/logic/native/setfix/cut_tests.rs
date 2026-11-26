@@ -558,3 +558,33 @@ fn a_closures_seed_is_cut_at_its_budget_and_goes_on_from_its_rows_left() {
     assert!(done && cuts > 1, "to the fixpoint, the seed cut on the way: {cuts} cuts, last {last}");
     assert_eq!(rows(&db), whole, "the fixpoint is the unlimited run's");
 }
+
+/// A profiled walk's step clock takes its own switches' cost off the steps (`StepClock::own`, `switch_ticks`): a step
+/// entered often that does nothing is charged nearly nothing, where it was charged a switch an entry, and a step that
+/// works keeps its time. Measured on the clock itself, one thread, in ticks.
+#[test]
+fn a_step_clocks_switches_are_no_steps_time() {
+    let cost = measure_switch_ticks();
+    assert!(cost > 0.0 && cost.is_finite(), "{cost}");
+    let fresh = || StepClock { ticks: rerail_blocks::vector![0; 4], switches: rerail_blocks::vector![0; 4], at: 3, last: ticks(), t0: 0, cpu0: 0.0, acc: crate::code_rule_dsl::logic::profile::accounted_ticks(), acc0: (0, 0.0), cost };
+    // Empty steps 0 and 1, entered in turn: their charge is the switches'.
+    let mut c = fresh();
+    for k in 0..200_000usize {
+        c.to(k & 1);
+    }
+    let raw = (c.ticks[0] + c.ticks[1]) as f64;
+    let own = c.own(0) + c.own(1);
+    assert!(raw > 0.0 && own <= 0.2 * raw, "empty steps: {own} of {raw} ticks kept (a switch {cost} ticks)");
+    // Step 2 works between its switches: its time is kept.
+    let mut c = fresh();
+    let mut x = 1u64;
+    for _ in 0..2_000 {
+        c.to(2);
+        for i in 0..2_000u64 {
+            x = std::hint::black_box(x.wrapping_mul(6364136223846793005).wrapping_add(i));
+        }
+        c.to(0);
+    }
+    let (raw, own) = (c.ticks[2] as f64, c.own(2));
+    assert!(own >= 0.9 * raw, "a working step: {own} of {raw} ticks kept ({x})");
+}

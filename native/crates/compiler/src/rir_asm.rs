@@ -9,7 +9,7 @@ use crate::rir_text::{quote, reading_rows, switch_rows};
 use std::fmt::Write as _;
 use crate::program::*;
 
-/// The format's version: the program digest's (`tempo-program-v7`).
+/// The format's version: the program digest's (`rerail-program-v7`).
 pub const IR: u32 = 7;
 
 /// The opcodes' mnemonics.

@@ -337,11 +337,11 @@ fn persisted_image_round_trips_without_parsing() {
     // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`, Patch 28's
     // `_member_name_here`, Patch 29's `_template_escape_without_digits`, Patch 30's `using`
     // declarations, `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; so does the language's format 16
-    // table (its codes, from the grammar, decision 0631, and their numbering, by two corpora's counts: revision 4), and a
+    // table (its codes, from the grammar, decision 0631, and their numbering, by a corpus's counts: revision 5), and a
     // change of format 16's layout (decision 0434) or of what its home holds (its auxiliary index, decision 0656).
     assert_eq!(
         digest,
-        "10220242ab41c817f5aa9505398499f5b0b2c4365a32400de60e17bc5a4888ab"
+        "7a5af35f41d747bf64e59f1f34fe3b9d04cd6d435a9180cd6a9a592d5f2f6ef5"
     );
 }
 
@@ -1046,7 +1046,7 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
             }
         }
         // The statement: `debugger` alone is natively its keyword, a token the grammar implies, which
-        // no tape stores (RER-131).
+        // no tape stores (decision 0161).
         let pattern = if lang == GrammarDialect::Python {
             "x = $A"
         } else {
@@ -1083,7 +1083,7 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
         "encode must poll before the final source digest"
     );
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
-    // A record per stored node: the tokens the grammar implies are in no tape (RER-131).
+    // A record per stored node: the tokens the grammar implies are in no tape (decision 0161).
     let nodes = native.tree.root_node().descendant_count();
     let doc = TapeDoc::restore(Arc::new(source.into()), grammar, &image, &|| false).unwrap();
     assert_eq!(doc.transducer_len(), doc.image.node_count());
@@ -1130,7 +1130,7 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
         (17, "x\n".repeat(8)),
     ] {
         let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
-        // The document's tree image: the stored one is named-only (RER-131).
+        // The document's tree image: the stored one is named-only (decision 0161).
         let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
@@ -1174,7 +1174,7 @@ fn span_varint_width_boundaries_preserve_utf8_ranges_and_captures() {
     for (length, expected_width) in [(127, 1), (128, 2), (16_383, 2), (16_384, 3)] {
         let source = format!("#é{}\nfoo(1)\n", "a".repeat(length - 3));
         let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
-        // The document's tree image: the stored one is named-only (RER-131).
+        // The document's tree image: the stored one is named-only (decision 0161).
         let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
@@ -6993,6 +6993,29 @@ fn every_tape_format_reads_the_document_as_restored() {
                 );
             }
         });
+    }
+}
+
+/// Decision 0353 step 4a (row 17): a parser writes its tape in its room where a device reads tapes (`placed::rooms`),
+/// whichever parser it is (tree-sitter's, a Bitlex parser's, simdjson's): the image a parse gives is placed there, and
+/// placing it (`place_stored`) is its home as it is, with the bytes it would be stored as.
+#[test]
+fn a_parse_writes_its_tape_in_its_room() {
+    for (language, source) in [
+        (GrammarDialect::Python, "def f(a):\n    return len(a)\n"),
+        (GrammarDialect::Json, "{\"a\": [1, 2, {\"b\": null}]}\n"),
+        (GrammarDialect::Go, "package p\n\nfunc f(a int) int { return a }\n"),
+        (GrammarDialect::Rust, "fn f(a: u8) -> u8 { a }\n"),
+    ] {
+        let grammar = Arc::new(Grammar::new(language).unwrap());
+        let image = TapeImage::parse(&grammar, source, &|| false).expect("parsed").expect("encoded").primary;
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        assert_eq!(image.placed(), super::placed::device().is_some(), "{language:?}: written in a slab's room where there is a device");
+        let home = image.place_stored().unwrap();
+        assert_eq!(&*home, &image.to_bytes().unwrap()[..], "{language:?}: the bytes as stored");
+        if image.placed() {
+            assert_eq!(home.as_ptr(), image.room().unwrap().bytes().as_ptr(), "{language:?}: placed where its parser wrote it");
+        }
     }
 }
 

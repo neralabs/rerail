@@ -606,7 +606,7 @@ pub mod tests {
         Connection::open(path).unwrap()
     }
     fn hex(s: &str) -> String {
-        s.bytes().map(|b| format!("{b:02x}")).collect()
+        rerail_prof::code_rule_dsl::prof::lower_hex(s.as_bytes())
     }
     #[test]
     fn native_join_shares_summaries_across_rules_and_independent_slots() {

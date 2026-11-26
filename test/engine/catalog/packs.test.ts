@@ -14,9 +14,9 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, rerailRangeFailure, ruleKeyRangeFailure, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
+import { dimensionsRangeFailure, heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, rerailRangeFailure, ruleKeyRangeFailure, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
-import { coreFloor, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, shippedLanguages, shippedRuleKeys } from "../../../scripts/release/core.mjs";
+import { coreFloor, dimensionedRules, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, shippedLanguages, shippedRuleKeys } from "../../../scripts/release/core.mjs";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -873,12 +873,24 @@ describe("validatePack", () => {
       expect(failing(validation).rules).toEqual([expect.stringContaining("with is for a rule written in .rerail")]);
     });
 
-    it("fails check 5 once core reads .rerail rules, while the core range admits older cores", { timeout: TIMEOUT }, async () => {
-      const raised = (directory: string): void => editJson(join(directory, "package.json"), manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": raisedCoreRange(RERAIL_DOCUMENTS_SINCE) } }));
-      expect(failing(await validatePack(join(FIXTURES, "rr-sample"), { coreVersion: RERAIL_DOCUMENTS_SINCE }))).toEqual({
-        package: [`package.json: the core range >=0.1.0-0 admits Rerail older than ${RERAIL_DOCUMENTS_SINCE}, which reads no rule written in .rerail (rr-sample-assert, rr-sample-print-call, rr-sample-deprecated-call); raise it to >=${RERAIL_DOCUMENTS_SINCE}-0`],
-      });
-      expect(failing(await validatePack(changed("rr-sample", raised), { coreVersion: RERAIL_DOCUMENTS_SINCE }))).toEqual({});
+    // Check 5 judges the core range at core's version: the repository's own unless a case passes one, which the Release
+    // pull request moves when it bumps core. The fixture's range starts at RERAIL_DOCUMENTS_SINCE, so check 5 passes it
+    // at any version; these cases pass the version on each side of that release, so a bump changes none of them.
+    const refusal = `package.json: the core range >=0.1.0-0 admits Rerail older than ${RERAIL_DOCUMENTS_SINCE}, which reads no rule written in .rerail (rr-sample-assert, rr-sample-print-call, rr-sample-deprecated-call); raise it to >=${RERAIL_DOCUMENTS_SINCE}-0`;
+    /** A copy of the fixture whose core range admits every core, as a pack's did before it shipped a .rerail rule. */
+    const admittingOlderCores = (): string =>
+      changed("rr-sample", directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": ">=0.1.0-0" } })));
+    const fixture = (): string => join(FIXTURES, "rr-sample");
+    const coreRangeCases: [string, () => string, string, Partial<Record<PackCheckName, string[]>>][] = [
+      ["passes a range admitting older cores while core is before the release that first reads .rerail rules", admittingOlderCores, "0.2.0", {}],
+      ["fails that range once core is at that release", admittingOlderCores, RERAIL_DOCUMENTS_SINCE, { package: [refusal] }],
+      ["fails it at a later release too", admittingOlderCores, "1.0.0", { package: [refusal] }],
+      ["passes the fixture's own range at that release", fixture, RERAIL_DOCUMENTS_SINCE, {}],
+      ["passes the fixture's own range at a later release", fixture, "1.0.0", {}],
+    ];
+
+    it.each(coreRangeCases)("check 5 %s", { timeout: TIMEOUT }, async (_name, directory, coreVersion, expected) => {
+      expect(failing(await validatePack(directory(), { coreVersion }))).toEqual(expected);
     });
   });
 
@@ -1134,13 +1146,14 @@ describe("the core range the release writes", () => {
     const languages = shippedLanguages(directory);
     const ruleKeys = shippedRuleKeys(directory);
     const rerail = rerailRules(packJson);
-    const floor = coreFloor(heldOff, languages, ruleKeys, rerail);
-    return floor === undefined ? [] : [{ id, heldOff, languages, ruleKeys, rerail, floor }];
+    const dimensioned = dimensionedRules(packJson);
+    const floor = coreFloor(heldOff, languages, ruleKeys, rerail, dimensioned);
+    return floor === undefined ? [] : [{ id, heldOff, languages, ruleKeys, rerail, dimensioned, floor }];
   });
 
   // react ships a utility named `stored`, which is no rule key: its range stays.
-  it("is due for the packs holding a rule off, shipping a rule in a language or with an ast rule key added since, or shipping a .rerail rule", () => {
-    expect(floors.map(({ id }) => id)).toEqual(["complexity", "django", "javascript", "python", "typescript"]);
+  it("is due for the packs holding a rule off, shipping a rule in a language or with an ast rule key added since, shipping a .rerail rule, or giving rules dimensions", () => {
+    expect(floors.map(({ id }) => id)).toEqual(["complexity", "django", "javascript", "python", "rerail", "typescript"]);
     expect(floors.filter(({ ruleKeys }) => ruleKeys.length > 0).map(({ id, ruleKeys }) => [id, ruleKeys])).toEqual([
       ["javascript", ["stored"]],
       ["python", ["stored"]],
@@ -1148,15 +1161,16 @@ describe("the core range the release writes", () => {
     ]);
   });
 
-  it.each(floors)("passes check 5's range checks for pack $id at the release that first loads it", ({ heldOff, languages, ruleKeys, rerail, floor }) => {
+  it.each(floors)("passes check 5's range checks for pack $id at the release that first loads it", ({ heldOff, languages, ruleKeys, rerail, dimensioned, floor }) => {
     const failures = (range: string): (string | undefined)[] => [
       heldOffRangeFailure(range, heldOff, floor),
       languageRangeFailure(range, languages, floor),
       ruleKeyRangeFailure(range, ruleKeys, floor),
       rerailRangeFailure(range, rerail, floor),
+      dimensionsRangeFailure(range, dimensioned, floor),
     ];
     expect(failures(">=0.1.0-0").some(failure => failure !== undefined)).toBe(true);
-    expect(failures(raisedCoreRange(floor))).toEqual([undefined, undefined, undefined, undefined]);
+    expect(failures(raisedCoreRange(floor))).toEqual([undefined, undefined, undefined, undefined, undefined]);
   });
 });
 

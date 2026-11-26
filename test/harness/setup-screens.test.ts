@@ -642,6 +642,19 @@ describe("T6 / C6 summary", () => {
     expect(stripAnsi(renderSummary(SUMMARY, "terminal"))).not.toContain("omp plugin uninstall");
   });
 
+  it("says Claude Code's hooks start with node, what that costs and how to try cmd.exe again, where cmd.exe ran no command", () => {
+    const agents = { ...CONNECTED, nodeHookFallback: true };
+    const row = [
+      "  Claude    cmd.exe could not run a test command, so Rerail’s hooks start",
+      "            with node. Where Claude Code’s PATH finds another Node first,",
+      "            each hook event starts a second Node.",
+      "            Run rerail install --refresh to try cmd.exe again.\n",
+    ].join("\n");
+    expect(stripAnsi(renderSummary({ ...SUMMARY, agents }, "terminal"))).toContain(row);
+    expect(stripAnsi(renderSkipped(agents, "terminal"))).toContain(row);
+    expect(stripAnsi(renderSummary(SUMMARY, "terminal"))).not.toContain("install --refresh");
+  });
+
   it("names Codex's form of the commands beside the others' where Codex is one of several agents", () => {
     const text = renderSummary({ ...SUMMARY, agents: { ...CONNECTED, connected: [CLAUDE, CODEX] } }, "agent");
     expect(text).toContain("type /rerail-show-me\n            to watch Rerail catch and fix a broken rule.\n            In Codex, type $rerail-show-me.\n");
@@ -723,7 +736,7 @@ describe("E1 coding agent can't install", () => {
 describe("E3 no repo here", () => {
   it.each(LANES)("asks which project to start with, folder first (%s)", lane => {
     const text = stripAnsi(renderNoRepoQuestion({}, lane));
-    expect(text).toContain("△ No repo found here.  Rerail needs one project to read.");
+    expect(text).toContain("△ No Git repository here.  Rerail needs one project to read.");
     expect(text).toContain("Which project do you want to start with?");
     expect(text).toContain("Rerail reads it on this computer only, to suggest rule packs.");
     expect(text).toMatch(/1\. Type the folder… +for example “~\/code\/acme-web”/);

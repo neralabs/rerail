@@ -24,7 +24,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 60
+VERSION = 61
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -993,7 +993,11 @@ def wrapper(rustc, args):
             except OSError:
                 pass
             # As sccache would run it (`sccache_remaps`), so its incremental state serves both ways.
-            os.execv(rustc, [rustc] + sccache_remaps(os.getcwd(), out_dir, basedirs()) + args)
+            # Under clippy, `rustc` is clippy-driver and the first argument rustc's path, which
+            # clippy-driver drops only in first place: the remaps go after it, or the path is read
+            # as a second input file.
+            lead = args[:1] if args and os.path.basename(args[0]).startswith("rustc") else []
+            os.execv(rustc, [rustc] + lead + sccache_remaps(os.getcwd(), out_dir, basedirs()) + args[len(lead):])
         env["RERAIL_FARM_INCREMENTAL"] = inc
         env["RERAIL_FARM_HOT"] = marker
         args = stripped

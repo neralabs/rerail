@@ -138,7 +138,7 @@ fn keyed<'r, D: Doc>(node: &Node<'r, D>) -> Keyed<'r, D> {
             }
         }
         // `x[k]`: the grammar's every subscript is `[ … ]` (no `{ … }` form), so the kind implies
-        // the `[`, which a tape does not store (RER-131): the kind is the question, not the token.
+        // the `[`, which a tape does not store (decision 0161): the kind is the question, not the token.
         "subscript_expression" => match node.named_code().nth(1) {
             Some(index) => Keyed::Computed(index, Role::ArrayKey),
             None => Keyed::Nameless,

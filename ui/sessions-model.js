@@ -325,6 +325,9 @@ const gapsOf = s => data.sessionDetail.get(s.sessionId)?.gaps
 /** Session events its host never delivered, from the `events-dropped` records anywhere in the session. */
 export const droppedEvents = s => gapsOf(s).droppedEvents;
 
+/** Session events Rerail recorded whose records a power cut or an operating system crash took (`events-lost`). */
+export const lostEvents = s => gapsOf(s).lostEvents ?? 0;
+
 /** Boundaries that answered before the session's shell-write check finished. */
 export const uncheckedBoundaries = s => gapsOf(s).uncheckedBoundaries;
 

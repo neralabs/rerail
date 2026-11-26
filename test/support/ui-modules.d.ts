@@ -49,6 +49,7 @@ declare module "*/ui/sessions-model.js" {
   export function placeCorrections(turns: TurnView[], corrections: readonly Correction[]): TurnView[];
   export function resumeCommand(s: { host: string; cwd: string; sessionId: string }): { name: string; cmd: string | null; cwd?: string };
   export function droppedEvents(s: { sessionId: string }): number;
+  export function lostEvents(s: { sessionId: string }): number;
   export function uncheckedBoundaries(s: { sessionId: string }): number;
   export function codeRulesPendingBoundaries(s: { sessionId: string }): number;
   export function discoveryGapPlaces(s: { sessionId: string }): Array<{ path?: string; reason: string; boundary: string; observedAt: number }>;
@@ -66,7 +67,13 @@ declare module "*/ui/sessions-model.js" {
   export function violationCounts(s: SessionRow): { logged: number; steered: number; declined: number };
 }
 
+declare module "*/ui/frame/topbar.js" {
+  /** Draws the status pill from the store, and draws it again once when time alone would change its words. */
+  export function renderStatus(): void;
+}
 declare module "*/ui/poll.js" {
+  /** Two missed beats of the change stream: the status stops saying Live, and the stream is opened again. */
+  export const LIVE_MS: number;
   export function titleFromPrompts(prompts: readonly string[]): string | null;
   /** What each poll loads for a repository in scope, by need name (`NEEDS` in poll.js). */
   export function setNeeds(needs: () => Iterable<string>): void;
@@ -86,6 +93,8 @@ declare module "*/ui/poll.js" {
   export function mergeAssistMark(): number;
   export function mergeAssistReadAfter(mark: number): boolean;
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
+  /** Follow the daemon's change stream while the tab shows; `listener` runs after each read and each beat. */
+  export function startPolling(listener: (changed: boolean) => void): void;
   export function refresh(): Promise<void>;
   export function refreshNow(): Promise<void>;
   export function loadMoreFindings(): Promise<boolean>;
@@ -122,6 +131,7 @@ declare module "*/ui/derive.js" {
   export function violationOutcome(finding: { mode?: string; logged: boolean }): "logged" | "steered";
   export function isRunning(stored: { enabled: boolean; configError?: string | null; inactive?: { reason: string } | null }): boolean;
   export function notRunningReason(stored: { enabled: boolean; configError?: string | null; inactive?: { reason: string } | null }): string | null;
+  export const RISK_LABELS: ReadonlyArray<readonly [string, string]>;
   export function packSuppressions(rules: readonly object[]): string;
   export function inPack(rule: object, packId: string): boolean;
   /** Whether a stored rule came in a rule pack (`origin` "pack"), rather than from the library ("user"). */
@@ -167,11 +177,19 @@ declare module "*/ui/state.js" {
     activityAllSessions: { started: number; withViolations: number } | null;
     packs: unknown[];
     attachedPacks: Map<string, string[]>;
-    repository: { setUp: boolean; repositoryKey?: string; name?: string } | null;
+    repository: { setUp: boolean; repositoryKey?: string; name?: string; state?: string } | null;
     checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
     followGitignore: boolean | null;
+    /** The status line's footer, as Settings shows it. */
+    presence: "compact" | "silent" | null;
     sessionDetail: Map<string, SessionDetail>;
+    repositories: Array<{ repositoryKey: string; [k: string]: unknown }>;
+    updatedAt: number;
+    heardAt: number;
+    behindSince: number;
+    readingSince: number;
+    health: { version: string; model?: { ok: boolean; message?: string } } | null;
     missing: boolean;
     disconnected: boolean;
     /** The daemon answered 401: this browser holds no access capability. */
@@ -204,11 +222,17 @@ declare module "*/ui/attachments.js" {
   export function attachmentWrites(page: { toast: (message: string) => void; invalidate: () => void }): {
     setUpRecommended(): Promise<void>;
     keepPack(id: string, keep: boolean, message: string, failed?: string): Promise<void> | undefined;
+    addPacks(ids: readonly string[], message: string, failed?: string): Promise<void> | undefined;
   };
 }
 
+declare module "*/ui/api.js" {
+  /** One write to the daemon's API; a refusal rejects, a change made but not confirmed on the disk as `NotOnDisk`. */
+  export function send(method: string, path: string, body: unknown, options?: { signal?: AbortSignal }): Promise<{ status: number; etag: string | undefined; body: unknown }>;
+}
+
 declare module "*/ui/format.js" {
-  /** A failure toast: what did not happen, then the error as a sentence. */
+  /** A failure toast: what did not happen, then the error as a sentence, or a `NotOnDisk` error's words alone. */
   export function failed(what: string, error: unknown): string;
   /** Who a violation is credited to: its session, which its button opens, or the repository (`session` null). */
   export function violationOwner(violation: { sessionId: string | null; host: string | null }): { session: string | null; label: string; title: string };
@@ -240,9 +264,17 @@ declare module "*/ui/rule-remove.js" {
 
 declare module "*/ui/pack-model.js" {
   type Stored = { rule: { id: string }; enabled: boolean; addedAt?: number | null };
-  type Pack = { id: string; name: string; category: string; covers?: string; rules: Array<{ id: string; title: string; group?: string; on?: boolean }> };
+  type Pack = { id: string; name: string; category: string; covers?: string; published?: boolean; rules: Array<{ id: string; title: string; group?: string; on?: boolean }> };
+  /** A pack as the catalog lists it, installed or only published. */
+  type Listed = { id: string; name: string; category: string; published?: boolean };
+  /** One entry of `GET /api/rule-packs/published`. */
+  type PublishedPack = {
+    id: string; name: string; category: string; covers: string; publisher: string; packageName: string; version: string;
+    ruleCount: number; installedVersion: string | null; reason?: string; folder?: string;
+  };
   export const PAGE_FILTERS: ReadonlyArray<readonly [string, string]>;
   export const PAGE_SORTS: ReadonlyArray<readonly [string, string]>;
+  export function pageRiskFilters(rules: readonly Stored[]): Array<[string, string]>;
   export function pageKey(view: string, packId: string | null): string;
   export function pageRules(key: string): Stored[] | null;
   export function sortPageRules<R extends Stored>(rules: readonly R[], sort: string): R[];
@@ -251,14 +283,19 @@ declare module "*/ui/pack-model.js" {
   export function packSwitch(rules: readonly Stored[]): { on: number; total: number; state: "true" | "false" | "mixed" };
   export function switchTurnsOn(state: "true" | "false" | "mixed"): boolean;
   export function enforcementCounts(rules: ReadonlyArray<Stored & { rule: { mode: string }; configError?: string | null }>): string;
-  export function catalogKinds(packs: readonly Pack[]): Array<[string, string]>;
-  export function catalogPacks<P extends Pack>(packs: readonly P[], kind: string): P[];
+  export function catalogKinds(packs: readonly Listed[]): Array<[string, string]>;
+  export function catalogPacks<P extends Listed>(packs: readonly P[], kind: string): P[];
+  export function catalogEntries<P extends Pack>(installed: readonly P[], published: { packs: readonly PublishedPack[]; unread: string | null } | null): Array<P | (PublishedPack & { published: true })>;
+  export function catalogSuggestions(recommendations: readonly Recommendation[] | null, entries: ReadonlyArray<Listed & { reason?: string }>): Recommendation[] | null;
+  export function installCommand(pack: { id: string; packageName: string; version: string }): string;
   export const SHEET_FILTER_AT: number;
   export function sheetRules(pack: Pack, query: string): Pack["rules"];
   type Recommendation = { packId: string; reason?: string };
   export function suggestedReason(recommendations: readonly Recommendation[] | null, packId: string): string | null;
-  export function suggestedSplit<P extends Pack>(packs: readonly P[], recommendations: readonly Recommendation[] | null): { suggested: P[]; others: P[] } | null;
+  export function suggestedSplit<P extends Listed>(packs: readonly P[], recommendations: readonly Recommendation[] | null): { suggested: P[]; others: P[] } | null;
   export function startGroups<R extends { on?: boolean }>(rows: readonly R[]): { on: R[]; off: R[] };
+  /** What the toast after adding `pack` says it turns on, and which rules it starts on that do not run. */
+  export function addedRulesText(pack: { rules: ReadonlyArray<{ on: boolean; inactive?: unknown }> } | undefined): string;
 }
 
 declare module "*/ui/routes.js" {
@@ -347,6 +384,14 @@ declare module "*/ui/render/rule-sheet-model.js" {
 declare module "*/ui/views/merge.js" {
   interface Patched { hidden: boolean; textContent: string; getAttribute(name: string): string | null; hasAttribute(name: string): boolean; setAttribute(name: string, value: string): void; removeAttribute(name: string): void }
   export function patchProblem(form: { querySelector(selector: string): Patched | null }, fields: { problem: string | null; field: "command" | "timeout" | null }): void;
+  export function stripSignature(status: import("../../src/engine/index.js").MergeAssistStatus): string;
+  /** The page's buttons by `data-act`: `maon` turns Merge Assist on in the scoped checkout. */
+  export const actions: { maon(): Promise<void> };
+}
+
+declare module "*/ui/views/settings.js" {
+  /** Settings' controls by `data-act`: the footer's switch and Follow .gitignore's. */
+  export const actions: { presence(value: "compact" | "silent"): Promise<void>; gitignore(value: "on" | "off"): Promise<void> };
 }
 
 declare module "*/ui/views/create.js" {

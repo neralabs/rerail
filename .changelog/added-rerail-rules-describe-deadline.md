@@ -1,1 +1,0 @@
-Rerail waits at most 30 seconds to read a pack's `.rerail` rules when it loads the pack, so a stuck engine no longer holds the daemon; a pack that takes longer is left out with a message that says so. `RERAIL_RR_DESCRIBE_DEADLINE_MS` changes the limit, and the runs' deadline no longer does.

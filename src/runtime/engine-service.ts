@@ -1,33 +1,44 @@
 import { existsSync } from "node:fs";
 import { lstat, mkdir, unlink } from "node:fs/promises";
-import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { Agent, createServer, request, type ClientRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect, type Socket } from "node:net";
 import { dirname, resolve as resolvePath } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { z } from "zod/v4";
-import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
+import type { AdapterDelivery, AdapterEvent, EventAnswerFacts, HeldSession } from "../engine/adapter-contract.js";
 import { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import { forgetFreedOwnerLocks, holdOwnerLock, someOwnerLockFreed } from "../engine/audit/owner-lock.js";
 import {
   AdapterEventSchema,
   decodeRerailEventResult,
   encodeRerailEventResult,
+  EVENT_ANSWER_HEADER,
+  EVENT_ANSWER_WITH_FACTS,
   RERAIL_EVENT_MAX_FRAME_BYTES,
+  type RerailEventSuccessFrame,
+  SteerReceiptSchema,
+  type SteerReceipt,
 } from "./event-protocol.js";
 import { defaultRerailDatabasePath, failWhileWriteLocked, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { isBusy } from "../engine/storage/sqlite-wal.js";
+import { waitForWriteLock } from "../engine/storage/write-lock-wait.js";
+import { openRecordWriter, type RecordWriter } from "../engine/storage/record-writes.js";
 import { DAEMON_ACCESS_HEADER, ENGINE_ANSWER_WAIT_MS, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./daemon/engine-proof.js";
 import { isNamedPipe } from "./daemon/engine-pipe.js";
+import { KeptRuntimes } from "./memory/kept-runtimes.js";
+import { memoryRoom } from "./memory/memory-room.js";
 import { checkoutStatus } from "./repository-start.js";
 import { nativeTreeWatch, type TreeWatch } from "../engine/code-rule/tree-watch.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
+import { NO_UNTAKEN_EVENTS, untakenEventTaker, type UntakenEventTaker, type UntakenPass } from "../engine/storage/untaken-events.js";
 import { GitIgnoreMatchers } from "../engine/native/git-ignore-matchers.js";
 import {
-  endSuspendedSessions, failQueuedScans, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
+  endSuspendedSessions, failQueuedScans, type IngestOptions, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
 } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
+import { keepReceipt, keptReceipts, steerReceiptWrite } from "./session-store.js";
 
 export interface EngineService {
   /** Where it listens: the socket path it was given, or its `pipeFallback` when another process held that pipe. */
@@ -41,13 +52,30 @@ export interface EngineService {
     event: AdapterEvent,
     configuration?: EngineRuntimeConfiguration,
   ): Promise<readonly AdapterDelivery[]>;
-  /** How many runtimes are open: one per checkout some live session uses. */
+  /**
+   * The taker of the events hooks left in the home `untakenEvents` names while its daemon did not read
+   * (`untaken-events.ts`); one that takes nothing without it. Each event it takes is checked as one sent to `ingest`,
+   * recorded at the time its hook met it. No one waits for its answer, so it takes none of what the session holds for
+   * its agent: its own findings and the steers they raise wait for the session's next event, whose answer carries them
+   * (`IngestOptions.signal`). `ingest` waits for it to begin every such check first, so none is checked after an event
+   * sent later.
+   */
+  readonly untaken: UntakenEventTaker;
+  /** How many runtimes are open: one per checkout some live session uses, and those kept for their checkout's next session. */
   openRuntimes(): number;
+  /**
+   * Closes every runtime no session uses, however recently its last session left, and settles once each has closed and
+   * one collection after them has run: the heap watch asks it before it restarts the daemon at its ceiling.
+   */
+  closeUnusedRuntimes(): Promise<void>;
   /**
    * Suspends every session that has sent no event for the idle limit and owes its agent nothing, and every one quiet for
    * a day whatever it owes (`RerailRuntime.closeIdleSession`), ends each suspended one that can no longer open again
    * (its folder removed, or Rerail stopped in its checkout), then, once a daemon on the same records that held its
-   * owner lock has ended, what it left open (`endAbandonedSessions`); the service also does this every minute.
+   * owner lock has ended, what it left open (`endAbandonedSessions`); and beside that, not behind it, closes each runtime
+   * no session has used for 15 minutes while the daemon is short of room, or once its checkout was removed
+   * (`KeptRuntimes.sweep`); and beside those, takes the events hooks left while it did not read (`untaken.taken`). The
+   * service also does this every minute.
    */
   closeIdleSessions(): Promise<void>;
   /**
@@ -69,8 +97,8 @@ export interface EngineService {
  * asked for it opens it again to run (`resumeSession`), and its next event opens it again from
  * its ledger, where its source walks stood (`RerailRuntime.closeIdleSession`). A session waiting on a tool call, holding
  * a steer or a finding for its agent, or running a check stays as it is for up to a day (`OWING_SESSION_IDLE_MS`). A
- * reopened session's code-rule boundaries wait for its rules to open again (`REOPENED_RULES_WAIT_MS` in runtime.ts), so
- * its first edit is still steered at its own result.
+ * reopened session's first edit or command waits for its rules to open again (`REOPENED_RULES_WAIT_MS` in runtime.ts),
+ * so that edit is still steered at its own result.
  */
 export const IDLE_SESSION_MS = 30 * 60_000;
 /**
@@ -79,20 +107,14 @@ export const IDLE_SESSION_MS = 30 * 60_000;
  * something, as Claude Code closed at a permission prompt is, sends no end and no result: without a bound its session
  * kept its source walk, its evaluator and its checkout's runtime until the daemon stopped. The bound is a day, not
  * `IDLE_SESSION_MS`, because an agent waiting on a person at a permission prompt can be left for hours while they are
- * away, and the session its next event opened again would hold the agent's next tool call while its rules compile again
- * (`REOPENED_RULES_WAIT_MS` in runtime.ts), or check its edit a turn later in a host that does not wait. Past the bound,
- * the steers and findings the session holds wait in its ledger for its next event, and the edit of the call it waited
- * on is checked once its rules are open again (`#takeOwed`, `#checkWhenOpen` in runtime.ts).
+ * away, and the session its next event opened again would hold the agent's next edit or command while its rules compile
+ * again (`REOPENED_RULES_WAIT_MS` in runtime.ts), or check its edit a turn later in a host that does not wait. Past the
+ * bound, the steers and findings the session holds wait in its ledger for its next event, and the edit of the call it
+ * waited on is checked once its rules are open again (`#takeOwed`, `#checkWhenOpen` in runtime.ts).
  */
 const OWING_SESSION_IDLE_MS = 24 * 60 * 60_000;
 /** How often the engine service looks for idle sessions. */
 const IDLE_SWEEP_MS = 60_000;
-/**
- * How soon a quiet session's open for a scan is tried again after it met another process's write lock: as often as an
- * open session's control timer looks for its scans.
- */
-const RESUME_RETRY_MS = 250;
-
 const ConfigurationSchema = z
   .object({
     storageRoot: z.string().min(1),
@@ -110,14 +132,23 @@ const RequestSchema = z
   })
   .strict();
 
-interface EngineRequest {
+/** One event as a hook hands it to the engine service, with the configuration of the runtime that takes it. */
+export interface EngineRequest {
   event: AdapterEvent;
   configuration: EngineRuntimeConfiguration | undefined;
 }
 
-function parseEngineRequest(value: unknown): EngineRequest {
+/** `value`, read from a request's body or an untaken event's file, as a request the engine service takes; throws when it is not one. */
+export function parseEngineRequest(value: unknown): EngineRequest {
   const { event, configuration } = RequestSchema.parse(value);
   return { event, configuration };
+}
+
+/** The body that hands `event` to the engine service: over its socket, or left untaken in the home (`untaken-events.ts`). */
+export function engineRequestBody(event: AdapterEvent, configuration?: EngineRuntimeConfiguration): string {
+  const body = JSON.stringify(RequestSchema.parse({ event, configuration }));
+  if (Buffer.byteLength(body) > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
+  return body;
 }
 
 
@@ -219,18 +250,91 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
   pipeFallback?: () => string;
   /** Defaults to `IDLE_SESSION_MS`; tests pass their own. */
   idleSessionMs?: number;
-  /** The clock idle sessions are measured by; defaults to `Date.now`. */
+  /**
+   * The clock idle sessions are measured by, `Date.now` by default; the runtimes no session uses are measured by it too
+   * when it is given, else by the monotonic clock, as their timers were, so a wall clock set forward closes none sooner.
+   */
   now?: () => number;
-  /** How long a checkout's runtime stays open once no session uses it; {@link IDLE_RUNTIME_MS} by default. */
-  idleRuntimeMs?: number;
+  /**
+   * What the answer to `event` tells a hook that asks (`EVENT_ANSWER_HEADER`) beside `deliveries`, from what the runtime
+   * that took the event holds of its session (`held`, asked only when needed; undefined where no runtime holds it): the
+   * daemon's, which adds its dashboard's origin. Undefined where it cannot say; the hook then asks over HTTP. A
+   * standalone service (tests, benchmarks) has none. Synchronous, from facts already held, so the answer waits for no read.
+   */
+  answerFacts?: (event: AdapterEvent, deliveries: readonly AdapterDelivery[], held: () => HeldSession | undefined) => EventAnswerFacts | undefined;
+  /**
+   * Whether the daemon needs the room the runtimes no session uses take (`memoryRoom` in memory-room.ts, by default):
+   * asked at each minute's sweep while one has been kept 15 minutes (`KeptRuntimes`).
+   */
+  needsRoom?: () => boolean;
+  /**
+   * The Rerail home whose untaken events the service checks (`EngineService.untaken`), and who hears of each pass over
+   * them once its checks end; none taken without it.
+   */
+  untakenEvents?: { home: string; lateChecked: (pass: UntakenPass) => void };
 };
 
+/** How the facts of an answer are read from the runtime that took its event, in the session's lane right after it. */
+type AnswerFactsReader = (runtime: RerailRuntime, deliveries: readonly AdapterDelivery[]) => EventAnswerFacts | undefined;
+
 /**
- * How long a checkout's runtime stays open after its last session ends. A session that starts there again within it
- * finds its rules compiled and its checkout walked: the five packs a TypeScript repository adds take 12 s of CPU to
- * compile on a Windows laptop. After it the runtime closes, and the engine frees what its rules held.
+ * How the answer to `event` reads its facts, for a hook that says it reads them (`EVENT_ANSWER_WITH_FACTS` or later),
+ * since an older hook refuses an answer that carries them; undefined for another hook, or a service without them.
  */
-export const IDLE_RUNTIME_MS = 15 * 60_000;
+function answerFactsReader(incoming: IncomingMessage, event: AdapterEvent, options: EngineServiceOptions): AnswerFactsReader | undefined {
+  const version = Number(incoming.headers[EVENT_ANSWER_HEADER]);
+  const { answerFacts } = options;
+  if (!Number.isInteger(version) || version < EVENT_ANSWER_WITH_FACTS || answerFacts === undefined) return undefined;
+  return (runtime, deliveries) => answerFacts(event, deliveries, () => runtime.heldSession(event));
+}
+
+/**
+ * What `read` says beside an event's deliveries, or nothing where it throws: a fact the daemon cannot tell never costs
+ * the event its answer, and the hook reads it after the answer as from a daemon older than these facts.
+ */
+function guardedFacts(read: () => EventAnswerFacts | undefined): EventAnswerFacts | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What the caller that sent an event reads of its answer: `signal` aborts once it stops waiting for it (a hook's request,
+ * `hookRequestSignal`; none for a caller that always reads the answer), `readFacts` reads the facts of the answer
+ * for a caller that reads them, and `answer` writes the answer in the session's lane (`routeEngineEvent`).
+ */
+interface EventCaller {
+  readonly signal?: AbortSignal | undefined;
+  readonly readFacts?: AnswerFactsReader | undefined;
+  /** When the event's hook met it (epoch ms), for an event a hook left while the daemon did not read (`untakenTaker`). */
+  readonly observedAt?: number | undefined;
+  readonly answer?: HookAnswer | undefined;
+}
+
+/** An event's deliveries, and the facts of its answer where its caller reads them. */
+interface RoutedEvent {
+  readonly deliveries: readonly AdapterDelivery[];
+  readonly facts: EventAnswerFacts | undefined;
+}
+
+/**
+ * Writes an event's answer to the hook that sent it and says whether it reaches a hook that still waits for it
+ * (`answered`). The service writes it in the session's lane, so what an answer its write already showed undelivered took
+ * is the session's again before its next event runs.
+ */
+type HookAnswer = (routed: RoutedEvent) => AnswerFate;
+
+/**
+ * What became of an answer: `refused` when the write itself showed it reached no client that still waited (its
+ * connection closed or ended before it, or the write failed); else `heard` resolves once the connection shows it:
+ * true once the answer was all handed to it, false when it closed first.
+ */
+interface AnswerFate {
+  readonly refused: boolean;
+  readonly heard: Promise<boolean>;
+}
 
 interface EngineRoutingState {
   runtimes: Map<string, RerailRuntime>;
@@ -240,16 +344,16 @@ interface EngineRoutingState {
   lastEventAt: Map<string, number>;
   lanes: SessionLanes;
   pending: Set<Promise<readonly AdapterDelivery[]>>;
-  /** The runtimes no session uses, each with the timer that closes it. */
-  idle: Map<string, NodeJS.Timeout>;
-  /** How long a runtime no session uses stays open: `idleRuntimeMs`, or `IDLE_RUNTIME_MS`. */
-  idleRuntimeMs: number;
+  /** The runtimes no session uses, kept open for their checkout's next session (`KeptRuntimes`). */
+  kept: KeptRuntimes;
   /** What each open runtime was made with, by its key: a suspended session's runtime is made again from it. */
   runtimeOptions: Map<string, RerailRuntimeOptions>;
   /** The sessions the idle close suspended, by session id, until a runtime opens one again or the service closes. */
   suspended: Map<string, SuspendedEntry>;
-  /** The timer of each suspended session whose open for a scan met another process's write lock (`retryResume`). */
-  resumeRetries: Map<string, NodeJS.Timeout>;
+  /** The wait of each suspended session whose open for a scan met another process's write lock (`retryResume`). */
+  resumeRetries: Map<string, AbortController>;
+  /** The service's use of each database's record writer, by path, for receipts no open runtime takes (`receiptWriter`). */
+  receiptWriters: Map<string, RecordWriter>;
   /**
    * The lock the service holds for its life beside its own database (`holdOwnerLock`), which the owner rows of its
    * runtimes over that database name (`ownerLockFor`); none where it could take none.
@@ -296,12 +400,21 @@ function suspendedSessions(state: EngineRoutingState, runtimeKey: string): Suspe
   return {
     keep: suspension => keepSuspended(state, runtimeKey, suspension),
     get: sessionId => state.suspended.get(sessionId)?.suspension,
-    take: (sessionId) => {
-      const entry = state.suspended.get(sessionId);
-      state.suspended.delete(sessionId);
-      return entry?.suspension;
-    },
+    take: (sessionId) => takeSuspended(state, sessionId)?.suspension,
   };
+}
+
+/**
+ * Takes the suspended session `sessionId` out of the service, and ends the wait for the write lock its open for a scan
+ * met (`retryResume`): a session opened or ended otherwise needs no such open, and the wait's worker would go on until
+ * the lock is given back.
+ */
+function takeSuspended(state: EngineRoutingState, sessionId: string): SuspendedEntry | undefined {
+  const entry = state.suspended.get(sessionId);
+  state.suspended.delete(sessionId);
+  state.resumeRetries.get(sessionId)?.abort();
+  state.resumeRetries.delete(sessionId);
+  return entry;
 }
 
 /** The lane one session's work in one runtime runs in, one at a time. */
@@ -314,51 +427,31 @@ interface RuntimeRoute {
   runtimeOptions?: RerailRuntimeOptions;
 }
 
+/** What a request names of the session its event or receipt belongs to: its id, and its folder when it says. */
+interface RoutedSession {
+  sessionId: string;
+  cwd?: string | undefined;
+}
+
+/** The session `event` belongs to, as `resolveRuntimeRoute` routes it. */
+function eventSession(event: AdapterEvent): RoutedSession {
+  return event.kind === "session-start" ? event.session : { sessionId: event.sessionId, cwd: event.session?.cwd };
+}
+
+/**
+ * The runtime the work of `session` goes to: the one its configuration and folder name, or, for a request that names
+ * neither, the one runtime the session already uses.
+ */
 function resolveRuntimeRoute(
-  event: AdapterEvent,
+  { sessionId, cwd }: RoutedSession,
   configuration: EngineRuntimeConfiguration | undefined,
   options: EngineServiceOptions,
   state: EngineRoutingState,
 ): RuntimeRoute {
-  const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
-  const eventWorkspace = event.kind === "session-start" ? event.session.cwd : event.session?.cwd;
-  const workspaceRoot = configuration?.workspaceRoot ?? options.workspaceRoot ?? eventWorkspace;
-  const configurationKey = configuration === undefined
-    ? undefined
-    : JSON.stringify([
-        resolvePath(configuration.storageRoot),
-        resolvePath(configuration.modelPath),
-        resolvePath(configuration.databasePath ?? options.databasePath ?? defaultRerailDatabasePath()),
-      ]);
-  if (workspaceRoot === undefined) {
-    const configuredRuntimeKey = configurationKey === undefined
-      ? undefined
-      : state.runtimeKeysByConfiguration.get(configurationKey);
-    const candidates = state.runtimeKeysBySession.get(sessionId);
-    if (configuredRuntimeKey === undefined && candidates?.size !== 1) {
-      throw new Error("Kernel runtime requires workspaceRoot or unambiguous session context");
-    }
-    return { runtimeKey: configuredRuntimeKey ?? candidates!.values().next().value! };
-  }
-  const serviceDatabasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
-  const { accessToken: _accessToken, ...serviceDefaults } = options;
-  const runtimeOptions: RerailRuntimeOptions = configuration === undefined
-    ? {
-        ...serviceDefaults,
-        storageRoot: resolvePath(options.storageRoot),
-        databasePath: serviceDatabasePath,
-        workspaceRoot: resolvePath(workspaceRoot),
-      }
-    : {
-        storageRoot: resolvePath(configuration.storageRoot),
-        modelPath: resolvePath(configuration.modelPath),
-        databasePath: resolvePath(configuration.databasePath ?? serviceDatabasePath),
-        workspaceRoot: resolvePath(workspaceRoot),
-      };
-  // The service's Merge Assist is over its own database; a runtime over another makes its own.
-  if (configuration !== undefined && options.mergeAssist !== undefined && runtimeOptions.databasePath === serviceDatabasePath) {
-    runtimeOptions.mergeAssist = options.mergeAssist;
-  }
+  const workspaceRoot = configuration?.workspaceRoot ?? options.workspaceRoot ?? cwd;
+  const configurationKey = configurationKeyOf(configuration, options);
+  if (workspaceRoot === undefined) return { runtimeKey: knownRuntimeKey(sessionId, configurationKey, state) };
+  const runtimeOptions = routedRuntimeOptions(workspaceRoot, configuration, options);
   const runtimeKey = JSON.stringify([
     runtimeOptions.storageRoot,
     runtimeOptions.modelPath,
@@ -369,49 +462,135 @@ function resolveRuntimeRoute(
   return { runtimeKey, runtimeOptions };
 }
 
-/**
- * Writes an event's answer and says whether it reaches a client that still waits for it (`answered`). The service
- * writes it in the session's lane, so what an answer its write already showed undelivered took is the session's again
- * before its next event runs.
- */
-type EngineAnswer = (deliveries: readonly AdapterDelivery[]) => AnswerFate;
+/** What names a request's configuration among the runtimes: its storage, model and database; none without one. */
+function configurationKeyOf(configuration: EngineRuntimeConfiguration | undefined, options: EngineServiceOptions): string | undefined {
+  if (configuration === undefined) return undefined;
+  return JSON.stringify([
+    resolvePath(configuration.storageRoot),
+    resolvePath(configuration.modelPath),
+    resolvePath(configuration.databasePath ?? options.databasePath ?? defaultRerailDatabasePath()),
+  ]);
+}
 
-/**
- * What became of an answer: `refused` when the write itself showed it reached no client that still waited (its
- * connection closed or ended before it, or the write failed); else `heard` resolves once the connection shows it:
- * true once the answer was all handed to it, false when it closed first.
- */
-interface AnswerFate {
-  readonly refused: boolean;
-  readonly heard: Promise<boolean>;
+/** The runtime of a request that names no folder: its configuration's, else the one runtime its session uses. */
+function knownRuntimeKey(sessionId: string, configurationKey: string | undefined, state: EngineRoutingState): string {
+  const configured = configurationKey === undefined ? undefined : state.runtimeKeysByConfiguration.get(configurationKey);
+  if (configured !== undefined) return configured;
+  const candidates = state.runtimeKeysBySession.get(sessionId);
+  if (candidates?.size !== 1) throw new Error("Kernel runtime requires workspaceRoot or unambiguous session context");
+  return candidates.values().next().value!;
+}
+
+/** What a runtime over `workspaceRoot` is made with: the request's configuration, else the service's own options. */
+function routedRuntimeOptions(
+  workspaceRoot: string,
+  configuration: EngineRuntimeConfiguration | undefined,
+  options: EngineServiceOptions,
+): RerailRuntimeOptions {
+  const serviceDatabasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
+  if (configuration === undefined) {
+    const { accessToken: _accessToken, ...serviceDefaults } = options;
+    return { ...serviceDefaults, storageRoot: resolvePath(options.storageRoot), databasePath: serviceDatabasePath, workspaceRoot: resolvePath(workspaceRoot) };
+  }
+  const databasePath = resolvePath(configuration.databasePath ?? serviceDatabasePath);
+  // The service's Merge Assist is over its own database; a runtime over another makes its own.
+  const mergeAssist = databasePath === serviceDatabasePath ? options.mergeAssist : undefined;
+  return {
+    storageRoot: resolvePath(configuration.storageRoot),
+    modelPath: resolvePath(configuration.modelPath),
+    databasePath,
+    workspaceRoot: resolvePath(workspaceRoot),
+    ...(mergeAssist === undefined ? {} : { mergeAssist }),
+  };
 }
 
 async function routeEngineEvent(
-  event: AdapterEvent,
-  configuration: EngineRuntimeConfiguration | undefined,
+  { event, configuration }: EngineRequest,
   options: EngineServiceOptions,
   state: EngineRoutingState,
-  answer?: EngineAnswer,
-): Promise<readonly AdapterDelivery[]> {
-  const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
-  const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
+  { signal, readFacts, observedAt, answer }: EventCaller = {},
+): Promise<RoutedEvent> {
+  const session = eventSession(event);
+  const { sessionId } = session;
+  const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(session, configuration, options, state);
   const lane = laneOf(runtimeKey, sessionId);
-  keepRuntime(state, runtimeKey);
+  // The event's work holds its runtime until it has ended: nothing closes it for want of use meanwhile, under an end
+  // too, which notes no use.
+  const release = state.kept.claim(runtimeKey);
   const execution = state.lanes.run(lane, async () => {
     const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
     // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
     if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
-    const deliveries = await runtime.ingest(event);
+    const deliveries = await runtime.ingest(event, { signal, observedAt });
+    // Read in the session's lane, so the facts are this event's and not those of the session's next one.
+    const routed = { deliveries, facts: readFacts === undefined ? undefined : guardedFacts(() => readFacts(runtime, deliveries)) };
     // A hook past its own limit has closed its connection: the steers its answer took go to the session's next answer.
-    if (answer !== undefined) await keepUnheard(answer(deliveries), () => runtime.returnUndelivered(sessionId, deliveries));
-    return deliveries;
+    if (answer !== undefined) await keepUnheard(answer(routed), () => runtime.returnUndelivered(sessionId, deliveries));
+    return routed;
   });
+  void execution.then(release, release);
   track(state, execution);
   try {
     return await execution;
   } finally {
     if (event.kind === "session-end") afterSessionEnd(state, sessionId, runtimeKey);
   }
+}
+
+/**
+ * Records the receipt of a steer a hook handed over (`answerReceipt`), never waiting for the database's write lock on
+ * this thread, and resolves once the receipt would survive this process's end. A hook hands one over only while
+ * another process holds the lock, and ends once the daemon takes it, so the receipt is first kept on disk
+ * (`keepReceipt`) until its record is made. It is then recorded in the runtime its session's events go to, found as
+ * theirs are, as an OMP or Pi host's receipts are (`RerailRuntime.recordHeldSteer`); else, when no open runtime holds the
+ * session (its runtime retired, or this daemon started after the event), through the service's own use of the
+ * database's record writer. Either way the record writer makes it now, or keeps it until another process gives the
+ * lock back, and removes the kept file after it. A receipt recorded twice counts once.
+ */
+async function recordHandedReceipt(
+  state: EngineRoutingState,
+  options: EngineServiceOptions,
+  receipt: SteerReceipt,
+  configuration: EngineRuntimeConfiguration | undefined,
+): Promise<void> {
+  const databasePath = resolvePath(configuration?.databasePath ?? state.databasePath);
+  // Opened first: a runtime whose store has closed records on a store of its own, whose close would otherwise be the
+  // writer's last and wait for the lock on this thread.
+  const writer = receiptWriter(state, databasePath);
+  const kept = await keepReceipt(databasePath, receipt);
+  const { session, receiptId, ruleIds } = receipt;
+  const { runtimeKey } = resolveRuntimeRoute(session, configuration, options, state);
+  if (state.runtimes.get(runtimeKey)?.recordHeldSteer(session.sessionId, receiptId, ruleIds) !== true) writer.write(steerReceiptWrite(databasePath, receipt));
+  writer.write(kept.forget);
+}
+
+/**
+ * Records the receipts a daemon over the service's database took and ended before their records were made
+ * (`keptReceipts`), through the record writer, now or once the lock is given back, removing each kept file after its
+ * record. A receipt that cannot be recorded (the database cannot be read) stays kept for the next start.
+ */
+function recordKeptReceipts(state: EngineRoutingState): void {
+  const kept = keptReceipts(state.databasePath);
+  if (kept.length === 0) return;
+  try {
+    const writer = receiptWriter(state, state.databasePath);
+    for (const { receipt, forget } of kept) {
+      writer.write(steerReceiptWrite(state.databasePath, receipt));
+      writer.write(forget);
+    }
+  } catch (error) {
+    process.stderr.write(`rerail: the steer receipts kept from the last daemon were not recorded: ${errorMessage(error)}\n`);
+  }
+}
+
+/** The service's use of the record writer of the database at `databasePath`, opened once and closed with the service. */
+function receiptWriter(state: EngineRoutingState, databasePath: string): RecordWriter {
+  let writer = state.receiptWriters.get(databasePath);
+  if (writer === undefined) {
+    writer = openRecordWriter(databasePath);
+    state.receiptWriters.set(databasePath, writer);
+  }
+  return writer;
 }
 
 /**
@@ -428,18 +607,12 @@ async function keepUnheard(fate: AnswerFate, giveBack: () => Promise<void>): Pro
 /**
  * The session has ended, whether its runtime recorded the end or not: it is no longer quiet, its suspension, when its
  * runtime did not open it again (a stopped repository, or an open that failed), ends its record here, and the runtime it
- * used retires once no other session uses it.
+ * used is kept open once no other session uses it (`KeptRuntimes.left`).
  */
 function afterSessionEnd(state: EngineRoutingState, sessionId: string, runtimeKey: string): void {
   state.lastEventAt.delete(laneOf(runtimeKey, sessionId));
   endIfSuspended(state, sessionId);
   releaseSessionRuntime(state, sessionId, runtimeKey);
-}
-
-/** The runtime at `runtimeKey` is about to be used: it is no longer one to close for want of use. */
-function keepRuntime(state: EngineRoutingState, runtimeKey: string): void {
-  clearTimeout(state.idle.get(runtimeKey));
-  state.idle.delete(runtimeKey);
 }
 
 /** The runtime open at `runtimeKey`, else one made with `runtimeOptions`, which takes back the sessions the service suspended. */
@@ -476,18 +649,18 @@ function track(state: EngineRoutingState, work: Promise<unknown>): void {
   void settled.then(() => state.pending.delete(settled));
 }
 
-/** `sessionId` no longer uses the runtime at `runtimeKey`, which closes once no session has used it a while. */
+/** `sessionId` no longer uses the runtime at `runtimeKey`, which is kept open once no session uses it (`KeptRuntimes`). */
 function releaseSessionRuntime(state: EngineRoutingState, sessionId: string, runtimeKey: string): void {
   const keys = state.runtimeKeysBySession.get(sessionId);
   keys?.delete(runtimeKey);
   if (keys?.size === 0) state.runtimeKeysBySession.delete(sessionId);
-  retireUnusedRuntime(state, runtimeKey);
+  state.kept.left(runtimeKey);
 }
 
 /**
  * Suspends each session that has sent no event for `idleMs` (`IDLE_SESSION_MS`): its runtime frees what it holds and
  * keeps it open in the database (`RerailRuntime.closeIdleSession`), and the service keeps its suspension for the
- * session's next open; then its runtime retires as after an end. The check runs again in the session's lane, so an
+ * session's next open; then its runtime is kept as after an end. The check runs again in the session's lane, so an
  * event that came in meanwhile keeps the session open. A session that still owes its agent a tool call's check, a
  * steer, a held finding or a scan stays as it is until it has been quiet for `OWING_SESSION_IDLE_MS`, and so does one
  * whose suspension fails, which is reported; the next sweep looks again. A runtime whose owner rows name no lock
@@ -525,17 +698,27 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
 }
 
 /**
- * One idle sweep: suspends this service's quiet sessions (`closeIdleSessions`), ends those that can no longer open again
- * (`endUnopenableSessions`), then ends what a daemon that died left open (`endAbandonedSessions`), as a start does, for
- * when the start's own pass failed, which it reports: with one daemon per Rerail home (`holdHomeDaemonLock`), no other
- * start comes while this one runs. Only once an owner lock beside the database is free (`someOwnerLockFreed`), which a
- * service that ended leaves: opening a writer waits for another process's write lock, up to `busy_timeout`, on the
- * daemon's main thread, so a minute with no such lock opens no writer. Rows that name no lock are judged at the next
- * start then, or by a sweep a free lock brings.
+ * One idle sweep: the kept runtimes' part (`KeptRuntimes.sweep`: each kept 15 minutes closes while the daemon is short of
+ * room, or once its checkout was removed) beside the sessions' (`sweepSessions`), not behind it: a quiet session's
+ * idle close waits for its session's work and a read of its walks, and so held every kept runtime past its time. The
+ * kept runtimes' part starts first: it begins the closes the daemon's room needs before the sessions' part begins, and
+ * looks for removed checkout folders beside it. Settles once both have.
  */
 async function sweepIdle(state: EngineRoutingState, options: EngineServiceOptions, databasePath: string): Promise<void> {
   const idleMs = options.idleSessionMs ?? IDLE_SESSION_MS;
-  const now = options.now ?? Date.now;
+  await Promise.all([state.kept.sweep(), sweepSessions(state, idleMs, options.now ?? Date.now, databasePath)]);
+}
+
+/**
+ * The idle sweep's sessions: suspends this service's quiet sessions (`closeIdleSessions`), ends those that can no longer
+ * open again (`endUnopenableSessions`), then ends what a daemon that died left open (`endAbandonedSessions`), as a start
+ * does, for when the start's own pass failed, which it reports: with one daemon per Rerail home (`holdHomeDaemonLock`),
+ * no other start comes while this one runs. Only once an owner lock beside the database is free (`someOwnerLockFreed`),
+ * which a service that ended leaves: opening a writer waits for another process's write lock, up to `busy_timeout`, on
+ * the daemon's main thread, so a minute with no such lock opens no writer. Rows that name no lock are judged at the next
+ * start then, or by a sweep a free lock brings.
+ */
+async function sweepSessions(state: EngineRoutingState, idleMs: number, now: () => number, databasePath: string): Promise<void> {
   await closeIdleSessions(state, idleMs, now);
   await endUnopenableSessions(state);
   if (someOwnerLockFreed(databasePath)) endAbandonedSessions(databasePath, idleMs, now);
@@ -616,30 +799,10 @@ function keepSuspended(state: EngineRoutingState, runtimeKey: string, suspension
 async function resumeSuspended(state: EngineRoutingState, sessionId: string, now: () => number): Promise<void> {
   const entry = state.suspended.get(sessionId);
   if (entry === undefined) return;
-  const { runtimeKey, runtimeOptions, suspension } = entry;
-  keepRuntime(state, runtimeKey);
-  const resuming = state.lanes.run(laneOf(runtimeKey, sessionId), async () => {
-    // Asked again in the lane: an end that ran first has closed the session's record, which must stay closed.
-    if (state.suspended.get(sessionId) !== entry) return;
-    const reason = readingStartStates(suspension.databasePath, database => unopenable(entry, database));
-    if (reason !== undefined) {
-      endUnopened(state, entry, reason);
-      retireUnusedRuntime(state, runtimeKey);
-      return;
-    }
-    try {
-      // A runtime made again opens its stores, each of which writes.
-      if (!state.runtimes.has(runtimeKey)) failWhileWriteLocked(suspension.databasePath);
-      const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
-      noteSessionUse(state, sessionId, runtimeKey, now());
-      await runtime.resumeSession(suspension.descriptor);
-    } catch (error) {
-      if (!isBusy(error) || state.suspended.get(sessionId) !== entry) throw error;
-      state.lastEventAt.delete(laneOf(runtimeKey, sessionId));
-      releaseSessionRuntime(state, sessionId, runtimeKey);
-      retryResume(state, sessionId, now);
-    }
-  });
+  const { runtimeKey, suspension } = entry;
+  // Nothing closes the runtime while the open waits in the session's lane: what runs there before it holds the runtime
+  // (the session's use, or an end's claim), and the open notes the session's use before its first wait.
+  const resuming = state.lanes.run(laneOf(runtimeKey, sessionId), () => resumeInLane(state, sessionId, entry, now));
   track(state, resuming);
   try {
     await resuming;
@@ -651,18 +814,54 @@ async function resumeSuspended(state: EngineRoutingState, sessionId: string, now
 }
 
 /**
- * Opens `sessionId` again (`resumeSuspended`) in `RESUME_RETRY_MS`, once however often it is asked meanwhile: its open
- * met another process's write lock. A session no longer suspended by then is left alone; the service's close drops the
- * timer.
+ * `resumeSuspended`'s step in the session's lane: asked again there, since an end that ran first has closed the
+ * session's record, which must stay closed; a session that can no longer open again is ended (`endUnopened`).
+ */
+async function resumeInLane(state: EngineRoutingState, sessionId: string, entry: SuspendedEntry, now: () => number): Promise<void> {
+  if (state.suspended.get(sessionId) !== entry) return;
+  const reason = readingStartStates(entry.suspension.databasePath, database => unopenable(entry, database));
+  if (reason === undefined) await openSuspended(state, sessionId, entry, now);
+  else endUnopened(state, entry, reason);
+}
+
+/**
+ * Opens the suspended session `sessionId` of `entry` in its runtime (`RerailRuntime.resumeSession`), making the runtime
+ * again when it has closed. While another process holds the database's write lock the open stops before its first
+ * write and is tried again (`retryResume`); any other failure, or this one once the session's suspension was taken
+ * meanwhile, is thrown.
+ */
+async function openSuspended(state: EngineRoutingState, sessionId: string, entry: SuspendedEntry, now: () => number): Promise<void> {
+  const { runtimeKey, runtimeOptions, suspension } = entry;
+  try {
+    // A runtime made again opens its stores, each of which writes.
+    if (!state.runtimes.has(runtimeKey)) failWhileWriteLocked(suspension.databasePath);
+    const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
+    noteSessionUse(state, sessionId, runtimeKey, now());
+    await runtime.resumeSession(suspension.descriptor);
+  } catch (error) {
+    if (!isBusy(error) || state.suspended.get(sessionId) !== entry) throw error;
+    state.lastEventAt.delete(laneOf(runtimeKey, sessionId));
+    releaseSessionRuntime(state, sessionId, runtimeKey);
+    retryResume(state, sessionId, now);
+  }
+}
+
+/**
+ * Opens `sessionId` again (`resumeSuspended`) once the write lock its open met is given back (`waitForWriteLock`, on a
+ * worker thread), once however often it is asked meanwhile. The session's suspension taken back (`takeSuspended`: its
+ * own event opened it, or it ended) stops the wait, as the service's close does. A wait that fails fails the session's
+ * queued scans, saying why, as a failed open does.
  */
 function retryResume(state: EngineRoutingState, sessionId: string, now: () => number): void {
-  if (state.resumeRetries.has(sessionId)) return;
-  const timer = setTimeout(() => {
-    state.resumeRetries.delete(sessionId);
-    void resumeSuspended(state, sessionId, now);
-  }, RESUME_RETRY_MS);
-  timer.unref();
-  state.resumeRetries.set(sessionId, timer);
+  const entry = state.suspended.get(sessionId);
+  if (entry === undefined || state.resumeRetries.has(sessionId)) return;
+  const wait = new AbortController();
+  state.resumeRetries.set(sessionId, wait);
+  const done = (): boolean => state.resumeRetries.get(sessionId) === wait && state.resumeRetries.delete(sessionId);
+  waitForWriteLock(entry.suspension.databasePath, wait.signal).then(
+    free => { if (done() && free) void resumeSuspended(state, sessionId, now); },
+    (error: unknown) => { if (done()) failScans(entry.suspension, error instanceof Error ? error.message : String(error)); },
+  );
 }
 
 /**
@@ -672,7 +871,7 @@ function retryResume(state: EngineRoutingState, sessionId: string, now: () => nu
  */
 function endUnopened(state: EngineRoutingState, entry: SuspendedEntry, reason: string): void {
   const { suspension } = entry;
-  state.suspended.delete(suspension.descriptor.sessionId);
+  takeSuspended(state, suspension.descriptor.sessionId);
   failScans(suspension, reason);
   endEntries([entry]);
 }
@@ -702,9 +901,8 @@ function endSuspended(state: EngineRoutingState): void {
  * the time the end came, as the runtime ends an open session's.
  */
 function endIfSuspended(state: EngineRoutingState, sessionId: string): void {
-  const entry = state.suspended.get(sessionId);
+  const entry = takeSuspended(state, sessionId);
   if (entry === undefined) return;
-  state.suspended.delete(sessionId);
   endEntries([entry], Date.now());
 }
 
@@ -738,24 +936,24 @@ function runtimeInUse(state: EngineRoutingState, runtimeKey: string): boolean {
 }
 
 /**
- * Disposes the runtime at `runtimeKey` once no session has used it for `state.idleRuntimeMs`. A runtime holds its
- * checkout's whole source walk (one observation for every file of the working tree, ignored ones included, about
- * 100,000 in a large repository) and its compiled rules, so a daemon that kept the runtime of every checkout and
- * worktree it ever served grew until its heap ran out. The next event for that checkout makes a new runtime, as the
- * first one did.
+ * The service's kept runtimes (`KeptRuntimes`) over the routing state `stateOf` gives once it is made: a runtime is in
+ * use while a session's runtime keys name it, its folder is its checkout's while it is open, it closes through
+ * `disposeRuntime`, and each batch of closes ends with one `collectGarbage`.
  */
-function retireUnusedRuntime(state: EngineRoutingState, runtimeKey: string): void {
-  if (runtimeInUse(state, runtimeKey) || !state.runtimes.has(runtimeKey) || state.idle.has(runtimeKey)) return;
-  if (state.idleRuntimeMs <= 0) {
-    disposeRuntime(state, runtimeKey);
-    return;
-  }
-  const timer = setTimeout(() => {
-    state.idle.delete(runtimeKey);
-    if (!runtimeInUse(state, runtimeKey)) disposeRuntime(state, runtimeKey);
-  }, state.idleRuntimeMs);
-  timer.unref();
-  state.idle.set(runtimeKey, timer);
+function keptRuntimes(stateOf: () => EngineRoutingState, needsRoom: () => boolean, now: () => number): KeptRuntimes {
+  return new KeptRuntimes({
+    needsRoom,
+    now,
+    inUse: key => runtimeInUse(stateOf(), key),
+    folderOf: key => openFolder(stateOf(), key),
+    close: key => disposeRuntime(stateOf(), key),
+    collect: collectGarbage,
+  });
+}
+
+/** The checkout folder of the open runtime at `runtimeKey`; undefined once it has closed. */
+function openFolder(state: EngineRoutingState, runtimeKey: string): string | undefined {
+  return state.runtimes.has(runtimeKey) ? state.runtimeOptions.get(runtimeKey)?.workspaceRoot : undefined;
 }
 
 /**
@@ -770,21 +968,25 @@ export function collectGarbage(): void {
   if (typeof gc === "function") gc();
 }
 
-function disposeRuntime(state: EngineRoutingState, runtimeKey: string): void {
+/**
+ * Closes the runtime at `runtimeKey` (`RerailRuntime.dispose`) and settles once it has: a runtime holds its checkout's
+ * whole source walk (one observation for every file of the working tree, ignored ones included, about 100,000 in a large
+ * repository) and its compiled rules, which the collection after its batch of closes frees (`KeptRuntimes`). The next
+ * event for its checkout makes a new runtime, as the first one did. A failure is reported.
+ */
+function disposeRuntime(state: EngineRoutingState, runtimeKey: string): Promise<void> {
   const runtime = state.runtimes.get(runtimeKey);
-  if (runtime === undefined) return;
+  if (runtime === undefined) return Promise.resolve();
   state.runtimes.delete(runtimeKey);
   state.runtimeOptions.delete(runtimeKey);
   for (const [configuration, key] of state.runtimeKeysByConfiguration) if (key === runtimeKey) state.runtimeKeysByConfiguration.delete(configuration);
-  const disposal = runtime.dispose().then(() => {
-    collectGarbage();
-    return [] as const;
-  }, (error: unknown) => {
+  const disposal = runtime.dispose().then(() => [] as const, (error: unknown) => {
     process.stderr.write(`rerail: closing an idle runtime failed: ${error instanceof Error ? error.message : String(error)}\n`);
     return [] as const;
   });
   state.pending.add(disposal);
   void disposal.then(() => state.pending.delete(disposal));
+  return disposal.then(() => undefined);
 }
 
 /**
@@ -935,6 +1137,157 @@ function answerEngineChallenge(challenge: unknown, accessToken: string, response
   response.end(JSON.stringify({ proof: engineProof(accessToken, challenge) }));
 }
 
+/**
+ * Aborts once `response` closes before its answer is written: the hook that sent the request gave up waiting (its 30 s,
+ * `ingestEngineEvent`), or its process ended, and no one reads the answer.
+ */
+function hookRequestSignal(response: ServerResponse): AbortSignal {
+  const request = new AbortController();
+  response.once("close", () => {
+    if (!response.writableEnded) request.abort();
+  });
+  return request.signal;
+}
+
+/** The path a hook posts its event to (`ingestEngineEvent`). */
+const EVENTS_PATH = "/events";
+/** The path a hook posts the receipt of a steer its answer carried to (`EngineLink.handReceipt`). */
+const RECEIPTS_PATH = "/receipts";
+const ReceiptRequestSchema = z.object({ receipt: SteerReceiptSchema, configuration: ConfigurationSchema.optional() }).strict();
+
+/** What a request to the engine socket asks for, by its method and path. */
+type EngineRoute = "proof" | "event" | "receipt";
+
+/** What the engine socket's requests reach: the service's events, and the receipts hooks hand over. */
+interface EngineAnswers {
+  /**
+   * Runs the event of `request`, which `incoming` carried, for the hook that sent it, and writes its answer
+   * (`answerEngineEvent`): `signal` aborts once the hook stops waiting, and the answer carries its facts when the hook
+   * reads them (`answerFactsReader`).
+   */
+  ingest(incoming: IncomingMessage, request: EngineRequest, hook: { readonly signal: AbortSignal; readonly answer: HookAnswer }): Promise<void>;
+  recordReceipt(receipt: SteerReceipt, configuration: EngineRuntimeConfiguration | undefined): Promise<void>;
+}
+
+const POSTED_ROUTES: ReadonlyMap<string | undefined, EngineRoute> = new Map([[EVENTS_PATH, "event"], [RECEIPTS_PATH, "receipt"]]);
+
+/**
+ * The route of `incoming`, or undefined for a request the socket does not answer. The capability proof is answered only
+ * by a service that holds a capability.
+ */
+function engineRoute(incoming: IncomingMessage, accessToken: string | undefined): EngineRoute | undefined {
+  if (incoming.method !== "POST") return undefined;
+  if (incoming.url === ENGINE_PROOF_PATH) return accessToken === undefined ? undefined : "proof";
+  return POSTED_ROUTES.get(incoming.url);
+}
+
+/** Whether `incoming` carries the capability `accessToken`; any request does when the service has none. */
+function presentsAccess(incoming: IncomingMessage, accessToken: string | undefined): boolean {
+  if (accessToken === undefined) return true;
+  const presented = incoming.headers[DAEMON_ACCESS_HEADER];
+  return sameSecret(typeof presented === "string" ? presented : undefined, accessToken);
+}
+
+/** The body of `incoming`, read as JSON; refused as soon as it passes the event frame limit. */
+async function requestBody(incoming: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of incoming) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.length;
+    if (size > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
+    chunks.push(bytes);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** The signal of an event no one has waited for since it arrived: one a hook left while the daemon did not read. */
+const NO_ONE_WAITS = AbortSignal.abort();
+
+/**
+ * The taker of `options.untakenEvents`' home, which begins each event's check through `route` in its session's queue,
+ * as no one's request (`NO_ONE_WAITS`), at the time its hook met it; one that takes nothing without a home.
+ */
+function untakenTaker(options: EngineServiceOptions, route: (request: EngineRequest, caller: EventCaller) => Promise<RoutedEvent>): UntakenEventTaker {
+  const untaken = options.untakenEvents;
+  if (untaken === undefined) return NO_UNTAKEN_EVENTS;
+  return untakenEventTaker(untaken.home, {
+    take: async ({ body, arrivedAt }) => {
+      await route(parseEngineRequest(JSON.parse(body)), { signal: NO_ONE_WAITS, observedAt: arrivedAt });
+    },
+    passed: untaken.lateChecked,
+  });
+}
+
+/**
+ * Runs the event a hook posted and answers with its deliveries, and the facts beside them for a hook that reads them.
+ * The hook's request is watched from before its body is read, so the hook giving up at any point before its answer is
+ * written counts; the runtime takes it with the event (`IngestOptions.signal`). Its answer is written as the service
+ * routes it (`answerEngineEvent`), so what the answer took comes back to the session when the write shows no hook heard it.
+ */
+async function answerEvent(incoming: IncomingMessage, response: ServerResponse, service: EngineAnswers): Promise<void> {
+  const signal = hookRequestSignal(response);
+  const request = parseEngineRequest(await requestBody(incoming));
+  const answer: HookAnswer = ({ deliveries, facts }) =>
+    answered(response, encodeRerailEventResult({ eventId: request.event.eventId, deliveries: [...deliveries], ...facts }));
+  await service.ingest(incoming, request, { signal, answer });
+}
+
+/**
+ * Takes the receipt of a steer a hook posted once its answer was written (`recordHandedReceipt`), which never waits for
+ * the write lock, and then answers: a receipt answered is recorded, or kept until the lock is given back, on disk so
+ * that it survives the daemon. A receipt that cannot be kept or recorded is answered with why, so the hook records it
+ * itself, and daemon.log says why too.
+ */
+async function answerReceipt(incoming: IncomingMessage, response: ServerResponse, service: EngineAnswers): Promise<void> {
+  const { receipt, configuration } = ReceiptRequestSchema.parse(await requestBody(incoming));
+  try {
+    await service.recordReceipt(receipt, configuration);
+  } catch (error) {
+    process.stderr.write(`rerail: a steer's receipt a hook handed over was not kept, so the hook records it itself: ${errorMessage(error)}\n`);
+    throw error;
+  }
+  response.end("{}");
+}
+
+/**
+ * Answers one request to the engine socket: the capability proof, a hook's event, or the receipt of a steer a hook's
+ * answer carried; anything else is not found. A request without the capability is refused before its body is read, so
+ * nothing of it reaches a runtime; a body that cannot be read or run is answered with why.
+ */
+async function answerEngineRequest(
+  incoming: IncomingMessage,
+  response: ServerResponse,
+  service: EngineAnswers,
+  accessToken: string | undefined,
+): Promise<void> {
+  response.setHeader("Content-Type", "application/json");
+  const route = engineRoute(incoming, accessToken);
+  if (route === "proof") {
+    answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], accessToken!, response);
+    incoming.resume();
+    return;
+  }
+  if (route === undefined) {
+    response.writeHead(404).end();
+    return;
+  }
+  if (!presentsAccess(incoming, accessToken)) {
+    response.writeHead(401).end(JSON.stringify({ error: "engine-access-required" }));
+    return;
+  }
+  const answer = route === "event" ? answerEvent : answerReceipt;
+  try {
+    await answer(incoming, response, service);
+  } catch (error) {
+    response.writeHead(400).end(JSON.stringify({ error: errorMessage(error) }));
+  }
+}
+
 /** What listening beside a held pipe needs; tests pass their own. */
 export interface HeldPipeListening {
   listen: (socketPath: string) => Promise<void>;
@@ -1031,58 +1384,22 @@ export function engineWorktreeWalks(): RepositoryWorktreeWalks {
 }
 
 /**
- * Routes a hook's event and writes its answer to `response`. Any event but a session's end is answered in its session's
- * lane, so the steers an answer its hook no longer waited for took are the session's again before its next event runs
- * (`routeEngineEvent`). A session's end is answered once the service has let go of the session (`afterSessionEnd`), as
- * the hook that ends it may read what that left: there is no later event of the session to carry a steer.
+ * Routes a hook's event through `route` and writes its answer (`answer`). Any event but a session's end is answered in
+ * its session's lane, so the steers an answer its hook no longer waited for took are the session's again before its next
+ * event runs (`routeEngineEvent`). A session's end is answered once the service has let go of the session
+ * (`afterSessionEnd`), as the hook that ends it may read what that left: there is no later event of the session to carry
+ * a steer.
  */
 async function answerEngineEvent(
-  routed: { event: AdapterEvent; configuration: EngineRuntimeConfiguration | undefined; options: EngineServiceOptions; routing: EngineRoutingState },
-  response: ServerResponse,
+  event: AdapterEvent,
+  { answer, ...caller }: EventCaller & { readonly answer: HookAnswer },
+  route: (caller: EventCaller) => Promise<RoutedEvent>,
 ): Promise<void> {
-  const { event, configuration, options, routing } = routed;
-  const answer: EngineAnswer = deliveries => answered(response, encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
   if (event.kind !== "session-end") {
-    await routeEngineEvent(event, configuration, options, routing, answer);
+    await route({ ...caller, answer });
     return;
   }
-  answer(await routeEngineEvent(event, configuration, options, routing));
-}
-
-/** Answers the challenge a hook sends to learn the engine holds the daemon's token (`ENGINE_PROOF_PATH`); false for any other request. */
-function answeredProof(incoming: IncomingMessage, response: ServerResponse, accessToken: string | undefined): boolean {
-  if (incoming.method !== "POST" || incoming.url !== ENGINE_PROOF_PATH || accessToken === undefined) return false;
-  answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], accessToken, response);
-  incoming.resume();
-  return true;
-}
-
-/**
- * Refuses, before its body is read, a request that is no event (404) or an event without the daemon's access token
- * (401), so nothing of it reaches a runtime; false for an event the service takes.
- */
-function refusedEventRequest(incoming: IncomingMessage, response: ServerResponse, accessToken: string | undefined): boolean {
-  if (incoming.method !== "POST" || incoming.url !== "/events") {
-    response.writeHead(404).end();
-    return true;
-  }
-  const presented = incoming.headers[DAEMON_ACCESS_HEADER];
-  if (accessToken === undefined || sameSecret(typeof presented === "string" ? presented : undefined, accessToken)) return false;
-  response.writeHead(401).end(JSON.stringify({ error: "engine-access-required" }));
-  return true;
-}
-
-/** An event request's body as text; it fails past the frame limit (`RERAIL_EVENT_MAX_FRAME_BYTES`). */
-async function engineRequestBody(incoming: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of incoming) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += bytes.length;
-    if (size > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
-    chunks.push(bytes);
-  }
-  return Buffer.concat(chunks).toString("utf8");
+  answer(await route(caller));
 }
 
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
@@ -1097,11 +1414,11 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     lastEventAt: new Map(),
     lanes: new SessionLanes(),
     pending: new Set(),
-    idle: new Map(),
-    idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
+    kept: keptRuntimes(() => routing, options.needsRoom ?? memoryRoom(), options.now ?? (() => performance.now())),
     runtimeOptions: new Map(),
     suspended: new Map(),
     resumeRetries: new Map(),
+    receiptWriters: new Map(),
     ownerLockId: ownerLock.id,
     databasePath,
     worktreeWalks: options.worktreeWalks ?? engineWorktreeWalks(),
@@ -1109,30 +1426,42 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   };
   // Walks a caller gave are the caller's to close.
   const closeWalks = options.worktreeWalks === undefined ? () => routing.worktreeWalks.close() : () => undefined;
-  const sweepIdleSessions = (): Promise<void> => sweepIdle(routing, options, databasePath);
-  const server = createServer(async (incoming, response) => {
-    response.setHeader("Content-Type", "application/json");
-    if (answeredProof(incoming, response, options.accessToken) || refusedEventRequest(incoming, response, options.accessToken)) return;
-    try {
-      const { event, configuration } = parseEngineRequest(JSON.parse(await engineRequestBody(incoming)));
-      await answerEngineEvent({ event, configuration, options, routing }, response);
-    } catch (error) {
-      response.writeHead(400).end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
-    }
-  });
+  const untaken = untakenTaker(options, async (request, caller) => await routeEngineEvent(request, options, routing, caller));
+  // Hooks skip a daemon an event still waits for, so a change notice of the folder lost on its way (the system dropped
+  // it, or it came while the watch followed the folder again) would leave every later event waiting with no pass.
+  const sweepIdleSessions = async (): Promise<void> => {
+    await Promise.all([untaken.taken(), sweepIdle(routing, options, databasePath)]);
+  };
+  const answers: EngineAnswers = {
+    ingest: async (incoming, request, { signal, answer }) => {
+      // Every event hooks left before this one was sent begins its check first, in its session's queue.
+      await untaken.taken();
+      const caller = { signal, answer, readFacts: answerFactsReader(incoming, request.event, options) };
+      await answerEngineEvent(request.event, caller, eventCaller => routeEngineEvent(request, options, routing, eventCaller));
+    },
+    recordReceipt: (receipt, configuration) => recordHandedReceipt(routing, options, receipt, configuration),
+  };
+  const server = createServer((incoming, response) => void answerEngineRequest(incoming, response, answers, options.accessToken));
   let socketPath = options.socketPath;
   const connections = trackConnections(server);
   const engineService: EngineService = {
     get socketPath() {
       return socketPath;
     },
-    ingest: (event, configuration) => routeEngineEvent(event, configuration, options, routing),
+    ingest: async (event, configuration) => {
+      // Every event hooks left before this one was sent begins its check first, in its session's queue.
+      await untaken.taken();
+      return (await routeEngineEvent({ event, configuration }, options, routing)).deliveries;
+    },
+    untaken,
     openRuntimes: () => routing.runtimes.size,
+    closeUnusedRuntimes: () => routing.kept.closeAll(),
     closeIdleSessions: sweepIdleSessions,
     resumeSession: sessionId => resumeSuspended(routing, sessionId, options.now ?? Date.now),
     async close() {
+      untaken.close();
       clearInterval(idleSweep);
-      for (const timer of routing.resumeRetries.values()) clearTimeout(timer);
+      for (const wait of routing.resumeRetries.values()) wait.abort();
       routing.resumeRetries.clear();
       try {
         // Every hook whose request has arrived gets its answer, with the block or steer in it, and its event is recorded,
@@ -1143,13 +1472,15 @@ export async function startEngineService(options: EngineServiceOptions): Promise
         const stopLooking = cutStalledRequests(connections);
         try {
           await closed.promise;
-          for (const timer of routing.idle.values()) clearTimeout(timer);
-          routing.idle.clear();
           await Promise.allSettled(routing.pending);
         } finally {
           stopLooking();
         }
+        routing.kept.stop();
         await disposeAll(routing.runtimes.values());
+        // After the runtimes' stores: the last use of a writer makes what still waits for the lock, within its bound.
+        for (const writer of routing.receiptWriters.values()) writer.close();
+        routing.receiptWriters.clear();
       } finally {
         // Also when the server's or a runtime's close failed: a suspended session left open would read as live with no
         // daemon. Its lock goes once its sessions have ended, and its file stays, so a later sweep ends any session a
@@ -1186,6 +1517,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   }
   // In the same turn as the listen, before any request is read: a session this service opens is its own.
   endAbandonedSessions(databasePath, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
+  recordKeptReceipts(routing);
   return engineService;
 }
 
@@ -1251,40 +1583,130 @@ export async function ingestEngineEvent(
   event: AdapterEvent,
   configuration?: EngineRuntimeConfiguration,
 ): Promise<readonly AdapterDelivery[]> {
-  const body = JSON.stringify(RequestSchema.parse({ event, configuration }));
-  if (Buffer.byteLength(body) > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
-  const { promise, resolve, reject } = Promise.withResolvers<readonly AdapterDelivery[]>();
-  const outgoing = request(
+  return (await postEngineEvent(endpoint, event, configuration, { agent: false })).deliveries;
+}
+
+/**
+ * The daemon's whole answer to `event`: its deliveries and, from a daemon that has them, the facts a hook builds the
+ * session-start note and a steer's link from (`EVENT_ANSWER_HEADER`). Sent over a connection of `agent`'s, or of its own
+ * (`false`) that closes after the answer.
+ */
+export async function ingestEngineEventAnswer(
+  endpoint: EngineEndpoint,
+  event: AdapterEvent,
+  configuration?: EngineRuntimeConfiguration,
+  agent: Agent | false = false,
+): Promise<RerailEventSuccessFrame> {
+  return await postEngineEvent(endpoint, event, configuration, { agent, headers: { [EVENT_ANSWER_HEADER]: String(EVENT_ANSWER_WITH_FACTS) } });
+}
+
+async function postEngineEvent(
+  endpoint: EngineEndpoint,
+  event: AdapterEvent,
+  configuration: EngineRuntimeConfiguration | undefined,
+  call: EngineCall,
+): Promise<RerailEventSuccessFrame> {
+  const body = engineRequestBody(event, configuration);
+  const { sent, answer } = postEngine(endpoint, call, EVENTS_PATH, body);
+  sent.setTimeout(answerWaitMs(endpoint), () => sent.destroy(new Error("Kernel request timed out")));
+  const { status, text } = await answer;
+  if (status !== 200) throw new Error(`Kernel request failed (${status}): ${text}`);
+  const result = decodeRerailEventResult(text);
+  if (result.eventId !== event.eventId) throw new Error("Kernel response event identity mismatch");
+  return result;
+}
+
+/** What the engine socket answered a request: its status and its text. */
+interface EngineAnswer {
+  status: number;
+  text: string;
+}
+
+/**
+ * How a request reaches the engine socket: over a connection of `agent`'s, or of its own (`false`) that closes after the
+ * answer, with `headers` beside its capability.
+ */
+interface EngineCall {
+  agent: Agent | false;
+  headers?: Record<string, string>;
+}
+
+/** Posts `body` to `path` on the engine socket at `endpoint`, with its capability, as `call` says. The request is the caller's to bound. */
+function postEngine(endpoint: EngineEndpoint, { agent, headers }: EngineCall, path: string, body: string): { sent: ClientRequest; answer: Promise<EngineAnswer> } {
+  const answer = Promise.withResolvers<EngineAnswer>();
+  const sent = request(
     {
       socketPath: endpoint.socketPath,
       method: "POST",
-      path: "/events",
-      agent: false,
+      path,
+      agent,
       headers: {
         "content-type": "application/json",
         "content-length": Buffer.byteLength(body),
+        ...headers,
         ...(endpoint.accessToken === undefined ? {} : { [DAEMON_ACCESS_HEADER]: endpoint.accessToken }),
       },
     },
     (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk: Buffer) => chunks.push(chunk));
-      response.on("error", reject);
-      response.on("end", () => {
-        try {
-          const text = Buffer.concat(chunks).toString("utf8");
-          if (response.statusCode !== 200) throw new Error(`Kernel request failed (${response.statusCode}): ${text}`);
-          const result = decodeRerailEventResult(text);
-          if (result.eventId !== event.eventId) throw new Error("Kernel response event identity mismatch");
-          resolve(result.deliveries);
-        } catch (error) {
-          reject(error);
-        }
-      });
+      response.on("error", answer.reject);
+      response.on("end", () => answer.resolve({ status: response.statusCode ?? 0, text: Buffer.concat(chunks).toString("utf8") }));
     },
   );
-  outgoing.setTimeout(answerWaitMs(endpoint), () => outgoing.destroy(new Error("Kernel request timed out")));
-  outgoing.on("error", reject);
-  outgoing.end(body);
-  return promise;
+  sent.on("error", answer.reject);
+  sent.end(body);
+  return { sent, answer: answer.promise };
+}
+
+/** A post to the engine socket on a link's connection (`postEngine`). */
+type EnginePost = (path: string, body: string) => ReturnType<typeof postEngine>;
+
+/**
+ * Hands `receipt` to the engine service; true once it took it, recorded or kept until the write lock is given back.
+ * False when it did not, so the caller records it itself: a daemon from before receipts were handed over answers it not
+ * found, one that is gone refuses or drops the connection, and one whose record failed says why. `signal`, the caller's
+ * end of the wait, drops the request: a daemon that reads it later still takes it.
+ */
+async function handEngineReceipt(
+  post: EnginePost,
+  receipt: SteerReceipt,
+  configuration: EngineRuntimeConfiguration | undefined,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const { sent, answer } = post(RECEIPTS_PATH, JSON.stringify(ReceiptRequestSchema.parse({ receipt, configuration })));
+  const drop = (): void => void sent.destroy(new Error("The hook stopped waiting for the Rerail daemon"));
+  signal?.addEventListener("abort", drop, { once: true });
+  try {
+    return (await answer).status === 200;
+  } catch {
+    return false;
+  } finally {
+    signal?.removeEventListener("abort", drop);
+  }
+}
+
+/**
+ * A hook's link to the engine service: its events, and then the receipt of a steer its answer carried when another
+ * connection held the database's write lock, go over one connection kept open between them, so the receipt makes no
+ * connect of its own (on Windows a connect to a pipe whose instances are all taken waits up to 30 s in Node). The
+ * daemon closes a connection left idle for 5 s (Node's keep-alive), so only a receipt handed later than that connects
+ * again. A connection kept open between requests never keeps the hook's process alive.
+ */
+export interface EngineLink {
+  /** The daemon's whole answer to `event`, its facts included (`ingestEngineEventAnswer`). */
+  ingest(event: AdapterEvent, configuration?: EngineRuntimeConfiguration): Promise<RerailEventSuccessFrame>;
+  /**
+   * Hands `receipt` to the service that answered the events (`handEngineReceipt`); false when it did not take it.
+   * `signal` ends the wait for its answer.
+   */
+  handReceipt(receipt: SteerReceipt, configuration?: EngineRuntimeConfiguration, signal?: AbortSignal): Promise<boolean>;
+}
+
+export function engineLink(endpoint: EngineEndpoint): EngineLink {
+  const agent = new Agent({ keepAlive: true });
+  return {
+    ingest: (event, configuration) => ingestEngineEventAnswer(endpoint, event, configuration, agent),
+    handReceipt: (receipt, configuration, signal) => handEngineReceipt((path, body) => postEngine(endpoint, { agent }, path, body), receipt, configuration, signal),
+  };
 }

@@ -227,7 +227,8 @@ joins' steps took 154 ms before the work below and 116 ms after.
 | E3 | No cost. The filter steps take 0.1–0.6 ms of the steps' 116–154 ms. Most are fused into the binding atom's row program already, and the rest run as comparisons. Writing hiding's bounds before the body moved the units a name from 34.2 to 31.1 and the CPU not at all, so that change was not kept. The case now bounds their CPU at 1% of the steps'. | aab93aa6c9 |
 | — | Not in the catalogue, the largest step: `text($e, $x)` read by its string walked every text row of every document for each probe (`rf_target`, 36.6 ms of 154). `Projected::text_rows_of` finds a document's rows of a text where the text occurs in its source, by a binary search on the tape's node starts. `rf_target` went from 52.9 to 12.8 ms, with the same outputs. The planner prices a step by the rows it passes on, so a read's own cost never enters a plan's price; this one was found only by timing. | 37f8fd8c9e |
 | E1 | `NearEnds`, run as a program is prepared (not in the lowering, which stays T's front end's). In a recursive rule whose recursion binds a `nearest`'s far end, the `nearest` and the atoms that bind its near end become a helper, made once and read by the far end. `rf_qn` reads 32–160 helper rows a wave, against 4,528 nodes. | e91529c5dd |
-| E4 | Not built. `bind_only` is demanded because the size test bounds a rule's key by base atoms only (`tgt(t), kind(t, "identifier")` counts every identifier), and 932 rows are over 1/32 of the nodes anyway. Its readers ask about every name read, so the demand saves no row. Each of its ten rules joins the demand, and two start from it: 9,175 units against a bound of 1,373. The demand pays only when its readers ask about fewer keys than the relation holds. That needs both sizes before any run: a derived atom bounded by its relation's own scans (written, `tmp/e4-demand-sizes.patch`), and an AST-pattern literal's rows (`nameref`, `tp_site`), which are its matcher's root kind's count. The demand split has no grammar to turn the root kind into a code, so both sizes stay unknown and the patch changes nothing. | — |
+| E4 | Built (2026-11-25). The demand split keeps a candidate whole where its readers ask about at least as many keys as it holds. Both sizes are the size scan's. It now bounds:<br>- a derived atom by its relation's own rows;<br>- an `ast` literal's node by its matcher's root kind's nodes (`TreeStats::freq`);<br>- a variable a comparison computes (`$x = @rr_node_text_any($n)`) by its inputs' rows;<br>- a relation another part derives by its measured rows.<br>On the cost case, `bind_only`'s readers ask about 3,602 keys of its 2,662 rows. It is made once, by its own rules: 3,687 units for 516 rows, against a bound of 1,437. The rest is the parameter rules' steps, a unit a row each (E3's count, not CPU). The cost cases pass 15 of 31, and the whole graph is 122 units a name read (137 before). On `all`, the head's instructions went from 1,604–1,612 G to 1,562 G. | — |
+| E7 | A spike beside the engine (2026-11-25): `rerail_blocks::node_keyed`. A relation keyed by one node of one document is a set (a bit a node), a value a node (`u32`; a second value breaks the key, and the writer is told), or a node's values grouped by offsets. All of it lies in the block, read in place. Over the same rows as a frozen relation probed by its index on the node (Relax, one thread, 2 M tests of 200 k nodes): a set's test 24.7 ns against 3.2 ns, in 35 times fewer bytes; a value's read 58.9 ns against 10.7 ns, in 4.5 times fewer bytes. Wired in as decision 0694. Step 1 (setfix tests a bound node in the relation's node-keyed index, each document as bits or its sorted lows, since node values are stable ids, sparse in their granules): 3.0% fewer instructions, 2.3% less CPU, the same rows. | — |
 
 The cost cases pass 13 of 31 (with E1). The remaining heads by step CPU: `rf_target` 12.8 ms (its `text` read and
 `rf_named`), `wstart` 8.1 (E7: `nearest` per name read, then the scope's kind), `rf_in` 6.0, `bind_only` 2.6–5.2
@@ -271,3 +272,98 @@ room's own cost: a small region taken without three shared `Arc`s and two locks 
 bumped), and a wave's rows read a chunk at a time in the sort, not one span-and-column lookup a value. The largest
 takers: `ast_wave::captured_rows` (a capture's one-node `Vector`, about 2,100 samples) and `Within::rows` (a
 vector a probe, about 970).
+
+## 10. The merged head against W, again (2026-11-25)
+
+The head after the merge of django-bugs (de3b8fc8b3, with Typing-support's rooms and t60's step 2) and W's Rust
+(6970a3e539), each run profiled and sampled over the whole run on `all`, back to back on m3 at load 9: W 54.1 s CPU
+and 595 G instructions, the head 128.8 s and 1,679 G. The spans' own CPU is 46.5 s and 111.6 s. §9's account was of
+the run room the merge has since replaced, so this one starts again from the spans.
+
+**The two runs do different work.** W resolves Python's names and references in Rust as it builds each document
+("W's reference graph", 5.7 s). The head resolves them in rules: `references.rerail`, `names.rerail` and the
+helpers the planner makes for them (`pre_*`). The program both run, `internal_dead_code`, is cheaper on the head: its
+strata's join steps take 8.1 s, against W's 14.7 s (`reach_edges` 7.9 s → 0.5 s).
+
+| Own CPU of the spans, by kind of work | W s | head s | difference |
+|---|---|---|---|
+| The per-file joins (`joins: wait`, `joins: phase 1`) | 3.7 | 65.0 | +61.2 |
+| The per-file facts outside the joins (W: `local`, its reference graph; the head: the AST matchers' waves, node rows) | 22.4 | 13.8 | −8.6 |
+| The cross-file joins | 13.5 | 15.5 | +2.1 |
+| Measuring sources (the AST matchers run for `measure pkg`) | 0.1 | 5.1 | +5.0 |
+| Parsing | 3.5 | 5.0 | +1.5 |
+| Live statistics, bookkeeping | 0.1 | 2.4 | +2.4 |
+| Planning (strata, join order) | 0.1 | 1.2 | +1.0 |
+| The rest | 3.0 | 3.6 | +0.6 |
+| All | 46.5 | 111.6 | +65.1 |
+
+Outside every span: 7.0 s and 11.2 s.
+
+**Where the per-file joins go.** The steps' CPU of each stratum, summed by the file that defines its head:
+
+| Rule file | Step CPU, head |
+|---|---|
+| `references.rerail` (`rf_*`) | 22.1 s |
+| `names.rerail` (`wstart`, `bind_only`, `nameref`, `cls_early`, `param`, `binding`, `look/walk`, `tgt`, `tp_*`) | 10.0 s |
+| their helpers (`pre_387`, `pre_434`, …) | 2.8 s |
+| `internal_dead_code.rerail` | 8.1 s (W: 14.7 s) |
+| the rest of the library | 5.3 s |
+
+So name resolution costs the head about 35 s of steps, plus the joins' work around the steps, where W's Rust takes
+5.7 s. That is most of the gap: the 3.5x is the rules for references against Rust, not the engine's overhead.
+
+**The AST matchers.** Their spans take 13.0 s on the head (the wave run 8.65, captures 2.83, confirmations 1.20, rows
+0.33), against 4.7 s on W, and their threads allocate about 12 GB, against about 2 GB on W. `literal_str`'s
+batch is the largest: 6.0 GB in 29 calls, because the matcher's rows are made on its first read.
+
+**Smaller items.** `look/walk` takes 3.17 s but only 0.7 s in steps; its recursion's rounds cost the rest.
+String annotations 2.08 s, identity maps 1.42 s (W 0.11), `Fresh::settle` 0.58 s.
+
+**Memory.** Peak footprint 2,426 MB against 1,075 MB. What the run wrote is close on both (1,236 MB at most against
+1,056 MB, decision 0435). W's peak is what it wrote, and the head's is twice that: about 1.2 GB the account of
+0435 doesn't cover. It needs its own breakdown.
+
+**What follows, in order of CPU:**
+1. The references and names rules (about 35 s of steps): their heaviest heads are `rf_in`, `wstart`, `bind_only`,
+   `rf_ref`, `nameref`, `rf_bind`, `cls_early`, `rf_expr` and `rf_selfish` (§8: E7, E4, E6, E9, E10).
+2. The AST matchers (13.0 s against 4.7, 12 GB of allocation): the captures written as rows, the kind read from the
+   code alone.
+3. `look/walk`'s rounds, the live statistics, the identity maps.
+4. The 1.2 GB of peak memory that 0435's account doesn't cover.
+
+## 11. The list of §10 not taken elsewhere (2026-11-25)
+
+After merging phased-facts (ca60a3ad0c), django-bugs (58029a3b26) and Typing-support (53269b48ad). Typing-support
+took E4, E7, `literal_str` and the per-value tape reads; django-bugs t60's allocations. This is the rest.
+
+**The debug relations** (`dbg_cls`, `dbg_rd`) were the measurement's, not the engine's: its copy of the program
+(`idc_dbg`) added them, and `dbg_cls` ran an AST matcher of 1.4 M rows. The runs now take `idc_head`, W's program as
+the head reads it. `rr_embed_req` is the engine's request for embedded parses (string annotations), not a debug
+relation; W has no such parse.
+
+**The AST matchers.** Without `dbg_cls`, the head's matchers take 7.9 s against W's 10.0 s in the same run (wave
+7.9 s → 5.3 s, captures 2.2 s, confirmations 0.4 s): no longer a gap. The captures now write a tape's rows into one
+buffer as W's match binds them (`findings::captured_each`), no `Vector` a capture and no row cloned a capture. The
+cost case `the_matcher_wave_allocates_little` still fails (an earlier "passes" here was wrong): six runs at
+ec929805d0 allocate 1,632-1,636 bytes a name read, and six at the merge of django-bugs (187dc91678) 774-777, its
+bound 128. The merge's arenas (394543d27f, f5e6f0d694) take it from about 1,630 to 775; diffs reversed in the tree:
+without them 1,625, without the whole django merge 1,637. What remains is one wave over a chunk's documents made
+ahead (1.20 MB of 1.25 MB).
+
+**E6 and E10: a plan's tests in the order that drops rows soonest** (`tests_ordered`). Cost cases: `cls_late` 945 →
+657 units, `rf_builtin` 3,441 → 2,881. Their orders are now as the cases ask; what keeps them over their bounds is a
+unit a row for each comparison step, which E3 measured at under 1% of the steps' CPU. `rf_crossing` (0.3 s on `all`)
+and `rf_fcond` (under 0.03 s) are one `nearest` read a row each; E9's `rf_same_qn` costs 0.07 s on `all` (59 k pairs,
+mostly a name with itself). None of the three is built: each is under 0.3% of the head's CPU.
+
+**`look/walk`**: 3.9 s, 0.63 s of it in its steps. Its delta plans show no rows (the profile's steps see none of
+its rounds), and the closure form has a few dozen samples. Where the rest goes is still open: the rounds of its
+recursion inside `engine run (joins)`, unspanned.
+
+**The peak** (`all`, profiled, 2,523 MB; the profile now counts the threads' stacks and long rooms, and the free
+chunks whose pages went back): heap 528 MB (379 live); blocks in memory 1,263 MB, of which 764 MB are live and
+499 MB free on their lists; the threads' stacks 302 MB; their long rooms 42 MB; the device's idle buffers 19 MB;
+the rest 368 MB (code, thread stacks, maps). W's 1,075 MB: heap 1,001 MB, blocks 124 MB. So the head's excess is
+blocks (+690 MB live, +450 MB free and resident) and the stacks (+302 MB), against 470 MB less heap. Next: the
+free lists' resident chunks (499 MB) given back at a high-water mark, and which stacks hold 302 MB at the peak
+(the census, `RERAIL_ANON_CENSUS`).

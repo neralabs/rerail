@@ -560,7 +560,7 @@ fn a_corpus_runs_memoised_rows_bind_by_name_from_their_frames() {
     std::fs::write(&rule, r#"
 .decl def(n: node, x: symbol)
 def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
-.decl dup(x: symbol)
+.decl dup(x: symbol) cross_file
 dup(x) :- def(a, x), def(b, x), a != b.
 .output dup
 .decl named(n: node, x: symbol)

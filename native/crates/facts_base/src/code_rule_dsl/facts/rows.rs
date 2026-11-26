@@ -1301,6 +1301,17 @@ impl WaveRoom {
         (r as u8, reg.at + (g - reg.first))
     }
 
+    /// Where row `row` of region `r`'s value in column `c` lies, and the rows from it on that lie each 8 bytes past
+    /// the one before (`Part::run`): a reader of many of the room's slots resolves their stretches once.
+    ///
+    /// # Safety
+    /// The row is claimed (`claim`).
+    #[inline]
+    pub unsafe fn run(&self, r: u8, row: u32, c: usize) -> Option<(*mut i64, u32)> {
+        // SAFETY: the caller's: claimed, so reserved.
+        unsafe { self.region(r).part.run(row, c) }
+    }
+
     /// Row `row` of region `r`'s value in column `c`, where a writer wrote it.
     #[inline(always)]
     pub fn get(&self, r: u8, row: u32, c: usize) -> i64 {
@@ -1770,6 +1781,22 @@ impl Part {
         self.cols[c].get(self.skip + i)
     }
 
+    /// Column `c`'s values at its rows `i..i + out.len()`, read where they lie a chunk at a time
+    /// (`rerail_blocks::rows::Rows::read_range`).
+    pub fn read_range(&self, c: usize, i: u32, out: &mut [i64]) {
+        self.rel().rows.read_range(c, self.skip + i, out);
+    }
+    /// Where its row `i`'s value in column `c` lies, and the rows from it on that lie each 8 bytes past the one
+    /// before (`ColRead::run`): `None` where the column's values are not each 8 bytes.
+    ///
+    /// # Safety
+    /// Row `i` is reserved.
+    #[inline]
+    pub unsafe fn run(&self, i: u32, c: usize) -> Option<(*mut i64, u32)> {
+        // SAFETY: the caller's.
+        unsafe { self.cols[c].run(self.skip + i) }
+    }
+
     /// An empty relation of `k` columns in a run's block, with room for `rows` rows that a writer other than the
     /// host fills (decision 0325 step 4: the device writes a head's rows in place, through the reads written once,
     /// `rows_at`), then says how many it wrote (`written`).
@@ -2005,8 +2032,8 @@ impl Part {
         if crate::code_rule_dsl::prof::on() {
             let from = if self.held.facts.is_shared() { "a shared" } else { "its own" };
             let bytes = 8 * k * (rows as usize + pre as usize);
-            crate::code_rule_dsl::prof::count_named(format!("facts.moved for growth: from {from} block, {:?}, {k} columns, bytes", self.life), bytes);
-            crate::code_rule_dsl::prof::count_named(format!("facts.moved for growth: from {from} block, {:?}, {k} columns, moves", self.life), 1);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("facts.moved for growth: from {from} block, {:?}, {k} columns, bytes", self.life), bytes);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("facts.moved for growth: from {from} block, {:?}, {k} columns, moves", self.life), 1);
         }
         // copy: growth: a relation moved out of a full block, once, as a vector's growth moves it.
         moved.copy_from(self, 0, rows);
@@ -2122,8 +2149,8 @@ impl Part {
         // part alone holds the relation.
         let (raw, sealed) = unsafe { self.rel().rows.seal(&self.facts.block) };
         if raw > 0 && crate::code_rule_dsl::prof::on() {
-            crate::code_rule_dsl::prof::count_named(format!("{what}_raw_bytes"), raw);
-            crate::code_rule_dsl::prof::count_named(format!("{what}_bytes"), sealed);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("{what}_raw_bytes"), raw);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("{what}_bytes"), sealed);
         }
     }
 
@@ -2285,6 +2312,21 @@ impl InBlock {
             r.index_built(&room);
             Some(room.index)
         }
+    }
+
+    /// The relation's node-keyed index on column `col` over its rows (decision 0694 step 1): found, or built now into
+    /// its block. `None` for a delta (dead rows), a continuation, a chain past its block, or a block with no room.
+    pub fn own_node_bits(&self, col: u16) -> Option<usize> {
+        let r = self.relation();
+        if self.dead != 0 || r.base_rows != 0 || self.far().is_some() {
+            return None;
+        }
+        let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = r.find_node_bits(col, self.rows) {
+            return Some(i);
+        }
+        // SAFETY: under the block's index lock; the relation's rows `0..rows` are written.
+        unsafe { r.try_add_node_bits(&self.facts.block, col, self.rows) }
     }
 
     fn own_index_if(&self, cols: &[u16], keys: usize, build: bool) -> Option<usize> {
@@ -2831,6 +2873,11 @@ impl Rows {
     /// Rows `lo..hi`, part by part in id order: each part, the rows of it (its own row numbers `from..to`), and the
     /// id of row `from`. A sequential reader finds each part once, not each row's (rows gathered from many relations,
     /// `append_part`, lie in many parts).
+    /// Column `c`'s values at ids `lo..lo + out.len()`, each part's run read as a range of it (`Part::read_range`).
+    pub fn read_range(&self, c: usize, lo: u32, out: &mut [i64]) {
+        self.each_run(lo, lo + out.len() as u32, |p, i, j, id| p.read_range(c, i, &mut out[(id - lo) as usize..(id - lo + j - i) as usize]));
+    }
+
     pub fn each_run(&self, lo: u32, hi: u32, mut f: impl FnMut(&Part, u32, u32, u32)) {
         let mut id = lo;
         while id < hi {
@@ -3281,25 +3328,28 @@ mod tests {
     /// gives its chunk back to the block's free list when dropped.
     #[test]
     fn an_index_array_lies_in_its_relations_block() {
-        let mut rows = Rows::new(1);
-        // copy: not block data: a test's rows
-        rows.extend_from_slice(&[1, 2, 3]);
-        let home = rows.home().expect("a relation with rows has a home");
-        let mut v = collect_in(Some(&home), 0..100u32);
-        assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "in the relation's block");
-        let cap = v.capacity();
-        v.extend(100..cap as u32 + 50);
-        assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "grown in the same block");
-        assert!(v.iter().copied().eq(0..cap as u32 + 50));
-        let c = v.clone();
-        assert!(Arc::ptr_eq(c.facts().expect("a chunk"), &home.facts) && *c == *v);
-        let free = home.facts.block.free_bytes();
-        drop((v, c));
-        assert!(home.facts.block.free_bytes() > free, "its chunks back on the free list");
-        // Without a home: a run's open block.
-        let lone = collect_in(None, [7i64, 8]);
-        assert_eq!(*lone, [7, 8]);
-        assert!(Vector::<u8>::new().facts().is_none(), "empty holds no chunk");
+        // In a chunk of its own: the run's open block is shared with the tests beside it, which take a chunk given back.
+        in_chunk(|| {
+            let mut rows = Rows::new(1);
+            // copy: not block data: a test's rows
+            rows.extend_from_slice(&[1, 2, 3]);
+            let home = rows.home().expect("a relation with rows has a home");
+            let mut v = collect_in(Some(&home), 0..100u32);
+            assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "in the relation's block");
+            let cap = v.capacity();
+            v.extend(100..cap as u32 + 50);
+            assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "grown in the same block");
+            assert!(v.iter().copied().eq(0..cap as u32 + 50));
+            let c = v.clone();
+            assert!(Arc::ptr_eq(c.facts().expect("a chunk"), &home.facts) && *c == *v);
+            let free = home.facts.block.free_bytes();
+            drop((v, c));
+            assert!(home.facts.block.free_bytes() > free, "its chunks back on the free list");
+            // Without a home: the open block of the chunk it is made in.
+            let lone = collect_in(None, [7i64, 8]);
+            assert_eq!(*lone, [7, 8]);
+            assert!(Vector::<u8>::new().facts().is_none(), "empty holds no chunk");
+        });
     }
 
     /// Decision 0487 R4 at a relation's arrays: with a GPU read of a relation array's items queued, a CPU write of them

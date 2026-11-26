@@ -24,6 +24,7 @@ import { encodeRerailEventResult, InactiveSessionError, RERAIL_EVENT_PROTOCOL_PR
 import { runRerailEventStream, serveRerailEventStream } from "../../src/harness/event-stream.js";
 import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { startTestRepository } from "../support/started-repository.js";
+import { countingDaemon } from "../support/hook-events.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -208,6 +209,50 @@ describe("rerail events in a main build", () => {
     }
   });
 
+  it("links a steer from the daemon's answer, asking it nothing more, and reads an older daemon's dashboard after it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-events-linked-"));
+    cleanups.push(async () => await removeFolder(root));
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    cleanups.push(async () => { vi.unstubAllEnvs(); });
+    const daemon = await countingDaemon(join(root, "home"));
+    cleanups.push(daemon.close);
+    const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+    const socketPath = testEngineEndpoint(root);
+    // The daemon's engine socket: every answer steers on one rule, and names the dashboard to a stream that asks for it,
+    // but for the event "older", answered as a daemon older than the field does.
+    const server = createServer(async (request, response) => {
+      let body = "";
+      for await (const chunk of request) body += String(chunk);
+      const { event } = JSON.parse(body) as { event: AdapterEvent };
+      const asks = request.headers["x-rerail-event-answer"] === "2" && event.eventId !== "older";
+      response.end(JSON.stringify({
+        eventId: event.eventId,
+        deliveries: [{ sessionId: "s", requested: "steer", mechanism: "native-queue", content: editSteer("acme:no-print", "Remove print."), ruleIds: ["acme:no-print"], rules: [{ id: "acme:no-print", state: "steered" }] }],
+        ...(asks ? { dashboard } : {}),
+      }));
+    });
+    await new Promise<void>(resolve => server.listen(socketPath, resolve));
+    cleanups.push(async () => await new Promise<void>(resolve => server.close(() => resolve())));
+    routing.isMainRerailBuild.mockReturnValue(true);
+    routing.daemonEngineEndpoint.mockResolvedValue({ socketPath, accessToken: "daemon-capability" });
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const output = new PassThrough();
+    let written = "";
+    output.setEncoding("utf8").on("data", (chunk: string) => { written += chunk; });
+    await runRerailEventStream({
+      workspaceRoot: root, storageRoot: join(root, "sessions"), databasePath: join(root, "rerail.sqlite"),
+      input: Readable.from([
+        `${RERAIL_EVENT_PROTOCOL_PREFACE}\n`,
+        `${JSON.stringify({ event: { kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: "s", cwd: root } } })}\n`,
+        `${JSON.stringify({ event: { kind: "user-prompt", eventId: "older", sessionId: "s", text: "go" } })}\n`,
+      ]),
+      output,
+    });
+    const links = written.trim().split("\n").map(line => (JSON.parse(line) as { deliveries: Array<{ rules: Array<{ url?: string }> }> }).deliveries[0]?.rules[0]?.url);
+    expect(links).toEqual([`${dashboard}#rule/acme%3Ano-print`, `${daemon.origin}#rule/acme%3Ano-print`]);
+    expect(daemon.requests).toEqual(["/api/repository"]);
+  });
+
   it("looks the engine socket RERAIL_ENGINE_SOCKET names up with each event's deadline, as a hook does", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-named-deadline-"));
     cleanups.push(async () => await removeFolder(root));
@@ -243,11 +288,11 @@ describe("rerail events in a main build", () => {
   });
 
   // Off Windows the daemon's socket sits in a folder only the person can open, so no other account can hold it.
-  it.runIf(process.platform === "win32")("sends nothing to the engine pipe RERAIL_ENGINE_SOCKET names until what holds it proves it is this home's daemon", async () => {
+  it.runIf(process.platform === "win32")("sends nothing, not even a proof's challenge, to the engine pipe RERAIL_ENGINE_SOCKET names when Windows names a holder that is not this home's daemon", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-named-"));
     cleanups.push(async () => await removeFolder(root));
     // Another process listens on the pipe daemon.json names, as after a logoff or a reboot ended the daemon that
-    // wrote it.
+    // wrote it: this process, which Windows names as the holder, started after the start daemon.json records.
     const socketPath = testEngineEndpoint(root);
     const received: string[] = [];
     const server = createServer((request, response) => {
@@ -280,8 +325,8 @@ describe("rerail events in a main build", () => {
       output,
     });
 
-    // Each event's challenge reached the pipe, and neither the capability nor an event did.
-    expect(received).toEqual(["POST /proof no capability", "POST /proof no capability"]);
+    // Nothing reached the pipe: no challenge, no capability and no event.
+    expect(received).toEqual([]);
     const notThisHome = { code: "invalid-event", message: expect.stringContaining(`${socketPath} is not this Rerail home's daemon`) };
     expect(written.trim().split("\n").map(line => JSON.parse(line) as unknown)).toEqual([
       { eventId: "start", error: notThisHome },

@@ -529,7 +529,7 @@ pub fn stats(st: &State, name: &str) -> Result<String> {
             let vals: Vec<String> = ix.table.iter().map(|p| {
                 let v = r.row(p.head as usize)[c];
                 let text = if r.types[c] == b's' { syms.names[v as usize].clone() } else { v.to_string() };
-                format!("{}={}", text.bytes().map(|b| format!("{b:02x}")).collect::<String>(), p.len)
+                format!("{}={}", rerail_prof::code_rule_dsl::prof::lower_hex(text.as_bytes()), p.len)
             }).collect();
             line.push_str(&format!(" |{c}:{}", vals.join(",")));
         }

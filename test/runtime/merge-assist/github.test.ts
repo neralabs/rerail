@@ -1,10 +1,11 @@
 import type { ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { loopInPlace } from "../../support/platform/links.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 import {
   createGithubClient,
@@ -12,6 +13,7 @@ import {
   PULL_REQUEST_LIMIT,
   type GithubRepository,
 } from "../../../src/runtime/merge-assist/github.js";
+import { ghConfigDir, ghSignInStamps, type SignInStamp } from "../../../src/runtime/merge-assist/gh-config.js";
 
 const REPOSITORY: GithubRepository = { host: "github.com", owner: "neralabs", name: "rerail" };
 const COMMIT = "ed0e9fcf09b181eb3440042af2cb24e5cc63b722";
@@ -279,6 +281,93 @@ describe("readiness", () => {
     const gh = fakeGh(args => (args[0] === "auth" ? {} : { stdout: JSON.stringify({ login: "evil\u001b[2J" }) }));
     await expect(createGithubClient({ env, spawn: gh.spawn }).readiness(REPOSITORY))
       .resolves.toEqual({ state: "signed-in", login: null, repository: "neralabs/rerail" });
+  });
+});
+
+describe("the stamp of gh's sign-in", () => {
+  it("finds gh's configuration folder in gh's own order on each system", () => {
+    expect(ghConfigDir({ GH_CONFIG_DIR: "/c/gh", XDG_CONFIG_HOME: "/x", HOME: "/h" }, "linux")).toBe("/c/gh");
+    expect(ghConfigDir({ GH_CONFIG_DIR: "", XDG_CONFIG_HOME: "/x", HOME: "/h" }, "linux")).toBe("/x/gh");
+    expect(ghConfigDir({ APPDATA: "/a", HOME: "/h" }, "darwin")).toBe("/h/.config/gh");
+    expect(ghConfigDir({ AppData: "C:\\Users\\t\\AppData\\Roaming", USERPROFILE: "C:\\Users\\t" }, "win32")).toBe("C:\\Users\\t\\AppData\\Roaming\\GitHub CLI");
+    expect(ghConfigDir({ xdg_config_home: "D:\\cfg", APPDATA: "C:\\Roaming" }, "win32")).toBe("D:\\cfg\\gh");
+    expect(ghConfigDir({ UserProfile: "C:\\Users\\t" }, "win32")).toBe("C:\\Users\\t\\.config\\gh");
+  });
+
+  it("moves its file part when gh writes, rewrites or removes its hosts file, and holds otherwise", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "rerail-gh-config-"));
+    try {
+      const stamps = ghSignInStamps({ GH_CONFIG_DIR: folder });
+      const file = async (): Promise<string> => await stamps().file;
+      const hosts = join(folder, "hosts.yml");
+      const none = await file();
+      // gh auth login writes the file; gh auth switch rewrites it in place, here at the same length.
+      writeFileSync(hosts, "github.com:\n    user: akim\n");
+      utimesSync(hosts, 1_700_000_000, 1_700_000_000);
+      const login = await file();
+      writeFileSync(hosts, "github.com:\n    user: jdoe01\n");
+      utimesSync(hosts, 1_700_000_001, 1_700_000_001);
+      const switched = await file();
+      // gh auth logout of the last account leaves the file with no login.
+      writeFileSync(hosts, "{}\n");
+      const loggedOut = await file();
+      expect(new Set([none, login, switched, loggedOut]).size).toBe(4);
+      expect(await file()).toBe(loggedOut);
+      rmSync(hosts);
+      expect(await file()).toBe(none);
+    } finally {
+      removeFolderSync(folder);
+    }
+  });
+
+  it("stamps a hosts file it cannot read apart from an absent one and the readable one, and moves again once it can", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "rerail-gh-config-"));
+    const hosts = join(folder, "hosts.yml");
+    try {
+      const file = async (): Promise<string> => await ghSignInStamps({ GH_CONFIG_DIR: folder })().file;
+      const absent = await file();
+      writeFileSync(hosts, "github.com:\n    user: akim\n");
+      const readable = await file();
+      loopInPlace(hosts);
+      const unreadable = await file();
+      expect(unreadable).toMatch(/^unreadable:/u);
+      expect(new Set([absent, readable, unreadable]).size).toBe(3);
+      // Readable again: the file written anew in the link's place.
+      rmSync(hosts);
+      writeFileSync(hosts, "github.com:\n    user: akim\n");
+      const reopened = await file();
+      expect([reopened === absent, reopened === unreadable]).toEqual([false, false]);
+    } finally {
+      removeFolderSync(folder);
+    }
+  });
+
+  it("tells environments apart by gh's folder and the token variables set, not by their values", () => {
+    const environment = (env: NodeJS.ProcessEnv): string => ghSignInStamps(env, "linux", async () => "absent")().environment;
+    const shell = environment({ GH_CONFIG_DIR: "/c/gh" });
+    const withToken = environment({ GH_CONFIG_DIR: "/c/gh", GH_TOKEN: "a" });
+    const withOther = environment({ GH_CONFIG_DIR: "/c/gh", GITHUB_TOKEN: "a" });
+    const elsewhere = environment({ GH_CONFIG_DIR: "/d/gh" });
+    expect(new Set([shell, withToken, withOther, elsewhere]).size).toBe(4);
+    expect(environment({ GH_CONFIG_DIR: "/c/gh", GH_TOKEN: "b" })).toBe(withToken);
+    expect(environment({ GH_CONFIG_DIR: "/c/gh", GITHUB_TOKEN: "" })).toBe(shell);
+    expect(environment({ XDG_CONFIG_HOME: "/c" })).toBe(shell);
+  });
+
+  it("runs one stat of the hosts file at a time: stamps asked while one does not answer share it", async () => {
+    const asked: string[] = [];
+    let answer: (stamp: string) => void = () => undefined;
+    const stamps = ghSignInStamps({ GH_CONFIG_DIR: "/slow/gh" }, "linux", async file => {
+      asked.push(file);
+      return await new Promise<string>(resolve => { answer = resolve; });
+    });
+    const waiting: SignInStamp[] = [stamps(), stamps(), stamps()];
+    expect(asked).toEqual(["/slow/gh/hosts.yml"]);
+    answer("answered");
+    expect(await Promise.all(waiting.map(async stamp => await stamp.file))).toEqual(["answered", "answered", "answered"]);
+    // Once it has answered, the next stamp reads the file again.
+    void stamps().file;
+    expect(asked).toHaveLength(2);
   });
 });
 

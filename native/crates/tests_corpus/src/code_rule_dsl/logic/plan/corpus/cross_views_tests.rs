@@ -555,3 +555,49 @@ fn cold_counted(made: &BTreeSet<String>) -> bool {
     let how = [": counted", ": counted at the held nodes", ": counted by the chunks, where their rows lay", ": counted by the chunks at their held nodes", own];
     !made.is_empty() && made.iter().all(|x| how.iter().any(|h| x.ends_with(h)))
 }
+
+/// Decision 0689: `text` read by node alone in the cross part, of a node only a cross-file relation binds (`said`:
+/// the text of each node inside a definition another file uses, `reach` recursive across files, as `same_some` is),
+/// is read in its versions. An edit that changes a node's text and keeps its id (`return x` to `return y`, one
+/// granule: the `return`, its value and the definition each) reaches `said` as `text`'s change alone; one that
+/// retracts the binding (no file imports `f`) reads the text the node had. The outputs are a cold run's after each.
+#[test]
+fn a_text_read_by_node_alone_follows_an_edit_of_its_node_kept() {
+    const SAID: &str = r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node) cross_file
+uses(n, f) :- imp(n, q), def(f, q).
+.decl reach(n: node) cross_file
+reach(f) :- uses(_, f).
+reach(c) :- reach(p), child(p, c, _).
+.decl said(r: node, t: symbol) cross_file
+said(r, t) :- reach(r), text(r, t).
+.output said
+"#;
+    let mut c = Corpus::with("said", SAID, &["said"]);
+    let (_, rows) = c.run();
+    let said = |rows: &[BTreeSet<Vec<String>>]| -> BTreeSet<String> { rows[0].iter().map(|r| r[1].clone()).collect() };
+    let first = said(&rows);
+    assert!(first.contains("return x") && first.contains("f(y)"), "the texts inside f and g: {first:?}");
+    // What `said` holds after each edit, and what it does not.
+    let edits: &[(&str, &str, &[&str], &[&str])] = &[
+        // The text of `return`'s value changes; its node is kept, and the `return`'s and the definition's.
+        ("a.py", "def f(x):\n    return y\n\ndef k():\n    pass\n", &["return y", "y", "f(y)"], &["return x"]),
+        // c.py still imports f, and g.
+        ("b.py", "def g(y, z):\n    return f(y)\n", &["return y", "f(y)"], &[]),
+        // No file imports f or g: `said` retracts what each of their nodes was read as.
+        ("c.py", "def h():\n    pass\n", &[], &["return y", "f(y)"]),
+        ("a.py", "def f(x):\n    return w\n\ndef k():\n    pass\n", &[], &["return w"]),
+        ("b.py", "from a import f\n\ndef g(y, z):\n    return f(y)\n", &["return w", "w"], &["return y"]),
+    ];
+    for (file, body, has, lacks) in edits {
+        c.write(file, body);
+        let (_, rows) = c.run();
+        let now = said(&rows);
+        assert!(has.iter().all(|t| now.contains(*t)) && lacks.iter().all(|t| !now.contains(*t)), "after {file}'s edit: {now:?}");
+        assert_eq!(rows, c.fresh(), "after {file}'s edit, the outputs are a cold run's");
+    }
+}
