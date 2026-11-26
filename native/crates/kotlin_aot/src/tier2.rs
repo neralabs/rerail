@@ -1500,10 +1500,7 @@ impl<L: Layout> P<'_, L> {
     fn r_statement(&mut self) -> R {
         self.deeper()?;
         if self.m_label_at() || !self.m_lab_loop() && (self.m_lab_lam() || self.pat_this_at_0_0(self.i, self.n) || self.pat_jump_at_0_0(self.i, self.n) || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.word() == w::LBRACE_33 && self.word_at(self.i + 1) == w::MINUS_GT_44 || self.pat_lam_params_0_0(self.i, self.n) || self.m_ann_expr()) || !(self.m_lab_loop() || (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27))) && ((self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_80)) && self.word() == w::OBJECT_8 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_33) || (self.word() == w::FUN_4 && self.word_at(self.i + 1) == w::LPAREN_35) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::EQ_32 | w::LPAREN_35 | w::LBRACK_29 | w::COMMA_36 | w::COLON_28 | w::RETURN_20 | w::THROW_19 | w::QUEST_COLON_47 | w::BAR_BAR_50 | w::AMP_AMP_49 | w::EQ_EQ_59 | w::BANG_EQ_57 | w::PLUS_EQ_52 | w::MINUS_EQ_53) && self.word() == w::FUN_4) || self.word() == w::SUSPEND_76 && self.word_at(self.i + 1) == w::FUN_4 && self.word_at(self.i + 2) == w::LPAREN_35 || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_51) || !(self.m_lab_loop() || (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) || self.m_named() || self.word() == w::ENUM_75 && self.word_at(self.i + 1) == w::CLASS_3 || self.m_acc() || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2) || self.word() == w::FOR_11 || self.word() == w::WHILE_13 || self.word() == w::DO_14) && (INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68 | w::FILE_72 | w::BY_77 | w::TRUE_24 | w::FALSE_25 | w::NULL_26 | w::THIS_9 | w::LPAREN_35 | w::RETURN_20 | w::THROW_19 | w::BREAK_22 | w::CONTINUE_21 | w::IF_15 | w::WHEN_17 | w::TRY_18 | w::COLON_COLON_51 | w::LBRACE_33 | w::SUPER_10 | w::LBRACK_29) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE)) {
-            let asks = self.asks;
-            self.asks = asks & 0x8 | 0x0;
             self.r_expression()?;
-            self.asks = asks;
             self.ask_semi(true)?;
             if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
                 if ASSIGNMENT_OPERATOR[self.word() as usize] != 0 {
@@ -1533,10 +1530,7 @@ impl<L: Layout> P<'_, L> {
                 }
             }
         } else if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_40 | w::COLON_COLON_51))) && SOFT_WORD[self.word() as usize] != 0 && !matches!(self.word(), w::CATCH_86 | w::COMPANION_80 | w::CONSTRUCTOR_83 | w::DELEGATE_118 | w::DYNAMIC_84 | w::ENUM_75 | w::FIELD_113 | w::FINALLY_87 | w::GET_81 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::SET_82 | w::WHERE_78) && (SOFT_WORD[self.word_at(self.i + 1) as usize] != 0 && !matches!(self.word_at(self.i + 1), w::CATCH_86 | w::DELEGATE_118 | w::DYNAMIC_84 | w::FIELD_113 | w::FINALLY_87 | w::INIT_79 | w::PARAM_116 | w::PROPERTY_114 | w::RECEIVER_115 | w::REIFIED_110 | w::SETPARAM_117 | w::WHERE_78) || matches!(self.word_at(self.i + 1), w::FUN_4 | w::VAL_6 | w::VAR_7 | w::CLASS_3 | w::INTERFACE_5 | w::OBJECT_8 | w::TYPEALIAS_2 | w::AT_27)) {
-            let asks = self.asks;
-            self.asks = asks & 0x8 | 0x0;
             self.declaration()?;
-            self.asks = asks;
         } else if self.m_named() {
             self.open(k::ASSIGNMENT);
             self.mark_named()?;
@@ -1552,10 +1546,7 @@ impl<L: Layout> P<'_, L> {
             self.close()?;
             self.marked = false;
         } else if self.word() == w::ENUM_75 && self.word_at(self.i + 1) == w::CLASS_3 || self.m_acc() || matches!(self.word(), w::AT_27 | w::CLASS_3 | w::INTERFACE_5 | w::FUN_4 | w::VAL_6 | w::VAR_7 | w::OBJECT_8 | w::TYPEALIAS_2) {
-            let asks = self.asks;
-            self.asks = asks & 0x8 | 0x0;
             self.declaration()?;
-            self.asks = asks;
         } else if self.word() == w::FOR_11 {
             self.for_statement()?;
         } else if self.word() == w::WHILE_13 {
@@ -3303,10 +3294,7 @@ impl<L: Layout> P<'_, L> {
     /// `expression`.
     fn r_expression(&mut self) -> R {
         self.deeper()?;
-        let asks = self.asks;
-        self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
-        self.asks = asks;
         self.unary_tight_ladder(0x1fbf)?;
         self.depth -= 1;
         self.marked = false;
@@ -3449,10 +3437,7 @@ impl<L: Layout> P<'_, L> {
     /// `as_operand`.
     fn as_operand(&mut self) -> R {
         self.deeper()?;
-        let asks = self.asks;
-        self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
-        self.asks = asks;
         self.unary_tight_ladder(0x2)?;
         self.depth -= 1;
         self.marked = false;
@@ -3560,10 +3545,7 @@ impl<L: Layout> P<'_, L> {
     /// `add_operand`.
     fn add_operand(&mut self) -> R {
         self.deeper()?;
-        let asks = self.asks;
-        self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
-        self.asks = asks;
         self.unary_tight_ladder(0x6)?;
         self.depth -= 1;
         self.marked = false;
@@ -3573,10 +3555,7 @@ impl<L: Layout> P<'_, L> {
     /// `range_operand`.
     fn range_operand(&mut self) -> R {
         self.deeper()?;
-        let asks = self.asks;
-        self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
-        self.asks = asks;
         self.unary_tight_ladder(0xe)?;
         self.depth -= 1;
         self.marked = false;
@@ -3586,10 +3565,7 @@ impl<L: Layout> P<'_, L> {
     /// `infix_operand`.
     fn infix_operand(&mut self) -> R {
         self.deeper()?;
-        let asks = self.asks;
-        self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
-        self.asks = asks;
         self.unary_tight_ladder(0x1e)?;
         self.depth -= 1;
         self.marked = false;
@@ -3599,10 +3575,7 @@ impl<L: Layout> P<'_, L> {
     /// `elvis_operand`.
     fn elvis_operand(&mut self) -> R {
         self.deeper()?;
-        let asks = self.asks;
-        self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
-        self.asks = asks;
         self.unary_tight_ladder(0x3e)?;
         self.depth -= 1;
         self.marked = false;
@@ -3612,10 +3585,7 @@ impl<L: Layout> P<'_, L> {
     /// `check_operand`.
     fn check_operand(&mut self) -> R {
         self.deeper()?;
-        let asks = self.asks;
-        self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
-        self.asks = asks;
         self.unary_tight_ladder(0xbe)?;
         self.depth -= 1;
         self.marked = false;
@@ -3625,10 +3595,7 @@ impl<L: Layout> P<'_, L> {
     /// `cmp_operand`.
     fn cmp_operand(&mut self) -> R {
         self.deeper()?;
-        let asks = self.asks;
-        self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
-        self.asks = asks;
         self.unary_tight_ladder(0x1ff)?;
         self.depth -= 1;
         self.marked = false;
@@ -3638,10 +3605,7 @@ impl<L: Layout> P<'_, L> {
     /// `eq_operand`.
     fn eq_operand(&mut self) -> R {
         self.deeper()?;
-        let asks = self.asks;
-        self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
-        self.asks = asks;
         self.unary_tight_ladder(0x3bf)?;
         self.depth -= 1;
         self.marked = false;
@@ -3651,10 +3615,7 @@ impl<L: Layout> P<'_, L> {
     /// `conj_operand`.
     fn conj_operand(&mut self) -> R {
         self.deeper()?;
-        let asks = self.asks;
-        self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
-        self.asks = asks;
         self.unary_tight_ladder(0x7bf)?;
         self.depth -= 1;
         self.marked = false;
@@ -3664,10 +3625,7 @@ impl<L: Layout> P<'_, L> {
     /// `disj_operand`.
     fn disj_operand(&mut self) -> R {
         self.deeper()?;
-        let asks = self.asks;
-        self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
-        self.asks = asks;
         self.unary_tight_ladder(0xfbf)?;
         self.depth -= 1;
         self.marked = false;
@@ -3680,10 +3638,7 @@ impl<L: Layout> P<'_, L> {
         if self.m_label_at() || self.m_lab_lam() || self.m_ann_expr() || matches!(self.word(), w::BANG_48 | w::MINUS_64 | w::PLUS_63 | w::PLUS_PLUS_67 | w::MINUS_MINUS_68) {
             self.prefix_expression()?;
         } else {
-            let asks = self.asks;
-            self.asks = asks & 0x8 | 0x0;
             self.primary_tight()?;
-            self.asks = asks;
             loop {
                 self.ask_semi(true)?;
                 if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
@@ -4084,10 +4039,7 @@ impl<L: Layout> P<'_, L> {
                     self.name()?;
                 }
                 _ if self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL => {
-                    let asks = self.asks;
-                    self.asks = asks & 0x8 | 0x0;
                     self.number_literal()?;
-                    self.asks = asks;
                 }
                 _ if self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) => {
                     self.string_literal()?;

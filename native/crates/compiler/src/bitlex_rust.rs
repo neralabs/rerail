@@ -1236,7 +1236,8 @@ impl<'a> G<'a> {
                 // A level's call: the questions it asks where it may end at a mark, those of the
                 // level it returns to (set where that takes the mark, kept where it ends there too).
                 let (set, keep, all) = self.call_asks(rest, rule)?;
-                let mut call = if all == 0 {
+                // None where the level asks none, or keeps every question its caller's (`asks & keep | set` is `asks`).
+                let mut call = if all == 0 || (keep & all == all && set & all == 0) {
                     vec![Op::Call(rule_fn(n))]
                 } else {
                     vec![line(format!("let asks = self.asks;\nself.asks = asks & {keep:#x} | {set:#x};\nself.{}()?;\nself.asks = asks;", rule_fn(n)))]

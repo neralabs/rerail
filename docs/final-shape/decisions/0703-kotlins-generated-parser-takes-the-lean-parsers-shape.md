@@ -101,6 +101,10 @@ them.
    takes, the loop writes, or only a test build keeps stays a vector of its own, and a scan that makes blocks of one
    has its vector's form (`_v`). Kotlin's are 95 masks a block together, and 5 vectors, the masks tier 2 reads a
    string's parts by.
+10. **A level's call that keeps its caller's questions is a call** (`call_asks`). `asks` carries the questions a
+   level that may end at a mark asks (Kotlin's: only `semi`'s, the lean parser's `stmt`). A call that keeps every
+   one (`asks & keep | set` is `asks`) saves, sets and restores nothing. Kotlin's 16 such calls are plain calls; 94
+   set it, where the lean parser sets `stmt` in 3 places. rr and JSON have none.
 
 What stays: stage 1 makes 95 masks a block, where the lean lexer makes 5 and works out the rest (its strings, escapes,
 comments) from the bytes in its loop; and tier 1 computes four marks into the token's code: `head_ctor`'s line break
@@ -108,4 +112,6 @@ comments) from the bytes in its loop; and tier 1 computes four marks into the to
 a number's bytes). Its strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or
 t_dollar resumes str`), a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in
 parts, from tier 1's masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state
-(`next_*`).
+(`next_*`). Tier 2 clears `marked` after 119 of its 145 closes and at 126 of its rules' ends: where a decision
+reads it, the reference's state after a mark (`G::after_mark`), which the lean parser keeps as its `asi` memo.
+`semi_close` is no derived mark: a comment keeps its own, which after a `;` is not its carrier's.
