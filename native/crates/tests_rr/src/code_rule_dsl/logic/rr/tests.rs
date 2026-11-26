@@ -4408,7 +4408,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             // widened copy (`rr_wide_node_text_rr_up9`) is compared by its rules.
             let numbered = |rel: &str| helper.is_match(rel) && !rel.starts_with("rr_wide_");
             // A helper the walk's end names (`rr_h_{stem}_{digest}` by its content, `rr_m_{stem}_{digest}` by its module;
-            // decision 0639 §4; a policy's copy too, `p3_rr_h_ctx_…`) is one helper for every clause that makes it, and
+            // decision 0639 §4; a policy's copy too, `p3_rr_h_ctx_…`, and a phase's, `rr_pass_<phase>_rr_h_…`) is one helper for every clause that makes it, and
             // its variables and columns keep the names of the clause that made it first, which an unreached clause
             // dropped can change. Its rules are compared with their variables renamed in the order they appear, and its
             // columns by their types.

@@ -11689,3 +11689,25 @@ Tests:
 - boot: `the_python_main_pack_is_split_with_its_crossings_declared` shards 4, 6 and 8 (fast003, ruf016 and the rest).
 
 tests-rr's full suite was not run: at 8 threads it passes the 12 GB cap, and at 4 it takes more than 580 s.
+
+### Q566. Roll-up 138 (final-rerail-shape-phased-facts 88bb1dc284 onto Pulling-it-all-together): what the merge chose
+
+final-rerail-shape-phased-facts' two new commits are merges: of the hub (through roll-up 130) and of Native-and-GPU-strata (1bafcd577a). Both are in the hub already, so this roll-up takes what phased-facts' own resolution decided.
+
+- **The tape's auxiliary index is phased-facts' resolution** (it wrote 0703). There is one way to lay the index where the writer wrote the tape, under Native's names: `f16::LayAux` and `Writer::finish_laid` / `finish_16_laid`. Their meaning is 0703's: the maker gets the writer's record of its nodes and the digest it took, and the tape is never read back. Kept from phased-facts:
+  - the built index checked (`AuxIndex::read`);
+  - the `written` helper;
+  - the fallback for a region refused as it grew;
+  - the writer laying the index in its own vector too;
+  - `AuxFor` using the digest given, else the writer's, else taking it once;
+  - the room test holding the index from the record to the one read back off the tape.
+
+  This replaces roll-up 137's choice of the hub's names (`AuxMaker`, `finish_with`).
+- **Roll-up 132's writer stays.** It is the hub's thread writer (`Writer::reused_in` / `give_back`, `SPARE` in run_state's global-state list). phased-facts' pool (`Writers`, `machine_writers`, `place_in` / `release_rooms`) is not taken: its files predate 132, so its non-conflicting hunks of `tape_format/lib.rs`, `f16/ops.rs`, `formats.rs`, `lean.rs` and `run_state.rs` that carry the pool are left out.
+- fast003's pack stays the hub's: the translator's 0677 form, from roll-up 137's `host_reads_by_text`. phased-facts' fast003 still declares `fast003_alt_2(n, k: loc) cross_file`.
+- c_pp `tape.rs`, clif `view_reads.rs`, facts `view_docs.rs` and `made.rs`: the hub's. phased-facts' copies equal its own earlier state, or rewrap the same comment.
+- README: the hub's rows, which hold all of phased-facts'. tests_lang: phased-facts' comment on the codes' directory.
+
+Checked with Relax: tape-format, lang, lang-json, rr-syntax, run, tests-lang, c-pp, clif, facts, ukl-rust, lean-tapes, json-aot, tests-tape, tests-sql, store, workspace, lang-php, lang-python, corpus-memo and compiler all check with 0 errors.
+
+Tests: tape-format 54/54, lang 80/80, rr-syntax 12/12, tests-tape 115/115 (one thread; four pass the 12 GB cap), tests-lang 192/192 (two threads).

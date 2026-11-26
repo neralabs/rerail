@@ -4344,9 +4344,9 @@ fn the_views_directory_is_the_hosts_too() {
         assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.index().as_ptr() as u64, "document {}'s line index, in its tape or its own", p.key());
         assert_eq!(homes[row.homes[2] as usize].host + row.source, p.facts.source.as_bytes().as_ptr() as u64, "document {}'s source, where it lies", p.key());
     }
-    // The homes its rows name (fixed: a row's tape in `3i`, its lines in `3i + 1`, its source in `3i + 2`), and the
-    // 16z cache's where it has one. The device reads the directory where it reads every tape and lines; a source
-    // it does not read keeps a node's text on the host alone (`ViewsInPlace::sources`).
+    // The homes its rows name (fixed: a row's tape in `3i`, its lines in `3i + 1`, its source in `3i + 2`), the
+    // 16z cache's where it has one, and the codes' directory's. The device reads the directory where it reads every
+    // tape and lines; a source it does not read keeps a node's text on the host alone (`ViewsInPlace::sources`).
     assert_eq!(dir.nhomes as usize, 3 * rows.len() + 2, "three homes a row, the cache's and the codes'");
     // The codes' directory's home: the binary's (decision 0697).
     assert_eq!(homes[dir.codes as usize].host, rerail_tape_format::codes_dir::bytes().as_ptr() as u64, "the codes' home is the binary's directory");

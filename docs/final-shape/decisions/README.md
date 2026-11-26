@@ -634,6 +634,7 @@ This continues the series in PIAT's `docs/rule-engine-direction/decisions/`
 | 0697 | [A language's codes' atoms are constants in the binary](0697-a-languages-codes-atoms-are-constants-in-the-binary.md) |
 | 0698 | [Python's Bitlex grammar, and a level's indent](0698-pythons-bitlex-grammar-and-a-levels-indent.md) |
 | 0700 | [The `node` view's rows by kind are made per kind, at its first lookup](0700-the-node-views-rows-by-kind-are-made-per-kind-at-its-first-lookup.md) |
+| 0702 | [A phase makes only the exports its reader reads](0702-a-phase-makes-only-the-exports-its-reader-reads.md) (amends 0083 §1): a phase's run names as outputs the exports its reader reads, so preparation drops the rest with the rules only they reach, and a phase only those read does not run; `bandit-b113` over 224 files: the phase 20.8 M rows to 13.6 M, 4.41 s to 2.26 s CPU, peak 1,571 MB to 720 MB, the same findings | built |
 | 0703 | [The parse writes its tape's auxiliary index and digest, and the preparation runs on the cores](0703-the-parse-writes-its-tapes-aux-and-digest-and-the-preparation-runs-on-the-cores.md) |
 | 0711 | [Tier 2's writer ops keep the caller's registers](0711-tier-2s-writer-ops-keep-the-callers-registers.md) |
 | 0681 | [Tier 2 is printed once from the lean parser's moves](0681-tier-2-is-printed-once-from-the-lean-parsers-moves.md) (follows 0673): tier 2's Rust is moves (takes, decisions, loops) rewritten into the lean parser's forms and printed once, in place of eleven passes over the code's text. | done |

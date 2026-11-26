@@ -10,7 +10,7 @@ fn repo() -> std::path::PathBuf {
 
 /// Every JSON rule of main's pinned pack translates to the pack's `<id>.rerail`, byte for byte: the generated pack is
 /// what the engine reads from the JSON, so a translator change regenerates it (`site/regen_main_pack.sh`, or
-/// `RERAIL_WRITE_PACK=1`, which writes each file that differs).
+/// `RERAIL_BLESS=1`, which writes each file that differs).
 #[test]
 fn json_rules_pack_is_current() {
     let pack = repo().join("docs/rule-syntax/packs/python-main");
