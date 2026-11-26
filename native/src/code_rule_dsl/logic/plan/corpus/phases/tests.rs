@@ -122,7 +122,8 @@ at(n, s) :- kind(n, "function_definition"), field(n, "name", i), text(i, s).
         let first = run(&text).unwrap();
         let r = || crate::code_rule_dsl::logic::plan::output::shown(&out, "r").unwrap();
         assert_eq!(r(), [["m"], ["m.f"], ["m.g"]]);
-        assert_eq!(first.phase_runs.iter().find(|r| r.name == "p1").expect("p1 ran").exports, [("unit".to_owned(), 3), ("def".to_owned(), 3)]);
+        // The reader reads `def` alone, so the phase's run makes `def` alone (`unit` is no output of it, 0702).
+        assert_eq!(first.phase_runs.iter().find(|r| r.name == "p1").expect("p1 ran").exports, [("def".to_owned(), 3)]);
         assert_eq!(first.files, 0, "the reader reads only the phase's exports, so no file");
         // Unchanged, a comment, a body: the exports the reader reads are as they were.
         run(&text).unwrap();
@@ -137,6 +138,59 @@ at(n, s) :- kind(n, "function_definition"), field(n, "name", i), text(i, s).
         write("a.py", "def f():\n    return 1\n\ndef h():\n    pass\n");
         run(&text).unwrap();
         assert_eq!(r(), [["m"], ["m.f"], ["m.h"]]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A phase's run makes only the exports its reader reads (decision 0702): the others are no outputs of it, so
+    /// preparation drops them with the rules only they reach, and the phases only they read do not run. And a phase
+    /// that no output reaches does not run at all: `lib/django.rerail` includes python/calls.rerail for `call_arg`,
+    /// whose points-to rules read `points_to`, which no Django output needs.
+    #[test]
+    fn a_phase_makes_only_the_exports_its_reader_reads() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("phases-wanted");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (src, phases) = (dir.join("src"), dir.join("phases"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&phases).unwrap();
+        std::fs::write(src.join("a.py"), "def f():\n    return 1\n\ndef g():\n    return 2\n").unwrap();
+        std::fs::write(phases.join("p2.rerail"), r#"
+#include "core.rerail"
+.phase p2
+.export tag
+.decl tag(s: symbol)
+tag(x) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
+"#).unwrap();
+        std::fs::write(phases.join("p1.rerail"), r#"
+#include "core.rerail"
+.phase p1
+.export def, tagged
+.decl def(s: symbol, k: symbol)
+def(@cat("m", x), k) :- kind(n, k), k = "function_definition", field(n, "name", i), text(i, x).
+.decl p2__tag(s: symbol)
+.decl tagged(s: symbol)
+tagged(@cat("t", s)) :- p2__tag(s).
+"#).unwrap();
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
+        let print = |text: &str| crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(text).unwrap()).unwrap();
+        let run = |text: &str| crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&print(text)], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+        let rows = |rel: &str| {
+            let mut v: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+            v.sort();
+            v
+        };
+        let ran = |r: &crate::code_rule_dsl::logic::plan::corpus::Report| r.phase_runs.iter().filter(|p| p.name != "sources").map(|p| (p.name.clone(), p.exports.clone())).collect::<Vec<_>>();
+        let one = run(".decl p1__def(s: symbol, k: symbol)\n.decl r(s: symbol)\nr(s) :- p1__def(s, _).\n.output r\n");
+        assert_eq!(rows("r"), [["m.f"], ["m.g"]]);
+        assert_eq!(ran(&one), [("p1".to_owned(), vec![("def".to_owned(), 2)])], "p1 makes `def` alone, and p2, which only `tagged` reads, does not run");
+        let both = run(".decl p1__def(s: symbol, k: symbol)\n.decl p1__tagged(s: symbol)\n.decl r(s: symbol)\nr(s) :- p1__def(s, _).\nr(s) :- p1__tagged(s).\n.output r\n");
+        assert_eq!(rows("r"), [["m.f"], ["m.g"], ["t.f"], ["t.g"]]);
+        assert_eq!(ran(&both), [("p2".to_owned(), vec![("tag".to_owned(), 2)]), ("p1".to_owned(), vec![("def".to_owned(), 2), ("tagged".to_owned(), 2)])], "read, `tagged` is made, and p2 runs first for it");
+        // A rule no output reaches reads `p1__tagged`: no phase runs for it.
+        let unreached = run(".decl p1__tagged(s: symbol)\n.decl idle(s: symbol)\nidle(s) :- p1__tagged(s).\n.decl r(s: symbol)\nr(\"x\") :- kind(_, \"module\").\n.output r\n");
+        assert_eq!(rows("r"), [["x"]]);
+        assert_eq!(ran(&unreached), [], "no output reaches a phase's export, so no phase runs");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

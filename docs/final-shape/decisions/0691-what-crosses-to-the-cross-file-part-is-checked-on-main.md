@@ -439,6 +439,41 @@ Found on the way and fixed:
    - Lists: split 28 → 27, node 166 → 157 (Django 1 → 0 in both, JavaScript 1 → 0, python-main 7 → 0). Every entry
      left is the data layer's.
 
+18. **A phase runs only for what an output reads** (the branch's bc43f5c906 and 0702). Fix 12 made points-to the
+    phase `points_to`, and `python/calls.rerail` includes it. So every policy that includes `calls.rerail` for one
+    rule (`lib/django.rerail` takes `call_arg` and `posarg` from it) ran `struct`, `types`, `py_names` and
+    `points_to` at every run, whether its outputs read them or not.
+   - `phases::wanted`: the phase reads are those the program's outputs reach, through the rules' bodies. A phase
+     program read with no outputs reaches from its exports. A program that names neither reads all, as before.
+   - `phases::facts`: a phase's run names as outputs only the exports its reader reads. Preparation drops the other
+     exports and the rules only they reach. The phases it reads are worked out from that program, so an earlier phase
+     that only an unread export needed does not run. Phase 1 keeps all its exports.
+   - Measured against the merge base (the CLI, profiling build, fresh stores, 120 PostHog files; instructions
+     retired, the machine shared):
+     - Django's `host-header`: 180 G before the fix, 17 G after (base 9.9 G).
+     - The whole Django pack: 346 G before, 190 G after (base 258 G). Peak memory 868 MB (base 1,453 MB), the same
+       2 findings.
+     - The rerail pack (762 files): 17.5 G before, 10.5 G after (base 12.2 G).
+   - Test: `a_phase_makes_only_the_exports_its_reader_reads`, which adds a rule no output reaches.
+     `a_phase_hands_on_its_exports_and_its_reader_follows_each_edit` no longer expects the export its reader does
+     not read.
+
+19. **`pt_scope_tm` joins a new scope's term to its definitions by the scope** (new here; the branch's rule is
+    unchanged).
+   - Each definition's place under its scope is now made once, outside the recursion: `pt_tm_child(f, s, x, i)`,
+     and `pt_tm_dead_child` for a definition in a branch never taken.
+   - Before, the recursive rules held `kind`, `field(f, "name", nm)` and `nearest(f, s, pt_scope)`. A round's new
+     `pt_scope_tm(s, q)` rows were joined to every name field first, and `nearest` then kept the few under the
+     scope: about 4.2 M rows a round for 1,625 kept, two rules each about 17 M rows, 45% of the phase.
+   - Django's `select-for-update`, which reads `points_to`, went from 327 G to 138 G with fixes 18 and 19
+     (base 131 G).
+   - Tests: the typing oracle tests, every pack's split test, and Django's and Python's rule tests.
+
+The constants fold that phase 1 now runs (0665 §5, ported in 9699816b84, gives `env` as given) costs a nested run
+of about 16 ms on a cold store, which keeps it. Phase 1 needs those constants: `library` resolves through
+`py_site`, `py_stub_dir` and `py_version`. The complexity pack's remaining difference with the merge base (31.5 G
+against 29.5 G over 762 files) is that run, plus small per-program costs spread over the run.
+
 ## Consequences
 
 - A new rule that adds a crossing or a node id fails its pack's test; its author fixes it or declares the relation.
