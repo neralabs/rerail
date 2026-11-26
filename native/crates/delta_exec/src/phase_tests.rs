@@ -752,6 +752,32 @@ fn aggregates_fold_their_groups_and_are_maintained_by_changed_groups() {
     }
 }
 
+/// Loads a level's rules derive from its own documents (B§10 step 9, includes): each round answers the loads asked,
+/// then runs the strata, until a round asks nothing new. An include cycle settles. An edit that drops an include lets
+/// its file go, as a cold run gives it. An include of a file that is not there is refused, naming it.
+#[test]
+fn a_level_loads_what_its_rules_derive_until_nothing_new_is_asked() {
+    const RULES: &str = "load(\"a.rerail\", \"a.rerail\", \"rr\").\n\
+load(p, p, \"rr\") :- kind(d, i, \"include\"), field(d, i, \"path\", s), value(d, s, p).\n\
+seen(p) :- doc(_, p, _).\n";
+    let mut r = kernel_run("phase-includes", RULES);
+    r.write("a.rerail", "#include \"b.rerail\"\nx(1).\n", 50);
+    r.write("b.rerail", "#include \"c.rerail\"\n#include \"a.rerail\"\nx(2).\n", 50);
+    r.write("c.rerail", "x(3).\n", 50);
+    r.run();
+    let seen = |r: &Run, paths: &[&str]| -> BTreeSet<Vec<i64>> { paths.iter().map(|p| vec![r.s(p)]).collect() };
+    assert_eq!(r.rows(2, "seen"), seen(&r, &["a.rerail", "b.rerail", "c.rerail"]), "every file the includes reach");
+    r.write("b.rerail", "#include \"a.rerail\"\nx(2).\n", 40);
+    r.run();
+    assert_eq!(r.rows(2, "seen"), seen(&r, &["a.rerail", "b.rerail"]), "after the edit");
+    r.last = None;
+    r.run();
+    assert_eq!(r.rows(2, "seen"), seen(&r, &["a.rerail", "b.rerail"]), "cold");
+    r.write("b.rerail", "#include \"gone.rerail\"\n", 30);
+    let e = r.try_run().expect_err("an include of no file");
+    assert!(e.contains("gone.rerail: not a readable file"), "{e}");
+}
+
 /// L4's functors (B§10 step 9; L4-f option 3): `@f(…)` and `f(…)` as calls of functions the executor knows by name,
 /// each a step of kind `call` placed as an operator is, its answer a number or a text's symbol. A text no symbol had
 /// is interned by the launch's driver, which runs the launch again. No answer (a text that is no number, a zero
@@ -952,10 +978,11 @@ fn a_k1_rule_lowered_by_p3_gives_the_rows_of_its_hand_ordered_k0_form() {
     let mut raw = hand_run("phase-k1-raw", K1_RULES);
     let e = raw.try_run().unwrap_err();
     assert!(e.contains("module hand.rerail") && e.contains("variable x is not bound by an earlier step"), "{e}");
-    // A level reads its documents before its rules run, so a `load` its program derives is refused.
-    r.write("ask.rerail", "load(p, \"u\", \"rr\") :- boot(p, 2).\nboot(\"u.rerail\", 2).\n", 20);
-    let e = r.try_run().unwrap_err();
-    assert!(e.contains("module ask.rerail") && e.contains("a load that is not a fact"), "{e}");
+    // The same files asked by a rule (B§10 step 9: a `load` the program derives, answered in the level's next round):
+    // the same rows.
+    r.write("ask.rerail", "load(p, m, \"rr\") :- boot(p, m).\nboot(\"u-facts.rerail\", \"u-facts\").\nboot(\"u.rerail\", \"u\").\n", 20);
+    r.run();
+    assert_eq!(rows(&r, 2), warm, "loads a rule derives");
 }
 
 /// The planner's memo is its module's operator cache, kept from one run of a level to the next (Operations §6.1: "in

@@ -1202,6 +1202,10 @@ pub struct Level {
     /// This run's start: each relation's head and the documents', where its roll-up starts.
     start: BTreeMap<i64, (Option<BlockId>, Option<BlockId>)>,
     tapes_start: Option<BlockId>,
+    /// Where this run's rounds last read each relation of the level and its documents: a round's modules read their
+    /// inputs from there (the first round's, the run's start).
+    read: BTreeMap<i64, Option<BlockId>>,
+    tapes_read: Option<BlockId>,
     /// `load`'s symbol: the level's asks, kept out of its facts out.
     load: Option<i64>,
     /// Each module's operator cache, its planner's memo (Operations §6.1: "in memory across runs"): kept from one
@@ -1221,7 +1225,7 @@ impl Level {
     /// An empty level, its layers placed at `place`.
     pub fn new(place: u32) -> Result<Level, String> {
         let tapes = Trace::new(&tape_shape())?.with_roll_up(RollUp::Never).resumed(place, None);
-        Ok(Level { place, rels: BTreeMap::new(), ran: Program::default(), tapes, seen: BTreeMap::new(), start: BTreeMap::new(), tapes_start: None, load: None, caches: BTreeMap::new() })
+        Ok(Level { place, rels: BTreeMap::new(), ran: Program::default(), tapes, seen: BTreeMap::new(), start: BTreeMap::new(), tapes_start: None, read: BTreeMap::new(), tapes_read: None, load: None, caches: BTreeMap::new() })
     }
 
     /// Its relation `rel`'s trace between this run's start and now.
@@ -1290,16 +1294,22 @@ impl Level {
         self.ran = Program::default();
         self.seen.clear();
         self.start.clear();
+        self.read.clear();
     }
 
-    /// Δphase: the program `program` (K-form's eight relations, each between two heads; `None`: ∅) over facts in
-    /// `facts`, its documents the `load` answers those facts ask (through `docs`), its strata in `k_order`.
+    /// Δphase: the program `program` (K-form's relations, each between two heads; `None`: ∅) over facts in `facts`,
+    /// its documents the `load` answers asked (through `docs`), its strata in `k_order`. A run is rounds: each answers
+    /// the `load` rows asked (`asked`: the facts', the program's facts' and the rows its rules derive, an include's),
+    /// then runs the strata, each module from where the round before left its inputs; the run ends at the first round
+    /// whose strata ask nothing new.
     #[allow(clippy::too_many_arguments)]
     pub fn step(&mut self, ops: PhaseOps, bench: &mut Bench, docs: &mut DocSet, leaves: &mut LeavesW, atoms: Atoms, program: &[Option<Between<'_>>], facts: &[FactIn<'_>]) -> Result<LevelRun, String> {
         let mut work = Work::default();
         // This run's start, where each of its traces is.
         self.start = self.rels.iter().map(|(&r, t)| (r, t.heads())).collect();
         self.tapes_start = self.tapes.head();
+        self.read = self.start.iter().map(|(&r, &(h, _))| (r, h)).collect();
+        self.tapes_read = self.tapes_start;
         // The program, as rules.
         let rows = program_rows(&bench.dir, program)?;
         let (next, known) = {
@@ -1309,7 +1319,8 @@ impl Level {
         // Its documents: the `load` answers its facts in ask, and its program's `load` facts (Bootstrap §5: "its load
         // facts ask the loader"; P3 loads what L3 reads).
         self.load = known.load;
-        self.answer(bench, docs, leaves, atoms, &known, facts, &next).map_err(|e| format!("a level's documents: {e}"))?;
+        let mut asked = self.asked(&bench.dir, &known, facts, &next).map_err(|e| e.named(&docs.path_of(&bench.dir, atoms, e.module)))?;
+        self.answer(bench, docs, leaves, atoms, &asked).map_err(|e| format!("a level's documents: {e}"))?;
         // A head whose shape the edit changed (its grain, its stratum's recursion): a trace keeps one shape, so the
         // level runs from ∅, its documents kept.
         let mut reset = false;
@@ -1329,49 +1340,67 @@ impl Level {
         if reset {
             self.reset(&mut bench.dir);
         }
-        // Its strata: modules gone first (their rows retracted), then the program's in k_order.
-        let gone: Vec<i64> = self.ran.modules.keys().filter(|m| !next.modules.contains_key(m)).copied().collect();
-        let order: Vec<i64> = gone.iter().copied().chain(next.strata()).collect();
-        // The strata that ran, in order: each one's module, the relations it writes and those it reads.
-        let mut strata: Vec<(i64, Vec<i64>, Vec<i64>)> = Vec::new();
-        // The facts the strata's rules give their heads (0361), as they run: each from the declarations and the facts
-        // inferred before it.
-        let mut inferred: Shapes = BTreeMap::new();
-        for m in order {
-            let before = self.ran.modules.get(&m).map_or(Vec::new(), |md| md.rules.clone());
-            let after = next.modules.get(&m).map_or(Vec::new(), |md| md.rules.clone());
-            let (w, writes, reads) = self.run_module(ops, bench, atoms, &known, m, before, after, facts, &inferred).map_err(|e| format!("module {}: {e}", docs.path_of(&bench.dir, atoms, m)))?;
-            work += w;
-            if let Some(md) = next.modules.get(&m) {
-                strata.push((m, writes.clone(), reads));
-                let declared = self.declared(&bench.dir, &known, facts)?;
-                let of = |r: i64| match (declared.get(&r), inferred.get(&r)) {
-                    (Some(a), Some(b)) => Some(a.and(b)),
-                    (a, b) => a.or(b).cloned(),
-                };
-                let recursive = md.rules.iter().any(|r| r.reads().any(|(_, rel)| writes.contains(&rel)));
-                let got: Vec<(i64, Facts)> = writes
-                    .iter()
-                    .map(|&h| {
-                        let rules: Vec<&Rule> = md.rules.iter().filter(|r| r.head == h).collect();
-                        (h, crate::shapes::infer(h, &rules, recursive, &of))
-                    })
-                    .filter(|(_, f)| !f.is_empty())
-                    .collect();
-                inferred.extend(got);
+        let mut round = 0;
+        loop {
+            // Its strata: modules gone first (their rows retracted), then the program's in k_order. A later round's
+            // program is the one the first ran.
+            let gone: Vec<i64> = if round == 0 { self.ran.modules.keys().filter(|m| !next.modules.contains_key(m)).copied().collect() } else { Vec::new() };
+            let order: Vec<i64> = gone.iter().copied().chain(next.strata()).collect();
+            // The strata that ran, in order: each one's module, the relations it writes and those it reads.
+            let mut strata: Vec<(i64, Vec<i64>, Vec<i64>)> = Vec::new();
+            // The facts the strata's rules give their heads (0361), as they run: each from the declarations and the facts
+            // inferred before it.
+            let mut inferred: Shapes = BTreeMap::new();
+            for m in order {
+                let ran = if round == 0 { &self.ran } else { &next };
+                let before = ran.modules.get(&m).map_or(Vec::new(), |md| md.rules.clone());
+                let after = next.modules.get(&m).map_or(Vec::new(), |md| md.rules.clone());
+                let (w, writes, reads) = self.run_module(ops, bench, atoms, &known, m, before, after, facts, &inferred).map_err(|e| format!("module {}: {e}", docs.path_of(&bench.dir, atoms, m)))?;
+                work += w;
+                if let Some(md) = next.modules.get(&m) {
+                    strata.push((m, writes.clone(), reads));
+                    let declared = self.declared(&bench.dir, &known, facts)?;
+                    let of = |r: i64| match (declared.get(&r), inferred.get(&r)) {
+                        (Some(a), Some(b)) => Some(a.and(b)),
+                        (a, b) => a.or(b).cloned(),
+                    };
+                    let recursive = md.rules.iter().any(|r| r.reads().any(|(_, rel)| writes.contains(&rel)));
+                    let got: Vec<(i64, Facts)> = writes
+                        .iter()
+                        .map(|&h| {
+                            let rules: Vec<&Rule> = md.rules.iter().filter(|r| r.head == h).collect();
+                            (h, crate::shapes::infer(h, &rules, recursive, &of))
+                        })
+                        .filter(|(_, f)| !f.is_empty())
+                        .collect();
+                    inferred.extend(got);
+                }
             }
-        }
-        // The run's critical path over its strata (0203 §4): each one's producers the strata before it that write a
-        // relation it reads.
-        let producers: Vec<Vec<usize>> = strata.iter().enumerate().map(|(j, (_, _, reads))| (0..j).filter(|&p| strata[p].1.iter().any(|r| reads.contains(r))).collect()).collect();
-        let memos: Vec<BlockId> = strata.iter().filter_map(|(m, _, _)| self.caches.get(m).map(|c| c.0)).collect();
-        if memos.len() == strata.len() {
-            work.planned.critical += ops.plan.critical_path(&bench.reg, &mut bench.dir, &memos, &producers)?;
+            // The run's critical path over its strata (0203 §4): each one's producers the strata before it that write a
+            // relation it reads.
+            let producers: Vec<Vec<usize>> = strata.iter().enumerate().map(|(j, (_, _, reads))| (0..j).filter(|&p| strata[p].1.iter().any(|r| reads.contains(r))).collect()).collect();
+            let memos: Vec<BlockId> = strata.iter().filter_map(|(m, _, _)| self.caches.get(m).map(|c| c.0)).collect();
+            if memos.len() == strata.len() {
+                work.planned.critical += ops.plan.critical_path(&bench.reg, &mut bench.dir, &memos, &producers)?;
+            }
+            for f in facts {
+                self.seen.insert(f.rel, f.trace.head());
+            }
+            // The round's end: the next round reads from here; the documents its rules ask, answered, else the run's end.
+            self.read = self.rels.iter().map(|(&r, t)| (r, t.head.head())).collect();
+            self.tapes_read = self.tapes.head();
+            let again = self.asked(&bench.dir, &known, facts, &next).map_err(|e| e.named(&docs.path_of(&bench.dir, atoms, e.module)))?;
+            if again == asked {
+                break;
+            }
+            round += 1;
+            if round > MAX_ROUNDS {
+                return Err(format!("a level's loads still change after {MAX_ROUNDS} rounds: its rules ask a new document every round"));
+            }
+            asked = again;
+            self.answer(bench, docs, leaves, atoms, &asked).map_err(|e| format!("a level's documents: {e}"))?;
         }
         self.ran = next;
-        for f in facts {
-            self.seen.insert(f.rel, f.trace.head());
-        }
         let ksyms = kform_syms(&bench.dir, atoms);
         let program = self.exports(&bench.dir, &ksyms)?;
         Ok(LevelRun { work, program, reset })
@@ -1394,26 +1423,34 @@ impl Level {
         }
     }
 
-    /// The level's documents moved to the `load` rows of its facts in and of its program's facts: each path read
-    /// through the document set (its load, parse and intern answers), and its row in the level's documents. The
-    /// documents are read before the rules run, so a `load` the program derives (a rule with a body) is refused.
-    #[allow(clippy::too_many_arguments)]
-    fn answer(&mut self, bench: &mut Bench, docs: &mut DocSet, leaves: &mut LeavesW, atoms: Atoms, known: &Known, facts: &[FactIn<'_>], program: &Program) -> Result<(), String> {
+    /// The `load` rows asked of the level: its facts in's, its program's facts' (asked before its rules first run),
+    /// and the rows its rules derived (an include's, as its last round left them). A load is a path, a module and a
+    /// grammar.
+    fn asked(&self, dir: &Directory, known: &Known, facts: &[FactIn<'_>], program: &Program) -> Result<BTreeSet<Vec<i64>>, Refused> {
         let mut asked: BTreeSet<Vec<i64>> = BTreeSet::new();
-        if let Some(load) = known.load {
-            if let Some(f) = facts.iter().find(|f| f.rel == load) {
-                asked.extend(rows_at(&bench.dir, f.trace, f.trace.head())?);
+        let Some(load) = known.load else { return Ok(asked) };
+        let rows = |t: &Trace| rows_at(dir, t, t.head()).map_err(|why| Refused { module: -1, rule: -1, why });
+        if let Some(f) = facts.iter().find(|f| f.rel == load) {
+            asked.extend(rows(f.trace)?);
+        }
+        if let Some(r) = self.rels.get(&load) {
+            asked.extend(rows(&r.head)?);
+        }
+        for r in program.modules.values().flat_map(|m| &m.rules).filter(|r| r.head == load) {
+            if r.args.len() != 3 {
+                return Err(Refused { module: r.module, rule: r.id, why: "a load that is not of a path, a module and a grammar".into() });
             }
-            for r in program.modules.values().flat_map(|m| &m.rules).filter(|r| r.head == load) {
-                let row: Option<Vec<i64>> = r.args.iter().map(|a| if let Term::Const(v) = a { Some(*v) } else { None }).collect();
-                match row {
-                    Some(row) if r.steps.is_empty() && row.len() == 3 => {
-                        asked.insert(row);
-                    }
-                    _ => return Err(format!("module {} rule {}: a load that is not a fact of a path, a module and a grammar: a level reads its documents before its rules run", docs.path_of(&bench.dir, atoms, r.module), r.id)),
-                }
+            let row: Option<Vec<i64>> = r.args.iter().map(|a| if let Term::Const(v) = a { Some(*v) } else { None }).collect();
+            if let (Some(row), true) = (row, r.steps.is_empty()) {
+                asked.insert(row);
             }
         }
+        Ok(asked)
+    }
+
+    /// The level's documents moved to the `load` rows `asked`: each path read through the document set (its load,
+    /// parse and intern answers), and its row in the level's documents.
+    fn answer(&mut self, bench: &mut Bench, docs: &mut DocSet, leaves: &mut LeavesW, atoms: Atoms, asked: &BTreeSet<Vec<i64>>) -> Result<(), String> {
         let mut want: BTreeSet<Vec<i64>> = BTreeSet::new();
         for r in asked {
             let (path, module) = (atoms.name(&bench.dir, r[0]), atoms.name(&bench.dir, r[1]));
@@ -1460,13 +1497,13 @@ impl Level {
         // Its inputs, each between two heads.
         let mut ins: Vec<(&Trace, Option<BlockId>, Option<BlockId>)> = Vec::new();
         if st.tape {
-            ins.push((&self.tapes, self.tapes_start, self.tapes.head()));
+            ins.push((&self.tapes, self.tapes_read, self.tapes.head()));
         }
         let mut taken: Vec<(i64, Rel)> = st.heads.iter().map(|h| (h.rel, self.rels.remove(&h.rel).expect("made"))).collect();
         let mut run = || {
             for (rel, _) in &st.ins {
                 if let Some(r) = self.rels.get(rel) {
-                    let start = self.start.get(rel).map_or(r.head.head(), |s| s.0);
+                    let start = self.read.get(rel).copied().unwrap_or(r.head.head());
                     ins.push((&r.head, start, r.head.head()));
                 } else if let Some(f) = facts.iter().find(|f| f.rel == *rel) {
                     ins.push((f.trace, self.seen.get(rel).copied().flatten(), f.trace.head()));
@@ -1543,6 +1580,9 @@ impl Level {
         Ok(l)
     }
 }
+
+/// The rounds a level's run may take before its loads are refused as never settling.
+const MAX_ROUNDS: usize = 256;
 
 /// A program's rows, K-form's relations each at its head (`None`: ∅), each row its relation's columns (a relation a
 /// recursive stratum writes carries its level after them).

@@ -2407,3 +2407,32 @@ Checks (Relax, local, 139 of 139): `calls_answer_by_function_and_text_answers_ar
   run.
 - The two refusals.
 - Mutations caught: the driver not interning the texts asked, and the answer left first.
+
+### L4: loads a level's rules derive, by rounds (B§10 step 9, includes; 2026-11-26)
+
+An include asks for a file that a level's own document names. So a level's `load` rows can come from its rules,
+not only from its facts in. Until now a level read its documents before its rules ran, and refused a derived `load`.
+
+- **Rounds** (`Level::step`). A level's run is rounds.
+  - Each round answers the `load` rows asked (`Level::asked`): its facts in's, its program's `load` facts (asked
+    before its rules first run), and the rows its rules derive, as the last round left them. It then runs the strata.
+  - A round's modules read their inputs from where the round before left them (`Level::read`, `tapes_read`), so a
+    later round runs the new documents' delta. The run's start stays the roll-up's and the exported program's.
+  - The run ends at the first round whose strata ask nothing new. An include cycle settles there.
+  - A level whose loads still change after 256 rounds is refused.
+  - A `load` row is a path, a module and a grammar, and a `load` rule of another arity is refused.
+- **A reset** (a head's shape changed: the level runs from ∅, its documents kept) also lets its rounds' read points
+  go.
+
+Checks (Relax, local, 140 of 140):
+- `a_level_loads_what_its_rules_derive_until_nothing_new_is_asked`. A rule of the level's program derives a `load`
+  of each `#include`'s path from its own documents.
+  - Three files with an include cycle are all read.
+  - An edit dropping an include lets its file go, as a cold run gives it.
+  - An include of a file that is not there is refused, naming it.
+  - Mutation caught: a run ending after its first round reads one file.
+- `a_k1_rule_lowered_by_p3_gives_the_rows_of_its_hand_ordered_k0_form`. Its last part asserted the old refusal. Now
+  L3's files are asked by a rule, with the same rows.
+
+Still to build in step 9: the include resolution and the module plan as rules of the compiler level
+(`bootstrap.rerail`'s, B§6's L4 row), with the compiler level itself.
