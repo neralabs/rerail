@@ -117,13 +117,13 @@ describe("the Claude Code status files the daemon keeps", () => {
     const session = recordSession("session-one", workspace, 3);
     const kept = keeper();
     await kept.refresh();
-    const first = statSync(join(folder, "session-one")).ino;
+    const first = statSync(join(folder, "session-one"), { bigint: true }).ino;
     await kept.refresh();
-    expect(statSync(join(folder, "session-one")).ino).toBe(first);
+    expect(statSync(join(folder, "session-one"), { bigint: true }).ino).toBe(first);
     store.recordSteer(session, "receipt", ["team:one", "team:two"]);
     await kept.refresh();
     expect(shown(drawn("session-one")![2]!)).toBe("R E R A I L ● 3 rules · steered 2×");
-    expect(statSync(join(folder, "session-one")).ino).not.toBe(first);
+    expect(statSync(join(folder, "session-one"), { bigint: true }).ino).not.toBe(first);
   });
 
   it("draws nothing for a session where Rerail is not on or the footer is silent, and says a repository is not set up", async () => {
