@@ -915,3 +915,32 @@ Two checks of the change:
 
 Checks (Relax, local): `rerail-delta-exec --lib` 35 of 35, `rerail-blocks --lib` 123 of 123,
 `rerail-delta-device --lib` 3 of 3; the check scripts; clippy as above.
+
+**B1's bounds and the operator cache, made real** (2026-11-25, after the audit against the pages: five of a phase's
+six bounds were declared and never read, and the operator cache was a trace of frozen layers).
+
+- Every bound is the executor's (`op::drive`). A twin reports through its meter (`Ctx::steps`, `depth`, `sample`,
+  `room`/`reach`): an item past its phase's bound fails the launch, and so does a report of a quantity the phase does
+  not bound, so a twin cannot do what its declared shape says it does not. A slot's capacity is how far its block's
+  allocations may reach inside its reservation (`Directory::make_capped`, `capacity`, `grow`): past it, `Refuse`
+  fails naming the slot, `Grow` raises the capacity, the bytes where they lie, and runs the phase again, and `Rerun`
+  runs the launch again from its first phase, once, at the capacity it needs. Past the reservation, it fails.
+- The launch budget is not a phase's bound but one ledger (0601): every phase's turn is a launch charged to the open
+  evaluation (`Directory::evaluation`, `charge`; 200 by default, `LAUNCH_BUDGET`), and one past it fails with the
+  account by operation and phase. `Bound::LaunchBudget` is gone.
+- Bounds fit their axes when an operation is declared: each kind once; a unit holding stacks bounds their depth, and
+  only such a unit does; a claimed output bounds its capacity; a phase by rounds bounds its turns; a launch run again
+  past a capacity writes no slot it reads. A UKL version declaring a bound its items report is refused (a kernel's
+  meter is not built).
+- A real bound on a real operation: the kill search in `consolidate` and `merge` reads a layer a step, bounded at 64
+  (`KILL_STEPS`). A trace never rolled up fails its 66th commit there; the geometric roll-up keeps it far below.
+- The operator cache (`delta_exec::cache`, twins in `rerail_delta_twins::cache`, no longer test-only) is P§11.3's:
+  mutable blocks of kind `CACHE`, never frozen, no generations, each with a header naming its state. `cache_open`
+  resets a header left open or naming another state to ∅ where it lies, then marks it open; `order` adds a layer's
+  row ids in a column order, with fences, unless the cache holds them, growing the cache within its reservation
+  (`Capacity(Grow)`); `cache_commit` writes the state, the mark last. A trace of `Retention::Cache` is refused, naming
+  the operator cache.
+
+Checks (Relax, local): `rerail-delta-exec --lib` 45 of 45 (new: each bound inside and past it, bounds against axes,
+the ledger, the kill search's 64 layers, five of the cache); `rerail-blocks --lib` 123 of 123; `rerail-delta-device
+--lib` 3 of 3; the shape script's new `bounds` and `cache` sections; clippy over the four crates, clean.

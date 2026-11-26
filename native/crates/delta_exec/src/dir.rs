@@ -25,6 +25,7 @@ use rerail_blocks::ledger::Fence;
 use rerail_blocks::region::{BlockPin, pin_block};
 use rerail_blocks::{Block, Frozen};
 use std::path::{Path, PathBuf};
+use std::cell::{Cell, RefCell};
 use std::sync::{Arc, Weak};
 
 /// A block's id: the directory's handle, the same on every device.
@@ -55,6 +56,36 @@ struct Entry {
     body: usize,
     /// A kept block's file (`Placement::KeptFile`): removed once the block is gone.
     file: Option<PathBuf>,
+    /// Its capacity: how far its allocations may reach, from its start (0: its whole reservation). An operation's
+    /// bound on its output's capacity grows it within the reservation (`grow`), the bytes never moving.
+    cap: Cell<usize>,
+}
+
+/// The launch budget of an evaluation (0540, 0601: `KERNEL_LAUNCH_LIMIT`): an evaluation needing more is code to
+/// restructure, not work to move elsewhere.
+pub const LAUNCH_BUDGET: u32 = 200;
+
+/// The launch ledger (0601: "every launch counts in one ledger, and past it is a hard failure"): the launches of the
+/// open evaluation, each phase's turn one, by operation and phase. An operation run with no evaluation open is one
+/// of its own. A directory is one thread's (its operations are launched from one host loop), so its ledger is too.
+#[derive(Default)]
+struct Ledger {
+    /// Evaluations open (`Directory::evaluation`), nested ones joining the outermost.
+    open: Cell<u32>,
+    budget: Cell<u32>,
+    launches: Cell<u32>,
+    account: RefCell<Vec<(&'static str, &'static str, u32)>>,
+}
+
+/// An open evaluation (`Directory::evaluation`): the launches made while it lives count against its budget.
+pub struct Evaluation<'d> {
+    ledger: &'d Ledger,
+}
+
+impl Drop for Evaluation<'_> {
+    fn drop(&mut self) {
+        self.ledger.open.set(self.ledger.open.get() - 1);
+    }
 }
 
 /// Where a block's memory is (P§12's `Placement`, as a shape holds it: `ShapeW::placement`).
@@ -72,6 +103,7 @@ pub struct Directory {
     entries: Vec<Entry>,
     kept: Option<PathBuf>,
     slabs: Option<Slabs>,
+    ledger: Ledger,
 }
 
 impl Directory {
@@ -88,6 +120,75 @@ impl Directory {
         // facts it wrote), whole pages to the OS, when nothing was made past the body.
         let b = Block::anon(kind, BODY_AT + body + room + rerail_blocks::block::PAGE).with_free_list();
         self.adopt_new(b, body, None)
+    }
+
+    /// `make`, reserving `reserve` bytes of address space (sparse: nothing is resident until written) with a capacity
+    /// of `cap` of them: an operation whose phase bounds its output's capacity grows it up to the reservation.
+    pub fn make_capped(&mut self, kind: u32, body: usize, cap: usize, reserve: usize) -> BlockId {
+        self.sweep();
+        let b = Block::anon(kind, reserve.max(BODY_AT + body + rerail_blocks::block::PAGE));
+        let id = self.adopt_new(b, body, None);
+        self.entries[id.0 as usize].cap.set(cap.max(BODY_AT + body.max(8)));
+        id
+    }
+
+    /// Block `id`'s capacity: how far its allocations may reach.
+    pub fn capacity(&self, id: BlockId) -> usize {
+        let Some(e) = self.entries.get(id.0 as usize) else { return 0 };
+        match e.cap.get() {
+            0 => self.block(id).map_or(0, |b| b.reserved()),
+            c => c,
+        }
+    }
+
+    /// Grows block `id`'s capacity to at least `need`, doubling, within its reservation: the bytes stay where they lie.
+    /// Refused past the reservation, naming it.
+    pub fn grow(&self, id: BlockId, need: usize) -> Result<usize, String> {
+        let reserved = self.block(id).ok_or_else(|| format!("{id} is held by nothing"))?.reserved();
+        if need > reserved {
+            return Err(format!("{id} needs a capacity of {need} bytes, past its reservation of {reserved}"));
+        }
+        let e = self.entry(id)?;
+        let cap = (self.capacity(id).max(1) * 2).max(need).min(reserved);
+        e.cap.set(cap);
+        Ok(cap)
+    }
+
+    /// Opens an evaluation of `budget` launches (0601); while it lives every operation's launches count against it, and
+    /// one past it fails. Nested, it joins the one already open.
+    pub fn evaluation(&self, budget: u32) -> Evaluation<'_> {
+        let l = &self.ledger;
+        if l.open.get() == 0 {
+            l.budget.set(budget);
+            l.launches.set(0);
+            l.account.borrow_mut().clear();
+        }
+        l.open.set(l.open.get() + 1);
+        Evaluation { ledger: l }
+    }
+
+    /// Charges one launch of `op`'s phase `phase` to the open evaluation: refused, with the evaluation's account, past
+    /// its budget.
+    pub fn charge(&self, op: &'static str, phase: &'static str) -> Result<(), String> {
+        let l = &self.ledger;
+        let n = l.launches.get() + 1;
+        l.launches.set(n);
+        let mut account = l.account.borrow_mut();
+        match account.iter_mut().find(|a| a.0 == op && a.1 == phase) {
+            Some(a) => a.2 += 1,
+            None => account.push((op, phase, 1)),
+        }
+        let budget = l.budget.get();
+        if n > budget {
+            let by: Vec<String> = account.iter().map(|(o, p, k)| format!("{o}.{p} {k}")).collect();
+            return Err(format!("{op}: launch {n} of an evaluation whose budget is {budget} (0601): {}", by.join(", ")));
+        }
+        Ok(())
+    }
+
+    /// The launches the open evaluation, or the last, has made.
+    pub fn launches(&self) -> u32 {
+        self.ledger.launches.get()
     }
 
     /// The directory with its kept blocks' files in `folder` (`Placement::KeptFile`): one a block, named by its id.
@@ -130,7 +231,7 @@ impl Directory {
         let found = rerail_blocks::kept::trace_folder::blocks(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
         let n = found.iter().map(|&(id, _)| id as usize + 1).max().unwrap_or(0);
         let mut dir = Directory::default().with_kept(folder);
-        dir.entries = (0..n).map(|_| Entry { own: Own::Released, placed: None, held: Vec::new(), weak: Weak::new(), body: 8, file: None }).collect();
+        dir.entries = (0..n).map(|_| Entry { own: Own::Released, placed: None, held: Vec::new(), weak: Weak::new(), body: 8, file: None, cap: Cell::new(0) }).collect();
         for (id, p) in &found {
             let f = Block::open_file(p, kind)?;
             let e = &mut dir.entries[*id as usize];
@@ -167,7 +268,7 @@ impl Directory {
             gens::init_refs(w.bytes_mut().expect("a write pin"));
         }
         let weak = Arc::downgrade(&b);
-        self.entries.push(Entry { own: Own::Open(b), placed: None, held: Vec::new(), weak, body: body.max(8), file });
+        self.entries.push(Entry { own: Own::Open(b), placed: None, held: Vec::new(), weak, body: body.max(8), file, cap: Cell::new(0) });
         BlockId(self.entries.len() as u32 - 1)
     }
 

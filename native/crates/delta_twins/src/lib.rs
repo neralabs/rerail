@@ -31,7 +31,6 @@
 use rerail_blocks::gens::Table;
 use rerail_blocks::region::BlockPin;
 
-#[cfg(any(test, feature = "test-hooks"))]
 pub mod cache;
 pub mod samples;
 pub mod sort;
@@ -65,15 +64,103 @@ impl Slot<'_> {
     }
 }
 
+/// What a phase's items report of their bounded work (Operations §4, the bounds axis), held by the executor to the
+/// phase's bounds: steps an item, a stack's depth, a sample's size, and the room a written slot needs. The executor
+/// sets the phase's bounds before its first tile and reads the meter after each. A twin reports what it does: an item
+/// past its bound stops, and the launch fails; a report of a quantity its phase's shape bounds not fails it too, so a
+/// twin cannot do what its declared shape says it does not.
+#[derive(Debug, Default)]
+pub struct Meter {
+    /// The phase's bound on an item's steps (`None`: its shape bounds none).
+    pub steps: Option<u32>,
+    /// The phase's bound on a stack's depth.
+    pub depth: Option<u32>,
+    /// The phase's sample size.
+    pub sample: Option<u32>,
+    /// Whether the phase bounds its output's capacity (refuse, grow or rerun).
+    pub bounded_room: bool,
+    /// Each slot's capacity: how far its block's allocations may reach, from the block's start.
+    pub capacity: Vec<usize>,
+    /// The first report past a bound, or of what the shape bounds not: the launch fails with it.
+    pub fault: Option<String>,
+    /// Slots an item found too small, each with the capacity it needs; the item wrote nothing past the capacity.
+    pub needs: Vec<(usize, usize)>,
+}
+
+impl Meter {
+    fn within(&mut self, bound: Option<u32>, n: u32, what: &str) -> bool {
+        match bound {
+            None => {
+                self.fault.get_or_insert_with(|| format!("an item reports {what}, and its phase's shape bounds none"));
+                false
+            }
+            Some(b) if n > b => {
+                self.fault.get_or_insert_with(|| format!("an item's {what} reached {n}, past its bound of {b}"));
+                false
+            }
+            Some(_) => true,
+        }
+    }
+}
+
 /// What a twin's phase reads and writes: its slots in its signature's order, the launch's descriptor table (the blocks
-/// its slots refer to, by id) and its params' bytes (`Params::read`).
+/// its slots refer to, by id), its params' bytes (`Params::read`) and the meter of its bounded work.
 pub struct Ctx<'c, 'p, 't> {
     pub slots: &'c mut [Slot<'p>],
     pub table: &'c Table<'t>,
     pub params: &'c [u8],
+    pub meter: &'c mut Meter,
 }
 
 impl<'p> Ctx<'_, 'p, '_> {
+    /// An item has taken `n` steps: false past its phase's bound on steps (the item stops; the launch fails).
+    pub fn steps(&mut self, n: u32) -> bool {
+        let b = self.meter.steps;
+        self.meter.within(b, n, "steps")
+    }
+
+    /// An item's stack has reached depth `d`: false past its phase's bound on stack depth.
+    pub fn depth(&mut self, d: u32) -> bool {
+        let b = self.meter.depth;
+        self.meter.within(b, d, "stack depth")
+    }
+
+    /// The phase's sample size; 0, and the launch fails, when its shape bounds none.
+    pub fn sample(&mut self) -> u32 {
+        let b = self.meter.sample;
+        if self.meter.within(b, 0, "a sample") { b.unwrap_or(0) } else { 0 }
+    }
+
+    /// Whether `bytes` more can be allocated in slot `slot`'s block within its capacity. When not, the slot's need is
+    /// recorded (the capacity the allocation needs) and the item writes nothing past the capacity: the executor
+    /// refuses, grows the capacity and runs the phase again, or runs the launch again, as the phase's bound says.
+    pub fn room(&mut self, slot: usize, bytes: usize) -> bool {
+        let need = self.slots[slot].pin().block().used().next_multiple_of(64) + bytes;
+        self.reach(slot, need)
+    }
+
+    /// Whether slot `slot`'s block may be written up to byte `end` within its capacity (a structure it lays out in its
+    /// bytes, past its allocations): as `room`, the need recorded when not.
+    pub fn reach(&mut self, slot: usize, need: usize) -> bool {
+        if !self.meter.bounded_room {
+            self.meter.fault.get_or_insert_with(|| format!("an item asks room in slot {slot}, and its phase's shape bounds no capacity"));
+            return false;
+        }
+        if need <= self.meter.capacity[slot] {
+            return true;
+        }
+        match self.meter.needs.iter_mut().find(|n| n.0 == slot) {
+            Some(n) => n.1 = n.1.max(need),
+            None => self.meter.needs.push((slot, need)),
+        }
+        false
+    }
+
+    /// Slot `slot`'s capacity: how far its block's allocations may reach.
+    pub fn capacity(&self, slot: usize) -> usize {
+        self.meter.capacity[slot]
+    }
+
     /// The bytes of slots `reads`, to read, and of slots `writes`, to write, at once (each slot once).
     pub fn views<const R: usize, const W: usize>(&mut self, reads: [usize; R], writes: [usize; W]) -> ([&[u8]; R], [&mut [u8]; W]) {
         let mut r: [Option<&[u8]>; R] = [None; R];

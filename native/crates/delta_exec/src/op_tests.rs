@@ -7,7 +7,7 @@
 
 use super::*;
 use rerail_blocks::block::kind;
-use rerail_blocks::gens::{BODY_AT, Ref};
+use rerail_blocks::gens::{BODY_AT, Ref, word};
 use rerail_blocks::region::{pin_block, whole};
 use rerail_delta_twins::samples::{self, EVENS, MERGE as MERGE2, REACH, SORT, SQUARE};
 use rerail_delta_twins::{NoParams, TwinPhase};
@@ -71,7 +71,7 @@ fn shapes() -> Vec<(&'static Signature, &'static [TwinPhase])> {
             sig(
                 "reach",
                 io(kind::SCRATCH),
-                vec![lanes("seed", Fixed, Nothing, InPlace, &[]), lanes("turn", Queue, Rounds, Claim, &[Bound::Turns(1024)])],
+                vec![lanes("seed", Fixed, Nothing, InPlace, &[]), lanes("turn", Queue, Rounds, Claim, &[Bound::Turns(1024), Bound::Capacity(Over::Refuse)])],
                 marked,
             ),
             REACH,
@@ -360,9 +360,9 @@ fn a_twin_fits_its_signature() {
     let e = reg.register_reference(Version::twin(op, "sort as square", sort, square.shape)).unwrap_err();
     assert!(e.contains("the twin's phases (chunks, passes, settle) are not its shape's (map)"), "{e}");
     let unbounded = sig("unbounded", vec![slot("in", R, kind::FACTS)], vec![lanes("chunks", Found::Fixed, Across::Nothing, Output::ByIndex, &[]), lanes("passes", Found::Indirect, Across::Rounds, Output::ByIndex, &[]), lanes("settle", Found::Fixed, Across::Nothing, Output::ByIndex, &[])], values);
-    let op = reg.declare(unbounded).unwrap();
-    let e = reg.register_reference(Version::twin(op, "sort", sort, unbounded.shape)).unwrap_err();
-    assert!(e.contains("phase passes runs again, and its shape bounds no turns"), "{e}");
+    // Refused when declared: a phase by rounds bounds its turns (`Phase::fits_axes`).
+    let e = reg.declare(unbounded).unwrap_err();
+    assert!(e.contains("unbounded: phase passes: relates its units by rounds, and its shape bounds no turns"), "{e}");
 
     // A version runs by its own shape: the sort's reference, then a version of it whose shape bounds its passes at
     // two turns, which the check runs by that bound and refuses (a case of more than two passes' items).
@@ -563,4 +563,194 @@ fn a_launch_on_a_device_holds_its_blocks_until_its_fence_completes() {
     assert!(dir.launch("rival", &[(out, false)]).is_err(), "held until the fence completes");
     g.mark_committed();
     g.complete();
+}
+
+// ---- Bounds (Operations §4, the bounds axis): each held by the executor ---------------------------------------------
+
+/// A values block's `i`th value as an item's report: each item reports its value (steps, a stack's depth).
+fn report_items(c: &Ctx<'_, '_, '_>) -> u32 {
+    samples::vals(c.read(0)).len() as u32
+}
+
+fn report_steps(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    for i in t.items() {
+        let n = samples::vals(c.read(0))[i] as u32;
+        if !c.steps(n) {
+            return;
+        }
+    }
+}
+
+fn report_depth(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    for i in t.items() {
+        let n = samples::vals(c.read(0))[i] as u32;
+        if !c.depth(n) {
+            return;
+        }
+    }
+}
+
+/// One item: the phase's sample size written to the out block.
+fn take_sample(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+    let n = c.sample();
+    let ([], [o]) = c.views([], [1]);
+    samples::vals_mut(o, 1)[0] = i64::from(n);
+}
+
+/// One item: every input value appended to an allocation of the out block, after asking room for it; the allocation's
+/// place and length in the out block's body. Run again over a grown block, it finds its own write and does nothing.
+fn append(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+    let n = samples::vals(c.read(0)).len();
+    if word::<u64>(c.read(1), BODY_AT + 8) != 0 || !c.room(1, 8 * n) {
+        return;
+    }
+    let v: Vec<i64> = samples::vals(c.read(0)).to_vec(); // copy: not block data (a test twin's input values)
+    let pin = c.pin_mut(1);
+    let at = pin.block().alloc(8 * n, 64);
+    let b = pin.bytes_mut().expect("a write pin");
+    for (k, x) in v.iter().enumerate() {
+        b[at + 8 * k..at + 8 * k + 8].copy_from_slice(&x.to_ne_bytes());
+    }
+    rerail_blocks::gens::set_word::<u64>(b, BODY_AT, at as u64);
+    rerail_blocks::gens::set_word::<u64>(b, BODY_AT + 8, n as u64);
+}
+
+fn appended(_: &Table<'_>, _: usize, b: &[u8]) -> Vec<Vec<i64>> {
+    let (at, n) = (word::<u64>(b, BODY_AT) as usize, word::<u64>(b, BODY_AT + 8) as usize);
+    (0..n).map(|k| vec![k as i64, i64::from_ne_bytes(b[at + 8 * k..at + 8 * k + 8].try_into().unwrap())]).collect()
+}
+
+const ONE: fn(&Ctx<'_, '_, '_>) -> u32 = |_| 1;
+static STEPS_TWIN: [TwinPhase; 1] = [TwinPhase { name: "walk", items: report_items, run: report_steps, again: None }];
+static DEPTH_TWIN: [TwinPhase; 1] = [TwinPhase { name: "walk", items: report_items, run: report_depth, again: None }];
+static SAMPLE_TWIN: [TwinPhase; 1] = [TwinPhase { name: "trial", items: ONE, run: take_sample, again: None }];
+static APPEND_TWIN: [TwinPhase; 1] = [TwinPhase { name: "append", items: ONE, run: append, again: None }];
+
+fn bounded(name: &'static str, slots: Vec<SlotSpec>, phase: Phase, facts: FactsFn) -> &'static Signature {
+    sig(name, slots, vec![phase], facts)
+}
+
+fn walk(inside: Inside, bounds: &'static [Bound]) -> Phase {
+    Phase { name: "walk", found: Found::Fixed, unit: Unit::Lane, inside, across: Across::Nothing, output: Output::ByIndex, bounds }
+}
+
+fn declared(sig: &'static Signature, twin: &'static [TwinPhase]) -> Result<(Registry, OpId), String> {
+    let mut reg = Registry::default();
+    let op = reg.declare(sig)?;
+    reg.register_reference(Version::twin(op, "twin", twin, sig.shape))?;
+    Ok((reg, op))
+}
+
+#[test]
+fn an_item_past_its_steps_or_its_stack_depth_fails_the_launch() {
+    let io = || vec![slot("in", R, kind::FACTS), slot("out", W, kind::FACTS)];
+    for (name, inside, bound, twin, what) in [
+        ("steps", Inside::Nothing, &[Bound::Steps(10)][..], &STEPS_TWIN[..], "steps"),
+        ("depth", Inside::Stacks, &[Bound::StackDepth(10)][..], &DEPTH_TWIN[..], "stack depth"),
+    ] {
+        let (reg, op) = declared(bounded(name, io(), walk(inside, bound), values), twin).unwrap();
+        for (v, ok) in [(vec![3, 10, 7], true), (vec![3, 11, 7], false)] {
+            let mut dir = Directory::default();
+            let (i, o) = (values_block(&mut dir, &v), dir.make(kind::FACTS, samples::vals_bytes(1)));
+            let r = run_cpu(&reg, &dir, op, &[i, o], &[], Tiling::WHOLE);
+            if ok {
+                r.unwrap();
+            } else {
+                let e = r.unwrap_err();
+                assert!(e.contains(&format!("an item's {what} reached 11, past its bound of 10")), "{e}");
+            }
+        }
+    }
+    // A twin reporting what its phase's shape does not bound fails: its twin does what its axes say it does not.
+    let (reg, op) = declared(bounded("unbounded steps", io(), walk(Inside::Nothing, &[]), values), &STEPS_TWIN).unwrap();
+    let mut dir = Directory::default();
+    let (i, o) = (values_block(&mut dir, &[1]), dir.make(kind::FACTS, samples::vals_bytes(1)));
+    let e = run_cpu(&reg, &dir, op, &[i, o], &[], Tiling::WHOLE).unwrap_err();
+    assert!(e.contains("reports steps, and its phase's shape bounds none"), "{e}");
+}
+
+#[test]
+fn a_phase_bounds_what_its_axes_say_it_does() {
+    let io = || vec![slot("in", R, kind::FACTS), slot("out", W, kind::FACTS)];
+    let refused = |s: &'static Signature| Registry::default().declare(s).unwrap_err();
+    let e = refused(bounded("stacks unbounded", io(), walk(Inside::Stacks, &[]), values));
+    assert!(e.contains("its units hold stacks, and it bounds no stack depth"), "{e}");
+    let e = refused(bounded("depth, no stacks", io(), walk(Inside::Nothing, &[Bound::StackDepth(4)]), values));
+    assert!(e.contains("bounds a stack's depth, and its units hold no stacks"), "{e}");
+    let claim = Phase { output: Output::Claim, ..walk(Inside::Nothing, &[]) };
+    let e = refused(bounded("claim unbounded", io(), claim, values));
+    assert!(e.contains("its output is claimed, and it bounds no capacity"), "{e}");
+    let e = refused(bounded("twice", io(), walk(Inside::Nothing, &[Bound::Steps(1), Bound::Steps(2)]), values));
+    assert!(e.contains("is given twice"), "{e}");
+    let rw = vec![slot("in", R, kind::FACTS), slot("out", Mode::ReadWrite, kind::FACTS)];
+    let e = refused(bounded("rerun rw", rw, walk(Inside::Nothing, &[Bound::Capacity(Over::Rerun)]), appended));
+    assert!(e.contains("runs the launch again past a capacity, and slot out is read and written"), "{e}");
+}
+
+#[test]
+fn a_sample_is_its_bound_and_a_phase_without_one_has_none() {
+    let io = vec![slot("in", R, kind::FACTS), slot("out", W, kind::FACTS)];
+    let trial = Phase { name: "trial", ..walk(Inside::Nothing, &[Bound::Sample(5)]) };
+    let (reg, op) = declared(bounded("sample", io.clone(), trial, values), &SAMPLE_TWIN).unwrap();
+    let mut dir = Directory::default();
+    let (i, o) = (values_block(&mut dir, &[0]), dir.make(kind::FACTS, samples::vals_bytes(1)));
+    run_cpu(&reg, &dir, op, &[i, o], &[], Tiling::WHOLE).unwrap();
+    assert_eq!(samples::vals(dir.read("t", &[o]).unwrap().block(0))[0], 5);
+    let (reg, op) = declared(bounded("no sample", io, Phase { name: "trial", ..walk(Inside::Nothing, &[]) }, values), &SAMPLE_TWIN).unwrap();
+    let e = run_cpu(&reg, &dir, op, &[i, o], &[], Tiling::WHOLE).unwrap_err();
+    assert!(e.contains("reports a sample, and its phase's shape bounds none"), "{e}");
+}
+
+#[test]
+fn a_slot_past_its_capacity_is_refused_grown_or_run_again() {
+    let io = || vec![slot("in", R, kind::FACTS), slot("out", W, kind::FACTS)];
+    let v: Vec<i64> = (0..2000).collect();
+    let want: Vec<Vec<i64>> = v.iter().map(|&x| vec![x, x]).collect();
+    for over in [Over::Refuse, Over::Grow, Over::Rerun] {
+        let phase = Phase { name: "append", output: Output::Claim, ..walk(Inside::Nothing, Box::leak(Box::new([Bound::Capacity(over)]))) };
+        let (reg, op) = declared(bounded(Box::leak(format!("append {over:?}").into_boxed_str()), io(), phase, appended), &APPEND_TWIN).unwrap();
+        let mut dir = Directory::default();
+        let i = values_block(&mut dir, &v);
+        // A capacity of 4 KiB in a reservation of 1 MiB: the 16,000 bytes do not fit until it grows.
+        let o = dir.make_capped(kind::FACTS, 16, 4096, 1 << 20);
+        let r = run_cpu(&reg, &dir, op, &[i, o], &[], Tiling::WHOLE);
+        match over {
+            Over::Refuse => {
+                let e = r.unwrap_err();
+                assert!(e.contains("slot 1 (out) needs a capacity of") && e.contains("refused"), "{e}");
+            }
+            Over::Grow | Over::Rerun => {
+                r.unwrap();
+                assert!(dir.capacity(o) > 16_000, "{over:?}: grown to {}", dir.capacity(o));
+                let l = dir.read("t", &[o]).unwrap();
+                assert_eq!(appended(&l.table(), 1, l.block(0)), want, "{over:?}");
+            }
+        }
+        // Past the reservation: refused, naming it.
+        if over != Over::Refuse {
+            let mut dir = Directory::default();
+            let big: Vec<i64> = (0..10_000).collect();
+            let i = values_block(&mut dir, &big);
+            let o = dir.make_capped(kind::FACTS, 16, 4096, 8192);
+            let e = run_cpu(&reg, &dir, op, &[i, o], &[], Tiling::WHOLE).unwrap_err();
+            assert!(e.contains("past its reservation"), "{over:?}: {e}");
+        }
+    }
+}
+
+#[test]
+fn every_launch_counts_in_the_evaluation_and_one_past_its_budget_fails() {
+    let (sig, twin) = shapes().into_iter().find(|(s, _)| s.name == "evens").unwrap();
+    let (reg, op) = declared(sig, twin).unwrap();
+    let mut dir = Directory::default();
+    let (c, _) = case("evens", &mut dir);
+    // Alone, a launch is an evaluation of its own: three phases, three launches.
+    run_cpu(&reg, &dir, op, &c.slots, &c.params, Tiling::WHOLE).unwrap();
+    assert_eq!(dir.launches(), 3);
+    let e = {
+        let _e = dir.evaluation(5);
+        run_cpu(&reg, &dir, op, &c.slots, &c.params, Tiling::WHOLE).unwrap();
+        run_cpu(&reg, &dir, op, &c.slots, &c.params, Tiling::WHOLE).unwrap_err()
+    };
+    assert!(e.contains("launch 6 of an evaluation whose budget is 5 (0601): evens.count 2, evens.scan 2, evens.place 2"), "{e}");
 }

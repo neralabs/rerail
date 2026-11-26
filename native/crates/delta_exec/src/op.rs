@@ -34,7 +34,7 @@ use crate::dir::{BlockId, Directory, Launch};
 use rerail_blocks::ledger::Fence;
 use std::sync::Arc;
 use rerail_blocks::gens::Table;
-use rerail_delta_twins::{Ctx, Field, Params, Slot, Tile, Twin};
+use rerail_delta_twins::{Ctx, Field, Meter, Params, Slot, Tile, Twin};
 
 /// The most slots an operation binds: Metal's argument table has 31 entries, one of them the params' (D1).
 pub const MAX_SLOTS: usize = 30;
@@ -156,18 +156,23 @@ pub enum Over {
     Rerun,
 }
 
-/// A bound on a phase.
+/// A bound on a phase, each held by the executor (`drive`): an item past it fails the launch, or, for capacity, the
+/// launch refuses, grows the slot and runs the phase again, or runs again from its first phase.
+///
+/// The launch budget (0540, 0601) is not a phase's bound: every launch counts in one ledger (`Directory::charge`), each
+/// phase's turn one, and one past the evaluation's budget fails.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Bound {
-    /// Steps an item.
+    /// Steps an item (`Ctx::steps`).
     Steps(u32),
     /// Turns of a phase that runs again (a queue's, a fixpoint's rounds, a merge's passes): past it, a hard failure.
     Turns(u32),
-    /// The launch budget (0540, 0601).
-    LaunchBudget,
+    /// What an item that finds a written slot too small does (`Ctx::room`): refuse, grow the slot's capacity within its
+    /// reservation and run the phase again, or run the launch again from its first phase at the capacity it needs.
     Capacity(Over),
+    /// A stack's depth (`Ctx::depth`): a phase whose units hold stacks (`Inside::Stacks`) bounds them.
     StackDepth(u32),
-    /// A sample's size.
+    /// A sample's size (`Ctx::sample`).
     Sample(u32),
 }
 
@@ -192,6 +197,50 @@ impl Phase {
     /// The most turns it runs: its `Turns` bound (one turn without one).
     pub fn turns(&self) -> u32 {
         self.bounds.iter().find_map(|b| if let Bound::Turns(n) = b { Some(*n) } else { None }).unwrap_or(1)
+    }
+
+    /// Its bound on an item's steps.
+    pub fn steps(&self) -> Option<u32> {
+        self.bounds.iter().find_map(|b| if let Bound::Steps(n) = b { Some(*n) } else { None })
+    }
+
+    /// Its bound on a stack's depth.
+    pub fn depth(&self) -> Option<u32> {
+        self.bounds.iter().find_map(|b| if let Bound::StackDepth(n) = b { Some(*n) } else { None })
+    }
+
+    /// Its sample's size.
+    pub fn sample(&self) -> Option<u32> {
+        self.bounds.iter().find_map(|b| if let Bound::Sample(n) = b { Some(*n) } else { None })
+    }
+
+    /// What it does past a written slot's capacity.
+    pub fn capacity(&self) -> Option<Over> {
+        self.bounds.iter().find_map(|b| if let Bound::Capacity(o) = b { Some(*o) } else { None })
+    }
+
+    /// Whether its bounds fit its axes (Operations §4): each kind of bound once; a unit holding stacks bounds their
+    /// depth, and only such a unit does; output by an atomic claim bounds its capacity (claim and rerun, shape 12); a
+    /// phase by rounds bounds its turns.
+    fn fits_axes(&self) -> Result<(), String> {
+        let kind = |b: &Bound| std::mem::discriminant(b);
+        if let Some((i, _)) = self.bounds.iter().enumerate().find(|(i, b)| self.bounds[..*i].iter().any(|a| kind(a) == kind(b))) {
+            return Err(format!("phase {}: its bound {:?} is given twice", self.name, self.bounds[i]));
+        }
+        if (self.inside == Inside::Stacks) != self.depth().is_some() {
+            return Err(format!(
+                "phase {}: {}",
+                self.name,
+                if self.inside == Inside::Stacks { "its units hold stacks, and it bounds no stack depth" } else { "bounds a stack's depth, and its units hold no stacks" }
+            ));
+        }
+        if self.output == Output::Claim && self.capacity().is_none() {
+            return Err(format!("phase {}: its output is claimed, and it bounds no capacity", self.name));
+        }
+        if self.across == Across::Rounds && self.turns() < 2 {
+            return Err(format!("phase {}: relates its units by rounds, and its shape bounds no turns", self.name));
+        }
+        Ok(())
     }
 }
 
@@ -403,6 +452,7 @@ impl Registry {
         if sig.shape.is_empty() {
             return Err(format!("{}: an operation's shape has at least one phase", sig.name));
         }
+        Self::fits_bounds(sig, sig.shape)?;
         self.ops.push(sig);
         Ok(OpId(self.ops.len() as u32 - 1))
     }
@@ -424,6 +474,7 @@ impl Registry {
                 names(&mut v.shape.iter().map(|p| p.name))
             ));
         }
+        Self::fits_bounds(sig, v.shape)?;
         if let Some((p, _)) = v.shape.iter().zip(twin).find(|(p, t)| t.again.is_some() && p.turns() < 2) {
             return Err(format!("{}: phase {} runs again, and its shape bounds no turns", sig.name, p.name));
         }
@@ -439,11 +490,27 @@ impl Registry {
         Ok(())
     }
 
-    /// A UKL version's shape: it declares no twin's phases, so its own shape is what it runs by; a phase that runs again
-    /// (by rounds) has a bound on its turns.
+    /// Whether a shape's bounds fit its axes (`Phase::fits_axes`), and a launch run again from its first phase (a
+    /// capacity's `Rerun`) writes no slot it reads: what the first run wrote there would be read by the second.
+    fn fits_bounds(sig: &Signature, shape: &[Phase]) -> Result<(), String> {
+        for p in shape {
+            p.fits_axes().map_err(|e| format!("{}: {e}", sig.name))?;
+        }
+        if let Some(p) = shape.iter().find(|p| p.capacity() == Some(Over::Rerun))
+            && let Some(s) = sig.slots.iter().find(|s| s.mode == Mode::ReadWrite)
+        {
+            return Err(format!("{}: phase {} runs the launch again past a capacity, and slot {} is read and written", sig.name, p.name, s.name));
+        }
+        Ok(())
+    }
+
+    /// A UKL version's shape: it declares no twin's phases, so its own shape is what it runs by, its bounds fitting its
+    /// axes. A bound an item reports (steps, a stack's depth, a sample, a slot's room) is metered for twins only: a
+    /// kernel's report of it is not built, so a UKL version declaring one is refused.
     fn fits_shape(sig: &Signature, v: &Version) -> Result<(), String> {
-        if let Some(p) = v.shape.iter().find(|p| p.across == Across::Rounds && p.turns() < 2) {
-            return Err(format!("{}: phase {} relates its units by rounds, and its shape bounds no turns", sig.name, p.name));
+        Self::fits_bounds(sig, v.shape)?;
+        if let Some(p) = v.shape.iter().find(|p| p.bounds.iter().any(|b| !matches!(b, Bound::Turns(_)))) {
+            return Err(format!("{}: {}: phase {} has a bound its items report, metered for twins only", sig.name, v.name, p.name));
         }
         Ok(())
     }
@@ -605,6 +672,8 @@ trait Runs {
     fn run(&mut self, p: usize, t: Tile) -> Result<(), String>;
     /// Whether phase `p` runs again (a phase by rounds; asked after each turn).
     fn again(&mut self, p: usize) -> Result<bool, String>;
+    /// The meter of its items' bounded work, where they report it (a twin's; a kernel's report is not built).
+    fn meter(&mut self) -> Option<&mut Meter>;
 }
 
 struct TwinRuns<'s, 'p, 't> {
@@ -622,6 +691,9 @@ impl Runs for TwinRuns<'_, '_, '_> {
     }
     fn again(&mut self, p: usize) -> Result<bool, String> {
         Ok(self.twin[p].again.is_some_and(|again| again(&mut self.ctx)))
+    }
+    fn meter(&mut self) -> Option<&mut Meter> {
+        Some(&mut *self.ctx.meter)
     }
 }
 
@@ -649,6 +721,9 @@ impl Runs for UklRuns<'_> {
             return Ok(false);
         }
         Ok(self.bound.run(self.source, &format!("{}_{}_again", self.entry, self.shape[p].name), 0, 1)? != 0)
+    }
+    fn meter(&mut self) -> Option<&mut Meter> {
+        None
     }
 }
 
@@ -684,49 +759,93 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
         Independence::Along(_) => tiling,
         Independence::Not(_) => Tiling::WHOLE,
     };
+    // Its launches count in the open evaluation, or in one of its own (0601).
+    let _evaluation = dir.evaluation(crate::dir::LAUNCH_BUDGET);
     let modes: Vec<(BlockId, bool)> = slots.iter().zip(sig.slots).map(|(&id, s)| (id, s.mode.writes())).collect();
-    let mut launch = dir.launch(sig.name, &modes)?;
-    match v.imp {
-        Impl::Twin(twin) => {
-            let (pins, table) = launch.parts();
-            let mut slot_views: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();
-            let ctx = Ctx { slots: &mut slot_views, table: &table, params };
-            drive(sig, v, tiling, &mut TwinRuns { ctx, twin })
+    let mut reran = false;
+    loop {
+        let mut launch = dir.launch(sig.name, &modes)?;
+        let drove = match v.imp {
+            Impl::Twin(twin) => {
+                let mut meter = Meter { capacity: slots.iter().map(|&id| dir.capacity(id)).collect(), ..Meter::default() };
+                let (pins, table) = launch.parts();
+                let mut slot_views: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();
+                let ctx = Ctx { slots: &mut slot_views, table: &table, params, meter: &mut meter };
+                drive(sig, v, tiling, dir, slots, &mut TwinRuns { ctx, twin })?
+            }
+            Impl::Ukl { source, entry } => return on_device(sig, v, dir, slots, params, tiling, device, launch, source, entry),
+            Impl::Compiled(_) => return Err(format!("{}: {} is compiled ahead, which is not built", sig.name, v.name)),
+        };
+        let needs = match drove {
+            Drove::Done => return Ok(()),
+            Drove::Rerun(needs) => needs,
+        };
+        // Run again from the first phase, once, each slot that needed room grown to what it needs: past that, the need
+        // was not the exact size, and the launch fails.
+        drop(launch);
+        if reran {
+            return Err(format!("{}: run again at the capacity its slots needed, and they needed more: {needs:?}", sig.name));
         }
-        Impl::Ukl { source, entry } => {
-            let d = device.ok_or_else(|| format!("{}: {} is a UKL version, and no device was given to run it on", sig.name, v.name))?;
-            if !v.devices.has(d.devices()) {
-                return Err(format!("{}: {} runs on {:?}, not on the device's {:?}", sig.name, v.name, v.devices, d.devices()));
-            }
-            let ids: Vec<u32> = slots.iter().map(|s| s.0).collect(); // copy: not block data (the slots' ids, an argument)
-            let fence = Fence::new();
-            // Every use the launch hands the fence ends with it, whatever the work did.
-            let done = |r: Result<(), String>| {
-                fence.mark_committed();
-                fence.complete();
-                r
-            };
-            let bound = match d.bind(&launch, &fence, &ids, params) {
-                Ok(b) => b,
-                Err(e) => return done(Err(e)),
-            };
-            if let Err(b) = launch.to_fence(&fence, sig.name, d.domain()) {
-                drop(bound);
-                return done(Err(b.1));
-            }
-            let r = done(drive(sig, v, tiling, &mut UklRuns { bound, source, entry, shape: v.shape }));
-            // A device domain of its own: what the kernels wrote comes back to the host's bytes (`Region::sync_host`).
-            if d.domain() != 0 {
-                for (spec, &id) in sig.slots.iter().zip(slots) {
-                    if let (true, Some(b)) = (spec.mode.writes(), dir.block(id)) {
-                        rerail_blocks::region::whole(&b).region().sync_host();
-                    }
-                }
-            }
-            r
+        for (s, need) in needs {
+            dir.grow(slots[s], need).map_err(|e| format!("{}: slot {} ({}): {e}", sig.name, s, sig.slots[s].name))?;
         }
-        Impl::Compiled(_) => Err(format!("{}: {} is compiled ahead, which is not built", sig.name, v.name)),
+        reran = true;
     }
+}
+
+/// A UKL version's launch on `device`: bound there, handed to its fence, its phases driven.
+#[allow(clippy::too_many_arguments)]
+fn on_device(
+    sig: &Signature,
+    v: &Version,
+    dir: &Directory,
+    slots: &[BlockId],
+    params: &[u8],
+    tiling: Tiling,
+    device: Option<&dyn Kernels>,
+    launch: Launch,
+    source: &'static str,
+    entry: &'static str,
+) -> Result<(), String> {
+    let d = device.ok_or_else(|| format!("{}: {} is a UKL version, and no device was given to run it on", sig.name, v.name))?;
+    if !v.devices.has(d.devices()) {
+        return Err(format!("{}: {} runs on {:?}, not on the device's {:?}", sig.name, v.name, v.devices, d.devices()));
+    }
+    let ids: Vec<u32> = slots.iter().map(|s| s.0).collect(); // copy: not block data (the slots' ids, an argument)
+    let fence = Fence::new();
+    // Every use the launch hands the fence ends with it, whatever the work did.
+    let done = |r: Result<(), String>| {
+        fence.mark_committed();
+        fence.complete();
+        r
+    };
+    let bound = match d.bind(&launch, &fence, &ids, params) {
+        Ok(b) => b,
+        Err(e) => return done(Err(e)),
+    };
+    if let Err(b) = launch.to_fence(&fence, sig.name, d.domain()) {
+        drop(bound);
+        return done(Err(b.1));
+    }
+    let r = done(drive(sig, v, tiling, dir, slots, &mut UklRuns { bound, source, entry, shape: v.shape }).and_then(|d| match d {
+        Drove::Done => Ok(()),
+        Drove::Rerun(_) => Err(format!("{}: a kernel's room is not metered", sig.name)),
+    }));
+    // A device domain of its own: what the kernels wrote comes back to the host's bytes (`Region::sync_host`).
+    if d.domain() != 0 {
+        for (spec, &id) in sig.slots.iter().zip(slots) {
+            if let (true, Some(b)) = (spec.mode.writes(), dir.block(id)) {
+                rerail_blocks::region::whole(&b).region().sync_host();
+            }
+        }
+    }
+    r
+}
+
+/// How a launch's phases ended: every one ran, or one asked for the launch to run again at the capacities it needs.
+enum Drove {
+    Done,
+    Rerun(Vec<(usize, usize)>),
 }
 
 /// Runs a version's phases by its shape, axis by axis:
@@ -735,16 +854,26 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
 ///   made it); an indirect one's is made by the phases before it;
 /// - across units: tiles whose units share nothing, combine associatively or make a round run in any order; units
 ///   in order (a carry from one to the next), or any other relation, run in order;
-/// - its bounds: a phase that runs again stops at its bound on turns, past which the launch fails.
-fn drive(sig: &Signature, v: &Version, tiling: Tiling, r: &mut dyn Runs) -> Result<(), String> {
+/// - its bounds: each turn is a launch, charged to the evaluation (0601); an item past its bound on steps, a stack's
+///   depth or a sample fails the launch, as does a report of one its phase does not bound; a slot found too small is
+///   refused, grown within its reservation and the phase run again, or the launch run again, as its capacity bound
+///   says; a phase that runs again stops at its bound on turns, past which the launch fails.
+fn drive(sig: &Signature, v: &Version, tiling: Tiling, dir: &Directory, slots: &[BlockId], r: &mut dyn Runs) -> Result<Drove, String> {
     let mut fixed = Vec::with_capacity(v.shape.len());
     for (k, p) in v.shape.iter().enumerate() {
         fixed.push(if p.found == Found::Fixed { Some(r.items(k)?) } else { None });
     }
     for (k, (phase, fixed)) in v.shape.iter().zip(fixed).enumerate() {
-        let mut turn = 0;
+        if let Some(m) = r.meter() {
+            m.steps = phase.steps();
+            m.depth = phase.depth();
+            m.sample = phase.sample();
+            m.bounded_room = phase.capacity().is_some();
+        }
+        let (mut turn, mut grown) = (0, 0);
         loop {
             turn += 1;
+            dir.charge(sig.name, phase.name)?;
             let n = r.items(k)? as usize;
             if let Some(f) = fixed
                 && f as usize != n
@@ -761,6 +890,36 @@ fn drive(sig: &Signature, v: &Version, tiling: Tiling, r: &mut dyn Runs) -> Resu
             for k2 in order {
                 let lo = k2 * t;
                 r.run(k, Tile { lo: lo as u32, hi: (lo + t).min(n) as u32 })?;
+                if let Some(f) = r.meter().and_then(|m| m.fault.take()) {
+                    return Err(format!("{}: phase {}: {f}", sig.name, phase.name));
+                }
+            }
+            if let Some(m) = r.meter()
+                && !m.needs.is_empty()
+            {
+                let needs = std::mem::take(&mut m.needs);
+                let (s, need) = needs[0];
+                match phase.capacity() {
+                    Some(Over::Grow) => {
+                        grown += 1;
+                        if grown > 32 {
+                            return Err(format!("{}: phase {}: grown 32 times, and its slots need more: {needs:?}", sig.name, phase.name));
+                        }
+                        for (s, need) in needs {
+                            m.capacity[s] = dir.grow(slots[s], need).map_err(|e| format!("{}: phase {}: slot {s} ({}): {e}", sig.name, phase.name, sig.slots[s].name))?;
+                        }
+                        // The same turn again, over the grown slots: what its items wrote is found, not written twice.
+                        turn -= 1;
+                        continue;
+                    }
+                    Some(Over::Rerun) => return Ok(Drove::Rerun(needs)),
+                    Some(Over::Refuse) | None => {
+                        return Err(format!(
+                            "{}: phase {}: slot {s} ({}) needs a capacity of {need} bytes, and has {}: refused",
+                            sig.name, phase.name, sig.slots[s].name, m.capacity[s]
+                        ));
+                    }
+                }
             }
             if r.again(k)? {
                 if turn >= phase.turns() {
@@ -771,7 +930,7 @@ fn drive(sig: &Signature, v: &Version, tiling: Tiling, r: &mut dyn Runs) -> Resu
             }
         }
     }
-    Ok(())
+    Ok(Drove::Done)
 }
 
 #[cfg(test)]

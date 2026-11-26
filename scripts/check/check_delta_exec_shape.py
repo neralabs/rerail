@@ -185,8 +185,8 @@ def b2(failures: list) -> None:
     code = strip_rust(trace.read_text())
     hits(trace, code, r"\bVec<\s*(Layer|Chain|BlockId)\b|\bVec<Vec<i64>>\s*[,;)]", "the host holding layers or rows", failures)
     tstruct = re.search(r"pub struct Trace \{(.*?)\}", code, flags=re.S)
-    if not tstruct or re.sub(r"\s+", " ", tstruct.group(1)).strip() != "shape: ShapeW, head: Option<BlockId>, roll: RollUp, cache: Option<BlockId>,":
-        failures.append(f"{trace.relative_to(ROOT)}: a Trace is its shape, its head's block id, its roll-up policy and its cache header's block id")
+    if not tstruct or re.sub(r"\s+", " ", tstruct.group(1)).strip() != "shape: ShapeW, head: Option<BlockId>, roll: RollUp,":
+        failures.append(f"{trace.relative_to(ROOT)}: a Trace is its shape, its head's block id and its roll-up policy")
     # O5: the geometric roll-up runs from commit, by the count consolidate's seal reads from the layers' headers.
     twins = (CRATE.parent / "delta_twins/src/trace.rs").read_text()
     if "fn due_to_merge(" not in twins or "due_to_merge(c.table" not in twins:
@@ -309,6 +309,51 @@ def axes(failures: list) -> None:
             failures.append(f"native/crates/delta_exec/src/trace.rs: phase {name} is one item, declared otherwise")
 
 
+def bounds(failures: list) -> None:
+    """Operations §4's bounds axis, each held by the executor: steps, a stack's depth and a sample reported by a twin
+    through its meter, a slot's capacity refused, grown or the launch run again, turns bounded; the launch budget one
+    ledger every launch charges (0601), not a phase's label. Bounds fit their axes when declared."""
+    op = strip_rust((CRATE / "src/op.rs").read_text())
+    for want, why in (
+        (r"m\.steps = phase\.steps\(\)", "the executor gives a phase's steps bound to its meter"),
+        (r"m\.depth = phase\.depth\(\)", "the executor gives a phase's stack bound to its meter"),
+        (r"m\.sample = phase\.sample\(\)", "the executor gives a phase's sample to its meter"),
+        (r"m\.bounded_room = phase\.capacity\(\)\.is_some\(\)", "the executor bounds a phase's room by its capacity bound"),
+        (r"Some\(Over::Grow\) =>", "a capacity's grow is the executor's"),
+        (r"Some\(Over::Rerun\) => return Ok\(Drove::Rerun", "a capacity's rerun is the executor's"),
+        (r"dir\.charge\(sig\.name, phase\.name\)\?", "every phase's turn is a launch charged to the ledger (0601)"),
+        (r"Self::fits_bounds\(sig, sig\.shape\)\?", "a signature's bounds fit its axes when declared"),
+    ):
+        if not re.search(want, op):
+            failures.append(f"native/crates/delta_exec/src/op.rs: {why}")
+    if re.search(r"\bLaunchBudget\b", op):
+        failures.append("native/crates/delta_exec/src/op.rs: the launch budget is the ledger's (0601), not a phase's bound")
+    shape = (CRATE / "src/trace.rs").read_text()
+    if not re.search(r'ph\("kills",[^)]*KILL_STEPS\)', shape):
+        failures.append("native/crates/delta_exec/src/trace.rs: the kill search bounds its steps, a layer a step")
+    if not re.search(r"c\.steps\(depth\)", strip_rust((TWINS / "src/trace.rs").read_text())):
+        failures.append("the twins' trace.rs: the kill search reports its steps")
+
+
+def cache(failures: list) -> None:
+    """P§11.3 and Operations §6.1: an operator's cache is mutable blocks, one state mutated in place, never frozen,
+    with no generations; not a trace's layers. Its operations are real (not test-only), and `order` grows it."""
+    layer = strip_rust((ROOT / "native/crates/blocks/src/layer.rs").read_text())
+    if re.search(r"Retention::Cache\s*=>\s*RETAIN_CACHE|\bRETAIN_CACHE\b|fn is_cache", layer):
+        failures.append("native/crates/blocks/src/layer.rs: a cache stored as a trace's layers (P§11.3: one block, mutated)")
+    lib = (TWINS / "src/lib.rs").read_text()
+    if re.search(r"#\[cfg\([^\]]*\)\]\s*pub mod cache;", lib):
+        failures.append("the twins' lib.rs: the cache's twins are test-only")
+    host = (CRATE / "src/cache.rs").read_text()
+    if not re.search(r'one\("order", [^)]*Bound::Capacity\(Over::Grow\)', host):
+        failures.append("native/crates/delta_exec/src/cache.rs: order grows the cache within its reservation")
+    if re.search(r"\bdir\.freeze\(|\.refer\(", host):
+        failures.append("native/crates/delta_exec/src/cache.rs: a cache block frozen or referring: it has no generations")
+    trace = strip_rust((CRATE / "src/trace.rs").read_text())
+    if re.search(r"cache", trace):
+        failures.append("native/crates/delta_exec/src/trace.rs: a trace holds a cache (P§11.3: a cache is not a trace)")
+
+
 def reach(failures: list) -> None:
     """The twins' rules reach the blocks code the twins call to write a layer (decision 0686): relation::layer_write,
     where the twins' clippy lints are denied (blocks' clippy.toml lists the twins' paths, and the two lists agree),
@@ -402,14 +447,14 @@ def e1(failures: list) -> None:
 
 def main() -> int:
     failures: list = []
-    for check in (m0, b1, b2, axes, reach, e1):
+    for check in (m0, b1, b2, axes, bounds, cache, reach, e1):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1, B2, axes, reach, E1)")
+    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, reach, E1)")
     return 0
 
 

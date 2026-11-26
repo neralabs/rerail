@@ -182,8 +182,11 @@ impl Shape {
         };
         let retention = match self.retention {
             Retention::Run => RETAIN_RUN,
-            // P§11.3: one state, folded into one layer at each commit, its header naming the state.
-            Retention::Cache => RETAIN_CACHE,
+            Retention::Cache => {
+                return Err("a cache is not a trace's layers: it is one state, blocks mutated in place, never frozen \
+                            (P§11.3): an operator's cache (delta_exec::cache)"
+                    .into());
+            }
             Retention::History => {
                 return Err("retention History keeps named frontiers, and a trace holds two states: \"no Frontier, at, \
                             between, fork or pins\" (the user's answer, 2026-11-25, in the rebuild plan)"
@@ -260,10 +263,9 @@ pub const ENC_PACKED: u32 = 1;
 pub const ENC_RANGED: u32 = 2;
 pub const ENC_DICT: u32 = 3;
 
-/// A shape's retention, as its blocks hold it: run data (two states during a run, one at rest), or a cache (one
-/// state, mutated: P§11.3).
+/// A shape's retention, as its blocks hold it: run data (two states during a run, one at rest). A cache is not a
+/// trace (P§11.3: one state, mutated in place).
 pub const RETAIN_RUN: u32 = 0;
-pub const RETAIN_CACHE: u32 = 1;
 
 /// One index of a shape, as its blocks hold it.
 #[repr(C)]
@@ -309,11 +311,6 @@ impl ShapeW {
 
     pub fn order(&self) -> &[u8] {
         &self.order[..self.arity()]
-    }
-
-    /// Whether the trace is a cache (P§11.3): one state, its header naming it.
-    pub fn is_cache(&self) -> bool {
-        self.retention == RETAIN_CACHE
     }
 
     /// A recursive relation's level column (0364): its last.

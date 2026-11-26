@@ -25,6 +25,7 @@
 //! The milestones toward one boot operation, L1 (the rebuild plan's §4), come after: the operator contract (B3), l0's
 //! tape through the file layer (B4), symbols (B5) and L1 itself (B6).
 
+pub mod cache;
 pub mod dir;
 pub mod k0;
 pub mod kform;
