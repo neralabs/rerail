@@ -20,6 +20,7 @@ import { GIT_OPEN_AGAIN_MS, gitReadTimedOut, nativeGitAccess } from "../native/g
 import type { NativeGitAccess, NativeGitIgnoreMatcher } from "../native/native.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import { GitIgnoreMatchers } from "../native/git-ignore-matchers.js";
+import type { GitIgnoreLook } from "../native/git-ignore-answers.js";
 import type {
   AuditorCloseOptions,
   CodeRuleEdit,
@@ -356,9 +357,13 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       const name = path.slice(slash + 1);
       return owner === undefined ? undefined : { checkoutRoot: owner.checkoutRoot, path: owner.path === "" ? name : `${owner.path}/${name}` };
     };
+    // Git's ignore answers come from those every session's walks learnt of the checkout, checked once per walk against
+    // the facts that end them (`GitIgnoreMatchers.look`); while they hold, a file's second question, whether a lane
+    // reads it, takes the answer its first learnt.
+    const look = this.#gitIgnoreMatchers.look();
     return {
-      acceptsPath: path => this.#accepts(fileOwner(path)),
-      ignoresPath: (path, directory) => this.#ignores(directory ? folderOwner(path) : fileOwner(path), directory),
+      acceptsPath: path => this.#accepts(fileOwner(path), look),
+      ignoresPath: (path, directory) => this.#ignores(directory ? folderOwner(path) : fileOwner(path), directory, look),
       sourceRoot: path => fileOwner(path)?.checkoutRoot,
     };
   }
@@ -370,25 +375,28 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * rules. A lane holds a native workspace and its checkout's index, so opening one in every worktree to answer took
    * the daemon's memory to gigabytes with one session in a repository of many.
    */
-  #accepts(owner: CheckoutOwner | undefined): boolean {
+  #accepts(owner: CheckoutOwner | undefined, look?: GitIgnoreLook): boolean {
     if (owner === undefined) return false;
     const root = owner.checkoutRoot;
     // A lane of its own reads its rules again first at its first use after an event (`#lane`).
     const lane = this.#lanes.has(root) ? this.#lane(root) : this.#laneWithRulesOf(root) ?? this.#lane(root);
-    return lane !== undefined && this.#readsIn(lane, owner);
+    return lane !== undefined && this.#readsIn(lane, owner, look);
   }
 
-  /** Whether `lane` reads `owner`'s path: its own checkout's answer, or another's by the same rules and that checkout's Git ignore rules. */
-  #readsIn(lane: Lane, owner: CheckoutOwner): boolean {
-    if (lane.root === owner.checkoutRoot) return lane.enforcer.acceptsPath(owner.path);
-    return lane.enforcer.readsPath(owner.path) && !this.#gitIgnores(owner, false);
+  /**
+   * Whether `lane` reads `owner`'s path: its own checkout's answer, or another's by the same rules and that checkout's
+   * Git ignore rules. `look`: a walk's questions of the answers kept (`walkView`).
+   */
+  #readsIn(lane: Lane, owner: CheckoutOwner, look: GitIgnoreLook | undefined): boolean {
+    if (lane.root === owner.checkoutRoot) return lane.enforcer.acceptsPath(owner.path, look);
+    return lane.enforcer.readsPath(owner.path) && !this.#gitIgnores(owner, false, look);
   }
 
   /** A lane follows its own checkout's Git ignore rules, as `#gitIgnores` does, so a checkout needs no lane to answer. */
-  #ignores(owner: CheckoutOwner | undefined, directory: boolean): boolean {
+  #ignores(owner: CheckoutOwner | undefined, directory: boolean, look?: GitIgnoreLook): boolean {
     if (owner === undefined) return false;
     const lane = this.#lanes.get(owner.checkoutRoot);
-    return lane === undefined ? this.#gitIgnores(owner, directory) : lane.enforcer.ignoresPath(owner.path, directory);
+    return lane === undefined ? this.#gitIgnores(owner, directory, look) : lane.enforcer.ignoresPath(owner.path, directory, look);
   }
 
   /**
@@ -448,12 +456,14 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * Only a failed open leaves the checkout without a matcher: one path's failed read (an unreadable nested
    * `.gitignore`, the index caught mid-rewrite) used to drop it too, and every later walk then entered the checkout's
    * ignored folders. As a lane does, rules that cannot be read leave the path in, so a broken `.gitignore` never hides
-   * sources.
+   * sources. A walk's question (`look`) takes the answer the walks learnt.
    */
-  #gitIgnores(owner: CheckoutOwner, directory: boolean): boolean {
+  #gitIgnores(owner: CheckoutOwner, directory: boolean, look?: GitIgnoreLook): boolean {
     if (this.#options.followGitignore !== true) return false;
     try {
-      return this.#gitIgnoreMatcher(owner)?.ignored(owner.path, directory) ?? false;
+      const matcher = this.#gitIgnoreMatcher(owner);
+      if (matcher === null) return false;
+      return look === undefined ? matcher.ignored(owner.path, directory) : look.ignored(matcher, owner.path, directory);
     } catch (error) {
       this.#reportGitIgnoreError(owner, error, "question");
       return false;
