@@ -27,5 +27,25 @@ both sides. Run on the files alone, the translation reports them.
 
 The `!option(_, _)` spelling is also recorded in NOTES-statements.md; any rule that copied it has the same defect.
 
-Library changes: none needed. Engine gap: `visit_index`/`earlier` for TypeScript (the comment in core says "elsewhere
+Library changes: none needed for the translation itself; the review fix below changes `lib/tsx/statements.rerail`.
+Engine gap: `visit_index`/`earlier` for TypeScript (the comment in core says "elsewhere
 it is start offset", but no rows came back for `visit_index` on a `.js` file).
+
+### Review fix: `declare global { … }`
+
+The review found `const x = 1; declare global { const y: number; }` unreported: ESLint parses the body as a
+TSModuleBlock, which one-var's stack ignores, but tree-sitter puts a plain `statement_block` straight in the
+`ambient_declaration`, so `block_scope_at` made it a scope. `namespace_body` (`lib/tsx/statements.rerail`, the one
+definition of one-var's scopes) now also takes a `statement_block` child of an `ambient_declaration`.
+
+| File | ESLint | Before | After |
+|---|---|---|---|
+| j1_declare_global.ts (review) | line 3 | nothing | line 3 |
+| j2.ts: let/var in and around `declare global`, `global { }` in `declare module "m"` | 3, 4, 7, 11 | 4, 7, 11 | 3, 4, 7, 11 |
+| j3.ts: `declare global` with an interface, blocks in a function | nothing | nothing | nothing |
+
+`namespace_body` is also read by eslint-max-statements (`owned`), where ESTree's TSModuleBlock is no BlockStatement
+either. ptcheck `--rules eslint-one-var,eslint-max-statements` after the fix: one-var unchanged (fixtures 311 both;
+rerail-typescript 11026 both, 130 translation-only, the ones explained above); max-statements unchanged from the
+integration branch without the fix (rerail-typescript 1401 both, `src/hosts/omp/extension.ts` 422 original-only and
+418 translation-only on both runs).
