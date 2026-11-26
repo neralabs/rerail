@@ -34,7 +34,8 @@ vi.mock("../../../../src/engine/child-process.js", async importOriginal => {
     const ending = next.ending;
     if (ending === undefined || !args.includes(next.ask)) return [file, [...args]];
     next.asks -= 1;
-    if (next.asks === 0) next.ending = undefined;
+    // The last of them ends the arming, and the next one takes a single ask unless it says more.
+    if (next.asks <= 0) Object.assign(next, { ending: undefined, asks: 1 });
     return [process.execPath, [next.script, ending]];
   };
   const spawn = ((file: string, args: readonly string[], options: object) => actual.spawn(...started(file, args), options)) as typeof actual.spawn;
