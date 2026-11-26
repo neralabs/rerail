@@ -2800,6 +2800,10 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
         let program = rerail_gpu::kernels::program("view_probe.uglykl", Box::leak(source.into_boxed_str())).unwrap_or_else(|e| panic!("the view reads compile: {e}"));
         (shared, program.function("view_probe").unwrap())
     });
+    // The codes' directory where it lies in the binary, wrapped in place once and held as long as the device (decision
+    // 0697, `Shared::wrap_static`): a wrap released after a shape's probe left its pages unreadable to the next
+    // shape's reads on Metal.
+    let cb = probe.as_ref().map(|(shared, _)| shared.wrap_static(rerail_tape_format::codes_dir::bytes()).unwrap());
     let cases: &[(&str, &str)] = &[
         ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
         ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
@@ -2915,7 +2919,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         assert_eq!(doc.sibling(i, 1), p.global(l), "{at}: sibling row {i}'s node");
                     }
                 }
-                if let Some((shared, probe)) = probe {
+                if let (Some((shared, probe)), Some(cb)) = (probe, cb.as_ref()) {
                     let d = block.offset_of(entry.desc()) as u64;
                     // The tape where the device reads it: a test's buffer of its bytes, a word of room past them.
                     let mut bytes = tape.to_vec();
@@ -2925,10 +2929,6 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     // Its lines where the device reads them: a test's buffer of their index.
                     let lb = buffer_of(&words).unwrap();
                     let (tt_at, lb_at) = (tt.device_address().unwrap(), lb.device_address().unwrap());
-                    // The codes' directory where it lies in the binary, wrapped in place (decision 0697).
-                    let codes = rerail_tape_format::codes_dir::bytes();
-                    // SAFETY: the binary's directory, which outlives the buffer; the kernel only loads from it.
-                    let cb = unsafe { rerail_gpu::device::wrap_host_memory(&shared.device, codes.as_ptr().cast_mut(), codes.len()) }.unwrap();
                     let cd_at = cb.device_address().unwrap();
                     // A 16z tape's blocks through a cache every thread shares (0353 step 4b): one of a block a
                     // generation, which turns all the time and may find no room (a failure counted: the device

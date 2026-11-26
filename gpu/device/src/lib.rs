@@ -62,6 +62,25 @@ pub mod shared {
         /// The queue of work committed ahead that waits on an event (the forest's armed prediction): a command
         /// buffer waiting on an event holds back the ones its queue commits after it, so it is not `queue`.
         pub waiting: QueueRoot,
+        /// The device's wraps of the binary's own memory (`wrap_static`), each held as long as the device.
+        statics: std::sync::Mutex<Vec<(usize, usize, crate::device::Buffer)>>,
+    }
+
+    impl Shared {
+        /// A buffer over `bytes`, the binary's own memory (a table it holds as constants), wrapped in place once
+        /// (`device::wrap_host_memory`) and held as long as the device: on Metal, a no-copy buffer's release leaves the
+        /// pages it wrapped unreadable to the host, so a wrap of the binary's pages is never released. A clone of it.
+        pub fn wrap_static(&self, bytes: &'static [u8]) -> Result<crate::device::Buffer, String> {
+            let key = (bytes.as_ptr() as usize, bytes.len());
+            let mut held = self.statics.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some((_, _, b)) = held.iter().find(|(at, len, _)| (*at, *len) == key) {
+                return Ok(b.clone());
+            }
+            // SAFETY: the binary's memory outlives the device; the kernels only load from it.
+            let b = unsafe { crate::device::wrap_host_memory(&self.device, bytes.as_ptr().cast_mut(), bytes.len()) }?;
+            held.push((key.0, key.1, b.clone()));
+            Ok(b)
+        }
     }
 
     static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
@@ -103,14 +122,14 @@ pub mod shared {
     fn opencl() -> Result<Shared, String> {
         use crate::compute_kernel_opencl::{ClDevice, ClQueueRoot};
         let (queue, waiting, device) = ClDevice::open().and_then(|d| Ok((ClQueueRoot::new(&d)?, ClQueueRoot::new(&d)?, d)))?;
-        Ok(Shared { device: Device::OpenCl(device), queue: QueueRoot::OpenCl(queue), waiting: QueueRoot::OpenCl(waiting) })
+        Ok(Shared { device: Device::OpenCl(device), queue: QueueRoot::OpenCl(queue), waiting: QueueRoot::OpenCl(waiting), statics: Default::default() })
     }
 
     fn open_cpu() -> Option<Shared> {
         use crate::compute_kernel_cpu::{CpuDevice, CpuQueueRoot};
         let device = CpuDevice::system_default()?;
         let (queue, waiting) = (QueueRoot::Cpu(CpuQueueRoot::new(device)), QueueRoot::Cpu(CpuQueueRoot::new(device)));
-        Some(Shared { device: Device::Cpu(device), queue, waiting })
+        Some(Shared { device: Device::Cpu(device), queue, waiting, statics: Default::default() })
     }
 
     #[cfg(target_os = "macos")]
@@ -119,7 +138,7 @@ pub mod shared {
             let device = metal::Device::system_default()?;
             let queue = QueueRoot::Native(device.new_command_queue());
             let waiting = QueueRoot::Native(device.new_command_queue());
-            Some(Shared { device: Device::Native(device), queue, waiting })
+            Some(Shared { device: Device::Native(device), queue, waiting, statics: Default::default() })
         })
     }
 
@@ -153,6 +172,6 @@ pub mod shared {
         // The waiting root first: its stream is the only one an armed wait holds (`CudaQueueRoot`).
         let waiting = QueueRoot::Native(CudaQueueRoot::new(device));
         let queue = QueueRoot::Native(CudaQueueRoot::new(device));
-        Some(Shared { device: Device::Native(device), queue, waiting })
+        Some(Shared { device: Device::Native(device), queue, waiting, statics: Default::default() })
     }
 }
