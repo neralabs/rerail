@@ -732,3 +732,34 @@ fn product_reads(text: &str, pats: &[&str]) -> bool {
     }
     false
 }
+
+/// Stage 1 run only in a test build, where the product reads nothing of it (decision 0703 step 31): every field of
+/// `Stage1` but `refused` only a test build's, and no escape of stage 1's sets `refused`. The token loop reads the
+/// bytes, as the lean lexer's reads its block's masks: so the product makes no mask the loop does not read.
+pub(super) fn stage1_for_tests(text: &str) -> String {
+    let cfg = "#[cfg(feature = \"test-hooks\")]";
+    let Some(a) = text.find("\nstruct Stage1 {\n") else { return text.to_owned() };
+    let Some(e) = text[a + 1..].find("\n}\n").map(|e| a + 1 + e) else { return text.to_owned() };
+    let lines: Vec<&str> = text[a + 1..e].lines().skip(1).collect();
+    for (k, l) in lines.iter().enumerate() {
+        let t = l.trim();
+        if t.is_empty() || t.starts_with("//") || t.starts_with("#[") {
+            continue;
+        }
+        if t != "refused: bool," && (k == 0 || lines[k - 1].trim() != cfg) {
+            return text.to_owned();
+        }
+    }
+    if text.contains("st.refused |=") || text.contains("st.refused = true") {
+        return text.to_owned();
+    }
+    let head = "        if st1.t < b + 2 + ";
+    let fin = "    stage1_best(src, &mut st1, &mut s1, usize::MAX);\n";
+    let past = "    if let Some(p) = r.into() {\n        let to = p / 64 + 2 + ";
+    if text.matches(head).count() != 1 || text.matches(fin).count() != 1 || text.matches(past).count() != 1 {
+        return text.to_owned();
+    }
+    text.replacen(head, &format!("        // Stage 1 for the test build's checks alone: the product reads none of it.\n        {cfg}\n{head}"), 1)
+        .replacen(fin, &format!("    {cfg}\n{fin}"), 1)
+        .replacen(past, &format!("    #[cfg(not(feature = \"test-hooks\"))]\n    let _ = (src, &st, &s1);\n    {cfg}\n{past}"), 1)
+}

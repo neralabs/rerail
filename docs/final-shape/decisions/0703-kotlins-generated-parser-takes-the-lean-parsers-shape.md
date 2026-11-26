@@ -251,6 +251,12 @@ them.
    each byte's bits the texts with it there (`AT_TWO_START_2_0[src[q]] & AT_TWO_START_2_1[src[q + 1]]`), as the lean
    lexer's `ONE[c]` and `FOLLOW[next]`. Measured (same run, m1max, best of 15): tier 1 32.6 to 33.9 ms against 34.0 to
    34.8 ms after 29.
+31. **Stage 1 runs only in a test build where the product reads none of it**: where every field of `Stage1` but
+   `refused` is a test build's and no escape of stage 1's sets `refused`, its runs (at the loop's head, in `s1_past`,
+   after the loop) are the test build's alone, its checks' masks. The token loop reads the bytes, as the lean lexer
+   reads only the block masks its loop asks; Kotlin's stage 1 made every class and fill of the grammar a block, read by
+   nothing. Measured (same run, m1max, best of 15): tier 1 22.9 to 23.7 ms against 32.0 ms after 30; the whole AOT
+   parse 263 to 285 ms against 264 ms, unchanged.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`

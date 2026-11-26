@@ -3301,6 +3301,9 @@ static DISPATCH_HI: [u32; 16] = [0x0, 0x0, 0x3e1, 0xc02, 0x1004, 0x2008, 0x11000
 /// `r`, stage 1 made through the block after the byte it names (a scan of the bytes' end).
 #[inline(always)]
 fn s1_past<T: Copy + Into<Option<usize>>>(src: &[u8], st: &mut Stage1Run, s1: &mut Stage1, r: T) -> T {
+    #[cfg(not(feature = "test-hooks"))]
+    let _ = (src, &st, &s1);
+    #[cfg(feature = "test-hooks")]
     if let Some(p) = r.into() {
         let to = p / 64 + 2 + 2;
         if st.t < to {
@@ -4161,6 +4164,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         let base = b * 64;
         code_pass!(b);
         // Stage 1 through the next block (the last a token of a few bytes reads), 16 more at a time.
+        // Stage 1 for the test build's checks alone: the product reads none of it.
+        #[cfg(feature = "test-hooks")]
         if st1.t < b + 2 + 2 {
             stage1_best(src, &mut st1, &mut s1, b + 2 + 2 + 16);
         }
@@ -5214,6 +5219,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         b += 1;
     }
     // Stage 1 to the file's end: its escapes, and the masks the passes after the loop read.
+    #[cfg(feature = "test-hooks")]
     stage1_best(src, &mut st1, &mut s1, usize::MAX);
     let escapes = s1.refused;
     refused |= escapes;
