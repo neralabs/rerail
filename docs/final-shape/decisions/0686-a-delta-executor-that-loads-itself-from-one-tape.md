@@ -2284,3 +2284,29 @@ Checks (Relax, local, 134 of 134):
 Checks (Relax, local, 135 of 135): `k1s_declarations_are_k_form_rows_and_an_arity_against_them_is_refused`. It covers
 a declared program's rows and its `k_decl` rows, and refusals for a head's arity, a step's arity and a column of two
 types. Before the fix to the loop, the head's refusal did not fire: L4 read no declaration.
+
+### K1: strata computed (K1-e; 2026-11-26)
+
+L3's strata are computed in K0 rules, at module grain (O4; B§6, L3: "strata computed"). A file's place in the
+bootstrap is no longer its stratum.
+
+- **The graph** (`k1-11-graph`). A module depends on each other module whose head it reads, through an atom or a
+  negation.
+  - Its depths are its chains' lengths through the numbers' chain, up to 64. A module that reaches itself is in a
+    cycle.
+- **Its stratum** (`k1-12-strata`). The depth with none deeper: the maximum, taken by negation.
+  - A module in a cycle has no stratum. The executor refuses a program of several modules where one has no `k_order`
+    row.
+  - Modules that read none of each other share a stratum.
+- **A new refusal.** A module of two `k_order` rows is refused (`Program::read`): a module is one stratum. Before
+  this, the last row won.
+- **Tests.** L3's ask no longer gives its files `boot` rows (`phase_tests::ASK`).
+
+Checks (Relax, local, 136 of 136): `k1s_strata_are_computed_from_the_modules_reads_and_a_cycle_is_refused`. It covers
+four files asked in an order that is not theirs, with depths 0, 1 and 2 through an atom and a negation, a module that
+shares stratum 0, the rows of the third module run after the second, and a cycle through a negation, which is
+refused.
+- Without `!deeper`, a module has a row at each depth, and the executor now refuses it. The test's first version kept
+  one row a module in a map and missed this; it compares the set of rows now.
+- Without `!cycle`, the cycle's modules get strata, and the executor refuses the cycle with another refusal, which the
+  test's message check catches.

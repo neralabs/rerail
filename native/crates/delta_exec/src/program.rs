@@ -335,6 +335,9 @@ impl Program {
         }
         for r in &rows[at("k_order")] {
             if let Some(md) = modules.get_mut(&r[0]) {
+                if let Some(k) = md.k.filter(|&k| k != r[1]) {
+                    return Err(Refused { module: r[0], rule: -1, why: format!("two k_order rows, strata {k} and {}: a module is one stratum", r[1]) });
+                }
                 md.k = Some(r[1]);
             }
         }

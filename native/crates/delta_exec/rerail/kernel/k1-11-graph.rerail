@@ -1,0 +1,13 @@
+// Strata computed (K1-e; B§6, L3: "strata computed"; O4, at module grain): the modules' graph. A module depends on
+// each other module whose head it reads, an atom's or a negation's; its depth is each chain's length below it, through
+// the numbers' chain (up to 64); a module that reaches itself is in a cycle.
+writes(d, h) :- read_rule(d, _, h).
+reads(d, x) :- read_step(d, _, _, -1, "atom", x).
+reads(d, x) :- read_step(d, _, _, -1, "not", x).
+dep(d, w) :- reads(d, x), writes(w, x), d != w.
+reach(d, w) :- dep(d, w).
+reach(d, u) :- reach(d, w), dep(w, u).
+cycle(d) :- reach(d, d).
+depth(d, 0) :- writes(d, _).
+depth(d, m) :- dep(d, w), depth(w, n), next(n, m).
+deeper(d, n) :- depth(d, n), depth(d, m), n < m.

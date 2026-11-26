@@ -548,7 +548,7 @@ fn a_later_process_resumes_the_levels_where_the_last_run_left_them() {
 
 /// The kernel's files (B§10 step 7), by path relative to the bootstrap's root, in stratum order: K1's reader, then
 /// the binding lowerer, one file a stratum (O4).
-const KERNEL: [(&str, &str); 11] = [
+const KERNEL: [(&str, &str); 13] = [
     ("kernel/k1-0-numbers.rerail", include_str!("../rerail/kernel/k1-0-numbers.rerail")),
     ("kernel/k1-1-read.rerail", include_str!("../rerail/kernel/k1-1-read.rerail")),
     ("kernel/k1-2-shared.rerail", include_str!("../rerail/kernel/k1-2-shared.rerail")),
@@ -560,11 +560,13 @@ const KERNEL: [(&str, &str); 11] = [
     ("kernel/k1-8-order.rerail", include_str!("../rerail/kernel/k1-8-order.rerail")),
     ("kernel/k1-9-turn.rerail", include_str!("../rerail/kernel/k1-9-turn.rerail")),
     ("kernel/k1-10-emit.rerail", include_str!("../rerail/kernel/k1-10-emit.rerail")),
+    ("kernel/k1-11-graph.rerail", include_str!("../rerail/kernel/k1-11-graph.rerail")),
+    ("kernel/k1-12-strata.rerail", include_str!("../rerail/kernel/k1-12-strata.rerail")),
 ];
 
 /// What L3 reads: the stand-in for the compiler's files (Bootstrap §6: "P3 loads the full compiler"), a K0 file of
-/// L2's whose `load` facts P3 then asks, with their files' strata: the facts first, as a base the rules negate.
-const ASK: &str = "load(\"u-facts.rerail\", \"u-facts\", \"rr\").\nboot(\"u-facts.rerail\", 1).\nload(\"u.rerail\", \"u\", \"rr\").\nboot(\"u.rerail\", 2).\n";
+/// L2's whose `load` facts P3 then asks. Their strata are computed (K1-e): the rules read the facts' relations.
+const ASK: &str = "load(\"u-facts.rerail\", \"u-facts\", \"rr\").\nload(\"u.rerail\", \"u\", \"rr\").\n";
 const FACTS: &str = "e(1, 2).\ne(2, 3).\ne(3, 1).\ne(2, 4).\nb(3).\n";
 /// K1: filters written before the atoms that bind their variables, which K0 refuses (B§7).
 const K1_RULES: &str = "h(x, z) :- x != z, !b(y), e(x, y), e(y, z).\ng(x) :- e(x, y), y > 2, e(y, _).\n";
@@ -574,14 +576,20 @@ const K0_RULES: &str = "h(x, z) :- e(x, y), !b(y), e(y, z), x != z.\ng(x) :- e(x
 /// A run over the kernel: L2 loads `ask.rerail` and the kernel's files, the boot rows their strata; it exports P3, the
 /// lowerer, which L3 runs over the files `ask.rerail` loads, exporting their rules lowered; L4 runs them.
 fn kernel_run(name: &str, rules: &str) -> Run {
+    kernel_files(name, ASK, &[("u-facts.rerail", FACTS), ("u.rerail", rules)])
+}
+
+/// A run over the kernel of L3's files `files`, which `ask` loads.
+fn kernel_files(name: &str, ask: &str, files: &[(&str, &str)]) -> Run {
     let mut r = Run::new(name);
     std::fs::create_dir_all(r.root.join("kernel")).unwrap();
     for (path, text) in KERNEL {
         r.write(path, text, 50);
     }
-    r.write("ask.rerail", ASK, 50);
-    r.write("u-facts.rerail", FACTS, 50);
-    r.write("u.rerail", rules, 50);
+    r.write("ask.rerail", ask, 50);
+    for (path, text) in files {
+        r.write(path, text, 50);
+    }
     let modules: Vec<(String, String)> = std::iter::once(("ask.rerail".to_string(), "ask".to_string()))
         .chain(KERNEL.iter().map(|(p, _)| (p.to_string(), p.trim_start_matches("kernel/").trim_end_matches(".rerail").to_string())))
         .collect();
@@ -698,6 +706,30 @@ fn k1s_declarations_are_k_form_rows_and_an_arity_against_them_is_refused() {
         let e = r.try_run().err().unwrap_or_else(|| panic!("{name}: run, not refused: {:?}", r.rows(1, "k_decl")));
         assert!(e.contains(why), "{name}: {e}");
     }
+}
+
+/// K1's computed strata (B§6, L3: "strata computed"; O4; K1-e): a module's stratum is its longest chain of modules whose
+/// heads it reads, an atom's or a negation's, through the numbers' chain; the files' order in the ask is not theirs.
+/// Modules that read none of each other share a stratum. A cycle of modules has no stratum, and is refused.
+#[test]
+fn k1s_strata_are_computed_from_the_modules_reads_and_a_cycle_is_refused() {
+    let ask = "load(\"c.rerail\", \"c\", \"rr\").\nload(\"b.rerail\", \"b\", \"rr\").\nload(\"a.rerail\", \"a\", \"rr\").\nload(\"z.rerail\", \"z\", \"rr\").\n";
+    let files = [
+        ("a.rerail", "e(1, 2).\ne(2, 3).\ne(3, 1).\n"),
+        ("b.rerail", "p(x, z) :- e(x, y), e(y, z).\n"),
+        ("c.rerail", "q(x) :- e(x, _), !p(x, 3).\n"),
+        ("z.rerail", "w(1).\n"),
+    ];
+    let mut r = kernel_files("phase-k1e", ask, &files);
+    r.run();
+    let order: BTreeSet<(String, i64)> = r.rows(1, "k_order").into_iter().map(|x| (r.docs.path_of(&r.bench.dir, r.atoms, x[0]), x[1])).collect();
+    let want = [("a.rerail", 0), ("b.rerail", 1), ("c.rerail", 2), ("z.rerail", 0)].map(|(p, k)| (p.to_string(), k));
+    assert_eq!(order, BTreeSet::from(want), "one row a module, its longest chain");
+    assert_eq!(r.rows(2, "q"), BTreeSet::from([vec![2], vec![3]]), "c after b: p is (1, 3), (2, 1), (3, 2), so only 1 has p(x, 3)");
+    let cycle = [("a.rerail", "e(1, 2).\n"), ("b.rerail", "p(x) :- e(x, _), !q(x).\n"), ("c.rerail", "q(x) :- p(x).\n"), ("z.rerail", "w(1).\n")];
+    let mut r = kernel_files("phase-k1e-cycle", ask, &cycle);
+    let e = r.try_run().expect_err("a cycle of modules is refused");
+    assert!(e.contains("no k_order row"), "{e}");
 }
 
 /// The steps of the rule level `k`'s K-form writes `head` (one rule), in their key order: (kind, relation or operator).

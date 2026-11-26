@@ -862,7 +862,7 @@ def k1(failures: list) -> None:
     before it; no lowering in Rust; a level's documents the `load` facts of its facts in and of its program."""
     kernel = CRATE / "rerail" / "kernel"
     files = ("k1-0-numbers", "k1-1-read", "k1-2-shared", "k1-3-rank", "k1-4-rules", "k1-5-steps", "k1-6-binds", "k1-7-place",
-             "k1-8-order", "k1-9-turn", "k1-10-emit")
+             "k1-8-order", "k1-9-turn", "k1-10-emit", "k1-11-graph", "k1-12-strata")
     heads = {"k1-0-numbers": ("next",),
              "k1-1-read": ("head_of", "several", "alt", "group_alt", "split", "aux_alt", "scope", "under", "up", "lit_step", "lit_arg",
                            "expr", "paren", "op_step", "op_arg", "term_root", "in_term", "read_decl"),
@@ -870,7 +870,8 @@ def k1(failures: list) -> None:
              "k1-4-rules": ("inst", "read_rule", "read_arg", "in_rule", "read_step"),
              "k1-5-steps": ("in_atom", "mover", "below", "in_filter", "uses_var", "bound_before"), "k1-6-binds": ("binds", "waits"),
              "k1-7-place": ("place", "moved"), "k1-8-order": ("const_op", "at", "before", "twixt", "not_first"),
-             "k1-9-turn": ("then", "turn", "placed"), "k1-10-emit": ("k_rule", "k_step", "k_arg", "k_var", "k_order", "k_decl")}
+             "k1-9-turn": ("then", "turn", "placed"), "k1-10-emit": ("k_rule", "k_step", "k_arg", "k_var", "k_decl"),
+             "k1-11-graph": ("writes", "reads", "dep", "reach", "cycle", "depth", "deeper"), "k1-12-strata": ("k_order",)}
     for f in files:
         path = kernel / f"{f}.rerail"
         if not path.exists():
