@@ -113,6 +113,8 @@ pub use kinds::{batched_rows_for_tests as kind_batched_rows, force_for_tests as 
 #[cfg(any(test, feature = "test-hooks"))]
 pub use scalars::built_whole_for_tests as summaries_built_whole;
 #[cfg(any(test, feature = "test-hooks"))]
+pub use kinds::term_atoms_for_tests as node_text_term_atoms;
+#[cfg(any(test, feature = "test-hooks"))]
 pub use access::value_indexes_built_for_tests as value_indexes_built;
 pub mod access;
 mod sorted_hash;
@@ -193,6 +195,10 @@ impl Interner {
     /// so it must not hold the registered cursor's lock across SQLite execution; nor does it take it.
     fn for_loading(shared: &Symbols) -> Self {
         Self { atoms: Arc::clone(shared.atoms()), buf: String::new(), failed: None, deferred: None }
+    }
+    /// Whether the walk has deferred no text: an atom interned now is the value every read of its text gives.
+    fn defers_none(&self) -> bool {
+        self.deferred.as_ref().is_none_or(|d| d.texts.is_empty())
     }
     /// The text `v` stands for if it is a text this morsel deferred.
     fn deferred_text(&self, v: i64) -> Option<&str> {
@@ -9500,12 +9506,20 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                             at_nodes.as_deref()
                         }
                     };
-                    match nodes.and_then(|s| s.node_read_ref(name, val(slots, args[0]))) {
+                    // A symbol's value, while the walk has deferred no text: the text's atom from its term, with no
+                    // hash of the text (decision 0706 E1). A text deferred, it is read: the atom of a text deferred
+                    // here would not be the deferred value.
+                    let as_atom = probe & (TEXT_OUT | UNREAD_OUT) == 0 && cx.syms.defers_none();
+                    let atom = if as_atom { nodes.and_then(|s| s.node_text_atom(name, val(slots, args[0]))) } else { None };
+                    if let Some(a) = atom {
+                        kinds::count_term_atom_for_tests();
+                        Some(a)
+                    } else { match nodes.and_then(|s| s.node_read_ref(name, val(slots, args[0]))) {
                         Some(NodeRead::Text(t)) => text_v(cx, t),
                         Some(NodeRead::Value(Value::Text(t))) => text_v(cx, &t),
                         Some(NodeRead::Value(Value::Integer(n))) => Some(n),
                         _ => None,
-                    }
+                    } }
                 } else {
                     // The arguments' texts read into one buffer, the interner's, and their places, numbers and
                     // slices in arrays: a string an argument and two lists a call were 3.7 M on cold PostHog.

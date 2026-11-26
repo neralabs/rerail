@@ -543,6 +543,20 @@ impl Source for LongTexts {
             _ => self.node_read(name, n).map(super::NodeRead::Value),
         }
     }
+    fn node_text_atom(&self, name: &str, n: i64) -> Option<i64> {
+        if name != "rr_node_text_any" {
+            return None;
+        }
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        // A comment span's text is no node's: read as text.
+        if granules::comment_of(low).is_some() {
+            return None;
+        }
+        let p = &self.batch.docs[*self.docs.get(&key)?];
+        let local = p.local_of(low)?;
+        let core = p.ranks().select(Item::Node, local)?;
+        Some(p.text_atom(&*self.batch.atoms, local, core)).filter(|&a| a >= 0)
+    }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.nodes.rows_of_documents(docs)
     }

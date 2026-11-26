@@ -1852,3 +1852,38 @@ targets(p, l) :- field(a, "left", n), kind(a, "assignment"), at(n, p, l).
     assert_eq!(of(&got[1]), want);
     assert_eq!(of(&got[2]), want);
 }
+
+/// Decision 0706 E1: a node's text read as a symbol (`node_text(n, s)`, its value bound, compared with a constant,
+/// and joined on) is its leaf's term's atom, read with no hash of the text; and the rows are the text's: each file's
+/// identifiers by name, those named `hit`, and the pairs of lines that name one identifier.
+#[test]
+fn node_texts_read_as_term_atoms_give_the_texts_rows() {
+    use crate::code_rule_dsl::logic::native::component::node_text_term_atoms;
+    let names = ["alpha", "hit", "beta", "hit", "gamma_long_enough_to_pass_the_inline_bound_of_text", "alpha"];
+    let source: String = names.iter().map(|n| format!("{n}\n")).collect();
+    let dir = corpus("node-text-terms", &[("a.py", source.as_str())]);
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl line(n: loc, l: number)
+.input doc, node, node_text, line
+.decl ids(l: number, s: symbol)
+ids(l, s) :- node(_, n, "identifier", _, _), node_text(n, s), line(n, l).
+.decl hits(l: number)
+hits(l) :- node(_, n, "identifier", _, _), node_text(n, "hit"), line(n, l).
+.decl same(a: number, b: number)
+same(a, b) :- node(d, n, "identifier", _, _), node_text(n, s), node(d, m, "identifier", _, _), node_text(m, s), n != m, line(n, a), line(m, b).
+.output ids, hits, same
+"#;
+    let before = node_text_term_atoms();
+    let got = run(&dir, program, &["ids", "hits", "same"]);
+    assert!(node_text_term_atoms() > before, "texts read as their terms' atoms");
+    let ids: BTreeSet<(i64, String)> = got[0].iter().map(|r| (r[0].parse().unwrap(), r[1].trim_matches('"').to_owned())).collect();
+    let want: BTreeSet<(i64, String)> = names.iter().enumerate().map(|(i, n)| (i as i64 + 1, (*n).to_owned())).collect();
+    assert_eq!(ids, want);
+    let hits: BTreeSet<i64> = got[1].iter().map(|r| r[0].parse().unwrap()).collect();
+    assert_eq!(hits, BTreeSet::from([2, 4]));
+    let same: BTreeSet<(i64, i64)> = got[2].iter().map(|r| (r[0].parse().unwrap(), r[1].parse().unwrap())).collect();
+    assert_eq!(same, BTreeSet::from([(1, 6), (6, 1), (2, 4), (4, 2)]));
+}

@@ -127,3 +127,18 @@ pub(super) fn count_for_tests(n: usize) {
 #[cfg(not(any(test, feature = "test-hooks")))]
 #[inline(always)]
 pub(super) fn count_for_tests(_: usize) {}
+
+/// Tests: the node texts the process's walks read as their term's atom (`Source::node_text_atom`).
+#[cfg(any(test, feature = "test-hooks"))]
+static TERMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn term_atoms_for_tests() -> u64 {
+    TERMS.load(std::sync::atomic::Ordering::Relaxed)
+}
+#[cfg(any(test, feature = "test-hooks"))]
+pub(super) fn count_term_atom_for_tests() {
+    TERMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+#[cfg(not(any(test, feature = "test-hooks")))]
+#[inline(always)]
+pub(super) fn count_term_atom_for_tests() {}

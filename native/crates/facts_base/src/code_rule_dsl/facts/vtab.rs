@@ -357,6 +357,10 @@ pub trait Source: Send + Sync {
     /// Decision 0706 E4: the source's value index of `column` (its rows by value, in its block) built now, ahead of
     /// its readers, where it keeps one: the rows read to build it. `None` where it keeps none, or had it built.
     fn build_value_index(&self, _column: usize) -> Option<usize> { None }
+    /// Decision 0706 E1: node read `name` of node `n` (`rr_node_text_any`) as its text's atom, read without its text
+    /// where the source keeps the text's term (a leaf's, decision 0656: interned at the term's first read). `None`
+    /// where it does not: the text is read (`node_read_ref`).
+    fn node_text_atom(&self, _name: &str, _n: i64) -> Option<i64> { None }
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], _cursor: &mut ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read(column, value, columns, each)
     }

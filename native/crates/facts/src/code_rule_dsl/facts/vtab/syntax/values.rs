@@ -806,6 +806,10 @@ impl Source for Layered {
         let p = parts.get(self.name.as_str())?;
         p.by_key.parts((n >> 32) as u32, p.list.len()).find_map(|i| p.list[i].src.node_read(name, n)).map(super::super::NodeRead::Value)
     }
+    /// The base's (a part's node is read as text).
+    fn node_text_atom(&self, name: &str, n: i64) -> Option<i64> {
+        self.base.node_text_atom(name, n)
+    }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
