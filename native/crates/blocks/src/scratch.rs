@@ -52,9 +52,9 @@ const HEAD: usize = 16;
 const PREV_BITS: u32 = 32;
 const _: () = assert!(ANON <= 1 << PREV_BITS, "a header's offsets fit its bits");
 /// The bytes freed under a live region, and not popped, past which the owner's settle coalesces them (`coalesce`).
-const STRAND: usize = 2 << 20;
+const STRAND: usize = 8 << 20;
 /// The least gap whose pages go back (`coalesce`): smaller gaps are linked past, and keep theirs.
-const HOLE_MIN: usize = 64 << 10;
+const HOLE_MIN: usize = 256 << 10;
 /// A region's state: live, freed, or (even, from 2) a live slice of the use with that tag.
 const LIVE: u64 = 0;
 const FREE: u64 = 1;
