@@ -357,11 +357,28 @@ fn a_twin_fits_its_signature() {
     let mut reg = Registry::default();
     let op = reg.declare(square).unwrap();
     let e = reg.register_reference(Version::twin(op, "sort as square", sort, square.shape)).unwrap_err();
-    assert!(e.contains("the twin's phases (chunks, passes, settle) are not the signature's (map)"), "{e}");
+    assert!(e.contains("the twin's phases (chunks, passes, settle) are not its shape's (map)"), "{e}");
     let unbounded = sig("unbounded", vec![slot("in", R, kind::FACTS)], vec![lanes("chunks", Found::Fixed, Across::Nothing, Output::ByIndex, &[]), lanes("passes", Found::Indirect, Across::Ordered, Output::ByIndex, &[]), lanes("settle", Found::Fixed, Across::Nothing, Output::ByIndex, &[])], values);
     let op = reg.declare(unbounded).unwrap();
     let e = reg.register_reference(Version::twin(op, "sort", sort, unbounded.shape)).unwrap_err();
     assert!(e.contains("phase passes runs again, and its shape bounds no turns"), "{e}");
+
+    // A version runs by its own shape: the sort's reference, then a version of it whose shape bounds its passes at
+    // two turns, which the check runs by that bound and refuses (a case of more than two passes' items).
+    let (sort_sig, _) = shapes[2];
+    let op = reg.declare(sort_sig).unwrap();
+    reg.register_reference(Version { status: Status::Reference, ..Version::twin(op, "sort", sort, sort_sig.shape) }).unwrap();
+    let tight: &'static [Phase] = Box::leak(sort_sig.shape.iter().map(|p| if p.name == "passes" { Phase { bounds: &[Bound::Turns(2)], ..*p } } else { *p }).collect::<Vec<_>>().into_boxed_slice());
+    let v = Version { status: Status::Candidate, ..Version::twin(op, "sort, two passes", sort, tight) };
+    // 3,000 values: chunks of 256, so four merge passes.
+    let sort_case = |dir: &mut Directory| {
+        let v: Vec<i64> = (0..3_000i64).map(|i| (i * 7919) % 3_001).collect();
+        let (i, o, w) = (values_block(dir, &v), dir.make(kind::FACTS, samples::vals_bytes(v.len())), dir.make(kind::SCRATCH, 24 + 8 * v.len()));
+        Case { slots: vec![i, o, w], params: vec![] }
+    };
+    assert!(reg.check(&Version { name: "sort, as the reference", status: Status::Candidate, ..Version::twin(op, "", sort, sort_sig.shape) }, &sort_case, &[Tiling::WHOLE]).is_ok());
+    let Err(e) = reg.check(&v, &sort_case, &[Tiling::WHOLE]) else { panic!("a version run past its shape's bound is refused") };
+    assert!(e.contains("phase passes ran past its bound of 2 turns"), "{e}");
 }
 
 /// Params are declared once in Rust; UKL's declaration comes from that one.
@@ -442,7 +459,7 @@ fn a_kernel_follows_references_through_the_device_table() {
     dir.refer(top, c).unwrap();
     let l = dir.read("device probe", &[top]).unwrap();
     let t = l.table();
-    let dt = l.device_table(&shared.device).unwrap();
+    let dt = rerail_blocks::gens::device_table(&t, &l.pins(), &shared.device).unwrap();
     let ids = |rows: &[rerail_blocks::gens::Desc]| rows.iter().map(|d| (d.id, d.kind, d.version)).collect::<Vec<_>>();
     assert_eq!(ids(dt.rows()), ids(t.rows()), "the device's table names the blocks the CPU's does");
 

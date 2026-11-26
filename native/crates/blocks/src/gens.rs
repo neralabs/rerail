@@ -158,6 +158,48 @@ pub fn device_rows(rows: &[Desc], pins: &[&BlockPin], device: &rerail_device::de
     Ok((out, buffers))
 }
 
+/// A launch's descriptor table on a device (E2: a kernel follows a reference through its own device's table): the same
+/// rows as its CPU table, each block's address the device's (`device_rows`), in a block of its own that the kernel
+/// binds, and the buffers the kernel reaches through it. It reads the launch's blocks, so it lives no longer than the
+/// launch's pins: the caller keeps the launch until the device's work completes.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub struct DeviceTable<'l> {
+    _pins: std::marker::PhantomData<&'l BlockPin>,
+    pin: BlockPin,
+    /// Where the table lies in its block.
+    pub at: u64,
+    /// The table block's buffer, to bind.
+    pub buffer: rerail_device::device::Buffer,
+    /// The blocks' buffers, which the kernel reads through their addresses (`uses_read`).
+    pub reached: Vec<rerail_device::device::Buffer>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl DeviceTable<'_> {
+    /// Its rows, by id ascending, as the device reads them.
+    pub fn rows(&self) -> &[Desc] {
+        let b = self.pin.bytes();
+        let n = word::<u64>(b, self.at as usize) as usize;
+        words::<Desc>(b, self.at as usize + 8, n)
+    }
+}
+
+/// A launch's table (`table`, over `pins`: every block it pins) on `device`.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub fn device_table<'l>(table: &Table<'l>, pins: &[&'l BlockPin], device: &rerail_device::device::Device) -> Result<DeviceTable<'l>, String> {
+    use crate::block::{Block, PAGE, kind};
+    let (rows, reached) = device_rows(table.rows(), pins, device)?;
+    let block = std::sync::Arc::new(Block::anon(kind::DESC, BODY_AT + table_bytes(&rows) + PAGE));
+    let at = block.alloc(table_bytes(&rows), 64);
+    {
+        let mut w = crate::region::pin_block(&block, "device descriptor table", true).expect("a new block is unused");
+        write_table(&mut w.bytes_mut().expect("a write pin")[at..], &rows);
+    }
+    let pin = crate::region::pin_block(&block, "device descriptor table", false).expect("the table is the launch's");
+    let buffer = block.device_buffer(device)?;
+    Ok(DeviceTable { _pins: std::marker::PhantomData, pin, at: at as u64, buffer, reached })
+}
+
 /// A descriptor table's device reads, in UKL (decision 0440: every backend's): a row as `Desc` lies, its address a
 /// pointer into the block's memory on the device, and the row of an id, found as `Table::row` finds it (the rows by
 /// id ascending). After `<ukl/backend.h>`.

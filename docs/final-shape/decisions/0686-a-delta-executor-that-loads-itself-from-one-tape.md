@@ -586,11 +586,25 @@ Not built yet, each still the plan's:
 
 - `relation::View` and `Chain` are two definitions; the plan's B2 asks for one (View generalized to n layers).
 - E1 on a device: GPU uses pinned through fences, and replicas made by the directory where a device needs them.
-- The executor runs a version's phases by its signature's shape, not `Version.shape`.
-- delta_exec's dependencies re-exported as B§7 has them (blocks and rr_syntax alone) is unchanged from 4fabca7c57.
 - The directory's references between blocks are block ids; only a layer's reference to the relation below carries
   its offset too.
 - consolidate's kills search each row's key in every layer below (a binary search a layer, by its order); its cost
   is not measured.
 - Clippy with the twins' `clippy.toml` was not run on this code (no cargo or clippy runs are allowed here), so it is
   not shown to catch anything yet.
+
+Then (the same day), two of the items above:
+
+- **A version runs by its own shape** (`Version.shape`, "the shape it runs the work as"): the registry checks a
+  twin's phases against its version's shape, and the executor runs each phase by that shape's bounds. A version of
+  the sort whose shape bounds its passes at two turns is refused by the check on a case of four passes
+  (`op::tests::a_twin_fits_its_signature`).
+- **B§7, "depends on blocks and rr_syntax alone", in the code too**: the device table moved into `blocks::gens`
+  (`gens::device_table`, beside `device_rows` and `DESC_READS`), and blocks no longer re-exports the device layer
+  (added in 425fb811e3 so that delta_exec could name a device). delta_exec gives a launch's pins (`Launch::pins`); the
+  caller makes the table on its device; only the device test, through its dev-dependency, names one. Format 16 still
+  reaches delta_exec as rr_syntax's own output (`rerail_rr_syntax::tape_format`, rr_syntax's interface since
+  2026-11-13). `check_delta_exec_shape.py` refuses any other crate named in delta_exec's code, and a device
+  re-export in blocks.
+
+Checks (Relax, local): `rerail-delta-exec --lib` 26 of 26 (all but the device test, which compiles; no Metal here).

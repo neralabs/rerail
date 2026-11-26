@@ -400,19 +400,20 @@ impl Registry {
         self.ops[op.0 as usize]
     }
 
-    /// Whether a twin's phases are its signature's: the same names, in order; a phase that runs again has a bound on
-    /// its turns.
-    fn fits(sig: &Signature, twin: Twin) -> Result<(), String> {
+    /// Whether a twin's phases are its version's shape's (the shape it runs the work as, `Version::shape`): the same
+    /// names, in order; a phase that runs again has a bound on its turns.
+    fn fits(sig: &Signature, v: &Version, twin: Twin) -> Result<(), String> {
         let names = |p: &mut dyn Iterator<Item = &'static str>| p.collect::<Vec<_>>().join(", ");
-        if sig.shape.len() != twin.len() || sig.shape.iter().zip(twin).any(|(p, t)| p.name != t.name) {
+        if v.shape.len() != twin.len() || v.shape.iter().zip(twin).any(|(p, t)| p.name != t.name) {
             return Err(format!(
-                "{}: the twin's phases ({}) are not the signature's ({})",
+                "{}: {}: the twin's phases ({}) are not its shape's ({})",
                 sig.name,
+                v.name,
                 names(&mut twin.iter().map(|t| t.name)),
-                names(&mut sig.shape.iter().map(|p| p.name))
+                names(&mut v.shape.iter().map(|p| p.name))
             ));
         }
-        if let Some((p, _)) = sig.shape.iter().zip(twin).find(|(p, t)| t.again.is_some() && p.turns() < 2) {
+        if let Some((p, _)) = v.shape.iter().zip(twin).find(|(p, t)| t.again.is_some() && p.turns() < 2) {
             return Err(format!("{}: phase {} runs again, and its shape bounds no turns", sig.name, p.name));
         }
         Ok(())
@@ -430,7 +431,7 @@ impl Registry {
         if !self.versions(v.op).is_empty() {
             return Err(format!("{}: a second reference ({})", sig.name, v.name));
         }
-        Self::fits(sig, twin)?;
+        Self::fits(sig, &v, twin)?;
         self.versions.push(v);
         Ok(())
     }
@@ -475,7 +476,7 @@ impl Registry {
         let Impl::Twin(twin) = candidate.imp else {
             return Err(format!("{}: {} is not a twin, and the CPU runs only twins", sig.name, candidate.name));
         };
-        Self::fits(sig, twin)?;
+        Self::fits(sig, candidate, twin)?;
         let run = |v: &Version, tiling: Tiling| -> Result<Vec<Vec<Vec<i64>>>, String> {
             let mut dir = Directory::default();
             let c = case(&mut dir);
@@ -562,7 +563,8 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
     let (pins, table) = launch.parts();
     let mut slot_views: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();
     let mut ctx = Ctx { slots: &mut slot_views, table: &table, params };
-    for (phase, tp) in sig.shape.iter().zip(twin) {
+    // The version's shape: its phases' bounds are the ones it runs by (`Registry::fits` checked its twin against it).
+    for (phase, tp) in v.shape.iter().zip(twin) {
         let mut turn = 0;
         loop {
             turn += 1;

@@ -211,6 +211,18 @@ def b2(failures: list) -> None:
     # O§2: the descriptor table names "per block id it can reach (its slots, and what they refer to, transitively)".
     dir_code = strip_rust((CRATE / "src/dir.rs").read_text())
     hits(CRATE / "src/dir.rs", dir_code, r"filter\(\|id\| slots\.iter\(\)\.all", "a descriptor table without the launch's slots (O§2)", failures)
+    # B§7: "a crate of its own that depends on blocks and rr_syntax alone" (with its twins, which depend on blocks
+    # alone), in its code as in its manifest: it names no other crate (its tests may name the device layer's programs,
+    # a dev-dependency), and blocks re-exports no crate for it to reach another through.
+    for path in sorted((CRATE / "src").rglob("*.rs")):
+        code = strip_rust(path.read_text())
+        allowed = {"rerail_blocks", "rerail_rr_syntax", "rerail_delta_twins", "rerail_delta_exec"}
+        if path.name.endswith("tests.rs"):
+            allowed.add("rerail_gpu")
+        for name in sorted(set(re.findall(r"\b(rerail_[a-z0-9_]+)\b", code)) - allowed):
+            failures.append(f"{path.relative_to(ROOT)}: names {name} (B§7: blocks and rr_syntax alone)")
+    blocks_lib = crates / "blocks/src/lib.rs"
+    hits(blocks_lib, strip_rust(blocks_lib.read_text()), r"pub use rerail_device\b", "blocks re-exporting the device layer (a way around B§7)", failures)
     # The B2 checks the plan asks for, kept as tests: a restriction reads only its partition's rows, counted where the
     # reads are made; is_identity reads a layer's counts only.
     tests = (CRATE / "src/trace_tests.rs").read_text()
