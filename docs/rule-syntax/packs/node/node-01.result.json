@@ -1,0 +1,26 @@
+[
+  {
+    "id": "n-callback-return",
+    "status": "same"
+  },
+  {
+    "id": "n-no-deprecated-api",
+    "status": "same"
+  },
+  {
+    "id": "n-prefer-promises-fs",
+    "status": "different",
+    "reason": "eslint-plugin-n 18.6.0's prefer-promises/fs lists `watch` among fs's callback functions (lib/rules/prefer-promises/fs.js) and reports `const fs = require('fs'); fs.watch('file', () => {})` (eslint-plugin-n/prefer-promises/fs/invalid-040.js:1, upstream's own invalid case), as the translation does. The original's name regex ends at `statfs` and has no `watch`.",
+    "right": "translation",
+    "counts": {
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      },
+      "rerail-typescript": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  }
+]
