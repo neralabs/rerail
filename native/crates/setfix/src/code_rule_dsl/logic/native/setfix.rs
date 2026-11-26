@@ -3675,6 +3675,7 @@ pub fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
     for (label, j) in rules {
         for i in 0..j.steps.len() {
             let Some(f) = j.fused_at(i) else { continue };
+            if !f.tests.is_empty() { continue; }
             let Step::Atom { src: src @ Src::In(..), keys, tests, .. } = &j.steps[i] else { continue };
             if keys.iter().any(|(_, k)| matches!(k, Key::Slot(_))) || f.params.iter().any(|p| matches!(p.key, Key::Slot(_))) { continue; }
             let key: Vector<i64> = keys.iter().map(|&(_, k)| match k { Key::Const(c) => c, Key::Slot(_) => unreachable!("constants") }).collect();
@@ -3698,7 +3699,7 @@ pub fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
                     s.columns[g.0].extend_from_slice(&col[start..end]);
                 }
                 s.rows = end - start;
-                let words = f.run(&mut s, |_, _| {});
+                let words = f.run(&mut s, |_, _| {}, |_, _, _, _| unreachable!("no test"));
                 for (w, &word) in words.iter().enumerate() {
                     let mut m = word;
                     while m != 0 { passed.push((start + 64 * w + m.trailing_zeros() as usize) as u32); m &= m - 1; }
@@ -8998,7 +8999,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     cx.list0 = Some((RowsOf::of(j, src), list.clone()));
                     cands = Cands::Owned(list);
                 }
-                if let Some(f) = j.fused_at(i) {
+                // A fused test is asked of its input whole: not one whose rows are restricted (a delta's, `only`), and
+                // not past the tail, where the first row made ends the step and a chunk would ask its tests of rows
+                // after the witness (the walk asks them row by row, up to it).
+                if let Some(f) = j.fused_at(i).filter(|f| f.tests.is_empty() || (i < cx.cut_from && !f.tests.iter().any(|t| i + 1 + t.at == cx.only_step))) {
                     // Fused with the filters after it: the candidates a chunk at a time, the filters one row program
                     // over each chunk, and only its rows go on (`rowcode`).
                     // Its filters run inside the row program, not through `go`: they count as reached (`factored`).
@@ -9027,8 +9031,21 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         bump(0, s.rows as u64);
                         let added = std::cell::Cell::new(s.rows as u64);
                         // On the stack (decision 0687): a chunk's words, `CHUNK / 64` at most.
+                        // The fused tests (`rowcode::Test`): each asked of its input as the walk's test step asks it
+                        // (`cands::holds`), the row's values in the slots its keys read.
+                        let mut asked = std::mem::take(&mut s.asked);
+                        asked.resize_with(f.tests.len(), Default::default);
+                        let (j, store) = (cx.j, cx.store);
+                        let held = |t: usize, r: usize, columns: &[rerail_blocks::vector::Vector<i64>], params: &[i64]| {
+                            let test = &f.tests[t];
+                            for &(slot, b) in &test.slots {
+                                slots[slot] = match b { rowcode::Bind::Column(k) => columns[k][r], rowcode::Bind::Param(k) => params[k] };
+                            }
+                            cands::holds(j, &j.steps[i + 1 + test.at], store, slots, &mut asked[t])
+                        };
                         let words: rerail_blocks::frame::InlineVec<u64, { rowcode::CHUNK / 64 }> =
-                            f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }).iter().copied().collect();
+                            f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }, held).iter().copied().collect();
+                        s.asked = asked;
                         // The chunk's filter work is charged after its rows run (below): charged first, a chunk
                         // whose filters alone spend the budget cut before its first row, every run (no progress).
                         'rows: for (w, &word) in words.iter().enumerate() {

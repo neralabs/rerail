@@ -191,7 +191,7 @@ use rerail_blocks::vector::Vector;
             for case in cases {
                 let n = case.gathered.first().map_or(0, |g| g.1.len());
                 let at = |c: usize| case.gathered.iter().position(|g| g.0 == c).expect("gathered");
-                let inputs: Vec<Input> = case.inputs.iter().map(|w| match *w { Word::Col(c) => Input::Col(at(c)), Word::Doc(c) => Input::Doc(at(c)) }).collect();
+                let inputs: Vec<Input> = case.inputs.iter().map(|w| match *w { Word::Col(c) => Input::Col(at(c)), Word::Doc(c) => Input::Doc(at(c)), Word::Held(_) => unreachable!("a scan case asks no input") }).collect();
                 let cols: Vec<&[i64]> = case.gathered.iter().map(|g| g.1.as_slice()).collect();
                 let resident = Resident::new(&cols, n).expect("resident");
                 let got = match scan(&case.program, &inputs, &resident, &case.params) {
