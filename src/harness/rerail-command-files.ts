@@ -172,10 +172,11 @@ const typedWords = (agent: CommandFileAgent, name: RerailCommandName): string =>
 function createBody(agent: CommandFileAgent, { cli, packageRoot, shell }: AgentCommandContext): CommandBody {
   return {
     text: createRuleInstructions({ cli, packageRoot, request: typedWords(agent, "rerail-create"), shell }),
-    // `rules export --output` writes any path, so Claude Code asks before it runs; the others only read or propose a
-    // rule (`rules show` prints one). `rules approve` and `rules import` (whose `--approve` approves a whole dump) are
-    // never pre-approved: the host asks the person, whose approval it is, before it runs.
-    allowed: [`${cli} rules evidence *`, `${cli} rules show *`, `${cli} rules test *`, `${cli} rules add *`],
+    // `rules export --output` writes any path, so Claude Code asks before it runs; the others only read or test a rule
+    // (`rules show` prints one). `rules add` is left out so that Claude Code asks the person before it stores a rule:
+    // allowing it is their one approval of the rule, which `rules add` records (`addIsApproved` in agent-session.ts).
+    // `rules approve` and `rules import` (whose `--approve` approves a whole dump) are never pre-approved either.
+    allowed: [`${cli} rules evidence *`, `${cli} rules show *`, `${cli} rules test *`],
   };
 }
 

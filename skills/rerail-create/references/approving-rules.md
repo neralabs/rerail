@@ -5,18 +5,21 @@ a worktree's `.rerail/rules/`, and every rule of a pack Rerail does not publish 
 a folder or tarball. Until it is approved it runs in Log: Rerail records what it would catch and tells the agent nothing. An
 edit is new content, so an edited rule waits again. The session footer counts what waits (`2 to approve`). The person
 approves on the rule's page in the dashboard, or with `rerail rules approve` in a terminal of their own: from a coding
-agent's session the command is refused, and through MCP nothing can be approved.
+agent's session the command is refused, and through MCP nothing can be approved. A rule `rerail rules add` stores is
+approved as it is stored when the person approved that command: in their own terminal, or by allowing it where the coding
+agent asks before it runs it (Claude Code, Codex).
 
 A steer is text that reaches you, the coding agent, mid-task, and you act on it. Approving a rule lets whoever wrote it put
 words in front of every agent in this repository. So you read the rule before the person approves it, and say plainly what you
-found. You are not the approver: the person is, on the rule's page. You make sure they know what they are approving.
+found. You are not the approver: the person is, on the rule's page or by allowing `rules add`. You make sure they know what they
+are approving.
 
 ## When to audit
 
-- **A rule you wrote in this session** (`/rerail-create`, Write). The read-back is the audit: the person read the card and said
-  yes. They approve it on its page.
+- **A rule you wrote in this session** (`/rerail-create`, Write). The read-back is the audit: the person read the card, then
+  allowed `rules add`. Where your coding agent does not ask first, they approve it on its page.
 - **Rules you suggested and added in this session** (`/rerail-create`, Suggest). The list is the audit: it quotes everything
-  each rule tells the agent. The person approves the ones they want on their pages.
+  each rule tells the agent. The person picks the ones to add, and approves each as a rule you wrote.
 - **Anything else waiting**: a rule someone else wrote into `.rerail/rules/`, one a branch committed, one in the library you did
   not write, a pack installed from a folder or from a third party. `rerail rules approve` with no name lists what waits here.
   Audit each one as below, then ask.

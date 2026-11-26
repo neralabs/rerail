@@ -815,7 +815,7 @@ describe("rerail rules test on a .rerail file", () => {
 });
 
 describe("rerail rules add", () => {
-  it("stores the rule in the library and adds it, on, to the whole of a set-up repository", async () => {
+  it("stores the rule in the library and adds it, on and approved, to the whole of a set-up repository", async () => {
     const repo = await repository();
     setUpEmpty(repo);
     const file = writeDraft(repo, {
@@ -827,7 +827,8 @@ describe("rerail rules add", () => {
     const { exit, stdout } = await run("add", [file, "--repo", repo]);
 
     expect(exit).toBe(0);
-    expect(stdout).toMatch(/^● Added acme:no-console-log to rerail-rule-draft-\w+\.\n {2}It runs in Log until a person approves it: rerail rules approve acme:no-console-log\n$/);
+    // From the person's own terminal: running the command is their approval, so the rule steers.
+    expect(stdout).toMatch(/^● Added acme:no-console-log to rerail-rule-draft-\w+\.\n$/);
     const after = rulesOf(repo);
     expect(after.library).toContain("acme:no-console-log");
     expect(after).toMatchObject({
@@ -1002,7 +1003,7 @@ describe("rerail rules add", () => {
       }
     }
 
-    it("is stored as your copy with only its scope changed, added where the original is, which keeps running until approval", async () => {
+    it("is stored as your copy with only its scope changed, added and approved where the original is, which it turns off there", async () => {
       const repo = await repository();
       setUpWithComplexity(repo, "api");
       const shown = await show(repo, SHIPPED);
@@ -1015,10 +1016,10 @@ describe("rerail rules add", () => {
 
       expect(exit).toBe(0);
       expect(stdout).toMatch(new RegExp(`^● Saved your copy of ${SHIPPED} as ${SHIPPED}-copy, added to rerail-rule-draft-\\w+/api where ${SHIPPED} is\\.\\n`));
-      expect(stdout).toContain(`It runs in Log beside ${SHIPPED} until a person approves it, which turns ${SHIPPED} off there: rerail rules approve ${SHIPPED}-copy\n`);
+      expect(stdout).not.toContain("runs in Log");
       expect(getLibraryRuleDocument(`${SHIPPED}-copy`)).toEqual({ ...shown.draft.rule, id: `${SHIPPED}-copy`, scope });
       expect(rulesNamed(repo, SHIPPED)).toEqual([
-        { id: SHIPPED, kind: "pack", folder: "api", on: true },
+        { id: SHIPPED, kind: "pack", folder: "api", on: false },
         { id: `${SHIPPED}-copy`, kind: "library_rule", folder: "api", on: true },
       ]);
     });
@@ -1231,7 +1232,7 @@ describe("rerail rules add", () => {
     });
   });
 
-  describe("in a coding agent's session, a draft that changes your approved rule", () => {
+  describe("in the session of a coding agent that does not ask first (Cursor), a draft that changes your approved rule", () => {
     afterEach(() => { vi.unstubAllEnvs(); });
 
     /** Rule `id` as `noConsolePolicy` writes it; the library is shared by this file's tests, so each takes its own id. */
@@ -1269,7 +1270,7 @@ describe("rerail rules add", () => {
       const id = "acme:agent-copy";
       const repo = await repository();
       await approvedRule(repo, id);
-      vi.stubEnv("CLAUDECODE", "1");
+      vi.stubEnv("CURSOR_AGENT", "1");
 
       const { exit, stdout } = await run("add", [writeDraft(repo, { kind: "code", rule: edit(id) }), "--repo", repo]);
 
@@ -1287,10 +1288,9 @@ describe("rerail rules add", () => {
 
     it("changes in place a rule that waits for approval, and takes a draft that says what the approved rule says", async () => {
       const repo = await repository();
-      setUpEmpty(repo);
-      expect((await run("add", [writeDraft(repo, { kind: "code", rule: policy("acme:agent-waiting") }), "--repo", repo])).exit).toBe(0);
       await approvedRule(repo, "acme:agent-same");
-      vi.stubEnv("CLAUDECODE", "1");
+      vi.stubEnv("CURSOR_AGENT", "1");
+      expect((await run("add", [writeDraft(repo, { kind: "code", rule: policy("acme:agent-waiting") }), "--repo", repo])).exit).toBe(0);
 
       expect((await run("add", [writeDraft(repo, { kind: "code", rule: edit("acme:agent-waiting") }), "--repo", repo])).stdout).toMatch(/^● Added acme:agent-waiting /);
       expect(getLibraryRuleDocument("acme:agent-waiting")).toEqual(edit("acme:agent-waiting"));
@@ -1302,7 +1302,7 @@ describe("rerail rules add", () => {
       const id = "acme:agent-refused";
       const repo = await repository();
       await approvedRule(repo, id);
-      vi.stubEnv("CLAUDECODE", "1");
+      vi.stubEnv("CURSOR_AGENT", "1");
       const inFolder = writeDraft(repo, { kind: "code", rule: edit(id), folder: "web" });
 
       const tested = await testReport(inFolder, repo);
@@ -1325,7 +1325,7 @@ describe("rerail rules add", () => {
       await approvedRule(await repository(), id);
       const repo = await repository();
       setUpEmpty(repo);
-      vi.stubEnv("CLAUDECODE", "1");
+      vi.stubEnv("CURSOR_AGENT", "1");
       const file = writeDraft(repo, { kind: "code", rule: edit(id) });
 
       const tested = await testReport(file, repo);
@@ -1342,7 +1342,7 @@ describe("rerail rules add", () => {
       const id = "acme:agent-copied";
       const first = await repository();
       await approvedRule(first, id);
-      vi.stubEnv("CLAUDECODE", "1");
+      vi.stubEnv("CURSOR_AGENT", "1");
       expect((await run("add", [writeDraft(first, { kind: "code", rule: edit(id) }), "--repo", first])).exit).toBe(0);
       approveStored(`${id}-copy`);
       vi.unstubAllEnvs();
@@ -1361,7 +1361,7 @@ describe("rerail rules add", () => {
       expect(running(second)).toEqual({ [id]: { on: true, mode: "steer" } });
 
       // A coding agent's edit of the copy there is refused the same way, and show names the original to change.
-      vi.stubEnv("CLAUDECODE", "1");
+      vi.stubEnv("CURSOR_AGENT", "1");
       const edited = writeDraft(second, { kind: "code", rule: { ...edit(id), id: `${id}-copy`, revision: 3 } });
       expect((await testReport(edited, second)).report.refusal).toBe(tested.report.refusal);
       expect(await run("add", [edited, "--repo", second])).toMatchObject({ exit: 1, stderr: added.stderr });
@@ -1372,15 +1372,52 @@ describe("rerail rules add", () => {
       const id = "acme:agent-shown";
       const repo = await repository();
       await approvedRule(repo, id);
-      vi.stubEnv("CLAUDECODE", "1");
+      vi.stubEnv("CURSOR_AGENT", "1");
       const shown = (await run("show", [id, "--repo", repo])).stderr;
       expect(shown).toMatch(new RegExp(`^● ${id} is yours, added to rerail-rule-draft-\\w+\\.\\n`));
-      expect(shown).toContain(`${id} is approved, so in Claude Code's session rules add saves an edit of it as a copy`);
+      expect(shown).toContain(`${id} is approved, so in Cursor's session rules add saves an edit of it as a copy`);
       expect(shown).not.toContain("saving changes it");
       vi.unstubAllEnvs();
 
       expect((await run("add", [writeDraft(repo, { kind: "code", rule: edit(id) }), "--repo", repo])).stdout).toMatch(/^● Added /);
       expect(getLibraryRuleDocument(id)).toEqual(edit(id));
+    });
+  });
+  describe("in the session of a coding agent that asks the person before it runs rules add (Claude Code, Codex)", () => {
+    afterEach(() => { vi.unstubAllEnvs(); });
+
+    const policy = (id: string, pattern?: string) => ({ ...noConsolePolicy(pattern), id });
+
+    /** Each rule `repo` runs, by id: whether it is on and the mode it runs in. */
+    function running(repo: string): Record<string, { on: boolean; mode: string }> {
+      const database = openRerailDatabase(defaultRerailDatabasePath());
+      try {
+        return Object.fromEntries(listRepositoryRules(database, loadRuleCatalog(), recordCheckout(database, repo).repositoryKey).rules
+          .map(rule => [rule.document.rule.id, { on: rule.on, mode: rule.mode }]));
+      } finally {
+        database.$client.close();
+      }
+    }
+
+    it("approves the rule it adds, since allowing the command was the person's approval, and changes an approved rule in place", async () => {
+      const id = "acme:asked-first";
+      const repo = await repository();
+      setUpEmpty(repo);
+      vi.stubEnv("CLAUDECODE", "1");
+
+      const added = await run("add", [writeDraft(repo, { kind: "code", rule: policy(id) }), "--repo", repo]);
+      expect(added.exit).toBe(0);
+      expect(added.stdout).not.toContain("runs in Log");
+      expect(running(repo)).toEqual({ [id]: { on: true, mode: "steer" } });
+
+      vi.stubEnv("CLAUDECODE", "");
+      vi.stubEnv("CODEX_THREAD_ID", "019a-thread");
+      const edit = { ...policy(id, String.raw`console\.(log|debug)`), revision: 2 };
+      expect((await run("show", [id, "--repo", repo])).stderr).not.toContain("saves an edit of it as a copy");
+      expect((await run("add", [writeDraft(repo, { kind: "code", rule: edit }), "--repo", repo])).stdout).toMatch(new RegExp(`^● Added ${id} `));
+      expect(getLibraryRuleDocument(id)).toEqual(edit);
+      expect(rulesOf(repo).library.filter(rule => rule.startsWith(`${id}-copy`))).toEqual([]);
+      expect(running(repo)).toEqual({ [id]: { on: true, mode: "steer" } });
     });
   });
 });

@@ -2,7 +2,7 @@
 
 A suggestion is worth making only when evidence from this repo shows the agent breaking the rule, or would break it, and when
 steering on it would make the code better. This page covers where that evidence comes from, how to judge a candidate, and what the
-shortlist carries into the approval list.
+shortlist carries into the list the person picks from.
 
 ## Where the evidence comes from
 
@@ -90,9 +90,9 @@ Score each one and keep the best five at most.
 
 ## The shortlist
 
-The shortlist is the at most five candidates you go on to write and test, best first. You don't show it as a list to pick
-from: the ones that pass are added in Log, and the person sees them in Suggest's approval list
-([SKILL.md, Suggest step 6](../SKILL.md#suggest)). For each candidate, keep what the approval list needs:
+The shortlist is the at most five candidates you go on to write and test, best first. You don't show it as it is: the ones
+that pass go into the list the person picks from ([SKILL.md, Suggest step 6](../SKILL.md#suggest)). For each candidate, keep
+what that list needs:
 
 - **From**: where it came from. Quote the person's words at most 80 characters long, and give dates, not session ids:
   `You corrected this 3 times, last: '<quote>' (Oct 12)`, `CLAUDE.md: '<quote>'`, `140 files use logger, 3 use console.log`,

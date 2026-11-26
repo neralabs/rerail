@@ -38,7 +38,7 @@ Terminal only: `rerail settings`, `rerail status`, `rerail update check`, `rerai
 <summary>How each coding agent registers them</summary>
 
 - **OMP and Pi:** native extension commands. `/rerail-create` and `/rerail-show-me` hand instructions to the agent; `/rerail-uninstall` asks you with a selector.
-- **Claude Code:** setup adds hooks, adds Rerail to your status line, and writes commands to `~/.claude/commands/` with their tool permissions. `/rerail-start` may run set-up's commands without re-asking, so in a repository not set up the agent relays each set-up question to you. `/rerail-uninstall` is not pre-approved; Claude Code asks first.
+- **Claude Code:** setup adds hooks, adds Rerail to your status line, and writes commands to `~/.claude/commands/` with their tool permissions. `/rerail-start` may run set-up's commands without re-asking, so in a repository not set up the agent relays each set-up question to you. `/rerail-uninstall` is not pre-approved; Claude Code asks first. Nor is `/rerail-create`'s `rerail rules add`: allowing it is your one approval of the rule it adds.
 - **Codex:** one skill per command in `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-manage`, and so on. Codex's hook trust and command approval still apply; it may ask before `$rerail` reads the local daemon.
 - **Cursor:** the same commands in `~/.cursor/commands/`.
 

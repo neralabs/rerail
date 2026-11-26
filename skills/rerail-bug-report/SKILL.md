@@ -85,7 +85,8 @@ for that kind. The person decides; nothing leaves their computer until they say 
 ## Fix their own rule
 
 Read [../rerail-create/SKILL.md](../rerail-create/SKILL.md) and follow its Tune section: reproduce the misfire as a case, fix the
-rule, test it, read it back, and add it only after the person says yes. Never change the rule before that yes.
+rule, test it, read it back, and add it with `rerail rules add`, which the person approves as that section says. Never change
+the rule any other way.
 
 If reproducing it shows the rule is right and Rerail is not, this is an engine bug: a case marked `not checked` by
 `rerail rules test`, or code the [rule language](../rerail-create/references/code-rules.md) says should match and does not. Tell

@@ -66,12 +66,14 @@ describe("rerail-create skill", () => {
     expect(skill).toMatch(/^---\nname: rerail-create\ndescription: \S.*\n---\n/u);
   });
 
-  it("asks before adding, with the read-back the command promises", () => {
+  it("reads the rule back, then adds it with no question of its own: allowing rules add is the person's one approval", () => {
     const skill = texts.get(join(SKILL, "SKILL.md"))!;
     expect(skill).toContain("rerail rules evidence --json");
     expect(skill).toContain("rerail rules test <tmp>/draft.json --json");
     expect(skill).toContain("rerail rules add <tmp>/draft.json");
-    expect(skill).toContain("Add this rule?\n     1. Yes, add it\n     2. Change something\n     3. Show me the rule\n     4. Cancel");
+    expect(skill).toContain("Here is the rule as I understand it.");
+    expect(skill).toContain("Adding it now. Allow the rerail rules add command to approve it, or decline it and tell me what to change.");
+    expect(skill).not.toContain("Add this rule?\n");
   });
 
   it.each(files.map(file => [file.slice(SKILL.length + 1), file]))("%s links only to files that exist", async (_, file) => {

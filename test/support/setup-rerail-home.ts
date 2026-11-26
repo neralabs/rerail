@@ -21,8 +21,8 @@ const userHome = mkdtempSync(join(tmpdir(), "rerail-vitest-user-"));
 
 process.env.RERAIL_HOME = rerailHome;
 // A test reads as a person's terminal whoever runs it: a coding agent running the suite sets the variables that mark
-// its session, which would refuse `rules approve` and turn `rules add` over an approved rule into a copy. A test of that
-// passes the session itself.
+// its session, which would refuse `rules approve` and change what `rules add` approves. A test of that passes the
+// session itself.
 for (const variable of CLEARED_AGENT_SESSION_VARIABLES) delete process.env[variable];
 // Every test file gets a user home of its own, so code that falls back to os.homedir() (harness registration, the
 // Claude status store, git's global config) never reaches the person's profile. os.homedir() reads HOME on POSIX and

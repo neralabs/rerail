@@ -1,0 +1,1 @@
+You approve a rule you ask `/rerail-create` for once. In Claude Code and Codex the agent shows you the rule and asks you to allow `rerail rules add`: allowing it approves the rule, which steers at once, with no question in the chat and no Approve on the dashboard. Cursor and Pi still approve on the dashboard.

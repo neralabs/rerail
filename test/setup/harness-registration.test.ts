@@ -1618,10 +1618,11 @@ describe("Claude Code commands", () => {
     expect(manage).toContain("For another browser, run `rerail manage` in a terminal.");
     const create = await read("rerail-create");
     expect(create).toContain(
-      `allowed-tools: Bash(${command} rules evidence *), Bash(${command} rules show *), Bash(${command} rules test *), Bash(${command} rules add *)\n`,
+      `allowed-tools: Bash(${command} rules evidence *), Bash(${command} rules show *), Bash(${command} rules test *)\n`,
     );
-    // Approving a rule is the person's: Claude Code asks them before the agent runs it.
-    expect(create).not.toMatch(/allowed-tools:.*rules approve/u);
+    // Approving a rule is the person's: Claude Code asks them before the agent runs either, and allowing rules add is
+    // their one approval of the rule it adds.
+    expect(create).not.toMatch(/allowed-tools:.*rules (approve|add)/u);
     expect(create).toContain("\"$ARGUMENTS\"");
     expect(create).toContain(`Read ${root}/skills/rerail-create/SKILL.md and follow it.`);
     // The removal is never pre-approved: Claude Code asks the person before it runs.

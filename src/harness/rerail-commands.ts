@@ -90,7 +90,8 @@ export function createRuleSkillPath(packageRoot: string): string {
 /**
  * `/rerail-create`: suggest rules from this repo's sessions and standards, or write the one the person names. The skill in
  * the package holds the steps; this keeps the commands and the one promise that matters in the command itself: test before
- * showing, and nothing steers until the person says yes. Suggested rules are added unapproved, so they run in Log.
+ * showing, and nothing steers until the person approves it, once: by allowing `rules add` where the coding agent asks
+ * first, else on the rule's page in the dashboard.
  */
 export function createRuleInstructions({ cli, packageRoot, request, shell }: CreateRuleInstructionsInput): string {
   return [
@@ -100,7 +101,7 @@ export function createRuleInstructions({ cli, packageRoot, request, shell }: Cre
     `Wherever it says \`rerail\`, run \`${cli}\`.`,
     "",
     "- With words: write that rule (the skill's Write).",
-    "- With no words: suggest rules from this repo's sessions and standards (the skill's Suggest): write and test each, add the ones that pass, and list them for the person to approve in the dashboard.",
+    "- With no words: suggest rules from this repo's sessions and standards (the skill's Suggest): write and test each, list the ones that pass, and add the ones the person picks.",
     "- If the words say a rule is wrong or noisy: tune it (the skill's Tune).",
     "- If the words change only where a rule applies: change its scope and nothing else (the skill's Scope).",
     "",
@@ -115,9 +116,9 @@ export function createRuleInstructions({ cli, packageRoot, request, shell }: Cre
     `${cli} rules approve`,
     "```",
     "",
-    "Test every draft before showing it. A rule the person asked for: read it back with \"Add this rule?\", and run `rules add` only after they say yes. A rule from Suggest: run `rules add` once it passes.",
-    "An added rule runs in Log, steering no one, until the person approves it on its page in the dashboard. `rules approve` with no id lists what waits; with an id it is the person's, refused from your session. Audit any rule you did not write before they approve it (the skill's Approve).",
-    "Never add a rule the person has not confirmed, except Suggest's tested rules, unapproved. The rule belongs to this repo only: never offer \"every repo\". Never write instruction files.",
+    "Test every draft before showing it. Show the rule's card, then run `rules add`: do not ask \"Add this rule?\" in the chat. The person approves the rule once, by allowing the `rules add` command when your coding agent asks them; where it does not ask, `rules add` says the rule runs in Log until they approve it on its page in the dashboard. A rule from Suggest: run `rules add` only for the ones the person picks.",
+    "`rules approve` with no id lists what waits for approval: rules and packs no one has approved yet, such as ones someone else wrote. With an id it is the person's, refused from your session. Audit any rule you did not write before they approve it (the skill's Approve).",
+    "Never run `rules add` for a rule the person has not asked for or picked, and never get around their approval of the command. The rule belongs to this repo only: never offer \"every repo\". Never write instruction files.",
   ].join("\n");
 }
 

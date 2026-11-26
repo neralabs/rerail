@@ -466,21 +466,30 @@ recorded, sent to no one (`src/engine/catalog/rule-approval.ts`).
 <summary>What needs approval, and how</summary>
 
 - **Needs approval:** rules created by you, rules in a worktree's `.rerail/rules/`, and every rule of a pack Rerail
-  does not publish from npm (a third party's, or one installed from a folder or tarball). `rerail rules add`,
-  `/rerail-create`, MCP writes and imports only propose; `rerail rules import --approve` is the person's own.
+  does not publish from npm (a third party's, or one installed from a folder or tarball). MCP writes and imports only
+  propose; `rerail rules import --approve` is the person's own.
 - **Steers without approval:** Rerail's own packs from npm (`@neralabs/rerail-pack-*`, not from a folder).
 - **Approving:** in the dashboard, or `rerail rules approve <id | package>`, which prints what it approves. The command
   files do not pre-approve it, so the host asks the person. The MCP approve operation refuses an `agent`.
+- **Approving as it adds:** `rerail rules add` approves the rule it stores where the person approved the command: run
+  in their own terminal (no agent session variable), or in a Claude Code or Codex session (`src/engine/agent-session.ts`).
+  Claude Code asks because the `/rerail-create` command file leaves `rules add` out of its allowed tools; Codex runs the
+  launcher only through its own approval. That one approval replaces the chat yes and the dashboard step, so the person
+  approves a rule they asked for once. Cursor asks nothing (Rerail's Cursor hook answers `allow` to every tool call) and
+  Pi has no prompt, so there, and for an agent that sets only `AI_AGENT`, `rules add` only proposes, and an edit of an
+  approved rule is stored as a copy that waits.
 - **What is approved** is content on this machine: a rule by id and document digest; a pack by package name and the
   digest of everything its version ships. An edit or new pack version waits again, in Log.
 - **Copies.** An agent's edited copy of a By Rerail rule runs in Log beside the original. A repository setting turns
-  the original off only once a person approves the copy, so a copy cannot weaken a rule.
+  the original off only once a person approves the copy (allowing `rules add` included), so a copy cannot weaken a rule
+  unseen.
 - **Before asking,** `/rerail-create` audits the rule's content (`skills/rerail-create/references/approving-rules.md`).
 
 </details>
 
 **What remains:** an unsandboxed agent, including one in a host's auto-approve mode, can still read the capability,
-write the database, and run `rerail rules approve`.
+write the database, and run `rerail rules approve`. In such a mode, or under a person's allowlist that covers
+`rerail rules add`, `rules add` also approves without asking anyone.
 
 <details>
 <summary>Other residual risks</summary>
@@ -489,6 +498,11 @@ write the database, and run `rerail rules approve`.
 - The `rule-approvals` migration sets no schema floor, so a host on an older version steers with every library rule
   until it updates.
 - A rule awaiting approval still evaluates; matches are recorded, never sent to the agent.
+- The host's prompt for `rules add` shows the command, not the rule. `/rerail-create` shows the rule's card just above
+  it, but a prompt-injected agent could show one card and add another draft file; the rule is on its dashboard page
+  afterwards, where the person can read and remove it.
+- An agent can unset its session variable so `rules add` looks like the person's terminal, but no command file
+  pre-allows that command either, so its host asks for it as for any other.
 - The passkey control is not built. It would require a WebAuthn assertion before any weakening change, so a leaked
   capability could not weaken rules either.
 

@@ -84,12 +84,12 @@ async function repository(): Promise<string> {
 }
 
 describe("a coding agent's session", () => {
-  it("is read from the variable each coding agent sets in its shell", () => {
-    expect(agentSession({ CLAUDECODE: "1" })).toEqual({ agent: "Claude Code", variable: "CLAUDECODE" });
-    expect(agentSession({ CODEX_THREAD_ID: "019a-thread" })).toEqual({ agent: "Codex", variable: "CODEX_THREAD_ID" });
-    expect(agentSession({ CURSOR_AGENT: "1" })).toEqual({ agent: "Cursor", variable: "CURSOR_AGENT" });
-    expect(agentSession({ PI_CODING_AGENT: "true", AI_AGENT: "pi" })).toEqual({ agent: "Pi", variable: "PI_CODING_AGENT" });
-    expect(agentSession({ AI_AGENT: "some-agent" })).toEqual({ agent: "a coding agent", variable: "AI_AGENT" });
+  it("is read from the variable each coding agent sets in its shell, with whether that agent asks before rules add", () => {
+    expect(agentSession({ CLAUDECODE: "1" })).toEqual({ agent: "Claude Code", variable: "CLAUDECODE", asksFirst: true });
+    expect(agentSession({ CODEX_THREAD_ID: "019a-thread" })).toEqual({ agent: "Codex", variable: "CODEX_THREAD_ID", asksFirst: true });
+    expect(agentSession({ CURSOR_AGENT: "1" })).toEqual({ agent: "Cursor", variable: "CURSOR_AGENT", asksFirst: false });
+    expect(agentSession({ PI_CODING_AGENT: "true", AI_AGENT: "pi" })).toEqual({ agent: "Pi", variable: "PI_CODING_AGENT", asksFirst: false });
+    expect(agentSession({ AI_AGENT: "some-agent" })).toEqual({ agent: "a coding agent", variable: "AI_AGENT", asksFirst: false });
   });
 
   it("is cleared for every test, so the suite reads as a person's terminal whoever runs it", () => {

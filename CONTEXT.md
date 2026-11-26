@@ -70,7 +70,7 @@ The rule documents in one checkout's `.rerail/rules/` folder, read from its work
 
 ## Rule Approval
 
-A person's approval of a rule's content on this machine: a rule by its id and document digest, a pack by its package name and the digest of its version. A rule Rerail did not publish (a library rule, a worktree rule, a rule of a third party's or locally installed pack) runs in Log until its content is approved; an edit is new content.
+A person's approval of a rule's content on this machine: a rule by its id and document digest, a pack by its package name and the digest of its version. A rule Rerail did not publish (a library rule, a worktree rule, a rule of a third party's or locally installed pack) runs in Log until its content is approved; an edit is new content. `rerail rules add` approves the rule it stores where the person approved the command: in their own terminal, or by allowing it when their coding agent asks first (Claude Code, Codex).
 
 ## Rerail Database
 

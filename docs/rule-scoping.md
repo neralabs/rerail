@@ -243,8 +243,9 @@ Conversation rules, in [internal testing](../README.md#internal-testing), resolv
 
 A rule Rerail did not publish runs in Log, whatever its settings say, until a person approves its content.
 
-This covers library rules, rules in a worktree's `.rerail/rules/`, and every rule of a pack that is not Rerail's own from npm. A person approves with:
+This covers library rules, rules in a worktree's `.rerail/rules/`, and every rule of a pack that is not Rerail's own from npm. A person approves once, with any one of:
 
+- `rerail rules add`, for the rule it stores: run in their own terminal, or allowed when Claude Code or Codex asks before running it (Rerail's command files do not pre-allow it);
 - `rerail rules approve <id | package>` (no name lists what waits);
 - the Approve button on the rule's page or the pack's sheet in the dashboard;
 - `rule_approvals_set`.
@@ -261,7 +262,7 @@ An approval is of content, on this machine:
 - **A rule**: its id and the digest of its document.
 - **A pack**: its package name and the digest of its version, what it says of itself (`name`, `category`, `covers`, `reason`), `honourSuppressionComments` and every rule document it lists.
 
-An edit, or a new pack version, is new content and waits again. Going back to approved content needs no second approval. A library rule a person writes through the dashboard or HTTP API is approved with the write; one a coding agent writes, or `rerail rules add` adds, waits. Library rules stored before approvals existed count as approved.
+An edit, or a new pack version, is new content and waits again. Going back to approved content needs no second approval. A library rule a person writes through the dashboard or HTTP API is approved with the write, and so is one `rerail rules add` stores where the person approved the command; one a coding agent writes through MCP, or `rerail rules add` stores in the session of an agent that does not ask first (Cursor, Pi, or one that sets only `AI_AGENT`), waits. Library rules stored before approvals existed count as approved.
 
 </details>
 
@@ -269,6 +270,8 @@ An edit, or a new pack version, is new content and waits again. Going back to ap
 <summary>How approving works, and its limits</summary>
 
 `rerail rules approve` first prints what it approves: a rule's JSON in full, invisible characters written as escapes, or a pack's rule ids. Rerail's command files never pre-approve it, so a coding agent's host asks the person before it runs.
+
+`rerail rules add` approves where the person approved the command. Outside a coding agent's session, that is their own terminal. In Claude Code, the `/rerail-create` command file leaves `rules add` out of its allowed tools, so Claude Code asks; Codex runs the launcher only through its own approval. Cursor asks nothing (Rerail's Cursor hook allows every tool call) and Pi has no prompt, so there the rule waits. The prompt shows the command, not the rule: `/rerail-create` shows the rule's card just above it. A host in a mode that approves every command, or a person's allowlist that covers `rerail rules add`, approves without asking.
 
 The session footer counts what waits (`2 to approve`), as does `/rerail`, and Overview lists it. An approval changes the configuration signature, so a running session picks it up at its next event.
 
@@ -315,17 +318,18 @@ Anything else is refused with `403 agent-not-permitted` and the dashboard URL wh
 
 - `rerail rules approve <id | package>` is refused, and names the dashboard page where a person approves it; with no name it lists what waits.
 - `rerail rules import` is refused: it replaces your rules, approved ones included.
-- `rerail rules add` of a draft that changes one of your approved rules saves the draft as a copy, as below, rather than changing the rule. The rule keeps running as it is, in every repository it is added to, until a person approves the copy. A rule still waiting for approval, and a draft that says what the approved rule says, are changed in place. Where the approved rule is not added, the copy would have nowhere to run, so the edit is refused until the rule is added there unchanged.
+- `rerail rules add` approves the rule it stores where the agent asked the person first (Claude Code, Codex), and changes an approved rule of yours in place ([approval](#approval)).
+- In any other agent's session, `rerail rules add` of a draft that changes one of your approved rules saves the draft as a copy, as below, rather than changing the rule. The rule keeps running as it is, in every repository it is added to, until a person approves the copy. A rule still waiting for approval, and a draft that says what the approved rule says, are changed in place. Where the approved rule is not added, the copy would have nowhere to run, so the edit is refused until the rule is added there unchanged.
 
 Like the API's, this holds a coding agent to the path it is given. It is not a security boundary: the agent runs as you, and can unset the variable before it runs a command.
 
-**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library instead (`<id>-copy`, `-copy-2`, …), as `rerail rules add` does for a coding agent's edit of your approved rule. The CLI does the same for every coding agent, MCP or not: `rerail rules show <id>` prints the rule as a draft, and `rerail rules add` of a draft that keeps its id stores the copy. `rules add` refuses a second copy where one is already added, and naming the copy is how to change it again.
+**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library instead (`<id>-copy`, `-copy-2`, …), as `rerail rules add` does for the edit of your approved rule by a coding agent that does not ask first. The CLI does the same for every coding agent, MCP or not: `rerail rules show <id>` prints the rule as a draft, and `rerail rules add` of a draft that keeps its id stores the copy. `rules add` refuses a second copy where one is already added, and naming the copy is how to change it again.
 
 <details>
 <summary>How the copy replaces the original</summary>
 
 - The copy is attached wherever the original is present in the target repository, at the same folders.
-- Its first approval switches the original off there with a repository setting: at once for a person's write, which is approved as saved, and for a coding agent's copy when a person approves it.
+- Its first approval switches the original off there with a repository setting: at once for a person's write and for `rerail rules add` where the person approved the command, both approved as saved, and for any other coding agent's copy when a person approves it.
 - Until then the original keeps running beside the copy, which runs in Log, so writing a copy never weakens a rule.
 - A By Rerail original stays a reference to its installed pack; your own rule stays in your library, unchanged.
 - `repository_rules_get` names the original in the copy's `copiedFromRuleId` (`null` for every other rule), so the dashboard can say that approving the copy turns the original off.

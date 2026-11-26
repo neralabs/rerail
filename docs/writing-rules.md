@@ -7,16 +7,16 @@ Start with `/rerail-create` in your coding agent (`$rerail-create` in Codex):
 
 | You type | What happens |
 |---|---|
-| `/rerail-create` | The agent suggests rules from this repo's sessions and written standards, tests them, and adds the ones that pass in Log until you approve them |
+| `/rerail-create` | The agent suggests rules from this repo's sessions and written standards, tests them, and adds the ones you pick |
 | `/rerail-create use our logger, not console.log` | The agent writes that rule |
 | `/rerail-create the no-sync rule keeps telling you to use fs/promises in our CLI` | The agent tunes that rule, or offers to switch it to Log |
 
-The agent tests each draft. A rule you asked for is read back and added only after you say yes. Rules it suggests are added once they pass, and listed for you. Every rule the agent adds runs in Log, steering no one, until you approve it on its page in the dashboard: the dashboard's Overview says what they caught in Log and sends you to Created by you, where you read each one. The agent cannot approve a rule for you ([coding agents](rule-scoping.md#coding-agents)).
+The agent tests each draft and shows it to you, then runs `rerail rules add`. You approve each rule once. In Claude Code and Codex, the agent asks you to allow that command: allowing it approves the rule, and it runs in its mode at once. Decline it to change something first. In Cursor and Pi, which do not ask, the rule runs in Log, steering no one, until you approve it on its page in the dashboard: the dashboard's Overview says what it caught in Log and sends you to Created by you, where you read it. The agent cannot approve a rule for you ([coding agents](rule-scoping.md#coding-agents)).
 
 <details>
 <summary>Where the agent's method comes from</summary>
 
-Every path ends the same way: test, read back, add on your yes. The agent follows the skill in
+Every path ends the same way: test, read back, add, approved by you once. The agent follows the skill in
 [`skills/rerail-create/`](../skills/rerail-create/SKILL.md), which ships in the package. The skill's references are the
 detailed guide to everything on this page: which rules to write, how to write and test them, and how to fix one that
 misfires.
@@ -149,8 +149,8 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 rerail rules test draft.json            # validate, run the cases, list the matches in the repo; writes nothing
 rerail rules test draft.json --json     # the same, listing every match and every file the rule could not check
 rerail rules test rule.rerail           # a .rerail rule file: run the tests it carries (.test ... .end); none is an error
-rerail rules add draft.json             # store it in your library and add it, on, to this repo
-rerail rules approve <id>               # after reading it: it steers instead of running in Log
+rerail rules add draft.json             # store it in your library, approved, and add it, on, to this repo
+rerail rules approve <id>               # after reading one that waits (a worktree's own, say): it steers instead of running in Log
 rerail rules export --output rules.json # your rules, to read or edit one
 rerail rules show <id> > draft.json     # one rule as a draft, a By Rerail one too; adding it back stores your copy
 ```
@@ -208,16 +208,20 @@ worktree.
 
 ## Approving a rule
 
-A rule you add with `rerail rules add`, or an agent writes, runs in Log until a person approves its message.
+A rule steers only once a person approves its message, and an edit needs approval again. You approve once, in one of
+these ways:
 
-Say yes to `/rerail-create` after its read-back, or approve on the rule's page in the dashboard. An edit needs approval
-again.
+- Run `rerail rules add` in your own terminal.
+- Allow the `rerail rules add` command when Claude Code or Codex asks, after `/rerail-create` shows you the rule.
+- Approve it on the rule's page in the dashboard, for a rule added where nothing asked you: from Cursor or Pi, or
+  through MCP.
 
 <details>
 <summary>Why, and what else waits for approval</summary>
 
-Every coding agent in the repository acts on a steer, so a person reads it first. On your yes, `/rerail-create` runs
-`rerail rules approve <id>`. The same approval applies to a worktree's own rules and to packs Rerail does not publish
+Every coding agent in the repository acts on a steer, so a person reads it first. Rerail's command files never
+pre-allow `rerail rules add`, so the agent's host asks you before it runs. The same approval, on the dashboard or with
+`rerail rules approve`, applies to a worktree's own rules and to packs Rerail does not publish
 ([approval](rule-scoping.md#approval)).
 
 </details>
@@ -250,8 +254,8 @@ feature/                  a linked worktree of the repository
 - **Git.** A committed `.rerail/rules/` runs in every checkout of that branch with Rerail started, and its messages reach
   the coding agent there.
 
-`/rerail-create` writes a rule here when you ask for this worktree only, or pick it under **Change something** in the
-read-back.
+`/rerail-create` writes a rule here when you ask for this worktree only, or when you decline its `rules add` and ask
+for this worktree only instead.
 
 </details>
 
