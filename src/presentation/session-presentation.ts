@@ -112,12 +112,13 @@ function silent(presence: PresentationPresence, repositoryState: RepositoryStart
 /**
  * The ramp-coloured `R E R A I L` and the state-coloured mark are the only colour; each label owns its own immutable
  * OSC 8 target. BEL-terminated to match the host TUI, which frames every line with `ESC ] 8 ; ; BEL`. `env` decides the
- * colour depth (`COLORTERM`, `NO_COLOR`).
+ * colour depth (`COLORTERM`, `NO_COLOR`). A linked label is underlined at every depth, `NO_COLOR` too: it is not colour,
+ * and many terminals (iTerm2's CPU renderer among them) draw an OSC 8 link like plain text until it is hovered.
  */
 export function formatTerminalStatus({ status, parts }: SessionPresentation, env: TerminalEnv = process.env): string {
   const link = (part: SessionPresentation["parts"][number], label: string): string => {
     const target = part.url === null ? null : terminalText(part.url);
-    return target ? `\u001b]8;;${target}\u0007${label}\u001b]8;;\u0007` : label;
+    return target ? `\u001b]8;;${target}\u0007\u001b[4m${label}\u001b[24m\u001b]8;;\u0007` : label;
   };
   const [brand, ...items] = parts;
   if (brand === undefined) return "";

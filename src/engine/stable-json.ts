@@ -87,10 +87,19 @@ export function ruleDocumentDigest(document: RuleDocument): string {
 }
 
 /**
- * {@link stableJsonText} of `rule` and the sha256 of that text; undefined when not JSON. Worked out at each build: each
- * checkout's rule set hands the catalog a copy of every rule with its mode set, so no two builds share the object.
+ * The stable JSON text of a rule (`stableJsonText`) and its digest, by the rule: a rule is never changed once read, and
+ * every checkout running a rule at one mode is handed one object for it (`runningDocument`), so every checkout's catalog
+ * builds from the same rules.
  */
+const ruleSources = new WeakMap<object, { readonly text: string; readonly digest: string }>();
+
+/** {@link stableJsonText} of `rule` and the sha256 of that text, worked out once per rule; undefined when not JSON. */
 export function ruleSourceText(rule: object): { readonly text: string; readonly digest: string } | undefined {
+  const known = ruleSources.get(rule);
+  if (known !== undefined) return known;
   const text = stableJsonText(rule);
-  return text === undefined ? undefined : { text, digest: `sha256:${createHash("sha256").update(text).digest("hex")}` };
+  if (text === undefined) return undefined;
+  const source = { text, digest: `sha256:${createHash("sha256").update(text).digest("hex")}` };
+  ruleSources.set(rule, source);
+  return source;
 }

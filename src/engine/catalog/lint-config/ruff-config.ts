@@ -579,11 +579,11 @@ function selectedDecision(selection: RuffSelection, code: string, info: RuffRule
   const { decided, exact } = ruffDecision(selection, code, info, mode);
   const decision = ((): PortDecision => {
     if (decided?.by !== undefined) return { on: decided.enabled, explicit: true, because: ruffText(decided.by) };
-    if (decided?.leftOutBy !== undefined) return { on: false, explicit: false, because: `${decided.leftOutBy.file}: ${decided.leftOutBy.selectKey!} does not select it` };
+    if (decided?.leftOutBy !== undefined) return { on: false, explicit: false, because: `not selected by ${decided.leftOutBy.file}: ${decided.leftOutBy.selectKey!}` };
     if (selection.unread !== undefined) return { on: "unknown", because: `${selection.unread} which Rerail does not read, may select it` };
     return byDefault(info, mode)
       ? { on: true, explicit: false, because: `${selection.file}: ${defaultText(mode)}` }
-      : { on: false, explicit: false, because: `${selection.file} does not select it, nor does ${defaultText(mode)}` };
+      : { on: false, explicit: false, because: `not selected by ${selection.file} or ${defaultText(mode)}` };
   })();
   return { decision, exact };
 }
