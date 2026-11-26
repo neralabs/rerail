@@ -226,11 +226,15 @@ gbind(s, x, t) :- decl(s, x, m), kind(m, "module"), tgt(t), kind(t, "identifier"
 // class body runs in order, so the read is looked up outside. A binding with no node (a `for` target, an import)
 // counts as early.
 .decl cls_late(n: node, x: symbol, s: node)
-cls_late(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x), bound_in(s, x), !cls_early(n, x, s),
+cls_late(n, x, s) :- cls_read(n, x, s), bound_in(s, x), !cls_early(n, x, s),
     !otgt(s, x), !ibind(s, x, _), x != "__qualname__", x != "__module__".
 .decl cls_early(n: node, x: symbol, s: node)
-cls_early(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x), defn(s, x, f), f < n.
-cls_early(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x), asg(s, x, _, a), a < n, !within(n, a).
+cls_early(n, x, s) :- cls_read(n, x, s), defn(s, x, f), f < n.
+cls_early(n, x, s) :- cls_read(n, x, s), asg(s, x, _, a), a < n, !within(n, a).
+// cls_read(n, x, s): read n of x, looked up from class body s: the few reads the two above ask about, keyed by the
+// class and the name together, so a class's definitions and assignments meet only its reads of their names.
+.decl cls_read(n: node, x: symbol, s: node) no_inline
+cls_read(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x).
 // wstart(n, s): where the lookup of n starts: its nearest scope or comprehension, except that a comprehension's
 // first iterable is looked up from the scope around the comprehension. (One level: an iterable nested in another
 // comprehension's first iterable starts at the outer comprehension.) A name in a string annotation's tree starts
