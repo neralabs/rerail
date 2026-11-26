@@ -132,12 +132,135 @@ pub const ORDER: u32 = 2;
 /// `Index::ordered`: a sorted order of the rows `lo..hi` themselves, already in the key's order (`mask` holds
 /// `lo << 32 | hi`), so no list of them is kept.
 pub const ORDER_ROWS: u32 = 3;
-/// `Index::ordered`: a node-keyed index of one column (`try_add_node_bits`, decision 0694): `rows` its groups'
-/// directory, `fences` their bits, `mask` the rows it holds. No hashed index's or order's finder finds it.
+/// `Index::ordered`: a node-keyed index of one column (`Relation::try_add_node_index`, decision 0694): its values as
+/// bits (`NodeIndex`). `rows` is its chunk; no other field is its. No hashed index's or order's finder finds it.
 pub const NODE_BITS: u32 = 4;
-/// `Index::ordered`: a value-keyed index of one column's rows (`try_add_node_rows`): `rows` its documents' directory,
-/// their distinct values, and each value's rows, `mask` the rows it holds. No other finder finds it.
+/// `Index::ordered`: a node-keyed index of one column with each value's rows (`NodeIndex::rows`): `rows` its bits'
+/// chunk, as `NODE_BITS`'s, and `offs` its rows' chunk. No other finder finds it.
 pub const NODE_ROWS: u32 = 5;
+
+/// A value's low bits within its `NodeIndex` group: below `ID_SPLIT` (a granule's index; by tape position, a place
+/// in a stretch of 2^18).
+#[inline]
+fn node_low(v: i64) -> u32 {
+    (v & ((1 << crate::packed::ID_SPLIT) - 1)) as u32
+}
+
+/// A node-keyed index's head, at the start of its bits' chunk.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct NodeHead {
+    pub groups: u32,
+    pub words: u32,
+    /// Its distinct values (`NODE_ROWS`; 0 for `NODE_BITS`).
+    pub values: u32,
+    /// The relation's rows it holds, `0..rows`.
+    pub rows: u32,
+}
+
+/// A group of a node-keyed index: the values whose bits above `ID_SPLIT` are `key`, a bit each from `base` (the
+/// least one's low bits), in words from `start` to the next group's.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct NodeGroup {
+    pub key: i64,
+    pub base: u32,
+    pub start: u32,
+}
+
+/// A node-keyed index read in place (`Relation::node_index`): its bits' chunk is its head, its groups by key, their
+/// words, and for `NODE_ROWS` each word's rank (the values before it); its rows' chunk is each value's first row's
+/// place and the end (`values + 1`), then the rows, by value, each value's in row order.
+#[derive(Clone, Copy)]
+pub struct NodeIndex<'a> {
+    pub head: &'a NodeHead,
+    pub groups: &'a [NodeGroup],
+    pub words: &'a [u64],
+    rank: &'a [u32],
+    offs: &'a [u32],
+    ids: &'a [u32],
+}
+
+impl<'a> NodeIndex<'a> {
+    /// The groups' place in the bits' chunk: past the head.
+    const GROUPS: usize = std::mem::size_of::<NodeHead>();
+
+    /// The bits' chunk's bytes: its head, groups, words, and their ranks where it keeps rows.
+    fn bits_bytes(groups: usize, words: usize, ranked: bool) -> usize {
+        Self::GROUPS + std::mem::size_of::<NodeGroup>() * groups + 8 * words + if ranked { 4 * words } else { 0 }
+    }
+
+    /// The groups' and words' places in a bits' chunk of `groups` and `words`.
+    fn places(groups: usize) -> (usize, usize) {
+        (Self::GROUPS, Self::GROUPS + std::mem::size_of::<NodeGroup>() * groups)
+    }
+
+    /// # Safety
+    /// `base` is a built node index's bits' chunk (`try_add_node_index`), 8-aligned, unchanged for `'a`; `rows` its
+    /// rows' chunk where it keeps rows.
+    unsafe fn at(base: *const u8, rows: Option<&'a [u32]>) -> Self {
+        // SAFETY: the caller's.
+        unsafe {
+            let head = &*base.cast::<NodeHead>();
+            let (g, w) = Self::places(head.groups as usize);
+            let groups = std::slice::from_raw_parts(base.add(g).cast::<NodeGroup>(), head.groups as usize);
+            let words = std::slice::from_raw_parts(base.add(w).cast::<u64>(), head.words as usize);
+            let (rank, offs, ids) = match rows {
+                Some(r) => {
+                    let rank = std::slice::from_raw_parts(base.add(w + 8 * head.words as usize).cast::<u32>(), head.words as usize);
+                    let (offs, ids) = r.split_at(head.values as usize + 1);
+                    (rank, offs, ids)
+                }
+                None => (&[][..], &[][..], &[][..]),
+            };
+            NodeIndex { head, groups, words, rank, offs, ids }
+        }
+    }
+
+    /// Whether it holds `v`. `hint` is the group of the last probe: tried first, then the one after it, then searched.
+    #[inline]
+    pub fn has(&self, v: i64, hint: &mut u32) -> bool {
+        node_place(self.groups, self.words.len(), v, hint).is_some_and(|(w, b)| self.words[w] >> b & 1 != 0)
+    }
+
+    /// The rows whose column holds `v`, in row order (`NODE_ROWS`; none for `NODE_BITS`): its rank among the bits,
+    /// then its rows. `hint` as `has`'s.
+    #[inline]
+    pub fn rows(&self, v: i64, hint: &mut u32) -> &'a [u32] {
+        let Some((w, b)) = node_place(self.groups, self.words.len(), v, hint) else { return &[] };
+        let word = self.words[w];
+        if self.offs.is_empty() || word >> b & 1 == 0 {
+            return &[];
+        }
+        let x = (self.rank[w] + (word & ((1u64 << b) - 1)).count_ones()) as usize;
+        &self.ids[self.offs[x] as usize..self.offs[x + 1] as usize]
+    }
+}
+
+/// Where value `v`'s bit lies among `groups` and their `words` words: its word and bit; `None` where no group holds
+/// it. `hint` the last probe's group: tried first, then the one after it (probes in node order), then searched.
+#[inline]
+fn node_place(groups: &[NodeGroup], words: usize, v: i64, hint: &mut u32) -> Option<(usize, u32)> {
+    let key = v >> crate::packed::ID_SPLIT;
+    let h = *hint as usize;
+    let k = if groups.get(h).is_some_and(|g| g.key == key) {
+        h
+    } else if groups.get(h + 1).is_some_and(|g| g.key == key) {
+        h + 1
+    } else {
+        let k = groups.partition_point(|g| g.key < key);
+        if groups.get(k).is_none_or(|g| g.key != key) {
+            return None;
+        }
+        k
+    };
+    *hint = k as u32;
+    let g = groups[k];
+    let x = node_low(v).checked_sub(g.base)?;
+    let w = g.start as usize + x as usize / 64;
+    let end = groups.get(k + 1).map_or(words, |n| n.start as usize);
+    (w < end).then_some((w, x % 64))
+}
 
 /// A chunk of a relation's block an order is given (`Relation::try_add_order`): its offset, its items, and the bytes
 /// its chunk keeps (0: one it does not own, given back by its owner).
@@ -801,355 +924,200 @@ impl Relation {
         }
     }
 
-    /// Gives this relation a node-keyed index on column `col` of its rows `0..n` (decision 0694 step 1), laid out as
-    /// a node's id is (`packed::ID_SPLIT`): its document's key (the high 32 bits), then its low 32 bits, a granule's
-    /// slot above an index in the granule. Each document is held in the smaller of two forms:
-    /// - **bits**: its slots from its least to its greatest, each a slot entry giving its bits, from its least
-    ///   index's word to its greatest's. A test is the slot's entry and one bit.
-    /// - **lows**: its distinct low halves, sorted. A test is a search of them.
+    /// Gives this relation a node-keyed index on column `col` of its rows `0..n` (decision 0694 step 1): its values
+    /// as bits, in groups of a value's bits above `ID_SPLIT` (a document and a granule's slot; by tape position, a
+    /// stretch of 2^18), a bit a value from its group's least (`NodeIndex`). With `rows` (`NODE_ROWS`), also each
+    /// value's rows in row order, found by the value's rank among the bits: the shape kernel's keyed read, a probe by
+    /// position, not a search of an order's runs.
     ///
-    /// Either is at most a hashed index's bytes (lows: 4 a distinct value); a document takes bits when they are at
-    /// most twice its lows' bytes. Its number; `None` when its directory is full or `block` has no room.
-    ///
-    /// Its `rows` (`u32`s): the documents' count; each document's key, its form's first field, its second, and where
-    /// its form starts; then the forms. A document of bits has its least slot and its slots; their entries, two a
-    /// slot, are its words' offset and its first word's number above its words' count (0 for a slot of none). A
-    /// document of lows has `LOWS` and its lows' count, then its lows. Its `fences`: the words.
+    /// Made from the rows read where they lie, with no copy and no sort of them: once for each group's span (a
+    /// group's rows mostly lie together; only those runs are sorted and merged), once for the bits, and with `rows`
+    /// twice more (each value's count, then its rows). Refused (`None`) where a value is negative or the words would
+    /// be more than 4 bytes a row: a probe then reads the hashed index, as without it (a sorted copy of the values and
+    /// words up to 16 bytes a row held 1.5 GB of the heap in a run on `all`, d2036b8dfa). Also `None` when the
+    /// directory is full or `block` has no room.
     ///
     /// # Safety
     /// As `try_reserve_index`'s: this relation's descriptor is the caller's to change, its rows `0..n` written.
-    pub unsafe fn try_add_node_bits(&self, block: &Block, col: u16, n: u32) -> Option<usize> {
-        use crate::packed::ID_SPLIT;
+    pub unsafe fn try_add_node_index(&self, block: &Block, col: u16, n: u32, rows: bool) -> Option<usize> {
         if n == 0 || col as usize >= self.rows.ncols as usize {
             return None;
         }
-        // The distinct values, by document then low half (scratch of the build).
-        let mut vals: Vec<u64> = (0..n).map(|id| self.get(id, col as usize) as u64).collect();
-        vals.sort_unstable();
-        vals.dedup();
-        /// A document's values, `vals[a..b]`, and its form: bits (its least slot, its slots, its words) or lows.
-        struct Doc {
-            hi: u32,
-            a: usize,
-            b: usize,
-            bits: Option<(u32, u32, u32)>,
-        }
-        let (mut docs, mut a) = (Vec::new(), 0usize);
-        while a < vals.len() {
-            let hi = (vals[a] >> 32) as u32;
-            let b = a + vals[a..].iter().take_while(|&&v| (v >> 32) as u32 == hi).count();
-            let slot = |v: u64| (v as u32) >> ID_SPLIT;
-            let (s0, s1) = (slot(vals[a]), slot(vals[b - 1]));
-            // Each slot's words: its least index's word to its greatest's.
-            let mut words = 0u32;
-            let mut i = a;
-            while i < b {
-                let s = slot(vals[i]);
-                let j = i + vals[i..b].iter().take_while(|&&v| slot(v) == s).count();
-                let x = |v: u64| (v as u32 & ((1 << ID_SPLIT) - 1)) / 64;
-                words += x(vals[j - 1]) - x(vals[i]) + 1;
-                i = j;
-            }
-            let bits_bytes = 8 * (s1 - s0 + 1) as usize + 8 * words as usize;
-            let bits = (bits_bytes <= 2 * 4 * (b - a)).then_some((s0, s1 - s0 + 1, words));
-            docs.push(Doc { hi, a, b, bits });
-            a = b;
-        }
-        const LOWS: u32 = u32::MAX;
-        let form: usize = docs.iter().map(|d| d.bits.map_or(d.b - d.a, |(_, slots, _)| 2 * slots as usize)).sum();
-        let words: usize = docs.iter().filter_map(|d| d.bits).map(|(_, _, w)| w as usize).sum();
-        let dir = 1 + 4 * docs.len() + form;
-        let (d_at, d_kept) = block.try_alloc_chunk_fit(4 * dir, 8)?;
-        let Some((w_at, w_kept)) = block.try_alloc_chunk_fit(8 * words.max(1), 8) else {
-            block.free_chunk_fit(d_at, d_kept);
-            return None;
-        };
-        let (d, w) = (block.ptr::<u32>(d_at), block.ptr::<i64>(w_at));
-        // SAFETY: both chunks were just allocated, this index's alone until it is marked built.
-        unsafe {
-            std::ptr::write_bytes(d, 0, dir);
-            std::ptr::write_bytes(w, 0, words.max(1));
-            d.write(docs.len() as u32);
-            let (mut at, mut off) = ((1 + 4 * docs.len()) as u32, 0u32);
-            for (k, doc) in docs.iter().enumerate() {
-                let e = d.add(1 + 4 * k);
-                e.write(doc.hi);
-                e.add(3).write(at);
-                let values = &vals[doc.a..doc.b];
-                match doc.bits {
-                    None => {
-                        e.add(1).write(LOWS);
-                        e.add(2).write(values.len() as u32);
-                        for (i, &v) in values.iter().enumerate() {
-                            d.add(at as usize + i).write(v as u32);
-                        }
-                        at += values.len() as u32;
-                    }
-                    Some((s0, slots, _)) => {
-                        e.add(1).write(s0);
-                        e.add(2).write(slots);
-                        let mut i = 0;
-                        while i < values.len() {
-                            let low = values[i] as u32;
-                            let s = low >> ID_SPLIT;
-                            let j = i + values[i..].iter().take_while(|&&v| (v as u32) >> ID_SPLIT == s).count();
-                            let x = |v: u64| v as u32 & ((1 << ID_SPLIT) - 1);
-                            let (w0, w1) = (x(values[i]) / 64, x(values[j - 1]) / 64);
-                            let t = d.add(at as usize + 2 * (s - s0) as usize);
-                            t.write(off);
-                            t.add(1).write(w0 << 16 | (w1 - w0 + 1));
-                            for &v in &values[i..j] {
-                                *w.add((off + x(v) / 64 - w0) as usize) |= 1 << (x(v) % 64);
-                            }
-                            off += w1 - w0 + 1;
-                            i = j;
-                        }
-                        at += 2 * slots;
-                    }
+        let at = |r: u32| self.get(r, col as usize);
+        // A group's runs as one, by key: at most one entry a group after.
+        fn merge(spans: &mut Vec<(i64, u32, u32)>) {
+            spans.sort_unstable_by_key(|s| s.0);
+            spans.dedup_by(|b, a| {
+                let same = a.0 == b.0;
+                if same {
+                    (a.1, a.2) = (a.1.min(b.1), a.2.max(b.2));
                 }
+                same
+            });
+        }
+        // Each run of rows of one group: its key, least and greatest low bits. Merged as they grow: more groups than
+        // half the rows would take more words than the bound.
+        let mut spans: Vec<(i64, u32, u32)> = Vec::new();
+        let mut cap = 1024;
+        for r in 0..n {
+            let v = at(r);
+            if v < 0 {
+                return None;
+            }
+            let (key, l) = (v >> crate::packed::ID_SPLIT, node_low(v));
+            match spans.last_mut() {
+                Some(s) if s.0 == key => (s.1, s.2) = (s.1.min(l), s.2.max(l)),
+                _ => spans.push((key, l, l)),
+            }
+            if spans.len() == cap {
+                merge(&mut spans);
+                if 2 * spans.len() > n as usize {
+                    return None;
+                }
+                cap = (2 * spans.len()).max(1024);
             }
         }
+        merge(&mut spans);
+        let words: usize = spans.iter().map(|&(_, least, most)| (most - least) as usize / 64 + 1).sum();
+        if 2 * words > n as usize {
+            return None;
+        }
+        let groups = spans.len();
+        let bytes = NodeIndex::bits_bytes(groups, words, rows);
+        let (b_at, b_kept) = block.try_alloc_chunk_fit(bytes, 8)?;
+        let base = block.ptr::<u8>(b_at);
+        let (g_at, w_at) = NodeIndex::places(groups);
+        // SAFETY: the chunk was just allocated, `bytes` long and 8-aligned, this index's alone until it is marked
+        // built; its head, groups, words and ranks lie apart.
+        let (head, group, w, rank) = unsafe {
+            std::ptr::write_bytes(base, 0, bytes);
+            let head = &mut *base.cast::<NodeHead>();
+            *head = NodeHead { groups: groups as u32, words: words as u32, values: 0, rows: n };
+            let group = std::slice::from_raw_parts_mut(base.add(g_at).cast::<NodeGroup>(), groups);
+            let w = std::slice::from_raw_parts_mut(base.add(w_at).cast::<u64>(), words);
+            let rank = std::slice::from_raw_parts_mut(base.add(w_at + 8 * words).cast::<u32>(), if rows { words } else { 0 });
+            (head, group, w, rank)
+        };
+        let mut start = 0u32;
+        for (g, &(key, least, most)) in group.iter_mut().zip(&spans) {
+            *g = NodeGroup { key, base: least, start };
+            start += (most - least) / 64 + 1;
+        }
+        drop(spans);
+        let group = &*group;
+        // The group of the row before: the next row's most often.
+        let mut hint = 0u32;
+        for r in 0..n {
+            let (word, bit) = node_place(group, words, at(r), &mut hint).expect("every row's value has its place");
+            w[word] |= 1 << bit;
+        }
+        let mut more = (0, 0);
+        if rows {
+            // Each word's rank: the values before it.
+            let mut values = 0u32;
+            for (k, &word) in w.iter().enumerate() {
+                rank[k] = values;
+                values += word.count_ones();
+            }
+            head.values = values;
+            let v1 = values as usize + 1;
+            let Some((r_at, r_kept)) = block.try_alloc_chunk_fit(4 * (v1 + n as usize), 8) else {
+                block.free_chunk_fit(b_at, b_kept);
+                return None;
+            };
+            // SAFETY: as the bits' chunk's.
+            let (offs, ids) = unsafe {
+                let p = block.ptr::<u32>(r_at);
+                std::ptr::write_bytes(p, 0, v1);
+                (std::slice::from_raw_parts_mut(p, v1), std::slice::from_raw_parts_mut(p.add(v1), n as usize))
+            };
+            let (w, rank) = (&*w, &*rank);
+            let value = |v: i64, hint: &mut u32| {
+                let (word, bit) = node_place(group, words, v, hint).expect("every row's value has its place");
+                (rank[word] + (w[word] & ((1u64 << bit) - 1)).count_ones()) as usize
+            };
+            // Each value's rows, in row order: their counts (at `offs[value + 1]`), their starts, then the rows
+            // placed, each start moving to its value's end; the ends moved back to be the starts.
+            for r in 0..n {
+                offs[value(at(r), &mut hint) + 1] += 1;
+            }
+            for k in 1..v1 {
+                offs[k] += offs[k - 1];
+            }
+            for r in 0..n {
+                let x = value(at(r), &mut hint);
+                ids[offs[x] as usize] = r;
+                offs[x] += 1;
+            }
+            offs.copy_within(..values as usize, 1);
+            offs[0] = 0;
+            more = (r_at, r_kept);
+        }
+        let values = head.values as usize;
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
             let Some(i) = self.next_entry(block) else {
-                block.free_chunk_fit(d_at, d_kept);
-                block.free_chunk_fit(w_at, w_kept);
+                block.free_chunk_fit(b_at, b_kept);
+                if more.1 > 0 {
+                    block.free_chunk_fit(more.0, more.1);
+                }
                 return None;
             };
-            let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
-            (*ix).ncols = 0;
-            (*ix).from = 0;
-            (*ix).state = 0;
+            let e = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
+            (*e).ncols = 0;
+            (*e).from = 0;
+            (*e).state = 0;
             let mut key = [0u16; MAX_KEY];
             key[0] = col;
-            (*ix).key = key;
-            (*ix).ordered = NODE_BITS;
-            (*ix).mask = u64::from(n);
-            (*ix).offs.off.store(0, Relaxed);
-            (*ix).offs.len.store(0, Relaxed);
-            (*ix).tags.off.store(0, Relaxed);
-            (*ix).tags.len.store(0, Relaxed);
-            (*ix).prints.off.store(0, Relaxed);
-            (*ix).prints.len.store(0, Relaxed);
-            Span::set(&raw mut (*ix).rows, d, dir);
-            Span::set(&raw mut (*ix).fences, w, words.max(1));
-            (*ix).held = [d_kept as u64, w_kept as u64, 0, 0];
+            (*e).key = key;
+            (*e).ordered = if rows { NODE_ROWS } else { NODE_BITS };
+            (*e).mask = 0;
+            for s in [&raw mut (*e).offs, &raw mut (*e).marks] {
+                (*s).off.store(0, Relaxed);
+                (*s).len.store(0, Relaxed);
+            }
+            (*e).fences.off.store(0, Relaxed);
+            (*e).fences.len.store(0, Relaxed);
+            (*e).tags.off.store(0, Relaxed);
+            (*e).tags.len.store(0, Relaxed);
+            (*e).prints.off.store(0, Relaxed);
+            (*e).prints.len.store(0, Relaxed);
+            // Its bits' chunk in `rows`, and with rows their chunk in `offs` (`node_index`).
+            Span::set(&raw mut (*e).rows, base.cast::<u32>(), bytes / 4);
+            if more.1 > 0 {
+                Span::set(&raw mut (*e).offs, block.ptr::<u32>(more.0), values + 1 + n as usize);
+            }
+            (*e).held = [b_kept as u64, more.1 as u64, 0, 0];
             self.nindex.fetch_max(i as u32 + 1, Release);
             std::sync::atomic::fence(Release);
-            std::ptr::write_volatile(&raw mut (*ix).ncols, 1);
+            std::ptr::write_volatile(&raw mut (*e).ncols, 1);
             Some(i)
         }
     }
 
-    /// Gives this relation an index of column `col`'s rows over its rows `0..n`, keyed by value as a node's id is laid
-    /// out (`try_add_node_bits`): the shape kernel's keyed read (the design's layer 5), a probe by a node its rows,
-    /// found by position, not by searching an order's runs by a hashed tag.
-    ///
-    /// Its `rows` (`u32`s): the documents' count `D`, the values' count `T`; each document's key (the high 32 bits),
-    /// its first value's place and its values' count (`3 D`); the values' low halves, sorted by document then value
-    /// (`T`); each value's first row's place in the rows, and the end (`T + 1`); the rows, by value, each value's in
-    /// row order (`n`). A probe finds its document (as `node_bits_has`), then its value from where the last probe
-    /// ended (`node_rows`): a probe sequence in node order walks each document's values once, a merge.
-    ///
-    /// Its number; `None` when its directory is full or `block` has no room.
-    ///
-    /// # Safety
-    /// As `try_add_node_bits`'s.
-    pub unsafe fn try_add_node_rows(&self, block: &Block, col: u16, n: u32) -> Option<usize> {
-        if n == 0 || col as usize >= self.rows.ncols as usize {
-            return None;
-        }
-        // The rows by value (scratch of the build): (value, row).
-        let mut by: Vec<(u64, u32)> = (0..n).map(|id| (self.get(id, col as usize) as u64, id)).collect();
-        by.sort_unstable();
-        let t = 1 + by.windows(2).filter(|w| w[0].0 != w[1].0).count();
-        let d = 1 + by.windows(2).filter(|w| w[0].0 >> 32 != w[1].0 >> 32).count();
-        let dir = 2 + 3 * d + t + (t + 1) + n as usize;
-        let (d_at, d_kept) = block.try_alloc_chunk_fit(4 * dir, 8)?;
-        let p = block.ptr::<u32>(d_at);
-        // SAFETY: the chunk was just allocated, this index's alone until it is marked built.
-        unsafe {
-            p.write(d as u32);
-            p.add(1).write(t as u32);
-            let (docs, lows) = (p.add(2), p.add(2 + 3 * d));
-            let (offs, ids) = (lows.add(t), lows.add(2 * t + 1));
-            let (mut doc, mut val) = (0usize, 0usize);
-            for (r, &(v, id)) in by.iter().enumerate() {
-                ids.add(r).write(id);
-                if r > 0 && by[r - 1].0 == v {
-                    continue;
-                }
-                if r == 0 || by[r - 1].0 >> 32 != v >> 32 {
-                    let e = docs.add(3 * doc);
-                    e.write((v >> 32) as u32);
-                    e.add(1).write(val as u32);
-                    e.add(2).write(0);
-                    doc += 1;
-                }
-                let e = docs.add(3 * (doc - 1) + 2);
-                e.write(e.read() + 1);
-                lows.add(val).write(v as u32);
-                offs.add(val).write(r as u32);
-                val += 1;
-            }
-            offs.add(t).write(n);
-            debug_assert_eq!((doc, val), (d, t), "its documents and values counted");
-        }
-        // SAFETY: the caller's: this relation's descriptor is ours to change.
-        unsafe {
-            let Some(i) = self.next_entry(block) else {
-                block.free_chunk_fit(d_at, d_kept);
-                return None;
-            };
-            let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
-            (*ix).ncols = 0;
-            (*ix).from = 0;
-            (*ix).state = 0;
-            let mut key = [0u16; MAX_KEY];
-            key[0] = col;
-            (*ix).key = key;
-            (*ix).ordered = NODE_ROWS;
-            (*ix).mask = u64::from(n);
-            (*ix).offs.off.store(0, Relaxed);
-            (*ix).offs.len.store(0, Relaxed);
-            (*ix).tags.off.store(0, Relaxed);
-            (*ix).tags.len.store(0, Relaxed);
-            (*ix).prints.off.store(0, Relaxed);
-            (*ix).prints.len.store(0, Relaxed);
-            (*ix).fences.off.store(0, Relaxed);
-            (*ix).fences.len.store(0, Relaxed);
-            Span::set(&raw mut (*ix).rows, p, dir);
-            (*ix).held = [d_kept as u64, 0, 0, 0];
-            self.nindex.fetch_max(i as u32 + 1, Release);
-            std::sync::atomic::fence(Release);
-            std::ptr::write_volatile(&raw mut (*ix).ncols, 1);
-            Some(i)
-        }
-    }
-
-    /// The value-keyed index of `col`'s rows over rows `0..rows` (`try_add_node_rows`), built: its number.
-    pub fn find_node_rows(&self, col: u16, rows: u32) -> Option<usize> {
+    /// The node-keyed index of `kind` (`NODE_BITS`, `NODE_ROWS`) on `col` over its rows `0..rows`
+    /// (`try_add_node_index`), built: its number.
+    pub fn find_node_index(&self, kind: u32, col: u16, rows: u32) -> Option<usize> {
         let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
         let ix = self.indexes.as_slice();
         // SAFETY: as `find_index`'s.
         let built = |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
-        let found = (0..n).find(|&i| ix[i].ordered == NODE_ROWS && built(i) == 1 && ix[i].key[0] == col && ix[i].mask == u64::from(rows));
-        std::sync::atomic::fence(Acquire);
-        found
+        (0..n).find(|&i| {
+            let found = ix[i].ordered == kind && built(i) == 1 && ix[i].key[0] == col;
+            // Its head read after it is seen built.
+            std::sync::atomic::fence(Acquire);
+            found && self.node_index(i).head.rows == rows
+        })
     }
 
-    /// The rows of value-keyed index `i` (`find_node_rows`) whose column holds `v`, in row order. `hint` is where the
-    /// last probe ended (its document, its value): the document tried there and after it, then searched; the value
-    /// tried there and after it, then searched from there (`gallop`), so probes in order walk the values once.
+    /// Node-keyed index `i` (`find_node_index`), read in place.
     #[inline]
-    pub fn node_rows(&self, i: usize, v: i64, hint: &mut [u32; 2]) -> &[u32] {
-        let p = self.index_at(i).rows.as_slice();
-        let (d, t) = (p[0] as usize, p[1] as usize);
-        let (hi, low) = ((v >> 32) as u32, v as u32);
-        let doc = |k: usize| &p[2 + 3 * k..5 + 3 * k];
-        let h = hint[0] as usize;
-        let k = if h < d && doc(h)[0] == hi {
-            h
-        } else if h + 1 < d && doc(h + 1)[0] == hi {
-            h + 1
-        } else {
-            let (mut lo, mut top) = (0usize, d);
-            loop {
-                if lo >= top {
-                    return &[];
-                }
-                let mid = (lo + top) / 2;
-                match doc(mid)[0].cmp(&hi) {
-                    Ordering::Less => lo = mid + 1,
-                    Ordering::Greater => top = mid,
-                    Ordering::Equal => break mid,
-                }
-            }
-        };
-        let (first, count) = (doc(k)[1] as usize, doc(k)[2] as usize);
-        let lows = &p[2 + 3 * d..2 + 3 * d + t];
-        let vals = &lows[first..first + count];
-        // From the last probe's value when it is this document's and not past `low`: a gallop forward.
-        let from = if hint[0] as usize == k && (hint[1] as usize) >= first && (hint[1] as usize) < first + count && lows[hint[1] as usize] <= low { hint[1] as usize - first } else { 0 };
-        let at = if vals[from] == low {
-            from
-        } else {
-            let mut step = 1usize;
-            let mut lo = from;
-            while lo + step < count && vals[lo + step] < low {
-                lo += step;
-                step *= 2;
-            }
-            let top = (lo + step + 1).min(count);
-            match vals[lo..top].binary_search(&low) {
-                Ok(x) => lo + x,
-                Err(x) => {
-                    *hint = [k as u32, (first + (lo + x).min(count - 1)) as u32];
-                    return &[];
-                }
-            }
-        };
-        let x = first + at;
-        *hint = [k as u32, x as u32];
-        let offs = &p[2 + 3 * d + t..2 + 3 * d + 2 * t + 1];
-        let ids = &p[2 + 3 * d + 2 * t + 1..];
-        &ids[offs[x] as usize..offs[x + 1] as usize]
-    }
-
-    /// The node-keyed index on `col` over its rows `0..rows` (`try_add_node_bits`), built: its number.
-    pub fn find_node_bits(&self, col: u16, rows: u32) -> Option<usize> {
-        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
-        let ix = self.indexes.as_slice();
-        // SAFETY: as `find_index`'s.
-        let built = |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
-        let found = (0..n).find(|&i| ix[i].ordered == NODE_BITS && built(i) == 1 && ix[i].key[0] == col && ix[i].mask == u64::from(rows));
-        std::sync::atomic::fence(Acquire);
-        found
-    }
-
-    /// Whether node-keyed index `i` (`find_node_bits`) holds value `v`: its document found (`hint` the last one, tried
-    /// first, then the one after it), and then its slot's entry and bit, or a search of its lows.
-    #[inline]
-    pub fn node_bits_has(&self, i: usize, v: i64, hint: &mut u32) -> bool {
-        use crate::packed::ID_SPLIT;
-        let ix = self.index_at(i);
-        let dir = ix.rows.as_slice();
-        let (hi, low) = ((v >> 32) as u32, v as u32);
-        let docs = dir[0] as usize;
-        let at = |k: usize| 1 + 4 * k;
-        let h = *hint as usize;
-        let k = if h < docs && dir[at(h)] == hi {
-            h
-        } else if h + 1 < docs && dir[at(h + 1)] == hi {
-            h + 1
-        } else {
-            let (mut lo, mut top) = (0usize, docs);
-            loop {
-                if lo >= top {
-                    return false;
-                }
-                let mid = (lo + top) / 2;
-                match dir[at(mid)].cmp(&hi) {
-                    Ordering::Less => lo = mid + 1,
-                    Ordering::Greater => top = mid,
-                    Ordering::Equal => break mid,
-                }
-            }
-        };
-        *hint = k as u32;
-        let (first, second, start) = (dir[at(k) + 1], dir[at(k) + 2], dir[at(k) + 3] as usize);
-        if first == u32::MAX {
-            return dir[start..start + second as usize].binary_search(&low).is_ok();
-        }
-        let s = (low >> ID_SPLIT).wrapping_sub(first);
-        if s >= second {
-            return false;
-        }
-        let e = start + 2 * s as usize;
-        let (off, fw) = (dir[e], dir[e + 1]);
-        let x = low & ((1 << ID_SPLIT) - 1);
-        let word = (x / 64).wrapping_sub(fw >> 16);
-        word < fw & 0xffff && ix.fences.as_slice()[(off + word) as usize] >> (x % 64) & 1 != 0
+    pub fn node_index(&self, i: usize) -> NodeIndex<'_> {
+        let e = self.index_at(i);
+        let rows = (e.ordered == NODE_ROWS).then(|| e.offs.as_slice());
+        // SAFETY: a built node index's `rows` is its bits' chunk and `offs` its rows' (`try_add_node_index`),
+        // unchanged once built, as long as the relation.
+        unsafe { NodeIndex::at(e.rows.as_ptr().cast::<u8>(), rows) }
     }
 
     /// Room for an index on `cols` of rows `0..n` in `block`, which holds this relation: its directory's entry, its
@@ -1391,8 +1359,17 @@ impl Relation {
                 unsafe { (*std::ptr::from_ref(ix).cast_mut()).state = 0 };
                 continue;
             }
-            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS || ix.ordered == NODE_BITS || ix.ordered == NODE_ROWS {
-                // A sorted order's chunks, each as it was given (`try_add_order`), and a node-keyed index's.
+            if ix.ordered == NODE_BITS || ix.ordered == NODE_ROWS {
+                // A node-keyed index's bits' chunk, and its rows' (`try_add_node_index`).
+                for (p, kept) in [(ix.rows.as_ptr().cast::<u8>(), ix.held[0]), (ix.offs.as_ptr().cast(), ix.held[1])] {
+                    if kept > 0 {
+                        block.free_chunk_fit(block.offset_of(p), kept as usize);
+                    }
+                }
+                continue;
+            }
+            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS {
+                // A sorted order's chunks, each as it was given (`try_add_order`).
                 let spans = [(ix.rows.as_ptr().cast::<u8>(), ix.held[0]), (ix.fences.as_ptr().cast(), ix.held[1]), (ix.tags.as_ptr().cast(), ix.held[2]), (ix.prints.as_ptr().cast(), ix.held[3])];
                 for (p, kept) in spans {
                     if kept > 0 {

@@ -129,7 +129,7 @@ pub(super) fn exact_cols(j: &JoinRule, src: &Src, membership: bool) -> u64 {
     let Src::In(rel, ix) = src else { return 0 };
     let (rel, ix) = j.src_in(rel, ix);
     // A probe by value (`candidates`) gives the key's rows alone.
-    if ix.by_value_kind() && ix.by_value(rel, 0, &mut [0; 2]).is_some() {
+    if ix.by_value_kind() && ix.by_value(rel, 0, &mut 0).is_some() {
         return 1 << ix.cols[0];
     }
     if let Some(index) = ix.runs(rel) {
@@ -174,7 +174,7 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
             // A one-column key's rows by its value-keyed index (the shape kernel's keyed read): found by position,
             // each probe walking on from where the last ended, not by searching the runs' tagged order.
             else if keys.len() == 1 && ix.by_value_kind()
-                && let Some(ids) = ix.by_value(rel, key[0], <&mut [u32; 2]>::try_from(&mut hints[..2]).expect("two hints"))
+                && let Some(ids) = ix.by_value(rel, key[0], &mut hints[0])
             {
                 (Rows::In(rel), Cands::Slice(ids))
             }

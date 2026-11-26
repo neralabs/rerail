@@ -5138,13 +5138,13 @@ pub struct Csr { cols: Vector<usize>, source: bool, sorted: bool, chain: Option<
                  /// A one-column key's node-keyed index in its relation's block (decision 0694 step 1): a test of a bound
                  /// value is one bit there. Found or built at its first test; `None` when it has none.
                  bits: OnceLock<Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)>>,
-                 /// A one-column key's value-keyed rows index in its relation's block (`Relation::try_add_node_rows`):
+                 /// A one-column key's node-keyed index with rows in its relation's block (`Relation::try_add_node_index`):
                  /// a probe's rows by position. Found or built at its first probe; `None` when it has none.
                  by_value: OnceLock<Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)>> }
 impl Csr {
     /// The rows of `rel` whose one key column holds `v`, by its value-keyed index (`node_rows`), `hint` where the last
     /// probe ended: `None` when it has none (a view, dead rows, rows in several parts, a key of several columns).
-    pub(super) fn by_value<'a>(&'a self, rel: &InRel, v: i64, hint: &mut [u32; 2]) -> Option<&'a [u32]> {
+    pub(super) fn by_value<'a>(&'a self, rel: &InRel, v: i64, hint: &mut u32) -> Option<&'a [u32]> {
         if !self.by_value_kind() {
             return None;
         }
@@ -5153,7 +5153,7 @@ impl Csr {
             ix
         }).as_ref()?;
         // SAFETY of the lifetime: the index's rows lie in its block, which `ib` keeps as long as this index.
-        let rows: &[u32] = ib.relation().node_rows(*i, v, hint);
+        let rows: &[u32] = ib.relation().node_index(*i).rows(v, hint);
         Some(unsafe { std::slice::from_raw_parts(rows.as_ptr(), rows.len()) })
     }
     /// Whether `rel`'s rows hold `v` in this index's one column, by its node-keyed index (decision 0694 step 1):
@@ -5169,7 +5169,7 @@ impl Csr {
             }
             bits
         }).as_ref()?;
-        Some(ib.relation().node_bits_has(*i, v, hint))
+        Some(ib.relation().node_index(*i).has(v, hint))
     }
     /// Whether a probe of it may read its rows by value (`by_value`): a one-column key, not a lattice's keyed rows, a
     /// composite's, or a ranged order's.
