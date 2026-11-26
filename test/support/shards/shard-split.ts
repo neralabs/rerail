@@ -78,10 +78,11 @@ export function runMs(paths: readonly string[], times: PlatformTimes): number {
 /**
  * How many of `total` shards a run of `paths` needs so that, split evenly by time, no shard holds more than a shard of
  * a run of every file the times name holds: `total` times the run's share of that whole run's time, rounded up, at
- * least one. Every shard when the times name no file, since they then say nothing of what a file takes.
+ * least one. Every shard when the times name no file or give that whole run no time, since they then say nothing of
+ * what a file takes.
  */
 export function shardsByTime(paths: readonly string[], times: PlatformTimes, total: number): number {
-  const named = Object.keys(times.files);
-  if (named.length === 0) return total;
-  return Math.min(total, Math.max(1, Math.ceil((total * runMs(paths, times)) / runMs(named, times))));
+  const whole = runMs(Object.keys(times.files), times);
+  if (!(whole > 0)) return total;
+  return Math.min(total, Math.max(1, Math.ceil((total * runMs(paths, times)) / whole)));
 }
