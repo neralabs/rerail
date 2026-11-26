@@ -3027,9 +3027,9 @@ rd(p, x, mq) :- dj_receiver_def(f, mq), def_name(f, x), docof(f, d), doc(d, p, _
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A body edit misses its own file alone; a changed base misses the files that read the modules whose ancestry rows
-/// change (decision 0665's keys: a file's own module's rows, and those of the modules its imports reach), not a file
-/// that reaches none of them.
+/// A body edit misses its own file alone; a changed base misses the files whose own classes' ancestry changes
+/// (decision 0705's keys: a file's own definitions that facts are handed on of, `own_at`, and their facts): not
+/// other.py, which reaches no class of the hierarchy, nor app/__init__.py, which re-exports Mid and defines no class.
 #[test]
 fn a_python_files_entry_is_kept_under_its_own_classes_ancestry() {
     let body = ("app/base.py", "from models_base import Base\n\n\nclass Mid(Base):\n    x = 1\n");
@@ -3042,7 +3042,7 @@ fn a_python_files_entry_is_kept_under_its_own_classes_ancestry() {
     assert_eq!(edited.memo.0, edited.files - 1, "a body edit misses its own file alone: {:?} of {}", edited.memo, edited.files);
     std::fs::write(dir.join("ws").join(rebased.0), rebased.1).unwrap();
     let (edited, rows) = py_classes_run(&dir, PY_CLASSES_PROGRAM);
-    assert_eq!(edited.memo.0, 1, "only other.py, which reaches no module of the hierarchy, hits: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(edited.memo.0, 2, "other.py and app/__init__.py alone hit: {:?} of {}", edited.memo, edited.files);
     let fresh = py_classes_workspace("py-classes-memo-fresh", &[body, rebased]);
     assert_eq!(rows, py_classes_run(&fresh, PY_CLASSES_PROGRAM).1, "the rows are a fresh run's");
     let _ = std::fs::remove_dir_all(&fresh);

@@ -11,7 +11,8 @@
 //   exports(m, x, q)  module m exposes x, which denotes q: re-exports and star imports followed (python/imports)
 //   class(m, c)       module m defines class c (class_named: the same, as python/django names it)
 //   defined(m, q)     module m defines q: a def or a class, nested ones too (its qualname)
-//   public(m, x)      x is part of module m's public interface (public_name: `__all__`, else no leading `_`)
+//   star_public(p, x) x is public in the module of the file at path p through a star import (python/imports'
+//                     public_name): the one part of a file's own names' being public another file decides
 //   ancestor(m, q, b) class q of module m inherits from b, at any depth (0677 fix 3a): each base resolved as
 //                     python/scopes' class_base resolves it, re-exports followed, a library's base by its name
 //   library_ancestor(m, q, b)  the same where no workspace module defines b: a library's class (`django.forms.Form`)
@@ -65,15 +66,17 @@
 #include "python/py-names-handed.rerail"
 
 .phase py_names
-// Keyed in a reader's memo (decision 0705): a file's modules and its asks at its path, each naming a key in column 1;
-// each ask's symbols by the ask, naming each symbol in column 1; every fact by the symbol (or module) in column 0.
-.export reads_at by_path 1, asks_at as asked_at by_path 1, denotes_k as denotes by_key 1, resolved_k as resolved by_key,
-    h_class as class by_key, h_class_named as class_named by_key, h_defined as defined by_key, h_public as public by_key,
-    h_ancestor as ancestor by_key, h_library_ancestor as library_ancestor by_key, h_anc_call as anc_call by_key,
-    h_anc_kw as anc_kw by_key, h_anc_ref as anc_ref by_key, h_anc_method as anc_method by_key,
-    h_member_call as member_call by_key, h_member_kw as member_kw by_key, h_member_method as member_method by_key,
-    h_plain_def as plain_def by_key, h_dj_group as dj_group by_key, h_dj_cond_group as dj_cond_group by_key,
-    h_dj_opaque as dj_opaque by_key, h_dj_unmanaged as dj_unmanaged by_key, h_dj_abstract as dj_abstract by_key,
+// Keyed in a reader's memo (decision 0705): a file's modules, its asks, its own classes and its own receivers, at its
+// path, each naming a key in column 1; its star-imported public names at its path; each ask's symbols by
+// the ask, naming each symbol in column 1; every fact by the symbol (or module) in column 0.
+.export reads_at by_path 1, asks_at as asked_at by_path 1, own_at by_path 1, own_rcv_at by_path 1, star_public by_path,
+    denotes_k as denotes by_key 1, resolved_k as resolved by_key, h_class as class by_key,
+    h_class_named as class_named by_key, h_defined as defined by_key, h_ancestor as ancestor by_key,
+    h_library_ancestor as library_ancestor by_key, h_anc_call as anc_call by_key, h_anc_kw as anc_kw by_key,
+    h_anc_ref as anc_ref by_key, h_anc_method as anc_method by_key, h_member_call as member_call by_key,
+    h_member_kw as member_kw by_key, h_member_method as member_method by_key, h_plain_def as plain_def by_key,
+    h_dj_group as dj_group by_key, h_dj_cond_group as dj_cond_group by_key, h_dj_opaque as dj_opaque by_key,
+    h_dj_unmanaged as dj_unmanaged by_key, h_dj_abstract as dj_abstract by_key,
     h_dj_manager_method as dj_manager_method by_key, h_dj_hook as dj_hook by_key,
     h_dj_receiver_fn as dj_receiver_fn by_key, h_dj_deferred_task as dj_deferred_task by_key,
     h_dj_task_def as dj_task_def by_key, h_dj_view_model as dj_view_model by_key,
@@ -107,8 +110,6 @@ defined(m, q) :- qualname(f, q), module_of(f, m).
 .decl class(m: symbol, c: symbol)
 class(m, c) :- class_def(n, c), module_of(n, m).
 
-.decl public(m: symbol, x: symbol)
-public(m, x) :- public_name(m, x).
 
 // base(q, b): class q lists base b (keyword arguments, `metaclass=M`, are none). A name the class's own file binds is
 // resolved there (python/scopes' sym_of: its definitions, builtins); a name through an import (qn) by the modules'
@@ -442,6 +443,5 @@ dj_expression_class(m, q) :- ancestor(m, q, b), (prefix("django.db.models.expres
 exports_of(m, x, q) :- exports(m, x, q).
 handed_sym(q) :- class(_, q).
 handed_sym(q) :- defined(_, q).
-handed_sym(q) :- public(m, x), q = @dot(m, x).
 handed_obj(q) :- class(_, q).
 handed_attr(q) :- defined(_, q).

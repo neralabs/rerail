@@ -131,7 +131,7 @@ dj_fk(c, x) :- dj_field(c, x, _, t), dj_fk_class(t).
 dj_model_ref(e, mq, m) :- sym_of(e, mq), docof(e, d), doc(d, p, _), py_names__asked_at(p, k), py_names__denotes(k, mq),
     py_names__class_named(mq, m).
 // A class of the file itself is its own module's (which the file reads): no row of the phase says so.
-dj_model_ref(c, mq, m) :- class_def(c, mq), docof(c, d), doc(d, p, m), py_names__asked_at(p, mq).
+dj_model_ref(c, mq, m) :- class_def(c, mq), docof(c, d), doc(d, p, m), py_names__own_at(p, mq).
 // dj_model_named(e, mq): that class is a model: a known base itself or among its ancestors, or one whose own body
 // declares a field, a query expression's `output_field` aside (dj_model_class_is, by symbol alone).
 //   from shop.models import Book; Book.objects.all()    dj_model_named(<Book>, "shop.models.Book")
@@ -192,11 +192,12 @@ dj_model_abstract(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names_
 //                                 for sender mq
 .decl py_names__dj_hook(q: symbol, m: symbol, k: symbol, h: symbol)
 .decl py_names__dj_receiver_fn(f: symbol, m: symbol, q: symbol)
+.decl py_names__own_rcv_at(p: symbol, f: symbol)  // f is a receiver function of the file at path p
 .decl dj_model_hook(e: node, k: symbol, h: symbol)
 dj_model_hook(e, k, h) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_hook(mq, m, k, h).
 .decl dj_receiver_def(f: node, mq: symbol)
 dj_receiver_def(f, mq) :- kind(f, "function_definition"), qualname(f, fq), docof(f, d), doc(d, p, _),
-    py_names__asked_at(p, fq), py_names__dj_receiver_fn(fq, _, mq).
+    py_names__own_rcv_at(p, fq), py_names__dj_receiver_fn(fq, _, mq).
 .decl dj_model_manager_method(e: node, a: symbol, x: symbol)
 dj_model_manager_method(e, a, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m),
     py_names__dj_manager_method(mq, m, a, x).

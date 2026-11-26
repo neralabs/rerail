@@ -1,10 +1,11 @@
 // The asked phase `py_names` (decision 0705), run in place of py_names.rerail while asked phases run
 // (`RERAIL_ASKED_PHASES`): the same exports, read by the same rules (python/names, python/django, python/upgrade),
 // but a module's exports are answered only where a file asks for them. Each file asks for each qualified name it
-// spells through an import (`qn`, "m.x": `spelled_at`), the cross part sends each ask to the file of the module it names
-// (`ask_in`), and that file answers it in the next round at its own path (`ans_def`, `fwd`, `fwd_star`, `ans_pub`): a
-// re-export or a star import asks the module it names in the round after, until no round asks anything new. The rest
-// of what this file says of py_names.rerail holds here.
+// spells through an import (`qn`, "m.x": `spelled_at`), the cross part follows each ask through the files' own
+// re-exports and star imports (`fwd`, `star_of`) to every module it reaches and sends it to that module's file
+// (`ask_in`), and that file answers it in the next round at its own path (`ans_def`, `ans_pub`). Round 2 finds no new
+// ask, so a cold run takes two rounds, and a run from its last run's asks one. The rest of what this file says of
+// py_names.rerail holds here.
 //
 // The phase `py_names` (decisions 0083, 0677): Python module resolution across the workspace's modules, run over the same
 // files as the program that reads it, in its language. It hands on symbols alone, so a per-file rule reading them stays
@@ -19,7 +20,8 @@
 //   exports(m, x, q)  module m exposes x, which denotes q: re-exports and star imports followed (python/imports)
 //   class(m, c)       module m defines class c (class_named: the same, as python/django names it)
 //   defined(m, q)     module m defines q: a def or a class, nested ones too (its qualname)
-//   public(m, x)      x is part of module m's public interface (public_name: `__all__`, else no leading `_`)
+//   star_public(p, x) x is public in the module of the file at path p through a star import (python/imports'
+//                     public_name): the one part of a file's own names' being public another file decides
 //   ancestor(m, q, b) class q of module m inherits from b, at any depth (0677 fix 3a): each base resolved as
 //                     python/scopes' class_base resolves it, re-exports followed, a library's base by its name
 //   library_ancestor(m, q, b)  the same where no workspace module defines b: a library's class (`django.forms.Form`)
@@ -73,16 +75,18 @@
 #include "python/py-names-handed.rerail"
 
 .phase py_names
-// Keyed in a reader's memo (decision 0705): a file's modules and its asks at its path, each naming a key in column 1;
-// each ask's symbols by the ask, naming each symbol in column 1; every fact by the symbol (or module) in column 0.
+// Keyed in a reader's memo (decision 0705): a file's modules, its asks, its own classes and its own receivers, at its
+// path, each naming a key in column 1; its star-imported public names at its path; each ask's symbols by
+// the ask, naming each symbol in column 1; every fact by the symbol (or module) in column 0.
 .rounds ask_in
-.export ask_in by_path, reads_at by_path 1, asks_at as asked_at by_path 1, denotes_k as denotes by_key 1, resolved_k as resolved by_key,
-    h_class as class by_key, h_class_named as class_named by_key, h_defined as defined by_key, h_public as public by_key,
-    h_ancestor as ancestor by_key, h_library_ancestor as library_ancestor by_key, h_anc_call as anc_call by_key,
-    h_anc_kw as anc_kw by_key, h_anc_ref as anc_ref by_key, h_anc_method as anc_method by_key,
-    h_member_call as member_call by_key, h_member_kw as member_kw by_key, h_member_method as member_method by_key,
-    h_plain_def as plain_def by_key, h_dj_group as dj_group by_key, h_dj_cond_group as dj_cond_group by_key,
-    h_dj_opaque as dj_opaque by_key, h_dj_unmanaged as dj_unmanaged by_key, h_dj_abstract as dj_abstract by_key,
+.export ask_in by_path, reads_at by_path 1, asks_at as asked_at by_path 1, own_at by_path 1, own_rcv_at by_path 1,
+    star_public by_path, denotes_k as denotes by_key 1, resolved_k as resolved by_key, h_class as class by_key,
+    h_class_named as class_named by_key, h_defined as defined by_key, h_ancestor as ancestor by_key,
+    h_library_ancestor as library_ancestor by_key, h_anc_call as anc_call by_key, h_anc_kw as anc_kw by_key,
+    h_anc_ref as anc_ref by_key, h_anc_method as anc_method by_key, h_member_call as member_call by_key,
+    h_member_kw as member_kw by_key, h_member_method as member_method by_key, h_plain_def as plain_def by_key,
+    h_dj_group as dj_group by_key, h_dj_cond_group as dj_cond_group by_key, h_dj_opaque as dj_opaque by_key,
+    h_dj_unmanaged as dj_unmanaged by_key, h_dj_abstract as dj_abstract by_key,
     h_dj_manager_method as dj_manager_method by_key, h_dj_hook as dj_hook by_key,
     h_dj_receiver_fn as dj_receiver_fn by_key, h_dj_deferred_task as dj_deferred_task by_key,
     h_dj_task_def as dj_task_def by_key, h_dj_view_model as dj_view_model by_key,
@@ -95,11 +99,13 @@
 spelled_at(p, k) :- qn(n, k), docof(n, d), doc(d, p, _).
 // asked(m, x): some file asks module m, a workspace file's, for x, directly or through a re-export or star import
 // that forwards it. A name of a module no file is (an outside package's, or an attribute chain past a module) is
-// asked of no file, so it makes no row.
+// asked of no file, so it makes no row. The forwards are each file's own, made whatever is asked (`fwd`, `star_of`),
+// so round 1 follows every ask through every re-export, and round 2 only answers: a cold run takes two rounds, not
+// one more for each re-export an ask passes.
 .decl asked(m: symbol, x: symbol) cross_file
 asked(m, x) :- spelled_at(_, k), split_dot(k, m, x), doc(_, _, m).
 asked(m2, x) :- asked(m, l), fwd(m, l, m2, x), doc(_, _, m2).
-asked(m2, x) :- asked(m, x), fwd_star(m, x, m2), doc(_, _, m2).
+asked(m2, x) :- asked(m, x), star_of(m, m2), doc(_, _, m2).
 // ask_in(p, x): the file at path p, module m's, is asked for x. The rounds hand it back as py_names__ask_in.
 .decl ask_in(p: symbol, x: symbol)
 ask_in(p, x) :- asked(m, x), doc(_, p, m).
@@ -110,13 +116,12 @@ ask_in(p, x) :- asked(m, x), doc(_, p, m).
 ans_def(m, x, q) :- doc(d, p, m), py_names__ask_in(p, x), def_name(f, x), docof(f, d), nearest(f, s, scope),
     kind(s, "module"), qualname(f, q).
 // fwd(m, l, m2, x): module m binds l by `from m2 import x [as l]`, run when m is imported (python/imports'
-// import_time), for an asked l. The asked file's part reads its module-level imports (`fwd_any`), its tree alone; the
+// import_time). Each file's part reads its module-level imports (`fwd_any`), its tree alone, whatever is asked; the
 // cross part drops a tuple the file imports only under `if TYPE_CHECKING:` (`tc_only`). That test resolves the
-// condition's name (`qn`), the file's binding analysis: read in the asked file's answers, a round that asks a file
-// anew built that analysis again, where `tc_only`, which reads no ask, is held in its memo entry from round 1.
+// condition's name (`qn`), the file's binding analysis, so it reads no ask and is held in the memo entry from
+// round 1.
 .decl fwd_any(m: symbol, l: symbol, m2: symbol, x: symbol)
-fwd_any(m, l, m2, x) :- doc(d, p, m), py_names__ask_in(p, l), import_alias(i, _, m2, x, l), docof(i, d),
-    !nearest(i, _, fn_or_lambda), x != "".
+fwd_any(m, l, m2, x) :- doc(d, _, m), import_alias(i, _, m2, x, l), docof(i, d), !nearest(i, _, fn_or_lambda), x != "".
 .decl fwd_rt(m: symbol, l: symbol, m2: symbol, x: symbol)
 fwd_rt(m, l, m2, x) :- doc(d, _, m), import_alias(i, _, m2, x, l), docof(i, d), import_time(i), x != "".
 .decl tc_only(m: symbol, l: symbol, m2: symbol, x: symbol)
@@ -124,17 +129,26 @@ tc_only(m, l, m2, x) :- doc(d, _, m), import_alias(i, _, m2, x, l), docof(i, d),
     x != "", !fwd_rt(m, l, m2, x).
 .decl fwd(m: symbol, l: symbol, m2: symbol, x: symbol) cross_file
 fwd(m, l, m2, x) :- fwd_any(m, l, m2, x), !tc_only(m, l, m2, x).
-.decl fwd_star(m: symbol, x: symbol, m2: symbol)
-fwd_star(m, x, m2) :- doc(d, p, m), py_names__ask_in(p, x), kind(i, "import_from_statement"), docof(i, d),
-    child(i, w, _), kind(w, "wildcard_import"), module_text(i, m2).
+// star_of(m, m2): module m has `from m2 import *`, each file's own, whatever is asked; fwd_star(m, x, m2): x is
+// asked of m, so of m2 through it.
+.decl star_of(m: symbol, m2: symbol)
+star_of(m, m2) :- doc(d, _, m), kind(i, "import_from_statement"), docof(i, d), child(i, w, _),
+    kind(w, "wildcard_import"), module_text(i, m2).
+.decl fwd_star(m: symbol, x: symbol, m2: symbol) cross_file
+fwd_star(m, x, m2) :- asked(m, x), star_of(m, m2).
+// all_here(d, x), all_assigned(d): document d's module-level `__all__` lists x; d assigns one, even an empty one.
+// Each file's own, read once, not once for each ask.
+.decl all_here(d: number, x: symbol)
+all_here(d, x) :- kind(a, "assignment"), docof(a, d), field(a, "left", l), text(l, "__all__"), field(a, "right", r),
+    child(r, s, _), value(s, x), nearest(a, sc, scope), kind(sc, "module").
+.decl all_assigned(d: number)
+all_assigned(d) :- kind(a, "assignment"), docof(a, d), field(a, "left", l), text(l, "__all__"), nearest(a, sc, scope),
+    kind(sc, "module").
 .decl ans_pub(m: symbol, x: symbol)
 // python/imports' public_name, read through the file's own nodes: its `__all__` lists x, or it has none and x has no
 // leading `_` (dunder_all and has_all, by the module, would join another file's rows by its module's name).
-ans_pub(m, x) :- doc(d, p, m), py_names__ask_in(p, x), kind(a, "assignment"), docof(a, d), field(a, "left", l),
-    text(l, "__all__"), field(a, "right", r), child(r, s, _), value(s, x), nearest(a, sc, scope), kind(sc, "module").
-ans_pub(m, x) :- doc(d, p, m), py_names__ask_in(p, x), !prefix("_", x),
-    count : { kind(a, "assignment"), docof(a, d), field(a, "left", l), text(l, "__all__"), nearest(a, sc, scope),
-    kind(sc, "module") } = 0.
+ans_pub(m, x) :- doc(d, p, m), py_names__ask_in(p, x), all_here(d, x).
+ans_pub(m, x) :- doc(d, p, m), py_names__ask_in(p, x), !prefix("_", x), !all_assigned(d).
 // The cross part: the answers followed through the forwards, as exports and resolve_export follow them.
 .decl asked_exported(m: symbol, x: symbol)
 asked_exported(m, x) :- ans_def(m, x, _).
@@ -182,8 +196,6 @@ defined(m, q) :- qualname(f, q), module_of(f, m).
 .decl class(m: symbol, c: symbol)
 class(m, c) :- class_def(n, c), module_of(n, m).
 
-.decl public(m: symbol, x: symbol)
-public(m, x) :- public_name(m, x).
 
 // base(q, b): class q lists base b (keyword arguments, `metaclass=M`, are none). A name the class's own file binds is
 // resolved there (python/scopes' sym_of: its definitions, builtins); a name through an import (qn) by the modules'

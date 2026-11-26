@@ -93,11 +93,15 @@ In `tests_corpus/…/corpus/phases/tests.rs`, on a small phase `q` and its reade
 (python/names, python/django, python/upgrade), but answers only what is asked:
 
 - `spelled_at(p, k)`: each qualified name the file at `p` spells through an import (`qn`, "m.x").
-- `asked(m, x)` and `ask_in(p, x)`: the cross part sends each ask to the file of module `m`, and forwards it through
-  that module's re-exports and star imports.
-- In the next round, the asked file answers at its own path: a top-level definition (`ans_def`), a re-export
-  (`fwd`), a star import (`fwd_star`), and whether the name is public there (`ans_pub`). These are python/imports'
-  three rules of `exports` and `exported`, for the asked names alone.
+- `asked(m, x)` and `ask_in(p, x)`: the cross part sends each ask to the file of module `m`, and follows it through
+  every re-export and star import it reaches (`fwd`, `star_of`). Those are each file's own module-level imports,
+  made whatever is asked, so round 1 has every ask, round 2 answers, and a cold run takes two rounds: before, a
+  forward was made only for an asked name, and each re-export an ask passed cost a round (three on the PostHog
+  sample).
+- In the next round, the asked file answers at its own path: a top-level definition (`ans_def`), and whether the
+  name is public there (`ans_pub`, which reads the file's own `__all__` once, `all_here` and `all_assigned`, where a
+  count over its assignments was made for each ask). With the forwards, these are python/imports' three rules of
+  `exports` and `exported`, for the asked names alone.
 - `asked_exports` follows the answers through the forwards, as `exports` and `resolve_export` do, and is handed on
   as each ask's `resolved` row. The phase's own lookups (bases, members' calls and references, Django's receivers and
   managers) read it in place of `exports`, and `reads_at`'s second rule takes the modules the file's own asks
@@ -116,8 +120,8 @@ In `tests_corpus/…/corpus/phases/tests.rs`, on a small phase `q` and its reade
   `dj_model_ref`). They are read in the cross part, where the phase's own rules (`reads_at`, the bases, the members)
   read every file's `class` and `defined` already, so no round asks a file for them. `.rounds` takes several
   relations (`.rounds R, S`), but `py_names` needs only `ask_in`.
-- A file's own definitions are asks of their own (`own_at`), for their ancestry, members and public names, never
-  for `class` or `defined`.
+- A file's own definitions are asks of their own (`own_def`, in `handed_any`), for their ancestry, members and
+  Django facts, never for `class` or `defined`.
 
 python/django's `dj_model_at` asks whether a class is a model of a class it knows by name alone, a proven type
 among them, which no file names and so none can ask of `py_names`. The phase applies the same tests to each class
@@ -141,15 +145,27 @@ module, is asked of no file.
 programs include python/py-names-handed, one definition of what is handed on; each names the symbols it hands facts on
 of (every one of the run's, eagerly; those the files' asks reach, asked):
 
-- `asked_at(p, k) by_path 1`: the file's asks: each symbol a node of it may denote (`sym_at`), and its own
-  definitions and module-level names (`own_at`).
+- `asked_at(p, k) by_path 1`: the file's asks: each symbol a node of it may denote (`sym_at`) that a fact is handed
+  on of, or that resolves through an export.
+- `own_at(p, q) by_path 1`: the file's own classes, what its readers ask of their own definitions (ancestry, their
+  body's and ancestors' members, their Django facts). A def or method is no row. A separate export, so a reader that
+  reads no fact of its own definitions (python/names' rules 1 and 3) is handed none (0702).
+- `own_rcv_at(p, f) by_path 1`: the file's own functions that are receivers (`dj_receiver_fn`), the one fact a
+  reader reads of its own functions, which python/django's `dj_receiver_def` reads. A function is a receiver through
+  a `connect` call that may be in another file, so this one is made of the fact, and only for a reader that reads it.
+  `own_at` is made of the file alone: filtering it by the facts handed on of each class made every fact, for every
+  reader, whether it read them or not (0702), which cost the Django policy's phase 1 s of its 3.
+- `star_public(p, x) by_path`: x is public in the file's module through a star import. python/names' `site_exported`
+  reads the rest of a name's being public from the file itself (its `__all__`, its module-level defs and import-time
+  imports: python/imports' `public_name` and `exported`'s first two cases), where the phase handed on `public(m, x)`
+  for every module-level name, and each file asked for each of its own.
 - `denotes(k, q) by_key 1`: what each ask denotes (`res`): itself, a definition through an import's exports, an
   attribute's definition of a class of the run.
 - `resolved(k, q) by_key`: `m.x`, as a file spells it through an import, is module m's export x, which denotes q.
   It replaces `exports(m, x, q)`, read through `reads_at`: python/names' `export_at` and python/upgrade's `up_export`
   read it under the file's own ask.
 - Each fact by its symbol in column 0, with the module that defines it: `class(q, m)`, `defined(q, m)`,
-  `public(q, m)`, `ancestor(q, m, b)`, `library_ancestor`, the `anc_*` and `member_*` facts, `plain_def`, and the
+  `ancestor(q, m, b)`, `library_ancestor`, the `anc_*` and `member_*` facts, `plain_def`, and the
   Django facts (`dj_group`, `dj_hook`, `dj_receiver_fn`, `dj_task_def`, `dj_view_model`, …), each `by_key`.
 - `dj_number_fields(q, m, x)`: class q's number fields, its own and its ancestors' (django-practice-bulk-not-loop's
   `bnl_number_field`, which read every member's call of every module the file reads, now reads those of the classes
@@ -158,14 +174,15 @@ of (every one of the run's, eagerly; those the files' asks reach, asked):
   type alone, which no file names. `dj_app_defers(b)`, a fact of the whole run, is handed on whole, not once under
   every module.
 
-So a reader's entry is keyed by its asks at its path, each ask's symbols, and the facts of those symbols: the
+So a reader's entry is keyed by its asks and own definitions at its path, each ask's symbols, and the facts of those
+symbols: the
 engine's `by_key C` hop (`phased::Keyed::ByKey(Some(C))`, `file_local::setting_key_hop`) closes `SettingsDigests`'
 keys through the `denotes` rows, and `settings_scopes` anchors a read keyed by a symbol a `denotes` row names. A def
 nobody imports changes no ask's answer but its own file's, so it reruns no other reader; a changed answer reruns the
 files whose asks reach it.
 
-The readers read each fact under one of their asks: python/names (`export_at`, rule 3, `site_exported`, the
-`class_anc*` rules), python/django (`dj_model_ref`, the `dj_model_*` rules, `dj_receiver_def`, `dj_plain_at`,
+The readers read each fact under one of their asks or own definitions: python/names (`export_at`, rule 3,
+`site_exported`, the `class_anc*` rules), python/django (`dj_model_ref`, the `dj_model_*` rules, `dj_receiver_def`, `dj_plain_at`,
 `dj_task_waits_for_commit`, `dj_app_defers`), python/upgrade, and the Django pack (`bwh_in_hook`, `cfr_helper`,
 `dco_field`, `ghw_view_model`, `tam_task_call`, `bnl_number_field`). `dj_number_field` moved to
 python/django-shared.
@@ -185,9 +202,9 @@ a cold run and then two edits on the same stores: A, a def nobody imports added 
 
 | | Off | On |
 |---|---|---|
-| Rows handed on, cold | 31,374 | 21,601 |
-| `asked_at` | 17,570 | 17,570 |
-| `denotes` | 3,114 | 3,064 |
+| Rows handed on, cold | 17,326 | 7,603 |
+| `asked_at` | 3,572 | 3,572 |
+| `denotes` | 3,064 | 3,064 |
 | `resolved` | 2,988 | 276 |
 | `defined` | 6,091 | 8 |
 | `class` | 832 | 37 |
@@ -195,12 +212,13 @@ a cold run and then two edits on the same stores: A, a def nobody imports added 
 | The phase's rounds, cold | 1 | 2: 300 asks each; 224 files built, then 60 as partial hits |
 | Edit A: the reader's files built | 1 | 1 |
 | Edit B: the reader's files built | 29 | 25 |
-| Cold run, user CPU | 11.8 s | 12.4 s |
-| Edit A, user CPU | 0.79 s | 0.77 s |
-| Edit B, user CPU | 3.80 s | 3.42 s |
+| Cold run, user CPU | 12.6 s | 14.0 s |
+| Edit A, user CPU | 0.93 s | 0.73 s |
+| Edit B, user CPU | 4.49 s | 3.84 s |
 
-`asked_at` is each file's own: what it may ask of a symbol, its own definitions among them. It is the price of keying
-an entry by its asks' answers, and is read by its own file alone.
+`asked_at` is each file's asks of the symbols its nodes denote, read by its own file alone. Before `own_at` was an
+export of its own, it held each file's own definitions and module-level names too: 17,570 rows on, 31,374 handed on
+off and 21,601 on. b113 reads no fact of its own classes, so it is handed no `own_at` row.
 
 **The PostHog sample's 291 files**, the Django pack's 27 policies in one run: HEAD's rules (module-keyed exports),
 the switch off, and on; then edits on the same stores: A, a def nobody imports added to `posthog/models/user.py`; B,
@@ -209,10 +227,20 @@ a field added to `User`, which 76 files import. Each edit's findings equal a col
 | | HEAD's rules | Off | On |
 |---|---|---|---|
 | Findings, cold | 76 | 76, the same | 76, the same |
-| Rows handed on, cold | 18,925 | 30,074 | 23,128 |
-| Cold run, user CPU | 63.2 s | 64.0 s | 75.0 s |
+| Rows handed on, cold | 18,925 | 7,932 | 7,932 |
+| Cold run, user CPU (load about 40) | 72.6 s | 81.1 s | 89.0 s |
 | Edit A: files built, of the readers | | 1 | 1 |
 | Edit B: files built, of the readers | | 76 | 76 |
+
+HEAD's rules here are those before every export was keyed by the file's asks (4956a96757). Before `own_at` held
+only classes, and before `site_exported` read a name's being public from its own file, the rows handed on were
+30,074 off and 23,128 on.
+
+The phase alone, on the Django pack's `django-practice-bulk-write-skips-hooks` over the same sample, back to back with
+the previous commit's rules (5a85a02741): 3 rounds to 2, the phase's CPU 2.43 s to 2.03 s, and the run's
+instructions 532 M to 479 M. `ans_pub`'s count over the file's assignments, made once for each ask, was 0.32 s of the
+2.43; `all_here` and `all_assigned`, read once, make 133 rows. A first `own_at` filtered by the facts handed on
+of each definition made every fact for every reader, whatever it read (0702): the phase took 3.14 s.
 
 Before `dj_number_fields` was keyed by the class (it was keyed by the module, which `reads_at` names), edit B built
 198 files off and 92 on: every file that reads posthog.models.user.

@@ -64,7 +64,7 @@ bnl_number_literal(n) :- unparen(n, m), (kind(m, "integer") ; kind(m, "float")).
 .decl bnl_number_field(d: number, x: symbol)
 bnl_number_field(d, x) :- doc(d, p, _), py_names__asked_at(p, k), py_names__denotes(k, q),
     py_names__dj_number_fields(q, _, x).
-bnl_number_field(d, x) :- doc(d, p, _), py_names__asked_at(p, q), py_names__dj_number_fields(q, _, x).
+bnl_number_field(d, x) :- doc(d, p, _), py_names__own_at(p, q), py_names__dj_number_fields(q, _, x).
 
 // bnl_model_is(c, body): c's manager belongs to a name the loop that runs body binds each iteration, as its target
 // (`for model in models: model.objects.get(...)`) or in its body (`cls = apps.get_model(...)`): each iteration may
