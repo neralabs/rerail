@@ -1,23 +1,88 @@
-.policy "ruff-ruf068-duplicate-entry-in-dunder-all" revision 2
+.policy "ruff-ruf068-duplicate-entry-in-dunder-all" revision 3
 .description "Don't list the same name twice in a module's __all__; a repeat has no effect and often hides a copy-paste mistake."
 .language python
 .mode steer
 .scope include "**/*"
 
-// Ruff RUF068: a string listed again in a module's `__all__` list or tuple, given by `__all__ = …`,
-// `__all__: T = …`, `__all__ += …` or `__all__.extend(…)` (python/ruff-sorting's all_seq). Each repeat is
-// reported, at the element.
-//   __all__ = ["A", "B", "A"]      ← RUF068 at the second "A"
-//   __all__ = [A, "B", "B"]        ← RUF068: other elements need not be strings
-//   __all__ += ["A", "B"]          not reported, though "A" may already be in `__all__`
+// Ruff RUF068: a string listed again in a list or tuple given to `__all__` by `__all__ = …`, `__all__: T = …`,
+// `__all__ += …` or `__all__.extend(…)` (one argument), where Ruff's scope is the module. Each repeat is
+// reported, at the element. Parentheses around `__all__`, `__all__.extend` or an element do not matter.
+//   __all__ = ["A", "B", "A"]                     ← RUF068 at the second "A"
+//   __all__ = [A, "B", "B"]                       ← RUF068: other elements need not be strings
+//   __all__ += ["A", "B"]                         not reported, though "A" may already be in `__all__`
+//   def f(x=__all__.extend(["a", "a"])): …        ← RUF068: a default runs in the module
+//   [0 for a[__all__.extend(["a", "a"])] in y]    not reported: the comprehension's own scope
+// A string in a type context is parsed, and its tree runs where the string stands:
+//   x: "list[__all__.extend(['a', 'a'])]"         ← RUF068
+//   def f() -> "__all__.extend(['a', 'a'])": …    not reported: a def's annotations are in its scope
 #include "python/ruff-sorting.rerail"
+#include "python/typing.rerail"
 
 .violation RUF068(at: node, dup: symbol) code "RUF068"
     "{dup} is already listed earlier in this `__all__` list; remove the repeat, or correct it if another name was meant."
     suppress ruff "RUF068"
 RUF068(m, t) :- all_item(v, m, j, s), all_item(v, _, j0, s), j0 < j, text(m, t).
 
-// all_item(v, m, j, s): child j of __all__'s sequence v is the str literal m, value s.
+// all_item(v, m, j, s): child j of a module `__all__` sequence v is the str literal m, value s.
 .decl all_item(v: node, m: node, j: number, s: symbol)
-all_item(v, m, j, s) :- all_seq(v0), unparen(v0, v), child(v, e, j), unparen(e, m), plain_str(m, s),
+all_item(v, m, j, s) :- site(v, a), runs_in(a, "module"), seq_str(v, m, j, s).
+all_item(v0, m, j, s) :- site(v0, a), runs_in(a, "free"), in_type_str(a, h), str_at_module(h), unparen(v0, v),
+    child(v, e, j), unparen(e, m), frag_str(m, s).
+// frag_str(m, s): str literal m of a parsed tree has value s. value() has no rows there (NOTES), so this reads
+// the text: a one-quoted literal with no backslash, or an implicit concatenation of them.
+.decl frag_piece(m: node, s: symbol)
+frag_piece(m, s) :- in_type_str(m, _), kind(m, "string"), text(m, t), match("[rRuU]?'(?<s>[^'\\\\]*)'", t).
+frag_piece(m, s) :- in_type_str(m, _), kind(m, "string"), text(m, t), match("[rRuU]?\"(?<s>[^\"\\\\]*)\"", t).
+.decl frag_str(m: node, s: symbol)
+frag_str(m, s) :- frag_piece(m, s).
+frag_str(c, s) :- in_type_str(c, _), kind(c, "concatenated_string"),
+    count : { child(c, p, _), !kind(p, "comment"), !frag_piece(p, _) } = 0,
+    s = join x by i sep "" : { child(c, p, i), frag_piece(p, x) }.
+
+// site(v, a): statement or call a gives sequence v to `__all__`, in any scope.
+.decl site(v: node, a: node)
+site(v, a) :- kind(a, "assignment"), field(a, "left", l), text(l, t), match("[(\\s]*__all__[)\\s]*", t),
+    field(a, "right", v), one_target(a), ordered(v).
+site(v, a) :- kind(a, "augmented_assignment"), op(a, "+="), field(a, "left", l), text(l, t),
+    match("[(\\s]*__all__[)\\s]*", t), field(a, "right", v), ordered(v).
+site(v, c) :- kind(c, "call"), field(c, "function", f), unparen(f, g), attr_of(g, o, "extend"), text(o, t),
+    match("[(\\s]*__all__[)\\s]*", t), field(c, "arguments", al), !kind(al, "generator_expression"),
+    child(al, v, _), ordered(v), count : { child(al, b, _), !kind(b, "comment"), !kind(b, "line_continuation") } = 1.
+// Not python/ruff's call_only: in a tree parsed from a string, kind(al, "argument_list") does not hold (NOTES).
+.decl seq_str(v: node, m: node, j: number, s: symbol)
+seq_str(v0, m, j, s) :- site(v0, _), unparen(v0, v), child(v, e, j), unparen(e, m), plain_str(m, s),
     string_type(m, "str").
+
+// Where n runs, as Ruff's scopes say. ev(n, p): n runs where p does. A def's or lambda's defaults and a
+// comprehension's first iterable run in the scope around it; the rest of a def (annotations included), a lambda,
+// a comprehension, a class (its bases too) and `type X = …` are scopes of their own.
+// runs_in(n, w): "module", or "free": in a tree parsed from a string, outside any scope of that tree.
+// The sites' relations read no parse (ev, runs_in) and the strings' do (evs, str_at_module): a relation with
+// both kinds of rule misses the parse-free rule's rows on parsed trees (NOTES).
+.decl rscope(kind: symbol)
+rscope(k) :- lscope(k).
+rscope("type_alias_statement").
+.decl ev(n: node, p: node)
+ev(n, n) :- site(_, n).
+ev(n, f) :- ev(n, p), nearest(p, f, rscope), outlet(x, f), (p = x ; within(p, x)).
+.decl runs_in(n: node, w: symbol)
+runs_in(n, "module") :- ev(n, p), nearest(p, m, rscope), kind(m, "module").
+runs_in(n, "free") :- ev(n, p), !nearest(p, _, rscope).
+// tstr(s): s is a string in a type context that mentions `__all__`: the strings parsed.
+.decl tstr(s: node)
+tstr(s) :- type_ctx(s), str_node(s), text(s, t), contains("__all__", t).
+.decl evs(n: node, p: node)
+evs(n, n) :- tstr(n).
+evs(n, f) :- evs(n, p), nearest(p, f, rscope), outlet(x, f), (p = x ; within(p, x)).
+.decl str_at_module(s: node)
+str_at_module(s) :- evs(s, p), nearest(p, m, rscope), kind(m, "module").
+str_at_module(s) :- evs(s, p), !nearest(p, _, rscope), in_type_str(p, h), str_at_module(h).
+// in_type_str(p, s): p is in the tree parsed from type string s.
+.decl in_type_str(p: node, s: node)
+in_type_str(p, s) :- tstr(s), parsed(s, "annotation", r), (p = r ; within(p, r)).
+// outlet(x, f): x, below scope f, runs in the scope around f: a default of def or lambda f, or comprehension f's
+// first iterable.
+.decl outlet(x: node, f: node)
+outlet(v, f) :- (kind(f, "function_definition") ; kind(f, "lambda")), field(f, "parameters", ps), child(ps, d, _),
+    (kind(d, "default_parameter") ; kind(d, "typed_default_parameter")), field(d, "value", v).
+outlet(e, c) :- first_for(c, fc), field(fc, "right", e).
