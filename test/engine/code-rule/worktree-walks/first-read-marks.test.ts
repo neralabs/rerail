@@ -7,7 +7,7 @@
 import { execFileSync } from "node:child_process";
 import { lstat, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodeRuleBridge, type DiscoveryGap } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
@@ -121,7 +121,14 @@ async function sessions(root: string) {
     git(root, "worktree", "remove", "--force", place);
     roots.length = 0;
   };
-  return { open, add, remove, seen, named: relative(root, place).split(sep).join("/") };
+  /** Adds a worktree of `other`'s commit at `name` beside the first one, listed after it, and its name for the session. */
+  const addBeside = async (name: string): Promise<{ worktree: string; named: string }> => {
+    const at = join(dirname(place), name);
+    git(root, "worktree", "add", "--quiet", "--detach", at, "other");
+    roots.push(await realpath(at));
+    return { worktree: roots.at(-1)!, named: relative(root, at).split(sep).join("/") };
+  };
+  return { open, add, addBeside, remove, seen, named: relative(root, place).split(sep).join("/") };
 }
 
 /** Each session's turn end, then the shared walk settled, twice: a worktree's first read, then the read after it. */
@@ -189,6 +196,18 @@ describe("a worktree's first read", () => {
     const marked = [{ path: named, reason: NOT_CHECKED }];
     expect({ audited: seen.audited, first: places(seen, "session-1"), second: places(seen, "session-2") })
       .toEqual({ audited: [], first: marked, second: marked });
+  });
+
+  // Two worktrees first read: the walk's take has a part for each, in the order Git lists them.
+  it("marks the worktree of a take's second part when its first read finds a file no call wrote there, and no other place", async () => {
+    const root = await repository();
+    const { open, add, addBeside, seen } = await sessions(root);
+    await add();
+    const second = await addBeside("w2");
+    const bridge = await open("session-1");
+    await atFirstRead(second.worktree, async () => { await writeFile(join(second.worktree, "src", "editor.py"), "violation\n"); }, bridge);
+    expect({ audited: seen.audited, record: places(seen, "session-1") })
+      .toEqual({ audited: [], record: [{ path: second.named, reason: NOT_CHECKED }] });
   });
 
   // A place is its path and its reason's code: the place a record holds under that code in other words, as a Rerail
