@@ -7,7 +7,7 @@
 //                     imports name, each module above or below one in the package tree, and the module of each
 //                     definition one of those exports
 //   exports(m, x, q)  module m exposes x, which denotes q: re-exports and star imports followed (python/imports)
-//   class(m, c)       module m defines class c
+//   class(m, c)       module m defines class c (class_named: the same, as python/django names it)
 //   defined(m, q)     module m defines q: a def or a class, nested ones too (its qualname)
 //   public(m, x)      x is part of module m's public interface (public_name: `__all__`, else no leading `_`)
 //   ancestor(m, q, b) class q of module m inherits from b, at any depth (0677 fix 3a): each base resolved as
@@ -51,6 +51,7 @@
 //                             body (S as the file binds it): a view over S
 //   dj_anc_clean_call(m, q, x)  a class of the run among class q's ancestors calls `self.x()`, x a `clean_…` method
 //                             (a form's clean_<field> it calls itself is a helper, not the field's hook)
+//   dj_model_class(m, q)      class q of module m is a model by python/django's tests on a symbol (dj_model_at)
 // An ancestor's members are handed on under the class's own module, not the ancestor's: a file need not read the
 // module an ancestor is defined in (`use.py`'s `Leaf(Mid)`, Mid's base in a module use.py never imports).
 // python/names reads them as `py_names__reads_at`, `py_names__exports`, … . This program includes python/scopes, not
@@ -68,7 +69,7 @@
     member_kw by_key, member_method by_key, plain_def by_key, dj_group by_key, dj_cond_group by_key,
     dj_opaque by_key, dj_unmanaged by_key, dj_abstract by_key, dj_manager_method by_key, dj_hook by_key,
     dj_receiver_fn by_key, dj_deferred_task by_key, dj_app_defers by_key, dj_task_def by_key, dj_view_model by_key,
-    dj_anc_clean_call by_key
+    dj_anc_clean_call by_key, dj_model_class by_key, class_named by_key
 
 // imported(p, q): an import statement of the file at path p names q: a module (`import a.b`, `from .m import x`'s
 // "pkg.m"), or a name of one ("pkg.m.x").
@@ -96,6 +97,9 @@ defined(m, q) :- qualname(f, q), module_of(f, m).
 
 .decl class(m: symbol, c: symbol)
 class(m, c) :- class_def(n, c), module_of(n, m).
+// class_named(m, c): the same, as python/django's dj_model_ref reads it (py_names.asked.rerail asks it apart).
+.decl class_named(m: symbol, c: symbol)
+class_named(m, c) :- class(m, c).
 
 .decl public(m: symbol, x: symbol)
 public(m, x) :- public_name(m, x).
@@ -411,3 +415,18 @@ dj_own_clean_call(o, x) :- class_def(a, o), kind(k, "call"), field(k, "function"
     text(s, "self"), nearest(k, a, "class_definition").
 .decl dj_anc_clean_call(m: symbol, q: symbol, x: symbol)
 dj_anc_clean_call(m, q, x) :- class(m, q), anc(q, o), dj_own_clean_call(o, x).
+
+// dj_model_class(m, q): class q of module m is a model (python/django's dj_model_at, by its symbol): a known base
+// itself or among its ancestors, or a class whose own body declares a field, a query expression's `output_field`
+// aside, where q is no query expression (a base under django.db.models' expressions, functions, aggregates or
+// lookups modules, or one of theirs as django.db.models exports it). A rule asks it of a class it knows by name alone,
+// a proven type among them, which no file names: so the verdict is handed on, not the classes it is made of.
+.decl dj_model_class(m: symbol, q: symbol)
+dj_model_class(m, q) :- class(m, q), dj_model_base(q).
+dj_model_class(m, q) :- ancestor(m, q, b), dj_model_base(b).
+dj_model_class(m, q) :- member_call(m, q, x, f), x != "output_field", split_dot(f, fm, t), dj_field_module(fm),
+    (suffix("Field", t) ; dj_relation_class(t)), !dj_expression_class(m, q).
+.decl dj_expression_class(m: symbol, q: symbol)
+dj_expression_class(m, q) :- ancestor(m, q, b), (prefix("django.db.models.expressions.", b) ;
+    prefix("django.db.models.functions.", b) ; prefix("django.db.models.aggregates.", b) ;
+    prefix("django.db.models.lookups.", b) ; dj_expression_base(b)).

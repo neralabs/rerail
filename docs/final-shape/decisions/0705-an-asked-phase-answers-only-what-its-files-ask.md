@@ -31,8 +31,8 @@ one run, and asks keyed per file.
 .decl q__ask_in(p: symbol, x: symbol)
 ```
 
-- `.rounds R`: the phase runs again while `R` grows. Each round reads the last round's rows of `R` as `<phase>__R`,
-  declared with `R`'s columns. `R` is an export declared `by_path`.
+- `.rounds R, S`: the phase runs again while any of them changes. Each round reads the last round's rows of each as
+  `<phase>__R`, declared with `R`'s columns. Each is an export declared `by_path`.
 - `by_path`, `by_path C`, `by_key` after an export: how a reader's memo entry is keyed by it. `by_path`: the rows at
   the file's own path (column 0). `by_path C`: those rows, and every row of a `by_key` export under each key named in
   their column `C`. `by_key`: rows keyed by column 0, read where a `by_path` row names the key. Key columns are
@@ -102,46 +102,74 @@ In `tests_corpus/…/corpus/phases/tests.rs`, on a small phase `q` and its reade
   managers) read it in place of `exports`, and `reads_at`'s second rule takes the modules the file's own asks
   resolve to, not every export of every module it names.
 
-The other exports (`reads_at`'s first rule, classes, definitions, ancestors, members, the Django facts) are made as
-`py_names.rerail` makes them.
+`class` and `defined` are answered for the symbols the files may name:
+
+- `sym_at(p, q)`: each symbol the file at `p` may give a node, from its own tree: python/scopes' `sym_of`, `qn`, and
+  an attribute of either at any depth. `obj_at` and `attr_at` are the same of an attribute's object and of an
+  attribute, where python/names' `sym_of` rule 3 reads `class` and `defined`.
+- `res(k, q)`: what the symbol denotes, as the readers resolve it: itself, an import through the asked exports (rule
+  1), a definition `c.a` of the run where `c` is what its prefix denotes (rule 3; bounded by a split of a `defined`
+  row, since a made `@dot` is refused as an unbounded value).
+- `asked_class`, `asked_defined` and `asked_named`, handed on as `class`, `defined` and `class_named`: the classes an
+  object may denote, the definitions an attribute may, and the classes any node may (python/django's
+  `dj_model_ref`). They are read in the cross part, where the phase's own rules (`reads_at`, the bases, the members)
+  read every file's `class` and `defined` already, so no round asks a file for them. `.rounds` takes several
+  relations (`.rounds R, S`), but `py_names` needs only `ask_in`.
+- `dj_model_ref`'s second rule, a class of the reading file itself, reads the file's own module, not a `class` row:
+  so a file asks nothing of its own classes. `py_names.rerail` hands on `class_named` as `class`.
+
+python/django's `dj_model_at` asks whether a class is a model of a class it knows by name alone, a proven type
+among them, which no file names and so none can ask of `py_names`. The phase applies the same tests to each class
+of the run and hands on the verdict, `dj_model_class(m, q)`, which `dj_model_at` and the Django pack's
+`tam_instance` read in place of `class`, `ancestor` and `member_call` (`dj_class_at`, `dj_expression_at`,
+`tam_model_type` and `tam_expression` are gone; the tests' helpers `dj_field_module`, `dj_relation_class` and
+`dj_expression_base` moved to python/django-shared, which both include). `py_names.rerail` hands it on too.
+
+The answers read the asked file's tree, not its binding analysis: a round that asks a file anew derives its answers
+as a partial memo hit (decision 0225 §2), and a cone that reads `qn` builds that analysis again. So `fwd` takes the
+file's module-level imports, and the cross part drops a tuple the file imports only under `if TYPE_CHECKING:`
+(`tc_only`, which reads no ask, held in the entry from round 1). A file on the memo's kept route whose outputs
+missed now takes that partial hit too (`corpus.rs`, `Unbuilt::partial`): it was built again whole.
+
+`asked` makes a row only for a module of the workspace: a name of an outside package, or an attribute chain past a
+module, is asked of no file.
+
+The other exports (`reads_at`'s first rule, ancestors, members, the Django facts) are made as `py_names.rerail`
+makes them.
 
 ## Measured
 
-The CLI at O0 with `test-hooks`, on this Mac with other runs going, each run with its own stores; user CPU and peak
-compared, not wall time.
+The CLI at O0 with `test-hooks`, on this Mac with other runs going (load 24 to 44); user CPU and peak compared, not
+wall time; each pair run back to back.
 
 Findings, the switch off against on, over the data layer's 224-file sample: the same in each of the 18 data-layer
-policies, with no crossing. The Django pack's 27 rules' cases and the Python pack's 3 pass with the switch on.
+policies, with no crossing. The Django pack's 27 cases and the Python pack's 3 pass, with the switch off and on.
 
 `bandit-b113-request-without-timeout` over the 224 files (`RERAIL_PROFILE=1`), a cold run and then one after a
-one-file edit (a new top-level name in `data_layer/batching.py`), on the same stores:
+one-file edit (a new top-level name in `data_layer/batching.py`), on the same stores, at load 27:
 
 | | Off | On |
 |---|---|---|
-| Rows handed on (the profile's "phase py_names: handed on") | 23,330 | 7,845 |
-| Of them, `exports` | 15,628 | 276 |
+| Rows handed on (the profile's "phase py_names: handed on") | 23,330 | 967 |
+| `exports` | 15,628 | 276 |
 | `reads_at` | 779 | 646 |
-| `defined`, `class` (not asked yet) | 6,091, 832 | 6,091, 832 |
-| The phase's rounds, cold | 1 | 2: 300 asks each; 224 files built, then 60 |
+| `defined` | 6,091 | 8 |
+| `class` | 832 | 37 |
+| The phase's rounds, cold | 1 | 2: 300 asks each; 224 files built, then 60 as partial hits |
 | After the edit | 1 round | 1 round: 1 file built |
-| Cold run, user CPU | 9.8 s | 11.0 s |
-| After the edit, user CPU | 0.60 s | 0.58 s |
-| Cold run, peak | 668 MB | 676 MB |
+| The phase's work (its heads), cold | 13,609,444 | 13,324,438 |
+| The phase's CPU (its heads), cold | 3.34 s | 3.18 s |
+| Cold run, user CPU | 15.3 s | 13.6 s |
+| After the edit, user CPU | 0.78 s | 0.62 s |
+| Cold run, peak | 657 MB | 669 MB |
 
-In an earlier pair of cold runs, with the profile's heads: the phase's work 13,571,526 off and 15,289,136 on, and
-its CPU 2.13 s and 3.07 s.
-
-Cold, the asked phase costs more. Both rounds hold the same 300 asks (no ask on the sample passes through a
-re-export): round 2 answers them. It reads 164 of the 224 files from the memo and builds the 60 asked files again
-whole, their python/scopes analysis with them, though only their answers read `ask_in`: no partial hit (decision
-0225 §2) is taken. After an edit, the run starts from the kept asks and takes one round.
+Round 2 builds the 60 asked files as partial hits: a chunk of them derives 5 of its 16 memoised relations, with 41
+of the program's 238 rules (before `fwd` read `qn`, 206 of 225, and before a kept-route miss took a partial hit,
+the files were built whole). The binding analysis is not built again: `wstart`'s work is 1.23 M, as with the
+switch off, where the asked phase's was 1.81 M before.
 
 ## Not yet done
 
 - The other exports of `py_names` are not asked: a class's members by an attribute chain, its ancestors by its
-  bases, a Django model's options by the model a file names.
-- Round 2 builds an asked file again whole. Its entry should be a partial hit, deriving again only the relations that
-  read `ask_in`; why it is not is not found yet.
-- `asked` makes a row for every name a file spells through an import, an outside module's too (93,699 rows over
-  the two rounds, for 300 asks sent): only a workspace module's names need one.
-- `defined` and `class`, most of what is still handed on, are not asked.
+  bases, a Django model's options by the model a file names, and `reads_at`'s first rule (the modules a file names,
+  and those above and below them).

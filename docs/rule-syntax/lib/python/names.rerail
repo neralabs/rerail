@@ -7,6 +7,7 @@
 //   py_names__reads_at(p, m)    the file at path p can name something of workspace module m
 //   py_names__exports(m, x, q)  module m exposes x, which denotes q, re-exports and star imports followed
 //   py_names__class(m, c)       module m defines class c
+//   py_names__class_named(m, c) the same, as python/django's dj_model_ref reads it
 //   py_names__defined(m, q)     module m defines q (a def or class, nested ones too)
 //   py_names__public(m, x)      x is part of module m's public interface (python/imports' public_name)
 //   py_names__ancestor(m, q, b) class q of module m inherits from b, at any depth (bases resolved as class_base)
@@ -16,6 +17,7 @@
 //   py_names__member_call(m, q, x, f), py_names__member_kw(m, q, x, k, v), py_names__member_method(m, q, x)
 //                               the same of class q's own body
 //   py_names__plain_def(m, q)   module m defines function q with no decorator
+//   py_names__dj_model_class(m, q)  class q of module m is a model by python/django's tests (dj_model_at)
 // Each is read by a module the file's own `reads_at` rows name, so a rule reading them stays file-local, and a file's
 // memo entry is keyed by those rows alone (decision 0665): an edit misses the files whose modules' rows changed.
 #include "python/scopes.rerail"
@@ -23,6 +25,7 @@
 .decl py_names__reads_at(p: symbol, m: symbol)
 .decl py_names__exports(m: symbol, x: symbol, q: symbol)
 .decl py_names__class(m: symbol, c: symbol)
+.decl py_names__class_named(m: symbol, c: symbol)
 .decl py_names__defined(m: symbol, q: symbol)
 .decl py_names__public(m: symbol, x: symbol)
 .decl py_names__ancestor(m: symbol, q: symbol, b: symbol)
@@ -32,6 +35,7 @@
 .decl py_names__anc_ref(m: symbol, q: symbol, x: symbol, s: symbol)
 .decl py_names__anc_method(m: symbol, q: symbol, x: symbol)
 .decl py_names__plain_def(m: symbol, q: symbol)
+.decl py_names__dj_model_class(m: symbol, q: symbol)
 .decl py_names__member_call(m: symbol, q: symbol, x: symbol, f: symbol)
 .decl py_names__member_kw(m: symbol, q: symbol, x: symbol, k: symbol, v: symbol)
 .decl py_names__member_method(m: symbol, q: symbol, x: symbol)

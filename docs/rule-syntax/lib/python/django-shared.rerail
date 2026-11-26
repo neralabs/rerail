@@ -41,3 +41,23 @@ dj_qs(p) :- kind(p, "parenthesized_expression"), unparen(p, e), dj_qs(e).
 dj_qs_root(q, o) :- dj_manager(q), attr_of(q, o, _).
 dj_qs_root(q, r) :- dj_qs(q), kind(q, "call"), field(q, "function", f), attr_of(f, o, _), dj_qs_root(o, r).
 dj_qs_root(p, r) :- kind(p, "parenthesized_expression"), unparen(p, e), dj_qs_root(e, r).
+
+// The tests of a model by its symbol (python/django's dj_model_at, the phase's dj_model_class): the modules field
+// classes come from, the relation fields, and the query expressions' bases, which declare fields but are no model.
+// dj_field_module(m): the modules model field classes are imported from (`models.CharField`, `JSONField`, ...).
+.decl dj_field_module(m: symbol)
+dj_field_module("django.db.models"). dj_field_module("django.db.models.fields").
+dj_field_module("django.db.models.fields.related"). dj_field_module("django.db.models.fields.json").
+dj_field_module("django.contrib.postgres.fields"). dj_field_module("django.contrib.gis.db.models").
+dj_field_module("modelcluster.fields").
+// dj_relation_class(t): the field classes that relate a model to another.
+.decl dj_relation_class(t: symbol)
+dj_relation_class("ForeignKey"). dj_relation_class("OneToOneField"). dj_relation_class("ManyToManyField").
+dj_relation_class("ParentalKey"). dj_relation_class("ParentalManyToManyField").
+// dj_expression_base(q): query expression classes as django.db.models exports them.
+.decl dj_expression_base(q: symbol)
+dj_expression_base("django.db.models.Func"). dj_expression_base("django.db.models.Expression").
+dj_expression_base("django.db.models.Aggregate"). dj_expression_base("django.db.models.Transform").
+dj_expression_base("django.db.models.Lookup"). dj_expression_base("django.db.models.Subquery").
+dj_expression_base("django.db.models.ExpressionWrapper"). dj_expression_base("django.db.models.Value").
+dj_expression_base("django.db.models.Window").

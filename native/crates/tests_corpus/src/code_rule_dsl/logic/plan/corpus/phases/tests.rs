@@ -530,23 +530,31 @@ ask_in(p, y) :- doc(_, p, _), g__ask_in(p, x), y = @cat(x, "x").
     fn the_asked_py_names_resolves_the_names_the_eager_one_does() {
         let files = [
             ("pkg/__init__.py", "from .core import App\nfrom .util import *\n"),
-            ("pkg/core.py", "class App:\n    pass\n\ndef unused():\n    return 0\n"),
+            ("pkg/core.py", "class App:\n    def run(self):\n        return 0\n\n    class Inner:\n        def go(self):\n            return 1\n\ndef unused():\n    return 0\n\nclass Spare:\n    pass\n"),
             ("pkg/util.py", "def helper():\n    return 1\n\ndef other():\n    return 2\n"),
-            ("use.py", "from pkg import App, helper\nimport pkg.core\n\nApp()\nhelper()\npkg.core.App()\n"),
+            ("use.py", "from pkg import App, helper\nimport pkg.core\n\nclass Here:\n    def mine(self):\n        return 2\n\nApp()\nApp.run\nApp.Inner.go\nhelper()\npkg.core.App.run\nHere.mine\n"),
         ];
-        let reader = ".language python\n#include \"python/names.rerail\"\n.decl r(q0: symbol, q: symbol)\nr(q0, q) :- export_at(_, q0, q).\n.output r\n";
+        // r: a name through an import, re-exports followed (rule 1). s: every symbol a node denotes, an attribute of a
+        // class of the run through `class` and `defined` (rule 3) among them.
+        let reader = ".language python\n#include \"python/names.rerail\"\n.decl r(q0: symbol, q: symbol)\nr(q0, q) :- export_at(_, q0, q).\n.output r\n.decl s(q: symbol)\ns(q) :- sym_of(_, q).\n.output s\n";
         let t = AskedTree::new("asked-py-names", &[], &files);
-        let exports = |report: &crate::code_rule_dsl::logic::plan::corpus::Report| {
-            report.phase_runs.iter().find(|r| r.name == "py_names").and_then(|r| r.exports.iter().find(|(e, _)| e == "exports").map(|(_, n)| *n)).expect("py_names hands on exports")
+        let handed = |report: &crate::code_rule_dsl::logic::plan::corpus::Report, export: &str| {
+            report.phase_runs.iter().find(|r| r.name == "py_names").and_then(|r| r.exports.iter().find(|(e, _)| e == export).map(|(_, n)| *n)).unwrap_or_else(|| panic!("py_names hands on {export}"))
         };
         let eager = t.run(reader, false).unwrap();
-        let eager_rows = t.rows("r");
+        let (eager_rows, eager_syms) = (t.rows("r"), t.rows("s"));
         t.store("asked.sqlite");
         let asked = t.run(reader, true).unwrap();
         assert_eq!(t.rows("r"), eager_rows, "the same names resolved");
+        assert_eq!(t.rows("s"), eager_syms, "the same symbols");
         for want in [["pkg.App", "pkg.core.App"], ["pkg.helper", "pkg.util.helper"], ["pkg.core.App", "pkg.core.App"]] {
             assert!(eager_rows.iter().any(|r| *r == want), "{want:?} in {eager_rows:?}");
         }
-        assert!(exports(&asked) < exports(&eager), "the asked phase hands on fewer exports: {} against {}", exports(&asked), exports(&eager));
+        for want in ["pkg.core.App.run", "pkg.core.App.Inner.go", "use.Here.mine"] {
+            assert!(eager_syms.iter().any(|r| r[0] == want), "{want} by rule 3, in {eager_syms:?}");
+        }
+        for export in ["exports", "class", "defined"] {
+            assert!(handed(&asked, export) < handed(&eager, export), "the asked phase hands on fewer {export}: {} against {}", handed(&asked, export), handed(&eager, export));
+        }
         assert!(!asked.phase_runs.iter().find(|r| r.name == "py_names").unwrap().rounds.is_empty(), "it ran in rounds");
     }

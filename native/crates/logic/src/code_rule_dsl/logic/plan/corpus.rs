@@ -3315,6 +3315,9 @@ fn run_observed_within(
     // `package.json` misses the files under it alone, and a source file's edit none. A file's ids are made once per
     // digest of its own settings. The phases' exports read as settings (`tsx_names`'s) are bound by now, below.
     let settings_scopes = memo::settings_scopes(&local_placed, &memo_ids.keys().cloned().collect());
+    crate::code_rule_dsl::logic::profile::decision("per-file memo: the relations an entry holds, and their settings", || {
+        memo_ids.keys().map(|r| format!("{r}{}", settings_scopes.get(r).map_or(String::new(), |s| format!(" ({s:?})")))).collect::<Vec<_>>().join(", ")
+    });
     let settings = {
         let bound: Vec<(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)> =
             repository.iter().filter(|(name, ..)| crate::code_rule_dsl::typing::file_local::setting_input(name)).map(|(name, source, _)| (name.as_str(), source.as_ref())).collect();
@@ -4494,7 +4497,11 @@ fn run_observed_within(
                     }
                 }
                 let mut partial = None;
-                if let (true, false, Some(found)) = (memoised, b.outputs, b.found) {
+                // A file on the kept route whose outputs missed (one reading a setting at its own path that changed,
+                // an asked phase's next round) is looked at whole: its entry may hold the other relations, and a
+                // partial hit derives only those it misses (decision 0225 §2). Its `Found` is the one a whole lookup
+                // gives (`Memo::found_outputs_all`).
+                if let (true, Some(found)) = (memoised, b.found) {
                     let _decode = crate::code_rule_dsl::logic::profile::span(|| "memo decode".into());
                     let entry = found.projected(*d, &memo_row_needed).map_err(|e| Error::Plan(e.to_string()))?;
                     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() && entry.as_ref().is_some_and(|e| !has_counts(e)) {
@@ -4503,7 +4510,12 @@ fn run_observed_within(
                     match entry {
                         Some(entry) if has_counts(&entry) && missing_of(&entry, path).is_empty() => return Ok(Some((b.content, Ok(entry)))),
                         Some(entry) if missing_of(&entry, path).len() < memo_ids.len() => partial = Some(entry),
-                        _ => {}
+                        // Found, and built again whole: why, for the profile (a partial hit derives only what is missing).
+                        other => crate::code_rule_dsl::logic::profile::decision("per-file memo: an entry found and built again whole", || match &other {
+                            Some(e) if !has_counts(e) && missing_of(e, path).is_empty() => "it holds no tree counts".to_owned(),
+                            Some(e) => format!("all {} relations missing: {:?}", memo_ids.len(), missing_of(e, path)),
+                            None => "its projection held none of the relations".to_owned(),
+                        }),
                     }
                 }
                 let (text, content, digest, tape) = match b.text {

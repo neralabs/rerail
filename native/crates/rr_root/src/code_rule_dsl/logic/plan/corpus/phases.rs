@@ -110,7 +110,7 @@ impl Running {
 }
 
 /// What a program says of itself as a phase: its name and its exports; and, for an asked phase (decision 0705), the
-/// export its rounds hand back to it (`.rounds ask_in`) and how its exports are keyed (`.export asked_at by_path 1,
+/// exports its rounds hand back to it (`.rounds ask_in, sym_in`) and how its exports are keyed (`.export asked_at by_path 1,
 /// resolved by_key`), as written: `keyed` checks them.
 pub struct Declared {
     pub(crate) name: String,
@@ -118,7 +118,8 @@ pub struct Declared {
     pub exports: Vec<String>,
     /// Each export's relation in the program, where it is not the export's name (`asked_exports as exports`).
     pub relations: BTreeMap<String, String>,
-    pub rounds: Option<String>,
+    /// The exports each round is handed back as the last round left them: none for a phase run once.
+    pub rounds: Vec<String>,
     /// Each export written with a key after it (`asked_at by_path 1`), and its key's words.
     pub keyed: Vec<(String, Vec<String>)>,
 }
@@ -138,7 +139,7 @@ pub fn declared(prog: &(impl ProgramFields + ?Sized)) -> Option<Declared> {
     let exports = items.iter().map(|(_, e, _)| e.clone()).collect();
     let relations = items.iter().filter(|(r, e, _)| r != e).map(|(r, e, _)| (e.clone(), r.clone())).collect();
     let keyed = items.into_iter().filter(|(_, _, w)| !w.is_empty()).map(|(_, e, w)| (e, w)).collect();
-    let rounds = setting("rounds").into_iter().next().map(|r| r.trim().trim_end_matches('.').to_owned());
+    let rounds = setting("rounds").iter().flat_map(|r| r.split(',')).map(|r| r.trim().trim_end_matches('.').to_owned()).filter(|r| !r.is_empty()).collect();
     Some(Declared { name, exports, relations, rounds, keyed })
 }
 
@@ -175,7 +176,7 @@ fn keyed(name: &str, program: &(impl ProgramFields + ?Sized), declared: &Declare
 fn kept_asks_key(name: &str, src: &str, root: &Path) -> String {
     use sha2::Digest as _;
     let digest: [u8; 32] = sha2::Sha256::digest(src.as_bytes()).into();
-    format!("asked-phase/v1:{name}:{}:{}", digest.iter().map(|b| format!("{b:02x}")).collect::<String>(), root.display())
+    format!("asked-phase/v2:{name}:{}:{}", digest.iter().map(|b| format!("{b:02x}")).collect::<String>(), root.display())
 }
 
 fn encode_rows(rows: &[Vec<Value>]) -> Vec<u8> {
@@ -206,6 +207,24 @@ fn decode_rows(bytes: &[u8]) -> Option<Vec<Vec<Value>>> {
 }
 
 /// A set of rows, to compare one round's asks with the last's.
+/// The rounds' exports' rows as one list to keep, each row led by its export's name.
+fn tagged(asks: &BTreeMap<String, Vec<Vec<Value>>>) -> Vec<Vec<Value>> {
+    asks.iter().flat_map(|(r, rows)| rows.iter().map(move |row| std::iter::once(Value::Str(r.as_str().into())).chain(row.iter().cloned()).collect())).collect()
+}
+
+/// `tagged`'s list, by export, for the exports `rounds` names: a kept row of another is dropped.
+fn untagged(rows: Vec<Vec<Value>>, rounds: &[String]) -> BTreeMap<String, Vec<Vec<Value>>> {
+    let mut out: BTreeMap<String, Vec<Vec<Value>>> = rounds.iter().map(|r| (r.clone(), Vec::new())).collect();
+    for row in rows {
+        if let Some((Value::Str(r), rest)) = row.split_first()
+            && let Some(rows) = out.get_mut(&**r)
+        {
+            rows.push(rest.to_vec());
+        }
+    }
+    out
+}
+
 fn row_set(rows: &[Vec<Value>]) -> BTreeSet<String> {
     rows.iter().map(|r| format!("{r:?}")).collect()
 }
@@ -600,11 +619,12 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
         // keyed in its readers' memo as it declares (`.export asked_at by_path 1`). Behind `RERAIL_ASKED_PHASES`.
         let keys = keyed(&name, &*program, &declared)?;
         let rounds_of = declared.rounds.clone();
-        if rounds_of.is_some() && !asked_phases_on() {
+        if !rounds_of.is_empty() && !asked_phases_on() {
             return Err(Error::Plan(format!("{name}.rerail is an asked phase (`.rounds`): set {ASKED_PHASES}=1 to run it (decision 0705)")));
         }
-        let own_read = rounds_of.as_ref().map(|r| format!("{name}{SEP}{r}"));
-        if let (Some(r), Some(own)) = (&rounds_of, &own_read) {
+        // Each rounds' export and the name a round reads its last rows under (`py_names__ask_in`).
+        let own_reads: Vec<(String, String)> = rounds_of.iter().map(|r| (r.clone(), format!("{name}{SEP}{r}"))).collect();
+        for (r, own) in &own_reads {
             if !declared.exports.contains(r) {
                 return Err(Error::Plan(format!("{name}.rerail: `.rounds {r}`: {r} is not an export")));
             }
@@ -615,7 +635,7 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
                 return Err(Error::Plan(format!("{name}.rerail: `.rounds {r}`: {r} is read at a file's own path, so it is declared `{r} by_path`")));
             }
         }
-        let made: Vec<String> = wanted.iter().cloned().chain(rounds_of.clone()).collect::<BTreeSet<String>>().into_iter().collect();
+        let made: Vec<String> = wanted.iter().cloned().chain(rounds_of.iter().cloned()).collect::<BTreeSet<String>>().into_iter().collect();
         // Its exports are its outputs: the program read, given them (decision 0249), not its text with an `.output`
         // after it read again. A phase naming no language runs in its reader's (as phase 1 does): a library read by
         // programs of several languages (tsx/names.rerail, by TypeScript's and Vue's) resolves over the reader's
@@ -642,19 +662,20 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
                 runs.push(r);
             }
         }
-        // Its own read of the rounds' export, keyed by a file's own path in its own run, as a reader's is.
+        // Its own reads of the rounds' exports, keyed by a file's own path in its own run, as a reader's are.
         let own_keys: Vec<(String, crate::code_rule_dsl::logic::plan::phased::Keyed)> =
-            own_read.iter().filter_map(|own| keys.iter().find(|(e, _)| Some(e) == rounds_of.as_ref()).map(|(_, k)| (own.clone(), k.clone()))).collect();
-        let kept_key = rounds_of.as_ref().map(|_| kept_asks_key(&name, &src, root));
+            own_reads.iter().filter_map(|(r, own)| keys.iter().find(|(e, _)| e == r).map(|(_, k)| (own.clone(), k.clone()))).collect();
+        let kept_key = (!rounds_of.is_empty()).then(|| kept_asks_key(&name, &src, root));
         // Round 1 starts from the asks the last run over this root ended with: an edit that changes no ask takes one
-        // round. A stale ask is made again from nothing (the rounds' export is derived afresh each round), so where
+        // round. A stale ask is made again from nothing (the rounds' exports are derived afresh each round), so where
         // it starts changes no answer.
-        let mut asks: Vec<Vec<Value>> = kept_key.as_ref().and_then(|k| super::observe(|o| o.run_record(k))).and_then(|(_, rows)| decode_rows(&rows)).unwrap_or_default();
+        let mut asks: BTreeMap<String, Vec<Vec<Value>>> =
+            untagged(kept_key.as_ref().and_then(|k| super::observe(|o| o.run_record(k))).and_then(|(_, rows)| decode_rows(&rows)).unwrap_or_default(), &rounds_of);
         let mut rounds: Vec<Round> = Vec::new();
         let (report, rows) = loop {
             let mut down = upstream.clone();
-            if let Some(own) = &own_read {
-                down.insert(own.clone(), asks.clone());
+            for (r, own) in &own_reads {
+                down.insert(own.clone(), asks.get(r).cloned().unwrap_or_default());
             }
             let _keys = (!own_keys.is_empty()).then(|| crate::code_rule_dsl::logic::plan::phased::bind_keys(own_keys.clone()));
             let _down = HandingDown::enter(&name, down);
@@ -665,21 +686,29 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
                 super::run_read_handing(&handed, None, root, Path::new(""), modes, binding, chunk_nodes, typing, options, Some(&mut image), super::FactPhase::of(entry.as_ref()))?
             };
             let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &*program, &declared, &made, &image)? };
-            let Some(r) = &rounds_of else { break (report, rows) };
-            let got = rows.get(r).cloned().unwrap_or_default();
-            rounds.push(Round { asks: got.len(), files: report.files, memo: report.memo });
-            let (was, now) = (row_set(&asks), row_set(&got));
-            if was == now {
+            if rounds_of.is_empty() {
+                break (report, rows);
+            }
+            let got: BTreeMap<String, Vec<Vec<Value>>> = rounds_of.iter().map(|r| (r.clone(), rows.get(r).cloned().unwrap_or_default())).collect();
+            rounds.push(Round { asks: got.values().map(Vec::len).sum(), files: report.files, memo: report.memo });
+            let changed: Vec<(&String, BTreeSet<String>)> = rounds_of
+                .iter()
+                .filter_map(|r| {
+                    let (was, now) = (row_set(asks.get(r).map_or(&[][..], Vec::as_slice)), row_set(&got[r]));
+                    (was != now).then(|| (r, now.difference(&was).cloned().collect()))
+                })
+                .collect();
+            if changed.is_empty() {
                 break (report, rows);
             }
             if rounds.len() >= MAX_ROUNDS {
-                let added: Vec<&String> = now.difference(&was).take(8).collect();
-                return Err(Error::Plan(format!("phase {name}: its asks still grow after {MAX_ROUNDS} rounds (decision 0705): the last round added {} asks of {r}, {added:?}; a rule that makes a new ask from an answer of its own never ends", now.difference(&was).count())));
+                let added = changed.iter().map(|(r, added)| format!("{} asks of {r}, {:?}", added.len(), added.iter().take(8).collect::<Vec<_>>())).collect::<Vec<_>>().join("; ");
+                return Err(Error::Plan(format!("phase {name}: its asks still grow after {MAX_ROUNDS} rounds (decision 0705): the last round added {added}; a rule that makes a new ask from an answer of its own never ends")));
             }
             asks = got;
         };
         if let Some(k) = &kept_key {
-            super::observe(|o| o.put_run_record(k, &super::reuse::encode_lists::<&str>(&[]), &encode_rows(&asks)));
+            super::observe(|o| o.put_run_record(k, &super::reuse::encode_lists::<&str>(&[]), &encode_rows(&tagged(&asks))));
         }
         { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&reads, &rows, &mut facts); }
         let exports: Vec<(String, usize)> = wanted.iter().map(|e| (e.clone(), rows.get(e).map_or(0, |v| v.len()))).collect();
