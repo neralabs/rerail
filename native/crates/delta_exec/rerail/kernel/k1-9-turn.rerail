@@ -1,0 +1,6 @@
+// The fifth stratum (negates the fourth): each step's turn after its atom, the first 0, each next one past it, by the
+// numbers' chain.
+then(d, r, a, b) :- before(d, r, a, b), !twixt(d, r, a, b).
+turn(d, r, a, 0) :- at(d, r, a, _), !not_first(d, r, a).
+turn(d, r, b, m) :- turn(d, r, a, n), then(d, r, a, b), next(n, m).
+placed(d, r, f) :- at(d, r, f, _).

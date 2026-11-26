@@ -322,6 +322,12 @@ impl ChainVars {
                     n.needs = vars & !own;
                 }
                 Op::Cmp(_) => n.needs = vars,
+                // An operator needs its operands and binds its answer's variable.
+                Op::Fn(op) => {
+                    let of = |a: &V| if let V::Var(x) = *a { 1u64 << x } else { 0 };
+                    n.needs = n.args[..op.operands()].iter().fold(0, |m, a| m | of(a));
+                    n.binds = of(&n.args[op.operands()]) & !n.needs;
+                }
             }
         }
         let fixed = t.steps.first().is_some_and(|s| s.side == Side::Delta);
@@ -332,9 +338,9 @@ impl ChainVars {
         self.nodes.len()
     }
 
-    /// The variables the atoms of `placed` bind.
+    /// The variables the atoms and operators of `placed` bind.
     fn bound(&self, placed: u64) -> u64 {
-        self.nodes.iter().enumerate().filter(|(j, n)| placed >> j & 1 == 1 && n.op == Op::Atom).fold(0, |m, (_, n)| m | n.binds)
+        self.nodes.iter().enumerate().filter(|(j, n)| placed >> j & 1 == 1 && matches!(n.op, Op::Atom | Op::Fn(_))).fold(0, |m, (_, n)| m | n.binds)
     }
 
     /// Whether step `j` may run after the steps of `placed`.
@@ -510,6 +516,14 @@ fn fan(c: &ChainVars, lp: &LinePrice, placed: u64, j: usize) -> f64 {
             Cmp::Ne => 0.9,
             _ => 1.0 / 3.0,
         },
+        // One answer a tuple, or a test of the answer where it is bound.
+        Op::Fn(_) => {
+            if n.binds == 0 {
+                0.1
+            } else {
+                1.0
+            }
+        }
     }
 }
 
@@ -1003,7 +1017,7 @@ fn lines(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             rows as f64
         };
         // Its declarations (0361), unless its rows broke them.
-        let decl: Vec<StepPrice> = t.steps.iter().map(|s| if matches!(s.op, Op::Cmp(_)) || note.as_ref().is_some_and(|n| n.broken) { StepPrice::default() } else { StepPrice { decl: env.declared(s.src), ..StepPrice::default() } }).collect();
+        let decl: Vec<StepPrice> = t.steps.iter().map(|s| if matches!(s.op, Op::Cmp(_) | Op::Fn(_)) || note.as_ref().is_some_and(|n| n.broken) { StepPrice::default() } else { StepPrice { decl: env.declared(s.src), ..StepPrice::default() } }).collect();
         let mut default = None;
         let (status, kept) = match &chain {
             None => (ONE, Vec::new()),
@@ -1161,7 +1175,7 @@ fn price(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             .iter()
             .map(|s| {
                 let (rows, ndv) = env.side_stats(s.src, s.side, s.args.len());
-                let decl = if broken || matches!(s.op, Op::Cmp(_)) { Facts::default() } else { env.declared(s.src) };
+                let decl = if broken || matches!(s.op, Op::Cmp(_) | Op::Fn(_)) { Facts::default() } else { env.declared(s.src) };
                 StepPrice { card: rows as f64, ndv: ndv.into_iter().map(|x| x as f64).collect(), corr: Vec::new(), decl }
             })
             .collect();

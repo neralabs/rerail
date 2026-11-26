@@ -26,7 +26,7 @@
 use crate::dir::{BlockId, Directory};
 use crate::files::Placed;
 use crate::op::{Across, Bound, Found, Independence, Inside, Mode, OpId, Output, Over, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
-use crate::program::Cmp;
+use crate::program::{Arith, Cmp};
 use crate::shapes::Facts;
 use crate::sym::Names;
 use crate::tape::{Reads, TapeView, View};
@@ -85,12 +85,14 @@ pub enum Arg {
     Same(usize),
 }
 
-/// What a step does.
+/// What a step does. An operator's step (`Fn`) reads no source: its frame word is its answer, the value its last
+/// column binds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
     Atom,
     Not,
     Cmp(Cmp),
+    Fn(Arith),
 }
 
 /// A step of a chain: what it does, its source and side, its arguments.
@@ -218,6 +220,7 @@ impl Plan {
                     Op::Atom => 0,
                     Op::Not => 1,
                     Op::Cmp(c) => 2 + c.code(),
+                    Op::Fn(a) => 2 + Cmp::ALL.len() as i64 + a.code(),
                 };
                 w.extend([op, s.src as i64, s.side as i64, s.args.len() as i64]);
                 s.args.iter().for_each(|a| put_arg(&mut w, a));
@@ -299,7 +302,8 @@ impl Plan {
                 let op = match next() {
                     0 => Op::Atom,
                     1 => Op::Not,
-                    c => Op::Cmp(Cmp::of_code(c - 2).expect("an operator")),
+                    c if c < 2 + Cmp::ALL.len() as i64 => Op::Cmp(Cmp::of_code(c - 2).expect("a comparison")),
+                    c => Op::Fn(Arith::of_code(c - 2 - Cmp::ALL.len() as i64).expect("an operator")),
                 };
                 let (src, side) = (next() as usize, [Side::Before, Side::After, Side::Delta][next() as usize]);
                 let n = next();
@@ -538,7 +542,14 @@ impl<'t> Env<'t> {
     fn val(&self, t: &TermPlan, refs: &[u64], a: Arg) -> i64 {
         match a {
             Arg::Const(v) => v,
-            Arg::Eq(j, c) => self.get(t.steps[j].src, refs[j], c),
+            Arg::Eq(j, c) => match t.steps[j].op {
+                // An operator's answer, in its frame word: its last column (its operands are bound before it).
+                Op::Fn(op) => {
+                    debug_assert_eq!(c, op.operands(), "an operator binds its answer only");
+                    refs[j] as i64
+                }
+                _ => self.get(t.steps[j].src, refs[j], c),
+            },
             a => unreachable!("a value is a constant or a bound variable, not {a:?}"),
         }
     }
@@ -621,13 +632,10 @@ impl<'t> Env<'t> {
                     });
                 }
                 // A filter first (a `not` or a `cmp` of constants: B§7 refuses an unbound variable in either): the
-                // empty tuple, kept when it passes.
-                (Op::Not | Op::Cmp(_), _) => {
+                // empty tuple, kept when it passes. An operator of constants: its answer.
+                (Op::Not | Op::Cmp(_) | Op::Fn(_), _) => {
                     let mut probes = 0;
-                    self.step(ti, 0, &[NO_ROW], &mut probes, &mut |r| {
-                        debug_assert!(r.is_none(), "a filter binds no row");
-                        f(ti, t.sign, NO_ROW);
-                    });
+                    self.step(ti, 0, &[NO_ROW], &mut probes, &mut |r| f(ti, t.sign, r.unwrap_or(NO_ROW)));
                 }
             }
         }
@@ -641,6 +649,18 @@ impl<'t> Env<'t> {
             Op::Cmp(c) => {
                 if c.test(self.val(t, refs, s.args[0]), self.val(t, refs, s.args[1])) {
                     f(None);
+                }
+            }
+            // The operator's answer: none where it has none (a division by zero, an overflow), else the step's frame
+            // word, where its last column is a variable it binds, or kept where that column holds the answer.
+            Op::Fn(op) => {
+                let n = op.operands();
+                let x: Vec<i64> = s.args[..n].iter().map(|&a| self.val(t, refs, a)).collect(); // copy: derived (an operator's one or two operands)
+                let Some(v) = op.apply(&x) else { return };
+                match s.args[n] {
+                    Arg::Bind | Arg::Wild => f(Some(v as u64)),
+                    a if self.val(t, refs, a) == v => f(Some(v as u64)),
+                    _ => {}
                 }
             }
             Op::Atom => {

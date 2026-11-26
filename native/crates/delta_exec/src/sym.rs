@@ -68,6 +68,11 @@ pub fn find(atoms: &[u8], s: &str) -> Option<i64> {
 /// The string of symbol `id` in the atoms block `atoms` (its bytes, where they lie): a name for a shape's choice and
 /// for messages (`#id` when it has none).
 pub fn name_of(atoms: &[u8], id: i64) -> String {
+    // A node's name (`tape::name`, negative): the node it names, in its document.
+    if id < 0 {
+        let at = -id;
+        return format!("<node {} of document {}>", at & 0xffff_ffff, at >> 32);
+    }
     // copy: not block data (a name's text)
     u32::try_from(id).ok().and_then(|i| rerail_blocks::atoms::name_in(atoms, i)).map_or_else(|| format!("#{id}"), str::to_owned)
 }

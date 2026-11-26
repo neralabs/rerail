@@ -64,12 +64,73 @@ impl Cmp {
     }
 }
 
-/// What a step does.
+/// An arithmetic operator: a relation the executor knows by its symbol (0686, K1-a; B§3, sentence 3: "an answer"),
+/// its operands then its answer, read with its operands bound. A Pure answer: a step that reads one binds its last
+/// column from the others, and it never changes. A division by zero and an overflow have no row.
+///
+/// `-` of two terms is `Neg`, `0 − a`. `Id` is `=` binding a variable no earlier step binds (`y = x + 1`): its answer is
+/// its operand. Neither has a symbol of its own: `Program::read` makes them where the terms say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Arith {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Neg,
+    Id,
+}
+
+impl Arith {
+    /// The operators a K-form step names by symbol; `Neg` and `Id` follow, by code only.
+    pub const ALL: [(Arith, &'static str); 5] = [(Arith::Add, "+"), (Arith::Sub, "-"), (Arith::Mul, "*"), (Arith::Div, "/"), (Arith::Rem, "%")];
+    const CODES: [Arith; 7] = [Arith::Add, Arith::Sub, Arith::Mul, Arith::Div, Arith::Rem, Arith::Neg, Arith::Id];
+
+    /// Its operands' count.
+    pub fn operands(self) -> usize {
+        match self {
+            Arith::Neg | Arith::Id => 1,
+            _ => 2,
+        }
+    }
+
+    /// Its answer for operands `x` (`operands()` of them), `None` where it has no row.
+    pub fn apply(self, x: &[i64]) -> Option<i64> {
+        match (self, x) {
+            (Arith::Add, &[a, b]) => a.checked_add(b),
+            (Arith::Sub, &[a, b]) => a.checked_sub(b),
+            (Arith::Mul, &[a, b]) => a.checked_mul(b),
+            (Arith::Div, &[a, b]) => a.checked_div(b),
+            (Arith::Rem, &[a, b]) => a.checked_rem(b),
+            (Arith::Neg, &[a]) => 0i64.checked_sub(a),
+            (Arith::Id, &[a]) => Some(a),
+            _ => unreachable!("an operator of {} operands, given {}", self.operands(), x.len()),
+        }
+    }
+
+    pub fn code(self) -> i64 {
+        Arith::CODES.iter().position(|&c| c == self).expect("an operator") as i64
+    }
+
+    pub fn of_code(c: i64) -> Option<Arith> {
+        Arith::CODES.get(usize::try_from(c).ok()?).copied()
+    }
+}
+
+/// What a step does: an atom of a relation, its negation, a comparison, or an atom of an arithmetic operator (`Fn`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     Atom,
     Not,
     Cmp(Cmp),
+    Fn(Arith),
+}
+
+impl Kind {
+    /// Whether it reads a relation's rows: a comparison and an operator read none.
+    pub fn reads(self) -> bool {
+        matches!(self, Kind::Atom | Kind::Not)
+    }
 }
 
 /// A step of a rule's body: its key, what it does, the relation it reads (a `cmp`'s none) and its arguments.
@@ -120,18 +181,47 @@ impl Known {
 }
 
 impl Rule {
+    /// The operators its terms make (`Arith`), in step order: a `-` of two terms is `Neg`, and an `=` of a variable no
+    /// earlier step binds and a bound term or a constant is `Id`, its answer that variable (Soufflé's `y = x + 1`).
+    fn operators(&mut self) {
+        let mut bound: BTreeSet<i64> = BTreeSet::new();
+        let var = |t: &Term| if let Term::Var(v) = *t { Some(v) } else { None };
+        for s in &mut self.steps {
+            match s.kind {
+                Kind::Fn(Arith::Sub) if s.args.len() == 2 => s.kind = Kind::Fn(Arith::Neg),
+                Kind::Cmp(Cmp::Eq) if s.args.len() == 2 => {
+                    let free = |t: &Term| var(t).is_some_and(|v| !bound.contains(&v));
+                    let given = |t: &Term| matches!(t, Term::Const(_)) || var(t).is_some_and(|v| bound.contains(&v));
+                    for (a, b) in [(0, 1), (1, 0)] {
+                        if free(&s.args[a]) && given(&s.args[b]) {
+                            s.kind = Kind::Fn(Arith::Id);
+                            s.args = vec![s.args[b], s.args[a]];
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            match s.kind {
+                Kind::Atom => bound.extend(s.args.iter().filter_map(var)),
+                Kind::Fn(_) => bound.extend(s.args.last().and_then(var)),
+                _ => {}
+            }
+        }
+    }
+
     /// Sentence 5: whether its steps read one document's views and relations. In the kernel this follows from the
     /// steps alone: it reads a view, and every relation step's and its head's first argument is that view's document
     /// variable.
     pub fn single_file(&self, known: &Known) -> bool {
         let d = self.steps.iter().find(|s| s.kind == Kind::Atom && known.view(s.rel).is_some()).and_then(|s| s.args.first().copied());
         let Some(Term::Var(d)) = d else { return false };
-        self.args.first() == Some(&Term::Var(d)) && self.steps.iter().filter(|s| !matches!(s.kind, Kind::Cmp(_))).all(|s| s.args.first() == Some(&Term::Var(d)))
+        self.args.first() == Some(&Term::Var(d)) && self.steps.iter().filter(|s| s.kind.reads()).all(|s| s.args.first() == Some(&Term::Var(d)))
     }
 
-    /// The relations its steps read (a `cmp`'s none).
+    /// The relations its steps read (a `cmp`'s and an operator's none).
     pub fn reads(&self) -> impl Iterator<Item = (Kind, i64)> + '_ {
-        self.steps.iter().filter(|s| !matches!(s.kind, Kind::Cmp(_))).map(|s| (s.kind, s.rel))
+        self.steps.iter().filter(|s| s.kind.reads()).map(|s| (s.kind, s.rel))
     }
 
     fn refuse(&self, why: String) -> Refused {
@@ -179,6 +269,7 @@ impl Program {
         let sym = |s: &str| find(atoms, s);
         let (atom, not, cmp) = (sym("atom"), sym("not"), sym("cmp"));
         let ops: BTreeMap<i64, Cmp> = Cmp::ALL.iter().filter_map(|(c, s)| sym(s).map(|i| (i, *c))).collect();
+        let ariths: BTreeMap<i64, Arith> = Arith::ALL.iter().filter_map(|(c, s)| sym(s).map(|i| (i, *c))).collect();
         // What each term is, by (module, term).
         let mut terms: BTreeMap<(i64, i64), Term> = BTreeMap::new();
         for r in &rows[at("k_var")] {
@@ -221,13 +312,13 @@ impl Program {
             let (m, id, key) = (r[0], r[1], (r[2], r[3]));
             let refuse = |why: String| Refused { module: m, rule: id, why };
             let kind = match Some(r[4]) {
-                k if k == atom => Kind::Atom,
+                k if k == atom => ariths.get(&r[5]).map_or(Kind::Atom, |&op| Kind::Fn(op)),
                 k if k == not => Kind::Not,
                 k if k == cmp => Kind::Cmp(*ops.get(&r[5]).ok_or_else(|| refuse(format!("step {key:?}: an unknown comparison")))?),
                 _ => return Err(refuse(format!("step {key:?}: a kind that is not atom, not or cmp"))),
             };
             let rule = modules.get_mut(&m).and_then(|md| md.rules.iter_mut().find(|x| x.id == id)).ok_or_else(|| refuse(format!("step {key:?} of no rule")))?;
-            rule.steps.push(Step { key, kind, rel: if matches!(kind, Kind::Cmp(_)) { 0 } else { r[5] }, args: Vec::new() });
+            rule.steps.push(Step { key, kind, rel: if kind.reads() { r[5] } else { 0 }, args: Vec::new() });
         }
         for md in modules.values_mut() {
             for rule in &mut md.rules {
@@ -236,6 +327,7 @@ impl Program {
                     let key = rule.steps[k].key;
                     rule.steps[k].args = term_list(rule.module, rule.id, key)?;
                 }
+                rule.operators();
             }
             md.rules.sort_by_key(|r| r.id);
         }
@@ -287,6 +379,16 @@ impl Program {
                     let vars = s.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(*v) } else { None });
                     match s.kind {
                         Kind::Atom => bound.extend(vars),
+                        Kind::Fn(op) => {
+                            if s.args.len() != op.operands() + 1 {
+                                return Err(rule.refuse(format!("step {:?}: operator {op:?} of {} terms, not {}", s.key, s.args.len(), op.operands() + 1)));
+                            }
+                            let ins = s.args[..op.operands()].iter().filter_map(|t| if let Term::Var(v) = t { Some(*v) } else { None });
+                            if let Some(v) = ins.clone().find(|v| !bound.contains(v)) {
+                                return Err(rule.refuse(format!("step {:?}: operand {} is not bound by an earlier step", s.key, n(v))));
+                            }
+                            bound.extend(vars);
+                        }
                         Kind::Not | Kind::Cmp(_) => {
                             if let Some(v) = vars.clone().find(|v| !bound.contains(v)) {
                                 return Err(rule.refuse(format!("step {:?}: variable {} is not bound by an earlier step", s.key, n(v))));
@@ -296,7 +398,7 @@ impl Program {
                             }
                         }
                     }
-                    if !matches!(s.kind, Kind::Cmp(_))
+                    if s.kind.reads()
                         && let Some(&w) = writers.get(&s.rel)
                     {
                         let neg = s.kind == Kind::Not;

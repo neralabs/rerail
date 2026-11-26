@@ -1,0 +1,10 @@
+// The fourth stratum (negates the third): an operator of constants alone goes first, at -1, before every step a
+// node's key holds (the head's key, (-1, -1), is no step's). The steps at one place, in the order they run: a step
+// under another before it (an operand before its operator, an operator before its filter), else in source order.
+const_op(d, r, e) :- mover(d, r, e), expr(d, e), !uses_var(d, r, e).
+at(d, r, f, p) :- place(d, r, f, p).
+at(d, r, e, -1) :- const_op(d, r, e).
+before(d, r, a, b) :- at(d, r, a, p), at(d, r, b, p), below(d, b, a).
+before(d, r, a, b) :- at(d, r, a, p), at(d, r, b, p), a < b, !below(d, a, b).
+twixt(d, r, a, b) :- before(d, r, a, c), before(d, r, c, b).
+not_first(d, r, b) :- before(d, r, _, b).

@@ -332,6 +332,12 @@ impl<'s> Planner<'s> {
                     });
                     steps.push(StepPlan { op: Op::Cmp(cmp), src: 0, side, args: args.collect() });
                 }
+                // An operator: its operands bound before it (B§7), its answer a variable it binds, or a value it
+                // holds. It reads no source.
+                Kind::Fn(op) => {
+                    let args = bind(&st.args, j, &mut bound);
+                    steps.push(StepPlan { op: Op::Fn(op), src: 0, side: Side::After, args });
+                }
                 Kind::Atom | Kind::Not => {
                     let d = if side == Side::Delta { changed } else { docs };
                     let src = self.source(st.rel, st.args.len(), d);
@@ -433,7 +439,7 @@ impl Stratum {
         let all: Vec<&Rule> = before.iter().chain(&after).collect();
         // A view is read with its own columns.
         for r in &all {
-            for st in r.steps.iter().filter(|s| !matches!(s.kind, Kind::Cmp(_))) {
+            for st in r.steps.iter().filter(|s| s.kind.reads()) {
                 if let Some(v) = known.view(st.rel)
                     && v.arity() != st.args.len()
                 {
@@ -445,7 +451,7 @@ impl Stratum {
         let tape = all.iter().any(|r| r.reads().any(|(_, rel)| known.view(rel).is_some()));
         let mut ins: Vec<(i64, Shape)> = Vec::new();
         for r in &all {
-            for s in r.steps.iter().filter(|s| !matches!(s.kind, Kind::Cmp(_))) {
+            for s in r.steps.iter().filter(|s| s.kind.reads()) {
                 if known.view(s.rel).is_some() || own.contains(&s.rel) || ins.iter().any(|i| i.0 == s.rel) {
                     continue;
                 }
@@ -696,7 +702,7 @@ impl Stratum {
                 continue;
             }
             for (i, st) in r.steps.iter().enumerate() {
-                if matches!(st.kind, Kind::Cmp(_)) || !self.changed(s, st.rel) {
+                if !st.kind.reads() || !self.changed(s, st.rel) {
                     continue;
                 }
                 let order = term_at(r, i);
@@ -834,7 +840,7 @@ impl Stratum {
             let mut ins_terms = Vec::new();
             for r in &self.after {
                 for (i, st) in r.steps.iter().enumerate() {
-                    if matches!(st.kind, Kind::Cmp(_)) || own(st.rel).is_some() || !self.changed(s, st.rel) {
+                    if !st.kind.reads() || own(st.rel).is_some() || !self.changed(s, st.rel) {
                         continue;
                     }
                     ins_terms.push((r, i));

@@ -36,6 +36,30 @@ lit_arg(d, l, 1, a) :- kind(d, l, "comparison"), field(d, l, "right", a).
 lit_step(d, x, "atom", s) :- scope(d, x), name(d, x, s).
 // What a term is.
 read_var(d, t, v) :- kind(d, t, "variable"), text(d, t, v).
+// Arithmetic (K1-a): an expression is a variable of its own, named by its node, its operator's answer; parentheses
+// are the term inside them.
+expr(d, e) :- kind(d, e, "binary_expression").
+expr(d, e) :- kind(d, e, "unary_expression").
+read_var(d, e, s) :- expr(d, e), name(d, e, s).
+paren(d, p, e) :- kind(d, p, "parenthesized_expression"), field(d, p, "expression", e).
+read_var(d, p, v) :- paren(d, p, e), read_var(d, e, v), kind(d, p, _).
+read_str(d, p, s) :- paren(d, p, e), read_str(d, e, s), kind(d, p, _).
+read_num(d, p, n) :- paren(d, p, e), read_num(d, e, n), kind(d, p, _).
+// Each expression's step: its operator, its operands, its answer last. `-` of one operand is 0 minus it.
+op_step(d, e, op) :- kind(d, e, "binary_expression"), field(d, e, "operator", o), text(d, o, op).
+op_step(d, e, "-") :- kind(d, e, "unary_expression").
+op_arg(d, e, 0, a) :- kind(d, e, "binary_expression"), field(d, e, "left", a).
+op_arg(d, e, 1, a) :- kind(d, e, "binary_expression"), field(d, e, "right", a).
+op_arg(d, e, 2, e) :- kind(d, e, "binary_expression").
+op_arg(d, e, 0, a) :- kind(d, e, "unary_expression"), field(d, e, "operand", a).
+op_arg(d, e, 1, e) :- kind(d, e, "unary_expression").
+// The nodes in a literal's or a head's terms (no scope lies there).
+term_root(d, l) :- kind(d, l, "atom").
+term_root(d, l) :- kind(d, l, "negation").
+term_root(d, l) :- kind(d, l, "comparison").
+term_root(d, h) :- head_of(d, _, h), kind(d, h, _).
+in_term(d, l, y) :- term_root(d, l), field(d, l, _, y).
+in_term(d, l, z) :- in_term(d, l, y), field(d, y, _, z).
 read_str(d, t, s) :- kind(d, t, "string"), value(d, t, s).
 read_num(d, t, n) :- kind(d, t, "number"), value(d, t, n).
 read_wild(d, t) :- kind(d, t, "wildcard").

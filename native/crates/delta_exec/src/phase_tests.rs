@@ -547,7 +547,7 @@ fn a_later_process_resumes_the_levels_where_the_last_run_left_them() {
 
 /// The kernel's files (B§10 step 7), by path relative to the bootstrap's root, in stratum order: K1's reader, then
 /// the binding lowerer, one file a stratum (O4).
-const KERNEL: [(&str, &str); 9] = [
+const KERNEL: [(&str, &str); 11] = [
     ("kernel/k1-0-numbers.rerail", include_str!("../rerail/kernel/k1-0-numbers.rerail")),
     ("kernel/k1-1-read.rerail", include_str!("../rerail/kernel/k1-1-read.rerail")),
     ("kernel/k1-2-shared.rerail", include_str!("../rerail/kernel/k1-2-shared.rerail")),
@@ -556,7 +556,9 @@ const KERNEL: [(&str, &str); 9] = [
     ("kernel/k1-5-steps.rerail", include_str!("../rerail/kernel/k1-5-steps.rerail")),
     ("kernel/k1-6-binds.rerail", include_str!("../rerail/kernel/k1-6-binds.rerail")),
     ("kernel/k1-7-place.rerail", include_str!("../rerail/kernel/k1-7-place.rerail")),
-    ("kernel/k1-8-emit.rerail", include_str!("../rerail/kernel/k1-8-emit.rerail")),
+    ("kernel/k1-8-order.rerail", include_str!("../rerail/kernel/k1-8-order.rerail")),
+    ("kernel/k1-9-turn.rerail", include_str!("../rerail/kernel/k1-9-turn.rerail")),
+    ("kernel/k1-10-emit.rerail", include_str!("../rerail/kernel/k1-10-emit.rerail")),
 ];
 
 /// What L3 reads: the stand-in for the compiler's files (Bootstrap §6: "P3 loads the full compiler"), a K0 file of
@@ -641,6 +643,37 @@ fn k1s_heads_disjunctions_and_constants_lower_to_their_hand_written_rules() {
         r.last = None;
         r.run();
         assert_eq!(want.iter().map(|&(rel, _)| r.rows(2, rel)).collect::<Vec<_>>(), warm, "{name}: cold");
+    }
+}
+
+/// K1's arithmetic (B§6, L3; B§10 step 8; K1-a): each expression a step of an operator (a Pure answer, B§3 sentence 3),
+/// its answer a variable named by its node, placed after the atom that binds the last variable under it and run in
+/// postorder there (an operand before its operator, an operator before its filter), one of constants alone first. Each
+/// program lowered by P3 gives the rows written by hand, its rule's steps the hand-lowered form's, and a cold run the
+/// same. `=` of a variable no step binds binds it; a division by zero has no row.
+#[test]
+fn k1s_arithmetic_lowers_to_operator_steps_in_postorder() {
+    type Steps = &'static [(&'static str, &'static str)];
+    type Want = &'static [&'static [i64]];
+    let cases: [(&str, &str, Steps, Want); 8] = [
+        ("head", "h(x + 1) :- e(x, _).\n", &[("atom", "e"), ("atom", "+")], &[&[2], &[3], &[4]]),
+        ("nested", "h(x, (x + y) * 2 - 1) :- e(x, y).\n", &[("atom", "e"), ("atom", "+"), ("atom", "*"), ("atom", "-")], &[&[1, 5], &[2, 9], &[3, 7], &[2, 11]]),
+        ("filter", "h(x) :- x * 2 > y + 1, e(x, y).\n", &[("atom", "e"), ("atom", "*"), ("atom", "+"), ("cmp", ">")], &[&[3]]),
+        ("bind", "h(x, z) :- e(x, y), z = y * 10.\n", &[("atom", "e"), ("atom", "*"), ("cmp", "=")], &[&[1, 20], &[2, 30], &[3, 10], &[2, 40]]),
+        ("unary", "h(x, -x, x / 2, x % 2) :- e(x, _).\n", &[("atom", "e"), ("atom", "-"), ("atom", "/"), ("atom", "%")], &[&[1, -1, 0, 1], &[2, -2, 1, 0], &[3, -3, 1, 1]]),
+        ("const", "h(x, 2 * 3) :- e(x, y), y > 1 + 0.\n", &[("atom", "*"), ("atom", "+"), ("atom", "e"), ("cmp", ">")], &[&[1, 6], &[2, 6]]),
+        ("zero", "h(x, 6 / (x - 1)) :- e(x, _).\n", &[("atom", "e"), ("atom", "-"), ("atom", "/")], &[&[2, 6], &[3, 3]]),
+        ("in-atom", "h(x) :- e(x, y), e(y + 1, _).\n", &[("atom", "e"), ("atom", "+"), ("atom", "e")], &[&[1], &[3]]),
+    ];
+    for (name, k1, steps, want) in cases {
+        let mut r = kernel_run(&format!("phase-k1a-{name}"), k1);
+        r.run();
+        let want: BTreeSet<Vec<i64>> = want.iter().map(|x| x.to_vec()).collect();
+        assert_eq!(r.rows(2, "h"), want, "{name}: lowered by P3");
+        assert_eq!(steps_in_order(&r, 1, "h"), steps.iter().map(|&(k, x)| (k.to_string(), x.to_string())).collect::<Vec<_>>(), "{name}: its steps");
+        r.last = None;
+        r.run();
+        assert_eq!(r.rows(2, "h"), want, "{name}: cold");
     }
 }
 

@@ -861,13 +861,16 @@ def k1(failures: list) -> None:
     """B§10 step 7, the first K1 feature in rules: the binding lowerer in K0, one file a stratum (O4), K1's reader
     before it; no lowering in Rust; a level's documents the `load` facts of its facts in and of its program."""
     kernel = CRATE / "rerail" / "kernel"
-    files = ("k1-0-numbers", "k1-1-read", "k1-2-shared", "k1-3-rank", "k1-4-rules", "k1-5-steps", "k1-6-binds", "k1-7-place", "k1-8-emit")
+    files = ("k1-0-numbers", "k1-1-read", "k1-2-shared", "k1-3-rank", "k1-4-rules", "k1-5-steps", "k1-6-binds", "k1-7-place",
+             "k1-8-order", "k1-9-turn", "k1-10-emit")
     heads = {"k1-0-numbers": ("next",),
-             "k1-1-read": ("head_of", "several", "alt", "group_alt", "split", "aux_alt", "scope", "under", "up", "lit_step", "lit_arg"),
+             "k1-1-read": ("head_of", "several", "alt", "group_alt", "split", "aux_alt", "scope", "under", "up", "lit_step", "lit_arg",
+                           "expr", "paren", "op_step", "op_arg", "term_root", "in_term"),
              "k1-2-shared": ("onesplit", "ctx", "shared", "rep", "gt"), "k1-3-rank": ("succ", "least", "rank"),
              "k1-4-rules": ("inst", "read_rule", "read_arg", "in_rule", "read_step"),
-             "k1-5-steps": ("in_atom", "filter", "in_filter", "bound_before"), "k1-6-binds": ("binds", "waits"),
-             "k1-7-place": ("place", "moved"), "k1-8-emit": ("k_rule", "k_step", "k_arg", "k_var", "k_order")}
+             "k1-5-steps": ("in_atom", "mover", "below", "in_filter", "uses_var", "bound_before"), "k1-6-binds": ("binds", "waits"),
+             "k1-7-place": ("place", "moved"), "k1-8-order": ("const_op", "at", "before", "twixt", "not_first"),
+             "k1-9-turn": ("then", "turn", "placed"), "k1-10-emit": ("k_rule", "k_step", "k_arg", "k_var", "k_order")}
     for f in files:
         path = kernel / f"{f}.rerail"
         if not path.exists():

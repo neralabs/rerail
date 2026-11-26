@@ -2228,3 +2228,40 @@ Checks (Relax, local, 133 of 133):
 - `the_name_view_names_a_named_node_in_place_and_interns_nothing`.
 - `a_block_refers_to_more_blocks_than_its_references_hold_through_holders` (70 blocks).
 - `k_form_rows_are_stored_in_32_bits`, now with the three name columns at 64.
+
+### K1: arithmetic (K1-a; 2026-11-26)
+
+- **Operators in the executor.** An arithmetic operator is a relation the executor knows by its symbol (`program::Arith`:
+  `+`, `-`, `*`, `/`, `%`), a Pure answer (B§3, sentence 3). It takes its operands and then its answer, read with the
+  operands bound. A step of one reads no source (`Kind::Fn`, `body::Op::Fn`):
+  - its frame word is its answer, the value its last column binds;
+  - where that column is already bound, the step is a test of it;
+  - a division by zero or an overflow has no row.
+- **Two operators `Program::read` makes from the terms.**
+  - `-` of two terms is `Neg`, 0 minus its operand.
+  - `=` of a variable no earlier step binds and a bound term is `Id`, which binds the variable (Soufflé's
+    `y = x + 1`).
+- **Planning.** The planner treats an operator as a filter that binds: it needs its operands, binds its answer, and
+  gives one row a tuple.
+- **Lowering (`k1-1-read`, `k1-4-rules`).** Every expression in a literal's or a head's terms is a step of its rule,
+  where it was read.
+  - Its answer is a variable of its own, named by its node (the `name` view), and its operator is its symbol.
+  - Parentheses are the term inside them.
+- **Placement (`k1-5-steps` to `k1-9-turn`).** An operator moves as a filter does: after the atom that binds the last
+  variable under it, the variables under a filter now counted through its expressions.
+  - The steps placed after one atom are ranked in postorder through the numbers' chain: a step under another runs
+    before it (an operand before its operator, an operator before its filter), else in source order.
+  - A step at the key (p, t) runs t-th after atom p. Before this, a placed filter's key was (p, f).
+  - An operator of constants alone runs first, at (-1, t). The head's key, (-1, -1), is no step's.
+- **What is refused.** A variable bound only by an `=` and read by a filter is refused by the executor ("not bound by
+  an earlier step"), as K0 refuses an unbound filter. The head and the atoms may read it.
+
+The kernel is eleven files: `k1-8-order`, `k1-9-turn` and `k1-10-emit` replace `k1-8-emit`.
+
+Checks (Relax, local, 134 of 134):
+- `k1s_arithmetic_lowers_to_operator_steps_in_postorder` covers eight programs: an expression in a head, nested
+  expressions, a filter of expressions, `=` binding, unary minus with `/` and `%`, constants alone, a division by
+  zero, and an expression as an atom's argument. Each gives its hand-written rows and its hand-lowered form's steps
+  in order, and a cold run gives the same.
+  - Without the rule that runs a step under another first, two steps share a turn, and the executor refuses the rule.
+  - Without the rule that runs constants first, an operator of constants is read unbound.
