@@ -1,34 +1,189 @@
-// python/python-21: calls that Ruff's expression rules inspect in ordinary Python and in strings used as types.
+// python/python-21: the PTH calls batch python-21 checks, read where Ruff reads them and resolved as Ruff resolves
+// them: in ordinary code, and in the strings Ruff parses as types.
 //
 // Interface
-//   pth_checked_call(c, q, f)              c calls qualified name q; f is the callee. Calls parsed from strings
-//                                          count only when the string is in a type context.
-//   pth_checked_single_arg(c, q, x, f, a)  the checked call has exactly one argument a for parameter x.
+//   pth_checked_call(c, q, f)              c calls qualified name q, by Ruff's resolve_qualified_name at the time
+//                                          Ruff visits c; f is the callee. c is ordinary code, or a call in a
+//                                          string type definition (python-01's typedef_node).
+//   pth_checked_single_arg(c, q, x, f, a)  the checked call has exactly one argument a, for parameter x.
+//   pth_checked_fd(c)                      the checked call's `path` argument (by keyword, else the first) is a file
+//                                          descriptor (Ruff's is_file_descriptor).
+//   pth_checked_kw_set(c, k)               the checked call passes keyword k, and not as None.
 //
-// Ruff parses strings in annotations and other type positions as Python expressions and runs expression rules on
-// them recursively. It does not run those rules on strings outside type positions, including Annotated metadata.
-//   x: "os.remove(path)"                         checked
-//   x: Annotated[int, "os.remove(path)"]         not checked
-//   x: "list['os.remove(path)']"                 checked recursively
+// Ruff background (ruff_python_semantic's SemanticModel, Ruff 0.17.6)
+//   - Ruff walks the module once and resolves each name when it visits it: a scope holds the bindings visited so
+//     far, the latest one for each name. Function and lambda bodies are visited after the module (a nested body
+//     after its parent's), so a name such a body reads from an enclosing scope gets that scope's last binding.
+//     Decorators, defaults, a def's annotations and class bodies are visited in place.
+//       import os
+//       def f(): os.remove(p)      not reported: the body is visited after `os = None`
+//       os.remove(p)               reported: `os` is still the module here
+//       os = None
+//   - A forward reference (a string type definition, or an annotation under `from __future__ import annotations`
+//     or Python 3.14) is visited after everything else, and resolves first against the module's last binding of
+//     the name, when it is not a deletion; only otherwise from the scope the string stands in.
+//       import os
+//       def f():
+//           os = None
+//           x: "os.remove(p)"      reported: the module's `os`
+//   - Strings in type positions are parsed and checked like code: annotations, `cast("…", x)`, TypeVar bounds and
+//     constraints, `list["…"]`, and strings nested in those. Not `Literal[…]` strings or `Annotated` metadata.
+//   - A string that is implicitly concatenated or has an escape sequence is a "complex" annotation: Ruff gives every
+//     node of its tree the string's whole range. Ruff records a name's resolution by the name's start offset, so
+//     every name of such a tree shares one record, which the last name resolved overwrites. When Ruff checks a call
+//     (after its callee and arguments), its callee's head therefore resolves as the last name in the call that
+//     resolved (a builtin counts; an undefined name does not).
+//       x: "os.remove('a\\tb')"    reported: `os` is the call's only name
+//       y: "os.remove(" "p)"       not reported: `os` reads as `p`, so the callee is `p.remove`
+//       z: "os.getcwd(" ")"        reported
 #include "python/pathlib.rerail"
-#include "python/python-01.rerail"
-// pth_type_source keeps only calls Ruff can map back to one source string piece. Ruff does not report a call whose
-// callee and opening parenthesis cross an implicit-concatenation boundary, or one created by decoding an escape.
-.decl pth_escape(s: node)
-pth_escape(s) :- child(s, e, _), kind(e, "escape_sequence").
-pth_escape(s) :- kind(s, "string"), contains("\\", s).
-.decl pth_type_source(c: node, f: node)
-pth_type_source(c, f) :- typedef_node(c), parsed_in(c, s), kind(s, "string"), !pth_escape(s),
-    field(c, "function", g), unparen(g, f).
-pth_type_source(c, f) :- typedef_node(c), parsed_in(c, s), kind(s, "concatenated_string"),
-    field(c, "function", g), unparen(g, f), name(f, n), child(s, p, _), kind(p, "string"), !pth_escape(p),
-    str(p, x), contains(n, x), contains("(", x).
+#include "python/python-01.rerail"     // typedef_node
+#include "python/python-02.rerail"     // tstr_node, tstr_in
+#include "python/upgrade.rerail"       // future_annotations
 
+// ---- calls looked at ---------------------------------------------------------------------------------------------
+// p21_member(x): the last name of a callee this batch resolves. A bare name is resolved when an import binds it.
+.decl p21_member(x: symbol)
+p21_member("chmod"). p21_member("rmdir"). p21_member("remove"). p21_member("unlink"). p21_member("getcwd").
+p21_member("getcwdb"). p21_member("exists"). p21_member("expanduser"). p21_member("local").
+// p21_file_call(c, f) and p21_type_call(c, f): candidate calls of ordinary code and of string type definitions;
+// f is the callee without parentheses.
+.decl p21_file_call(c: node, f: node)
+p21_file_call(c, f) :- kind(c, "call"), !typedef_node(c), !in_string_ann(c), field(c, "function", g), unparen(g, f),
+    p21_wanted(f).
+.decl p21_type_call(c: node, f: node)
+p21_type_call(c, f) :- typedef_node(c), kind(c, "call"), field(c, "function", g), unparen(g, f), p21_wanted(f).
+.decl p21_wanted(f: node)
+p21_wanted(f) :- kind(f, "attribute"), field(f, "attribute", a), text(a, x), p21_member(x).
+p21_wanted(f) :- kind(f, "identifier"), text(f, x), import_site(_, x).
+// p21_head(e, h, t): the name or attribute chain e is the name h followed by the attributes t ("" or ".path.exists").
+.decl p21_chain(e: node)
+p21_chain(f) :- p21_file_call(_, f).
+p21_chain(f) :- p21_type_call(_, f).
+p21_chain(o) :- p21_chain(e), kind(e, "attribute"), field(e, "object", g), unparen(g, o).
+.decl p21_head(e: node, h: node, t: symbol)
+p21_head(e, e, "") :- p21_chain(e), kind(e, "identifier").
+p21_head(e, h, cat(t, cat(".", x))) :- p21_chain(e), kind(e, "attribute"), field(e, "object", g), unparen(g, o),
+    p21_head(o, h, t), field(e, "attribute", a), text(a, x).
+
+// ---- bindings ----------------------------------------------------------------------------------------------------
+// p21_site(s, x, b, k): scope s binds x at site b, as an import (k "import"), a deletion ("del"), or otherwise.
+.decl p21_site(s: node, x: symbol, b: node, k: symbol)
+p21_site(s, x, b, "import") :- binding(s, x, b, "import").
+p21_site(s, x, b, "bind") :- binding(s, x, b, f), f != "import".
+p21_site(s, x, b, "del") :- del_site(s, n, b), text(n, x).
+// p21_import(b, q): what Ruff's qualified name gives for the import at site b: `import os` "os", `import os.path`
+// "os" (the head), `import os.path as p` "os.path", `from os import path` "os.path".
+.decl p21_import(b: node, q: symbol)
+p21_import(a, m) :- import_alias(_, a, m, "", _), kind(a, "aliased_import").
+p21_import(a, @head(m)) :- import_alias(_, a, m, "", _), !kind(a, "aliased_import").
+p21_import(a, @dot(m, y)) :- import_alias(_, a, m, y, _), y != "".
+// p21_start(n, s): the scope Ruff is in when it visits n: n's nearest scope, or the one around it when n is in the
+// header of a def, lambda or class (decorators sit outside it already).
+.decl p21_at(n: node)
+.decl p21_start(n: node, s: node)
+p21_start(n, s) :- p21_at(n), nearest(n, s, lscope), !p21_header(n, s).
+p21_start(n, p) :- p21_at(n), nearest(n, s, lscope), p21_header(n, s), nearest(s, p, lscope).
+.decl p21_header(n: node, s: node)
+p21_header(n, s) :- p21_at(n), nearest(n, s, lscope), (kind(s, "function_definition") ; kind(s, "lambda") ;
+    kind(s, "class_definition")), field(s, "body", b), !within(n, b).
+
+// Ordinary code. p21_ref(n, x): head name n, read as x, is resolved when Ruff visits it.
+.decl p21_ref(n: node, x: symbol)
+p21_at(n) :- p21_ref(n, _).
+// p21_up(n, s): s is a scope n's lookup may reach: the start, then outwards past class bodies.
+.decl p21_up(n: node, s: node)
+p21_up(n, s) :- p21_start(n, s).
+p21_up(n, p) :- p21_up(n, s), nearest(s, p, lfscope).
+// p21_late(n, s): Ruff visits n after scope s is complete: n is in the body of a def or lambda inside s.
+.decl p21_late(n: node, s: node)
+p21_late(n, s) :- p21_up(n, s), within(n, b), field(f, "body", b), (kind(f, "function_definition") ; kind(f, "lambda")),
+    within(f, s).
+// p21_seen(n, s, b): site b of n's name in s exists when Ruff visits n (a site's value is visited before it binds).
+.decl p21_seen(n: node, s: node, b: node)
+p21_seen(n, s, b) :- p21_ref(n, x), p21_up(n, s), p21_site(s, x, b, _), p21_late(n, s).
+p21_seen(n, s, b) :- p21_ref(n, x), p21_up(n, s), p21_site(s, x, b, _), !p21_late(n, s), b < n, !within(n, b).
+.decl p21_outer(n: node, s: node)  // a scope inside s already has a binding n reads
+p21_outer(n, s) :- p21_seen(n, s, _), p21_seen(n, s2, _), within(s2, s).
+// p21_bind(n, b): n resolves to site b: the latest seen in the innermost scope that has one.
+.decl p21_bind(n: node, b: node)
+p21_bind(n, b) :- p21_seen(n, s, _), !p21_outer(n, s), b = max b2 : { p21_seen(n, s, b2) }.
+
+// Forward references, by the node h they are read from (a type string of the file, or a name in an annotation that
+// is deferred) and the name x. p21_fwd(h, x) asks; p21_fbind(h, x, b) answers.
+.decl p21_fwd(h: node, x: symbol)
+p21_at(h) :- p21_fwd(h, _).
+.decl p21_global(h: node, x: symbol, b: node)  // the module's last site of x
+p21_global(h, x, b) :- p21_fwd(h, x), docof(h, d), modnode(d, m), p21_site(m, x, _, _),
+    b = max b2 : { p21_site(m, x, b2, _) }.
+.decl p21_fup(h: node, x: symbol, s: node)
+p21_fup(h, x, s) :- p21_fwd(h, x), p21_start(h, s).
+p21_fup(h, x, p) :- p21_fup(h, x, s), nearest(s, p, lfscope).
+.decl p21_fhas(h: node, x: symbol, s: node)
+p21_fhas(h, x, s) :- p21_fup(h, x, s), p21_site(s, x, _, _).
+.decl p21_fouter(h: node, x: symbol, s: node)
+p21_fouter(h, x, s) :- p21_fhas(h, x, s), p21_fhas(h, x, s2), within(s2, s).
+.decl p21_fbind(h: node, x: symbol, b: node)
+p21_fbind(h, x, b) :- p21_global(h, x, b), !p21_site(_, x, b, "del").
+p21_fbind(h, x, b) :- p21_fwd(h, x), !p21_fglobal(h, x), p21_fhas(h, x, s), !p21_fouter(h, x, s),
+    b = max b2 : { p21_site(s, x, b2, _) }.
+.decl p21_fglobal(h: node, x: symbol)
+p21_fglobal(h, x) :- p21_global(h, x, b), !p21_site(_, x, b, "del").
+// p21_fknown(h, x): Ruff records a resolution for x: a binding that is not a deletion, or a builtin.
+.decl p21_fknown(h: node, x: symbol)
+p21_fknown(h, x) :- p21_fbind(h, x, b), !p21_site(_, x, b, "del").
+p21_fknown(h, x) :- p21_fwd(h, x), !p21_fbind(h, x, _), builtin(x).
+
+// ---- the names resolved ------------------------------------------------------------------------------------------
+// p21_name(n): a name of ordinary code Ruff resolves for this batch: a callee's head, and the name (or the
+// attribute's head) in a call's path argument that Ruff's is_file_descriptor reads.
+.decl p21_name(n: node)
+p21_name(h) :- p21_file_call(_, f), p21_head(f, h, _).
+p21_name(n) :- p21_path_cand(c, a), !typedef_node(c), p21_fd_root(a, n).
+// p21_deferred(n): ordinary code Ruff reads as a forward reference: an annotation under `from __future__ import
+// annotations`, or for Python 3.14.
+.decl p21_deferred(n: node)
+p21_deferred(n) :- p21_name(n), ann_root(t), within(n, t), docof(n, d), (future_annotations(d) ; targets(14)).
+p21_ref(n, x) :- p21_name(n), !p21_deferred(n), text(n, x).
+p21_fwd(n, x) :- p21_deferred(n), text(n, x).
+// In a type string: every name of the call, against the outermost string.
+p21_fwd(s, x) :- p21_type_call(c, _), tstr_in(c, s), within(n, c), nameref(n, x).
+// p21_lookup(n, b): name n resolves to site b, by its own name.
+.decl p21_lookup(n: node, b: node)
+p21_lookup(n, b) :- p21_name(n), p21_bind(n, b).
+p21_lookup(n, b) :- p21_deferred(n), text(n, x), p21_fbind(n, x, b).
+p21_lookup(n, b) :- p21_type_call(c, _), tstr_in(c, s), within(n, c), nameref(n, x), p21_fbind(s, x, b).
+
+.decl p21_qual(c: node, q: symbol)
+p21_qual(c, cat(q, t)) :- p21_file_call(c, f), p21_head(f, h, t), p21_lookup(h, b), p21_import(b, q).
+// A simple string: the head resolves by its own name.
+p21_qual(c, cat(q, t)) :- p21_type_call(c, f), !p21_complex_at(c), p21_head(f, h, t), text(h, x), tstr_in(c, s),
+    p21_fbind(s, x, b), p21_import(b, q).
+// A complex string: the head resolves as the last name of the call that Ruff resolved.
+p21_qual(c, cat(q, t)) :- p21_type_call(c, f), p21_complex_at(c), p21_head(f, _, t), p21_last(c, y), tstr_in(c, s),
+    p21_fbind(s, y, b), p21_import(b, q).
+// p21_complex(s): s is a type string whose tree has the string's range: concatenated, with an escape, or in such a
+// string. p21_complex_at(c): call c is in the tree of one.
+.decl p21_complex(s: node)
+p21_complex(s) :- type_ctx(s), kind(s, "concatenated_string").
+p21_complex(s) :- type_ctx(s), kind(s, "string"), has(s, _, "escape_sequence").
+p21_complex(s) :- p21_complex(s0), tstr_node(s, s0), str_node(s).
+.decl p21_complex_at(c: node)
+p21_complex_at(c) :- p21_type_call(c, _), tstr_node(c, s), p21_complex(s).
+// p21_known_in(c, n, y): name n (y) of call c's own tree has a resolution Ruff records. A nested string is visited
+// later, so its names do not count.
+.decl p21_known_in(c: node, n: node, y: symbol)
+p21_known_in(c, n, y) :- p21_complex_at(c), tstr_node(c, s), within(n, c), tstr_node(n, s), nameref(n, y),
+    tstr_in(c, h), p21_fknown(h, y).
+.decl p21_last(c: node, y: symbol)
+p21_last(c, y) :- p21_known_in(c, n, y), !p21_later(c, n).
+.decl p21_later(c: node, n: node)
+p21_later(c, n) :- p21_known_in(c, n, _), p21_known_in(c, n2, _), n2 > n.
+
+// ---- the interface -----------------------------------------------------------------------------------------------
 .decl pth_checked_call(c: node, q: symbol, f: node)
-pth_checked_call(c, q, f) :- pth_call(c, q, f), !in_string_ann(c).
-// Relations that range over a file do not enter a parsed string. Keep the typedef_node anchor in the clause that
-// recognizes the call rather than joining it to pth_call afterward.
-pth_checked_call(c, q, f) :- pth_type_source(c, f), ruff_qual(f, q).
+pth_checked_call(c, q, f) :- p21_file_call(c, f), p21_qual(c, q).
+pth_checked_call(c, q, f) :- p21_type_call(c, f), p21_qual(c, q).
 
 // Argument helpers for calls in parsed strings. Aggregates do not range over those trees, so `pth_type_many`
 // detects a second argument explicitly.
@@ -45,6 +200,65 @@ pth_type_arg(al, x, a) :- pth_type_item(al, i), !pth_type_many(al), kind(i, "key
 pth_type_arg(g, x, g) :- pth_slot(x, 0), typedef_node(g), kind(g, "generator_expression").
 
 .decl pth_checked_single_arg(c: node, q: symbol, x: symbol, f: node, a: node)
-pth_checked_single_arg(c, q, x, f, a) :- single_arg(c, q, x, f, a), !in_string_ann(c).
+pth_checked_single_arg(c, q, x, f, a) :- pth_checked_call(c, q, f), !typedef_node(c), call_len(c, 1),
+    arg_value(c, x, 0, a).
 pth_checked_single_arg(c, q, x, f, a) :- pth_checked_call(c, q, f), typedef_node(c),
     field(c, "arguments", al), typedef_node(al), pth_type_arg(al, x, a).
+
+// ---- file descriptors and keywords -------------------------------------------------------------------------------
+// pth_checked_kw_set(c, k): `dir_fd=3`; not `dir_fd=None`, and not `**kw`.
+.decl pth_checked_kw_set(c: node, k: symbol)
+pth_checked_kw_set(c, k) :- pth_checked_call(c, _, _), !typedef_node(c), kw_set(c, k).
+pth_checked_kw_set(c, k) :- pth_checked_call(c, _, _), typedef_node(c), field(c, "arguments", al), typedef_node(al),
+    pth_type_item(al, i), kind(i, "keyword_argument"), field(i, "name", n), text(n, k), field(i, "value", v),
+    !pth_none(v).
+// p21_path_cand(c, a): Ruff's find_argument_value("path", 0) of a candidate call: the `path=` keyword, else the
+// first positional item.
+.decl p21_path_cand(c: node, a: node)
+p21_path_cand(c, a) :- p21_file_call(c, _), arg_value(c, "path", 0, a).
+p21_path_cand(c, a) :- p21_type_call(c, _), field(c, "arguments", al), typedef_node(al), pth_type_item(al, i),
+    kind(i, "keyword_argument"), field(i, "name", n), text(n, "path"), field(i, "value", v), unparen(v, a).
+p21_path_cand(c, a) :- p21_type_call(c, _), field(c, "arguments", al), typedef_node(al), !p21_type_path_kw(al),
+    p21_type_pos(al, i), !p21_type_pos_before(al, i), !kind(i, "list_splat"), unparen(i, a).
+.decl p21_type_pos(al: node, i: node)
+p21_type_pos(al, i) :- pth_type_item(al, i), !kind(i, "keyword_argument"), !kind(i, "dictionary_splat").
+.decl p21_type_pos_before(al: node, i: node)
+p21_type_pos_before(al, i) :- p21_type_pos(al, i), p21_type_pos(al, j), j < i.
+.decl p21_type_path_kw(al: node)
+p21_type_path_kw(al) :- pth_type_item(al, i), kind(i, "keyword_argument"), field(i, "name", n), text(n, "path").
+// p21_fd_root(a, n): the name is_file_descriptor looks up for a: the head of an attribute `C.D.x`, or the name of
+// `n` or `n()`.
+.decl p21_fd_root(a: node, n: node)
+p21_fd_root(a, n) :- p21_path_cand(_, a), pth_name_root(a, n).
+p21_fd_root(a, h) :- p21_path_cand(_, a), p21_attr_head(a, h).
+
+// pth_checked_fd(c): Ruff's is_file_descriptor on c's path argument. An int literal; an attribute `C.x` (or `C.D.x`)
+// whose head is a class where it is read and whose class binds x last as an int; a name, or a call of one, whose
+// binding is the first of its name in its scope and an int. In a complex string a name resolves as the call's last
+// name, which is the callee's module when the call is reported at all, so there only literals and attributes count.
+.decl pth_checked_fd(c: node)
+// The literal by its form: a parsed string's nodes have no `value` rows, which python/ruff's ruff_int reads.
+pth_checked_fd(c) :- pth_checked_call(c, _, _), p21_path_cand(c, a), unparen(a, m), kind(m, "integer"), text(m, t),
+    !match("[\\s\\S]*[jJ]", t).
+pth_checked_fd(c) :- pth_checked_call(c, _, _), p21_path_cand(c, a), kind(a, "attribute"), p21_attr_site(a, b),
+    pth_int_site(b).
+pth_checked_fd(c) :- pth_checked_call(c, _, _), p21_path_cand(c, a), pth_name_root(a, n), !p21_complex_name(n),
+    p21_lookup(n, b), !p21_shadows(b), pth_int_site(b).
+.decl p21_complex_name(n: node)
+p21_complex_name(n) :- p21_type_call(c, _), within(n, c), tstr_node(n, s), p21_complex(s).
+.decl p21_shadows(b: node)  // site b rebinds a name its scope bound before
+p21_shadows(b) :- p21_lookup(_, b), p21_site(s, x, b, _), p21_site(s, x, b0, _), b0 < b.
+// p21_attr_head(e, h) and p21_attr_site(e, b): attribute `C.D.x` is read from head C, and resolves to site b of x in
+// D's body, its last one there; each step but the last must be a class (Ruff's lookup_attribute).
+.decl p21_attr(e: node)
+p21_attr(a) :- p21_path_cand(_, a), kind(a, "attribute").
+p21_attr(o) :- p21_attr(e), field(e, "object", g), unparen(g, o), kind(o, "attribute").
+.decl p21_attr_head(e: node, h: node)
+p21_attr_head(e, h) :- p21_attr(e), field(e, "object", g), unparen(g, h), kind(h, "identifier").
+p21_attr_head(e, h) :- p21_attr(e), field(e, "object", g), unparen(g, o), p21_attr_head(o, h).
+.decl p21_attr_site(e: node, b: node)
+p21_attr_site(e, b) :- p21_attr(e), field(e, "object", g), unparen(g, o), p21_obj_class(o, k),
+    field(e, "attribute", at), text(at, x), pth_member(k, x, _), b = max b2 : { pth_member(k, x, b2) }.
+.decl p21_obj_class(o: node, k: node)
+p21_obj_class(h, k) :- p21_attr_head(_, h), p21_lookup(h, k), kind(k, "class_definition").
+p21_obj_class(o, k) :- p21_attr(o), p21_attr_site(o, k), kind(k, "class_definition").

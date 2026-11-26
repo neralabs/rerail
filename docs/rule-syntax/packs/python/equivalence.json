@@ -2972,16 +2972,6 @@
         }
       }
     },
-    "ruff-pth101-os-chmod": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 4
-        }
-      }
-    },
     "ruff-pth102-os-mkdir": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -3018,66 +3008,6 @@
       "counts": {
         "fixtures": {
           "originalOnly": 0,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pth106-os-rmdir": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pth107-os-remove": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pth108-os-unlink": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pth109-os-getcwd": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-pth110-os-path-exists": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-pth111-os-path-expanduser": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
           "translationOnly": 3
         }
       }
@@ -3199,16 +3129,6 @@
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 6
-        }
-      }
-    },
-    "ruff-pth124-py-path": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
         }
       }
     },

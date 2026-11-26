@@ -18,3 +18,131 @@
     "Use `Path({s}).exists()` from pathlib instead of `os.path.exists({s})`; leave it for bytes paths, file descriptors, or a value that can be an empty string (`Path('')` is `.`)."
     suppress ruff "PTH110"
 PTH110(f, a) :- pth_checked_single_arg(_, "os.path.exists", "path", f, a).
+
+// Tests (decision 0130), from the python-21 review: each expects exactly what Ruff 0.17.6 reports.
+// S1 `cast` strings, S2 escaped strings and S4 forward references in a function are reported; of S3's implicit
+// concatenations only the call whose last name is its own head (`os.getcwd(" ")`) is; S5's function body runs after
+// the module rebinds the import, so nothing there is.
+.test review_shared exactly
+    .fixture "shared.py" ```
+        import os
+        import py
+        from typing import cast
+        p = "x"
+
+        # S1
+        c101 = cast("os.chmod(p, 0o644)", p)
+        c106 = cast("os.rmdir(p)", p)
+        c107 = cast("os.remove(p)", p)
+        c108 = cast("os.unlink(p)", p)
+        c109 = cast("os.getcwd()", p)
+        c110 = cast("os.path.exists(p)", p)
+        c111 = cast("os.path.expanduser(p)", p)
+        c124 = cast("py.path.local(p)", p)
+
+        # S2
+        e101: "os.chmod('a\\tb', 0o644)"
+        e106: "os.rmdir('a\\tb')"
+        e107: "os.remove('a\\tb')"
+        e108: "os.unlink('a\\tb')"
+        e109: "(os.getcwd(), 'a\\tb')"
+        e110: "os.path.exists('a\\tb')"
+        e111: "os.path.expanduser('a\\tb')"
+        e124: "py.path.local('a\\tb')"
+
+        # S3 (the all-rule rerun is shown separately below)
+        s101: "os.chmod(" "p, 0o644)"
+        s106: "os.rmdir(" "p)"
+        s107: "os.remove(" "p)"
+        s108: "os.unlink(" "p)"
+        s109: "os.getcwd(" ")"
+        s110: "os.path.exists(" "p)"
+        s111: "os.path.expanduser(" "p)"
+        s124: "py.path.local(" "p)"
+
+        # S4
+        def forward_scope():
+            os = None
+            py = None
+            f101: "os.chmod(p, 0o644)"
+            f106: "os.rmdir(p)"
+            f107: "os.remove(p)"
+            f108: "os.unlink(p)"
+            f109: "os.getcwd()"
+            f110: "os.path.exists(p)"
+            f111: "os.path.expanduser(p)"
+            f124: "py.path.local(p)"
+
+        # S5
+        import os as late_os
+        import py as late_py
+        def deferred_scope():
+            late_os.chmod(p, 0o644)
+            late_os.rmdir(p)
+            late_os.remove(p)
+            late_os.unlink(p)
+            late_os.getcwd()
+            late_os.path.exists(p)
+            late_os.path.expanduser(p)
+            late_py.path.local(p)
+        late_os = None
+        late_py = None
+        ```
+    .expect PTH110 at "shared.py":12
+    .expect PTH110 at "shared.py":22
+    .expect PTH110 at "shared.py":45
+.end
+
+// Implicit concatenations whose last name is not the callee's head: Ruff reports none.
+.test review_concat exactly
+    .fixture "concat.py" ```
+        import os
+        import py
+        p = "x"
+        s101: "os.chmod(" "p, 0o644)"
+        s106: "os.rmdir(" "p)"
+        s107: "os.remove(" "p)"
+        s108: "os.unlink(" "p)"
+        s109: "os.getcwd(" "p)"
+        s110: "os.path.exists(" "p)"
+        s111: "os.path.expanduser(" "p)"
+        s124: "py.path.local(" "p)"
+        ```
+.end
+
+// Every import form, in code and in simple, complex and nested strings.
+.test import_forms exactly
+    .fixture "import_forms.py" ```
+        import os.path as osp
+        import os.path
+        from os import path as pth
+        from os.path import exists as ex
+        p = "x"
+        osp.exists(p)
+        os.path.exists(p)
+        pth.exists(p)
+        ex(p)
+        a: "ex('a\\tb')"
+        b: "ex(p)" ""
+        c: "ex(ex)" ""
+        d: "osp.exists(os)" ""
+        e: "os.path.exists(pth)" ""
+        f: "(osp).exists(p)"
+        g: "list['os.path.exists(p)']"
+        h: "list['os.path.exists(1)']" ""
+        def k():
+            ex = None
+            m: "ex(p)"
+            ex(p)
+        ```
+    .expect PTH110 at "import_forms.py":6
+    .expect PTH110 at "import_forms.py":7
+    .expect PTH110 at "import_forms.py":8
+    .expect PTH110 at "import_forms.py":9
+    .expect PTH110 at "import_forms.py":10
+    .expect PTH110 at "import_forms.py":12
+    .expect PTH110 at "import_forms.py":15
+    .expect PTH110 at "import_forms.py":16
+    .expect PTH110 at "import_forms.py":17
+    .expect PTH110 at "import_forms.py":20
+.end

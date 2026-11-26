@@ -6,25 +6,190 @@
 
 // Ruff PTH101 (flake8-use-pathlib): a call of `os.chmod`, however it is imported, with any arguments, unless
 // the path is a file descriptor (pathlib has no chmod on one) or `dir_fd` is passed and not None (pathlib has
-// no `dir_fd`). Reported at the callee.
+// no `dir_fd`). Reported at the callee, in code and in strings Ruff reads as types.
 //   os.chmod("f", 0o644)                 ← PTH101
 //   os.chmod(3, 0o644)                   not reported: a file descriptor
 //   fd = 3; os.chmod(fd, 0o644)          not reported: fd's only binding is an int
+//   class C: fd = 3
+//   os.chmod(C.fd, 0o644)                not reported; after `C = None` it is: C is no class there
 //   os.chmod("f", 0o644, dir_fd=d)       not reported; `dir_fd=None` is reported
 #include "python/python-21.rerail"
 //   pth_checked_call(c, q, f)   c calls q in code Ruff checks; f the callee
-//   fd_arg(c, x)                x's argument is a file descriptor
-//   kw_set(c, k)                keyword k is not None
-//
-// The library follows a nested class through its definition. Ruff stops doing so when a later class-body binding
-// replaces that class: `class O: class B: y = 3; B = None`; `O.B.y` is therefore not known to be an integer.
-.decl replaced_nested_class(a: node)
-replaced_nested_class(a) :- attr_of(a, o, _), attr_of(o, p, x), pth_class_of(p, k), defn(k, x, n),
-    binding(k, x, b, _), n < b.
+//   pth_checked_fd(c)           c's path argument is a file descriptor
+//   pth_checked_kw_set(c, k)    c passes keyword k, not as None
 
 .violation PTH101(at: node) code "PTH101"
     "Use `Path(path).chmod(mode)` instead of `os.chmod(path, mode)`; leave it where the path is a file descriptor or bytes, or `dir_fd` comes through `**kwargs`."
     suppress ruff "PTH101"
-PTH101(f) :- pth_checked_call(c, "os.chmod", f), !fd_arg(c, "path"), !kw_set(c, "dir_fd").
-PTH101(f) :- pth_checked_call(c, "os.chmod", f), fd_arg(c, "path"), arg_value(c, "path", 0, a),
-    replaced_nested_class(a), !kw_set(c, "dir_fd").
+PTH101(f) :- pth_checked_call(c, "os.chmod", f), !pth_checked_fd(c), !pth_checked_kw_set(c, "dir_fd").
+
+// Tests (decision 0130), from the python-21 review: each expects exactly what Ruff 0.17.6 reports.
+// S1 `cast` strings, S2 escaped strings and S4 forward references in a function are reported; of S3's implicit
+// concatenations only the call whose last name is its own head (`os.getcwd(" ")`) is; S5's function body runs after
+// the module rebinds the import, so nothing there is.
+.test review_shared exactly
+    .fixture "shared.py" ```
+        import os
+        import py
+        from typing import cast
+        p = "x"
+
+        # S1
+        c101 = cast("os.chmod(p, 0o644)", p)
+        c106 = cast("os.rmdir(p)", p)
+        c107 = cast("os.remove(p)", p)
+        c108 = cast("os.unlink(p)", p)
+        c109 = cast("os.getcwd()", p)
+        c110 = cast("os.path.exists(p)", p)
+        c111 = cast("os.path.expanduser(p)", p)
+        c124 = cast("py.path.local(p)", p)
+
+        # S2
+        e101: "os.chmod('a\\tb', 0o644)"
+        e106: "os.rmdir('a\\tb')"
+        e107: "os.remove('a\\tb')"
+        e108: "os.unlink('a\\tb')"
+        e109: "(os.getcwd(), 'a\\tb')"
+        e110: "os.path.exists('a\\tb')"
+        e111: "os.path.expanduser('a\\tb')"
+        e124: "py.path.local('a\\tb')"
+
+        # S3 (the all-rule rerun is shown separately below)
+        s101: "os.chmod(" "p, 0o644)"
+        s106: "os.rmdir(" "p)"
+        s107: "os.remove(" "p)"
+        s108: "os.unlink(" "p)"
+        s109: "os.getcwd(" ")"
+        s110: "os.path.exists(" "p)"
+        s111: "os.path.expanduser(" "p)"
+        s124: "py.path.local(" "p)"
+
+        # S4
+        def forward_scope():
+            os = None
+            py = None
+            f101: "os.chmod(p, 0o644)"
+            f106: "os.rmdir(p)"
+            f107: "os.remove(p)"
+            f108: "os.unlink(p)"
+            f109: "os.getcwd()"
+            f110: "os.path.exists(p)"
+            f111: "os.path.expanduser(p)"
+            f124: "py.path.local(p)"
+
+        # S5
+        import os as late_os
+        import py as late_py
+        def deferred_scope():
+            late_os.chmod(p, 0o644)
+            late_os.rmdir(p)
+            late_os.remove(p)
+            late_os.unlink(p)
+            late_os.getcwd()
+            late_os.path.exists(p)
+            late_os.path.expanduser(p)
+            late_py.path.local(p)
+        late_os = None
+        late_py = None
+        ```
+    .expect PTH101 at "shared.py":7
+    .expect PTH101 at "shared.py":17
+    .expect PTH101 at "shared.py":40
+.end
+
+// Implicit concatenations whose last name is not the callee's head: Ruff reports none.
+.test review_concat exactly
+    .fixture "concat.py" ```
+        import os
+        import py
+        p = "x"
+        s101: "os.chmod(" "p, 0o644)"
+        s106: "os.rmdir(" "p)"
+        s107: "os.remove(" "p)"
+        s108: "os.unlink(" "p)"
+        s109: "os.getcwd(" "p)"
+        s110: "os.path.exists(" "p)"
+        s111: "os.path.expanduser(" "p)"
+        s124: "py.path.local(" "p)"
+        ```
+.end
+
+// The latest nested class, a rebound class, and file descriptors in a string type.
+.test review_pth101 exactly
+    .fixture "pth101.py" ```
+        import os
+
+        class Redefined:
+            class B:
+                fd = "path"
+            class B:
+                fd = 3
+        os.chmod(Redefined.B.fd, 0o644)
+
+        class Rebound:
+            fd = 3
+        Rebound = None
+        os.chmod(Rebound.fd, 0o644)
+
+        literal_fd: "os.chmod(3, 0o644)"
+        dir_fd: "os.chmod('f', 0o644, dir_fd=3)"
+        ```
+    .expect PTH101 at "pth101.py":13
+.end
+
+// File descriptors and dir_fd in string types, looked up as forward references.
+.test string_file_descriptors exactly
+    .fixture "string_file_descriptors.py" ```
+        import os
+        fd = 3
+        p = "x"
+        a: "os.chmod(fd, 1)"
+        b: "os.chmod(3, 1)" ""
+        c: "os.chmod(p, 1, dir_fd=fd)"
+        d: "os.chmod(p, 1, dir_fd=None)"
+        class K:
+            fd = 3
+        e: "os.chmod(K.fd, 1)"
+        def h():
+            fd = "s"
+            x: "os.chmod(fd, 1)"
+        g: "os.chmod(-1, 1)"
+        ```
+    .expect PTH101 at "string_file_descriptors.py":7
+    .expect PTH101 at "string_file_descriptors.py":14
+.end
+
+// C.x is a file descriptor while C is a class where it is read; a name only when its binding shadows none.
+.test class_attributes exactly
+    .fixture "class_attributes.py" ```
+        import os
+        class Outer:
+            class Inner:
+                fd = 3
+            Inner = None
+        os.chmod(Outer.Inner.fd, 1)
+        class K:
+            fd = 3
+        def f():
+            os.chmod(K.fd, 1)
+            os.chmod(fd2, 1)
+        K2 = K
+        os.chmod(K.fd, 1)
+        fd2 = 4
+        os.chmod(fd2, 1)
+        fd2 = 5
+        os.chmod(fd2, 1)
+        x: "os.chmod(K.fd, 1)"
+        y: "os.chmod(K.fd, 1)" ""
+        z: "os.chmod(path=3, mode=1)" ""
+        w: "os.chmod(3, 1, dir_fd=None)" ""
+        v: "os.chmod(int(1), 1)"
+        K = None
+        ```
+    .expect PTH101 at "class_attributes.py":6
+    .expect PTH101 at "class_attributes.py":10
+    .expect PTH101 at "class_attributes.py":11
+    .expect PTH101 at "class_attributes.py":17
+    .expect PTH101 at "class_attributes.py":18
+    .expect PTH101 at "class_attributes.py":22
+.end
