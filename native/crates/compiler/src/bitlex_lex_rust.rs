@@ -1423,7 +1423,7 @@ impl Gen<'_> {
         if let Some(&id) = self.node_of.get(&key) {
             return id;
         }
-        let code = format!("S::eq_mask(v, {c:#04x}) & lv");
+        let code = format!("s::eq_mask(v, {c:#04x}) & lv");
         self.push_node(key, format!("b_{c:02x}"), format!("the byte {c:#04x}"), code, 0, false)
     }
 
@@ -1744,7 +1744,7 @@ impl Gen<'_> {
         let indexes = std::mem::take(&mut out);
         let _ = writeln!(
             out,
-            "/// Stage 1: one pass over the blocks, 64 bytes a step, as the lean lexer's `Blocks::of`: the classes of block `t`{}, each mask a local of its block{}.\n#[inline(always)]\nunsafe fn stage1<S: rerail_simd8::Simd8x64>({}) -> Stage1 {{\n{}    let nw = n.div_ceil(64);",
+            "/// Stage 1: one pass over the blocks, 64 bytes a step, as the lean lexer's `Blocks::of`: the classes of block `t`{}, each mask a local of its block{}.\n#[inline(always)]\nunsafe fn stage1({}) -> Stage1 {{\n{}    let nw = n.div_ceil(64);",
             if most > 0 { ", each mask of block `t - lag` (a `next` reads the block after its operand's)" } else { "" },
             if rings { format!(", the block before's where it is read, its last {ring} words in a ring where older ones are") } else { " and the block before's where it is read".to_owned() },
             if self.index.is_some() { "src: &[u8], n: usize" } else { "src: &[u8]" },
@@ -1789,7 +1789,7 @@ impl Gen<'_> {
             let _ = writeln!(out, "    let mut {a} = vec![0u64; nw];");
         }
         if self.lookup.is_some() {
-            out.push_str("    // The byte-pair errors' check, simdjson's `utf8_checker`: the block before, the errors, and whether the block before left\n    // a sequence open.\n    let mut prev_input = unsafe { S::splat(0) };\n    let mut error = unsafe { S::splat(0) };\n    let mut prev_incomplete = unsafe { S::splat(0) };\n    let max_value = unsafe { S::load(&MAX_VALUE) };\n");
+            out.push_str("    // The byte-pair errors' check, simdjson's `utf8_checker`: the block before, the errors, and whether the block before left\n    // a sequence open.\n    let mut prev_input = s::splat(0);\n    let mut error = s::splat(0);\n    let mut prev_incomplete = s::splat(0);\n    let max_value = s::load(&MAX_VALUE);\n");
         }
         // The file's bits of each block (`lv`), once a block: a stage behind takes the block before's.
         if let Some(b) = &self.prefix
@@ -1840,15 +1840,15 @@ impl Gen<'_> {
                 if padded {
                     // The source padded: each block of the file loaded where it is (`PADDING` past its end).
                     if most == 0 {
-                        let _ = writeln!(out, "            let b: &[u8; 64] = src[{0}..{0} + 64].try_into().expect(\"a padded block\");\n            let v = unsafe {{ S::load(b) }};", off("q"));
+                        let _ = writeln!(out, "            let b: &[u8; 64] = src[{0}..{0} + 64].try_into().expect(\"a padded block\");\n            let v = s::load(b);", off("q"));
                     } else {
-                        let _ = writeln!(out, "            const NONE: [u8; 64] = [0u8; 64];\n            let b: &[u8; 64] = if q < nw {{ src[64 * q..64 * q + 64].try_into().expect(\"a padded block\") }} else {{ &NONE }};\n            let v = unsafe {{ S::load(b) }};");
+                        let _ = writeln!(out, "            const NONE: [u8; 64] = [0u8; 64];\n            let b: &[u8; 64] = if q < nw {{ src[64 * q..64 * q + 64].try_into().expect(\"a padded block\") }} else {{ &NONE }};\n            let v = s::load(b);");
                     }
                 } else {
-                    let _ = writeln!(out, "            let b = if q < nw {{ block(src, q) }} else {{ [0u8; 64] }};\n            let v = unsafe {{ S::load(&b) }};");
+                    let _ = writeln!(out, "            let b = if q < nw {{ block(src, q) }} else {{ [0u8; 64] }};\n            let v = s::load(&b);");
                 }
                 for p in 0..pairs.len() {
-                    let _ = writeln!(out, "            let c{p} = unsafe {{ S::classify(v, &LO_{p}, &HI_{p}) }};");
+                    let _ = writeln!(out, "            let c{p} = s::classify(v, &LO_{p}, &HI_{p});");
                 }
                 if let Some(l) = &self.lookup {
                     out.push_str(&lookup_code(l));
@@ -1860,7 +1860,7 @@ impl Gen<'_> {
                 let code = if bare { without_lv(&code) } else { code };
                 let code = indent(&code, "            ");
                 let code = code.trim();
-                let unsafe_ = if codes[i].contains("S::") { format!("unsafe {{ {code} }}") } else { code.to_owned() };
+                let unsafe_ = code.to_owned();
                 // The block's word: a local of the block's code, or of the pass where it is read past it.
                 let w = format!("v_{}", n.name);
                 if needs_p[i] {
@@ -1935,7 +1935,7 @@ impl Gen<'_> {
         }
         if self.lookup.is_some() {
             // The block past the file's end is zeros: an ASCII block, so the same test as there.
-            out.push_str("    // The byte-pair errors (simdjson's `errors()`), and a sequence the file's last block leaves open (`check_eof`).\n    refused |= unsafe { S::nonzero(S::or(error, prev_incomplete)) } != 0;\n");
+            out.push_str("    // The byte-pair errors (simdjson's `errors()`), and a sequence the file's last block leaves open (`check_eof`).\n    refused |= s::nonzero(s::or(error, prev_incomplete)) != 0;\n");
         }
         if self.index.is_some() {
             // simdjson's: the index ends in `n`, `n` and 0, so that stage 2 reads past its last record unchecked.
@@ -1952,7 +1952,7 @@ impl Gen<'_> {
         if self.index.is_some() {
             out.push_str("        starts,\n        count,\n");
         }
-        let _ = write!(out, "        refused,\n    }}\n}}\n\nrerail_simd8::dispatch! {{\n    fn stage1_best({}) -> Stage1 = stage1, on stage1_on;\n}}\n\n", if self.index.is_some() { "src: &[u8], n: usize" } else { "src: &[u8]" });
+        let _ = write!(out, "        refused,\n    }}\n}}\n\nrerail_simd8::kernel! {{\n    fn stage1_best({}) -> Stage1 = stage1, on stage1_on;\n}}\n\n", if self.index.is_some() { "src: &[u8], n: usize" } else { "src: &[u8]" });
         Stage1Text { tables, record, indexes, header, decls, steps, most, body, finals, ret: out }
     }
 
@@ -2041,7 +2041,7 @@ impl Gen<'_> {
             let code = if lanes && lane[i] { lane_code(&code) } else { code };
             let code = indent(&code, pad);
             let code = code.trim();
-            let code = if codes[i].contains("S::") { format!("unsafe {{ {code} }}") } else { code.to_owned() };
+            let code = code.to_owned();
             let outer = needs_p[i] || (!lane[i] || !lanes) && self.end_sinks.iter().any(|(_, s)| *s == i && !carried(*s));
             if needs_p[i] {
                 let _ = writeln!(out, "{pad}let p_{0} = v_{0};", n.name);
@@ -2065,9 +2065,9 @@ impl Gen<'_> {
         };
         let load = |out: &mut String| {
             out.push_str("    for q in from.saturating_sub(1)..to {\n        // The block before the chunk: the words of the bytes alone it leaves the chunk's first block.\n        let warm = q < from;\n");
-            let _ = writeln!(out, "        let b: &[u8; 64] = src[{off}..{off} + 64].try_into().expect(\"a padded block\");\n        let v = unsafe {{ S::load(b) }};");
+            let _ = writeln!(out, "        let b: &[u8; 64] = src[{off}..{off} + 64].try_into().expect(\"a padded block\");\n        let v = s::load(b);");
             for p in 0..pairs.len() {
-                let _ = writeln!(out, "        let c{p} = unsafe {{ S::classify(v, &LO_{p}, &HI_{p}) }};");
+                let _ = writeln!(out, "        let c{p} = s::classify(v, &LO_{p}, &HI_{p});");
             }
         };
         let mut out = String::new();
@@ -2082,7 +2082,7 @@ impl Gen<'_> {
         // Pass 1.
         let _ = writeln!(
             out,
-            "/// Pass 1 over blocks `from..to`: each entry's end (entry `l` is `lane_carries(l)`). The block before is read for the\n/// words of the bytes alone it leaves the chunk; each block's lines of the bytes run once, its lines of the carries once\n/// a lane, and a lane whose carries are an earlier lane's at a block's end stops there, its end that lane's. A lane a\n/// value of the carries other than the toggles no other carry reads ({}): those run from 0, and an entry of 1 ends\n/// inverted.\n#[inline(always)]\nunsafe fn stage1_ends<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, from: usize, to: usize) -> [Carries; LANES] {{\n    const RUN: usize = {};",
+            "/// Pass 1 over blocks `from..to`: each entry's end (entry `l` is `lane_carries(l)`). The block before is read for the\n/// words of the bytes alone it leaves the chunk; each block's lines of the bytes run once, its lines of the carries once\n/// a lane, and a lane whose carries are an earlier lane's at a block's end stops there, its end that lane's. A lane a\n/// value of the carries other than the toggles no other carry reads ({}): those run from 0, and an entry of 1 ends\n/// inverted.\n#[inline(always)]\nunsafe fn stage1_ends(src: &[u8], n: usize, from: usize, to: usize) -> [Carries; LANES] {{\n    const RUN: usize = {};",
             if free_names.is_empty() { "none".to_owned() } else { free_names.iter().map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", ") },
             1usize << run.len()
         );
@@ -2103,27 +2103,27 @@ impl Gen<'_> {
         let lane_bits: Vec<String> = carries.iter().enumerate().filter(|(_, c)| run.contains(c)).map(|(k, _)| k).enumerate().map(|(r, k)| format!("(l >> {k} & 1) << {r}")).collect();
         let _ = writeln!(
             out,
-            "        }}\n        // A lane whose carries are an earlier lane's: its end is that lane's.\n        for l in 1..RUN {{\n            if met[l].is_none() {{\n                met[l] = (0..l).find(|&k| met[k].is_none() && {});\n            }}\n        }}\n    }}\n    core::array::from_fn(|l| {{\n        let e = lane_carries(l);\n        let mut k = {};\n        while let Some(j) = met[k] {{\n            k = j;\n        }}\n        Carries {{\n{}        }}\n    }})\n}}\n\nrerail_simd8::dispatch! {{\n    pub fn stage1_ends_best(src: &[u8], n: usize, from: usize, to: usize) -> [Carries; LANES] = stage1_ends, on stage1_ends_on;\n}}\n",
+            "        }}\n        // A lane whose carries are an earlier lane's: its end is that lane's.\n        for l in 1..RUN {{\n            if met[l].is_none() {{\n                met[l] = (0..l).find(|&k| met[k].is_none() && {});\n            }}\n        }}\n    }}\n    core::array::from_fn(|l| {{\n        let e = lane_carries(l);\n        let mut k = {};\n        while let Some(j) = met[k] {{\n            k = j;\n        }}\n        Carries {{\n{}        }}\n    }})\n}}\n\nrerail_simd8::kernel! {{\n    pub fn stage1_ends_best(src: &[u8], n: usize, from: usize, to: usize) -> [Carries; LANES] = stage1_ends, on stage1_ends_on;\n}}\n",
             same.join(" && "),
             if lane_bits.is_empty() { "0".to_owned() } else { lane_bits.join(" | ") },
             carries.iter().map(|c| if free_names.contains(c) { format!("            {c}: c_{c}[k] ^ e.{c},\n") } else { format!("            {c}: c_{c}[k],\n") }).collect::<String>()
         );
         // Pass 2.
-        out.push_str("/// Pass 2 over blocks `from..to`, from entry `e`: the records into `starts` (as `stage1`'s), whether the chunk refuses,\n/// and its end.\n#[inline(always)]\nunsafe fn stage1_from<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, from: usize, to: usize, e: Carries, starts: &mut Vec<u32>) -> (bool, Carries) {\n");
+        out.push_str("/// Pass 2 over blocks `from..to`, from entry `e`: the records into `starts` (as `stage1`'s), whether the chunk refuses,\n/// and its end.\n#[inline(always)]\nunsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, starts: &mut Vec<u32>) -> (bool, Carries) {\n");
         head(&mut out);
         for c in &carries {
             let _ = writeln!(out, "    let mut c_{c} = e.{c};");
         }
         if self.lookup.is_some() {
-            out.push_str("    let mut prev_input = unsafe { S::splat(0) };\n    let mut error = unsafe { S::splat(0) };\n    let mut prev_incomplete = unsafe { S::splat(0) };\n    let max_value = unsafe { S::load(&MAX_VALUE) };\n");
+            out.push_str("    let mut prev_input = s::splat(0);\n    let mut error = s::splat(0);\n    let mut prev_incomplete = s::splat(0);\n    let max_value = s::load(&MAX_VALUE);\n");
         }
         out.push_str("    let mut errors = 0u64;\n    // Room for a record a byte of the bytes from the chunk on (at most a record a byte before it), and the slack of a\n    // block's unconditional writes: within `lex`'s `n + 67`.\n    starts.reserve((n - (64 * from).min(n)) + 64);\n    let si = starts.as_mut_ptr();\n    let mut count = starts.len();\n    // The block before's records, written at the next block (simdjson's `prev_structurals`).\n    let mut prev_structurals = 0u64;\n");
         // The block before the chunk, apart from the loop (as `stage1` has no such block): the words of the bytes alone it
         // leaves the chunk's first block, and the byte-pair check's.
         let block = |out: &mut String, pad: &str| {
-            let _ = writeln!(out, "{pad}let b: &[u8; 64] = src[{off}..{off} + 64].try_into().expect(\"a padded block\");\n{pad}let v = unsafe {{ S::load(b) }};");
+            let _ = writeln!(out, "{pad}let b: &[u8; 64] = src[{off}..{off} + 64].try_into().expect(\"a padded block\");\n{pad}let v = s::load(b);");
             for p in 0..pairs.len() {
-                let _ = writeln!(out, "{pad}let c{p} = unsafe {{ S::classify(v, &LO_{p}, &HI_{p}) }};");
+                let _ = writeln!(out, "{pad}let c{p} = s::classify(v, &LO_{p}, &HI_{p});");
             }
             if let Some(l) = &self.lookup {
                 out.extend(lookup_code(l).lines().map(|x| format!("{pad}{}\n", x.strip_prefix("            ").unwrap_or(x))));
@@ -2136,7 +2136,7 @@ impl Gen<'_> {
             line(i, false, &mut out, "        ");
         }
         if self.lookup.is_some() {
-            out.push_str("        error = unsafe { S::splat(0) };\n");
+            out.push_str("        error = s::splat(0);\n");
         }
         out.push_str("    }\n    for q in from..to {\n");
         block(&mut out, "        ");
@@ -2162,11 +2162,11 @@ impl Gen<'_> {
             }
         }
         if self.lookup.is_some() {
-            out.push_str("    // The byte-pair errors, and at the file's end a sequence left open.\n    refused |= unsafe { S::nonzero(error) } != 0 || to == nw && unsafe { S::nonzero(prev_incomplete) } != 0;\n");
+            out.push_str("    // The byte-pair errors, and at the file's end a sequence left open.\n    refused |= s::nonzero(error) != 0 || to == nw && s::nonzero(prev_incomplete) != 0;\n");
         }
         let _ = writeln!(
             out,
-            "    (refused, Carries {{\n{}    }})\n}}\n\nrerail_simd8::dispatch! {{\n    pub fn stage1_from_best(src: &[u8], n: usize, from: usize, to: usize, e: Carries, starts: &mut Vec<u32>) -> (bool, Carries) = stage1_from, on stage1_from_on;\n}}\n",
+            "    (refused, Carries {{\n{}    }})\n}}\n\nrerail_simd8::kernel! {{\n    pub fn stage1_from_best(src: &[u8], n: usize, from: usize, to: usize, e: Carries, starts: &mut Vec<u32>) -> (bool, Carries) = stage1_from, on stage1_from_on;\n}}\n",
             carries.iter().map(|c| format!("        {c}: c_{c},\n")).collect::<String>()
         );
         let off_of = match &self.prefix {
@@ -5640,7 +5640,7 @@ impl Gen<'_> {
             let _ = writeln!(fields_init, "            {f}: {v},");
         }
         let mut out = String::new();
-        out.push_str("// Generated by native/crates/compiler/src/bitlex_lex_rust.rs; do not edit. The Bitlex compiler's Rust from the grammar's lexer statements.\n\n");
+        out.push_str("// Generated by native/crates/compiler/src/bitlex_lex_rust.rs; do not edit. The Bitlex compiler's Rust from the grammar's lexer statements.\n\n#[allow(unused_imports)]\nuse rerail_simd8::portable as s;\n\n");
         if !in_pass {
             let _ = write!(out, "/// The masks tier 2 reads, a bit a byte: those it finds a token's end by, and splits a region by.\npub struct Masks {{\n{decl}}}\n\n");
         }
@@ -7109,7 +7109,7 @@ impl Gen<'_> {
         acc_after = shared(&acc_after);
         span_after.push_str(&fill_end);
         let mut out = String::new();
-        out.push_str("// Generated by native/crates/compiler/src/bitlex_lex_rust.rs; do not edit. The Bitlex compiler's Rust from the grammar's lexer statements.\n\n");
+        out.push_str("// Generated by native/crates/compiler/src/bitlex_lex_rust.rs; do not edit. The Bitlex compiler's Rust from the grammar's lexer statements.\n\n#[allow(unused_imports)]\nuse rerail_simd8::portable as s;\n\n");
         if fields.is_empty() {
             // No region tier 2 reads in parts (decision 0619, as 0586's): no mask for it.
             out.push_str("/// A token's record (the lean lexer's `Tok`): its first and last byte, and its code (its kind, its word and its marks).\n#[derive(Clone, Copy)]\npub struct Rec {\n    pub start: u32,\n    pub last: u32,\n    pub code: u32,\n}\n\n/// Tier 1's records, one a grammar token; the comments (the extras) apart, as the lean lexer keeps its comments; and\n/// whether the file goes to tree-sitter.\npub struct Lexed {\n    pub recs: Vec<Rec>,\n    pub extras: Vec<Rec>,\n    pub refused: bool,\n}\n\n");
@@ -7147,7 +7147,7 @@ impl Gen<'_> {
                 alone.steps,
                 alone.body,
                 alone.finals,
-                alone.ret.replacen("rerail_simd8::dispatch!", &format!("{test}rerail_simd8::dispatch!"), 1)
+                alone.ret.replacen("rerail_simd8::kernel!", &format!("{test}rerail_simd8::kernel!"), 1)
             );
             out.push_str(&alone_text);
         } else {
@@ -7333,10 +7333,10 @@ impl Gen<'_> {
         let scan_decl: String = if from_bytes.is_some() { String::new() } else { token_scans.iter().map(|(name, ..)| format!("    let mut c_{} = 0u32;\n", ident(name))).collect() };
         if fused {
             let head = if from_bytes.is_some() {
-                String::from("/// `src`'s records, in one pass over its blocks (decisions 0619, 0623): each block's token starts from its 64 bytes, and\n/// each mask a token reads from the bytes where it reads it, as the lean lexer reads its window's.\n#[inline(always)]\nunsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {\n    let nw = n.div_ceil(64);\n    let mut refused = false;\n")
+                String::from("/// `src`'s records, in one pass over its blocks (decisions 0619, 0623): each block's token starts from its 64 bytes, and\n/// each mask a token reads from the bytes where it reads it, as the lean lexer reads its window's.\n#[inline(always)]\nunsafe fn lex_on(src: &[u8], n: usize) -> Lexed {\n    let nw = n.div_ceil(64);\n    let mut refused = false;\n")
             } else {
                 format!(
-                    "/// `src`'s records, in one pass over its blocks (decision 0619): stage 1 makes each block's masks as the token loop\n/// comes to need them, and the token loop reads its tokens from them, as the lean lexer's `lex_blocks` reads its\n/// blocks' masks.\n#[inline(always)]\nunsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {{\n    let nw = n.div_ceil(64);\n{}    let mut refused = false;\n    // Stage 1's next step, the blocks whose masks it has made, and those the token loop waits for.\n    let mut t = 0usize;\n    let mut made = 0usize;\n    let mut wait = nw.min(1);\n",
+                    "/// `src`'s records, in one pass over its blocks (decision 0619): stage 1 makes each block's masks as the token loop\n/// comes to need them, and the token loop reads its tokens from them, as the lean lexer's `lex_blocks` reads its\n/// blocks' masks.\n#[inline(always)]\nunsafe fn lex_on(src: &[u8], n: usize) -> Lexed {{\n    let nw = n.div_ceil(64);\n{}    let mut refused = false;\n    // Stage 1's next step, the blocks whose masks it has made, and those the token loop waits for.\n    let mut t = 0usize;\n    let mut made = 0usize;\n    let mut wait = nw.min(1);\n",
                     s1.decls
                 )
             };
@@ -7450,7 +7450,7 @@ impl Gen<'_> {
             }
         }
         if fused {
-            out.push_str("\nrerail_simd8::dispatch! {\n    fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;\n}\n\n/// The spaces after a file `lex` reads, as simdjson's `SIMDJSON_PADDING`: each block of it is loaded where it is.\npub const PADDING: usize = 64;\n\n/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    lex_best(buf, n)\n}\n");
+            out.push_str("\nrerail_simd8::kernel! {\n    fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;\n}\n\n/// The spaces after a file `lex` reads, as simdjson's `SIMDJSON_PADDING`: each block of it is loaded where it is.\npub const PADDING: usize = 64;\n\n/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    lex_best(buf, n)\n}\n");
         }
         if let Some((_, _, code, _)) = &from_bytes {
             out.push_str(code);
@@ -7459,12 +7459,12 @@ impl Gen<'_> {
                     continue;
                 }
                 // Each pair's two tests and the pairs joined in the vectors, then one mask (lean's `pair`, of its one classify).
-                let pairs: Vec<String> = two.iter().map(|(a, b)| format!("S::and(S::eq(v, S::splat({a:#04x})), S::eq(w, S::splat({b:#04x})))")).collect();
-                let joined = pairs.iter().skip(1).fold(pairs.first().cloned().unwrap_or_default(), |acc, p| format!("S::or({acc},\n            {p})"));
-                let test = [format!("S::to_bitmask({joined})")];
+                let pairs: Vec<String> = two.iter().map(|(a, b)| format!("s::and(s::eq(v, s::splat({a:#04x})), s::eq(w, s::splat({b:#04x})))")).collect();
+                let joined = pairs.iter().skip(1).fold(pairs.first().cloned().unwrap_or_default(), |acc, p| format!("s::or({acc},\n            {p})"));
+                let test = [format!("s::to_bitmask({joined})")];
                 // Its own loads only where the block's classes are not made (`Bytes::block_words`).
-                if out.contains(&format!("w_{f}::<S>")) {
-                    let _ = write!(out, "\n/// `{f}`'s pairs' first bytes in the block at `base`, as the lean lexer's `pair`: where a pair's two bytes are. A token\n/// never starts at a pair's second byte, so at a token's start this is the grammar's mask of pairs (read left to right).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn w_{f}<S: rerail_simd8::Simd8x64>(src: &[u8], base: usize) -> u64 {{\n    // The block and the one a byte on: in the padded source.\n    let at: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let on: &[u8; 64] = src[base + 1..base + 65].try_into().expect(\"the padded source\");\n    // SAFETY: the caller's.\n    unsafe {{\n        let (v, w) = (S::load(at), S::load(on));\n        {}\n    }}\n}}\n", test.join("\n            | "));
+                if out.contains(&format!("w_{f}")) {
+                    let _ = write!(out, "\n/// `{f}`'s pairs' first bytes in the block at `base`, as the lean lexer's `pair`: where a pair's two bytes are. A token\n/// never starts at a pair's second byte, so at a token's start this is the grammar's mask of pairs (read left to right).\n#[inline(always)]\nunsafe fn w_{f}(src: &[u8], base: usize) -> u64 {{\n    // The block and the one a byte on: in the padded source.\n    let at: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let on: &[u8; 64] = src[base + 1..base + 65].try_into().expect(\"the padded source\");\n    // SAFETY: the caller's.\n    unsafe {{\n        let (v, w) = (s::load(at), s::load(on));\n        {}\n    }}\n}}\n", test.join("\n            | "));
                 }
                 // The function the mask replaces, where nothing calls it.
                 if !out.contains(&format!("{f}(src, s)"))
@@ -7571,7 +7571,7 @@ impl Gen<'_> {
                 let unless = if unless.is_empty() { String::new() } else { format!("    // A mark's `unless after`: none at a token after those words.\n    let before = j.checked_sub(1).map_or(0, |p| recs[p].code >> 8 & 0xff);\n    let unless = match b {{\n{unless}        _ => true,\n    }};\n    if !unless {{\n        return false;\n    }}\n") };
                 let _ = write!(
                     out,
-                    "\n/// The marks whose token tests tier 2 asks where a rule reads the mark (decision 0655 step 6), as the lean parser asks\n/// what it reads of a token where it reads it: no record holds them.\npub const TESTED: u32 = {tested_bits:#x};\n\n/// Whether token `r` (an extra, where `extra`) holds a token test of mark `b`: one of the token after it (`after`), else\n/// one of its own. Its row by its first byte, its kind and whether it is an extra.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn token_test_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -> bool {{\n    let (s, l, kind) = (r.start as usize, r.last as usize, r.code & 0xff);\n    let _ = (l, kind);\n{}}}\n\nrerail_simd8::dispatch! {{\n    fn token_test(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -> bool = token_test_on, on token_test_on_best;\n}}\n\n/// Whether a token test of mark `b` holds at grammar token `j` of `recs` (`recs.len()`: the file's end), as tier 1's loop\n/// carried them: `j`'s own, or one of the token after it at the grammar token before or at an extra (`xs`) between.\npub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {{\n    let n = src.len();\n{unless}    let p = j.checked_sub(1);\n    let (from, to) = (p.map_or(0, |p| recs[p].start + 1), recs.get(j).map_or(u32::MAX, |r| r.start));\n    let k = xs.partition_point(|x| x.start < from);\n    (j < recs.len() && token_test(src, n, &recs[j], false, b, false))\n        || p.is_some_and(|p| token_test(src, n, &recs[p], false, b, true))\n        || xs[k..].iter().take_while(|x| x.start < to).any(|x| token_test(src, n, x, true, b, false) || token_test(src, n, x, true, b, true))\n}}\n",
+                    "\n/// The marks whose token tests tier 2 asks where a rule reads the mark (decision 0655 step 6), as the lean parser asks\n/// what it reads of a token where it reads it: no record holds them.\npub const TESTED: u32 = {tested_bits:#x};\n\n/// Whether token `r` (an extra, where `extra`) holds a token test of mark `b`: one of the token after it (`after`), else\n/// one of its own. Its row by its first byte, its kind and whether it is an extra.\n#[inline(always)]\nunsafe fn token_test_on(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -> bool {{\n    let (s, l, kind) = (r.start as usize, r.last as usize, r.code & 0xff);\n    let _ = (l, kind);\n{}}}\n\nrerail_simd8::kernel! {{\n    fn token_test(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -> bool = token_test_on, on token_test_on_best;\n}}\n\n/// Whether a token test of mark `b` holds at grammar token `j` of `recs` (`recs.len()`: the file's end), as tier 1's loop\n/// carried them: `j`'s own, or one of the token after it at the grammar token before or at an extra (`xs`) between.\npub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {{\n    let n = src.len();\n{unless}    let p = j.checked_sub(1);\n    let (from, to) = (p.map_or(0, |p| recs[p].start + 1), recs.get(j).map_or(u32::MAX, |r| r.start));\n    let k = xs.partition_point(|x| x.start < from);\n    (j < recs.len() && token_test(src, n, &recs[j], false, b, false))\n        || p.is_some_and(|p| token_test(src, n, &recs[p], false, b, true))\n        || xs[k..].iter().take_while(|x| x.start < to).any(|x| token_test(src, n, x, true, b, false) || token_test(src, n, x, true, b, true))\n}}\n",
                     p[6]
                 );
             }
@@ -7621,15 +7621,15 @@ const LEX_HEAD: &str = "\u{0}lex_on's head\u{0}";
 /// The byte-pair errors' check of block `q` (its bytes `b`, its vector `v`), as simdjson's `utf8_checker::check_next_input`.
 fn lookup_code(l: &crate::bitlex_pair_lookup::Lookup) -> String {
     let mut out = String::new();
-    out.push_str("            // The byte-pair errors, as simdjson's `utf8_checker`: a block of ASCII holds one only where the block before left a\n            // sequence open.\n            if unsafe { S::to_bitmask(v) } == 0 {\n                error = unsafe { S::or(error, prev_incomplete) };\n            } else {\n");
-    out.push_str("                // The byte before's nibbles and this byte's high nibble, each rule a bit (`check_special_cases`).\n                let p1 = unsafe { S::prev(v, prev_input, 1) };\n                let sc = unsafe { S::and(S::and(S::lookup_16(S::high_nibbles(p1), &BYTE_1_HIGH), S::lookup_16(S::low_nibbles(p1), &BYTE_1_LOW)), S::lookup_16(S::high_nibbles(v), &BYTE_2_HIGH)) };\n");
+    out.push_str("            // The byte-pair errors, as simdjson's `utf8_checker`: a block of ASCII holds one only where the block before left a\n            // sequence open.\n            if s::to_bitmask(v) == 0 {\n                error = s::or(error, prev_incomplete);\n            } else {\n");
+    out.push_str("                // The byte before's nibbles and this byte's high nibble, each rule a bit (`check_special_cases`).\n                let p1 = s::prev(v, prev_input, 1);\n                let sc = s::and(s::and(s::lookup_16(s::high_nibbles(p1), &BYTE_1_HIGH), s::lookup_16(s::low_nibbles(p1), &BYTE_1_LOW)), s::lookup_16(s::high_nibbles(v), &BYTE_2_HIGH));\n");
     match l.xor {
         Some((x, y)) => {
-            let _ = writeln!(out, "                // A continuation needed 2 or 3 bytes after a lead byte (`must_be_2_3_continuation`), against two in a row (bit 0x80).\n                let must23 = unsafe {{ S::and(S::or(S::ge(S::prev(v, prev_input, 2), {x:#04x}), S::ge(S::prev(v, prev_input, 3), {y:#04x})), S::splat(0x80)) }};\n                error = unsafe {{ S::or(error, S::xor(sc, must23)) }};");
+            let _ = writeln!(out, "                // A continuation needed 2 or 3 bytes after a lead byte (`must_be_2_3_continuation`), against two in a row (bit 0x80).\n                let must23 = s::and(s::or(s::ge(s::prev(v, prev_input, 2), {x:#04x}), s::ge(s::prev(v, prev_input, 3), {y:#04x})), s::splat(0x80));\n                error = s::or(error, s::xor(sc, must23));");
         }
-        None => out.push_str("                error = unsafe { S::or(error, sc) };\n"),
+        None => out.push_str("                error = s::or(error, sc);\n"),
     }
-    out.push_str("                // A sequence the block's last bytes leave open (`is_incomplete`): the bytes above `MAX_VALUE`'s.\n                prev_incomplete = unsafe { S::gt_bits(v, max_value) };\n            }\n            prev_input = v;\n");
+    out.push_str("                // A sequence the block's last bytes leave open (`is_incomplete`): the bytes above `MAX_VALUE`'s.\n                prev_incomplete = s::gt_bits(v, max_value);\n            }\n            prev_input = v;\n");
     out
 }
 
@@ -7889,7 +7889,7 @@ fn class_code(pairs: &mut Vec<Vec<Rect>>, set: &[bool; 256]) -> String {
     let bytes: Vec<u8> = (0..=255u8).filter(|&c| set[usize::from(c)]).collect();
     match bytes.as_slice() {
         [] => "0".to_owned(),
-        [c] => format!("S::eq_mask(v, {c:#04x}) & lv"),
+        [c] => format!("s::eq_mask(v, {c:#04x}) & lv"),
         _ => {
             // Its bytes by high nibble; the high nibbles with the same low ones are one bit.
             let mut lows = [0u16; 16];
@@ -7931,7 +7931,7 @@ fn class_code(pairs: &mut Vec<Vec<Rect>>, set: &[bool; 256]) -> String {
                         None => rest.push(r),
                     }
                 }
-                tests.push(format!("S::to_bitmask(S::test(c{p}, S::splat({bits:#04x})))"));
+                tests.push(format!("s::to_bitmask(s::test(c{p}, s::splat({bits:#04x})))"));
                 left = rest;
             }
             if tests.len() == 1 { format!("{} & lv", tests[0]) } else { format!("({}) & lv", tests.join(" | ")) }
@@ -8975,15 +8975,15 @@ fn tidy_lean(out: &str) -> String {
         out = out.replace("its code (its kind, its word and its marks).", "its code (its kind and its word).");
     }
     // The token tests read no vector: a plain function, as the lean parser's tests of a token.
-    if let Some(a) = out.find("unsafe fn token_test_on<S: rerail_simd8::Simd8x64>(")
-        && let Some(d) = out[a..].find("\nrerail_simd8::dispatch! {\n    fn token_test(").map(|d| d + a)
+    if let Some(a) = out.find("unsafe fn token_test_on(")
+        && let Some(d) = out[a..].find("\nrerail_simd8::kernel! {\n    fn token_test(").map(|d| d + a)
         && let Some(e) = out[d..].find("\n}\n").map(|e| e + d + 3)
-        && !out[a..d].contains("S::")
+        && !out[a..d].contains("s::")
         && !out[a..d].contains("<S>")
     {
         out.replace_range(d..e, "");
-        out.replace_range(a..a + "unsafe fn token_test_on<S: rerail_simd8::Simd8x64>(".len(), "fn token_test(");
-        out = out.replace("one of its own. Its row by its first byte, its kind and whether it is an extra.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nfn token_test(", "one of its own. Its row by its first byte, its kind and whether it is an extra.\nfn token_test(");
+        out.replace_range(a..a + "unsafe fn token_test_on(".len(), "fn token_test(");
+        out = out.replace("one of its own. Its row by its first byte, its kind and whether it is an extra.\n#[inline(always)]\nfn token_test(", "one of its own. Its row by its first byte, its kind and whether it is an extra.\nfn token_test(");
     }
     out
 }
@@ -9328,7 +9328,7 @@ fn drop_uncalled_fns(code: &str) -> String {
             }
             i += 1;
         }
-        // A call of the function: its name and `(`, `::<S>(`, or the name given (`= lex_on, on …;`, as `dispatch!` takes
+        // A call of the function: its name and `(`, `(`, or the name given (`= lex_on, on …;`, as `dispatch!` takes
         // it); a table's name read (`&LO_0,`, `RARE_0.0`). Not in a comment, not a method's (`.any(`), not in its own
         // body (a variable of the same name is no call, nor is the function calling itself).
         let named = |n: &str, own: (usize, usize)| {

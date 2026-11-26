@@ -290,12 +290,12 @@ impl<'a> Bytes<'a> {
                         let mut lines = String::new();
                         for k in 0..8 {
                             if code.contains(&format!("c{k},")) || code.contains(&format!("c{k})")) {
-                                let _ = writeln!(lines, "    let c{k} = unsafe {{ S::classify(v, &LO_{k}, &HI_{k}) }};");
+                                let _ = writeln!(lines, "    let c{k} = s::classify(v, &LO_{k}, &HI_{k});");
                             }
                         }
                         let _ = write!(
                             self.code,
-                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window::<S>(src, n, p) }}) else {{ return 0 }};\n{lines}    // SAFETY: the caller's.\n    let b = unsafe {{ {code} }};\n    {held}\n}}\n\n"
+                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n#[inline(always)]\nunsafe fn {f}(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window(src, n, p) }}) else {{ return 0 }};\n{lines}    // SAFETY: the caller's.\n    let b = unsafe {{ {code} }};\n    {held}\n}}\n\n"
                         );
                     }
                     if !self.cls.contains(&f) {
@@ -304,19 +304,19 @@ impl<'a> Bytes<'a> {
                         let bits: Vec<String> = rs
                             .iter()
                             .map(|&(lo, hi)| match (lo, hi) {
-                                (lo, hi) if lo == hi => format!("S::eq_mask(v, {lo:#04x})"),
-                                (lo, 255) => format!("S::to_bitmask(S::ge(v, {lo:#04x}))"),
-                                (0, hi) => format!("!S::to_bitmask(S::ge(v, {:#04x}))", hi + 1),
-                                (lo, hi) => format!("(S::to_bitmask(S::ge(v, {lo:#04x})) & !S::to_bitmask(S::ge(v, {:#04x})))", hi + 1),
+                                (lo, hi) if lo == hi => format!("s::eq_mask(v, {lo:#04x})"),
+                                (lo, 255) => format!("s::to_bitmask(s::ge(v, {lo:#04x}))"),
+                                (0, hi) => format!("!s::to_bitmask(s::ge(v, {:#04x}))", hi + 1),
+                                (lo, hi) => format!("(s::to_bitmask(s::ge(v, {lo:#04x})) & !s::to_bitmask(s::ge(v, {:#04x})))", hi + 1),
                             })
                             .collect();
                         let _ = write!(
                             self.code,
-                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window::<S>(src, n, p) }}) else {{ return 0 }};\n    // SAFETY: the caller's.\n    let b = unsafe {{ {} }};\n    {held}\n}}\n\n",
+                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n#[inline(always)]\nunsafe fn {f}(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window(src, n, p) }}) else {{ return 0 }};\n    // SAFETY: the caller's.\n    let b = unsafe {{ {} }};\n    {held}\n}}\n\n",
                             if bits.is_empty() { "0".to_owned() } else { bits.join(" | ") }
                         );
                     }
-                    let here = format!("unsafe {{ {f}::<S>(src, n, p) }}");
+                    let here = format!("unsafe {{ {f}(src, n, p) }}");
                     // (A neighbour byte is in the padded source: before the file's end, or `PADDING` past it.)
                     // At a distance: the window's own bits shifted, its neighbours' bytes tested where they are, as the
                     // lean lexer derives its masks from its window's one classify (`shift_in`), not a window loaded again.
@@ -333,7 +333,7 @@ impl<'a> Bytes<'a> {
                             let before: Vec<String> = (0..k).map(|j| format!("{}{}", test(format!("p >= {}", k - j), format!("(p - {})", k - j)), if j == 0 { String::new() } else { format!(" << {j}") })).collect();
                             format!("({here} << {k} | {})", before.join(" | "))
                         }
-                        _ => format!("unsafe {{ {f}::<S>(src, n, {p}) }}"),
+                        _ => format!("unsafe {{ {f}(src, n, {p}) }}"),
                     }
                 } else if let Some(d) = self.defs.get(n).cloned() {
                     self.win(&d, off, depth + 1)?
@@ -576,7 +576,7 @@ impl<'a> Bytes<'a> {
             self.written.push(f.clone());
             let _ = write!(
                 self.code,
-                "/// `{m}`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {{\n    {bits}\n}}\n\n"
+                "/// `{m}`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn {f}(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {{\n    {bits}\n}}\n\n"
             );
             // Its twin given the window's escaped bytes, where it reads them of one mask.
             if bits.matches("escaped_step(").count() == 1
@@ -587,10 +587,10 @@ impl<'a> Bytes<'a> {
                 let twin = bits.replacen(&format!("escaped_step({of}, esc)"), "escaped", 1);
                 let _ = write!(
                     self.code,
-                    "/// `{f}` given its window's escaped bytes (`escaped`).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn e_{m}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, escaped: u64) -> u64 {{\n    {twin}\n}}\n\n"
+                    "/// `{f}` given its window's escaped bytes (`escaped`).\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn e_{m}(src: &[u8], n: usize, p: isize, escaped: u64) -> u64 {{\n    {twin}\n}}\n\n"
                 );
                 // The class's bytes, where the escapes are of one class.
-                if let Some(c) = of.strip_prefix("unsafe { cls_").and_then(|c| c.strip_suffix("::<S>(src, n, p) }"))
+                if let Some(c) = of.strip_prefix("unsafe { cls_").and_then(|c| c.strip_suffix("(src, n, p) }"))
                     && let Some((name, rs)) = self.classes.iter().find(|(name, _)| ident(name) == c)
                 {
                     let _ = name;
@@ -600,7 +600,7 @@ impl<'a> Bytes<'a> {
                 self.escapes.insert(f.clone(), of);
             }
         }
-        Ok((format!("|p: isize, esc: &mut u64| unsafe {{ {f}::<S>(src, n, p, esc) }}"), esc))
+        Ok((format!("|p: isize, esc: &mut u64| unsafe {{ {f}(src, n, p, esc) }}"), esc))
     }
 
     /// One read (`name(args)`) of the loop as the bytes' form.
@@ -771,10 +771,10 @@ impl<'a> Bytes<'a> {
             None => {
                 let mut out = String::from("        // The block's masks, from its bytes (the lean lexer's `Window`): what its tokens read of it.\n");
                 for m in &self.block {
-                    let _ = writeln!(out, "        let k_{m} = unsafe {{ w_{m}::<S>(src, n, base as isize, &mut 0) }};");
+                    let _ = writeln!(out, "        let k_{m} = unsafe {{ w_{m}(src, n, base as isize, &mut 0) }};");
                 }
                 for (f, _) in &self.pairs {
-                    let _ = writeln!(out, "        let k_{f} = unsafe {{ w_{f}::<S>(src, base) }};");
+                    let _ = writeln!(out, "        let k_{f} = unsafe {{ w_{f}(src, base) }};");
                 }
                 (String::new(), out)
             }
@@ -808,7 +808,7 @@ impl<'a> Bytes<'a> {
                 let row = |t: &[u8; 16]| t.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(", ");
                 let _ = write!(statics, "/// `{f}`'s pairs ({}): a first byte's bits the pairs it starts, a second's those it ends.\nstatic {t}_FIRST: ([u8; 16], [u8; 16]) = ([{}], [{}]);\nstatic {t}_SECOND: ([u8; 16], [u8; 16]) = ([{}], [{}]);\n\n", chunk.iter().map(|(a, b)| format!("`{}{}`", *a as char, *b as char)).collect::<Vec<_>>().join(", "), row(&flo), row(&fhi), row(&slo), row(&shi));
                 let c = format!("{f}_{g}");
-                self.class_code.insert(c.clone(), format!("S::to_bitmask(S::test(S::classify(v, &{t}_FIRST.0, &{t}_FIRST.1), S::classify(d, &{t}_SECOND.0, &{t}_SECOND.1)))"));
+                self.class_code.insert(c.clone(), format!("s::to_bitmask(s::test(s::classify(v, &{t}_FIRST.0, &{t}_FIRST.1), s::classify(d, &{t}_SECOND.0, &{t}_SECOND.1)))"));
                 used.push(c);
                 groups.push(format!("cur[{}]", used.len() - 1));
                 shifted = true;
@@ -827,14 +827,14 @@ impl<'a> Bytes<'a> {
             let mut packs: Vec<Vec<(u16, u16)>> = Vec::new();
             let mut named: Vec<(String, usize, u8)> = Vec::new();
             // A class of every byte past ASCII and some ASCII ones: the ASCII ones its bits, the others a compare, as
-            // lean's `rare` (`S::ge(x, 0xc0)`).
+            // lean's `rare` (`s::ge(x, 0xc0)`).
             let mut high: Vec<String> = Vec::new();
             // The smaller classes first, by their ASCII bytes: a larger one shares their bits where it holds them.
             sets.sort_by_key(|(_, set)| set[..0x80].iter().filter(|&&b| b).count());
             for (c, set) in &sets {
                 let bytes: Vec<usize> = (0..256).filter(|&b| set[b]).collect();
                 if let [b] = bytes.as_slice() {
-                    self.class_code.insert(c.clone(), format!("S::eq_mask(v, {b:#04x})"));
+                    self.class_code.insert(c.clone(), format!("s::eq_mask(v, {b:#04x})"));
                     continue;
                 }
                 let mut set = *set;
@@ -852,9 +852,9 @@ impl<'a> Bytes<'a> {
             for (c, p, bits) in &named {
                 let k = c.to_uppercase();
                 let _ = writeln!(text, "/// `{c}`: its bits in the classes' nibble tables{}.\nconst {k}: u8 = {bits:#04x};", if one { String::new() } else { format!(", pair {p}") });
-                let test = format!("S::test({}, S::splat({k}))", c_n(*p).2);
-                let test = if high.contains(c) { format!("S::or({test}, S::ge(v, 0x80))") } else { test };
-                self.class_code.insert(c.clone(), format!("S::to_bitmask({test})"));
+                let test = format!("s::test({}, s::splat({k}))", c_n(*p).2);
+                let test = if high.contains(c) { format!("s::or({test}, s::ge(v, 0x80))") } else { test };
+                self.class_code.insert(c.clone(), format!("s::to_bitmask({test})"));
             }
             let row = |t: &[u8; 16]| t.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(", ");
             let mut heads = String::new();
@@ -872,7 +872,7 @@ impl<'a> Bytes<'a> {
                 }
                 let (l, h, c) = c_n(p);
                 let _ = write!(text, "/// The classes' nibble tables{} (the lean lexer's `LO`, `HI`): a byte's bit `b` is set in both where it is of bit `b`'s\n/// high and low nibbles.\nstatic {l}: [u8; 16] = [{}];\nstatic {h}: [u8; 16] = [{}];\n", if one { String::new() } else { format!(", pair {p}") }, row(&lo), row(&hi));
-                let _ = writeln!(heads, "        let {c} = S::classify(v, &{l}, &{h});");
+                let _ = writeln!(heads, "        let {c} = s::classify(v, &{l}, &{h});");
             }
             text.push('\n');
             if self.rare.is_some() {
@@ -912,7 +912,7 @@ impl<'a> Bytes<'a> {
                 let row = |t: &[u8; 16]| t.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(", ");
                 let _ = write!(statics, "/// The bytes a rare token starts with, part {g}: a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.\nstatic RARE_{g}: ([u8; 16], [u8; 16]) = ([{}], [{}]);\n\n", row(&lo), row(&hi));
                 let c = format!("rare_{g}");
-                self.class_code.insert(c.clone(), format!("S::to_bitmask(S::test(S::classify(v, &RARE_{g}.0, &RARE_{g}.1), S::splat(0xff)))"));
+                self.class_code.insert(c.clone(), format!("s::to_bitmask(s::test(s::classify(v, &RARE_{g}.0, &RARE_{g}.1), s::splat(0xff)))"));
                 used.push(c);
                 groups.push(format!("cur[{}]", used.len() - 1));
             }
@@ -925,25 +925,25 @@ impl<'a> Bytes<'a> {
         let mut tables = lean_tables.clone().unwrap_or_default();
         for k in (0..8).filter(|_| lean_tables.is_none()) {
             if used.iter().any(|c| self.class_code.get(c.as_str()).is_some_and(|code| code.contains(&format!("c{k},")) || code.contains(&format!("c{k})")))) {
-                let _ = writeln!(tables, "        let c{k} = S::classify(v, &LO_{k}, &HI_{k});");
+                let _ = writeln!(tables, "        let c{k} = s::classify(v, &LO_{k}, &HI_{k});");
             }
         }
         let bits: Vec<String> = used.iter().map(|c| self.class_bits(c)).collect::<Option<_>>()?;
         self.code.push_str(&statics);
         if shifted {
             // The block a byte on: its last byte the next block's first, in the padded source.
-            tables.insert_str(0, "        let d = S::shift_in(v, src[base + 64]);\n");
+            tables.insert_str(0, "        let d = s::shift_in(v, src[base + 64]);\n");
         }
         let k = used.len();
         let _ = write!(
             self.code,
-            "/// The classes the block's words read ({}), each's bits in the block at `base`, a byte of the file: one load, and one\n/// classify a pair of nibble tables, as the lean lexer's `Window`. None past the file.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn block_classes<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, base: usize) -> [u64; {k}] {{\n    let block: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let lv = valid(n, base as isize);\n    // SAFETY: the caller's.\n    unsafe {{\n        let v = S::load(block);\n{tables}        [{}]\n    }}\n}}\n\n",
+            "/// The classes the block's words read ({}), each's bits in the block at `base`, a byte of the file: one load, and one\n/// classify a pair of nibble tables, as the lean lexer's `Window`. None past the file.\n#[inline(always)]\nunsafe fn block_classes(src: &[u8], n: usize, base: usize) -> [u64; {k}] {{\n    let block: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let lv = valid(n, base as isize);\n    // SAFETY: the caller's.\n    unsafe {{\n        let v = s::load(block);\n{tables}        [{}]\n    }}\n}}\n\n",
             used.iter().map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", "),
             bits.iter().map(|b| format!("{b} & lv")).collect::<Vec<_>>().join(", ")
         );
         let decl = String::new();
         let mut head = String::from("        // The block's masks, from its classes (the lean lexer's `Window`): what its tokens read of it.\n");
-        let _ = writeln!(head, "        // SAFETY: `base` is in the file.\n        let cur = unsafe {{ block_classes::<S>(src, n, base) }};");
+        let _ = writeln!(head, "        // SAFETY: `base` is in the file.\n        let cur = unsafe {{ block_classes(src, n, base) }};");
         if words.iter().any(|(_, w)| w.contains("lv")) {
             head.push_str("        let lv = valid(n, base as isize);\n");
         }
@@ -962,10 +962,10 @@ impl<'a> Bytes<'a> {
         let bits: Vec<String> = rs
             .iter()
             .map(|&(lo, hi)| match (lo, hi) {
-                (lo, hi) if lo == hi => format!("S::eq_mask(v, {lo:#04x})"),
-                (lo, 255) => format!("S::to_bitmask(S::ge(v, {lo:#04x}))"),
-                (0, hi) => format!("!S::to_bitmask(S::ge(v, {:#04x}))", hi + 1),
-                (lo, hi) => format!("(S::to_bitmask(S::ge(v, {lo:#04x})) & !S::to_bitmask(S::ge(v, {:#04x})))", hi + 1),
+                (lo, hi) if lo == hi => format!("s::eq_mask(v, {lo:#04x})"),
+                (lo, 255) => format!("s::to_bitmask(s::ge(v, {lo:#04x}))"),
+                (0, hi) => format!("!s::to_bitmask(s::ge(v, {:#04x}))", hi + 1),
+                (lo, hi) => format!("(s::to_bitmask(s::ge(v, {lo:#04x})) & !s::to_bitmask(s::ge(v, {:#04x})))", hi + 1),
             })
             .collect();
         Some(if bits.is_empty() { "0".to_owned() } else { format!("({})", bits.join(" | ")) })
@@ -1131,7 +1131,7 @@ pub(super) fn fuse_read(code: &str, firsts: &[[bool; 256]], escapes: &HashMap<St
             let first = firsts.get(row?)?;
             let ind = l.len() - l.trim_start().len();
             let pad = " ".repeat(ind);
-            let f = l.trim_start().strip_prefix("let l = match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { ")?.strip_suffix("::<S>(src, n, p, esc) }) {")?;
+            let f = l.trim_start().strip_prefix("let l = match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { ")?.strip_suffix("(src, n, p, esc) }) {")?;
             (lines.get(i + 1)? == &format!("{pad}    Some(c) => c + 0,")).then_some(())?;
             // The `None` arm, to the match's end.
             let close = (i + 2..lines.len()).find(|&j| lines[j] == format!("{pad}}};"))?;
@@ -1152,7 +1152,7 @@ pub(super) fn fuse_read(code: &str, firsts: &[[bool; 256]], escapes: &HashMap<St
             let mut t = String::new();
             let _ = writeln!(t, "{pad}// The region's end and its tests in one window loop from its opener, the escapes found once a window, as the");
             let _ = writeln!(t, "{pad}// lean lexer reads a string once: no first byte of the row starts an escape.");
-            let _ = writeln!(t, "{pad}let (l, hit) = match wfirst_any(n, s, |p: isize, esc: &mut u64| unsafe {{ let escaped = escaped_step({}, esc); (e_{e}::<S>(src, n, p, escaped), [{calls}]) }}) {{", in_unsafe(b));
+            let _ = writeln!(t, "{pad}let (l, hit) = match wfirst_any(n, s, |p: isize, esc: &mut u64| unsafe {{ let escaped = escaped_step({}, esc); (e_{e}(src, n, p, escaped), [{calls}]) }}) {{", in_unsafe(b));
             let _ = writeln!(t, "{pad}    Some((c, hit)) => (c, hit),");
             for x in &none {
                 let _ = writeln!(t, "{x}");
@@ -1181,7 +1181,7 @@ pub(super) fn fuse_tests(code: &str, escapes: &HashMap<String, String>) -> Strin
     // A test's head: its indent, its span and its window function.
     let head = |l: &str| -> Option<(usize, String, String)> {
         let ind = l.len() - l.trim_start().len();
-        let rest = l.trim_start().strip_prefix("if wcount_in(n, ")?.strip_suffix("::<S>(src, n, p, esc) }) >= 1 {")?;
+        let rest = l.trim_start().strip_prefix("if wcount_in(n, ")?.strip_suffix("(src, n, p, esc) }) >= 1 {")?;
         let (span, f) = rest.split_once(", |p: isize, esc: &mut u64| unsafe { ")?;
         (f.starts_with("w_") && !f.contains(' ')).then(|| (ind, span.to_owned(), f.to_owned()))
     };
@@ -1227,10 +1227,10 @@ pub(super) fn fuse_tests(code: &str, escapes: &HashMap<String, String>) -> Strin
         let shared = of.iter().all(|o| o.is_some() && *o == of[0]);
         let _ = writeln!(out, "{pad}// The token's tests of its bytes, in one window loop: their classes loaded once a window.");
         if let (true, Some(Some(b))) = (shared, of.first()) {
-            let calls: Vec<String> = tests.iter().map(|(_, f)| format!("e_{}::<S>(src, n, p, escaped)", f.trim_start_matches("w_"))).collect();
+            let calls: Vec<String> = tests.iter().map(|(_, f)| format!("e_{}(src, n, p, escaped)", f.trim_start_matches("w_"))).collect();
             let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ let escaped = escaped_step({}, &mut esc[0]); [{}] }});", tests.len(), in_unsafe(b), calls.join(", "));
         } else {
-            let calls: Vec<String> = tests.iter().enumerate().map(|(k, (_, f))| format!("{f}::<S>(src, n, p, &mut esc[{k}])")).collect();
+            let calls: Vec<String> = tests.iter().enumerate().map(|(k, (_, f))| format!("{f}(src, n, p, &mut esc[{k}])")).collect();
             let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ [{}] }});", tests.len(), calls.join(", "));
         }
         for (k, line) in lines.iter().enumerate().take(last).skip(i) {
@@ -1340,24 +1340,20 @@ fn word_last(n: usize, base: usize, k: u64, s: usize, w: impl Fn(usize) -> bool)
 
 /// The 64 bytes from `p` as loaded, and the byte they start at: at the file's first byte for a window before it. None
 /// for a window past the file's end.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
 #[inline(always)]
-unsafe fn window<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> Option<(S::V, isize)> {
+unsafe fn window(src: &[u8], n: usize, p: isize) -> Option<(s::V, isize)> {
     if p >= n as isize || p <= -64 {
         return None;
     }
     let q = p.max(0);
-    // SAFETY: the caller's.
     Some((
         match src.get(q as usize..q as usize + 64) {
-            Some(block) => unsafe { S::load(block.try_into().expect("64 bytes")) },
+            Some(block) => s::load(block.try_into().expect("64 bytes")),
             // A source with no padding (tier 2's, asking a token's tests): its last bytes, and spaces as the padding's.
             None => {
                 let mut block = [b' '; 64];
                 block[..src.len() - q as usize].copy_from_slice(&src[q as usize..]);
-                unsafe { S::load(&block) }
+                s::load(&block)
             }
         },
         q,

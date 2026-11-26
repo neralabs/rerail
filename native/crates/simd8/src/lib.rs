@@ -19,6 +19,7 @@
 
 pub mod blocks;
 pub mod micro;
+pub mod portable;
 pub mod swar;
 pub mod words;
 

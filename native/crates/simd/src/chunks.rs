@@ -153,9 +153,54 @@ scalar_chunks! { u16, false, 16; i16, true, 16; }
 pub mod x86;
 
 #[cfg(target_arch = "aarch64")]
+pub(crate) use neon::{bits8x64, shift8};
+
+#[cfg(target_arch = "aarch64")]
 mod neon {
     use super::*;
     use core::arch::aarch64::*;
+
+    /// `n` one-byte lanes at `a` (`n` 16 to 64, a multiple of 16) moved by `off` into `o`: lane `i` is lane `i + off`,
+    /// `pad` where that is outside the lanes (`std::simd`'s `shift_elements_left` for an `off` of 0 or more, `_right`
+    /// below). Each register of `o` is one two-register table lookup (`tbl`) of the two it starts in, at indices
+    /// `off mod 16` on: `vext`'s, whose offset must be a literal.
+    ///
+    /// # Safety
+    /// `a` and `o` hold `n` bytes.
+    #[inline(always)]
+    pub(crate) unsafe fn shift8(a: *const u8, o: *mut u8, n: usize, off: isize, pad: u8) {
+        unsafe {
+            let padv = vdupq_n_u8(pad);
+            let regs = n as isize / 16;
+            let reg = |j: isize| if (0..regs).contains(&j) { vld1q_u8(a.add(16 * j as usize)) } else { padv };
+            let r = off.rem_euclid(16) as u8;
+            let idx: [u8; 16] = core::array::from_fn(|i| r + i as u8);
+            let idx = vld1q_u8(idx.as_ptr());
+            for k in 0..regs {
+                let j = (16 * k + off).div_euclid(16);
+                vst1q_u8(o.add(16 * k as usize), vqtbl2q_u8(uint8x16x2_t(reg(j), reg(j + 1)), idx));
+            }
+        }
+    }
+
+    /// The bits of 64 one-byte mask lanes at `a` (each `0xff` or 0): the four registers' place bits folded by pairwise
+    /// adds (simdjson's `to_bitmask`), not each register's two horizontal adds.
+    ///
+    /// # Safety
+    /// `a` holds 64 bytes.
+    #[inline(always)]
+    pub(crate) unsafe fn bits8x64(a: *const u8) -> u64 {
+        const PLACE: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128];
+        unsafe {
+            let place = vld1q_u8(PLACE.as_ptr());
+            let r = |k: usize| vandq_u8(vld1q_u8(a.add(16 * k)), place);
+            let ab = vpaddq_u8(r(0), r(1));
+            let cd = vpaddq_u8(r(2), r(3));
+            let s = vpaddq_u8(ab, cd);
+            let s = vpaddq_u8(s, s);
+            vgetq_lane_u64::<0>(vreinterpretq_u64_u8(s))
+        }
+    }
 
     /// A NEON lane type: its register, loads and stores, and each operation as an expression of registers `a`, `b`.
     macro_rules! neon {

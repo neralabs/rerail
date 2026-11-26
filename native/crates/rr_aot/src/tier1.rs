@@ -2,6 +2,9 @@
 
 use rerail_simd8::micro;
 
+#[allow(unused_imports)]
+use rerail_simd8::portable as s;
+
 /// A token's record (the lean lexer's `Tok`): its first and last byte, and its code (its kind and its word).
 #[derive(Clone, Copy)]
 pub struct Rec {
@@ -21,7 +24,7 @@ pub struct Lexed {
 /// `src`'s records, in one pass over its blocks (decisions 0619, 0623): each block's token starts from its 64 bytes, and
 /// each mask a token reads from the bytes where it reads it, as the lean lexer reads its window's.
 #[inline(always)]
-unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
+unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
     let nw = n.div_ceil(64);
     let mut refused = false;
     // The tokens: each block's starts at once, the lean lexer's `lex_blocks`.
@@ -38,7 +41,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
         let base = b * 64;
         // The block's masks, from its classes (the lean lexer's `Window`): what its tokens read of it.
         // SAFETY: `base` is in the file.
-        let cur = unsafe { block_classes::<S>(src, n, base) };
+        let cur = unsafe { block_classes(src, n, base) };
         let k_m_ws = cur[0];
         let k_m_word = cur[1];
         let k_pair_6 = cur[2];
@@ -253,7 +256,7 @@ fn left_to_right(mut m: u64) -> u64 {
     kept
 }
 
-rerail_simd8::dispatch! {
+rerail_simd8::kernel! {
     fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;
 }
 
@@ -370,19 +373,16 @@ static PAIR_6_0_SECOND: ([u8; 16], [u8; 16]) = ([0x00, 0x00, 0x00, 0x00, 0x00, 0
 
 /// The classes the block's words read (`ws`, `word`, `pair_6_0`, `rare`), each's bits in the block at `base`, a byte of the file: one load, and one
 /// classify a pair of nibble tables, as the lean lexer's `Window`. None past the file.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
 #[inline(always)]
-unsafe fn block_classes<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, base: usize) -> [u64; 4] {
+unsafe fn block_classes(src: &[u8], n: usize, base: usize) -> [u64; 4] {
     let block: &[u8; 64] = src[base..base + 64].try_into().expect("the padded source");
     let lv = valid(n, base as isize);
     // SAFETY: the caller's.
     unsafe {
-        let v = S::load(block);
-        let d = S::shift_in(v, src[base + 64]);
-        let c = S::classify(v, &LO, &HI);
-        [S::to_bitmask(S::test(c, S::splat(WS))) & lv, S::to_bitmask(S::test(c, S::splat(WORD))) & lv, S::to_bitmask(S::test(S::classify(v, &PAIR_6_0_FIRST.0, &PAIR_6_0_FIRST.1), S::classify(d, &PAIR_6_0_SECOND.0, &PAIR_6_0_SECOND.1))) & lv, S::to_bitmask(S::or(S::test(c, S::splat(RARE)), S::ge(v, 0x80))) & lv]
+        let v = s::load(block);
+        let d = s::shift_in(v, src[base + 64]);
+        let c = s::classify(v, &LO, &HI);
+        [s::to_bitmask(s::test(c, s::splat(WS))) & lv, s::to_bitmask(s::test(c, s::splat(WORD))) & lv, s::to_bitmask(s::test(s::classify(v, &PAIR_6_0_FIRST.0, &PAIR_6_0_FIRST.1), s::classify(d, &PAIR_6_0_SECOND.0, &PAIR_6_0_SECOND.1))) & lv, s::to_bitmask(s::or(s::test(c, s::splat(RARE)), s::ge(v, 0x80))) & lv]
     }
 }
 

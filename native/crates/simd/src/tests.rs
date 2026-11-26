@@ -195,3 +195,58 @@ fn a_dynamic_swizzle_of_64_bytes_is_each_lanes_index() {
     let r = Simd::<u8, 64>::from_array(t).swizzle_dyn(Simd::from_array(ix));
     assert_eq!(r.to_array(), core::array::from_fn(|i| if (ix[i] as usize) < 64 { t[ix[i] as usize] } else { 0 }));
 }
+
+/// A mask of 64 one-byte lanes: its bitmask is each lane's bit (NEON folds the four registers at once).
+#[test]
+fn a_mask_of_64_bytes_has_each_lanes_bit() {
+    for seed in 0..64u64 {
+        let x: [u8; 64] = core::array::from_fn(|i| ((i as u64).wrapping_mul(0x9e37_79b9).wrapping_add(seed * 7) >> 3) as u8);
+        let m = Simd::<u8, 64>::from_array(x).simd_lt(Simd::splat(0x80));
+        assert_eq!(m.to_bitmask(), (0..64).fold(0, |b, i| b | u64::from(x[i] < 0x80) << i), "seed {seed}");
+        let s = Simd::<i8, 64>::from_array(x.map(|v| v as i8)).simd_lt(Simd::splat(0));
+        assert_eq!(s.to_bitmask(), (0..64).fold(0, |b, i| b | u64::from(x[i] >= 0x80) << i), "seed {seed}, signed");
+    }
+}
+
+/// Shifts of one-byte lanes by each amount, left and right, at 16, 32 and 64 lanes: each lane `std::simd`'s.
+#[test]
+fn byte_shifts_are_each_lanes() {
+    let x: [u8; 64] = core::array::from_fn(|i| i as u8 * 3 + 1);
+    macro_rules! at {
+        ($n:literal, $($o:literal)*) => {$({
+            let v = Simd::<u8, $n>::from_slice(&x);
+            let l = v.shift_elements_left::<$o>(0xee).to_array();
+            let r = v.shift_elements_right::<$o>(0xee).to_array();
+            for i in 0..$n {
+                assert_eq!(l[i], if i + $o < $n { x[i + $o] } else { 0xee }, "{} lanes left {}: lane {i}", $n, $o);
+                assert_eq!(r[i], if i < $o { 0xee } else { x[i - $o] }, "{} lanes right {}: lane {i}", $n, $o);
+            }
+        })*};
+    }
+    at!(16, 0 1 2 3 7 15 16);
+    at!(32, 0 1 3 15 16 17 31 32);
+    at!(64, 0 1 2 3 15 16 17 33 47 48 61 62 63 64);
+}
+
+/// Unsigned saturating adds and subtracts and absolute differences, every pair of bytes and a spread of `u32`s: each
+/// lane the scalar's.
+#[test]
+fn unsigned_saturating_ops_are_each_lanes() {
+    use crate::num::SimdUint;
+    for a in 0..=255u8 {
+        let x = Simd::<u8, 64>::splat(a);
+        let y: [u8; 64] = core::array::from_fn(|i| (i * 4 + a as usize % 4) as u8);
+        let ys = Simd::from_array(y);
+        let (s, d, ad) = (x.saturating_add(ys).to_array(), x.saturating_sub(ys).to_array(), x.abs_diff(ys).to_array());
+        for i in 0..64 {
+            assert_eq!((s[i], d[i], ad[i]), (a.saturating_add(y[i]), a.saturating_sub(y[i]), a.abs_diff(y[i])), "{a} and {}", y[i]);
+        }
+    }
+    let v: [u32; 8] = [0, 1, 7, u32::MAX, u32::MAX - 1, 1 << 31, 12345, 3];
+    let w: [u32; 8] = [5, 1, u32::MAX, 2, u32::MAX, 1 << 31, 54321, 0];
+    let (a, b) = (Simd::from_array(v), Simd::from_array(w));
+    let (s, d) = (a.saturating_add(b).to_array(), a.saturating_sub(b).to_array());
+    for i in 0..8 {
+        assert_eq!((s[i], d[i]), (v[i].saturating_add(w[i]), v[i].saturating_sub(w[i])), "lane {i}");
+    }
+}

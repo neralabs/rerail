@@ -201,6 +201,26 @@ where
     #[inline(always)]
     pub fn splat(value: T) -> Self {
         let mut a = core::mem::MaybeUninit::<[T; N]>::uninit();
+        // On AArch64, whole registers of `dup`: stored as 16-byte vectors, the lanes stay vectors where they are
+        // carried (a loop's state). `__splat`'s arrays of arrays are split by LLVM into one value a lane.
+        #[cfg(target_arch = "aarch64")]
+        if (N * core::mem::size_of::<T>()).is_multiple_of(16) {
+            use core::arch::aarch64::*;
+            let p = a.as_mut_ptr().cast::<u8>();
+            // SAFETY: `T` is 1, 2, 4 or 8 bytes (a lane's), read as that many; `N * size` bytes written, 16 at a time.
+            unsafe {
+                let r = match core::mem::size_of::<T>() {
+                    1 => vdupq_n_u8(core::mem::transmute_copy::<T, u8>(&value)),
+                    2 => vreinterpretq_u8_u16(vdupq_n_u16(core::mem::transmute_copy::<T, u16>(&value))),
+                    4 => vreinterpretq_u8_u32(vdupq_n_u32(core::mem::transmute_copy::<T, u32>(&value))),
+                    _ => vreinterpretq_u8_u64(vdupq_n_u64(core::mem::transmute_copy::<T, u64>(&value))),
+                };
+                for k in 0..N * core::mem::size_of::<T>() / 16 {
+                    vst1q_u8(p.add(16 * k), r);
+                }
+                return Simd(a.assume_init());
+            }
+        }
         // SAFETY: `__splat` writes all `N` lanes.
         unsafe {
             LaneCount::<N>::__splat(value, a.as_mut_ptr().cast::<T>());
@@ -227,7 +247,7 @@ where
     #[inline(always)]
     pub fn from_slice(slice: &[T]) -> Self {
         assert!(slice.len() >= N, "slice length must be at least the number of elements");
-        Simd(by_lane(|i| slice[i]))
+        Simd(slice[..N].try_into().expect("N elements"))
     }
     /// `std::simd`'s `rotate_elements_right`: lane `i` is lane `(i - OFFSET) mod N`.
     #[inline(always)]
@@ -239,15 +259,40 @@ where
     pub fn rotate_elements_left<const OFFSET: usize>(self) -> Self {
         Simd(by_lane(|i| self.0[(i + OFFSET) % N]))
     }
-    /// `std::simd`'s `shift_elements_right`: lane `i` is lane `i - OFFSET`, `padding` below `OFFSET`.
+    /// `std::simd`'s `shift_elements_right`: lane `i` is lane `i - OFFSET`, `padding` below `OFFSET`. On AArch64, for
+    /// 16 to 64 one-byte lanes, a two-register table lookup a register (`vext`'s).
     #[inline(always)]
     pub fn shift_elements_right<const OFFSET: usize>(self, padding: T) -> Self {
+        #[cfg(target_arch = "aarch64")]
+        if let Some(s) = self.shift8(-(OFFSET.min(N) as isize), padding) {
+            return s;
+        }
         Simd(by_lane(|i| if i < OFFSET { padding } else { self.0[i - OFFSET] }))
     }
-    /// `std::simd`'s `shift_elements_left`: lane `i` is lane `i + OFFSET`, `padding` past the end.
+    /// `std::simd`'s `shift_elements_left`: lane `i` is lane `i + OFFSET`, `padding` past the end. On AArch64, for 16
+    /// to 64 one-byte lanes, a two-register table lookup a register (`vext`'s).
     #[inline(always)]
     pub fn shift_elements_left<const OFFSET: usize>(self, padding: T) -> Self {
+        #[cfg(target_arch = "aarch64")]
+        if let Some(s) = self.shift8(OFFSET.min(N) as isize, padding) {
+            return s;
+        }
         Simd(by_lane(|i| if i + OFFSET < N { self.0[i + OFFSET] } else { padding }))
+    }
+    /// Lane `i` is lane `i + off`, `padding` outside the lanes, for 16 to 64 one-byte lanes (`chunks::shift8`); else
+    /// none.
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    fn shift8(self, off: isize, padding: T) -> Option<Self> {
+        if core::mem::size_of::<T>() != 1 || !N.is_multiple_of(16) || !(16..=64).contains(&N) {
+            return None;
+        }
+        let mut o = core::mem::MaybeUninit::<[T; N]>::uninit();
+        // SAFETY: `T` is one byte (any value of it a byte); `self` and `o` hold `N` lanes, each written.
+        unsafe {
+            chunks::shift8(self.0.as_ptr().cast::<u8>(), o.as_mut_ptr().cast::<u8>(), N, off, core::mem::transmute_copy::<T, u8>(&padding));
+            Some(Simd(o.assume_init()))
+        }
     }
     /// Writes the lanes to the first `N` elements of `slice`; panics if it is shorter.
     #[inline(always)]
@@ -562,6 +607,12 @@ where
     #[inline(always)]
     pub fn to_bitmask(self) -> u64 {
         let mut b = 0u64;
+        // One-byte lanes, 64 of them: the four registers folded together (NEON).
+        #[cfg(target_arch = "aarch64")]
+        if core::mem::size_of::<T>() == 1 && N == 64 {
+            // SAFETY: 64 lanes of one byte, each all ones or zero (a mask's).
+            return unsafe { chunks::bits8x64(self.0.as_ptr().cast::<u8>()) };
+        }
         if T::L > 1 && N.is_multiple_of(T::L) {
             let mut i = 0;
             while i < N {
@@ -823,6 +874,7 @@ pub mod cmp {
 
 pub mod num {
     use super::*;
+    use crate::cmp::SimdOrd;
 
     /// Operations of unsigned integer lanes.
     pub trait SimdUint: Copy + Sealed {
@@ -902,11 +954,13 @@ pub mod num {
                 #[inline(always)]
                 fn wrapping_neg(self) -> Self { map!(self, |x| x.wrapping_neg()) }
                 #[inline(always)]
-                fn saturating_add(self, o: Self) -> Self { Simd(by_lane(|i| self.0[i].saturating_add(o.0[i]))) }
+                // Unsigned: `a + min(b, !a)`, `a - min(a, b)` and `max - min`, each lane's, from the chunked
+                // operations (no lane-by-lane loop).
+                fn saturating_add(self, o: Self) -> Self { self + o.simd_min(!self) }
                 #[inline(always)]
-                fn saturating_sub(self, o: Self) -> Self { Simd(by_lane(|i| self.0[i].saturating_sub(o.0[i]))) }
+                fn saturating_sub(self, o: Self) -> Self { self - self.simd_min(o) }
                 #[inline(always)]
-                fn abs_diff(self, o: Self) -> Self { Simd(by_lane(|i| self.0[i].abs_diff(o.0[i]))) }
+                fn abs_diff(self, o: Self) -> Self { self.simd_max(o) - self.simd_min(o) }
                 #[inline(always)]
                 fn reduce_sum(self) -> $t { self.0.iter().fold(0, |a: $t, &x| a.wrapping_add(x)) }
                 #[inline(always)]

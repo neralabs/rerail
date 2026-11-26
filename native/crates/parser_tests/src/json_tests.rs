@@ -1341,7 +1341,7 @@ fn json_utf8_is_simdjsons_lookup() {
     assert_eq!(l.xor, Some((0xe0, 0xf0)));
     assert_eq!(l.open, [Some(0xc0), Some(0xe0), Some(0xf0)]);
     let (tier1, _) = json_rust();
-    for part in ["static BYTE_1_HIGH", "static BYTE_1_LOW", "static BYTE_2_HIGH", "let must23 =", "if unsafe { S::to_bitmask(v) } == 0 {", "prev_incomplete = unsafe { S::gt_bits(v, max_value) };", "0xff, 0xef, 0xdf, 0xbf];"] {
+    for part in ["static BYTE_1_HIGH", "static BYTE_1_LOW", "static BYTE_2_HIGH", "let must23 =", "if s::to_bitmask(v) == 0 {", "prev_incomplete = s::gt_bits(v, max_value);", "0xff, 0xef, 0xdf, 0xbf];"] {
         assert!(tier1.contains(part), "tier 1 has no `{part}`");
     }
     for class in ["cont", "lead3", "lead4", "e0", "ed", "f0", "f4", "below_a0", "from_a0", "below_90", "from_90", "not_cont", "lead", "c0c1", "f5ff", "third", "fourth"] {
@@ -1380,13 +1380,13 @@ fn json_tier2_is_walks_shape() {
     // A value as `walk` decides it (decision 0602): at each of its three places (the root, a pair's value, an element)
     // a `match` on the byte with the containers' arms, and the rest one method's (`walk`'s `primitive`), its `_`. The
     // method is written once: the string's, the atoms' and the number's arms there alone.
-    assert_eq!(tier2.matches("fn value_primitive<S").count(), 1, "the primitive written once");
-    let calls: Vec<&str> = tier2.split("match peek(src, starts, i) {\n").skip(1).filter(|m| m.contains("value_primitive::<S>(")).collect();
+    assert_eq!(tier2.matches("fn value_primitive(").count(), 1, "the primitive written once");
+    let calls: Vec<&str> = tier2.split("match peek(src, starts, i) {\n").skip(1).filter(|m| m.contains("value_primitive(")).collect();
     let places: Vec<&str> = tier2.split("let s = starts[i] as usize;\nmatch src[s] {\n0x7b => {").skip(1).collect();
     assert_eq!(places.len() + calls.len(), 3, "a value's decision at three places");
-    assert_eq!(tier2.matches("_ => {\ne = unsafe { value_primitive::<S>(src, starts, d, &mut i, [").count(), 3, "each place's `_` the primitive");
-    let primitive = tier2.split("fn value_primitive<S").nth(1).expect("the primitive").split("\nOk(e)\n}").next().expect("its body");
-    for arm in ["0x22 => {\ne = unsafe { string::<S>(", "0x74 if src[s..s + 4] == *b\"true\"", "0x66 if src[s..s + 5] == *b\"false\"", "0x6e if src[s..s + 4] == *b\"null\"", "let end = number_end(src, s)?;\ne = token(d, &mut i, "] {
+    assert_eq!(tier2.matches("_ => {\ne = unsafe { value_primitive(src, starts, d, &mut i, [").count(), 3, "each place's `_` the primitive");
+    let primitive = tier2.split("fn value_primitive(").nth(1).expect("the primitive").split("\nOk(e)\n}").next().expect("its body");
+    for arm in ["0x22 => {\ne = unsafe { string(", "0x74 if src[s..s + 4] == *b\"true\"", "0x66 if src[s..s + 5] == *b\"false\"", "0x6e if src[s..s + 4] == *b\"null\"", "let end = number_end(src, s)?;\ne = token(d, &mut i, "] {
         assert!(primitive.contains(arm), "`{arm}` the primitive's:\n{primitive}");
         assert_eq!(tier2.matches(arm).count(), 1, "`{arm}` written once");
     }
@@ -1414,9 +1414,9 @@ fn json_tier2_is_walks_shape() {
         assert!(!tier2.contains(op), "tier 2 still has `{op}`");
     }
     // A string read 32 bytes at a time on the backend chosen once (`run_best`), as `backslash_quote`.
-    assert!(tier2.contains("x += 32;") && tier2.contains("S::marks32(") && tier2.contains("fn run_best("), "32 bytes a step, one dispatch");
+    assert!(tier2.contains("x += 32;") && tier2.contains("s::marks32(") && tier2.contains("fn run_best("), "32 bytes a step, one dispatch");
     // A string with no escape: the node and its content at once.
-    let string = tier2.split("fn string<S").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
+    let string = tier2.split("fn string(").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
     assert!(string.contains("leaf_in(d, "), "a plain string at once:\n{string}");
 }
 
@@ -1425,10 +1425,18 @@ fn json_tier2_is_walks_shape() {
 #[test]
 fn json_escape_checks_are_tier2s() {
     let (tier1, tier2) = json_rust();
+    // Its code's names, not its comments (whose prose may say "alone") nor other words (`Clone`): a name has `m` where
+    // a run of its `_`-separated parts is `m`'s.
+    let names: Vec<&str> = tier1.lines().map(|l| l.split("//").next().unwrap_or("")).flat_map(|l| l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))).filter(|w| !w.is_empty()).collect();
+    let has = |name: &str, m: &str| {
+        let parts: Vec<&str> = name.split('_').collect();
+        let k = m.split('_').count();
+        parts.windows(k).any(|w| w.join("_") == m)
+    };
     for m in ["unicode", "r_m_hex", "r_m_dee", "high_2", "low_2", "r_m_low", "lone"] {
-        assert!(!tier1.contains(m), "tier 1 still has `{m}`");
+        assert!(!names.iter().any(|n| has(n, m)), "tier 1 still has `{m}`");
     }
-    let string = tier2.split("fn string<S").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
+    let string = tier2.split("fn string(").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
     let at = string.split("let y = p + 1;\n").nth(1).expect("the checks at an escape");
     // The escape's second byte decided once, as `escaped_string`'s `c`: the `u`'s checks, the other words, else refused.
     assert!(at.starts_with("// Its second byte decided once: the words', the checks at the gate's.\nmatch src[y] {\n0x75 => {\n"), "at a `\\u` alone:\n{at}");
@@ -1454,7 +1462,7 @@ fn json_escape_checks_are_tier2s() {
 #[test]
 fn json_tier1_masks_are_block_locals() {
     let (tier1, _) = json_rust();
-    let stage1 = tier1.split("unsafe fn stage1<").nth(1).expect("stage 1").split("\nrerail_simd8::dispatch!").next().expect("its body");
+    let stage1 = tier1.split("unsafe fn stage1(").nth(1).expect("stage 1").split("\nrerail_simd8::kernel!").next().expect("its body");
     assert!(!stage1.contains("RING") && !stage1.contains("r_m_"), "no ring:\n{stage1}");
     assert!(stage1.contains("    for t in 0..nw {\n"), "the file's blocks alone");
     assert!(!stage1.contains("NONE"), "no block past the file");
