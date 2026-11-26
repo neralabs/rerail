@@ -183,9 +183,12 @@ ts_member_name(m, x, "Expression") :- field(m, "name", c), kind(c, "computed_pro
 .decl member_key_name(k: node, x: symbol, t: symbol)
 member_key_name(k, x, "Normal") :- (kind(k, "property_identifier") ; kind(k, "identifier")), text(k, x).
 member_key_name(k, x, "Private") :- kind(k, "private_property_identifier"), text(k, x).
-member_key_name(k, v, "Normal") :- (kind(k, "string") ; kind(k, "number")), value(k, v), match("[A-Za-z_$][A-Za-z0-9_$]*", v).
+// requiresQuoting: TypeScript's isIdentifierStart / isIdentifierPart per UTF-16 unit, so a letter outside the BMP
+// (`"𝑎"`) is quoted and `"ä"`, `"a\u200c"` are not.
+member_key_name(k, v, "Normal") :- (kind(k, "string") ; kind(k, "number")), value(k, v),
+    match("(?:[$_]|[\\p{ID_Start}&&[\\x{0}-\\x{FFFF}]])(?:[$\\x{200C}\\x{200D}]|[\\p{ID_Continue}&&[\\x{0}-\\x{FFFF}]])*", v).
 member_key_name(k, cat("\"", cat(v, "\"")), "Quoted") :- (kind(k, "string") ; kind(k, "number")), value(k, v),
-    !match("[A-Za-z_$][A-Za-z0-9_$]*", v).
+    !match("(?:[$_]|[\\p{ID_Start}&&[\\x{0}-\\x{FFFF}]])(?:[$\\x{200C}\\x{200D}]|[\\p{ID_Continue}&&[\\x{0}-\\x{FFFF}]])*", v).
 
 // ts_ctor(m): ESTree's MethodDefinition of kind "constructor": a key `constructor` or "constructor", not static,
 // not computed. An overload `constructor(a);` is a method_signature in tree-sitter.

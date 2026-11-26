@@ -13,7 +13,32 @@ The translation's own run on the same files was `rerail-engine run-policies` wit
 | consistent-type-definitions | different | translation | fixtures: 2 keys in files the original skips |
 | explicit-member-accessibility | same | | was: engine gap 1, every member reported |
 
-No new library file: no concept is shared by two of these rules.
+No new library file: no concept is shared by two of these rules. One library fix, from the review: ts-a's
+`member_key_name` decides quoting as TypeScript's requiresQuoting does (below).
+
+## Review fixes (review/typescript-01.review.md)
+
+Each counterexample of the review is a `.test` of its rule now, with the extra cases below checked against
+typescript-eslint 8.74.0 on pt-w01; every test passes under the fleet's `rerail-engine test-rr`. A test cannot set
+options (`test-rr` passes the run tool calls only), so a rule reads its options through one relation a test gives
+with `.given`: `style` in class-literal-property-style, `setting` and `ignored_name` in
+explicit-member-accessibility. ptcheck after the fixes: the same five statuses and counts as before, and
+adjacent-overload-signatures and member-ordering (ts-a's other `ts_member_name` users) still `same`.
+
+| rule | defect | fix |
+|---|---|---|
+| class-literal-property-style | 1: `get [k]` paired with `set [k]` by text | removed; a key pairs by getStaticMemberAccessValue only (`member_name`), and `[k]` of a parameter has none: reported, as 8.74 does. The "8.70 does" in the comment was wrong |
+| | 2: constants not resolved | `key_value`: getStaticValue for computed keys and `this[k]`: literals, plain templates, `Symbol.x`, and a variable with one declarator definition that is `const` or never written after its initialiser (ts-b-scope's `resolves`/`writes`). `let k = "a"; k = "b"` is no constant (reported, as ESLint does). Not followed: operators, templates with `${…}`, other globals' members |
+| | 3: constructor by its written name | `ts_ctor` (not static, key `constructor` or `"constructor"`) |
+| | 4: exclusion lands on the constructor's class | it lands on the innermost class body around the `this` |
+| | 5: `({ a: this.a } = o)` counted | `pair_pattern` dropped from `assignee`; `[this.a] = o` still counts |
+| | 6: `readonly accessor e = 1` reported | tree-sitter misreads it (name `accessor`, `e` in an ERROR; `op` gives `readonly` only); a field holding an ERROR is left out |
+| | also | the name "" pairs and excludes nothing (the plugin tests it for truth); `get [Symbol.iterator]` pairs with its `set` |
+| class-methods-use-this | decorated field reported at its decorator | `head`: typescript-eslint's getFunctionHeadLoc, ts-a's `member_head` for a decorated field |
+| consistent-indexed-object-style | 1: names by text | the owner (superVar) is the alias's or interface's variable; a name is followed as findVariable finds it from the owner's scope outwards (ts-b-scope), and the owner's name counts only while the owner has a reference (isNodeEqual compares identifiers by name: `type Bar<Foo> = Foo` is circular for Foo exactly when Foo is referenced somewhere) |
+| | 2: type parameters of function types | the climb stops at TSTypeAnnotation only: annotations, and a function or constructor type's return type, which tree-sitter does not wrap |
+| | 3: shadowed mapped key | a use of the key is a reference that resolves to the key's variable |
+| explicit-member-accessibility | `"ä"` quoted | ts-a's `member_key_name`: `[$_\p{ID_Start}]` then `[$\p{ID_Continue}\u200C\u200D]*`, BMP only (TypeScript reads UTF-16 units: `"𝑎"` is quoted, `"a\u200c"` is not) |
 
 ## class-literal-property-style: a getter of a class only
 
@@ -33,12 +58,12 @@ but its violation took `at: node`, and the place it reports an `accessor` field'
 (eslint-a-functions' `fn_head`, a `loc`, since an AccessorProperty is no holder), so the finding was dropped. The
 violation now takes `at: loc`, as `fn_head` declares.
 
-## consistent-indexed-object-style: names resolve in their own file; one key the original cannot see
+## consistent-indexed-object-style: names resolve as the scope manager does; one key the original cannot see
 
 The original reported `interface Foo<T> { [k: string]: T }` (065.ts:2), Foo1 in 072.ts and 073.ts, and Foo2 and Foo3
 in 074.ts (lines 6 and 10), and typescript-eslint does too; the translation found them circular. Its `type_decl`
 looked a type name up across the whole corpus, so `T` reached another fixture's `type T = …` and Foo2 another file's
-Foo2. `named_decl` now needs the declaration in the name's own file (`docof`).
+Foo2. Names are now looked up in scopes (Review fixes, above), which keeps them in their file.
 
 Left: 088.ts:2, `interface Foo { [key: string]: Bar; }` beside `interface Bar { [key: string]; }`. typescript-eslint
 reports Foo (2:1). Bar's signature without a type is an error to tree-sitter, so the original skips the file; the
@@ -87,3 +112,8 @@ ignoredMethodNames ["m"] (the option replaced by a fact in a probe copy; the sui
    body is inlined into `probe`, when the include is left out, or when the left side is a predicate of tape facts
    only. ts-a's `ts_member_name` is such a predicate, so any rule doing `ts_member_name`-derived `, !p(m)` may
    over-report. No `.decl` needed: an engine fix.
+
+2. **`.expect r(…)` of a rule's own relation finds no rows.** In explicit-member-accessibility's test
+   `the_names_of_string_keys`, `.expect missing(_, "method definition", "ä")` failed with "missing has 0 rows"
+   (also with `.output missing` in the test) while the test's findings, which only `missing` derives, were there.
+   A relation the test declares, `named(x) :- missing(_, _, x).`, has the rows; the test expects that instead.

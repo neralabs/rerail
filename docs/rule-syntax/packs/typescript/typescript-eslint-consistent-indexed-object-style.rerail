@@ -1,11 +1,12 @@
-.policy "typescript-eslint-consistent-indexed-object-style" revision 3
+.policy "typescript-eslint-consistent-indexed-object-style" revision 4
 .description "Use a Record type instead of an interface or object type whose only member is an index signature, or a mapped type that ignores its keys."
 .language typescript
 .mode steer
 .scope include "**/*"
 
-#include "tsx/ts-a.rerail"
-//   ts_member, type_literal, mapped_type, type_parent, type_child
+#include "tsx/ts-b-scope.rerail"
+//   variable, resolves, declares, scope_up (the scope manager's variables); through it ts-a (ts_member,
+//   type_literal, mapped_type, type_parent)
 
 // typescript-eslint's consistent-indexed-object-style: an object type that is only an index signature is a Record.
 //   "record" (the default):   interface A { [k: string]: T }  type B = { [k: string]: T }  { [K in X]: T }
@@ -31,33 +32,44 @@ lone_signature(b, s) :- type_literal(b), only_signature(b, s).
 .decl only_signature(b: node, s: node)
 only_signature(b, s) :- ts_member(b, s, 0), !ts_member(b, _, 1), kind(s, "index_signature"),
     field(s, "name", k), kind(k, "identifier"), field(s, "index_type", _), field(s, "type", _).
-// The type it belongs to: an interface's own name, or the alias a type literal is part of, unless a type
-// annotation comes first (`type F = { a: { [k: string]: F } }` is not circular in this sense).
-.decl owner_name(n: node, x: symbol)
-owner_name(n, x) :- kind(n, "interface_declaration"), field(n, "name", i), text(i, x).
-owner_name(b, x) :- kind(b, "object_type"), nearest(b, a, decl_stop), kind(a, "type_alias_declaration"),
-    field(a, "name", i), text(i, x).
-// A mapped type's value has no annotation node in TSESTree, so its `: V` does not stop the climb.
-.decl decl_stop(a: node)
-decl_stop(a) :- kind(a, k), (k = "type_alias_declaration" ; k = "function_type" ; k = "constructor_type").
-decl_stop(a) :- kind(a, k), (k = "type_annotation" ; k = "opting_type_annotation" ; k = "omitting_type_annotation" ;
+// owner(n, s, x): the variable n's circularity is asked against (the plugin's superVar): an interface's own, or the
+// alias findParentDeclaration reaches from a type literal or mapped type, x declared in scope s.
+.decl owner(n: node, s: node, x: symbol)
+owner(n, s, x) :- lone_signature(n, _), kind(n, "interface_declaration"), field(n, "name", i), variable(s, x, i, _).
+owner(b, s, x) :- climb(b, a), kind(a, "type_alias_declaration"), field(a, "name", i), variable(s, x, i, _).
+// climb(b, c): findParentDeclaration's climb from b through its ESTree parents to the first alias, stopped by a
+// TSTypeAnnotation: a property's, parameter's or index signature's `: T`, and the return type of a function or
+// constructor type (tree-sitter wraps neither; a mapped type's `: V` is no TSTypeAnnotation). A type parameter's
+// constraint is none: `type F = <T extends { [k: string]: F }>() => void` climbs to F.
+.decl climb(b: node, c: node)
+climb(b, b) :- lone_signature(b, _), type_literal(b).
+climb(b, b) :- mapped_type(b, _).
+climb(b, p) :- climb(b, c), !kind(c, "type_alias_declaration"), child(p, c, _), !annotation(p), !returned(c).
+.decl annotation(a: node)
+annotation(a) :- kind(a, k), (k = "type_annotation" ; k = "opting_type_annotation" ; k = "omitting_type_annotation" ;
     k = "adding_type_annotation"), child(s, a, _), !mapped_signature(s).
 .decl mapped_signature(s: node)
 mapped_signature(s) :- kind(s, "index_signature"), child(s, c, _), kind(c, "mapped_type_clause").
-.decl circular(n: node)
-circular(n) :- lone_signature(n, _), owner_name(n, x), deep(n, x).
-circular(b) :- mapped_type(b, _), owner_name(b, x), type_parent(b, p), deep(p, x).
+.decl returned(c: node)
+returned(c) :- (kind(f, "function_type") ; kind(f, "constructor_type")), field(f, "return_type", c).
 
-// deep(r, x): isDeeplyReferencingType. Type x is named under r through unions, intersections, conditionals,
-// indexed access, generic arguments and index signatures' values, also through the aliases and interfaces of the
-// same file named on the way. A property, array or function type stops the search.
-.decl deep_root(r: node)
-deep_root(n) :- lone_signature(n, _).
-deep_root(p) :- mapped_type(b, _), type_parent(b, p).
-deep_root(d) :- deep_root(r), reach(r, t), named_decl(t, d).
-.decl reach(r: node, t: node)
-reach(r, c) :- deep_root(r), walk(r, c).
-reach(r, c) :- reach(r, m), walk(m, c).
+// circular(n): isDeeplyReferencingType. From n (a mapped type: from its parent) through unions, intersections,
+// conditionals, indexed access, generic arguments and index signatures' values, a type name is reached that is the
+// owner's name while the owner has some reference (the plugin compares identifiers by name with any of its
+// references). Another name is followed to its declarations as findVariable finds them from the owner's scope
+// outwards, the first scope with a variable of that name: its aliases and interfaces are walked on. A property,
+// array or function type stops the search.
+//   type Bar = number; type Foo = { [k: string]: Bar }; function f() { type Bar = Foo; }   not circular
+.decl circular(n: node)
+circular(n) :- reach(n, t), kind(t, "type_identifier"), text(t, x), owner(n, s, x), referenced(s, x).
+.decl referenced(s: node, x: symbol)
+referenced(s, x) :- owner(_, s, x), resolves(_, s, x).
+.decl reach(n: node, c: node)
+reach(n, n) :- owner(n, _, _), !mapped_type(n, _).
+reach(n, p) :- owner(n, _, _), mapped_type(n, _), type_parent(n, p).
+reach(n, c) :- reach(n, m), walk(m, c).
+reach(n, d) :- reach(n, t), kind(t, "type_identifier"), text(t, y), owner(n, s, _), found(s, y, f),
+    variable(f, y, i, k), (k = "type" ; k = "interface"), field(d, "name", i).
 .decl walk(p: node, c: node)
 walk(p, s) :- (kind(p, "object_type") ; kind(p, "interface_body")), child(p, s, _), kind(s, "index_signature").
 walk(p, b) :- kind(p, "interface_declaration"), field(p, "body", b).
@@ -67,21 +79,19 @@ walk(p, c) :- kind(p, k), deep_kind(k), child(p, c, _), !kind(c, "comment").
 .decl deep_kind(k: symbol)
 deep_kind("union_type"). deep_kind("intersection_type"). deep_kind("conditional_type"). deep_kind("lookup_type").
 deep_kind("parenthesized_type"). deep_kind("generic_type"). deep_kind("type_arguments"). deep_kind("type_annotation").
-// named_decl(t, d): type name t names alias or interface d of its own file; another file's `type T` is not this T.
-.decl named_decl(t: node, d: node)
-named_decl(t, d) :- reach(_, t), kind(t, "type_identifier"), text(t, x), docof(t, f),
-    (kind(d, "type_alias_declaration") ; kind(d, "interface_declaration")), field(d, "name", i), text(i, x), docof(d, f).
-.decl deep(r: node, x: symbol)
-deep(r, x) :- reach(r, t), kind(t, "type_identifier"), text(t, x).
-deep(r, x) :- reach(r, t), named_decl(t, d), text(t, y), y != x, deep(d, x).
+// found(s, y, f): findVariable(s, y): f is the first scope from s outwards with a variable named y, of any kind.
+.decl look_from(s: node, y: symbol, c: node)
+look_from(s, y, s) :- reach(n, t), kind(t, "type_identifier"), text(t, y), owner(n, s, _).
+look_from(s, y, p) :- look_from(s, y, c), !declares(c, y, "both"), scope_up(c, p).
+.decl found(s: node, y: symbol, f: node)
+found(s, y, f) :- look_from(s, y, f), declares(f, y, "both").
 
-// free_mapped(b): `{ [K in X]: V }` that a Record can say: V does not use K, X is no bare `keyof T`, and the type
-// is not circular.
+// free_mapped(b): `{ [K in X]: V }` that a Record can say: no type reference resolves to K, X is no bare `keyof T`,
+// and the type is not circular. `{ [K in X]: <K>(x: K) => K }` is free: those K are the function type's.
 .decl free_mapped(b: node)
-free_mapped(b) :- mapped_type(b, c), field(c, "name", k), text(k, x), !uses_key(b, k, x),
-    field(c, "type", t), !kind(t, "index_type_query"), !circular(b).
-.decl uses_key(b: node, k: node, x: symbol)
-uses_key(b, k, x) :- mapped_type(b, c), field(c, "name", k), text(k, x), has(b, u, "type_identifier"), u != k, text(u, x).
+free_mapped(b) :- mapped_type(b, c), !uses_key(b), field(c, "type", t), !kind(t, "index_type_query"), !circular(b).
+.decl uses_key(b: node)
+uses_key(b) :- mapped_type(b, c), child(s, c, _), field(c, "name", k), text(k, x), resolves(_, s, x).
 
 // The fixes. A Record drops a mapped type's `-readonly` (there is no Mutable), so that one is not fixed.
 to_record(n, _, _) :- lone_signature(n, s), !circular(n), type_literal(n), record_text(s, r) => replace(n, `$r`).
@@ -131,3 +141,61 @@ key_keyword(k) :- kind(k, "predefined_type"), (text(k, "string") ; text(k, "numb
 to_signature(g, _, _) :- record_ref(g, k, v), key_keyword(k), text(k, x), text(v, y) => replace(g, `{ [key: $x]: $y }`).
 signature_suggestion(g, _, _) :- record_ref(g, k, v), !key_keyword(k), text(k, x), text(v, y)
     => replace(g, `{ [key: $x]: $y }`).
+
+// ---- tests: the review's counterexamples (typescript-eslint 8.74.0) -------------------------------------------
+
+// Names are followed as findVariable finds them from the owner's scope: an inner `type Bar` is not the Bar Foo
+// names, and a type parameter Foo is not Foo (unless Foo has a reference: the plugin then compares by name).
+.test names_resolve_from_the_owners_scope exactly
+    .fixture "i1.ts" ```
+        export type Bar = number;
+        export type Foo = { [k: string]: Bar };
+        export function f() {
+          type Bar = Foo;
+          return 0 as unknown as Bar;
+        }
+        ```
+    .fixture "i5.ts" ```
+        export type Foo = { [k: string]: Bar<string> };
+        type Bar<Foo> = Foo;
+        ```
+    .fixture "i6.ts" ```
+        export type Foo = { [k: string]: Bar<string> };
+        type Bar<Foo> = Foo;
+        export let x: Foo;
+        ```
+    .fixture "i8.ts" ```
+        export function g() {
+          type Bar = Foo;
+          type Foo = { [k: string]: Bar };
+          return 0 as unknown as Foo;
+        }
+        ```
+    .expect "@typescript-eslint/consistent-indexed-object-style" at "i1.ts":2
+    .expect "@typescript-eslint/consistent-indexed-object-style" at "i5.ts":1
+.end
+
+// A type parameter's constraint is no annotation: the literal belongs to the alias around the function type. A
+// function type's return type is one.
+.test a_constraint_climbs_to_the_alias exactly
+    .fixture "i2.ts" ```
+        export type Foo = <T extends { [k: string]: Foo }>(a: T) => void;
+        export type Foo2 = new <T extends { [k: string]: Foo2 }>(a: T) => void;
+        ```
+    .fixture "i7.ts" ```
+        export type F = (a: number) => { [k: string]: F };
+        export type G = { [k: string]: G };
+        export interface I { [k: string]: I }
+        export type H = { [K in string]: H };
+        ```
+    .expect "@typescript-eslint/consistent-indexed-object-style" at "i7.ts":1
+.end
+
+// A mapped type's key is used only by references that resolve to it, not by an inner type parameter's.
+.test a_shadowed_key_is_no_use exactly
+    .fixture "i3.ts" ```
+        export type M = { [K in "a" | "b"]: <K>(x: K) => K };
+        export type N = { [K in "a"]: K };
+        ```
+    .expect "@typescript-eslint/consistent-indexed-object-style" at "i3.ts":1
+.end
