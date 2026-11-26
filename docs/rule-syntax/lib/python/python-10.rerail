@@ -1,0 +1,82 @@
+// python/python-10: typing names inside strings Ruff reads as types, for the pyupgrade rules that rewrite them
+// (UP006 `"List[int]"`, UP007 `"Union[a, b]"`). Ruff parses such a string and checks the expression inside it like
+// any other. python/upgrade's sym_at resolves a name from the node's own scope by Ruff's walk order; a node of a
+// parsed tree has no scope, so typing_ref and up_typing_sub never hold there.
+//   - A string annotation's tree (names' parsed_in) is resolved by names itself: its lookup starts at the string.
+//     python/typing's typing_sym reads it.
+//   - A string that is a type outside annotations (python/typing's type_ctx: `X: TypeAlias = "…"`, `type X =
+//     "…"`, TypeVar's bound and constraints, `cast("…", v)`, the arguments of a generic subscript at runtime),
+//     and `TypeAliasType("X", "…")`'s value, is parsed too, but names starts no lookup there. Ruff resolves those
+//     strings after the whole module (deferred), so a name in one reads the last binding of the scopes around the
+//     string: xsym below, the module's imports and those of the functions around it.
+//
+// Interface
+//   str_type(e, s0)         e is in a tree parsed from string s0, a type to Ruff (any depth of nesting), and
+//                           is itself a type there (not in `Literal[…]` or `Annotated[T, …]`'s metadata); s0 is in
+//                           the file's own tree
+//   str_typing_ref(e, x)    such an e, a name or attribute, names typing.x or typing_extensions.x
+//   str_typing_sub(s, x)    such an s is `X[…]` with X naming typing.x: `"Union[a, b]"`
+//   str_rewritable(e, m)    upgrade-typing's rewritable, asked of the string e is in: in a stub, at a 3.m or later
+//                           target, or from 3.7 in an annotation under `from __future__ import annotations`
+//
+// Python background
+//   - A string type is never evaluated, so what it holds needs no runtime support; Ruff still gates the rewrite
+//     on the target version as it does outside strings.
+//   - Strings nest: `"List['List[int]']"` holds another string, parsed in turn.
+//
+//   from typing import List, TypeVar
+//   def f(x: "List[str]"): ...       str_typing_ref(<List>, "List"), str_rewritable(<List>, 9) at 3.10
+//   T = TypeVar("T", bound="List")   str_typing_ref(<List>, "List"), through xsym
+#include "python/upgrade-typing.rerail"
+#include "python/typing.rerail"
+//   parsed_in(e, s), ann_ctx(s), str_node(s), concat_part(s), bound_in(s, x), ibind(s, x, q), modnode(d, m)
+//   (python/names); type_ctx(n), typing_sym(e, x), tsub(s, h, i, a) (python/typing); up_arg, up_kwarg, want(m),
+//   targets(m), stub_file(d), future_annotations(d), typing_only(n) (python/upgrade, python/upgrade-typing)
+
+// ---- strings read as types ---------------------------------------------------------------------------------------
+.decl str_type(e: node, s0: node)
+str_type(e, s0) :- parsed_in(e, s0), type_ctx(e).
+str_type(e, s0) :- xhost(e, s0), type_ctx(e).
+str_type(e, s0) :- xhost(e, s0), taa_value(s0).
+// xstr(s): a string in the file's own tree (a fragment has no module node) that Ruff reads as a type, outside
+// annotations; one of adjacent strings is parsed as their whole.
+.decl xstr(s: node)
+xstr(s) :- type_ctx(s), str_node(s), !ann_ctx(s), !concat_part(s), docof(s, d), modnode(d, _).
+xstr(s) :- taa_value(s).
+// taa_value(s): `TypeAliasType("X", "…")`'s value, positional or `value=`: a type, as Ruff reads it.
+.decl taa_value(s: node)
+taa_value(s) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), typing_sym(f, "TypeAliasType"),
+    up_arg(c, 1, s), str_node(s), !concat_part(s).
+taa_value(s) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), typing_sym(f, "TypeAliasType"),
+    up_kwarg(c, "value", ka), field(ka, "value", v), unparen(v, s), str_node(s), !concat_part(s).
+// xhost(e, s0): e is in the tree parsed from xstr s0, or from a string nested in it.
+.decl xhost(e: node, s0: node)
+xhost(e, s0) :- xstr(s0), parsed(s0, "annotation", r), (e = r ; within(e, r)).
+xhost(e, s0) :- xhost(s, s0), str_node(s), type_ctx(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+
+// ---- names in them -----------------------------------------------------------------------------------------------
+// xwalk(e, x, s): name e (x) of an xhost tree is looked up in scope s: the string's own scope, then the function
+// and module scopes around it (class bodies skipped), up to the first that binds x.
+.decl xwalk(e: node, x: symbol, s: node)
+xwalk(e, x, s) :- xhost(e, s0), ast_name(e, x), expr_ctx(e, "load"), nearest(s0, s, lscope), kind(s, k), scope(k).
+xwalk(e, x, p) :- xwalk(e, x, s), !bound_in(s, x), nearest(s, p, lfscope).
+// xsym(e, q): e (a name, or an attribute on one) names q through an import of the scope its head lands on.
+.decl xsym(e: node, q: symbol)
+xsym(e, q) :- xwalk(e, x, s), bound_in(s, x), ibind(s, x, q).
+xsym(e, cat(q, @slice(de, strlen(x), strlen(de)))) :- kind(e, "attribute"), dotted_expr(e, de), head_name(e, h),
+    ast_name(h, x), xsym(h, q).
+.decl head_name(e: node, h: node)  // h is the name attribute chain e starts with
+head_name(e, h) :- attr_of(e, o, _), (kind(o, "identifier"), h = o ; head_name(o, h)).
+
+// ---- interface ---------------------------------------------------------------------------------------------------
+.decl str_typing_ref(e: node, x: symbol)
+str_typing_ref(e, x) :- str_type(e, _), (ast_name(e, _) ; kind(e, "attribute")), str_sym(e, q), split_dot(q, m, x),
+    typing_mod(m).
+.decl str_sym(e: node, q: symbol)  // e's qualified name: names' for an annotation's tree, xsym for the others
+str_sym(e, q) :- parsed_in(e, _), pyi_sym(e, q).
+str_sym(e, q) :- xhost(e, _), xsym(e, q).
+.decl str_typing_sub(s: node, x: symbol)
+str_typing_sub(s, x) :- str_type(s, _), tsub(s, h, 0, _), str_typing_ref(h, x).
+.decl str_rewritable(e: node, m: number)
+str_rewritable(e, m) :- str_type(e, s0), want(m), docof(s0, d),
+    (stub_file(d) ; targets(m) ; targets(7), future_annotations(d), typing_only(s0)).

@@ -4,22 +4,29 @@
 .mode steer
 .scope include "**/*"
 
-// Ruff UP003 (pyupgrade): `type(x)` where x is a literal: the builtin `type` called with one positional
-// argument and no keywords. The type is known, so write it: str, bytes, int, float, complex or bool.
+// Ruff UP003 (pyupgrade): `type(x)` where x is a literal: the builtin `type` (parentheses allowed) called with one
+// positional argument, keywords ignored. The type is known, so write it: str, bytes, int, float, complex or bool.
 //   type("")        ← UP003: `str`
 //   type(0j)        ← UP003: `complex`
+//   type(("a"), x=1) ← UP003: `str`
 //   type(-1)        not reported: a unary minus, not a literal
-//   type(arg)       not reported
+//   type(1, 2)      not reported; type(*"a") neither
 #include "python/upgrade.rerail"
 //   builtin_at(e, x): e reads the builtin x, at that point of the module
+//   up_arglist(c, a, j), up_keyword(a): c's arguments, comments left out (python/upgrade)
 //   string_form(n, f): "str", "fstr", "bytes" or "tstr" (python/ast)
 
 .violation UP003(at: node, t: symbol) code "UP003"
     "Replace this `type(...)` call with `{t}`; the type of a literal is known in advance."
     suppress ruff "UP003"
     fix safe to_type "Replace `type(...)` with `{t}`"
-UP003(c, t) :- kind(c, "call"), field(c, "function", f), builtin_at(f, "type"), field(c, "arguments", al),
-    kind(al, "argument_list"), child(al, a, 0), !child(al, _, 1), primitive(a, t).
+UP003(c, t) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), builtin_at(f, "type"),
+    count : { up_arglist(c, b, _), positional(b) } = 1, up_arglist(c, a0, _), positional(a0),
+    !kind(a0, "list_splat"), unparen(a0, a), primitive(a, t).
+// positional(a): a positional argument (`*xs` too). A backslash continuation is a line_continuation child of the
+// argument list, which up_arglist keeps: it is no argument.
+.decl positional(a: node)
+positional(a) :- up_arglist(_, a, _), !up_keyword(a), !kind(a, "line_continuation").
 // Ruff's fix: the builtin's name, if nothing shadows it here, padded with a space where the call touches a
 // name or keyword (`type("")in y` becomes `str in y`).
 to_type(c, t) :- !str_shadowed(c, t), !glued_after(c) => replace(c, `$t`).

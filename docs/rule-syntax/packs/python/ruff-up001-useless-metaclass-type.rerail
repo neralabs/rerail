@@ -4,21 +4,24 @@
 .mode steer
 .scope include "**/*"
 
-// Ruff UP001 (pyupgrade): `__metaclass__ = type` in a class body. Python 3 ignores `__metaclass__`, and `type`
-// is the default metaclass anyway. The assignment must have one target, the name itself, and the value the
-// name `type` (parentheses allowed, unresolved: Ruff compares the spelling).
+// Ruff UP001 (pyupgrade): `__metaclass__ = type`, in any scope (Ruff checks every Assign, not only class bodies).
+// Python 3 ignores `__metaclass__`, and `type` is the default metaclass anyway. A plain assignment with one
+// target, the name itself, and the value the name `type`; parentheses allowed on both sides, the value
+// unresolved: Ruff compares the spelling.
 //   class A:
 //       __metaclass__ = type          ← UP001
-//   __metaclass__ = type              not reported: not in a class
-#include "python/ast.rerail"
-//   assign_target(a, t), assign_value(a, v), unparen(e, m)
+//   (__metaclass__) = (type)          ← UP001, at module level too
+//   __metaclass__: type = type        not reported: an annotated assignment
+//   a = __metaclass__ = type          not reported: two targets
+#include "python/typing.rerail"
+//   assign_target(a, t), assign_value(a, v), assign_ann(a, t), unparen(e, m) (python/ast);
+//   plain_target(t, x): `x` or `(x)`, which tree-sitter reads as a one-element tuple_pattern
 
 .violation UP001(at: node) code "UP001"
     "Remove this `__metaclass__ = type` line; Python 3 classes already use `type` as their metaclass. Keep it only if the code must still run on Python 2."
     suppress ruff "UP001"
     fix safe remove "Remove `__metaclass__ = type`"
-UP001(s) :- assign_value(s, v), unparen(v, n), text(n, "type"), kind(n, "identifier"),
-    assign_target(s, t), text(t, "__metaclass__"), kind(t, "identifier"), count : { assign_target(s, _) } = 1,
-    scope_node(s, c), kind(c, "class_definition").
+UP001(s) :- assign_value(s, v), unparen(v, n), text(n, "type"), kind(n, "identifier"), !assign_ann(s, _),
+    count : { assign_target(s, _) } = 1, assign_target(s, t), plain_target(t, "__metaclass__").
 // The statement is the expression_statement around the assignment; remove_stmt leaves `pass` in an emptied body.
 remove(s) :- child(st, s, 0), kind(st, "expression_statement") => remove_stmt(st).

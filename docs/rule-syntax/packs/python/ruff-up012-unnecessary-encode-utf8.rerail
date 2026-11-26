@@ -15,9 +15,9 @@
 #include "python/upgrade-format.rerail"
 //   str_lit, fstr_lit, wide_escape, ascii_str, utf8_only_arg, up_argc
 
-// encode_on(c, s): call c is `s.encode(…)`.
+// encode_on(c, s): call c is `s.encode(…)`, the callee in parentheses or not: `("a".encode)()`.
 .decl encode_on(c: node, s: node)
-encode_on(c, s) :- kind(c, "call"), field(c, "function", f), attr_of(f, s, "encode").
+encode_on(c, s) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), attr_of(f, s, "encode").
 
 .violation bytes_literal(at: node) code "UP012"
     "Write this ASCII string as a bytes literal (`b\"...\"`) instead of calling `.encode()` on it; the result is the same bytes."
