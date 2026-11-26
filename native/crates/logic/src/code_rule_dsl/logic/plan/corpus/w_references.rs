@@ -108,12 +108,15 @@ impl Files {
             return Ok(());
         }
         let _span = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph: a file summarized".into());
+        // Its joins counted, where the run counts them (`RERAIL_W_JOINS`).
+        rerail_prof::code_rule_dsl::w_joins::begin();
         let module = (!self.packages.is_empty()).then(|| python_module_in(path, |directory| self.packages.contains(directory))).flatten();
         let file = FileInput::new(path.to_owned(), "python".to_owned(), Arc::clone(source), module.as_ref(), None, "references").map_err(|e| Error::Plan(format!("{path}: {}", e.reason)))?;
         let root = ast_grep_core::AstGrep::doc(tape.clone());
         let (summary, _) = calls::summarize(root.root(), GrammarDialect::Python, path, file.module.as_deref(), facts.has_syntax_error(), file.source.len(), None);
         let nodes = syntax::definitions(key, facts, self.core).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
         self.files.lock().expect("reference files").push((Arc::from(path), Arc::new(summary), nodes));
+        rerail_prof::code_rule_dsl::w_joins::flush();
         Ok(())
     }
 
@@ -121,6 +124,7 @@ impl Files {
     /// configured key, each edge and open definition at its node, `via` as an atom of the store.
     pub(in crate::code_rule_dsl) fn relations(&self, intern: &dyn Fn(&[&str]) -> Result<Vec<i64>>, read: &BTreeSet<String>) -> Result<Vec<Bound>> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph: the summaries linked".into());
+        rerail_prof::code_rule_dsl::w_joins::begin();
         let key = self.config.key;
         // Taken once, by the cross-file part's binding: the builder's closures still borrow the set.
         let mut files = std::mem::take(&mut *self.files.lock().expect("reference files"));
@@ -149,6 +153,7 @@ impl Files {
             rows.dedup();
             out.push((RELATIONS[1], columns(1), vec![Some(rows.into_iter().collect())]));
         }
+        rerail_prof::code_rule_dsl::w_joins::write();
         Ok(out)
     }
 }

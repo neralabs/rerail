@@ -966,6 +966,7 @@ pub mod code_rule_dsl {
     pub mod phase_clock;
     pub mod prof;
     pub mod sql_frame;
+    pub mod w_joins;
     #[allow(unused_imports)]
     use napi::Result;
     #[allow(unused_imports)]

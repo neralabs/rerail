@@ -133,6 +133,8 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's state"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "SHARD", Thread, "this thread's shard of its run's profile records, merged into them as they are read (decision 0442)"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "STACK", Thread, "this thread's open spans; a job opens its span under its caller's (`profile::here`, carried)"),
+    ("crates/prof/src/code_rule_dsl/w_joins.rs", "ON", Call, "whether W's joins are counted on this thread, from `begin` to `flush`; a pool job counts its own (`w_joins::counted`)"),
+    ("crates/prof/src/code_rule_dsl/w_joins.rs", "TALLY", Call, "this thread's counts of W's joins, merged into the run's (a `rerail_context::local`) at `flush`"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "ACCOUNTED", Thread, "the time this thread's profiled scopes have charged, read and set by its own scopes as they open and close"),
     ("crates/facts_base/src/code_rule_dsl/facts/vtab.rs", "NEAR", Thread, "this thread's view of the process's interned column lists (`column_names`): the same list on any thread"),
     ("crates/tape_format/src/f16/ops.rs", "SPARE", Thread, "this thread's format 16 writer between documents: its parts' buffers, the same on any thread"),
