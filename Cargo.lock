@@ -4297,6 +4297,7 @@ dependencies = [
 name = "rerail-from-middle"
 version = "0.1.0"
 dependencies = [
+ "rerail-bitlex",
  "rerail-blocks",
  "rerail-compiler",
  "rerail-cpu-stream",

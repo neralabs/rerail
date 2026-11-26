@@ -510,6 +510,27 @@ pub struct BlockProgram {
     /// Rounds groups that are regions (Bitlex's `regions`): the same values, which a backend may
     /// make by walking the regions left to right instead of running the rounds (`Walk`).
     pub walks: Vec<Walk>,
+    /// Sets of values no two of which have a bit at one place: a regions group's kinds' fills,
+    /// as a region opens only where no other's bytes are hidden. A walk's kinds are apart too;
+    /// this holds them for the nested regions, which have no `Walk` (decision 0621). Read by a
+    /// run that starts in the middle of a file, which may assume at most one is open.
+    pub apart: Vec<Vector<u16>>,
+    /// The stacks the nested regions keep (decision 0621), each by its levels' carries.
+    pub nests: Vec<Nest>,
+}
+
+/// A stack the nested regions keep (decision 0621): level `j`'s carry (`H_lv{j}`, outermost
+/// first) has a bit where `j` levels or more are open, so each level's bits are within the one
+/// below's. `kinds[k][j]` is level `j`'s carry as a template of string kind `k` (`H_lv{j}_{K}`):
+/// within level `j`'s, and apart from the other kinds' at `j` (a level a bracket's has none). A
+/// kind that nests itself (`Region::nests`) has a stack of its own levels (`K_lv{j}`), within its
+/// fill (`within`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Nest {
+    pub levels: Vector<u16>,
+    pub kinds: Vec<Vector<u16>>,
+    /// A kind that nests itself: its fill, which every level's bits are within.
+    pub within: Option<u16>,
 }
 
 /// A rounds group that is regions (Bitlex's `regions H { … }`, decision 0139): kinds of region
@@ -1861,6 +1882,24 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
             let opens = if k.opens > 1 { format!(" opens {}", k.opens) } else { String::new() };
             let _ = writeln!(out, "  block {at} region {} %{} %{} %{} %{} {}{outside}{empty}{or}{after}{opens}", walk.group, k.opener, k.closer, k.open, k.fill, k.bytes);
         }
+    }
+    // `block N nest %l1 … %lD [kind %k1 … %kD]…`: a stack's levels, and each string kind's.
+    for nest in &block.nests {
+        let vs: Vec<String> = nest.levels.iter().map(|v| format!("%{v}")).collect();
+        let mut line = format!("  block {at} nest {}", vs.join(" "));
+        for kind in &nest.kinds {
+            let ks: Vec<String> = kind.iter().map(|v| format!("%{v}")).collect();
+            line.push_str(&format!(" kind {}", ks.join(" ")));
+        }
+        if let Some(w) = nest.within {
+            line.push_str(&format!(" within %{w}"));
+        }
+        let _ = writeln!(out, "{line}");
+    }
+    // `block N apart %a %b …`: values no two of which have a bit at one place.
+    for set in &block.apart {
+        let vs: Vec<String> = set.iter().map(|v| format!("%{v}")).collect();
+        let _ = writeln!(out, "  block {at} apart {}", vs.join(" "));
     }
     for (k, value) in block.outputs.iter().enumerate() {
         match block.output_delay(k) {

@@ -417,8 +417,12 @@ pub struct Leaf {
     pub back_in: Vec<T>,
     pub back_out: Vec<T>,
     pub outputs: Vec<Vec<T>>,
-    /// No refusal over the chunk is unknown and every state component of the end is known.
+    /// No refusal over the chunk is unknown and every state component of the end is known (a
+    /// stack's kinds aside).
     pub clean: bool,
+    /// The end's components that are the entry's, passed through: the kinds of the stack's
+    /// levels the chunk never went below. The join takes them from the end before.
+    pub pass: Vec<Place>,
 }
 
 /// What a chunk's bytes leave of its start.
@@ -476,74 +480,203 @@ fn known_in(program: &BlockProgram, c: &Component, s: &TStart) -> bool {
     s.get(c.at).k & w == w
 }
 
-/// The order a block splits a world's components in: the long-lived state first (the region
-/// group's members, fills and toggles), then escapes, then `prev`s of at most 4 bits. Wider
-/// `prev`s and back fills (guessed, then checked) are never split here.
-fn split_rank(program: &BlockProgram, c: &Component) -> Option<u8> {
+/// The state a start keeps across many blocks, by component (`Shape::long`), and what of it is
+/// left unknown until the chunk reads it (`Shape::lazy`).
+///
+/// - **Long-lived**: a walk's or a set apart's fills (the region open at a place), a stack's
+///   levels (decision 0621), the toggles, and the `prev`s tied to them.
+/// - **Lazy**: a stack level's kind (the string whose template it is). A chunk never enumerates
+///   them: where it pops a level below its own pushes and the kind decides an output, the entry
+///   is split on that level's kind only, and the leaf records it. The join checks the record
+///   against the chunk before's pushes.
+#[derive(Clone, Debug, Default)]
+pub struct Shape {
+    pub long: Vec<bool>,
+    pub lazy: Vec<bool>,
+}
+
+/// The order a block splits a world's components in: the long-lived state first (the only one
+/// split before the chunk), then the other fills, escapes and the lazy kinds, then `prev`s of at
+/// most 4 bits. Wider `prev`s and back fills (guessed,
+/// then checked) are never split here.
+fn split_rank(program: &BlockProgram, shape: &Shape, i: usize, c: &Component) -> Option<u8> {
     match (c.at, &program.ops[c.op]) {
         (Place::Back(_), _) => None,
+        _ if shape.lazy[i] => Some(1),
+        _ if shape.long[i] => Some(0),
+        // A group's short `prev`: where it leaves the block open, a case before the chunk too
+        // (a region's opener at the byte before: the cases rejoin after its closer, which three
+        // values cannot see).
         (Place::Group(..), BlockOp::Prev(_, k)) if *k <= 4 => Some(0),
-        (_, BlockOp::Fill(..) | BlockOp::Toggle(_)) => Some(0),
-        (_, BlockOp::Escaped(_)) => Some(1),
+        (_, BlockOp::Fill(..) | BlockOp::Toggle(_) | BlockOp::Escaped(_)) => Some(1),
         (_, BlockOp::Prev(_, k)) if *k <= 4 => Some(2),
         _ => None,
     }
 }
 
-/// The state made concrete at each edge before the chunk: what lives across many blocks, the
-/// region group's members (at most 4 bits) and the toggles.
-fn edge_state(program: &BlockProgram, c: &Component) -> bool {
-    match (c.at, &program.ops[c.op]) {
-        (Place::Group(..), BlockOp::Prev(_, k)) => *k <= 4,
-        (Place::Group(..), _) => true,
-        (_, BlockOp::Toggle(_)) => true,
-        _ => false,
-    }
-}
-
-/// The ties between components: each `prev(x, k)` whose `x` is a fill or a toggle holds, as its
-/// top bit, `x`'s last bit at the block before, which is `x`'s carry. `(prev, x)` component pairs.
-pub fn ties(program: &BlockProgram, comps: &[Component]) -> Vec<(usize, usize)> {
-    let by_op: std::collections::HashMap<usize, usize> = comps.iter().enumerate().map(|(i, c)| (c.op, i)).collect();
-    comps.iter().enumerate().filter_map(|(i, c)| match program.ops[c.op] {
-        BlockOp::Prev(a, k) if k > 0 && !c.in_place => {
-            let j = *by_op.get(&usize::from(a))?;
-            matches!(program.ops[comps[j].op], BlockOp::Fill(..) | BlockOp::Toggle(_)).then_some((i, j))
+/// Per value, the fill or toggle component whose carry is its last bit: the fill or toggle
+/// itself, or a group's carry whose next is one (its value is the next's).
+fn carried_by(program: &BlockProgram, comps: &[Component]) -> std::collections::HashMap<usize, usize> {
+    let mut out: std::collections::HashMap<usize, usize> = comps.iter().enumerate().filter(|(_, c)| matches!(program.ops[c.op], BlockOp::Fill(..) | BlockOp::Toggle(_))).map(|(i, c)| (c.op, i)).collect();
+    for group in &program.rounds {
+        for &(c, x) in group {
+            if let Some(&i) = out.get(&usize::from(x)) {
+                out.insert(usize::from(c), i);
+            }
         }
-        _ => None,
-    }).collect()
-}
-
-/// Each walk's kinds (`BlockProgram::walks`: regions that hide each other, so at most one is open
-/// at a place): each kind's fill component, and the `prev`s of it, by component.
-#[derive(Clone, Debug)]
-pub struct Walks {
-    /// Per walk, per kind: the fill's component.
-    pub fills: Vec<Vec<usize>>,
-    /// Per walk, per kind: `(component, k)` of each `prev(fill, k)`.
-    pub prevs: Vec<Vec<Vec<(usize, u8)>>>,
-}
-
-pub fn walks(program: &BlockProgram, comps: &[Component]) -> Walks {
-    let by_op: std::collections::HashMap<usize, usize> = comps.iter().enumerate().map(|(i, c)| (c.op, i)).collect();
-    let mut out = Walks { fills: Vec::new(), prevs: Vec::new() };
-    for w in &program.walks {
-        let fills: Option<Vec<usize>> = w.kinds.iter().map(|k| by_op.get(&usize::from(k.fill)).copied()).collect();
-        let Some(fills) = fills else { continue };
-        let prevs = fills.iter().map(|&f| comps.iter().enumerate().filter_map(|(i, c)| match program.ops[c.op] {
-            BlockOp::Prev(a, k) if usize::from(a) == comps[f].op && k > 0 => Some((i, k)),
-            _ => None,
-        }).collect()).collect();
-        out.fills.push(fills);
-        out.prevs.push(prevs);
     }
     out
 }
 
+/// The ties between components: each `prev(x, k)` whose `x` is a fill or a toggle (or a group's
+/// carry of one) holds, as its top bit, `x`'s last bit at the block before, which is the fill's
+/// carry. `(prev, fill)` component pairs.
+pub fn ties(program: &BlockProgram, comps: &[Component]) -> Vec<(usize, usize)> {
+    let by = carried_by(program, comps);
+    comps.iter().enumerate().filter_map(|(i, c)| match program.ops[c.op] {
+        BlockOp::Prev(a, k) if k > 0 && !c.in_place => Some((i, *by.get(&usize::from(a))?)),
+        _ => None,
+    }).collect()
+}
+
+/// Sets of fills no two of which are open at one place: each walk's kinds, each set apart, each
+/// stack level's kinds. Per set, each fill's component and the `prev`s of it.
+#[derive(Clone, Debug)]
+pub struct Walks {
+    /// Per set, per kind: the fill's component.
+    pub fills: Vec<Vec<usize>>,
+    /// Per set, per kind: `(component, k)` of each `prev(fill, k)`.
+    pub prevs: Vec<Vec<Vec<(usize, u8)>>>,
+}
+
+/// A stack's levels by component (`block::Nest`): per level, outermost first, its fill, and its
+/// kinds' fills.
+#[derive(Clone, Debug)]
+pub struct Stack {
+    pub levels: Vec<usize>,
+    pub kinds: Vec<Vec<usize>>,
+    /// The fill a kind's own stack is within.
+    pub within: Option<usize>,
+}
+
+pub fn walks(program: &BlockProgram, comps: &[Component]) -> Walks {
+    let by = carried_by(program, comps);
+    let mut sets: Vec<Vec<usize>> = Vec::new();
+    for w in &program.walks {
+        let fills: Option<Vec<usize>> = w.kinds.iter().map(|k| by.get(&usize::from(k.fill)).copied()).collect();
+        sets.extend(fills);
+    }
+    for set in &program.apart {
+        sets.push(set.iter().filter_map(|&v| by.get(&usize::from(v)).copied()).collect());
+    }
+    for st in stacks(program, comps) {
+        sets.extend((0..st.levels.len()).map(|j| st.kinds.iter().map(|k| k[j]).collect::<Vec<usize>>()));
+    }
+    sets.retain(|s| s.len() > 1);
+    sets.dedup();
+    let prevs = sets.iter().map(|fills| fills.iter().map(|&f| comps.iter().enumerate().filter_map(|(i, c)| match program.ops[c.op] {
+        BlockOp::Prev(a, k) if k > 0 && by.get(&usize::from(a)) == Some(&f) => Some((i, k)),
+        _ => None,
+    }).collect()).collect()).collect();
+    Walks { fills: sets, prevs }
+}
+
+/// Fills within a run: `fill(s, e)` whose bits are within a value `R`'s at every place of
+/// every stream, so its carry is 1 only where `R`'s last byte was: what `prev(R, 1)` holds. `R`
+/// is a value whose runs a closer of the fill ends (`e`, or a branch it ORs, is `prev(R, 1)`
+/// less a part of `R`): the fill opens in a run and closes at the byte after it. Proved by the
+/// compiler's prover (`f & ~R` never, at the program's delay: bytes after the position may be
+/// past the stream's end, which is sound; by induction, `Induction::never_inductive`). `(fill,
+/// prev)` component pairs; proved once a
+/// program (`Prepared::bounds`).
+pub fn bounds(p: &Prepared<'_>, comps: &[Component]) -> Vec<(usize, usize)> {
+    let program = p.program;
+    let ops = &program.ops;
+    let by_op: std::collections::HashMap<usize, usize> = comps.iter().enumerate().map(|(i, c)| (c.op, i)).collect();
+    let proved = p.bounds.get_or_init(|| {
+        let mut out = Vec::new();
+        for (f, op) in ops.iter().enumerate() {
+            let BlockOp::Fill(_, e) = *op else { continue };
+            let mut todo = vec![(e, 3u8)];
+            let mut rs = Vec::new();
+            while let Some((e, d)) = todo.pop() {
+                match ops[usize::from(e)] {
+                    BlockOp::Or(a, b) if d > 0 => todo.extend([(a, d - 1), (b, d - 1)]),
+                    BlockOp::AndNot(q, _) => {
+                        if let BlockOp::Prev(r, 1) = ops[usize::from(q)] {
+                            rs.push((r, q));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for (r, q) in rs {
+                let mut with = ops.clone();
+                let (Ok(fv), Ok(at)) = (u16::try_from(f), u16::try_from(with.len())) else { continue };
+                with.push(BlockOp::AndNot(fv, r));
+                // By induction on the positions, `f & ~R` itself the hypothesis: at the first
+                // place it would hold, the fill was within `R` the byte before.
+                let work = rerail_bitlex::bitlex_prove::Budget::new(2_000_000);
+                let mut prover = rerail_bitlex::bitlex_prove::Induction::new(&program.rounds, 8, 100_000).within(&work);
+                if prover.never_inductive(&with, &program.tables, at, program.delay) {
+                    out.push((f, usize::from(q)));
+                    break;
+                }
+            }
+        }
+        out
+    });
+    proved.iter().filter_map(|&(f, q)| {
+        let held = by_op.get(&q).copied().or_else(|| comps.iter().position(|c| ops[c.op] == ops[q]))?;
+        Some((*by_op.get(&f)?, held))
+    }).collect()
+}
+
+/// The stacks by component.
+pub fn stacks(program: &BlockProgram, comps: &[Component]) -> Vec<Stack> {
+    let by = carried_by(program, comps);
+    program.nests.iter().filter_map(|n| {
+        let levels: Option<Vec<usize>> = n.levels.iter().map(|&v| by.get(&usize::from(v)).copied()).collect();
+        let kinds: Option<Vec<Vec<usize>>> = n.kinds.iter().map(|k| k.iter().map(|&v| by.get(&usize::from(v)).copied()).collect()).collect();
+        Some(Stack { levels: levels?, kinds: kinds?, within: n.within.and_then(|w| by.get(&usize::from(w)).copied()) })
+    }).collect()
+}
+
+/// The components' shape: long-lived and lazy (`Shape`).
+pub fn shape(program: &BlockProgram, comps: &[Component]) -> Shape {
+    let mut long = vec![false; comps.len()];
+    let mut lazy = vec![false; comps.len()];
+    let walks = walks(program, comps);
+    for &f in walks.fills.iter().flatten() {
+        long[f] = true;
+    }
+    for st in stacks(program, comps) {
+        for &l in &st.levels {
+            long[l] = true;
+        }
+        for &k in st.kinds.iter().flatten() {
+            lazy[k] = true;
+            long[k] = false;
+        }
+    }
+    for (i, c) in comps.iter().enumerate() {
+        if matches!(program.ops[c.op], BlockOp::Toggle(_)) && !c.in_place {
+            long[i] = true;
+        }
+    }
+    for (i, j) in ties(program, comps) {
+        long[i] |= long[j];
+        lazy[i] |= lazy[j];
+        long[i] &= !lazy[i];
+    }
+    Shape { long, lazy }
+}
+
 /// A walk's kinds open at the last places before a block, from a start: per place back from the
 /// last (0: the last byte, the fills' carries; j: what each `prev(fill, k > j)` holds), the kinds
-/// known open. `None` when two are, which no walk makes.
-fn exclusive(walks: &Walks, start: &TStart, comps: &[Component]) -> bool {
+/// known open. False when two are, which no walk makes; or when a stack's level is open with
+/// the one below it closed, or a level's kind with the level closed.
+fn exclusive(walks: &Walks, stacks: &[Stack], start: &TStart, comps: &[Component]) -> bool {
     for (fills, prevs) in walks.fills.iter().zip(&walks.prevs) {
         for j in 0..8u8 {
             let mut open = 0;
@@ -561,6 +694,21 @@ fn exclusive(walks: &Walks, start: &TStart, comps: &[Component]) -> bool {
                 open += usize::from(one);
             }
             if open > 1 {
+                return false;
+            }
+        }
+    }
+    let bit = |c: usize| start.get(comps[c].at).bit(0);
+    for st in stacks {
+        if st.within.is_some_and(|w| bit(w) == Some(false)) && bit(st.levels[0]) == Some(true) {
+            return false;
+        }
+        for (j, &l) in st.levels.iter().enumerate() {
+            let below_closed = j > 0 && bit(st.levels[j - 1]) == Some(false);
+            if bit(l) == Some(true) && below_closed {
+                return false;
+            }
+            if bit(l) == Some(false) && st.kinds.iter().any(|k| bit(k[j]) == Some(true)) {
                 return false;
             }
         }
@@ -623,11 +771,102 @@ struct Ctx<'a, 'p> {
     ties: Vec<(usize, usize)>,
     walks: Walks,
     walk_of: std::collections::HashMap<usize, usize>,
+    stacks: Vec<Stack>,
+    shape: Shape,
+    /// Per component, a stack kind's fill and the `prev`s tied to it (empty for any other).
+    kind_comps: Vec<Vec<usize>>,
+    /// Fills within a run, each with the `prev` that bounds its carry (`bounds`).
+    bounds: Vec<(usize, usize)>,    /// Per value, the fill or toggle component whose carry is its last bit (`carried_by`).
+    carried: std::collections::HashMap<usize, usize>,
+    /// The `prev(x, 1)` components not read in place: `(component, x)`.
+    lasts: Vec<(usize, usize)>,
 }
 
 impl Ctx<'_, '_> {
     fn program(&self) -> &BlockProgram {
         self.p.program
+    }
+
+    /// No two kinds of a set open at one place, and every stack's levels nested.
+    fn consistent(&self, s: &TStart) -> bool {
+        exclusive(&self.walks, &self.stacks, s, self.comps)
+    }
+
+    /// What a start's known closed levels say: a level closed (or the fill a stack is within)
+    /// closes every level above it and its kinds, which are then known 0; the ties applied.
+    /// `None` when the start is not consistent.
+    fn settle(&self, mut s: TStart) -> Option<TStart> {
+        let program = self.program();
+        let comps = self.comps;
+        let closed = |s: &TStart, c: usize| { let t = s.get(comps[c].at); t.k & 1 == 1 && t.v & 1 == 0 };
+        for st in &self.stacks {
+            let from = if st.within.is_some_and(|w| closed(&s, w)) { Some(0) } else { st.levels.iter().position(|&l| closed(&s, l)) };
+            if let Some(j0) = from {
+                for j in j0..st.levels.len() {
+                    for &c in std::iter::once(&st.levels[j]).chain(st.kinds.iter().map(|k| &k[j])) {
+                        let t = s.get(comps[c].at);
+                        if t.k & 1 == 1 && t.v & 1 == 1 {
+                            return None;
+                        }
+                        s.set(comps[c].at, fixed(program, &comps[c], 0));
+                    }
+                }
+            }
+        }
+        // A fill within a run is open only where the run's last byte was.
+        for &(f, r) in &self.bounds {
+            let (ft, rt) = (s.get(comps[f].at), s.get(comps[r].at));
+            match (ft.k & 1 == 1, ft.v & 1 == 1, rt.k & 1 == 1, rt.v & 1 == 1) {
+                (true, true, true, false) => return None,
+                (false, _, true, false) => s.set(comps[f].at, fixed(program, &comps[f], 0)),
+                (true, true, false, _) => s.set(comps[r].at, T::norm(rt.k | 1, rt.v | 1)),
+                _ => {}
+            }
+        }
+        let mut s = tied(program, comps, &self.ties, s)?;
+        // A `prev(x, 1)` holds `x`'s last bit: where `x` combines values whose last bits the
+        // start holds (a fill's or toggle's carry), that bit.
+        for &(i, x) in &self.lasts {
+            let t = s.get(comps[i].at);
+            if t.k & 1 == 0 {
+                if let Some(b) = self.last_bit(&s, x, 6) {
+                    s.set(comps[i].at, T::norm(t.k | 1, t.v | u64::from(b)));
+                }
+            }
+        }
+        Some(s).filter(|x| self.consistent(x))
+    }
+
+    /// Value `x`'s last bit at the block before a start, where the start holds it: a fill's or
+    /// toggle's carry, or a combination of them (`depth` deep).
+    fn last_bit(&self, s: &TStart, x: usize, depth: u8) -> Option<bool> {
+        if let Some(&c) = self.carried.get(&x) {
+            let t = s.get(self.comps[c].at);
+            return (t.k & 1 == 1).then_some(t.v & 1 == 1);
+        }
+        if depth == 0 {
+            return None;
+        }
+        let bit = |v: u16| self.last_bit(s, usize::from(v), depth - 1);
+        match self.program().ops[x] {
+            BlockOp::Or(a, b) => match (bit(a), bit(b)) {
+                (Some(true), _) | (_, Some(true)) => Some(true),
+                (Some(false), Some(false)) => Some(false),
+                _ => None,
+            },
+            BlockOp::And(a, b) => match (bit(a), bit(b)) {
+                (Some(false), _) | (_, Some(false)) => Some(false),
+                (Some(true), Some(true)) => Some(true),
+                _ => None,
+            },
+            BlockOp::AndNot(a, b) => match (bit(a), bit(b)) {
+                (Some(false), _) | (_, Some(true)) => Some(false),
+                (Some(true), Some(false)) => Some(true),
+                _ => None,
+            },
+            BlockOp::Not(a) => bit(a).map(|b| !b),
+            _ => None,
+        }
     }
 
     /// Block `b` from state `s`, each guess of the back fills' carries into it; `pending` is what
@@ -640,7 +879,7 @@ impl Ctx<'_, '_> {
         }
         let mut steps = Vec::new();
         for g in guesses {
-            let Some(g) = tied(program, self.comps, &self.ties, g).filter(|g| exclusive(&self.walks, g, self.comps)) else {
+            let Some(g) = self.settle(g) else {
                 out.refuted += 1;
                 continue;
             };
@@ -652,7 +891,9 @@ impl Ctx<'_, '_> {
                 continue;
             }
             let open_refusal = self.totals.iter().any(|&t| !values[t][0].full());
-            let end_open = self.comps.iter().any(|c| !c.in_place && !matches!(c.at, Place::Back(_)) && !known_in(program, c, &end));
+            // A stack level's kind left unknown is the entry's, or decides nothing yet: the join
+            // takes it from the chunk before (`Leaf::pass`).
+            let end_open = self.comps.iter().enumerate().any(|(i, c)| !c.in_place && !self.shape.lazy[i] && !matches!(c.at, Place::Back(_)) && !known_in(program, c, &end));
             let back_open = end.backs.iter().any(|x| x.k & 1 == 0);
             steps.push(Step { from: g, values, end, open_refusal, end_open, back_open });
         }
@@ -681,7 +922,7 @@ impl Ctx<'_, '_> {
                 }
             }
         }
-        for c in self.comps.iter().filter(|c| !c.in_place && !matches!(c.at, Place::Back(_)) && !known_in(program, c, &t.end)) {
+        for (_, c) in self.comps.iter().enumerate().filter(|(i, c)| !c.in_place && !self.shape.lazy[*i] && !matches!(c.at, Place::Back(_)) && !known_in(program, c, &t.end)) {
             mark(c.op);
         }
         if t.back_open {
@@ -696,7 +937,7 @@ impl Ctx<'_, '_> {
         if outputs {
             targets.extend(self.outputs.iter().copied().filter(|&o| !t.values[o][0].full()));
         }
-        targets.extend(self.comps.iter().filter(|c| !c.in_place && !matches!(c.at, Place::Back(_)) && !known_in(program, c, &t.end)).map(|c| c.op));
+        targets.extend(self.comps.iter().enumerate().filter(|(i, c)| !c.in_place && !self.shape.lazy[*i] && !matches!(c.at, Place::Back(_)) && !known_in(program, c, &t.end)).map(|(_, c)| c.op));
         if t.back_open {
             targets.extend(self.p.backs.iter().copied());
         }
@@ -709,7 +950,7 @@ impl Ctx<'_, '_> {
         let source = |x: usize| anc[x] && !t.values[x][0].full() && program.ops[x].operands().iter().all(|&o| t.values[usize::from(o)][0].full());
         let best = |direct: bool| self.comps.iter().enumerate()
             .filter(|(i, c)| want[*i] && !c.in_place && !known_in(program, c, s) && (!direct || source(c.op)))
-            .filter_map(|(i, c)| split_rank(program, c).filter(|&r| outputs || r == 0).map(|r| (r, known_in(program, c, &t.from), c.op, i)))
+            .filter_map(|(i, c)| split_rank(program, &self.shape, i, c).filter(|&r| outputs || r == 0).map(|r| (r, known_in(program, c, &t.from), c.op, i)))
             .min()
             .map(|(.., i)| i);
         if outputs { best(true).or_else(|| best(false)) } else { best(false) }
@@ -720,6 +961,8 @@ impl Ctx<'_, '_> {
     fn split(&self, s: &TStart, i: usize) -> Vec<TStart> {
         let program = self.program();
         let comps = self.comps;
+        // A `prev` of a set's fill splits as the fill does: the set one-hot.
+        let i = self.ties.iter().find(|t| t.0 == i && self.walk_of.contains_key(&t.1) && !known_in(program, &comps[t.1], s)).map_or(i, |t| t.1);
         if let Some(&wk) = self.walk_of.get(&i) {
             let fills = &self.walks.fills[wk];
             let free: Vec<usize> = fills.iter().copied().filter(|&f| !known_in(program, &comps[f], s)).collect();
@@ -756,6 +999,8 @@ struct World {
     back_out: Vec<T>,
     outputs: Vec<Vec<T>>,
     clean: bool,
+    /// Per stack, per level: open, and known so, at every place so far.
+    held: Vec<Vec<bool>>,
 }
 
 /// Chunk `range` of `file` solved from an unknown start, in two phases.
@@ -773,6 +1018,15 @@ struct World {
 /// A refusal with a known bit refutes a world; a back fill's carry into each block is guessed
 /// and checked against the next block's run.
 pub fn solve(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<usize>, look: usize, cap: usize) -> Solved {
+    solve_to(p, comps, file, range, look, cap, true)
+}
+
+/// The run to the chunk's entry only (`solve`'s first phase): `Solved::entry_states`.
+pub fn entries(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<usize>, look: usize, cap: usize) -> Solved {
+    solve_to(p, comps, file, range, look, cap, false)
+}
+
+fn solve_to(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<usize>, look: usize, cap: usize, through: bool) -> Solved {
     let program = p.program;
     let walks = walks(program, comps);
     let walk_of = walks.fills.iter().enumerate().flat_map(|(w, f)| f.iter().map(move |&c| (c, w))).collect();
@@ -786,6 +1040,25 @@ pub fn solve(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<us
         ties: ties(program, comps),
         walks,
         walk_of,
+        stacks: stacks(program, comps),
+        shape: shape(program, comps),
+        bounds: bounds(p, comps),
+        carried: carried_by(program, comps),
+        lasts: comps.iter().enumerate().filter_map(|(i, c)| match program.ops[c.op] {
+            BlockOp::Prev(x, 1) if !c.in_place => Some((i, usize::from(x))),
+            _ => None,
+        }).collect(),
+        kind_comps: {
+            let mut k: Vec<Vec<usize>> = vec![Vec::new(); comps.len()];
+            let ties = ties(program, comps);
+            for st in stacks(program, comps) {
+                for &f in st.kinds.iter().flatten() {
+                    k[f].push(f);
+                    k[f].extend(ties.iter().filter(|t| t.1 == f).map(|t| t.0));
+                }
+            }
+            k
+        },
     };
     let from = range.start.saturating_sub(look);
     let base = if from == 0 {
@@ -802,6 +1075,8 @@ pub fn solve(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<us
     };
     let nb = p.backs.len();
     let mut out = Solved { from, ..Solved::default() };
+    let trace = std::env::var_os("RERAIL_FM_TRACE").is_some();
+    let t0 = std::time::Instant::now();
     // To the entry.
     let mut worlds: Vec<(TStart, Vec<T>)> = vec![(base, vec![T::X; nb])];
     for b in from..range.start {
@@ -823,21 +1098,22 @@ pub fn solve(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<us
                 for t in steps {
                     let mut st = t.end;
                     st.backs.iter_mut().for_each(|x| *x = T::X);
-                    // The state that lives across many blocks concrete at the edge (`edge_state`:
-                    // the region group's members, the toggles), each one unknown split into its
-                    // values (a walk's kinds one-hot), the ties applied. A token's fill outside
-                    // the regions is left to the next block's bytes.
+                    // The state that lives across many blocks concrete at the edge (`Shape::long`:
+                    // the region open, a stack's depth, the toggles), each one unknown split into
+                    // its values (a set's kinds one-hot, a stack's levels nested), the ties
+                    // applied. A stack's kinds stay unknown (`Shape::lazy`), and what the next
+                    // block's bytes decide is left to them.
                     let mut edge = vec![st];
                     loop {
                         let mut more = false;
                         let mut split_all = Vec::new();
                         for e in edge {
-                            match comps.iter().position(|c| edge_state(program, c) && !known_in(program, c, &e)) {
+                            match comps.iter().enumerate().position(|(i, c)| cx.shape.long[i] && !known_in(program, c, &e)) {
                                 Some(i) => {
                                     more = true;
-                                    split_all.extend(cx.split(&e, i).into_iter().filter_map(|x| tied(program, comps, &cx.ties, x).filter(|x| exclusive(&cx.walks, x, comps))));
+                                    split_all.extend(cx.split(&e, i).into_iter().filter_map(|x| cx.settle(x)));
                                 }
-                                None => split_all.push(e),
+                                None => split_all.extend(cx.settle(e)),
                             }
                         }
                         edge = split_all;
@@ -860,17 +1136,24 @@ pub fn solve(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<us
             next = next.chunks(per).map(|c| c.iter().skip(1).fold(c[0].clone(), |a, b| (merge_start(&a.0, &b.0), merge_all(&a.1, &b.1)))).collect();
         }
         out.widest = out.widest.max(next.len());
+        if trace {
+            eprintln!("   trace: lookback block {b}: {} worlds, {} runs, {} refuted, {:.0} ms", next.len(), out.runs, out.refuted, t0.elapsed().as_secs_f64() * 1e3);
+        }
         worlds = next;
     }
     out.entries = worlds.len();
     out.entry_states = worlds.iter().map(|w| w.0.clone()).collect();
+    if !through {
+        return out;
+    }
     // Each entry through the chunk.
     for (entry, pending0) in worlds {
         let mut variants = vec![entry];
         let mut splits = 0usize;
         out.splits.push(0);
         while let Some(v) = variants.pop() {
-            let mut ws = vec![World { state: v.clone(), pending: pending0.clone(), back_out: vec![T::X; nb], outputs: vec![Vec::new(); cx.outputs.len()], clean: true }];
+            let held0: Vec<Vec<bool>> = cx.stacks.iter().map(|st| vec![true; st.levels.len()]).collect();
+            let mut ws = vec![World { state: v.clone(), pending: pending0.clone(), back_out: vec![T::X; nb], outputs: vec![Vec::new(); cx.outputs.len()], clean: true, held: held0 }];
             let mut need: Option<usize> = None;
             for b in range.clone() {
                 let mut next: Vec<World> = Vec::new();
@@ -907,6 +1190,12 @@ pub fn solve(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<us
                             n.outputs[j].push(t.values[o][0]);
                         }
                         n.clean &= !t.open_refusal;
+                        for (st, held) in cx.stacks.iter().zip(n.held.iter_mut()) {
+                            for (h, &l) in held.iter_mut().zip(&st.levels) {
+                                let x = t.values[comps[l].op][0];
+                                *h &= x.full() && x.v == u64::MAX;
+                            }
+                        }
                         n.pending = t.from.backs.clone();
                         n.state = t.end;
                         n.state.backs.iter_mut().for_each(|x| *x = T::X);
@@ -917,6 +1206,11 @@ pub fn solve(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<us
                                     *a = merge_all(a, b);
                                 }
                                 m.clean &= n.clean;
+                                for (a, b) in m.held.iter_mut().zip(&n.held) {
+                                    for (x, y) in a.iter_mut().zip(b) {
+                                        *x &= *y;
+                                    }
+                                }
                             }
                             None => next.push(n),
                         }
@@ -930,6 +1224,11 @@ pub fn solve(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<us
             if need.is_none() && splits >= 256 {
                 out.spent += 1;
             }
+            if trace {
+                if let Some(i) = need {
+                    eprintln!("   trace: entry split {splits} on component {i} #{} {}, {} runs, {:.0} ms", comps[i].op, program.ops[comps[i].op].text(), out.runs, t0.elapsed().as_secs_f64() * 1e3);
+                }
+            }
             if let Some(i) = need {
                 splits += 1;
                 *out.splits.last_mut().expect("this entry's") = splits;
@@ -940,9 +1239,18 @@ pub fn solve(p: &Prepared<'_>, comps: &[Component], file: &File, range: Range<us
             let mut e = v.clone();
             e.backs.iter_mut().for_each(|x| *x = T::X);
             for w in ws {
-                let end_known = comps.iter().all(|c| c.in_place || matches!(c.at, Place::Back(_)) || known_in(program, c, &w.state));
-                let leaf = Leaf { entry: e.clone(), end: w.state, back_in: w.pending, back_out: w.back_out, outputs: w.outputs, clean: w.clean && end_known };
-                match out.leaves.iter_mut().find(|l| l.end == leaf.end && l.back_in == leaf.back_in && l.entry == leaf.entry) {
+                let end_known = comps.iter().enumerate().all(|(i, c)| c.in_place || cx.shape.lazy[i] || matches!(c.at, Place::Back(_)) || known_in(program, c, &w.state));
+                // The kinds of the levels the chunk never went below are the entry's.
+                let mut pass = Vec::new();
+                for (st, held) in cx.stacks.iter().zip(&w.held) {
+                    for (j, _) in st.levels.iter().enumerate().take_while(|&(j, &l)| held[j] && v.get(comps[l].at).bit(0) == Some(true)) {
+                        for k in &st.kinds {
+                            pass.extend(cx.kind_comps[k[j]].iter().map(|&c| comps[c].at));
+                        }
+                    }
+                }
+                let leaf = Leaf { entry: e.clone(), end: w.state, back_in: w.pending, back_out: w.back_out, outputs: w.outputs, clean: w.clean && end_known, pass };
+                match out.leaves.iter_mut().find(|l| l.end == leaf.end && l.back_in == leaf.back_in && l.entry == leaf.entry && l.pass == leaf.pass) {
                     Some(l) => {
                         l.back_out = merge_all(&l.back_out, &leaf.back_out);
                         for (a, b) in l.outputs.iter_mut().zip(&leaf.outputs) {

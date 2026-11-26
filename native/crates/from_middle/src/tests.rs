@@ -329,7 +329,11 @@ fn report_solve(name: &str, program: &BlockProgram, files: &[Vec<u8>], look: usi
     for &(f, at) in all.iter().step_by(step) {
         let file = File::new(program, &files[f]);
         let range = at..(at + 16).min(file.count());
+        let t1 = std::time::Instant::now();
         let s = crate::solve::solve(&p, &comps, &file, range, look, cap);
+        if std::env::var_os("RERAIL_FM_EACH").is_some() {
+            eprintln!("   file {f} block {at}: {:.0} ms, {} entries, widest {}, {} runs, {} refuted, {} leaves, splits {:?}", t1.elapsed().as_secs_f64() * 1e3, s.entries, s.widest, s.runs, s.refuted, s.leaves.len(), s.splits);
+        }
         sampled += 1;
         leaves.push(s.leaves.len());
         entries.push(s.entries);
@@ -539,6 +543,101 @@ fn report_the_walks() {
     }
 }
 
+#[test]
+#[ignore = "a report: Kotlin from the true state two blocks before a chunk, the short-lived state unknown"]
+fn report_kotlin_sources() {
+    let program = kotlin();
+    let files = kotlin_files(65_536, usize::MAX);
+    let p = Prepared::new(program).expect("a program the chunks run");
+    let comps = crate::starts::components(&p);
+    let shape = crate::solve::shape(program, &comps);
+    let n = |v: &str, d: usize| std::env::var(v).ok().and_then(|n| n.parse().ok()).unwrap_or(d);
+    let (f, at, look) = (n("RERAIL_FM_FILE", 364), n("RERAIL_FM_AT", 176), n("RERAIL_FM_LOOK", 2));
+    let file = File::new(program, &files[f]);
+    let truth = serial_starts(&p, &file, &files[f]);
+    let t = &truth[at - look];
+    let mut s = crate::solve::TStart { ops: t.ops.iter().map(|&v| crate::solve::T::known(v)).collect(), groups: t.groups.iter().map(|g| g.iter().map(|&v| crate::solve::T::known(v)).collect()).collect(), backs: t.backs.iter().map(|&v| crate::solve::T::known(v)).collect() };
+    // RERAIL_FM_KEEP=group keeps the group's members known; RERAIL_FM_ONLY=i makes only
+    // component i unknown.
+    let keep_group = std::env::var("RERAIL_FM_KEEP").is_ok_and(|v| v == "group");
+    let only: Option<usize> = std::env::var("RERAIL_FM_ONLY").ok().and_then(|v| v.parse().ok());
+    for (i, c) in comps.iter().enumerate() {
+        let short = !c.in_place && !shape.long[i] && !shape.lazy[i] && !matches!(c.at, crate::starts::Place::Back(_));
+        let group = matches!(c.at, crate::starts::Place::Group(..));
+        if short && only.map_or(!(keep_group && group), |o| o == i) {
+            s.set(c.at, crate::solve::T::X);
+        }
+    }
+    if std::env::var_os("RERAIL_FM_EACH_GROUP").is_some() {
+        // Each short-lived group component alone: the unknown it leaves at the block's end.
+        let base = s.clone();
+        let t0 = crate::solve::TStart { ops: t.ops.iter().map(|&v| crate::solve::T::known(v)).collect(), groups: t.groups.iter().map(|g| g.iter().map(|&v| crate::solve::T::known(v)).collect()).collect(), backs: t.backs.iter().map(|&v| crate::solve::T::known(v)).collect() };
+        let _ = base;
+        for (i, c) in comps.iter().enumerate() {
+            if c.in_place || shape.long[i] || shape.lazy[i] || !matches!(c.at, crate::starts::Place::Group(..)) {
+                continue;
+            }
+            let mut one = t0.clone();
+            one.set(c.at, crate::solve::T::X);
+            let (_, end) = p.run_t(&file, at - look..at - look + 1, &one);
+            let unknown = comps.iter().filter(|c| !c.in_place && !matches!(c.at, crate::starts::Place::Back(_)) && { let w = crate::solve::width(program, c); end.get(c.at).k & w != w }).count();
+            if unknown > 0 {
+                eprintln!("   alone: component {i} #{} {} leaves {unknown} unknown", c.op, program.ops[c.op].text());
+            }
+        }
+    }
+    for b in at - look..at {
+        let (values, end) = p.run_t(&file, b..b + 1, &s);
+        let unknown: Vec<usize> = comps.iter().filter(|c| !c.in_place && !matches!(c.at, crate::starts::Place::Back(_)) && { let w = crate::solve::width(program, c); end.get(c.at).k & w != w }).map(|c| c.op).collect();
+        let sources: Vec<String> = (0..program.ops.len()).filter(|&x| !values[x][0].full() && program.ops[x].operands().iter().all(|&o| values[usize::from(o)][0].full())).map(|x| format!("#{x} {}", program.ops[x].text())).collect();
+        eprintln!("== block {b}: {} unknown at its end: {:?}", unknown.len(), unknown);
+        eprintln!("   sources: {}", sources.join("; "));
+        s = end;
+        s.backs.iter_mut().zip(&truth[b + 1].backs).for_each(|(x, &v)| *x = crate::solve::T::known(v));
+    }
+}
+
+#[test]
+#[ignore = "a report: the operations under Kotlin's values RERAIL_FM_OPS, three deep"]
+fn report_kotlin_ops() {
+    let program = kotlin();
+    let ops: Vec<usize> = std::env::var("RERAIL_FM_OPS").unwrap_or_default().split(',').filter_map(|x| x.trim().parse().ok()).collect();
+    fn show(program: &BlockProgram, x: usize, depth: usize, seen: &mut Vec<usize>) {
+        let pad = "  ".repeat(depth);
+        eprintln!("   {pad}#{x} {}", program.ops[x].text());
+        if depth >= 4 || seen.contains(&x) {
+            return;
+        }
+        seen.push(x);
+        for o in program.ops[x].operands() {
+            show(program, usize::from(o), depth + 1, seen);
+        }
+    }
+    for x in ops {
+        show(program, x, 0, &mut Vec::new());
+    }
+}
+
+#[test]
+#[ignore = "a report: Kotlin's start, its groups' carries and the sets apart"]
+fn report_the_groups() {
+    let program = kotlin();
+    let p = Prepared::new(program).expect("a program the chunks run");
+    let comps = crate::starts::components(&p);
+    for (g, group) in program.rounds.iter().enumerate() {
+        eprintln!("== group {g}: {} carries", group.len());
+        for &(c, x) in group {
+            eprintln!("   carry #{c} {} next #{x} {}", program.ops[usize::from(c)].text(), program.ops[usize::from(x)].text());
+        }
+    }
+    for (i, c) in comps.iter().enumerate().filter(|(_, c)| !c.in_place) {
+        eprintln!("   component {i} {:?} #{} {}", c.at, c.op, program.ops[c.op].text());
+    }
+    for set in &program.apart {
+        eprintln!("   apart {:?}", set.iter().map(|&v| (v, comps.iter().position(|c| c.op == usize::from(v)))).collect::<Vec<_>>());
+    }
+}
+
 /// Each file in `chunk`-block chunks, each solved from an unknown start, then joined. Every
 /// output bit the join decides is the serial run's, and a chunk not decided (an output bit
 /// unknown) is counted: the ones a device runs again. Returns (chunks, run again).
@@ -587,6 +686,23 @@ fn join_is_the_serial_run(program: &BlockProgram, files: &[Vec<u8>], chunk: usiz
 fn rr_join_is_the_serial_run() {
     let (n, again) = join_is_the_serial_run(rr(), &rr_files(6_000, 3), 4, 1024);
     eprintln!("rr: {again} of {n} chunks run again");
+}
+
+/// Kotlin's stack (decision 0621): a chunk's entry fixes the depth only; the kind of a level
+/// it pops below its own pushes is split on where it decides an output, and the join checks it.
+#[test]
+fn kotlin_join_is_the_serial_run() {
+    let (n, again) = join_is_the_serial_run(kotlin(), &kotlin_files(4_000, 3), 4, 1024);
+    eprintln!("kotlin: {again} of {n} chunks run again");
+}
+
+#[test]
+#[ignore = "a report: Kotlin's join over the files of at most RERAIL_FM_MAX bytes, the first RERAIL_FM_COUNT"]
+fn report_kotlin_join() {
+    let n = |v: &str, d: usize| std::env::var(v).ok().and_then(|n| n.parse().ok()).unwrap_or(d);
+    let t0 = std::time::Instant::now();
+    let (c, again) = join_is_the_serial_run(kotlin(), &kotlin_files(n("RERAIL_FM_MAX", 8_000), n("RERAIL_FM_COUNT", 6)), 16, 1024);
+    eprintln!("== kotlin: {again} of {c} chunks of 1 KB run again, {:.1} s", t0.elapsed().as_secs_f64());
 }
 
 #[test]
@@ -734,6 +850,68 @@ fn report_undecided_causes() {
 }
 
 /// The entries the run to one rr chunk leaves: each one's unknown components.
+#[test]
+#[ignore = "a report"]
+fn report_kotlin_entries() {
+    let program = kotlin();
+    let files = kotlin_files(65_536, usize::MAX);
+    let p = Prepared::new(program).expect("a program the chunks run");
+    let comps = crate::starts::components(&p);
+    let n = |v: &str, d: usize| std::env::var(v).ok().and_then(|n| n.parse().ok()).unwrap_or(d);
+    // `report_solve`'s sample `RERAIL_FM_SAMPLE` of `RERAIL_FM_KOTLIN` (default the second of 4).
+    let mut all: Vec<(usize, usize)> = Vec::new();
+    for (f, bytes) in files.iter().enumerate() {
+        all.extend((0..bytes.len().div_ceil(64).max(1)).step_by(16).map(|at| (f, at)));
+    }
+    let step = all.len().div_ceil(n("RERAIL_FM_KOTLIN", 4).max(1)).max(1);
+    let (f, at) = all[step * n("RERAIL_FM_SAMPLE", 1)];
+    let file = File::new(program, &files[f]);
+    let s = crate::solve::entries(&p, &comps, &file, at..at + 16, n("RERAIL_FM_LOOK", 2), 1024);
+    let truth = serial_starts(&p, &file, &files[f]);
+    eprintln!("== kotlin file {f} chunk {at}: {} entries; refuted {} runs {}", s.entries, s.refuted, s.runs);
+    eprintln!("   bounds: {:?}", crate::solve::bounds(&p, &comps).iter().map(|&(f, r)| (comps[f].op, comps[r].op)).collect::<Vec<_>>());
+    let stacks = crate::solve::stacks(program, &comps);
+    let walks = crate::solve::walks(program, &comps);
+    let show = |e: &crate::solve::TStart| {
+        let bit = |c: usize| { let t = e.get(comps[c].at); if t.k & 1 == 0 { '?' } else if t.v & 1 == 1 { '1' } else { '0' } };
+        let depth: Vec<String> = stacks.iter().map(|st| st.levels.iter().map(|&l| bit(l)).collect()).collect();
+        let sets: Vec<String> = walks.fills.iter().map(|fs| fs.iter().map(|&f| bit(f)).collect()).collect();
+        let unknown = comps.iter().filter(|c| !c.in_place && !matches!(c.at, crate::starts::Place::Back(_))).filter(|c| { let w = crate::solve::width(program, c); e.get(c.at).k & w != w }).count();
+        format!("levels {depth:?} sets {sets:?} {unknown} unknown")
+    };
+    let t = &truth[at];
+    let tt = crate::solve::TStart { ops: t.ops.iter().map(|&v| crate::solve::T::known(v)).collect(), groups: t.groups.iter().map(|g| g.iter().map(|&v| crate::solve::T::known(v)).collect()).collect(), backs: t.backs.iter().map(|&v| crate::solve::T::known(v)).collect() };
+    eprintln!("   truth: {}", show(&tt));
+    let mut lines: Vec<String> = s.entry_states.iter().map(|e| show(e)).collect();
+    lines.sort();
+    let mut counted: Vec<(usize, String)> = Vec::new();
+    for l in lines {
+        match counted.last_mut() {
+            Some((c, m)) if *m == l => *c += 1,
+            _ => counted.push((1, l)),
+        }
+    }
+    for (c, l) in counted {
+        eprintln!("   {c:4} {l}");
+    }
+    // The entry with the fewest unknown, and what is unknown in it.
+    let unknown = |e: &crate::solve::TStart| comps.iter().filter(|c| !c.in_place && !matches!(c.at, crate::starts::Place::Back(_))).filter(|c| { let w = crate::solve::width(program, c); e.get(c.at).k & w != w }).map(|c| format!("#{} {}", c.op, program.ops[c.op].text())).collect::<Vec<String>>();
+    if let Some(e) = s.entry_states.iter().min_by_key(|e| unknown(e).len()) {
+        eprintln!("   fewest: {}", show(e));
+        for u in unknown(e) {
+            eprintln!("     {u}");
+        }
+    }
+    let agrees: Vec<&crate::solve::TStart> = s.entry_states.iter().filter(|e| crate::join::agree_state(e, &tt)).collect();
+    eprintln!("   {} entries agree with the truth", agrees.len());
+    if let Some(e) = agrees.iter().min_by_key(|e| unknown(e).len()) {
+        eprintln!("   true: {}", show(e));
+        for u in unknown(e) {
+            eprintln!("     {u}");
+        }
+    }
+}
+
 #[test]
 #[ignore = "a report"]
 fn report_entries() {

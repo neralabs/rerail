@@ -48,6 +48,9 @@ pub struct Prepared<'p> {
     pub backs: Vec<usize>,
     /// Each operation's place in `carried`, or a back fill's in `backs` (`usize::MAX`: none).
     slot: Vec<usize>,
+    /// The fills proved within a run, by operation, each with the `prev(R, 1)` that bounds its
+    /// carry (`solve::bounds`): proved once a program.
+    pub bounds: std::sync::OnceLock<Vec<(usize, usize)>>,
 }
 
 /// A file's blocks as the interpreter reads them: padded past its end by the program's delay,
@@ -138,7 +141,7 @@ impl<'p> Prepared<'p> {
         for (s, &x) in backs.iter().enumerate() {
             slot[x] = s;
         }
-        Ok(Prepared { program, groups, order, carried, backs, slot })
+        Ok(Prepared { program, groups, order, carried, backs, slot, bounds: std::sync::OnceLock::new() })
     }
 
     /// A file's start: every carry zero.

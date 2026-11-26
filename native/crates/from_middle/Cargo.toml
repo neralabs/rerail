@@ -7,11 +7,13 @@ description = "Tier 1 from the middle of a file: a chunk's possible starts, rule
 
 [features]
 # The compiler's test hooks, for a build with `--features test-hooks` (scripts/check/check_dev_features.py).
-test-hooks = ["rerail-compiler/test-hooks", "rerail-blocks/test-hooks"]
+test-hooks = ["rerail-compiler/test-hooks", "rerail-blocks/test-hooks", "rerail-bitlex/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler" }
 rerail-blocks = { path = "../blocks" }
+# The compiler's prover: a fill proved within a run bounds its carry (`solve::bounds`).
+rerail-bitlex = { path = "../bitlex" }
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
