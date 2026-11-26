@@ -2,8 +2,8 @@
 .description "In a migration, add a foreign key or CHECK constraint to a table that already exists with NOT VALID and validate it in a later migration, so adding it does not scan the table under a lock."
 .language sql
 .mode steer
-.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml"
-.scope text "**/migrations/migration_lock.toml"
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml", "**/*.prisma"
+.scope text "**/migrations/migration_lock.toml", "**/*.prisma"
 .scope exclude "**/node_modules/**", "**/.next/**", "**/dist/**", "**/build/**", "**/out/**", "**/coverage/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/__tests__/**", "**/__mocks__/**", "**/*.test.*", "**/*.spec.*", "**/*.stories.*", "**/test/**", "**/tests/**", "**/e2e/**", "**/fixtures/**"
 // Rerail's own rule, not a port. `ALTER TABLE t ADD CONSTRAINT … FOREIGN KEY …` or `… CHECK (…)` without NOT VALID
 // checks every existing row of t before it commits, holding SHARE ROW EXCLUSIVE on t and on the referenced table
@@ -84,4 +84,24 @@ cnv_constraint_is(a, k) :- kind(a, "add_constraint"), child(a, w, _), kind(w, k)
     .expect _ at "prisma/migrations/20240501000000_post_owner/migration.sql":14
     .expect _ at "drizzle/0001_order_total.sql":2
     .expect _ at "drizzle/0001_order_total.sql":3
+.end
+
+// Another database's migrations (`cases/_other-databases/`), with statements every rule of the pack reports on a
+// PostgreSQL table: Prisma folders whose schema declares `provider = "sqlite"` and `"mysql"` (no migration_lock.toml,
+// no database named in the path, no backquoted names) and a Drizzle folder whose drizzle.config.ts declares
+// `dialect: "sqlite"`. The ORM's declaration makes them another database's: nothing is reported.
+.test other_databases exactly uses repo
+    .given pgm_applied
+    .fixture "apps/mobile/package.json" from "../cases/_other-databases/mobile/package.json"
+    .fixture "apps/mobile/prisma/schema.prisma" from "../cases/_other-databases/mobile/prisma/schema.prisma"
+    .fixture "apps/mobile/prisma/migrations/20240101000000_init/migration.sql" from "../cases/_other-databases/mobile/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "apps/mobile/prisma/migrations/20261120093000_change/migration.sql" from "../cases/_other-databases/mobile/prisma/migrations/20261120093000_change/migration.sql"
+    .fixture "apps/legacy/package.json" from "../cases/_other-databases/legacy/package.json"
+    .fixture "apps/legacy/prisma/schema.prisma" from "../cases/_other-databases/legacy/prisma/schema.prisma"
+    .fixture "apps/legacy/prisma/migrations/20240101000000_init/migration.sql" from "../cases/_other-databases/legacy/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "apps/legacy/prisma/migrations/20261120093000_change/migration.sql" from "../cases/_other-databases/legacy/prisma/migrations/20261120093000_change/migration.sql"
+    .fixture "apps/edge/drizzle.config.ts" from "../cases/_other-databases/edge/drizzle.config.ts"
+    .fixture "apps/edge/drizzle/meta/_journal.json" from "../cases/_other-databases/edge/drizzle/meta/_journal.json"
+    .fixture "apps/edge/drizzle/0000_init.sql" from "../cases/_other-databases/edge/drizzle/0000_init.sql"
+    .fixture "apps/edge/drizzle/0001_change.sql" from "../cases/_other-databases/edge/drizzle/0001_change.sql"
 .end

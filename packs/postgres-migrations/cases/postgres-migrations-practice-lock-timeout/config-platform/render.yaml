@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: api
+    preDeployCommand: npx prisma migrate deploy
+    envVars:
+      - key: PGOPTIONS
+        value: "-c lock_timeout=5s"

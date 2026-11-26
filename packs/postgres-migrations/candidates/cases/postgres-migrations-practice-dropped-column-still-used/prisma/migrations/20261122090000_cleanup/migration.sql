@@ -7,7 +7,7 @@ DROP TABLE "Gone"
 -- "User" stays
 ;
 
--- DropTable: ModelStats is a `/// @view` model now, a view that replaced this table
+-- DropTable: a view of the same name replaces ModelStats below, and Prisma reads the view
 DROP TABLE "ModelStats";
 
 -- AlterTable: "prompt" lives on only as an output name in raw SQL (`meta->>'prompt' prompt`)
@@ -15,3 +15,6 @@ ALTER TABLE "User" DROP COLUMN "prompt";
 
 -- AlterTable
 ALTER TABLE "posts" DROP COLUMN "title"; -- caught
+
+-- CreateView: the model ModelStats now reads this view
+CREATE OR REPLACE VIEW "ModelStats" AS SELECT "id", 1 AS "count" FROM "User";

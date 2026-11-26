@@ -2,8 +2,8 @@
 .description "Don't change a column's type on a table earlier migrations created unless the change is a no-rewrite widening: PostgreSQL rewrites the table and its indexes under an ACCESS EXCLUSIVE lock."
 .language sql
 .mode steer
-.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml"
-.scope text "**/migrations/migration_lock.toml"
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml", "**/*.prisma"
+.scope text "**/migrations/migration_lock.toml", "**/*.prisma"
 .scope exclude "**/node_modules/**", "**/.next/**", "**/dist/**", "**/build/**", "**/out/**", "**/coverage/**", "**/__tests__/**", "**/__mocks__/**", "**/test/**", "**/tests/**", "**/fixtures/**", "**/*.test.*", "**/*.spec.*"
 // Rerail's own rule, not a port. `ALTER TABLE t ALTER COLUMN c [SET DATA] TYPE …` rewrites the whole table and every
 // index on it while it holds ACCESS EXCLUSIVE (no reads, no writes), unless the old type is binary coercible to the
@@ -167,11 +167,11 @@ ctc_rewrites(a, od) :- ctc_old(a, od), ctc_ty(od, _, _, _, _), ctc_ty(a, _, _, _
 // so git_rev reads instead of withholding the rule; `.given pgm_applied` with no rows makes every case migration
 // pending (a run with no base would read only each directory's newest).
 .fixtures repo
-    .fixture ".git/HEAD" from "../cases/_git/HEAD"
-    .fixture ".git/config" from "../cases/_git/config"
-    .fixture ".git/refs/heads/main" from "../cases/_git/refs/heads/main"
-    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
-    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+    .fixture ".git/HEAD" from "../../cases/_git/HEAD"
+    .fixture ".git/config" from "../../cases/_git/config"
+    .fixture ".git/refs/heads/main" from "../../cases/_git/refs/heads/main"
+    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
+    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
 .end
 
 .test cases exactly uses repo
@@ -191,4 +191,24 @@ ctc_rewrites(a, od) :- ctc_old(a, od), ctc_ty(od, _, _, _, _), ctc_ty(a, _, _, _
     .expect _ at "prisma/migrations/20240401000000_bigint/migration.sql":4
     .expect _ at "prisma/migrations/20240401000000_bigint/migration.sql":5
     .expect _ at "prisma/migrations/20240401000000_bigint/migration.sql":11
+.end
+
+// Another database's migrations (`cases/_other-databases/`), with statements every rule of the pack reports on a
+// PostgreSQL table: Prisma folders whose schema declares `provider = "sqlite"` and `"mysql"` (no migration_lock.toml,
+// no database named in the path, no backquoted names) and a Drizzle folder whose drizzle.config.ts declares
+// `dialect: "sqlite"`. The ORM's declaration makes them another database's: nothing is reported.
+.test other_databases exactly uses repo
+    .given pgm_applied
+    .fixture "apps/mobile/package.json" from "../../cases/_other-databases/mobile/package.json"
+    .fixture "apps/mobile/prisma/schema.prisma" from "../../cases/_other-databases/mobile/prisma/schema.prisma"
+    .fixture "apps/mobile/prisma/migrations/20240101000000_init/migration.sql" from "../../cases/_other-databases/mobile/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "apps/mobile/prisma/migrations/20261120093000_change/migration.sql" from "../../cases/_other-databases/mobile/prisma/migrations/20261120093000_change/migration.sql"
+    .fixture "apps/legacy/package.json" from "../../cases/_other-databases/legacy/package.json"
+    .fixture "apps/legacy/prisma/schema.prisma" from "../../cases/_other-databases/legacy/prisma/schema.prisma"
+    .fixture "apps/legacy/prisma/migrations/20240101000000_init/migration.sql" from "../../cases/_other-databases/legacy/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "apps/legacy/prisma/migrations/20261120093000_change/migration.sql" from "../../cases/_other-databases/legacy/prisma/migrations/20261120093000_change/migration.sql"
+    .fixture "apps/edge/drizzle.config.ts" from "../../cases/_other-databases/edge/drizzle.config.ts"
+    .fixture "apps/edge/drizzle/meta/_journal.json" from "../../cases/_other-databases/edge/drizzle/meta/_journal.json"
+    .fixture "apps/edge/drizzle/0000_init.sql" from "../../cases/_other-databases/edge/drizzle/0000_init.sql"
+    .fixture "apps/edge/drizzle/0001_change.sql" from "../../cases/_other-databases/edge/drizzle/0001_change.sql"
 .end

@@ -1,7 +1,7 @@
 {
   "name": "@neralabs/rerail-pack-postgres-migrations",
   "version": "0.1.0",
-  "description": "Rerail rule pack: Postgres migration practice rules for locks, table rewrites and data loss in SQL migrations.",
+  "description": "Rerail rule pack: Postgres migration practice rules for SET NOT NULL and constraints that scan an existing table under lock in SQL migrations, and a lock_timeout check off by default.",
   "keywords": [
     "rerail",
     "rerail-pack",

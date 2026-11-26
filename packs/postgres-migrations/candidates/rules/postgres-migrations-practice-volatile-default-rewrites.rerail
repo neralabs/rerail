@@ -2,8 +2,8 @@
 .description "In a migration, add a column to an existing table without a volatile default, serial type, identity or stored generated expression: each rewrites the whole table under an exclusive lock."
 .language sql
 .mode steer
-.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml"
-.scope text "**/migrations/migration_lock.toml"
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml", "**/*.prisma"
+.scope text "**/migrations/migration_lock.toml", "**/*.prisma"
 .scope exclude "**/*.test.*", "**/*.spec.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**"
 // Rerail's own rule, not a port. Since PostgreSQL 11, `ADD COLUMN … DEFAULT <constant or stable expression>` only
 // records the default in the catalog. A volatile default is different: PostgreSQL must compute a value for each
@@ -65,11 +65,11 @@ vdr_rewrites(cd, "a stored generated expression (`GENERATED ALWAYS AS (…) STOR
 // so git_rev reads instead of withholding the rule; `.given pgm_applied` with no rows makes every case migration
 // pending (a run with no base would read only each folder's newest).
 .fixtures repo
-    .fixture ".git/HEAD" from "../cases/_git/HEAD"
-    .fixture ".git/config" from "../cases/_git/config"
-    .fixture ".git/refs/heads/main" from "../cases/_git/refs/heads/main"
-    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
-    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+    .fixture ".git/HEAD" from "../../cases/_git/HEAD"
+    .fixture ".git/config" from "../../cases/_git/config"
+    .fixture ".git/refs/heads/main" from "../../cases/_git/refs/heads/main"
+    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
+    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
 .end
 
 .test cases exactly uses repo
@@ -86,4 +86,24 @@ vdr_rewrites(cd, "a stored generated expression (`GENERATED ALWAYS AS (…) STOR
     .expect _ at "prisma/migrations/20261120093000_order_public_id/migration.sql":12
     .expect _ at "drizzle/0007_invoice_number.sql":1
     .expect _ at "drizzle/0007_invoice_number.sql":3
+.end
+
+// Another database's migrations (`cases/_other-databases/`), with statements every rule of the pack reports on a
+// PostgreSQL table: Prisma folders whose schema declares `provider = "sqlite"` and `"mysql"` (no migration_lock.toml,
+// no database named in the path, no backquoted names) and a Drizzle folder whose drizzle.config.ts declares
+// `dialect: "sqlite"`. The ORM's declaration makes them another database's: nothing is reported.
+.test other_databases exactly uses repo
+    .given pgm_applied
+    .fixture "apps/mobile/package.json" from "../../cases/_other-databases/mobile/package.json"
+    .fixture "apps/mobile/prisma/schema.prisma" from "../../cases/_other-databases/mobile/prisma/schema.prisma"
+    .fixture "apps/mobile/prisma/migrations/20240101000000_init/migration.sql" from "../../cases/_other-databases/mobile/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "apps/mobile/prisma/migrations/20261120093000_change/migration.sql" from "../../cases/_other-databases/mobile/prisma/migrations/20261120093000_change/migration.sql"
+    .fixture "apps/legacy/package.json" from "../../cases/_other-databases/legacy/package.json"
+    .fixture "apps/legacy/prisma/schema.prisma" from "../../cases/_other-databases/legacy/prisma/schema.prisma"
+    .fixture "apps/legacy/prisma/migrations/20240101000000_init/migration.sql" from "../../cases/_other-databases/legacy/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "apps/legacy/prisma/migrations/20261120093000_change/migration.sql" from "../../cases/_other-databases/legacy/prisma/migrations/20261120093000_change/migration.sql"
+    .fixture "apps/edge/drizzle.config.ts" from "../../cases/_other-databases/edge/drizzle.config.ts"
+    .fixture "apps/edge/drizzle/meta/_journal.json" from "../../cases/_other-databases/edge/drizzle/meta/_journal.json"
+    .fixture "apps/edge/drizzle/0000_init.sql" from "../../cases/_other-databases/edge/drizzle/0000_init.sql"
+    .fixture "apps/edge/drizzle/0001_change.sql" from "../../cases/_other-databases/edge/drizzle/0001_change.sql"
 .end

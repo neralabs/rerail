@@ -43,9 +43,16 @@ model Team {
 }
 
 /// @view
-/// Per-user counts: a view since its table was dropped
+/// Per-user counts, read from the view that replaced its table
 
 model ModelStats {
+  id    String @id
+  count Int
+}
+
+/// @view
+/// A doc comment only: nothing replaced the table
+model ArchivedStats {
   id    String @id
   count Int
 }

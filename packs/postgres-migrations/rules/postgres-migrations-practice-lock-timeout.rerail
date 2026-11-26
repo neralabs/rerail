@@ -2,8 +2,8 @@
 .description "Start a Postgres migration that locks an existing table with SET lock_timeout, so a lock it waits for does not queue every query on the table behind it."
 .language sql
 .mode log
-.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml"
-.scope text "**/migrations/migration_lock.toml"
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml", "**/*.prisma"
+.scope text "**/migrations/migration_lock.toml", "**/*.prisma"
 .scope exclude "**/*.test.*", "**/*.spec.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**"
 // Rerail's own rule, not a port (Squawk's require-lock-timeout, strong_migrations' lock timeout advice). A DDL
 // statement that needs a strong lock on a table waits in the lock queue behind any open transaction that touched the
@@ -24,26 +24,33 @@
 //   CREATE INDEX "User_email_idx" ON "User"("email");                                reported (blocks writes)
 //   DROP TABLE "Old";  CREATE TRIGGER t … ON "User" …                                 reported
 // Left alone:
-//   SET lock_timeout = '5s'; (or SET LOCAL …, SELECT set_config('lock_timeout', '5s', …)) before the statement
-//   a table created earlier in the same migration, or by a migration missing from the Git base (empty, nobody waits;
-//   a table only emptied, or given a NOT NULL column, still has others waiting on its lock)
+//   SET lock_timeout = '5s'; (or SET LOCAL …, SELECT set_config('lock_timeout', '5s', …), '500ms', '0.5s') before
+//   the statement
+//   a table created earlier in the same migration, or by a migration of the same folder missing from the Git base
+//   (empty, nobody waits; a table only emptied, or given a NOT NULL column, still has others waiting on its lock)
 //   a migration that only creates tables (Prisma's init migration) or whose FKs point at tables it creates
 //   CREATE INDEX CONCURRENTLY, ALTER TABLE … VALIDATE CONSTRAINT (they do not block reads or writes)
+//   statements on a table the migration has already locked with `LOCK TABLE t` (ACCESS EXCLUSIVE, the default mode):
+//   they wait for no other session; the migration stops the table on purpose (lib's pgm_locked_at)
 //   statements inside a function body or DO block
 //   migrations of another database the scope also matches (`clickhouse/migrations/…`, a table `ENGINE = …`, MySQL's
 //   backquoted names, a Prisma migration_lock.toml naming another provider)
 //   an older, already-applied migration; a down migration (`down.sql`, `*.down.sql`)
 //   any migration when the repository sets lock_timeout elsewhere: a migration with `ALTER ROLE|USER|DATABASE …
-//   SET lock_timeout`, or `lock_timeout` in package.json, .env files, *.config.* (prisma.config.ts,
-//   drizzle.config.ts), CI workflows, shell scripts, Dockerfiles and compose files, or a script whose path names
-//   migrations (a migrate runner that sets it on its connection)
+//   SET lock_timeout`; or a non-zero `lock_timeout=`/`lock_timeout:`/`lock_timeout TO` (`options=-c
+//   lock_timeout%3D5s` in a URL too) in a file of lib's pgm_config (package.json, .env files, *.config.* such as
+//   prisma.config.ts or drizzle.config.ts, CI workflows, shell scripts, Dockerfiles, compose files, platform deploy
+//   files, a Makefile, a script named for migrations), when that file's package (its nearest package.json; the root
+//   when it has none) holds the migrations folder: the timeout of another app of a monorepo does not count
 //   `SET lock_timeout = 0` (or '0') does not count: it turns the timeout off.
 // Gaps: a timeout set on the database role outside the repository (managed Postgres consoles) is unknowable, so the
 // rule logs. `SET LOCAL` outside a transaction block is accepted, though under Prisma >= 7.4 (statements run one by
 // one) it has no effect. `DROP INDEX` without CONCURRENTLY locks its table, which the statement does not name, so it
-// is not counted. Without a Git base only the newest migration of a directory is read, names ordered bytewise
-// (`10_x` sorts before `9_x`), as by every rule of the pack.
-// A runner configured in a TypeScript file outside the listed paths is not read.
+// is not counted. `LOCK TABLE` itself waits like any statement but is not counted: a migration that takes it has
+// planned the lock (a maintenance window). Without a Git base only the newest migration of a directory is read (lib's
+// version order: `9_x` before `10_x`), as by every rule of the pack. A runner configured in a TypeScript file outside
+// the listed names, or one that reads its timeout from an environment variable set outside the repository, is not
+// read.
 
 #include "lib/postgres-migrations.rerail"
 
@@ -51,7 +58,7 @@
 
 NoLockTimeout(s, t, w, r) :- pgm_pending(d), lt_lock(d, s, t, w), node(d, s, _, i, _),
     i = min j : { lt_lock(d, s2, _, _), node(d, s2, _, j, _) },
-    !lt_timeout_before(d, i), !lt_repo_timeout(), pgm_runner(d, k), lt_retry(k, r).
+    !lt_timeout_before(d, i), !lt_repo_timeout(), !lt_config_timeout(d), pgm_runner(d, k), lt_retry(k, r).
 // lt_retry(k, r): what to do when the timeout fires, by runner (lib's pgm_runner). Prisma records the migration as
 // failed and refuses every later deploy (P3009) until it is resolved; from 7.4 it sends statements one by one, so
 // those before the timed-out one stay applied unless the file wraps them in a transaction.
@@ -68,11 +75,12 @@ lt_target(s, x) :- lt_stmt_kind(k), kind(s, k), pgm_target(s, x).
 lt_target(s, x) :- kind(s, "create_trigger"), child(s, kw, i), kind(kw, "keyword_on"), child(s, o, i + 1), pgm_ref(o, x).
 .decl lt_stmt_kind(k: symbol)
 lt_stmt_kind("alter_table"). lt_stmt_kind("create_table"). lt_stmt_kind("create_index"). lt_stmt_kind("drop_table").
-// lt_existing(s, d, x): at statement s of d, table x was not created before it in the same migration, nor by any
-// migration missing from the Git base (lib's pgm_created_at, pgm_created_pending).
+// lt_existing(s, d, x): at statement s of d, table x was not created before it in the same migration, nor by a
+// migration of the same folder missing from the Git base (lib's pgm_created_at, pgm_created_pending), nor locked
+// before it by the migration's own `LOCK TABLE x` in ACCESS EXCLUSIVE mode (lib's pgm_locked_at).
 .decl lt_existing(s: node, d: number, x: symbol)
 lt_existing(s, d, x) :- lt_cand(s, d, x), node(d, s, _, i, _), count : { pgm_created_at(d, x, j), j < i } = 0,
-    !pgm_created_pending(x).
+    pgm_mig(d, g, _), !pgm_created_pending(g, x), count : { pgm_locked_at(d, x, j, "all"), j < i } = 0.
 
 // ---- statements that lock a table ---------------------------------------------------------------------------------
 // lt_cand(s, d, x, w) before the existing-table check: the table each statement locks and how it reads.
@@ -108,17 +116,28 @@ lt_action(a) :- child(p, a, _), kind(p, "alter_table"), !kind(a, "validate_const
 .decl lt_timeout_before(d: number, i: number)
 lt_timeout_before(d, i) :- lt_lock(d, s0, _, _), node(d, s0, _, i, _), kind(s, "statement"), node(d, s, _, j, _),
     j < i, text(s, x), lt_sets(x).
+// lt_sets(x): statement x sets lock_timeout to a non-zero value: `5s`, `500`, `0.5s`, not `0` or `'0'`.
 .decl lt_sets(x: symbol)
 lt_sets(x) :- kind(s, "statement"), text(s, x),
-    match("(?is)\\s*set\\s+(?:(?:local|session)\\s+)?lock_timeout\\s*(?:=|\\bto\\b)\\s*'?\\s*0*[1-9].*", x).
+    match("(?is)\\s*set\\s+(?:(?:local|session)\\s+)?lock_timeout\\s*(?:=|\\bto\\b)\\s*'?\\s*0*\\.?0*[1-9].*", x).
 lt_sets(x) :- kind(s, "statement"), text(s, x),
-    match("(?is).*set_config\\s*\\(\\s*'lock_timeout'\\s*,\\s*'\\s*0*[1-9].*", x).
-// lt_repo_timeout(): the repository sets lock_timeout for the role, the database or the migration connection.
+    match("(?is).*set_config\\s*\\(\\s*'lock_timeout'\\s*,\\s*'\\s*0*\\.?0*[1-9].*", x).
+// lt_repo_timeout(): a migration sets lock_timeout for the role or the database.
 .decl lt_repo_timeout()
 lt_repo_timeout() :- kind(s, "statement"), text(s, x),
     match("(?is)\\s*alter\\s+(?:role|user|database)\\b.*\\bset\\s+lock_timeout\\b.*", x).
-lt_repo_timeout() :- pgm_config(p), file_line(p, _, t), match("(?i).*lock_timeout.*", t).
-// pgm_config (lib): the files that may configure the migration connection or its runner.
+// lt_config_timeout(d): a file of lib's pgm_config sets a non-zero lock_timeout (lt_config_sets), and no package.json
+// lies in a folder above that file that does not also hold migration d: the timeout of another app of a monorepo
+// (`apps/web/.env` for `packages/db/migrations/…`) does not count; a root, CI or Dockerfile setting does.
+.decl lt_config_timeout(d: number)
+lt_config_timeout(d) :- pgm_pending(d), doc(d, m, _), lt_config_sets(p),
+    count : { pgm_dir(a, _), a != "", prefix(a, p), !prefix(a, m), dir_entry(a, "package.json", 0) } = 0.
+// lt_config_sets(p): config file p sets a non-zero lock_timeout: `lock_timeout=5s`, `lock_timeout: 5000`,
+// `lock_timeout TO '5s'`, `lock_timeout%3D5s` (a URL), `DB_LOCK_TIMEOUT=5s` (a variable the runner reads), or a value
+// read from elsewhere (`lock_timeout: env.X`).
+.decl lt_config_sets(p: symbol)
+lt_config_sets(p) :- pgm_config(p), file_line(p, _, t),
+    match("(?i).*lock_timeout(?:\\s*[=:]\\s*|%3D|\\s+to\\s+|['\"]\\s*,\\s*)['\"]?\\s*(?:0*\\.?0*[1-9]|[a-z_$]).*", t).
 
 // The cases, `cases/postgres-migrations-practice-lock-timeout/`, read as one repository: each line ending in
 // `-- caught` is reported, and no other line. `cases/_git/` is a one-commit repository written as `.git`, so git_rev
@@ -155,12 +174,23 @@ lt_repo_timeout() :- pgm_config(p), file_line(p, _, t), match("(?i).*lock_timeou
     .fixture "services/audit/migrations/20261101120000_event_at/up.sql" from "../cases/postgres-migrations-practice-lock-timeout/services/audit/migrations/20261101120000_event_at/up.sql"
     .fixture "supabase/migrations/20261001000000_posts.sql" from "../cases/postgres-migrations-practice-lock-timeout/supabase/migrations/20261001000000_posts.sql"
     .fixture "supabase/migrations/20261115000000_comments.sql" from "../cases/postgres-migrations-practice-lock-timeout/supabase/migrations/20261115000000_comments.sql"
+    .fixture "modules/maintenance/migrations/0003_lock_first.sql" from "../cases/postgres-migrations-practice-lock-timeout/modules/maintenance/migrations/0003_lock_first.sql"
+    .fixture "modules/shares/migrations/0002_weak_lock.sql" from "../cases/postgres-migrations-practice-lock-timeout/modules/shares/migrations/0002_weak_lock.sql"
+    .fixture "modules/fast/prisma/migrations/20261120100000_subsecond/migration.sql" from "../cases/postgres-migrations-practice-lock-timeout/modules/fast/prisma/migrations/20261120100000_subsecond/migration.sql"
+    .fixture "modules/numbered/migrations/9_ticket_note.sql" from "../cases/postgres-migrations-practice-lock-timeout/modules/numbered/migrations/9_ticket_note.sql"
+    .fixture "modules/numbered/migrations/10_ticket_ref.sql" from "../cases/postgres-migrations-practice-lock-timeout/modules/numbered/migrations/10_ticket_ref.sql"
+    .fixture "modules/longstamp/prisma/migrations/20251015211003000_audit_note/migration.sql" from "../cases/postgres-migrations-practice-lock-timeout/modules/longstamp/prisma/migrations/20251015211003000_audit_note/migration.sql"
+    .fixture "modules/longstamp/prisma/migrations/20260430000000_audit_ref/migration.sql" from "../cases/postgres-migrations-practice-lock-timeout/modules/longstamp/prisma/migrations/20260430000000_audit_ref/migration.sql"
+    .fixture "modules/longstamp/prisma/migrations/20250101000000_audit_presets.sql/migration.sql" from "../cases/postgres-migrations-practice-lock-timeout/modules/longstamp/prisma/migrations/20250101000000_audit_presets.sql/migration.sql"
     .expect _ at "apps/web/prisma/migrations/20261120093000_add_flag/migration.sql":12
     .expect _ at "modules/notify/prisma/migrations/20261120100000_inbox_read/migration.sql":2
     .expect _ at "modules/search/prisma/migrations/20261120100000_doc_lang/migration.sql":4
     .expect _ at "packages/db/migrations/0002_sessions.sql":8
     .expect _ at "services/audit/migrations/20261101120000_event_at/up.sql":1
     .expect _ at "supabase/migrations/20261115000000_comments.sql":1
+    .expect _ at "modules/shares/migrations/0002_weak_lock.sql":3
+    .expect _ at "modules/numbered/migrations/10_ticket_ref.sql":1
+    .expect _ at "modules/longstamp/prisma/migrations/20260430000000_audit_ref/migration.sql":2
 .end
 
 // The migration role gets its timeout from an earlier migration: nothing is reported.
@@ -195,4 +225,51 @@ lt_repo_timeout() :- pgm_config(p), file_line(p, _, t), match("(?i).*lock_timeou
         ALTER TABLE "User" ADD COLUMN "flag" BOOLEAN;
         ```
     .expect _ at "prisma/migrations/20261120093000_add_flag/migration.sql":2
+.end
+
+// `lock_timeout` set to 0 in the connection URL turns the timeout off: reported (`cases/…/config-zero/`).
+.test zero_env_timeout exactly uses repo
+    .fixture ".env.example" from "../cases/postgres-migrations-practice-lock-timeout/config-zero/.env.example"
+    .fixture "prisma/migrations/20261120093000_add_flag/migration.sql" from "../cases/postgres-migrations-practice-lock-timeout/config-zero/prisma/migrations/20261120093000_add_flag/migration.sql"
+    .expect _ at "prisma/migrations/20261120093000_add_flag/migration.sql":2
+.end
+
+// A monorepo (`cases/…/config-other-package/`): the web app's connection URL sets a timeout for the web app only, so
+// the db package's migration is reported; the billing package sets PGOPTIONS for its own migrations, which are not.
+.test other_package_timeout exactly uses repo
+    .fixture "apps/web/package.json" from "../cases/postgres-migrations-practice-lock-timeout/config-other-package/apps/web/package.json"
+    .fixture "apps/web/.env.example" from "../cases/postgres-migrations-practice-lock-timeout/config-other-package/apps/web/.env.example"
+    .fixture "packages/db/package.json" from "../cases/postgres-migrations-practice-lock-timeout/config-other-package/packages/db/package.json"
+    .fixture "packages/db/migrations/0002_flag.sql" from "../cases/postgres-migrations-practice-lock-timeout/config-other-package/packages/db/migrations/0002_flag.sql"
+    .fixture "packages/billing/package.json" from "../cases/postgres-migrations-practice-lock-timeout/config-other-package/packages/billing/package.json"
+    .fixture "packages/billing/.env.example" from "../cases/postgres-migrations-practice-lock-timeout/config-other-package/packages/billing/.env.example"
+    .fixture "packages/billing/migrations/0002_due.sql" from "../cases/postgres-migrations-practice-lock-timeout/config-other-package/packages/billing/migrations/0002_due.sql"
+    .expect _ at "packages/db/migrations/0002_flag.sql":1
+.end
+
+// A hosting platform's deploy file sets PGOPTIONS for the deploy (`cases/…/config-platform/render.yaml`): nothing is
+// reported.
+.test platform_timeout exactly uses repo
+    .fixture "render.yaml" from "../cases/postgres-migrations-practice-lock-timeout/config-platform/render.yaml"
+    .fixture "prisma/migrations/20261120093000_add_flag/migration.sql" from "../cases/postgres-migrations-practice-lock-timeout/config-platform/prisma/migrations/20261120093000_add_flag/migration.sql"
+.end
+
+// Another database's migrations (`cases/_other-databases/`), with statements every rule of the pack reports on a
+// PostgreSQL table: Prisma folders whose schema declares `provider = "sqlite"` and `"mysql"` (no migration_lock.toml,
+// no database named in the path, no backquoted names) and a Drizzle folder whose drizzle.config.ts declares
+// `dialect: "sqlite"`. The ORM's declaration makes them another database's: nothing is reported.
+.test other_databases exactly uses repo
+    .given pgm_applied
+    .fixture "apps/mobile/package.json" from "../cases/_other-databases/mobile/package.json"
+    .fixture "apps/mobile/prisma/schema.prisma" from "../cases/_other-databases/mobile/prisma/schema.prisma"
+    .fixture "apps/mobile/prisma/migrations/20240101000000_init/migration.sql" from "../cases/_other-databases/mobile/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "apps/mobile/prisma/migrations/20261120093000_change/migration.sql" from "../cases/_other-databases/mobile/prisma/migrations/20261120093000_change/migration.sql"
+    .fixture "apps/legacy/package.json" from "../cases/_other-databases/legacy/package.json"
+    .fixture "apps/legacy/prisma/schema.prisma" from "../cases/_other-databases/legacy/prisma/schema.prisma"
+    .fixture "apps/legacy/prisma/migrations/20240101000000_init/migration.sql" from "../cases/_other-databases/legacy/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "apps/legacy/prisma/migrations/20261120093000_change/migration.sql" from "../cases/_other-databases/legacy/prisma/migrations/20261120093000_change/migration.sql"
+    .fixture "apps/edge/drizzle.config.ts" from "../cases/_other-databases/edge/drizzle.config.ts"
+    .fixture "apps/edge/drizzle/meta/_journal.json" from "../cases/_other-databases/edge/drizzle/meta/_journal.json"
+    .fixture "apps/edge/drizzle/0000_init.sql" from "../cases/_other-databases/edge/drizzle/0000_init.sql"
+    .fixture "apps/edge/drizzle/0001_change.sql" from "../cases/_other-databases/edge/drizzle/0001_change.sql"
 .end

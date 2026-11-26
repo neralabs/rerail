@@ -34,3 +34,6 @@ DROP TABLE "AuditLog";
 -- AlterTable (a type change Prisma cannot cast: the column is dropped and added again)
 ALTER TABLE "Account" DROP COLUMN "provider",
 ADD COLUMN     "provider" TEXT NOT NULL DEFAULT 'email';
+
+-- DropTable: the model is documented `/// @view`, but no migration creates a view in the table's place
+DROP TABLE "ArchivedStats"; -- caught

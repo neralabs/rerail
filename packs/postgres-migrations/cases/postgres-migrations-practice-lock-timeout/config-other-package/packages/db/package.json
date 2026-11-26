@@ -1,0 +1,1 @@
+{ "name": "@app/db", "private": true, "scripts": { "migrate": "node-pg-migrate up" } }

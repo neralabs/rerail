@@ -9,10 +9,14 @@
 //                                              `<g>/<k>/migration.sql` (Prisma, drizzle-kit 1.0) or `<g>/<k>/up.sql`,
 //                                              else `<g>/<k>.sql` (drizzle-kit's `0003_x.sql`, Supabase, plain SQL);
 //                                              down migrations are none, and so is any other `.sql` in a folder that
-//                                              holds a `migration.sql` or `up.sql` (civitai's `rollback.sql` and
-//                                              `backfill.sql` beside a Prisma migration). A folder runs its
-//                                              migrations in the byte order of k, so `k1 < k2` compares two of them
-//                  pgm_newer(d)                another migration of d's folder sorts after it
+//                                              holds a `migration.sql` or `up.sql` (a `rollback.sql` or a
+//                                              `backfill.sql` kept beside a Prisma migration). A folder of
+//                                              `<k>/migration.sql` folders runs them in the byte order of k, as
+//                                              Prisma sorts them (`20251015211003000_x` before `20260430000000_y`);
+//                                              a folder of `.sql` files in version order: by the leading number of
+//                                              k (after a Flyway `V`, leading zeros dropped), shorter numbers first,
+//                                              then by the bytes of k, so `9_x.sql` runs before `10_x.sql`
+//                  pgm_newer(d)                another migration of d's folder runs after it
 //                  pgm_applied(d)              migration d has run already (see "Pending" below)
 //                  pgm_pending(d)              d is a PostgreSQL migration that has not run yet: the only kind a rule
 //                                              of the pack reports in
@@ -21,15 +25,18 @@
 //                  pgm_drizzle(p)              drizzle-kit wrote the migration at path p (its journal or snapshot)
 //                  pgm_config(p)               a file that may configure or run the migrator (package.json, .env*,
 //                                              *.config.*, *.sh, Dockerfiles, compose files, CI workflows, a
-//                                              `*migrat*` script), found by a walk of the checkout four levels deep
+//                                              platform's deploy file, a script named for migrations), found by a
+//                                              walk of the checkout four levels deep
 //   Tables:        pgm_ref(o, x)               object reference o names table x
 //                  pgm_target(s, x)            statement s creates, alters, indexes, drops or truncates table x
 //                  pgm_created_at(d, x, i)     document d creates table x (CREATE TABLE, CREATE MATERIALIZED VIEW) at
 //                                              byte offset i
-//                  pgm_created_pending(x)      a migration not in the Git base creates table x
-//                  pgm_partitioned(x)          a migration creates table x `PARTITION BY …` (a partitioned parent)
+//                  pgm_created_pending(g, x)   a migration of folder g that the Git base lacks creates table x
+//                  pgm_partitioned(g, x)       a migration of folder g creates table x `PARTITION BY …` (a
+//                                              partitioned parent)
+//                  pgm_locked_at(d, x, i, m)   document d takes an explicit `LOCK TABLE x` at offset i, in mode m
 //                  pgm_new_table(s, x)         x is s's table and was created in this deploy: earlier in s's file, or
-//                                              by a pending migration (with a Git base)
+//                                              by a pending migration of s's folder (with a Git base)
 //                  pgm_empty_table(s, x)       pgm_new_table, or x was TRUNCATEd or wholly DELETEd earlier in s's file
 //                  pgm_fresh_table(s, x)       pgm_empty_table, or s's file adds x a required column (pgm_required)
 //                                              at or before s: PostgreSQL runs that on an empty table only
@@ -48,19 +55,25 @@
 //   any environment, so a finding there can still be acted on. Without a base (a whole-repository audit), only the
 //   newest migration of each folder counts as pending, the one a coding agent has just written: the older ones have
 //   run, and reporting every applied migration would list hundreds of findings nobody can fix. A table created by a
-//   pending migration is new in every environment; without a base only the same file shows that.
+//   pending migration of the same folder is new in every environment; without a base only the same file shows that.
 //   git_rev needs a repository: outside one (test-rr's fixture directory) it is unreadable and every rule that negates
 //   it is withheld, so the cases carry a one-commit `.git` (`cases/_git/`). test-rr passes no `--base`, so a test that
 //   reads every case migration gives `pgm_applied` no rows (`.given pgm_applied`).
 //
 // Other databases
-//   A project may keep migrations for another database beside its PostgreSQL ones (umami ships MySQL and PostgreSQL
-//   Prisma folders; langfuse ClickHouse ones). A folder is another database's when its path names one
-//   (`prisma/sqlite/migrations/…`, `clickhouse/migrations/…`), its Prisma `migration_lock.toml` names another provider,
-//   or one of its statements has a table `ENGINE = …` clause (ClickHouse, MySQL) or backquoted names (MySQL), comments
-//   and string literals aside (langfuse's PostgreSQL comments quote names in backticks). The lock file is read as a
-//   document, so every rule that includes this library adds `**/migrations/migration_lock.toml` to its
-//   `.scope include` and `.scope text` (file_line cannot read a path computed from a document).
+//   A project may keep migrations for another database beside its PostgreSQL ones (MySQL and PostgreSQL Prisma folders
+//   side by side, ClickHouse migrations beside Prisma ones, a SQLite Drizzle folder for an edge app). The ORM's own
+//   declaration decides first (pgm_declared): the Prisma `migration_lock.toml` of the folder (`provider = …`), the
+//   datasource `provider` of the Prisma schema files under the folder's parent (`<x>/schema.prisma`,
+//   `<x>/schema/*.prisma` for `<x>/migrations`), and the `dialect` (or drizzle-kit 0.20's `driver`) of a Drizzle
+//   config (`*.config.[cm]?[jt]s`, found by the checkout walk) whose `out` folder (default `drizzle`) is the folder.
+//   A folder declared PostgreSQL (or CockroachDB) is PostgreSQL. A folder declared another database is another
+//   database's; so, when nothing declares PostgreSQL, is one whose path names a database (`prisma/sqlite/migrations/…`,
+//   `clickhouse/migrations/…`), or one of whose statements has a table `ENGINE = …` clause (ClickHouse, MySQL) or
+//   backquoted names (MySQL, SQLite as drizzle-kit writes it), comments and string literals aside (a PostgreSQL
+//   comment may quote a name in backticks). The lock file and the schema files are read as documents (file_line cannot
+//   read a path computed from a document), so every rule that includes this library adds
+//   `**/migrations/migration_lock.toml` and `**/*.prisma` to its `.scope include` and `.scope text`.
 //
 // e.g.  prisma/migrations/20240101000000_init/migration.sql     pgm_mig(_, "prisma/migrations", "20240101000000_init")
 //         CREATE TABLE "Order" (…);                             pgm_created_at(_, "Order", _)
@@ -82,8 +95,18 @@ pgm_down(p) :- doc(_, p, _), match("(?i).*(?:/|[._-])down\\.sql", p).
 // `.sql` there (a rollback, a backfill script) is run by hand, if at all.
 .decl pgm_beside_main(p: symbol)
 pgm_beside_main(p) :- doc(_, p, _), (file(@join(@dir(p), "migration.sql")) ; file(@join(@dir(p), "up.sql"))).
+// pgm_newer(d): another migration of d's folder runs after d (pgm_ver first, then the bytes of the name).
 .decl pgm_newer(d: number)
-pgm_newer(d) :- pgm_mig(d, g, k), pgm_mig(_, g, k2), k2 > k.
+pgm_newer(d) :- pgm_mig(d, g, k), pgm_ver(d, n), pgm_mig(d2, g, k2), pgm_ver(d2, n2), (n2 > n ; n2 = n, k2 > k).
+// pgm_ver(d, n): for a migration file `<g>/<k>.sql` (golang-migrate, Flyway and hand-numbered folders order by the
+// number), the digit count of k's leading version number (after a Flyway `V`, leading zeros dropped); else 0, so
+// the names compare by their bytes: Prisma sorts its `<k>/migration.sql` folders by name, whatever the timestamp's
+// length (a folder may even be named `<ts>_x.sql`), and timestamps and zero-padded numbers have equal lengths anyway.
+.decl pgm_ver(d: number, n: number)
+pgm_ver(d, strlen(@replace_all(v, "^0+", ""))) :- pgm_mig(d, g, k), doc(d, p, _), p = cat(g, "/", k),
+    match("[Vv]?(?<v>[0-9]+)(?:[^0-9].*)?", k).
+pgm_ver(d, 0) :- pgm_mig(d, g, k), doc(d, p, _), p = cat(g, "/", k), !match("[Vv]?[0-9].*", k).
+pgm_ver(d, 0) :- pgm_mig(d, g, k), doc(d, p, _), p != cat(g, "/", k).
 
 // ---- pending --------------------------------------------------------------------------------------------------------
 .decl pgm_base()  // the run has a Git base
@@ -99,13 +122,46 @@ pgm_pending(d) :- pgm_mig(d, _, _), !pgm_applied(d), !pgm_other_db(d).
 .decl pgm_other_db(d: number)
 pgm_other_db(d) :- pgm_mig(d, g, _), pgm_other_group(g).
 .decl pgm_other_group(g: symbol)
-pgm_other_group(g) :- pgm_mig(_, g, _),
+pgm_other_group(g) :- pgm_declared(g, "other"), !pgm_declared(g, "pg").
+pgm_other_group(g) :- pgm_mig(_, g, _), !pgm_declared(g, "pg"),
     match("(?i).*(?:clickhouse|mysql|mariadb|sqlite|libsql|turso|mssql|sqlserver|planetscale).*", g).
-pgm_other_group(g) :- pgm_mig(_, g, _), doc(dl, cat(g, "/migration_lock.toml"), _), split_line(dl, _, t),
-    glob("provider*=*", t), !glob("*postgres*", t), !glob("*cockroach*", t).
-pgm_other_group(g) :- pgm_mig(d, g, _), kind(s, "statement"), docof(s, d), text(s, x),
+pgm_other_group(g) :- pgm_mig(d, g, _), !pgm_declared(g, "pg"), kind(s, "statement"), docof(s, d), text(s, x),
     match("(?is).*(?:\\)\\s*engine\\s*=|`[a-z_][a-z0-9_]*`).*", @replace_all(x, "--[^\\n]*|'(?:[^']|'')*'", " ")).
-pgm_other_group(g) :- pgm_mig(d, g, _), kind(n, "identifier"), quoted(n, "`"), docof(n, d).
+pgm_other_group(g) :- pgm_mig(d, g, _), !pgm_declared(g, "pg"), kind(n, "identifier"), quoted(n, "`"), docof(n, d).
+// pgm_declared(g, k): the ORM declares the database of migrations folder g: k = "pg" for PostgreSQL (or CockroachDB),
+// "other" for any other. Prisma: g's migration_lock.toml (any provider but postgresql/cockroachdb is another
+// database), or a datasource `provider` in a `.prisma` file under g's parent folder. Drizzle: a config whose out
+// folder is g.
+.decl pgm_declared(g: symbol, k: symbol)
+pgm_declared(g, "pg") :- pgm_lock_provider(g, v), match("(?i)postgres.*|cockroach.*", v).
+pgm_declared(g, "other") :- pgm_lock_provider(g, v), !match("(?i)postgres.*|cockroach.*", v).
+pgm_declared(g, k) :- pgm_mig(_, g, _), match("(?<b>(?:.*/)?)migrations", g), doc(ds, sp, _), suffix(".prisma", sp),
+    prefix(b, sp), split_line(ds, _, t), match("\\s*provider\\s*=\\s*\"(?<v>[^\"]*)\".*", t), pgm_db_kind(@lower(v), k).
+pgm_declared(g, k) :- pgm_mig(_, g, _), pgm_dz_out(p, g), pgm_dz_kind(p, k).
+// pgm_lock_provider(g, v): folder g's Prisma migration_lock.toml says `provider = "v"`.
+.decl pgm_lock_provider(g: symbol, v: symbol)
+pgm_lock_provider(g, v) :- pgm_mig(_, g, _), doc(dl, cat(g, "/migration_lock.toml"), _), split_line(dl, _, t),
+    match("\\s*provider\\s*=\\s*\"(?<v>[^\"]*)\".*", t).
+// pgm_db_kind(v, k): a Prisma datasource provider, a Drizzle dialect or a drizzle-kit driver, and its database kind
+// (a generator's `provider = "prisma-client-js"` has none).
+.decl pgm_db_kind(v: symbol, k: symbol)
+pgm_db_kind("postgresql", "pg"). pgm_db_kind("postgres", "pg"). pgm_db_kind("pg", "pg"). pgm_db_kind("pglite", "pg").
+pgm_db_kind("cockroachdb", "pg"). pgm_db_kind("mysql", "other"). pgm_db_kind("mysql2", "other").
+pgm_db_kind("sqlite", "other"). pgm_db_kind("better-sqlite", "other"). pgm_db_kind("libsql", "other").
+pgm_db_kind("turso", "other"). pgm_db_kind("d1", "other"). pgm_db_kind("d1-http", "other").
+pgm_db_kind("durable-sqlite", "other"). pgm_db_kind("expo", "other"). pgm_db_kind("singlestore", "other").
+pgm_db_kind("sqlserver", "other"). pgm_db_kind("mongodb", "other").
+// pgm_dz_kind(p, k): config file p declares a Drizzle dialect or driver of kind k (`dialect: "sqlite"`).
+.decl pgm_dz_kind(p: symbol, k: symbol)
+pgm_dz_kind(p, k) :- pgm_config(p), match(".*\\.config\\.[cm]?[jt]s", p), file_line(p, _, t),
+    match("\\s*[\"']?(?:dialect|driver)[\"']?\\s*:\\s*[\"'](?<v>[^\"']+)[\"'].*", t), pgm_db_kind(@lower(v), k).
+// pgm_dz_out(p, g): the migrations folder of Drizzle config p: its `out`, relative to p's folder (`./` and a trailing
+// `/` dropped), else drizzle-kit's default `drizzle`.
+.decl pgm_dz_out(p: symbol, g: symbol)
+pgm_dz_out(p, cat(c, @replace_all(@replace_all(o, "^(?:\\./)+", ""), "/+$", ""))) :- pgm_dz_kind(p, _),
+    match("(?<c>(?:.*/)?)[^/]*", p), file_line(p, _, t), match("\\s*[\"']?out[\"']?\\s*:\\s*[\"'](?<o>[^\"']+)[\"'].*", t).
+pgm_dz_out(p, cat(c, "drizzle")) :- pgm_dz_kind(p, _), match("(?<c>(?:.*/)?)[^/]*", p),
+    count : { file_line(p, _, t), match("\\s*[\"']?out[\"']?\\s*:.*", t) } = 0.
 // pgm_runner(d, r): "drizzle" when drizzle-kit wrote the folder (pgm_drizzle: drizzle-kit migrate and drizzle-orm's
 // migrate() run every pending migration in one transaction); "prisma" for `…/migrations/<dir>/migration.sql` (before
 // 7.4, Prisma sends a file as one batch, which PostgreSQL runs as one transaction); else "plain".
@@ -121,6 +177,10 @@ pgm_drizzle(p) :- doc(_, p, _), suffix("/migration.sql", p), file(@join(@dir(p),
 // pgm_config(p): a file that may configure the migration connection or run the migrator, found by a walk of the
 // checkout (dir_entry and file_line read only paths derived from the root), four levels deep, past dependencies and
 // tests: lock-timeout reads it for a lock_timeout, concurrently-inside-transaction for a `prisma migrate deploy`.
+// Read by name: package.json, .env files, `*.config.*`, shell scripts, Dockerfiles, compose files, CI workflows
+// (GitHub, GitLab), the deploy files of hosting platforms (Procfile, render.yaml, railway.toml/json, fly.toml,
+// vercel.json, netlify.toml, app.yaml), a Makefile, and a JS/TS script whose name holds the word migrate, migration or
+// migrator (`migrate.mjs`, `run-migrations.ts`, `runMigrations.ts`).
 .decl pgm_dir(p: symbol, k: number)
 pgm_dir("", 0).
 pgm_dir(".github/", 1) :- dir_entry("", ".github", 1).
@@ -128,7 +188,9 @@ pgm_dir(cat(p, n, "/"), k + 1) :- pgm_dir(p, k), k < 4, dir_entry(p, n, 1), !pre
     !match("node_modules|dist|build|out|coverage|vendor|tests?|__tests__|e2e|fixtures|__fixtures__|__mocks__|tmp|public|assets", n).
 .decl pgm_config(p: symbol)
 pgm_config(cat(p, n)) :- pgm_dir(p, _), dir_entry(p, n, 0),
-    match("package\\.json|\\.env(?:\\..*)?|.*\\.config\\.[cm]?[jt]s|.*\\.sh|(?i:dockerfile.*)|(?:docker-)?compose.*\\.ya?ml|(?i:.*migrat.*)\\.[cm]?[jt]s", n).
+    match("package\\.json|\\.env(?:\\..*)?|.*\\.config\\.[cm]?[jt]s|.*\\.sh|(?i:dockerfile.*)|(?:docker-)?compose.*\\.ya?ml|\\.gitlab-ci\\.ya?ml|Procfile|render\\.ya?ml|railway\\.(?:toml|json)|fly\\.toml|vercel\\.json|netlify\\.toml|app\\.ya?ml|(?i:makefile)", n).
+pgm_config(cat(p, n)) :- pgm_dir(p, _), dir_entry(p, n, 0),
+    match("(?:(?:.*[-_.])?[Mm]|.*[a-z0-9]M)igrat(?:e|es|ion|ions|or|ors)(?:[-_.A-Z].*)?\\.[cm]?[jt]s", n).
 pgm_config(cat(".github/workflows/", n)) :- pgm_dir(".github/workflows/", _), dir_entry(".github/workflows/", n, 0),
     match(".*\\.ya?ml", n).
 
@@ -147,12 +209,29 @@ pgm_target_kind("create_materialized_view"). pgm_target_kind("drop_table").
 .decl pgm_created_at(d: number, x: symbol, i: number)
 pgm_created_at(d, x, i) :- (kind(e, "create_table") ; kind(e, "create_materialized_view")), pgm_target(e, x),
     node(d, e, _, i, _).
-.decl pgm_created_pending(x: symbol)
-pgm_created_pending(x) :- pgm_created_at(d, x, _), doc(d, p, _), git_rev("base", b), @git_has(b, p) = 0.
-// pgm_partitioned(x): x is created as a partitioned parent; PostgreSQL builds no index on one CONCURRENTLY.
-.decl pgm_partitioned(x: symbol)
-pgm_partitioned(x) :- kind(e, "create_table"), pgm_target(e, x), child(e, c, _), kind(c, "table_partition"), text(c, s),
-    match("(?is)\\s*partition\\s+by\\b.*", s).
+.decl pgm_created_pending(g: symbol, x: symbol)
+pgm_created_pending(g, x) :- pgm_created_at(d, x, _), pgm_mig(d, g, _), doc(d, p, _), git_rev("base", b),
+    @git_has(b, p) = 0.
+// pgm_partitioned(g, x): a migration of folder g creates x as a partitioned parent; PostgreSQL builds no index on one
+// CONCURRENTLY.
+.decl pgm_partitioned(g: symbol, x: symbol)
+pgm_partitioned(g, x) :- kind(e, "create_table"), pgm_target(e, x), child(e, c, _), kind(c, "table_partition"),
+    text(c, s), match("(?is)\\s*partition\\s+by\\b.*", s), docof(e, d), pgm_mig(d, g, _).
+// pgm_locked_at(d, x, i, m): `LOCK [TABLE] [ONLY] x [IN <mode> MODE]` at offset i of d. m is "all" for ACCESS
+// EXCLUSIVE (also the mode when none is written: every read and write waits), "writes" for SHARE, SHARE ROW EXCLUSIVE
+// and EXCLUSIVE (every write waits), else "weak". PostgreSQL takes it only inside a transaction block and holds it to
+// the end of that transaction, so a migration that takes "all" has chosen to stop the table for its whole run, and
+// its later statements on the table wait for no other session.
+.decl pgm_locked_at(d: number, x: symbol, i: number, m: symbol)
+pgm_locked_at(d, x, i, m) :- kind(e, "statement"), text(e, s), match("(?is)\\s*lock\\b.*", s), pgm_lock_mode(e, m),
+    within(o, e), pgm_ref(o, x), node(d, e, _, i, _).
+.decl pgm_lock_mode(e: node, m: symbol)
+pgm_lock_mode(e, "all") :- kind(e, "statement"), text(e, s), match("(?is)\\s*lock\\b.*", s),
+    (!match("(?is).*\\bin\\s+[a-z ]+\\s+mode\\b.*", s) ; match("(?is).*\\bin\\s+access\\s+exclusive\\s+mode\\b.*", s)).
+pgm_lock_mode(e, "writes") :- kind(e, "statement"), text(e, s), match("(?is)\\s*lock\\b.*", s),
+    match("(?is).*\\bin\\s+(?:share|share\\s+row\\s+exclusive|exclusive)\\s+mode\\b.*", s).
+pgm_lock_mode(e, "weak") :- kind(e, "statement"), text(e, s), match("(?is)\\s*lock\\b.*", s),
+    match("(?is).*\\bin\\s+(?:access\\s+share|row\\s+share|row\\s+exclusive|share\\s+update\\s+exclusive)\\s+mode\\b.*", s).
 // pgm_cleared_at(d, x, i): document d empties table x at offset i: TRUNCATE, or DELETE FROM x with no WHERE.
 .decl pgm_cleared_at(d: number, x: symbol, i: number)
 pgm_cleared_at(d, x, i) :- kind(e, "statement"), child(e, k, _), kind(k, "keyword_truncate"), pgm_target(e, x),
@@ -165,7 +244,7 @@ pgm_required_at(d, x, i) :- kind(e, "alter_table"), pgm_target(e, x), child(e, c
     child(c, cd, _), pgm_required(cd), node(d, e, _, i, _).
 .decl pgm_new_table(s: node, x: symbol)
 pgm_new_table(s, x) :- pgm_target(s, x), node(d, s, _, at, _), pgm_created_at(d, x, i), i < at.
-pgm_new_table(s, x) :- pgm_target(s, x), pgm_created_pending(x).
+pgm_new_table(s, x) :- pgm_target(s, x), docof(s, d), pgm_mig(d, g, _), pgm_created_pending(g, x).
 .decl pgm_empty_table(s: node, x: symbol)
 pgm_empty_table(s, x) :- pgm_new_table(s, x).
 pgm_empty_table(s, x) :- pgm_target(s, x), node(d, s, _, at, _), pgm_cleared_at(d, x, i), i < at.

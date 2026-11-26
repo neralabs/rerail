@@ -4,9 +4,12 @@
 `rules/lib/postgres-migrations.rerail`, and one (`dropped-column-still-used`) a TypeScript policy that reads the
 migrations and `*.prisma` files as text. None is a port, so there is no upstream to score against: each rule is checked
 by its cases (`cases/<id>/`, run by the rule file's own test) and by runs on the apps of
-[README.md](README.md#the-corpus) with the largest Prisma and Drizzle migration histories, whose matches were read. What
-each rule matches, leaves alone and misses, with its corpus numbers and sources, is in README.md's "Rule details"; the
-verdict on every match read is at the end of this file.
+[README.md](README.md#the-corpus) with the largest Prisma and Drizzle migration histories, whose matches were read.
+After the [frozen test set](#frozen-test-set-2026-11-26) the pack ships three of them (`set-not-null-scans-table` and
+`constraint-on-existing-table-not-valid` on, `lock-timeout` off); the other seven, with no match there, are candidates
+in `candidates/`. What each rule matches, leaves alone and misses, with its corpus numbers and sources, is in the
+"Rule details" of README.md (shipped rules) or `candidates/README.md` (candidates); the verdict on every match read is
+at the end of this file.
 
 ## Dropped candidates
 
@@ -210,11 +213,171 @@ From the review, not done here:
   `not-valid-validated-in-same-transaction`; and a repository fact for large tables so the lock rules could steer
   there and log elsewhere.
 
+## Generalization pass (held-out apps)
+
+On 8 apps the rules were not tuned on, the pack's two matching rules gave 6 `lock-timeout` and 3
+`index-on-existing-table-blocks-writes` findings; 5 and 0 were real. An overfit audit of the pack listed the
+patches fitted to one corpus app. What changed, each with a case:
+
+- **Library: PostgreSQL only, by the ORM's declaration.** `pgm_declared` reads the folder's `migration_lock.toml`,
+  the datasource `provider` of the `.prisma` files under the folder's parent, and the `dialect`/`driver` of a Drizzle
+  config whose `out` (default `drizzle`) is the folder. A folder declared PostgreSQL (or CockroachDB) is read even when
+  its path or content looks like another database; one declared MySQL, SQLite/libSQL/Turso/D1, SQL Server,
+  SingleStore or MongoDB is skipped; the path-name and content guesses (backquotes, `ENGINE =`) apply only where
+  nothing declares PostgreSQL. Before, only the lock file was read: a Prisma SQLite folder without a lock file and
+  without the database in its path, or a Drizzle SQLite folder written with double quotes, was read as PostgreSQL.
+  Every rule had the same gate through `pgm_pending`, so all ten lacked the schema and Drizzle-config declarations;
+  the nine SQL rules now scan `**/*.prisma` as text for it. Case: `cases/_other-databases/` (a Prisma `sqlite` and a
+  `mysql` folder, a Drizzle `dialect: "sqlite"` folder, each with statements every rule reports), the
+  `other_databases` test of every rule. The same files declared `postgresql` were reported by all ten rules (a one-off
+  control run, not committed).
+- **Library: version order.** "Newest migration of a folder" compared names bytewise, so `9_x.sql` sorted after
+  `10_x.sql` and Flyway `V9__` after `V10__`. In a folder of `.sql` files it now compares the leading version number
+  by its digit count first (`pgm_ver`). Prisma's `<k>/migration.sql` folders keep the byte order, which is the order
+  Prisma applies them in: a first version of the change ordered them by digit count too and made a 17-digit
+  `20251015211003000_x` folder the "newest" of a corpus app's Prisma history, hiding its real newest migration.
+  Cases: `lock-timeout` `modules/numbered/` (`10_ticket_ref.sql` is the newest) and `modules/longstamp/` (the
+  14-digit `20260430000000_audit_ref` is newer than the 17-digit folder and than a folder named
+  `20250101000000_audit_presets.sql`). The second version still keyed the order on the name ending in `.sql`, and a
+  corpus Prisma history holds such a folder (`20250517273700_add_table_view_presets.sql/`), which it made the
+  newest; the order now follows the file layout (`<g>/<k>.sql` against `<g>/<k>/migration.sql`). This last edit was
+  made after the local runs stopped and has not been tested.
+- **Library: tables by folder.** A table created by a pending migration exempts statements on that name only in the
+  same migrations folder (`pgm_created_pending(g, x)`), and a partitioned parent is looked up in the same folder
+  (`pgm_partitioned(g, x)`): a table of the same name in another database's folder no longer counts. Git-base only, so
+  no test-rr case (see ENGINE-GAPS 2).
+- **Library: explicit locks.** `pgm_locked_at` reads `LOCK [TABLE] x [IN <mode> MODE]` (ACCESS EXCLUSIVE when no
+  mode is written). The held-out false positives were one operator-run migration that takes `LOCK TABLE … IN ACCESS
+  EXCLUSIVE MODE` inside `BEGIN … COMMIT` before altering and indexing the table: its later statements wait for no
+  other session and stall nothing the migration did not already stop. `lock-timeout` skips statements on a table
+  the migration has locked ACCESS EXCLUSIVE; `index-on-existing-table-blocks-writes` skips an index build after any
+  write-blocking lock and an ALTER after ACCESS EXCLUSIVE. A `LOCK TABLE` itself is not counted by `lock-timeout`
+  (documented gap: it does wait in the queue). Cases: `lock-timeout` `modules/maintenance/` (left alone) and
+  `modules/shares/` (ROW EXCLUSIVE: still caught); index `ops/migrations/0001_locked.sql` (left alone) and
+  `0002_share_lock.sql` (the UNIQUE constraint after a SHARE lock is still caught).
+- **Library: config walk.** The file list adds GitLab CI, Procfile, render.yaml, railway.toml/json, fly.toml,
+  vercel.json, netlify.toml, app.yaml and Makefile (platform and build files, several of them in the corpus), and the
+  JS/TS runner-script name test `*migrat*` became a whole-word one (`migrate`, `migration(s)`, `migrator`, at a
+  `-`/`_`/`.` or camelCase boundary).
+- **lock-timeout: a timeout set elsewhere.** A config line counted when it held `lock_timeout` anywhere, including
+  `lock_timeout=0`, and in any package of a monorepo. It now needs a non-zero assignment (`=`, `:`, `TO`, a URL's
+  `%3D`, `'lock_timeout', '5s'`, or a value read from a variable), and the file counts for a migrations folder only
+  when no `package.json` sits between them. `SET lock_timeout = '0.5s'` now counts as set (the value regex required a
+  leading non-zero digit). Cases: `zero_env_timeout` (caught), `other_package_timeout` (the web app's timeout does not
+  cover `packages/db`: caught; the billing package's own does), `platform_timeout` (render.yaml), `modules/fast/`.
+- **concurrently-inside-transaction: JS/TS runner scripts.** `prisma migrate deploy|dev` in a JS/TS/JSON config file
+  was ignored, to keep one corpus app's local helper from counting. Every pgm_config file is read now; instead,
+  `migrate dev --create-only` (writes a migration, applies none) does not count, and a package.json script must name
+  `prisma` too. The corpus app whose migrations are applied by hand but whose helper script prints and runs
+  `prisma migrate dev`/`deploy` is now read as running Prisma's migrator: a documented false positive, if its newest
+  migration mixes a CONCURRENTLY with other statements. Cases: `manual_apply` (`--create-only`: left alone),
+  `js_deploy_script` (`scripts/migrate.mjs` runs `prisma migrate deploy`: caught).
+- **dropped-column-still-used: `/// @view`.** A model documented `/// @view` was not a table: one app's comment
+  convention. Now a table counts as brought back when a later statement or pending migration creates a view of its
+  name (`CREATE [OR REPLACE] [MATERIALIZED] VIEW t`). Cases: cleanup migration (`DROP TABLE "ModelStats"` then
+  `CREATE OR REPLACE VIEW "ModelStats"`: left alone), `drop_legacy:39` (a `/// @view` model whose table is dropped with
+  no view: caught).
+- **rename-as-drop-and-add: id names, short names.** `Identifier`/`_identifier` no longer make a name an id (only
+  `id`, `…Id`, `…ID`, `…_id`), and two names are alike only when the contained one has 3 or more characters. Cases:
+  `20250301000000_address_zip` (`ip`/`note` dropped, `zip` added: left alone; `externalIdentifier` → `externalRef`:
+  caught).
+- App names removed from rule and case comments.
+
+Measured before the local runs were stopped (the nine SQL rules in one `run-policies` per app, profiling engine, no
+Git base; `dropped-column-still-used` not run):
+- Held-out, 8 apps: `lock-timeout` 6 → 5 (the operator migration with `LOCK TABLE … ACCESS EXCLUSIVE` gone; the other
+  five, judged real before, unchanged), `index-on-existing-table-blocks-writes` 3 → 0 (the same migration), every
+  other SQL rule 0 → 0.
+- Corpus, 22 apps with valid runs (dossier, nodedr-restaurant-pos, shelf.nu, infisical, workout-cool,
+  kun-touchgal-next, crawlseo, customermates, documenso, civitai, inbox-zero, postiz-app, airbroke, ever-teams,
+  karakeep, minute, formbricks, openship, rallly, openstatus, papermark, spliit): the same matches the review's audit
+  lists for them (papermark 5 index, 3 foreign key, 1 lock; customermates 2 index, 1 lock; airbroke 1 index, 1 lock;
+  one lock each in dossier, crawlseo, inbox-zero, openship, rallly), plus nodedr-restaurant-pos's newest migration
+  (`20261122000000_stock_batch_idempotency`: an ADD COLUMN at :3 and a `CREATE UNIQUE INDEX` at :5 on the existing
+  `stock_batches`, both real); a run of the rules before this pass on that app was stopped before it finished (its
+  partial output had the same two rows), so whether they are new is not measured.
+- Not run (stopped or invalid): cal.diy (its run used the second ordering version, which picked a 17-digit folder;
+  the rerun was stopped), langfuse (run with the second ordering version; see above), trigger.dev and the remaining
+  corpus apps, and `dropped-column-still-used` everywhere.
+
+Not done, with the reason:
+- A rule option to audit every migration instead of each folder's newest: no `.rerail` rule of this repository reads
+  an option yet, and the newest-only policy is the pack's reading of "pending" without a Git base, not a corpus
+  threshold; the ordering it relied on is fixed above.
+- Keeping a table's schema (`public.users` vs `auth.users`): an unqualified name resolves through `search_path`, which
+  the rules cannot read, so splitting by schema would part `users` from `public.users`.
+- Wider folder scopes (`db/migrate`, `migration/`, Flyway `db/migration`): coverage, not precision, and a new
+  folder glob would pull in folders the rules were never measured on.
+- Unifying the copied `.scope exclude` lists: no behaviour depends on them.
+- `rename-as-drop-and-add`'s `rad_copied` (any column of the dropped name read anywhere in the file exempts the drop)
+  over-exempts; it costs recall, not precision.
+
+## Frozen test set (2026-11-26)
+
+20 open-source apps nobody used to write, tune or generalize the rules, at these commits: AmruthPillai/Reactive-Resume
+`897bcf8`, Mail-0/Zero `4b642df`, baptisteArno/typebot.io `532c83e`, boxyhq/saas-starter-kit `abc9b68`,
+dittofeed/dittofeed `9127793`, hatchet-dev/hatchet `8441396`, ixartz/SaaS-Boilerplate `e3952a7`,
+latitude-dev/latitude-llm `1317bc0`, lobehub/lobe-chat `58a93517`, mickasmt/next-saas-stripe-starter `c6df229`,
+onlook-dev/onlook `20e374e`, polarsource/polar `180647f`, sadmann7/skateshop `e954d54`, shadcn-ui/taxonomy `298a885`,
+sourcebot-dev/sourcebot `fa0f00c`, steven-tey/precedent `3be4020`, t3-oss/create-t3-app `4709861`, usertour/usertour
+`4c604ab`, vercel/ai-chatbot `a8989b5`, webstudio-is/webstudio `726b288`. One `run-policies` per app with all ten rules
+on (no Git base: each migrations folder's newest migration is the pending one), profiling engine of `628c1f905f` on a
+fleet workspace; every app ran, none hit a resource limit. Each finding was read by a reader who did not write the
+rules. The bar: a rule ships on when more than 90% of its test-set matches are real, ships off below that, and leaves
+the pack as a candidate when it has no match.
+
+19 findings, 17 real. Every finding, with its verdict (paths in the app, line of the finding):
+
+| Rule | App | Migration | Line | Verdict | Why |
+|---|---|---|--:|---|---|
+| `lock-timeout` | Reactive-Resume | `migrations/20261113160840_rapid_reaper/migration.sql` | 1 | not real | `ALTER TABLE "application" ADD COLUMN "posting_file_url" text;`, but the runner in `apps/server/src/startup/checks.ts` sends `SET lock_timeout = '5s'` before the migrations ("A waiting ALTER queues every later query on its table, so give up quickly and retry instead"); the rule does not read that file |
+| `lock-timeout` | Zero | `apps/server/src/db/migrations/0039_account_assistants.sql` | 42 | real, low impact | a foreign key from the new `mail0_assistant_action` to the existing `mail0_user` locks `mail0_user`; no `lock_timeout` in the repository |
+| `lock-timeout` | typebot.io | `packages/prisma/postgresql/migrations/20260821120000_remove_inactive_workspace_cleanup/migration.sql` | 1 | real | `ALTER TABLE "Workspace" DROP COLUMN …` on the hot `Workspace`; no `lock_timeout` in the repository |
+| `lock-timeout` | saas-starter-kit | `prisma/migrations/20240531124127_expand_jackson_namespace_column/migration.sql` | 2 | real, low impact | `ALTER COLUMN "namespace" SET DATA TYPE VARCHAR(256)` on `jackson_store`: no rewrite, but ACCESS EXCLUSIVE with no timeout |
+| `lock-timeout` | dittofeed | `examples/supabase/supabase/migrations/20221017024722_init.sql` | 2 | not real | `create table profiles (id uuid references auth.users …)`: the init migration of an example Supabase project; on a fresh project nobody waits on `auth.users` (borderline: on a live project the foreign key briefly locks it) |
+| `lock-timeout` | dittofeed | `packages/backend-lib/drizzle/0010_subscription_management_template.sql` | 9 | real, low impact | a foreign key from `SubscriptionManagementTemplate` to the existing `Workspace`; no `lock_timeout` in the repository |
+| `lock-timeout` | latitude-llm | `packages/platform/db-postgres/drizzle/20261027114149_add-trace-deletion-include-dataset-rows/migration.sql` | 1 | real, low impact | `ADD COLUMN "include_dataset_rows" boolean DEFAULT false NOT NULL` on `trace_deletion_requests`, created by `20261027100325_add-trace-deletion-requests` (probably small); the only `lock_timeout` mention is a doc for another migration |
+| `lock-timeout` | usertour | `apps/server/prisma/migrations/20261012000000_required_content_step_theme_segment_columns/migration.sql` | 10 | real | the first of ten ALTERs, `ALTER TABLE "Content" ALTER COLUMN "name" SET NOT NULL, …`, with no `lock_timeout` |
+| `constraint-on-existing-table-not-valid` | usertour | same migration | 40 | real | `ADD CONSTRAINT "Content_environmentId_fkey" FOREIGN KEY … REFERENCES "Environment"("id") ON DELETE RESTRICT` after dropping it, no `NOT VALID`: every `Content` row re-checked under SHARE ROW EXCLUSIVE; the comment above is about `onDelete` only |
+| `set-not-null-scans-table` | usertour | same migration | 10 | real | `ALTER TABLE "Content" ALTER COLUMN "name" SET NOT NULL, … SET DEFAULT ''` after an `UPDATE` backfill; no validated CHECK |
+| `set-not-null-scans-table` | usertour | same migration | 13 | real | `"Content"."publishedAt" SET NOT NULL` after a backfill, no CHECK proof |
+| `set-not-null-scans-table` | usertour | same migration | 15 | real | `"Content"."environmentId" SET NOT NULL`, no backfill; the header comment's "tightened as they are" states intent but the scan stays |
+| `set-not-null-scans-table` | usertour | same migration | 18 | real | `"Step"."name" SET NOT NULL, … SET DEFAULT ''` |
+| `set-not-null-scans-table` | usertour | same migration | 20 | real | `"Step"."type" SET NOT NULL`, no backfill; the file's comment says NULLs may exist, so it can also fail |
+| `set-not-null-scans-table` | usertour | same migration | 23 | real | `"Step"."setting" SET NOT NULL, … SET DEFAULT '{}'` |
+| `set-not-null-scans-table` | usertour | same migration | 26 | real | `"Step"."data" SET NOT NULL, … SET DEFAULT '[]'` |
+| `set-not-null-scans-table` | usertour | same migration | 29 | real | `"Step"."target" SET NOT NULL, … SET DEFAULT '{}'` |
+| `set-not-null-scans-table` | usertour | same migration | 32 | real, low impact | `"Theme"."settings" SET NOT NULL`: `Theme` is probably small |
+| `set-not-null-scans-table` | usertour | same migration | 35 | real, low impact | `"Segment"."source" SET NOT NULL` after `UPDATE "Segment" SET "source" = 'internal'`: `Segment` is probably small |
+
+(The reader's own tally printed 9 for `set-not-null-scans-table`; its per-finding lines are the 10 above, all real.)
+
+Per rule, and what follows:
+- `set-not-null-scans-table`: 10 of 10 real. Ships on.
+- `constraint-on-existing-table-not-valid`: 1 of 1 real. Ships on.
+- `lock-timeout`: 6 of 8 real (75%). Ships off (`"on": false` in pack.json; it keeps its log mode for whoever turns it
+  on). The fixes it needs before it can start on, one per false shape:
+  - A timeout set by the app's own migration runner (Reactive-Resume's TypeScript startup code): count a non-zero
+    `SET lock_timeout` (the test `lt_sets` applies to a migration's statements) in a string literal of any JS/TS
+    source file, outside tests, of the package that holds the migrations folder, instead of only the config files,
+    deploy files and migration-named scripts of lib's `pgm_config`. Case to add: a `src/startup/*.ts` that sends
+    `SET lock_timeout = '5s'` before running the folder's migrations (left alone), and one that sends `'0'` (caught).
+  - An example app's migration (dittofeed's `examples/supabase/…`): add `**/examples/**` and `**/example/**` to the
+    rule's `.scope exclude`, beside the test and fixture folders. Case to add: `examples/<app>/supabase/migrations/…`
+    with an ALTER on an existing table (left alone).
+- The other seven rules: no match on any of the 20 apps, so their precision on unseen apps is unmeasured. Each moved,
+  with its cases, to `candidates/rules/` and `candidates/cases/`, out of pack.json; their details moved from README.md
+  to `candidates/README.md`: `index-on-existing-table-blocks-writes`, `concurrently-inside-transaction`,
+  `required-column-without-default`, `volatile-default-rewrites`, `column-type-change-rewrites`,
+  `rename-as-drop-and-add`, `dropped-column-still-used`. The library stays in `rules/lib/`; the candidates include it
+  as `../../rules/lib/postgres-migrations.rerail` and read the shared `../../cases/_git/` and
+  `../../cases/_other-databases/`.
+
 ## Every match read, with its verdict
 
 The writers' runs read each repository's whole migration history (every migration counted as pending, before the
 library's newest-only audit policy). Each list is the rule's final round; the verdicts and the fixes they led to are
-summarised in README.md's rule details.
+summarised in the rule details of README.md (shipped rules) and candidates/README.md (candidates).
 
 ### `postgres-migrations-practice-index-on-existing-table-blocks-writes`
 

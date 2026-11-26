@@ -119,3 +119,18 @@ A probe with `doc_root(d, r)` as the anchor failed `run-rr` with "no statistics 
 
 The csv export of a run has each violation's location and code, not its parameters; reading what a message says needs
 the run-rr JSON (`.diagnostics[].parameters`). Affected the reading of `rename-as-drop-and-add`'s corpus matches.
+
+## 13. `package_for` has rows only for the policy's scanned documents
+
+`package_for(p, dir)` answers for a path the policy scans (a migration `.sql`), not for another file of the checkout
+found by `dir_entry` (a `.env.example`, a Dockerfile). Repro (`.language sql`, scope `**/*.sql`), with fixtures
+`apps/web/package.json`, `apps/web/.env.example` and `apps/web/migrations/1.sql`:
+
+```
+A(s) :- kind(s, "alter_table"), package_for("apps/web/.env.example", _).          // no rows
+B(s) :- kind(s, "alter_table"), doc(_, p, _), package_for(p, "apps/web").         // reported
+```
+
+Affects `lock-timeout` (whether a configuration file belongs to the package that holds a migrations folder).
+Workaround: the rule looks for a `package.json` with `dir_entry` in the walked folders between the file and the
+migration (`lt_config_timeout`).

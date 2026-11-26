@@ -34,7 +34,8 @@
 //     output name (`AS "locationId"`, or with no AS after a literal or `)`: `meta->>'prompt' prompt`), a
 //     'string literal' or a `-- comment`                                                      not reported
 //   a DROP COLUMN or DROP TABLE in a `--` or `/* */` comment of the migration                  not reported
-//   a model documented `/// @view` (a view that replaced the table; Prisma reads it, not the table)  not reported
+//   a table dropped and replaced by a view of its name (`CREATE [OR REPLACE] [MATERIALIZED] VIEW t`) in the same or a
+//     later pending migration: Prisma reads the view as the model                         not reported
 //   an applied migration (not pending), a down migration, a rollback.sql beside a migration.sql  not reported
 //   a bare name in raw SQL that also names another table declaring that column (`INSERT INTO "Team" ("tier") …
 //     FROM "Account"` while Account drops tier and model Team has tier)                       not reported
@@ -122,10 +123,14 @@ dcsu_droptable(d, l, m, sp, n) :- dcsu_read(d), source(d, src),
     match_group("(?is)--[^\\n]*|/\\*(?s:.*?)\\*/|'(?:[^']|'')*'|\\bDROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:(?:\"[^\"]+\"|\\w+)\\.)?(?<t>\"[^\"]+\"|\\w+)(?<n>(?:[^;-]|-[^-;])*)", src, m, "t", sp),
     match_group("(?is)--[^\\n]*|/\\*(?s:.*?)\\*/|'(?:[^']|'')*'|\\bDROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:(?:\"[^\"]+\"|\\w+)\\.)?(?<t>\"[^\"]+\"|\\w+)(?<n>(?:[^;-]|-[^-;])*)", src, m, "n", ns),
     text(ns, n), line(m, l).
-// dcsu_create(d, l, sp): `CREATE [UNLOGGED] TABLE [IF NOT EXISTS] [s.]t` at line l, name span sp.
+// dcsu_create(d, l, sp): `CREATE [UNLOGGED] TABLE [IF NOT EXISTS] [s.]t`, or `CREATE [OR REPLACE] [MATERIALIZED] VIEW
+// [IF NOT EXISTS] [s.]t` (a view that takes the place of a dropped table), at line l, name span sp.
 .decl dcsu_create(d: number, l: number, sp: span)
 dcsu_create(d, l, sp) :- dcsu_read(d), source(d, src),
     match_group("(?is)--[^\\n]*|/\\*(?s:.*?)\\*/|'(?:[^']|'')*'|\\bCREATE\\s+(?:UNLOGGED\\s+)?TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:(?:\"[^\"]+\"|\\w+)\\.)?(?<t>\"[^\"]+\"|\\w+)", src, _, "t", sp),
+    line(sp, l).
+dcsu_create(d, l, sp) :- dcsu_read(d), source(d, src),
+    match_group("(?is)--[^\\n]*|/\\*(?s:.*?)\\*/|'(?:[^']|'')*'|\\bCREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:MATERIALIZED\\s+)?VIEW\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:(?:\"[^\"]+\"|\\w+)\\.)?(?<t>\"[^\"]+\"|\\w+)", src, _, "t", sp),
     line(sp, l).
 
 // dcsu_drop(sp, t, c, d, l): the migration d drops column c of table t (c = "" for the whole table), at span sp,
@@ -137,7 +142,8 @@ dcsu_drop(sp, t, "", d, l) :- dcsu_droptable(d, l, _, sp, n), match_all("(?<s>\"
     dcsu_fold(s, t), t != "cascade", t != "restrict".
 
 // dcsu_back(d, l, t, c): migration d, at line l, makes column c of table t exist again (c = "" for the table):
-// ADD COLUMN, RENAME … TO c, CREATE TABLE t, ALTER TABLE … RENAME TO t. A new table counts for each of its columns.
+// ADD COLUMN, RENAME … TO c, CREATE TABLE t or CREATE VIEW t, ALTER TABLE … RENAME TO t. A new table counts for each
+// of its columns.
 .decl dcsu_back(d: number, l: number, t: symbol, c: symbol)
 dcsu_back(d, l, t, c) :- dcsu_alter(d, l, t, k, c, _), (k = "add" ; k = "rencol").
 dcsu_back(d, l, t, "") :- dcsu_alter(d, l, _, "rentab", t, _).
@@ -167,20 +173,13 @@ dcsu_in(d, l, s, m) :- dcsu_pline(d, l, _), s = max s0 : { dcsu_open(d, s0, _, _
     count : { dcsu_close(d, e), e > s, e < l } = 0.
 .decl dcsu_model_name(m: symbol)
 dcsu_model_name(m) :- dcsu_open(_, _, kw, m), (kw = "model" ; kw = "view" ; kw = "type").
-// dcsu_table(d, s, m, t): the model m opened at line s of d is table t (its @@map, else its name); @@ignore and a
-// `/// @view` doc comment leave it out.
+// dcsu_table(d, s, m, t): the model m opened at line s of d is table t (its @@map, else its name); @@ignore leaves it
+// out.
 .decl dcsu_table(d: number, s: number, m: symbol, t: symbol)
 dcsu_table(d, s, m, t) :- dcsu_open(d, s, "model", m), dcsu_in(d, l, s, m), dcsu_pline(d, l, x),
-    match("\\s*@@map\\(\\s*(name:\\s*)?\"(?<t>[^\"]+)\".*", x), !dcsu_ignored(d, s), !dcsu_view(d, s).
+    match("\\s*@@map\\(\\s*(name:\\s*)?\"(?<t>[^\"]+)\".*", x), !dcsu_ignored(d, s).
 dcsu_table(d, s, m, m) :- dcsu_open(d, s, "model", m), count : { dcsu_in(d, l, s, m), dcsu_pline(d, l, x), match("\\s*@@map\\(.*", x) } = 0,
-    !dcsu_ignored(d, s), !dcsu_view(d, s).
-// dcsu_view(d, s): the model opened at line s is documented `/// @view` (the doc comment lines right above it): a
-// database view that Prisma reads as a model (civitai's ModelHash replaced its table), not the table a migration drops.
-.decl dcsu_view_line(d: number, v: number)
-dcsu_view_line(d, v) :- dcsu_pline(d, v, x), match("\\s*///.*@view\\b.*", x).
-.decl dcsu_view(d: number, s: number)
-dcsu_view(d, s) :- dcsu_view_line(d, v), s = min s0 : { dcsu_open(d, s0, _, _), s0 > v }, dcsu_open(d, s, "model", _),
-    count : { dcsu_pline(d, j, y), j > v, j < s, !match("\\s*(//.*)?", y) } = 0.
+    !dcsu_ignored(d, s).
 .decl dcsu_ignored(d: number, s: number)
 dcsu_ignored(d, s) :- dcsu_open(d, s, "model", m), dcsu_in(d, l, s, m), dcsu_pline(d, l, x), match("\\s*@@ignore\\b.*", x).
 // dcsu_column(d, l, m, f, c): line l of d declares scalar field f of model m, column c (its @map, else f).
@@ -302,11 +301,14 @@ dcsu_use(dm, t, c, cat(p, " (TypedSQL) names it")) :- dcsu_drop(_, t, c, dm, _),
 // git_rev reads instead of withholding the rule; `.given pgm_applied` with no rows makes every case migration pending
 // (a run with no base would read only each folder's newest).
 .fixtures repo
-    .fixture ".git/HEAD" from "../cases/_git/HEAD"
-    .fixture ".git/config" from "../cases/_git/config"
-    .fixture ".git/refs/heads/main" from "../cases/_git/refs/heads/main"
-    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
-    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+    .fixture ".git/HEAD" from "../../cases/_git/HEAD"
+    .fixture ".git/config" from "../../cases/_git/config"
+    .fixture ".git/refs/heads/main" from "../../cases/_git/refs/heads/main"
+    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
+    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+.end
+
+.fixtures app
     .fixture "package.json" from "../cases/postgres-migrations-practice-dropped-column-still-used/package.json"
     .fixture "tsconfig.json" from "../cases/postgres-migrations-practice-dropped-column-still-used/tsconfig.json"
     .fixture "prisma/schema.prisma" from "../cases/postgres-migrations-practice-dropped-column-still-used/prisma/schema.prisma"
@@ -324,13 +326,14 @@ dcsu_use(dm, t, c, cat(p, " (TypedSQL) names it")) :- dcsu_drop(_, t, c, dm, _),
     .fixture "packages/analytics/migrations/0001_drop_legacy.sql" from "../cases/postgres-migrations-practice-dropped-column-still-used/packages/analytics/migrations/0001_drop_legacy.sql"
 .end
 
-.test cases exactly uses repo
+.test cases exactly uses repo, app
     .given pgm_applied
     .expect _ at "prisma/migrations/20261120093000_drop_legacy/migration.sql":8
     .expect _ at "prisma/migrations/20261120093000_drop_legacy/migration.sql":11
     .expect _ at "prisma/migrations/20261120093000_drop_legacy/migration.sql":15
     .expect _ at "prisma/migrations/20261120093000_drop_legacy/migration.sql":18
     .expect _ at "prisma/migrations/20261120093000_drop_legacy/migration.sql":29
+    .expect _ at "prisma/migrations/20261120093000_drop_legacy/migration.sql":39
     .expect _ at "prisma/migrations/20261122090000_cleanup/migration.sql":17
     .expect _ at "packages/analytics/migrations/0001_drop_legacy.sql":1
     .expect _ at "packages/analytics/migrations/0001_drop_legacy.sql":2
@@ -338,8 +341,28 @@ dcsu_use(dm, t, c, cat(p, " (TypedSQL) names it")) :- dcsu_drop(_, t, c, dm, _),
 
 // The same repository read as a repository audit reads it (no Git base, no `.given`): only the newest migration of
 // each folder is pending, so the applied 20261120093000_drop_legacy is not read.
-.test no_base exactly uses repo
+.test no_base exactly uses repo, app
     .expect _ at "prisma/migrations/20261122090000_cleanup/migration.sql":17
     .expect _ at "packages/analytics/migrations/0001_drop_legacy.sql":1
     .expect _ at "packages/analytics/migrations/0001_drop_legacy.sql":2
+.end
+
+// Another database's migrations (`cases/_other-databases/`), with statements every rule of the pack reports on a
+// PostgreSQL table: Prisma folders whose schema declares `provider = "sqlite"` and `"mysql"` (no migration_lock.toml,
+// no database named in the path, no backquoted names) and a Drizzle folder whose drizzle.config.ts declares
+// `dialect: "sqlite"`. The ORM's declaration makes them another database's: nothing is reported.
+.test other_databases exactly uses repo
+    .given pgm_applied
+    .fixture "apps/mobile/package.json" from "../../cases/_other-databases/mobile/package.json"
+    .fixture "apps/mobile/prisma/schema.prisma" from "../../cases/_other-databases/mobile/prisma/schema.prisma"
+    .fixture "apps/mobile/prisma/migrations/20240101000000_init/migration.sql" from "../../cases/_other-databases/mobile/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "apps/mobile/prisma/migrations/20261120093000_change/migration.sql" from "../../cases/_other-databases/mobile/prisma/migrations/20261120093000_change/migration.sql"
+    .fixture "apps/legacy/package.json" from "../../cases/_other-databases/legacy/package.json"
+    .fixture "apps/legacy/prisma/schema.prisma" from "../../cases/_other-databases/legacy/prisma/schema.prisma"
+    .fixture "apps/legacy/prisma/migrations/20240101000000_init/migration.sql" from "../../cases/_other-databases/legacy/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "apps/legacy/prisma/migrations/20261120093000_change/migration.sql" from "../../cases/_other-databases/legacy/prisma/migrations/20261120093000_change/migration.sql"
+    .fixture "apps/edge/drizzle.config.ts" from "../../cases/_other-databases/edge/drizzle.config.ts"
+    .fixture "apps/edge/drizzle/meta/_journal.json" from "../../cases/_other-databases/edge/drizzle/meta/_journal.json"
+    .fixture "apps/edge/drizzle/0000_init.sql" from "../../cases/_other-databases/edge/drizzle/0000_init.sql"
+    .fixture "apps/edge/drizzle/0001_change.sql" from "../../cases/_other-databases/edge/drizzle/0001_change.sql"
 .end

@@ -2,8 +2,8 @@
 .description "Don't write a column rename as DROP COLUMN plus ADD COLUMN of the same type: deploying it deletes every value in the old column; rename the column or map the new field name onto the old column."
 .language sql
 .mode log
-.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml"
-.scope text "**/migrations/migration_lock.toml"
+.scope include "**/migrations/**/*.sql", "**/drizzle/**/*.sql", "**/migrations/migration_lock.toml", "**/*.prisma"
+.scope text "**/migrations/migration_lock.toml", "**/*.prisma"
 .scope exclude "**/node_modules/**", "**/.next/**", "**/dist/**", "**/build/**", "**/out/**", "**/coverage/**", "**/__tests__/**", "**/__mocks__/**", "**/test/**", "**/tests/**", "**/fixtures/**", "**/*.test.*", "**/*.spec.*"
 // Rerail's own rule, not a port. `prisma migrate dev` cannot tell a renamed field from a removed one and a new one, so
 // renaming `biograpy` to `biography` in schema.prisma generates `ALTER TABLE "Profile" DROP COLUMN "biograpy",
@@ -25,8 +25,11 @@
 //   (the values cannot carry over); a referenced table renamed in between (`"Item" RENAME TO "Asset"`) still counts
 //   as the same table, so itemId → assetId is reported
 //   with several drops and one add, the add pairs only with the drop named like it (profileBio, not profileURL, → bio);
-//   with no name alike, only a one-to-one match counts: five TEXT columns dropped and one added is a restructure
-//   an id replacing a name or the reverse (queueName → queueId, versionId → version): the values are of another kind
+//   with no name alike, only a one-to-one match counts: five TEXT columns dropped and one added is a restructure.
+//   Names are alike when one holds the other, case-folded and without underscores, and the shorter has 3 or more
+//   characters (`ip` is not like `zip`)
+//   an id replacing a name or the reverse (queueName → queueId, versionId → version): the values are of another kind;
+//   an id is `id` or a name ending in `Id`, `ID` or `_id`
 //   a file that UPDATEs table t, or reads column a in a query: the data is copied before the drop
 //   a table created or emptied (TRUNCATE, DELETE without WHERE) earlier in the same file, or created by a migration
 //   the Git base lacks (lib/postgres-migrations' pgm_empty_table: it is empty)
@@ -106,10 +109,10 @@ rad_pair(dc, a) :- rad_drop(dc, d, t, x), rad_add(a, d, t, y), y != x, rad_old(d
 // rad_ok(dc, a): the pair's own exemptions do not hold.
 .decl rad_ok(dc: node, a: node)
 rad_ok(dc, a) :- rad_pair(dc, a), rad_drop(dc, _, _, x), rad_add(a, _, _, y), !rad_retarget(dc, a), !rad_idkind(x, y).
-// rad_idkind(x, y): one name is an id (`queueId`, `queue_id`, `id`, `imageIdentifier`) and the other is not
-// (`queue`, `queueName`): a name or a key replaced by a reference, whose values are of another kind.
+// rad_idkind(x, y): one name is an id (`queueId`, `queue_id`, `id`) and the other is not (`queue`, `queueName`): a
+// name or a key replaced by a reference, whose values are of another kind.
 .decl rad_id(x: symbol)
-rad_id(x) :- rad_key(x, _), match("^(id|.*[a-z0-9]Id|.*ID|.*_id|.*Identifier|.*_identifier)$", x).
+rad_id(x) :- rad_key(x, _), match("^(id|.*[a-z0-9]Id|.*ID|.*_id)$", x).
 .decl rad_idkind(x: symbol, y: symbol)
 rad_idkind(x, y) :- rad_drop(_, d, t, x), rad_add(_, d, t, y), rad_id(x), !rad_id(y).
 rad_idkind(x, y) :- rad_drop(_, d, t, x), rad_add(_, d, t, y), !rad_id(x), rad_id(y).
@@ -132,11 +135,11 @@ rad_retarget(dc, a) :- rad_drop(dc, d, t, x), rad_add(a, d, t, y), rad_fk(_, t, 
 .decl rad_sameref(dc: node, a: node)
 rad_sameref(dc, a) :- rad_drop(dc, d, t, x), rad_add(a, d, t, y), rad_fk(_, t, x, r1), rad_fk(d, t, y, r2),
     (r1 = r2 ; rad_renamed(r1, r2)).
-// rad_namelike(x, y): one name holds the other, case-folded and without underscores: expires and expiresAt,
-// profileBio and bio, updatedAt and updated_at.
+// rad_namelike(x, y): one name holds the other, case-folded and without underscores, and the shorter has at least
+// three characters: expires and expiresAt, profileBio and bio, updatedAt and updated_at (not ip and zip).
 .decl rad_namelike(x: symbol, y: symbol)
 rad_namelike(x, y) :- rad_drop(_, d, t, x), rad_add(_, d, t, y), rad_key(x, kx), rad_key(y, ky),
-    (contains(kx, ky) ; contains(ky, kx)).
+    (contains(kx, ky), strlen(kx) >= 3 ; contains(ky, kx), strlen(ky) >= 3).
 .decl rad_key(x: symbol, k: symbol)
 rad_key(x, @replace_all(@lower(x), "_", "")) :- rad_drop(_, _, _, x).
 rad_key(y, @replace_all(@lower(y), "_", "")) :- rad_add(_, _, _, y).
@@ -175,11 +178,11 @@ rad_existing(dc, d) :- rad_drop(dc, d, t, _), child(s, dc, _), !pgm_empty_table(
 // reads instead of withholding the rule; `.given pgm_applied` with no rows makes every case migration pending (a run
 // with no base would read only each directory's newest).
 .fixtures repo
-    .fixture ".git/HEAD" from "../cases/_git/HEAD"
-    .fixture ".git/config" from "../cases/_git/config"
-    .fixture ".git/refs/heads/main" from "../cases/_git/refs/heads/main"
-    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
-    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
+    .fixture ".git/HEAD" from "../../cases/_git/HEAD"
+    .fixture ".git/config" from "../../cases/_git/config"
+    .fixture ".git/refs/heads/main" from "../../cases/_git/refs/heads/main"
+    .fixture ".git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53" from "../../cases/_git/objects/32/b988bd0a8e4bd9c69256baecd681a7eb9f1e53"
+    .fixture ".git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904" from "../../cases/_git/objects/4b/825dc642cb6eb9a060e54bf8d69288fbee4904"
 .end
 
 .test cases exactly uses repo
@@ -199,6 +202,8 @@ rad_existing(dc, d) :- rad_drop(dc, d, t, _), child(s, dc, _), !pgm_empty_table(
     .fixture "prisma/migrations/20241101000000_item_to_asset/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20241101000000_item_to_asset/migration.sql"
     .fixture "prisma/migrations/20241201000000_restructure_jobs/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20241201000000_restructure_jobs/migration.sql"
     .fixture "prisma/migrations/20250101000000_run_queue/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20250101000000_run_queue/migration.sql"
+    .fixture "prisma/migrations/20250201000000_address_deploy/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20250201000000_address_deploy/migration.sql"
+    .fixture "prisma/migrations/20250301000000_address_zip/migration.sql" from "../cases/postgres-migrations-practice-rename-as-drop-and-add/prisma/migrations/20250301000000_address_zip/migration.sql"
     .expect _ at "drizzle/0001_names.sql":1
     .expect _ at "prisma/migrations/20240401000000_rename_bio/migration.sql":9
     .expect _ at "prisma/migrations/20240501000000_post_status/migration.sql":5
@@ -206,4 +211,25 @@ rad_existing(dc, d) :- rad_drop(dc, d, t, _), child(s, dc, _), !pgm_empty_table(
     .expect _ at "prisma/migrations/20240801000000_session_fields/migration.sql":2
     .expect _ at "prisma/migrations/20240901000000_rework_profiles/migration.sql":2
     .expect _ at "prisma/migrations/20241101000000_item_to_asset/migration.sql":8
+    .expect _ at "prisma/migrations/20250301000000_address_zip/migration.sql":7
+.end
+
+// Another database's migrations (`cases/_other-databases/`), with statements every rule of the pack reports on a
+// PostgreSQL table: Prisma folders whose schema declares `provider = "sqlite"` and `"mysql"` (no migration_lock.toml,
+// no database named in the path, no backquoted names) and a Drizzle folder whose drizzle.config.ts declares
+// `dialect: "sqlite"`. The ORM's declaration makes them another database's: nothing is reported.
+.test other_databases exactly uses repo
+    .given pgm_applied
+    .fixture "apps/mobile/package.json" from "../../cases/_other-databases/mobile/package.json"
+    .fixture "apps/mobile/prisma/schema.prisma" from "../../cases/_other-databases/mobile/prisma/schema.prisma"
+    .fixture "apps/mobile/prisma/migrations/20240101000000_init/migration.sql" from "../../cases/_other-databases/mobile/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "apps/mobile/prisma/migrations/20261120093000_change/migration.sql" from "../../cases/_other-databases/mobile/prisma/migrations/20261120093000_change/migration.sql"
+    .fixture "apps/legacy/package.json" from "../../cases/_other-databases/legacy/package.json"
+    .fixture "apps/legacy/prisma/schema.prisma" from "../../cases/_other-databases/legacy/prisma/schema.prisma"
+    .fixture "apps/legacy/prisma/migrations/20240101000000_init/migration.sql" from "../../cases/_other-databases/legacy/prisma/migrations/20240101000000_init/migration.sql"
+    .fixture "apps/legacy/prisma/migrations/20261120093000_change/migration.sql" from "../../cases/_other-databases/legacy/prisma/migrations/20261120093000_change/migration.sql"
+    .fixture "apps/edge/drizzle.config.ts" from "../../cases/_other-databases/edge/drizzle.config.ts"
+    .fixture "apps/edge/drizzle/meta/_journal.json" from "../../cases/_other-databases/edge/drizzle/meta/_journal.json"
+    .fixture "apps/edge/drizzle/0000_init.sql" from "../../cases/_other-databases/edge/drizzle/0000_init.sql"
+    .fixture "apps/edge/drizzle/0001_change.sql" from "../../cases/_other-databases/edge/drizzle/0001_change.sql"
 .end
