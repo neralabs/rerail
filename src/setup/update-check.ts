@@ -1,8 +1,8 @@
 /**
  * The daemon's daily update check: once a day it asks npm for the version under the `latest` dist-tag, and keeps the
- * answer, so `/healthz` and the dashboard can say a newer Rerail is out. It asks about `latest` whatever channel
- * `rerail update` installs from: a release candidate under `next` is never recommended. It checks only where a bare
- * `rerail update` reaches what it names, on `latest` and `next`, and says nothing on another channel (`beta`). Unless a remote is added or Merge
+ * answer, so `/healthz` and the dashboard can say a newer Rerail is out. A release candidate under `next` is still in
+ * QA and never recommended. It checks only while a bare `rerail update` installs from `latest`: on `next` or `beta`
+ * that update would install a preview, or not the version named, so it says nothing there. Unless a remote is added or Merge
  * Assist is on (internal testing), it is the only request Rerail makes on its own, apart from an npm rebuild of the
  * SQLite binding when it fails to load (docs/privacy.md). It installs nothing: `rerail update` stays the only way a
  * new version arrives.
@@ -29,10 +29,8 @@ export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60_000;
 const DUE_LOOK_MS = 60 * 60_000;
 /** The first look waits this long after the daemon starts, so a start never waits on npm. */
 const FIRST_LOOK_MS = 60_000;
-/** The dist-tag the check asks about: released versions only, never a `next` release candidate. */
+/** The dist-tag the check asks about, and the only update channel it checks on: released versions only. */
 const CHECKED_CHANNEL = "latest";
-/** The channels whose bare `rerail update` installs every version under `latest`: a promotion raises `next` to it. */
-const CHANNELS_REACHING_LATEST: ReadonlySet<string> = new Set([CHECKED_CHANNEL, "next"]);
 
 /** The newest Rerail under `latest` and when npm said so (epoch ms), as `/healthz.update` reports it. */
 export interface NewestRelease {
@@ -44,8 +42,8 @@ export interface NewestRelease {
 export interface UpdateChecks {
   /**
    * The last answer about `latest`; null before the first one (an older daemon's answer about another channel does
-   * not count), while `rerail update` installs from a channel other than `latest` or `next`, and while a signed
-   * customer profile is active.
+   * not count), while `rerail update` installs from a channel other than `latest`, and while a signed customer
+   * profile is active.
    */
   newest(): NewestRelease | null;
   /** Stops asking. An ask still out is not awaited: its answer is dropped, and npm ends on its own timeout. */
@@ -92,11 +90,11 @@ function profileActive(home: string): boolean {
 
 /**
  * The channel the check asks about, `latest`; undefined while a signed customer profile is active, and while a bare
- * `rerail update` installs from a channel that does not reach `latest` (`beta`): its "Update available" would stay
- * after the update.
+ * `rerail update` installs from another channel: "Update available" would send it to `next`'s release candidate, or
+ * to `beta`, which never reaches the version named.
  */
 function checkedChannel(home: string): string | undefined {
-  return profileActive(home) || !CHANNELS_REACHING_LATEST.has(recordedChannel(home)) ? undefined : CHECKED_CHANNEL;
+  return profileActive(home) || recordedChannel(home) !== CHECKED_CHANNEL ? undefined : CHECKED_CHANNEL;
 }
 
 /** The channel a bare `rerail update` installs from: the one `update-state.json` records, else `latest`. */

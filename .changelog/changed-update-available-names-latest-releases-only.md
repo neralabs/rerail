@@ -1,1 +1,1 @@
-The dashboard's "Update available" names only versions released under npm's `latest` tag, also on a computer that updates from `next`: a release candidate is never recommended. On `beta`, it no longer shows.
+The dashboard's "Update available" names only versions released under npm's `latest` tag, never a `next` release candidate, and shows only on a computer that updates from `latest`, so `/rerail-update` never installs a preview.

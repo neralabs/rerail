@@ -108,23 +108,14 @@ describe("the daemon's daily update check", () => {
     expect(restarted.newest()?.latest).toBe("0.4.0");
   });
 
-  it("asks about latest only, even where rerail update installs from next", async () => {
-    const folder = home(), time = clock(), npm = registry("0.3.0", "0.3.1");
-    writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: "next", current: { version: "0.3.0-next.2", packageRoot: folder } }));
-    const checks = start(folder, npm, time.now);
-    await time.advance(1_000);
-    expect(checks.newest()?.latest).toBe("0.3.0");
-
-    await time.advance(DAY);
-    expect(npm.asked).toEqual(["latest", "latest"]);
-    expect(checks.newest()?.latest).toBe("0.3.1");
-  });
-
-  it("says nothing where rerail update installs from beta, which never reaches latest, and asks once that changes", async () => {
+  it.each(["next", "beta"])("says nothing where rerail update installs from %s, and asks about latest once that changes", async channel => {
     const folder = home(), time = clock(), npm = registry("0.3.0");
-    const state = (channel: string): void => writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel, current: { version: "0.2.0-beta.1", packageRoot: folder } }));
-    state("beta");
+    const state = (to: string): void => writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: to, current: { version: `0.3.0-${channel}.1`, packageRoot: folder } }));
+    state(channel);
+    // An older daemon asked about the recorded channel: its answer, a preview, is not reported either.
+    writeFileSync(join(folder, UPDATE_CHECK_FILE), JSON.stringify({ channel, latest: `0.3.1-${channel}.0`, answeredAt: time.now(), askedAt: time.now() }));
     const checks = start(folder, npm, time.now);
+    expect(checks.newest()).toBeNull();
     await time.advance(2 * DAY);
     expect(npm.asked).toEqual([]);
     expect(checks.newest()).toBeNull();
@@ -133,21 +124,9 @@ describe("the daemon's daily update check", () => {
     await time.advance(HOUR);
     expect(npm.asked).toEqual(["latest"]);
     expect(checks.newest()?.latest).toBe("0.3.0");
-    // Back on beta, the answer about latest is not reported.
-    state("beta");
+    // Back on the preview channel, the answer about latest is not reported.
+    state(channel);
     expect(checks.newest()).toBeNull();
-  });
-
-  it("drops an older daemon's answer about next, and asks about latest at its first look", async () => {
-    const folder = home(), time = clock(), npm = registry("0.3.0");
-    writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: "next", current: { version: "0.3.0-next.2", packageRoot: folder } }));
-    writeFileSync(join(folder, UPDATE_CHECK_FILE), JSON.stringify({ channel: "next", latest: "0.3.1-next.0", answeredAt: time.now(), askedAt: time.now() }));
-    const checks = start(folder, npm, time.now);
-    expect(checks.newest()).toBeNull();
-
-    await time.advance(1_000);
-    expect(npm.asked).toEqual(["latest"]);
-    expect(checks.newest()?.latest).toBe("0.3.0");
   });
 
   it("stops asking and reporting once a signed customer profile is activated while it runs", async () => {
