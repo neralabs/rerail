@@ -6,16 +6,26 @@
 
 // Ruff UP011 (pyupgrade): a decorator `@functools.lru_cache()` with no arguments. Since Python 3.8 the
 // decorator takes the function directly, with the same defaults; below a 3.8 target the rule is off. The
-// finding is at the parentheses.
-//   @functools.lru_cache()        ← UP011 at `()`
+// finding is where Ruff puts it, from the end of the callee to the end of the call: at the callee's last name,
+// whose line is that of the callee's end. Parentheses around the callee or the decorator, comments and
+// backslash continuations between the parentheses change nothing.
+//   @functools.lru_cache()        ← UP011 at `lru_cache`
+//   @(functools.lru_cache  # a
+//     )(  # c
+//   )                             ← UP011, on the first line
 //   @lru_cache(maxsize=64)        not reported
 #include "python/upgrade.rerail"
 //   sym_at(e, q): e names q, through the bindings visible where it runs; targets(m): Python 3.m or later
+//   unparen(e, m) (python/ast)
 
-.violation UP011(at: node) code "UP011"
+.violation UP011(at: node, al: node) code "UP011"
     "Remove the empty parentheses after `lru_cache` in this decorator and write it bare; it defaults to the same cache size. Keep the call only if the code must support Python 3.7 or older."
     suppress ruff "UP011"
     fix safe drop_call "Remove the unnecessary parentheses"
-UP011(al) :- targets(8), decorator(_, c), kind(c, "call"), field(c, "function", f), sym_at(f, "functools.lru_cache"),
-    field(c, "arguments", al), count : { child(al, a, _), !kind(a, "comment") } = 0.
-drop_call(al) => delete(al).
+UP011(e, al) :- targets(8), decorator(_, c0), unparen(c0, c), kind(c, "call"), field(c, "function", f0),
+    unparen(f0, f), sym_at(f, "functools.lru_cache"), field(c, "arguments", al),
+    count : { child(al, a, _), !kind(a, "comment"), !kind(a, "line_continuation") } = 0, last_name(f, e).
+.decl last_name(f: node, e: node)  // e is the name callee f ends with
+last_name(f, f) :- kind(f, "identifier").
+last_name(f, e) :- kind(f, "attribute"), field(f, "attribute", e).
+drop_call(_, al) => delete(al).
