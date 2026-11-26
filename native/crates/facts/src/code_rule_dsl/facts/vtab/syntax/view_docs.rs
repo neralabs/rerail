@@ -1,11 +1,12 @@
 //! A document's entry for its views' reads (decision 0353 step 4c, `rerail_clif::view_reads::ViewDoc`): in the
-//! block its projection's numbering is in, which it refers to, with the derived table of its tape's codes (each
-//! code's kind atom and field atom, a few hundred u32s). No per-node column: a node's row is read off the tape. The
+//! block its projection's numbering is in, which it refers to. A code's kind atom and field atom are its language's,
+//! in the codes' directory the binary holds (decision 0697), which the reads are passed: no entry makes them. No
+//! per-node column: a node's row is read off the tape. The
 //! tape's rows' derived columns (`tape_rows::Derived`: a gap's or a digest's atom, a child's place, the visit order),
 //! where its program reads them, are runs of it too.
 
 use super::cells::{Block, Cells, Desc};
-use super::{Dialect, Placement, Projected, field_atom};
+use super::{Placement, Projected};
 use rerail_clif::ids::Run;
 use rerail_clif::view_reads::ViewDoc;
 use std::sync::Arc;
@@ -19,44 +20,27 @@ pub struct ViewEntry {
 unsafe impl Send for ViewEntry {}
 unsafe impl Sync for ViewEntry {}
 
-/// An entry's codes' table: each code's kind atom and field atom.
-pub struct Codes {
-    _kinds: Cells<u32>,
-    _fields: Cells<u32>,
-    /// A guest's spans as its host places them (`ViewDoc::placed`), where no word of the entry maps them.
+/// What an entry's runs point at that it made itself: a guest's spans as its host places them (`ViewDoc::placed`),
+/// where no word of the entry maps them. A code's kind and field are its language's, in the codes' directory the
+/// binary holds (decision 0697): no entry makes them.
+pub struct Filled {
     _placed: Option<Cells<u64>>,
 }
 
 impl ViewEntry {
-    /// `p`'s entry, in `block` (its projection's, which its numbering is in), its kinds as `dialect` holds them:
-    /// written whole on the first ask, the same entry after.
-    pub fn new(block: &Arc<Block>, p: &Projected, dialect: &Dialect) -> Self {
+    /// `p`'s entry, in `block` (its projection's, which its numbering is in): written whole on the first ask, the same
+    /// entry after.
+    pub fn new(block: &Arc<Block>, p: &Projected) -> Self {
         assert!(Arc::ptr_eq(p.block(), block), "an entry is in its projection's block");
-        let (desc, codes) = p.entry();
-        codes.get_or_init(|| Self::fill(block, p, dialect, desc));
+        let (desc, filled) = p.entry();
+        filled.get_or_init(|| Self::fill(block, p, desc));
         ViewEntry { desc: desc.as_ptr() }
     }
 
-    /// Writes the rest of `p`'s entry `desc` (its key, file and tag are there from the start), and returns its codes'
-    /// table.
-    fn fill(block: &Arc<Block>, p: &Projected, dialect: &Dialect, desc: &Desc<ViewDoc>) -> Codes {
+    /// Writes the rest of `p`'s entry `desc` (its key, file and tag are there from the start), and returns what it
+    /// made itself.
+    fn fill(block: &Arc<Block>, p: &Projected, desc: &Desc<ViewDoc>) -> Filled {
         let f = p.f();
-        let n = f.code_count();
-        // copy: derived (each code's kind and field atom, computed once from the tape's code table and the dialect)
-        let kinds = Cells::build(block, n.max(1), |out| {
-            for (c, k) in out.iter_mut().enumerate().take(n) {
-                *k = dialect.kind_of_atom(f.code_entry(c as u32).0);
-            }
-            n
-        })
-        .expect("a batch's block holds its entries");
-        let fields = Cells::build(block, n.max(1), |out| {
-            for (c, k) in out.iter_mut().enumerate().take(n) {
-                *k = field_atom(p.tag(), f.code_entry(c as u32).1);
-            }
-            n
-        })
-        .expect("a batch's block holds its entries");
         // A guest whose placement no word maps (an embedder's segments, a string's normalized pieces): each position's
         // span placed as the host places it (`Locs::place`), the table the `Loc` views read.
         let placed = Self::locs(p).and_then(|x| x.host.as_ref()).filter(|(_, place)| !matches!(place, Placement::Copied { .. } | Placement::At(_))).map(|(_, place)| {
@@ -78,8 +62,6 @@ impl ViewEntry {
             (*d).preorder = u32::from(p.defs.is_none());
             (*d).nodes = p.len();
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
-            Run::set(&raw mut (*d).kinds, kinds.as_ptr(), kinds.len());
-            Run::set(&raw mut (*d).fields, fields.as_ptr(), fields.len());
             // A node's place, read in its tape's auxiliary index (`tape_place`, `tape_place_past_comments`).
             (*d).place = p.place_kind() as u32;
             // The tape's rows' derived columns made by now (`tape_rows::derive`: those its program reads).
@@ -121,7 +103,7 @@ impl ViewEntry {
                 }
             }
         }
-        Codes { _kinds: kinds, _fields: fields, _placed: placed }
+        Filled { _placed: placed }
     }
 
     /// `p`'s positions where the views' reads answer its `Loc` rows: core.rerail's; a guest's through its host's

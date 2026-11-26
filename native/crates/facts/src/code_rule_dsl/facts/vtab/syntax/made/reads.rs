@@ -35,11 +35,20 @@ pub(super) struct Layer {
     /// The 16z documents' cache (decision 0353 step 4b, `view::cache`): the batch's (`Docs::cache`), which the host's
     /// reads of its tapes decode into, home `2n` of the directory from the first 16z row: every reader shares it.
     cache: OnceLock<Option<ZCache>>,
+    /// The codes' directory as the device reads it (decision 0697): the binary's, wrapped in place for the device
+    /// (no copy) where the device's reads are set up, home `2n + 1`'s device address.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    codes: OnceLock<Option<rerail_device::device::Buffer>>,
 }
 
 impl Layer {
     pub(super) fn new(n: usize) -> Layer {
-        Layer { rows: (0..n).map(|_| OnceLock::new()).collect(), cache: OnceLock::new() }
+        Layer {
+            rows: (0..n).map(|_| OnceLock::new()).collect(),
+            cache: OnceLock::new(),
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+            codes: OnceLock::new(),
+        }
     }
 }
 
@@ -106,6 +115,30 @@ impl Docs {
             .filter(|c| c.entry >= entry)
     }
 
+    /// The codes' directory's device buffer (`Layer::codes`), its home's device address written: none without a
+    /// device. A device that refuses the binary's memory is an error, never a copy (decision 0353). Made where the
+    /// device's reads of the batch are set up (`device_chunk::build_views`), before any of its rows is read there.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub fn codes_device(&self) -> Option<&rerail_device::device::Buffer> {
+        self.layer
+            .codes
+            .get_or_init(|| {
+                let device = placed::device()?;
+                let bytes = rerail_tape_format::codes_dir::bytes();
+                // SAFETY: the binary's directory, which outlives every buffer; no reader writes it (the kernels' reads
+                // of it are loads).
+                let buffer = unsafe { rerail_device::device::wrap_host_memory(device, bytes.as_ptr().cast_mut(), bytes.len()) }
+                    .unwrap_or_else(|e| panic!("the device's wrap of the codes' directory: {e}"));
+                let gpu = buffer.device_address()?;
+                let dir = self.dir().cast_mut();
+                // SAFETY: the directory's codes' home, in the batch's block: written here once, before any row the
+                // device reads names it (this row's, written after).
+                unsafe { (*ViewDir::homes_mut(dir).add((*dir).codes as usize)).gpu = gpu };
+                Some(buffer)
+            })
+            .as_ref()
+    }
+
     /// Document `i`'s row written: its entry, its tape and lines in their homes, its view.
     fn write_row(&self, i: usize) -> Result<RowReads, &'static str> {
         let p = &self[i];
@@ -170,7 +203,7 @@ impl Docs {
                 (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32);
             }
         }
-        let entry = ViewEntry::new(b, p, &self.context.dialects[p.tag()]);
+        let entry = ViewEntry::new(b, p);
         let dir = self.dir().cast_mut();
         // SAFETY: row `i` and its homes `2i`, `2i + 1`, in the batch's block: the reads layer's fields, which only this
         // write writes (once, in the row's `OnceLock`), and the search layer's readers do not read.

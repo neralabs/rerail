@@ -153,7 +153,7 @@ struct ViewDir {
     by_key: u64,
     ends: [u32; 27],
     counted: u32,
-    pad: u32,
+    codes: u32,
 }
 #[repr(C)]
 struct PlacedDir {
@@ -435,17 +435,17 @@ impl Reads {
     /// View read `i` (`READS`' place) of document entry `e` of directory `d`: its row `r`, column `col`.
     #[inline]
     unsafe fn view(self, i: usize, d: *const ViewDir, e: *const ViewRow, r: u32, col: u32) -> u64 {
-        let f: unsafe extern "C" fn(u64, u64, u64, u64, u32, u32) -> u64 = core::mem::transmute(*self.0.add(i));
-        let (b, t, l) = view_parts(d, e);
-        f((b as u64).wrapping_add((*e).entry), t as u64, (*e).view.as_ptr() as u64, l as u64, r, col)
+        let f: unsafe extern "C" fn(u64, u64, u64, u64, u64, u32, u32) -> u64 = core::mem::transmute(*self.0.add(i));
+        let (b, t, l, c) = view_parts(d, e);
+        f((b as u64).wrapping_add((*e).entry), t as u64, (*e).view.as_ptr() as u64, l as u64, c as u64, r, col)
     }
 
     /// A view's walk read `i` (`child_first`, `child_next`, `number`, `up`, `end`) of node `x`.
     #[inline]
     unsafe fn walk(self, i: usize, d: *const ViewDir, e: *const ViewRow, x: u32) -> u32 {
-        let f: unsafe extern "C" fn(u64, u64, u64, u64, u32) -> u32 = core::mem::transmute(*self.0.add(i));
-        let (b, t, l) = view_parts(d, e);
-        f((b as u64).wrapping_add((*e).entry), t as u64, (*e).view.as_ptr() as u64, l as u64, x)
+        let f: unsafe extern "C" fn(u64, u64, u64, u64, u64, u32) -> u32 = core::mem::transmute(*self.0.add(i));
+        let (b, t, l, c) = view_parts(d, e);
+        f((b as u64).wrapping_add((*e).entry), t as u64, (*e).view.as_ptr() as u64, l as u64, c as u64, x)
     }
 
     /// The compiled `col_sealed` (`READS`' place 24), which the N-lane reads read a sealed chunk through.
@@ -482,9 +482,9 @@ unsafe fn view_home(d: *const ViewDir, h: u32, at: u64) -> *const u8 {
     let homes = view_block(d).add((*d).homes as usize) as *const ViewHome;
     (*homes.add(h as usize)).gpu.wrapping_add(at as usize)
 }
-/// The directory's block, document `e`'s tape and its lines.
-unsafe fn view_parts(d: *const ViewDir, e: *const ViewRow) -> (*const u8, *const u8, *const u8) {
-    (view_block(d), view_home(d, (*e).homes[0], (*e).tape), view_home(d, (*e).homes[1], (*e).lines))
+/// The directory's block, document `e`'s tape and its lines, and the codes' directory (decision 0697).
+unsafe fn view_parts(d: *const ViewDir, e: *const ViewRow) -> (*const u8, *const u8, *const u8, *const u8) {
+    (view_block(d), view_home(d, (*e).homes[0], (*e).tape), view_home(d, (*e).homes[1], (*e).lines), view_home(d, (*d).codes, 0))
 }
 
 unsafe fn vread_dir(rd: Reads, kind: u32, d: *const ViewDir, r: u32, col: u32, memo: &mut u32) -> i64 {

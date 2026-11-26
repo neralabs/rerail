@@ -99,11 +99,12 @@ pub fn tape_queued(cache: &dyn crate::content_store::FactStore, file: &dyn Sourc
 }
 
 pub const NONE: u32 = u32::MAX;
-/// Kind codes per dialect (the tape's `KIND_LIMIT`).
-pub const KIND_STRIDE: u32 = 1024;
-
-/// Tree-sitter's ERROR symbol, past every grammar's kinds and so past the stride.
-const ERROR_SYMBOL: u16 = u16::MAX;
+/// Kind codes per dialect, ERROR's symbol and a kind's atom: the shipped tables' (decision 0697), whose codes'
+/// atoms the binary holds. ERROR's atom takes code 0, the grammar's end symbol, which never labels a node (the tape's
+/// own `ERROR_CODE`), so every atom of a dialect stays in its stride: `tag * 1024 + 0xffff` would read as another
+/// dialect's kind.
+pub use rerail_tape_format::codes::{KIND_STRIDE, kind_atom};
+use rerail_tape_format::codes::ERROR_SYMBOL;
 
 /// The codes a test of a document reads, as its table holds them.
 #[derive(Clone, Copy)]
@@ -117,12 +118,6 @@ enum Codes {
     Faults,
 }
 
-/// The atom of kind `code` in the dialect whose tape tag is `tag`. ERROR's atom takes code 0, the grammar's end
-/// symbol, which never labels a node (the tape's own `ERROR_CODE`), so every atom of a dialect stays in its stride:
-/// `tag * 1024 + 0xffff` would read as another dialect's kind.
-pub fn kind_atom(tag: u8, code: u16) -> u32 {
-    u32::from(tag) * KIND_STRIDE + if code == ERROR_SYMBOL { 0 } else { u32::from(code) }
-}
 
 /// The tape tag of a kind atom's dialect.
 pub fn kind_tag(atom: u32) -> u8 {

@@ -24,10 +24,54 @@ pub mod doc_index;
 
 pub use rerail_vector::{Pod, vector::Vector};
 
-pub const CODE_EXTRA: u8 = 1;
-pub const CODE_ERROR: u8 = 2;
-pub const CODE_MISSING: u8 = 4;
+/// The shipped tables' lines and the codes' atoms (decision 0697), shared with the build script.
+pub mod codes;
+pub use codes::{CODE_ERROR, CODE_EXTRA, CODE_MISSING};
 pub const KIND_LIMIT: usize = 1024;
+const _: () = assert!(KIND_LIMIT == codes::KIND_STRIDE as usize, "a kind atom's stride is the tape's kinds");
+
+/// The codes' directory (decision 0697): each shipped language's codes' kind atoms and field atoms, written by the
+/// build script from `tables/` (`codes::image`) and read where it lies in the binary: by the host's view reads
+/// (`codes_dir::kinds`), and as a home of the views' directory by the JIT's and the kernels' (`rerail_clif::view_reads::
+/// CodesDir`). Page-aligned and a whole number of pages, as a device's wrap of it in place takes it.
+pub mod codes_dir {
+    const LEN: usize = include!(concat!(env!("OUT_DIR"), "/codes_len.rs"));
+    #[repr(C, align(16384))]
+    struct Aligned<T>(T);
+    const _: () = assert!(align_of::<Aligned<u8>>() == super::codes::ALIGN && LEN % super::codes::ALIGN == 0);
+    const _: () = assert!(cfg!(target_endian = "little"), "the directory's image is little-endian");
+    const _: () = assert!(size_of::<rerail_clif::view_reads::CodesLang>() == super::codes::LANG_BYTES, "a language's place, as the reads read it");
+    static DIR: Aligned<[u8; LEN]> = Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/codes.bin")));
+
+    /// The directory's bytes.
+    pub fn bytes() -> &'static [u8] {
+        &DIR.0
+    }
+
+    /// Run `k` (0 kinds, 1 fields) of language `tag`: empty for a tag with no table.
+    fn run(tag: u8, k: usize) -> &'static [u32] {
+        let at = |i: usize| u32::from_le_bytes(DIR.0[i..i + 4].try_into().expect("a u32")) as usize;
+        let place = usize::from(tag) * super::codes::LANG_BYTES;
+        let (kinds, fields) = (at(place), at(place + 4));
+        if kinds == 0 {
+            return &[];
+        }
+        let n = (fields - kinds) / 4;
+        let start = if k == 0 { kinds } else { fields };
+        // SAFETY: `n` u32s at a multiple of 4 from the page-aligned directory, inside it (`codes::image`).
+        unsafe { std::slice::from_raw_parts(DIR.0.as_ptr().add(start).cast::<u32>(), n) }
+    }
+
+    /// Language `tag`'s codes' kind atoms, by number: the `kind` column's value of a node of each.
+    pub fn kinds(tag: u8) -> &'static [u32] {
+        run(tag, 0)
+    }
+
+    /// Language `tag`'s codes' field atoms, by number: the `field` column's value of a node of each.
+    pub fn fields(tag: u8) -> &'static [u32] {
+        run(tag, 1)
+    }
+}
 pub const FIELD_LIMIT: usize = 64;
 /// No value: a cell of an index past its width (the engine's `tape::index`).
 pub const SENTINEL: u16 = u16::MAX;

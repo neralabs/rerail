@@ -196,6 +196,10 @@ fn build_views(batch: &Batch) -> Option<ViewsInPlace> {
             }
         }
     }
+    // The codes' directory (decision 0697), which every row's `node` and `field` reads read.
+    if let Some(codes) = device.and_then(|_| docs.codes_device()) {
+        slabs.push(codes.clone());
+    }
     let cache = docs.zcache_made().cloned();
     if let Some(c) = &cache {
         on_device &= c.buffer.as_ref().and_then(|b| b.device_address()).is_some();
@@ -290,8 +294,11 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
     // The chunk's batch's cache is the directory's; each value's rows name their own in their views (`TapeView::side`).
     // SAFETY: the chunk's batch's directory, as above.
     let cache = unsafe { (*batch.docs.dir()).cache };
+    // So is its codes' home (the binary's directory, decision 0697): the chunk's batch's homes are the first.
+    // SAFETY: as above.
+    let codes = unsafe { (*batch.docs.dir()).codes };
     // SAFETY: the directory, just allocated in the chunk's block, made whole.
-    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: nhomes as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes) as u64, cache, by_key: b.offset_of(by_key) as u64, ends: past, counted: 1, pad: 0 }) };
+    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: nhomes as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes) as u64, cache, by_key: b.offset_of(by_key) as u64, ends: past, counted: 1, codes }) };
     // The device's where it reads every batch's: the block's buffer made after the last allocation, so it covers
     // them, and each batch's slabs (a batch's first buffer is its block's, covered by this one).
     let device = crate::code_rule_dsl::tape::placed::device();

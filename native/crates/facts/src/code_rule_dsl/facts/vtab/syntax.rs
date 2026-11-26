@@ -1585,8 +1585,8 @@ pub struct Projected {
     /// key of the file it is part of and its tag are read there (`key`, `file`), the one place the kernels read
     /// them too; the rest is written on the first read through the views (`view_docs::ViewEntry::new`).
     entry: cells::Desc<rerail_clif::view_reads::ViewDoc>,
-    /// The entry's codes' table, made with the rest of it.
-    codes: OnceLock<view_docs::Codes>,
+    /// What the entry's runs point at that it made itself (a guest's placed spans), made with the rest of it.
+    filled: OnceLock<view_docs::Filled>,
     pub facts: Arc<Facts>,
     /// The cache its 16z tape's blocks are decoded into: its batch's (`Growth::cache`), the block the device's reads
     /// share; its own where it is projected alone (`new`). Every read of its nodes names it (`f`).
@@ -1749,9 +1749,9 @@ impl Projected {
         // SAFETY: the entry is this projection's, and `&mut self` has no reader.
         unsafe { (*self.entry.as_ptr()).file = file };
     }
-    /// Its entry, made whole on the first ask (`view_docs::ViewEntry::new`), and its codes' table.
-    pub(super) fn entry(&self) -> (&cells::Desc<rerail_clif::view_reads::ViewDoc>, &OnceLock<view_docs::Codes>) {
-        (&self.entry, &self.codes)
+    /// Its entry, made whole on the first ask (`view_docs::ViewEntry::new`), and what it made itself.
+    pub(super) fn entry(&self) -> (&cells::Desc<rerail_clif::view_reads::ViewDoc>, &OnceLock<view_docs::Filled>) {
+        (&self.entry, &self.filled)
     }
     /// Document `key`'s projection in `shape`; `dialect` is its facts' (`None` for a text-only document, which has no
     /// node). A `withheld` document (`core.rerail`: one that does not parse) has no nodes and no spans: no facts. A guest's
@@ -1952,7 +1952,7 @@ impl Projected {
         let mut p = Projected {
             module: None,
             entry,
-            codes: OnceLock::new(),
+            filled: OnceLock::new(),
             ranks,
             derived: tape_rows::Derived::default(),
             place: if shape == Shape::T { PlaceAmong::PastComments } else { PlaceAmong::Named },
@@ -5876,9 +5876,7 @@ struct Known {
 }
 
 /// The field atom of field `code` in the dialect whose tape tag is `tag`.
-pub fn field_atom(tag: u8, code: u16) -> u32 {
-    u32::from(tag) << 16 | u32::from(code)
-}
+pub use rerail_tape_format::codes::field_atom;
 
 /// Document `key`'s `function_definition` and `class_definition` nodes by byte range (start, end), as ids of
 /// `node` in the run's shape (`core`: core.rerail's, else T's; a node's id is its rank among the shape's numbered nodes,
