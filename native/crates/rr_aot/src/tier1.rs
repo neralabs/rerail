@@ -414,42 +414,42 @@ static TOKEN: [(u8, u8, u8); 1024] = {
         c += 1;
     }
     t[b' ' as usize] = (255, 1, 0);
-    t[b'!' as usize] = (6, 2, 19);
+    t[b'!' as usize] = (6, 2, 18);
     t[b'"' as usize] = (0, 7, 0);
     t[b'#' as usize] = (3, 4, 0);
     t[b'$' as usize] = (7, 0, 0);
-    t[b'%' as usize] = (6, 2, 30);
-    t[b'&' as usize] = (6, 2, 33);
+    t[b'%' as usize] = (6, 2, 29);
+    t[b'&' as usize] = (6, 2, 32);
     t[b'\'' as usize] = (7, 0, 0);
-    t[b'(' as usize] = (6, 2, 10);
-    t[b')' as usize] = (6, 2, 11);
-    t[b'*' as usize] = (6, 2, 24);
-    t[b'+' as usize] = (6, 2, 28);
-    t[b',' as usize] = (6, 2, 12);
-    t[b'-' as usize] = (6, 2, 27);
-    t[b'.' as usize] = (6, 2, 13);
-    t[b'/' as usize] = (13, 2, 29);
+    t[b'(' as usize] = (6, 2, 9);
+    t[b')' as usize] = (6, 2, 10);
+    t[b'*' as usize] = (6, 2, 23);
+    t[b'+' as usize] = (6, 2, 27);
+    t[b',' as usize] = (6, 2, 11);
+    t[b'-' as usize] = (6, 2, 26);
+    t[b'.' as usize] = (6, 2, 12);
+    t[b'/' as usize] = (13, 2, 28);
     let mut c = b'0' as usize;
     while c <= b'9' as usize {
         t[c] = (5, 6, 0);
         c += 1;
     }
-    t[b':' as usize] = (6, 2, 15);
-    t[b';' as usize] = (6, 2, 14);
-    t[b'<' as usize] = (6, 2, 17);
-    t[b'=' as usize] = (6, 2, 16);
-    t[b'>' as usize] = (6, 2, 18);
+    t[b':' as usize] = (6, 2, 14);
+    t[b';' as usize] = (6, 2, 13);
+    t[b'<' as usize] = (6, 2, 16);
+    t[b'=' as usize] = (6, 2, 15);
+    t[b'>' as usize] = (6, 2, 17);
     t[b'?' as usize] = (7, 0, 0);
-    t[b'@' as usize] = (6, 2, 23);
+    t[b'@' as usize] = (6, 2, 22);
     let mut c = b'A' as usize;
     while c <= b'Z' as usize {
         t[c] = (4, 8, 0);
         c += 1;
     }
-    t[b'[' as usize] = (6, 2, 25);
+    t[b'[' as usize] = (6, 2, 24);
     t[b'\\' as usize] = (7, 0, 0);
-    t[b']' as usize] = (6, 2, 26);
-    t[b'^' as usize] = (6, 2, 32);
+    t[b']' as usize] = (6, 2, 25);
+    t[b'^' as usize] = (6, 2, 31);
     t[b'_' as usize] = (4, 8, 65);
     t[b'`' as usize] = (16, 5, 0);
     let mut c = b'a' as usize;
@@ -457,25 +457,25 @@ static TOKEN: [(u8, u8, u8); 1024] = {
         t[c] = (4, 8, 0);
         c += 1;
     }
-    t[b'{' as usize] = (6, 2, 20);
-    t[b'|' as usize] = (6, 2, 22);
-    t[b'}' as usize] = (6, 2, 21);
-    t[b'~' as usize] = (6, 2, 31);
+    t[b'{' as usize] = (6, 2, 19);
+    t[b'|' as usize] = (6, 2, 21);
+    t[b'}' as usize] = (6, 2, 20);
+    t[b'~' as usize] = (6, 2, 30);
     t[0x7f as usize] = (7, 0, 0);
-    t[256 + b'!' as usize] = (6, 2, 5);
-    t[256 + b'-' as usize] = (6, 2, 9);
-    t[256 + b':' as usize] = (6, 2, 3);
-    t[256 + b'<' as usize] = (6, 2, 6);
-    t[256 + b'=' as usize] = (6, 2, 4);
-    t[256 + b'>' as usize] = (6, 2, 7);
-    t[768 + b'<' as usize] = (6, 2, 8);
+    t[256 + b'!' as usize] = (6, 2, 4);
+    t[256 + b'-' as usize] = (6, 2, 8);
+    t[256 + b':' as usize] = (6, 2, 2);
+    t[256 + b'<' as usize] = (6, 2, 5);
+    t[256 + b'=' as usize] = (6, 2, 3);
+    t[256 + b'>' as usize] = (6, 2, 6);
+    t[768 + b'<' as usize] = (6, 2, 7);
     t
 };
 /// The words the grammar reads, a word's code its place plus one, as the lean lexer's `WORD_LIST`.
 const WORD_LIST: [&[u8]; 71] = [
-    b"pragma", b"type", b":-", b"=>", b"!=", b"<=", b">=", b"<:", b"->", b"(", b")", b",",
-    b".", b";", b":", b"=", b"<", b">", b"!", b"{", b"}", b"|", b"@", b"*",
-    b"[", b"]", b"-", b"+", b"/", b"%", b"~", b"^", b"&", b"#include", b"must", b"may",
+    b"#include", b":-", b"=>", b"!=", b"<=", b">=", b"<:", b"->", b"(", b")", b",", b".",
+    b";", b":", b"=", b"<", b">", b"!", b"{", b"}", b"|", b"@", b"*", b"[",
+    b"]", b"-", b"+", b"/", b"%", b"~", b"^", b"&", b"pragma", b"type", b"must", b"may",
     b"code", b"in", b"tag", b"fix", b"safe", b"suppress", b"over", b"options", b"by", b"sep", b"count", b"min",
     b"max", b"sum", b"mean", b"join", b"test", b"exactly", b"uses", b"end", b"fixtures", b"input", b"output", b"product",
     b"true", b"false", b"null", b"at", b"_", b"policy", b"decl", b"violation", b"edit", b"functor", b"lattice",
@@ -573,7 +573,7 @@ pub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {
         // `line`
         1 => src[from..to].contains(&0x0a),
         // `newline`
-        2 => src[from..to].contains(&0x0a) && !matches!(before, 12),
+        2 => src[from..to].contains(&0x0a) && !matches!(before, 11),
         // `json_bad`
         11 => src[from..to].contains(&0x0c),
         _ => false,

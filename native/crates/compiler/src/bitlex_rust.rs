@@ -3216,7 +3216,10 @@ impl<'a> G<'a> {
     fn kind_test(&self, k: &str, kind: &str, word: &str) -> String {
         let kinds: Vec<String> = self.x.tokens.iter().filter(|(_, n)| *n == k || n.strip_suffix("_close") == Some(k)).map(|(_, n)| format!("t::{}", upper(n))).collect();
         // A row of keywords only (`required`) names them all: its kind holds at each, as the interpreter's `kind_set`.
-        let hard: Vec<String> = self.x.keywords.iter().filter(|r| r.0 == k && !r.2).flat_map(|r| r.1.iter().filter_map(|(w, _)| self.word_of(&String::from_utf8_lossy(w)))).map(|w| format!("w::{}", self.word_const(w))).collect();
+        let mut ids: Vec<u8> = self.x.keywords.iter().filter(|r| r.0 == k && !r.2).flat_map(|r| r.1.iter().filter_map(|(w, _)| self.word_of(&String::from_utf8_lossy(w)))).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let hard: Vec<String> = ids.iter().map(|&w| format!("w::{}", self.word_const(w))).collect();
         let is = match kinds.as_slice() {
             [] => "false".to_owned(),
             [one] => format!("{kind} == {one}"),
@@ -3225,6 +3228,9 @@ impl<'a> G<'a> {
         match hard.as_slice() {
             [] => is,
             [one] => format!("{is} && {word} != {one}"),
+            // The hard keywords numbered together (`bitlex_tier2`'s words, as the lean parser's): the word past them, one
+            // compare a side, as the lean parser's `ident_word`.
+            [first, .., last] if ids.windows(2).all(|p| p[1] == p[0] + 1) => format!("{is} && !({first}..={last}).contains(&{word})"),
             all => format!("{is} && !matches!({word}, {})", all.join(" | ")),
         }
     }

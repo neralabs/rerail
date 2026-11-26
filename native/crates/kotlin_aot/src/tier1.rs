@@ -4751,15 +4751,15 @@ pub fn lex(src: &[u8]) -> Lexed {
                     marks |= 1 << 1;
                 }
                 // `ann_lf`
-                if (tested >> 2 & 1 == 1 || acc_0) && !matches!(before, 33) {
+                if (tested >> 2 & 1 == 1 || acc_0) && !matches!(before, 41) {
                     marks |= 1 << 2;
                 }
                 // `semi`
-                if (tested >> 3 & 1 == 1 || acc_0) && !matches!(before, 33) {
+                if (tested >> 3 & 1 == 1 || acc_0) && !matches!(before, 41) {
                     marks |= 1 << 3;
                 }
                 // `semi_close`
-                if (tested >> 4 & 1 == 1 || acc_1 || here_1) && !matches!(before, 33) {
+                if (tested >> 4 & 1 == 1 || acc_1 || here_1) && !matches!(before, 41) {
                     marks |= 1 << 4;
                 }
                 // `as_open`
@@ -4918,16 +4918,16 @@ pub fn lex(src: &[u8]) -> Lexed {
 }
 /// The words the grammar reads, a word's code its place plus one, as the lean lexer's `WORD_LIST`.
 const WORD_LIST: [&[u8]; 123] = [
-    b"annotation", b"@", b"file", b":", b"[", b"]", b"package", b"import", b"*", b"as", b"typealias", b"=",
-    b"class", b"fun", b"interface", b"enum", b"{", b"}", b"(", b",", b")", b"val", b"var", b"suspend",
-    b"by", b"<", b">", b"where", b"init", b"companion", b"object", b".", b";", b"get", b"set", b"constructor",
-    b"this", b"super", b"dynamic", b"&", b"?", b"->", b"for", b"in", b"while", b"do", b"..", b"..<",
-    b"?:", b"!", b"&&", b"||", b"data", b"if", b"else", b"when", b"try", b"catch", b"finally", b"throw",
-    b"return", b"continue", b"break", b"::", b"+=", b"-=", b"*=", b"/=", b"%=", b"!=", b"!==", b"==",
-    b"===", b"<=", b">=", b"is", b"+", b"-", b"/", b"%", b"++", b"--", b"!!", b"?.",
-    b"sealed", b"inner", b"value", b"override", b"lateinit", b"public", b"private", b"internal", b"protected", b"out", b"tailrec", b"operator",
-    b"infix", b"inline", b"external", b"const", b"abstract", b"final", b"open", b"vararg", b"noinline", b"crossinline", b"reified", b"expect",
-    b"actual", b"field", b"property", b"receiver", b"param", b"setparam", b"delegate", b"L", b"true", b"false", b"null", b"u",
+    b"as", b"typealias", b"class", b"fun", b"interface", b"val", b"var", b"object", b"this", b"super", b"for", b"in",
+    b"while", b"do", b"if", b"else", b"when", b"try", b"throw", b"return", b"continue", b"break", b"is", b"true",
+    b"false", b"null", b"@", b":", b"[", b"]", b"*", b"=", b"{", b"}", b"(", b",",
+    b")", b"<", b">", b".", b";", b"&", b"?", b"->", b"..", b"..<", b"?:", b"!",
+    b"&&", b"||", b"::", b"+=", b"-=", b"*=", b"/=", b"%=", b"!=", b"!==", b"==", b"===",
+    b"<=", b">=", b"+", b"-", b"/", b"%", b"++", b"--", b"!!", b"?.", b"annotation", b"file",
+    b"package", b"import", b"enum", b"suspend", b"by", b"where", b"init", b"companion", b"get", b"set", b"constructor", b"dynamic",
+    b"data", b"catch", b"finally", b"sealed", b"inner", b"value", b"override", b"lateinit", b"public", b"private", b"internal", b"protected",
+    b"out", b"tailrec", b"operator", b"infix", b"inline", b"external", b"const", b"abstract", b"final", b"open", b"vararg", b"noinline",
+    b"crossinline", b"reified", b"expect", b"actual", b"field", b"property", b"receiver", b"param", b"setparam", b"delegate", b"L", b"u",
     b"U", b"uL", b"UL",
 ];
 
