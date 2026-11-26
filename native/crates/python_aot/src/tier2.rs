@@ -495,6 +495,9 @@ fn bit(x: &[u64], i: usize) -> bool {
 const NONE: u32 = u32::MAX;
 /// No record's kind: past the last record (`kind_at`).
 const NO_KIND: u32 = u32::MAX;
+
+/// The token's code past the last record (`P::cur`): word 0, and a kind no token is.
+const END_CODE: u32 = 0xff;
 /// The kind of a node open whose kind its rule gives later (`retag`).
 const UNSET: u16 = 0x3ff;
 /// The deepest the calls go.
@@ -536,6 +539,9 @@ pub struct P<'a, L: Layout> {
     /// The marks found at this token (`held`): which, and whether each holds.
     known: u64,
     holds: u64,
+    /// The token's code, read as the token is reached (`arrive`, a piece taken), as the lean parser's `peek` reads its
+    /// token: past the last record, `END_CODE`.
+    cur: u32,
     flags: u32,
     depth: u32,
     /// A mark taken last, no token or rule's end since (`G::after_mark`).
@@ -556,7 +562,7 @@ impl<'a, L: Layout> P<'a, L> {
         let (recs, xs, m) = (&lx.recs[..], &lx.extras[..], &lx.masks);
         let n = recs.len();
         // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
-        let mut p = P { src, recs, xs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8).classes(SUPERS), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, leaf_from: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, strings: 0, indent: 0 };
+        let mut p = P { src, recs, xs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8).classes(SUPERS), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, leaf_from: 0, taken: 0, known: 0, holds: 0, cur: END_CODE, flags: 0, depth: 0, marked: false, asks: 0, strings: 0, indent: 0 };
         p.pass_comments();
         p.arrive()?;
         Ok(p)
@@ -569,6 +575,7 @@ impl<'a, L: Layout> P<'a, L> {
         if self.i < self.n {
             self.split(self.i)?;
         }
+        self.cur = if self.i < self.n { self.code_at(self.i) } else { END_CODE };
         Ok(())
     }
 
@@ -650,7 +657,7 @@ impl<'a, L: Layout> P<'a, L> {
 
     #[inline(always)]
     fn word(&self) -> u32 {
-        self.word_at(self.i)
+        self.cur >> 8 & 0xff
     }
 
     #[inline(always)]
@@ -661,7 +668,7 @@ impl<'a, L: Layout> P<'a, L> {
     /// The token's record kind (`t`), as the lean parser's `kind()`; none past the last record.
     #[inline(always)]
     fn kind(&self) -> u32 {
-        self.kind_at(self.i)
+        self.cur & 0xff
     }
 
     #[inline(always)]
@@ -752,6 +759,7 @@ impl<'a, L: Layout> P<'a, L> {
             self.k += 1;
             if self.k < self.sub.len() {
                 self.known = 0;
+                self.cur = self.sub[self.k].2;
                 self.last_end = l + 1;
                 return Ok((s, l + 1));
             }
@@ -4451,7 +4459,9 @@ impl<L: Layout> P<'_, L> {
     fn advance(&mut self, from: usize) -> R {
         if self.strings > 0 && let Some(p) = first_of([&self.m.rd1_open], from, (if self.i + 1 < self.n { self.recs[self.i + 1].start } else { u32::MAX }).min(self.next_x) as usize) {
             self.known = 0;
-            return self.resume_1(p);
+            self.resume_1(p)?;
+            self.cur = self.code_at(self.i);
+            return Ok(());
         }
         // The next token, the comments before it passed.
         self.i += 1;

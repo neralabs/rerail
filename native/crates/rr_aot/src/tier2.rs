@@ -358,6 +358,9 @@ type R<X = ()> = Result<X, u32>;
 const NONE: u32 = u32::MAX;
 /// No record's kind: past the last record (`kind_at`).
 const NO_KIND: u32 = u32::MAX;
+
+/// The token's code past the last record (`P::cur`): word 0, and a kind no token is.
+const END_CODE: u32 = 0xff;
 /// The kind of a node open whose kind its rule gives later (`retag`).
 const UNSET: u16 = 0x3ff;
 /// The deepest the calls go.
@@ -387,7 +390,8 @@ pub struct P<'a, L: Layout> {
     last_end: u32,
     /// A `leaf`'s first token's record (`leaf_open`).
     leaf_from: usize,
-    /// The token's code (none past the last record), read as the token is reached.
+    /// The token's code, read as the token is reached (`arrive`, a piece taken), as the lean parser's `peek` reads its
+    /// token: past the last record, `END_CODE`.
     cur: u32,
     flags: u32,
     depth: u32,
@@ -407,7 +411,7 @@ impl<'a, L: Layout> P<'a, L> {
         let (recs, xs) = (&lx.recs[..], &lx.extras[..]);
         let n = recs.len();
         // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
-        let mut p = P { src, recs, xs, n, i: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, leaf_from: 0, cur: 0, flags: 0, depth: 0, limited: false, asks: 0, strings: 0 };
+        let mut p = P { src, recs, xs, n, i: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, leaf_from: 0, cur: END_CODE, flags: 0, depth: 0, limited: false, asks: 0, strings: 0 };
         p.pass_comments();
         p.arrive()?;
         Ok(p)
@@ -416,7 +420,7 @@ impl<'a, L: Layout> P<'a, L> {
     /// At record `i`: its code read.
     #[inline(always)]
     fn arrive(&mut self) -> R {
-        self.cur = if self.i < self.n { self.recs[self.i].code } else { 0 };
+        self.cur = if self.i < self.n { self.code_at(self.i) } else { END_CODE };
         Ok(())
     }
 
@@ -455,7 +459,7 @@ impl<'a, L: Layout> P<'a, L> {
     /// The token's record kind (`t`), as the lean parser's `kind()`; none past the last record.
     #[inline(always)]
     fn kind(&self) -> u32 {
-        self.kind_at(self.i)
+        self.cur & 0xff
     }
 
     #[inline(always)]

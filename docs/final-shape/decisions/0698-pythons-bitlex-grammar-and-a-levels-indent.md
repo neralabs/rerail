@@ -360,3 +360,9 @@ statements and blocks end.
     further, as the lean lexer's string reader looks no further than its quote. Each part then asks its own mask at
     the one byte found. `advance`'s look for a template's `}` that resumes a string reads up to the next record in the
     same way.
+67. **The token's code is kept as the token is reached (`cur`), for every grammar.** `word()` and `kind()` had asked
+    whether the token was past the last record and whether it was a piece of a split record, then read either one,
+    at every ask. Now they read `cur`, one field, as the lean parser's `peek` reads its token. `arrive` sets it after a
+    record's split, `take` sets it at a piece after another, and `advance` sets it after resuming a string. Past the
+    last record it is `END_CODE` (word 0 and kind 255, which no token has). Grammars with no string read in parts had
+    this already; it is now the runtime's own.
