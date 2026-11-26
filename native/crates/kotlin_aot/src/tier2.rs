@@ -434,6 +434,9 @@ const INTERP_SOFT: [u16; 124] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 /// A word's leaf's kind where `soft_word` takes it (the lean parser's `anon()`); 0: none of its words.
 const SOFT_WORD: [u16; 124] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::SEALED, k::ANNOTATION, k::DATA, k::INNER, k::VALUE, k::OVERRIDE, k::LATEINIT, k::PUBLIC, k::PRIVATE, k::INTERNAL, k::PROTECTED, k::TAILREC, k::OPERATOR, k::INFIX, k::INLINE, k::EXTERNAL, k::SUSPEND, k::CONST, k::ABSTRACT, k::FINAL, k::OPEN, k::VARARG, k::NOINLINE, k::CROSSINLINE, k::EXPECT, k::ACTUAL, k::GET, k::SET, k::FIELD, k::PROPERTY, k::RECEIVER, k::PARAM, k::SETPARAM, k::DELEGATE, k::REIFIED, k::DYNAMIC, k::WHERE, k::CATCH, k::FINALLY, k::INIT, k::COMPANION, k::CONSTRUCTOR, k::ENUM];
 
+/// A set of words a test asks together, of classes apart (`in` `(` `@` `file`): 1 at each.
+const WORD_SET_0: [u16; 124] = [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
 const FLAG_NO_LAMBDA: u32 = 1 << 0;
 /// The word of a piece of record kind `kind`, its bytes `b`: its kind's keywords'.
 fn word_in(kind: u32, b: &[u8]) -> u32 {
@@ -3019,7 +3022,7 @@ impl<L: Layout> P<'_, L> {
     /// `type_projection`.
     fn type_projection(&mut self) -> R {
         self.open(k::TYPE_PROJECTION);
-        if self.m_paren_amp() || self.m_fn_recv() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::IN_4 | w::AT_70 | w::LPAREN_61 | w::FILE_74) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+        if self.m_paren_amp() || self.m_fn_recv() || INTERP_SOFT[self.word() as usize] != 0 || WORD_SET_0[self.word() as usize] != 0 || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
             if !self.m_fn_recv() {
                 if matches!(self.word(), w::IN_4 | w::OUT_75) {
                     self.open(k::TYPE_PROJECTION_MODIFIERS);

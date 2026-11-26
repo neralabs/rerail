@@ -159,6 +159,8 @@ struct G<'a> {
     /// The choices of tokens taken where they are used (`anon_choice`), by their table's name (`anon_table`): the words
     /// each may be, and each one's leaf's kind.
     anon: std::cell::RefCell<std::collections::BTreeMap<String, std::collections::BTreeMap<u8, String>>>,
+    /// The word sets a test asks that are no runs of their numbers (`word_set_table`), each a table.
+    word_sets: std::cell::RefCell<Vec<Vec<u8>>>,
     /// The rules a `leaf K R` reaches (`R` and those it calls): they read the tokens and make nothing, the leaf made
     /// over them after (decision 0673 step 6).
     recognizers: HashSet<String>,
@@ -355,7 +357,7 @@ impl<'a> G<'a> {
                 refusing.clear();
             }
         }
-        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), follows_taken: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default(), scans: Default::default(), marked_read: Default::default(), names: Default::default(), inline: Default::default(), methods: Default::default(), ladder_of: Default::default() }
+        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), follows_taken: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), word_sets: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default(), scans: Default::default(), marked_read: Default::default(), names: Default::default(), inline: Default::default(), methods: Default::default(), ladder_of: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -2601,6 +2603,31 @@ impl<'a> G<'a> {
     /// of the choices written in rules (`ANON`). The take's leaf's kind, the word's in it. A choice that gives a word
     /// another kind than the table has for it (Kotlin's `class`: a `class` leaf in a declaration, a `simple_identifier`
     /// after `::`) takes the next table of the name where none does (`ANON_2`, …), so no choice's kind is another's.
+    /// A word set's table (`moves::word_tables`), where its words are of three classes or more: the table's name.
+    fn word_set_table(&self, ws: &[String]) -> Option<String> {
+        let mut ids: Vec<u8> = ws.iter().map(|w| w.rsplit('_').next().and_then(|d| d.parse().ok())).collect::<Option<_>>()?;
+        ids.sort_unstable();
+        ids.dedup();
+        // Its classes: each word's keyword row, hard or soft. Three or more: no order of classes makes it runs.
+        let class = |w: u8| -> Option<(bool, &str)> {
+            let text = &self.x.words[usize::from(w) - 1];
+            self.x.keywords.iter().find(|r| r.1.iter().any(|(k, _)| k == text)).map(|r| (false, r.0.as_str())).or_else(|| self.x.soft.iter().find(|r| r.1.iter().any(|k| k == text)).map(|r| (true, r.0.as_str())))
+        };
+        let classes: HashSet<Option<(bool, &str)>> = ids.iter().map(|&w| class(w)).collect();
+        if classes.len() < 3 {
+            return None;
+        }
+        let mut sets = self.word_sets.borrow_mut();
+        let i = match sets.iter().position(|s| *s == ids) {
+            Some(i) => i,
+            None => {
+                sets.push(ids);
+                sets.len() - 1
+            }
+        };
+        Some(format!("WORD_SET_{i}"))
+    }
+
     fn anon_table(&self, rule: Option<&str>, ws: &[(u8, String)]) -> Result<String, String> {
         let base = match rule.map(upper) {
             Some(t) if !["ANON", "NONE", "UNSET", "DEPTH", "TERMINATORS", "REMEMBERED", "REFUSED"].contains(&t.as_str()) && !t.starts_with("FLAG_") => t,
@@ -2999,6 +3026,7 @@ impl<'a> G<'a> {
         let rewrite = |b: &mut Block| {
             moves::rewrite(b, &moves::Cx { marks: marks.as_ref(), marked: self.marked_read.get() });
             moves::classes(b, &anon);
+            moves::word_tables(b, &|ws| self.word_set_table(ws));
         };
         bs.iter_mut().for_each(&rewrite);
         // The rules' methods (`inlined`, in order): each decision whose arms open a node opens it once.
@@ -3604,6 +3632,12 @@ impl<'a> G<'a> {
             let kinds: Vec<String> = (0..=self.x.words.len()).map(|w| words.get(&(w as u8)).cloned().unwrap_or_else(|| "0".to_owned())).collect();
             let what = if table == "ANON" || table.starts_with("ANON_") { "a choice of tokens written in a rule".to_owned() } else { format!("`{}`", table.to_ascii_lowercase()) };
             let _ = writeln!(out, "/// A word's leaf's kind where {what} takes it (the lean parser's `anon()`); 0: none of its words.\nconst {table}: [u16; {}] = [{}];\n", kinds.len(), kinds.join(", "));
+        }
+        // Each word set no run of its numbers (`word_set_table`): one read, as the lean parser's `modifier(code)`.
+        for (i, ids) in self.word_sets.borrow().iter().enumerate() {
+            let row: Vec<&str> = (0..=self.x.words.len()).map(|w| if ids.contains(&(w as u8)) { "1" } else { "0" }).collect();
+            let names: Vec<String> = ids.iter().map(|&w| format!("`{}`", String::from_utf8_lossy(&self.x.words[usize::from(w) - 1]))).collect();
+            let _ = writeln!(out, "/// A set of words a test asks together, of classes apart ({}): 1 at each.\nconst WORD_SET_{i}: [u16; {}] = [{}];\n", names.join(" "), row.len(), row.join(", "));
         }
         for (i, f) in self.flags.iter().enumerate() {
             let _ = writeln!(out, "const FLAG_{}: u32 = 1 << {i};", upper(f));

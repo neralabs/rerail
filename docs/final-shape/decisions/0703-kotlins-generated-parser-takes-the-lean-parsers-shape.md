@@ -208,6 +208,10 @@ them.
    operators, then a postfix's tokens (`.` `!!` `(` `[` `::` `++` `--`), a prefix's (`++` `--` `+` `-` `!`), and the
    others an expression may start with (`{` `@`), each set one run. One word test lists four words, of three classes
    (`IN | AT | LPAREN | FILE`: a hard keyword, two punctuation's and a soft one), which no order of classes makes one.
+24. **A word set of three classes is a table** (`moves::word_tables`, `G::word_set_table`): a test that lists four or
+   more words alone, of three keyword rows or more (hard, punctuation, soft), reads one table, as the lean parser's
+   `modifier(code)` reads one `match`. Kotlin's one, `type_projection`'s start, is `WORD_SET_0[w] != 0`. rr and JSON
+   have none. No word test in tier 2 lists four words.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
