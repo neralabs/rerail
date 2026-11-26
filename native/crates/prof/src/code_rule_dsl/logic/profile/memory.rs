@@ -136,11 +136,11 @@ pub(super) struct Sample {
     /// reservations, relational work's leases (live, idle), SQLite's heap, the host blocks (used, and of it free
     /// on their lists, and of that what is still resident: a free chunk's pages may have gone to the OS; decision
     /// 0342), and the threads' stacks and long rooms (blocks of their own, which no allocator counts).
-    pub(super) holders: [usize; 23],
+    pub(super) holders: [usize; 24],
 }
 
 /// The holders a sample reads (`Sample::holders`), in MB.
-fn holders() -> [usize; 23] {
+fn holders() -> [usize; 24] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
     // Relational work's device leases exist only where the device does (macOS).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -159,7 +159,7 @@ fn holders() -> [usize; 23] {
     let (by_kind, leased_in_memory) = rerail_accel::blocks::resident_split();
     let anon: usize = by_kind.iter().sum();
     let k = by_kind.map(|b| b >> 20);
-    [driver, reserved, live >> 20, idle >> 20, sqlite >> 20, host >> 20, host_free >> 20, host_free_resident >> 20, stacks >> 20, long >> 20, host_in_memory >> 20, givable >> 20, pinned >> 20, anon >> 20, leased_in_memory >> 20, k[0], k[1], k[2], k[3], k[4], k[5], k[6], k[7] + k[8]]
+    [driver, reserved, live >> 20, idle >> 20, sqlite >> 20, host >> 20, host_free >> 20, host_free_resident >> 20, stacks >> 20, long >> 20, host_in_memory >> 20, givable >> 20, pinned >> 20, anon >> 20, leased_in_memory >> 20, k[0], k[1], k[2], k[3], k[4], k[5], k[6], k[7] + k[8], rerail_blocks::scratch::used() >> 20]
 }
 
 /// The relations' blocks live now by the span that made them (span, life, bytes used, blocks), as the facts crate
@@ -398,13 +398,13 @@ pub(super) fn sampled_report(r: &mut String) {
     // allocators). The driver's count (`current_allocated_size`) is shown apart: it counts every no-copy wrap of host
     // memory (the blocks, the heap) again, so it is no holder of its own (ab145: 2,709 MB of it at a 3,051 MB
     // footprint whose IOAccelerator regions were 971 MB).
-    let [driver, reserved, leased, idle, sqlite, host, host_free, host_free_resident, stacks, long, host_resident, givable, pinned, anon, leased_in_memory, k0, facts, chunk, program, outputs, journal, scratch, atoms_kept] = t.holders;
+    let [driver, reserved, leased, idle, sqlite, host, host_free, host_free_resident, stacks, long, host_resident, givable, pinned, anon, leased_in_memory, k0, facts, chunk, program, outputs, journal, scratch, atoms_kept, stacks_used] = t.holders;
     let heap_mb = |b: u64| (b >> 20) as usize;
     // The blocks' bytes in memory are measured (`blocks::host_resident`): their used bytes, less their free chunks'
     // pages given back, counted room reserved and never written too (7,890 MB of them at a 4,243 MB footprint).
     let accounted = heap_mb(t.resident) + reserved + leased + idle + host_resident + stacks + long;
-    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; the device's own {} (device pool {}, relational leases {} + {} idle; of every ledger's memory {} MB in memory, anonymous blocks {} of it: facts {}, chunk {}, program {}, outputs {}, journal {}, scratch {}, atoms and kept {}, no kind {}); SQLite heap {}; host blocks {} used, {} of them in memory ({} live, {} free on their lists: {} in pages no live chunk reaches, {} in pages one shares; {} more free given back to the OS); the threads' stacks {}, their long rooms {}; the rest {}; the Metal driver's count {} (no-copy wraps of host memory counted again)",
-        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), reserved + leased + idle, reserved, leased, idle, anon + leased_in_memory, anon, facts, chunk, program, outputs, journal, scratch, atoms_kept, k0, sqlite, host, host_resident, host_resident.saturating_sub(host_free_resident), host_free_resident, givable, pinned, host_free.saturating_sub(host_free_resident), stacks, long, heap_mb(t.footprint).saturating_sub(accounted), driver);
+    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; the device's own {} (device pool {}, relational leases {} + {} idle; of every ledger's memory {} MB in memory, anonymous blocks {} of it: facts {}, chunk {}, program {}, outputs {}, journal {}, scratch {}, atoms and kept {}, no kind {}); SQLite heap {}; host blocks {} used, {} of them in memory ({} live, {} free on their lists: {} in pages no live chunk reaches, {} in pages one shares; {} more free given back to the OS); the threads' stacks {} ({} under their tops), their long rooms {}; the rest {}; the Metal driver's count {} (no-copy wraps of host memory counted again)",
+        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), reserved + leased + idle, reserved, leased, idle, anon + leased_in_memory, anon, facts, chunk, program, outputs, journal, scratch, atoms_kept, k0, sqlite, host, host_resident, host_resident.saturating_sub(host_free_resident), host_free_resident, givable, pinned, host_free.saturating_sub(host_free_resident), stacks, stacks_used, long, heap_mb(t.footprint).saturating_sub(accounted), driver);
     // Blocks' memory handed out again and zeroed for it (decision 0342): a free list's chunk asked zeroed (a
     // descriptor), a recycled slab's allocation; a relation's rows are written before read and never zeroed.
     let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);

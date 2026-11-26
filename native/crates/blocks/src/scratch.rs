@@ -11,6 +11,10 @@
 //!   block and an offset (`maps::place_of`), so a kernel reads a structure there in place.
 //! - **Pages** past `KEEP` bytes above the top go back to the OS, in steps of `GIVE_STEP`, and a take that reaches
 //!   them marks them in use again.
+//! - **Freed regions under a live one** (a small array that outlives what was made after it): once `STRAND` bytes
+//!   were freed and not popped, the owner's settle links each live region past the freed ones under it (one gap) and
+//!   gives the gap's whole pages back (a hole). A pop past a hole leaves it above the top, as pages past `KEEP` are.
+//!   In the census of a run, the stacks held 342 MB of freed regions under 7 MB of live ones at their most.
 //! - **GPU work** (decision 0487): a kernel that binds the stack's bytes holds the block's ledger; while one is
 //!   queued nothing is popped, so no take writes bytes a kernel reads. The pops wait for its fence.
 //!
@@ -45,7 +49,12 @@ const GIVE_STEP: usize = 1 << 20;
 /// A region's header: the previous header's offset (0: none) with, above `PREV_BITS`, the padding between the top
 /// before it and itself; and its state.
 const HEAD: usize = 16;
-const PREV_BITS: u32 = 40;
+const PREV_BITS: u32 = 32;
+const _: () = assert!(ANON <= 1 << PREV_BITS, "a header's offsets fit its bits");
+/// The bytes freed under a live region, and not popped, past which the owner's settle coalesces them (`coalesce`).
+const STRAND: usize = 2 << 20;
+/// The least gap whose pages go back (`coalesce`): smaller gaps are linked past, and keep theirs.
+const HOLE_MIN: usize = 64 << 10;
 /// A region's state: live, freed, or (even, from 2) a live slice of the use with that tag.
 const LIVE: u64 = 0;
 const FREE: u64 = 1;
@@ -72,6 +81,11 @@ pub struct Stack {
     touched: AtomicUsize,
     /// Pages given back, from and to: marked in use again when a take reaches them.
     given: [AtomicUsize; 2],
+    /// Bytes freed and not yet popped (any thread adds; the owner's pops and coalescing take off).
+    stranded: AtomicUsize,
+    /// Gaps under live regions whose pages went back (`coalesce`), from and to, lowest first; the bytes given; the
+    /// owner's.
+    holes: std::sync::Mutex<(Vec<(usize, usize)>, usize)>,
     /// Uses begun, for their tags.
     uses: AtomicU64,
 }
@@ -90,7 +104,7 @@ impl Stack {
     fn new(reserved: usize, owner: u64) -> Stack {
         let block = Arc::new(Block::anon(crate::block::kind::SCRATCH, reserved));
         let (base, len, floor) = (block.base_ptr(), block.reserved(), block.used());
-        Stack { block, base, len, owner, floor, top: AtomicUsize::new(floor), last: AtomicUsize::new(0), touched: AtomicUsize::new(floor), given: [AtomicUsize::new(0), AtomicUsize::new(0)], uses: AtomicU64::new(0) }
+        Stack { block, base, len, owner, floor, top: AtomicUsize::new(floor), last: AtomicUsize::new(0), touched: AtomicUsize::new(floor), given: [AtomicUsize::new(0), AtomicUsize::new(0)], stranded: AtomicUsize::new(0), holes: std::sync::Mutex::new((Vec::new(), 0)), uses: AtomicU64::new(0) }
     }
 
     fn head(&self, at: usize) -> &Head {
@@ -127,6 +141,7 @@ impl Stack {
         h.prev.store(self.last.load(Relaxed) as u64 | ((head - top) as u64) << PREV_BITS, Relaxed);
         h.state.store(state, Relaxed);
         self.last.store(head, Relaxed);
+        USED.fetch_add(end - top, Relaxed);
         self.top.store(end, Relaxed);
         let touched = self.touched.load(Relaxed);
         if end > touched {
@@ -138,8 +153,9 @@ impl Stack {
         (head, at)
     }
 
-    /// The region whose header lies at `head` goes: from any thread; popped now when this is its owner.
-    fn free(&self, head: usize) {
+    /// The region of `bytes` whose header lies at `head` goes: from any thread; popped now when this is its owner.
+    fn free(&self, head: usize, bytes: usize) {
+        self.stranded.fetch_add(bytes, Relaxed);
         self.head(head).state.store(FREE, Release);
         if self.owner != 0 && self.owner == thread_id() {
             self.settle();
@@ -150,7 +166,11 @@ impl Stack {
     /// GPU work that binds the block is queued.
     fn settle(&self) {
         let mut last = self.last.load(Relaxed);
-        if last == 0 || self.head(last).state.load(Acquire) != FREE || !self.block.ledger().quiet() {
+        if last == 0 || !(self.head(last).state.load(Acquire) == FREE || self.stranded.load(Relaxed) >= STRAND) || !self.block.ledger().quiet() {
+            return;
+        }
+        if self.head(last).state.load(Acquire) != FREE {
+            self.coalesce();
             return;
         }
         let mut top = self.top.load(Relaxed);
@@ -164,7 +184,12 @@ impl Stack {
             last = (prev & ((1 << PREV_BITS) - 1)) as usize;
         }
         self.last.store(last, Relaxed);
+        let popped = self.top.load(Relaxed) - top;
+        USED.fetch_sub(popped, Relaxed);
         self.top.store(top, Relaxed);
+        let stranded = self.stranded.load(Relaxed);
+        self.stranded.store(if last == 0 { 0 } else { stranded.saturating_sub(popped) }, Relaxed);
+        self.uncover(top);
         let keep = (top + KEEP).next_multiple_of(crate::block::PAGE);
         let touched = self.touched.load(Relaxed);
         if touched >= keep + GIVE_STEP {
@@ -177,6 +202,77 @@ impl Stack {
             self.touched.store(keep, Relaxed);
             RESIDENT.fetch_sub(touched - keep, Relaxed);
         }
+        if last != 0 && self.stranded.load(Relaxed) >= STRAND {
+            self.coalesce();
+        }
+    }
+
+    /// Links each live region past the freed ones under it, into one gap the pop jumps (its header's padding), and
+    /// gives back the whole pages of gaps of `HOLE_MIN` and more. The owner's, with no GPU work queued: a freed
+    /// region's bytes may be bound by a kernel still to run.
+    fn coalesce(&self) {
+        const MASK: u64 = (1 << PREV_BITS) - 1;
+        let mut holes = self.holes.lock().unwrap_or_else(|e| e.into_inner());
+        let mut above = self.last.load(Relaxed);
+        let mut found = Vec::new();
+        while above != 0 {
+            let h = self.head(above);
+            let prev = h.prev.load(Relaxed);
+            let mut below = (prev & MASK) as usize;
+            if below == 0 || self.head(below).state.load(Acquire) != FREE {
+                above = below;
+                continue;
+            }
+            // The freed run down to the next live region (or the floor): the gap from its end to `above`'s header.
+            let mut low = above - (prev >> PREV_BITS) as usize;
+            while below != 0 && self.head(below).state.load(Acquire) == FREE {
+                let p = self.head(below).prev.load(Relaxed);
+                low = below - (p >> PREV_BITS) as usize;
+                below = (p & MASK) as usize;
+            }
+            h.prev.store(below as u64 | ((above - low) as u64) << PREV_BITS, Relaxed);
+            if above - low >= HOLE_MIN {
+                found.push((low, above));
+            }
+            above = below;
+        }
+        let page = crate::block::PAGE;
+        let mut given = 0;
+        for &(from, to) in found.iter().rev() {
+            let (a, b) = (from.next_multiple_of(page), to / page * page);
+            if b > a {
+                // SAFETY: the stack's own pages, every region on them freed and unlinked: no region reaches them.
+                unsafe { crate::mem::free_pages(self.base.add(a), b - a) };
+                // A gap reaching down past a live region freed since takes in the holes under that one.
+                let mut inside = 0;
+                holes.0.retain(|&(x, y)| {
+                    let within = a <= x && y <= b;
+                    inside += if within { y - x } else { 0 };
+                    !within
+                });
+                holes.0.push((a, b));
+                given += b - a - inside;
+            }
+        }
+        holes.0.sort_unstable();
+        holes.1 += given;
+        RESIDENT.fetch_sub(given, Relaxed);
+        self.stranded.store(0, Relaxed);
+    }
+
+    /// The holes a pop to `top` left above it join the pages given back above the top (`given`), marked in use again
+    /// when a take reaches them; their bytes count as touched again, as the pages past `KEEP` the next settle gives.
+    fn uncover(&self, top: usize) {
+        let mut holes = self.holes.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(at) = holes.0.iter().position(|&(_, to)| to > top) else { return };
+        let (from, to) = (holes.0[at].0, holes.0.last().map_or(0, |h| h.1));
+        let back: usize = holes.0.drain(at..).map(|(a, b)| b - a).sum();
+        holes.1 -= back;
+        RESIDENT.fetch_add(back, Relaxed);
+        let [f, t] = [self.given[0].load(Relaxed), self.given[1].load(Relaxed)];
+        let (f, t) = if t > f { (f.min(from), t.max(to)) } else { (from, to) };
+        self.given[0].store(f, Relaxed);
+        self.given[1].store(t, Relaxed);
     }
 }
 
@@ -189,9 +285,20 @@ pub fn resident() -> usize {
     RESIDENT.load(Relaxed)
 }
 
+/// The bytes every thread's stack holds under its top: its live regions, and the freed ones under a live one (what
+/// a stack holds beside them is pages above its top, `KEEP` and those a settle has not given back).
+static USED: AtomicUsize = AtomicUsize::new(0);
+
+/// What the threads' stacks hold under their tops now (`USED`).
+pub fn used() -> usize {
+    USED.load(Relaxed)
+}
+
 impl Drop for Stack {
     fn drop(&mut self) {
-        RESIDENT.fetch_sub(self.touched.load(Relaxed) - self.floor, Relaxed);
+        let holes = self.holes.get_mut().unwrap_or_else(|e| e.into_inner()).1;
+        RESIDENT.fetch_sub(self.touched.load(Relaxed) - self.floor - holes, Relaxed);
+        USED.fetch_sub(self.top.load(Relaxed) - self.floor, Relaxed);
     }
 }
 
@@ -211,6 +318,7 @@ pub struct OnStack {
     stack: Arc<Stack>,
     head: usize,
     at: usize,
+    bytes: usize,
     _census: crate::maps::Keep,
 }
 
@@ -223,7 +331,7 @@ impl OnStack {
 
 impl Drop for OnStack {
     fn drop(&mut self) {
-        self.stack.free(self.head);
+        self.stack.free(self.head, self.bytes);
     }
 }
 
@@ -253,7 +361,7 @@ impl crate::maps::Room for StackRoom {
         unsafe { std::ptr::write_bytes(ptr, 0, bytes) };
         let census = crate::census::counted(crate::census::STACK, name, bytes);
         // SAFETY: `bytes` writable bytes at `ptr`, aligned as asked, held by `OnStack` while the region lives.
-        unsafe { crate::maps::Region::new(ptr, bytes, Box::new(OnStack { stack, head, at, _census: census })) }
+        unsafe { crate::maps::Region::new(ptr, bytes, Box::new(OnStack { stack, head, at, bytes, _census: census })) }
     }
 }
 
@@ -262,6 +370,7 @@ pub struct Scratch {
     stack: Arc<Stack>,
     tag: u64,
     taken: Cell<usize>,
+    bytes: Cell<usize>,
 }
 
 impl Scratch {
@@ -270,6 +379,7 @@ impl Scratch {
     pub fn take<T: Pod + Copy>(&self, n: usize) -> &mut [T] {
         let (_, at) = self.stack.push(n * size_of::<T>(), align_of::<T>().max(64), self.tag);
         self.taken.set(self.taken.get() + 1);
+        self.bytes.set(self.bytes.get() + n * size_of::<T>());
         // SAFETY: the stack's bytes past the header just pushed, this use's alone until it ends (which outlives the
         // borrow of `self`); every bit pattern is a value of a `Pod` type.
         unsafe { std::slice::from_raw_parts_mut(self.stack.base.add(at).cast::<T>(), n) }
@@ -294,6 +404,7 @@ impl Drop for Scratch {
     /// Its slices go: each found down the chain (they are all on it, live), freed, then popped.
     fn drop(&mut self) {
         let mut left = self.taken.get();
+        self.stack.stranded.fetch_add(self.bytes.get(), Relaxed);
         let mut at = self.stack.last.load(Relaxed);
         while left > 0 && at != 0 {
             let h = self.stack.head(at);
@@ -313,7 +424,7 @@ impl Drop for Scratch {
 pub fn with<R>(f: impl FnOnce(&Scratch) -> R) -> R {
     let stack = mine(0);
     let tag = (stack.uses.fetch_add(1, Relaxed) + 1) << 1;
-    let s = Scratch { stack, tag, taken: Cell::new(0) };
+    let s = Scratch { stack, tag, taken: Cell::new(0), bytes: Cell::new(0) };
     f(&s)
 }
 
@@ -434,6 +545,45 @@ mod tests {
             let x = u.zeroed::<u8>(big);
             x[big - 1] = 2;
         });
+    }
+
+    /// Regions freed under a live one: past `STRAND` bytes they are linked past as one gap and its pages go back (a
+    /// hole); once the live one goes, all are popped, and the hole's pages are taken (and marked in use) again.
+    #[test]
+    fn freed_regions_under_a_live_one_give_their_pages_back() {
+        let s = stack();
+        let before = s.used();
+        let (n, bytes) = (STRAND / 2000 + 64, 2000);
+        let mut under: Vec<_> = (0..n).map(|_| StackRoom.region(bytes, 8, "under")).collect();
+        // SAFETY (each fill): the region's own bytes.
+        let fill = |r: &mut crate::maps::Region, v: u8| unsafe { std::ptr::write_bytes(r.as_mut_ptr(), v, bytes) };
+        for r in &mut under {
+            fill(r, 1);
+        }
+        let live = StackRoom.region(64, 8, "live");
+        let used = s.used();
+        let resident = crate::mem::resident(s.block().base_ptr() as usize, s.block().reserved());
+        drop(under);
+        assert_eq!(s.used(), used, "the live region holds the stack under it");
+        let holes = s.holes.lock().unwrap().1;
+        assert!(holes >= n * bytes - 2 * HOLE_MIN, "the freed regions' pages went back: {holes} of {} bytes", n * bytes);
+        // On macOS reusable pages leave memory at once; elsewhere `MADV_FREE` leaves them until the OS wants them.
+        let after = crate::mem::resident(s.block().base_ptr() as usize, s.block().reserved());
+        #[cfg(target_vendor = "apple")]
+        assert!(after + holes <= resident + crate::block::PAGE, "in memory {after}, was {resident}");
+        let _ = (after, resident);
+        let next = StackRoom.region(256, 8, "next");
+        drop((next, live));
+        assert_eq!(s.used(), before, "the live one gone: every region popped, the gap jumped");
+        assert!(s.holes.lock().unwrap().0.is_empty(), "the hole is above the top");
+        let mut again: Vec<_> = (0..n).map(|_| StackRoom.region(bytes, 8, "again")).collect();
+        for r in &mut again {
+            // SAFETY: the region's own bytes.
+            assert!(unsafe { std::slice::from_raw_parts(r.as_mut_ptr(), bytes) }.iter().all(|b| *b == 0), "a room's region reads zero");
+            fill(r, 3);
+        }
+        drop(again);
+        assert_eq!(s.used(), before);
     }
 
     /// Decision 0487 at a stack: while a kernel's bind of its bytes is queued, nothing is popped (the next take would

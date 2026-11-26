@@ -45,6 +45,7 @@ native/crates/blocks/src/long.rs::IN_MEMORY	review	Native-and-GPU-strata's, unli
 native/crates/blocks/src/mem.rs::RESERVED	stays	the process's own mappings, counted as the OS counts them (address space is the process's)
 native/crates/blocks/src/scratch.rs::NEXT	review	Native-and-GPU-strata's, unlisted there; listed in the merge, not yet classified
 native/crates/blocks/src/scratch.rs::RESIDENT	review	Native-and-GPU-strata's, unlisted there; listed in the merge, not yet classified
+native/crates/blocks/src/scratch.rs::USED	stays	a measure for the profile's account of a footprint, as RESIDENT
 native/crates/blocks/src/windows.rs::HANDLER	stays	code registered at load (the one fault handler a Windows process has, which commits a reservation's pages as they are touched)
 native/crates/blocks/src/windows.rs::REGIONS	stays	the process's reservations, which its one fault handler commits the pages of: the process's own address space
 native/crates/boot/src/code_rule_dsl/boot.rs::LOAD	stays	code registered at load (an init-array entry: a test binary boots the program)
