@@ -683,13 +683,16 @@ pub fn sources(
     }
     // The observer's facts: stated, handed down as a phase's exports are (they are its inputs, not its program).
     let stated: Vec<Vec<Value>> = files.iter().map(|(p, m, g, c)| vec![Value::Str(p.clone().into()), Value::Str(m.clone().into()), Value::Str(g.clone().into()), Value::Str(c.clone().into())]).collect();
-    let paths = files.iter().filter_map(|(p, _, _, _)| {
-        let file = if crate::git_workspace::snapshot::contains(root) {
-            p.clone()
-        } else {
-            // Spelled with `/` on every OS, as the rules join and split paths (`corpus::slashed`).
-            super::slashed(&crate::git_workspace::snapshot::canonicalize(root.join(p)).ok()?)
-        };
+    // Each file's canonical path, by the observer's (a directory at a time, on the pool, and each one this run
+    // resolved before as it was): spelled with `/` on every OS, as the rules join and split paths (`corpus::slashed`).
+    let canonical: Vec<Option<PathBuf>> = if crate::git_workspace::snapshot::contains(root) {
+        Vec::new()
+    } else {
+        let joined: Vec<PathBuf> = files.iter().map(|(p, ..)| root.join(p)).collect();
+        crate::content_store::observe::Observer::canonical_all(|f| super::observe(|o| f(o)), &joined)
+    };
+    let paths = files.iter().enumerate().filter_map(|(i, (p, _, _, _))| {
+        let file = if crate::git_workspace::snapshot::contains(root) { p.clone() } else { super::slashed(canonical[i].as_deref()?) };
         Some(vec![Value::Str(p.clone().into()), Value::Str(file.into())])
     }).collect();
     let _down = HandingDown::enter(NAME, Facts::from([

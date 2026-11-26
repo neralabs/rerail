@@ -2576,14 +2576,30 @@ pub fn walked(root: &Path, enters: fn(&str) -> bool) -> Result<Vec<String>> {
             o.preload(&real);
         }
     });
+    // Every directory's listing, a level of the tree at a time, each level's read at once on the pool: each entry
+    // with whether it is a file, as the directory's listing read it (one call a directory; a symbolic link, or a
+    // listing kept from an earlier run, by its own `stat`).
+    let mut lists: HashMap<PathBuf, Vec<(String, bool, bool)>> = HashMap::new();
+    let mut level = vec![root.to_path_buf()];
+    while !level.is_empty() {
+        let read = crate::content_store::observe::Observer::listings_all(|f| observe(|o| f(o)), &level);
+        let mut next = Vec::new();
+        for (dir, listing) in level.into_iter().zip(read) {
+            let listing = listing.ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
+            next.extend(listing.iter().filter(|(name, is_dir, _)| *is_dir && enters(name)).map(|(name, ..)| dir.join(name)));
+            lists.insert(dir, listing);
+        }
+        level = next;
+    }
+    // The files in the walk's order: a directory's entries in its listing's, the directories last listed first.
     let (mut pending, mut out) = (vec![root.to_path_buf()], Vec::new());
     while let Some(dir) = pending.pop() {
-        let listing = observe(|o| o.listing(&dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
-        for (name, is_dir) in listing.iter() {
+        let listing = lists.remove(&dir).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
+        for (name, is_dir, is_file) in &listing {
             let path = dir.join(name);
             if *is_dir {
                 pending.extend(enters(name).then_some(path));
-            } else if path.is_file() {
+            } else if *is_file {
                 // A document is named by its path in the repository, with `/` on Windows too: scopes' globs and
                 // findings read it.
                 out.push(slashed(path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?));

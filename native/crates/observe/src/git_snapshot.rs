@@ -1269,7 +1269,7 @@ pub fn read_placed(path: impl AsRef<Path>, place: Placer<'_>) -> io::Result<rera
     use std::io::Read as _;
     let path = path.as_ref();
     let Some(v) = view(path) else {
-        let mut file = std::fs::File::open(path)?;
+        let mut file = crate::content_store::observe::listing::lookup(|| std::fs::File::open(path))?;
         let len = usize::try_from(file.metadata()?.len()).map_err(error)?;
         let home = place(len, &mut |out| file.read_exact(out))?;
         let mut more = [0u8; 1];

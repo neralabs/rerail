@@ -45,7 +45,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 mod facts;
-mod listing;
+pub(crate) mod listing;
 
 /// One trusted file in this many is hashed again each process (`RERAIL_VALIDATE_EVERY`).
 pub const VALIDATE_EVERY: u64 = 64;
@@ -104,6 +104,14 @@ impl Stat {
 
 /// A directory's entries: (name, is a directory), sorted by name.
 pub type Listing = Arc<Vec<(String, bool)>>;
+
+/// A directory `Observer::listing` reads (`listing_step`), and its stat as it was asked.
+pub struct ListingRead {
+    dir: PathBuf,
+    own: bool,
+    now: Stat,
+    started: i64,
+}
 
 /// A path as the store keys it (`observed`, `observed_changes`, a canonical form's record): its text, spelled with `/`
 /// between components on Windows too, as a document's path is. A root's answers are then the range under `root/`,
@@ -235,6 +243,12 @@ pub struct Observer {
     /// since the last `flush`.
     canon: BTreeMap<PathBuf, PathBuf>,
     new_canon: Vec<(PathBuf, PathBuf)>,
+    /// Each file's stat as its directory's listing read it (`listing::entries`, one call a directory):
+    /// a path's next `stat` takes its own, once, with no call of its own; the run's (`flushes`) only.
+    listed: (u64, HashMap<PathBuf, (Kind, Stat)>),
+    /// The paths whose canonical form this run resolved (`canonical_resolved`): asked again in the run, the form
+    /// held answers (`canonical_kept`).
+    resolved: (u64, std::collections::HashSet<PathBuf>),
     new_aliases: Vec<(Vec<u8>, [u8; 32])>,
     epoch: u64,
     validate_every: u64,
@@ -486,7 +500,7 @@ impl Observer {
             _ => None,
         });
         let (generation, floor) = (meta_int(LISTING_GEN).unwrap_or(0), meta_int(LISTING_FLOOR).unwrap_or(0));
-        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), changes: BTreeMap::new(), generation, floor, list_max: list_max(), journal_settle: std::time::Duration::ZERO, settle_ns: JOURNAL_SETTLE_NS, wait_least_ns: journal_wait_least() }
+        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), listed: (0, HashMap::new()), resolved: (0, Default::default()), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), changes: BTreeMap::new(), generation, floor, list_max: list_max(), journal_settle: std::time::Duration::ZERO, settle_ns: JOURNAL_SETTLE_NS, wait_least_ns: journal_wait_least() }
     }
 
     /// Records `dir` as a directory a run writes its outputs into: rerail's own (decision 0284), for this observer
@@ -676,12 +690,24 @@ impl Observer {
         for root in self.roots.iter_mut().filter(|r| !r.trusted && under(path, &r.path)) {
             root.checked.insert(path.to_owned());
         }
+        // As its directory's listing read it this run, once.
+        if self.listed.0 == self.flushes
+            && let Some(listed) = self.listed.1.remove(path)
+        {
+            return Some(listed);
+        }
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_OBSERVED_PATHS").is_some()) {
             let under = self.roots.iter().find(|r| under(path, &r.path)).map(|r| if r.trusted { "trusted root, no answer" } else { "untrusted root" }).unwrap_or("no root");
             eprintln!("rerail: stat {} ({under})", path.display());
         }
         self.counts.stats += 1;
         kind_and_stat(path)
+    }
+
+    /// Whether `path` is a file, as its directory's listing read it this run (`None`: not listed so, a symbolic
+    /// link, or taken by a `stat`).
+    pub fn listed_file(&self, path: &Path) -> Option<bool> {
+        (self.listed.0 == self.flushes).then(|| self.listed.1.get(path).map(|(k, _)| *k == Kind::File)).flatten()
     }
 
     fn remember(&mut self, path: &Path, entry: Entry) {
@@ -808,6 +834,13 @@ impl Observer {
         }
         self.ensure(&path);
         self.watch_above(&path);
+        // Resolved earlier in this run: the form held.
+        if self.resolved.0 == self.flushes
+            && self.resolved.1.contains(&path)
+            && let Some(c) = self.canon.get(&path)
+        {
+            return Ok(Some(c.clone()));
+        }
         let asked = self.flushes;
         let trusted = |p: &Path, roots: &[Root]| roots.iter().any(|r| r.trusted && r.asked == asked && (under(p, &r.path) || under(p, &r.real)));
         if plain(&path) && trusted(&path, &self.roots) {
@@ -829,6 +862,10 @@ impl Observer {
 
     /// Records `path`'s canonical form `c`, resolved: kept for the next run.
     fn canonical_resolved(&mut self, path: PathBuf, c: PathBuf) -> PathBuf {
+        if self.resolved.0 != self.flushes {
+            self.resolved = (self.flushes, Default::default());
+        }
+        self.resolved.1.insert(path.clone());
         if self.canon.get(&path) != Some(&c) {
             super::hazards::warm_fault("the observer resolved a canonical form it did not hold", || {
                 format!("{} -> {} (held {:?}; {} forms held, store {})", path.display(), c.display(), self.canon.get(&path), self.canon.len(), self.db.is_some())
@@ -1579,8 +1616,47 @@ impl Observer {
     /// The entries of the directory at `dir` (`None`: not a readable directory), listed only when its stat changed.
     /// An entry is a directory when what it names is one, symlinks followed.
     pub fn listing(&mut self, dir: &Path) -> Option<Listing> {
+        match self.listing_step(dir) {
+            Ok(listing) => listing,
+            Err(read) => {
+                let entries = listing::entries(&read.dir);
+                self.listing_read(read, entries)
+            }
+        }
+    }
+
+    /// Each of `dirs`' listings (`listing`), each entry with whether it is a file as the listing read it (else by its
+    /// own `stat`): the directories to read read at once on the pool, with `observe`'s lock (the process's observer)
+    /// released, as `canonical_all` resolves.
+    pub fn listings_all(observe: impl Fn(&mut dyn FnMut(&mut Observer)), dirs: &[PathBuf]) -> Vec<Option<Vec<(String, bool, bool)>>> {
+        use rayon::prelude::*;
+        let with_files = |o: &Observer, dir: &Path, l: &Listing| l.iter().map(|(name, is_dir)| (name.clone(), *is_dir, !*is_dir && o.listed_file(&dir.join(name)).unwrap_or_else(|| dir.join(name).is_file()))).collect::<Vec<_>>();
+        let mut out: Vec<Option<Vec<(String, bool, bool)>>> = vec![None; dirs.len()];
+        let mut todo: Vec<(usize, ListingRead)> = Vec::new();
+        observe(&mut |o| {
+            for (i, d) in dirs.iter().enumerate() {
+                match o.listing_step(d) {
+                    Ok(l) => out[i] = l.map(|l| with_files(o, d, &l)),
+                    Err(read) => todo.push((i, read)),
+                }
+            }
+        });
+        if todo.is_empty() {
+            return out;
+        }
+        let mut read: Vec<std::io::Result<Vec<(std::ffi::OsString, listing::Listed)>>> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| todo.par_iter().map(|(_, r)| listing::entries(&r.dir)).collect());
+        observe(&mut |o| {
+            for ((i, r), entries) in std::mem::take(&mut todo).into_iter().zip(std::mem::take(&mut read)) {
+                out[i] = o.listing_read(r, entries).map(|l| with_files(o, &dirs[i], &l));
+            }
+        });
+        out
+    }
+
+    /// `listing` up to its read: the answer where the observer has it, else the directory to read (`listing_read`).
+    fn listing_step(&mut self, dir: &Path) -> std::result::Result<Option<Listing>, ListingRead> {
         let dir = &self.abs(dir);
-        if source::contains(dir) { return source::listing(dir).ok().map(Arc::new); }
+        if source::contains(dir) { return Ok(source::listing(dir).ok().map(Arc::new)); }
         let own = self.is_own(dir);
         if !own {
             self.ensure(dir);
@@ -1588,43 +1664,64 @@ impl Observer {
         // An own directory is listed each time, and nothing above it watched for it (`trusted` would).
         if let Some(listing) = (!own).then(|| self.trusted(dir)).flatten().filter(|e| e.kind == Kind::Dir).and_then(|e| e.listing) {
             self.counts.reused += 1;
-            return Some(listing);
+            return Ok(Some(listing));
         }
         let started = now_ns();
-        let (kind, now) = if own { Self::own_stat(dir)? } else { self.stat(dir)? };
+        let Some((kind, now)) = (if own { Self::own_stat(dir) } else { self.stat(dir) }) else { return Ok(None) };
         if kind != Kind::Dir {
-            return None;
+            return Ok(None);
         }
         if let Some(listing) = self.known(dir).filter(|e| e.kind == Kind::Dir && e.holds(&now) && !own).and_then(|e| e.listing) {
             self.counts.reused += 1;
-            return Some(listing);
+            return Ok(Some(listing));
         }
+        Err(ListingRead { dir: dir.clone(), own, now, started })
+    }
+
+    /// Records a directory read for `listing` (`listing_step`): its entries as `listing::entries` gave them.
+    fn listing_read(&mut self, read: ListingRead, entries: std::io::Result<Vec<(std::ffi::OsString, listing::Listed)>>) -> Option<Listing> {
+        let ListingRead { dir, own, now, started } = read;
         self.counts.listed += 1;
-        let listing = self.read_listing(dir, own)?;
+        let listing = self.listing_of(&dir, own, entries.ok()?);
         if encode_listing(&listing).is_some() && !own {
-            self.remember(dir, Entry { kind: Kind::Dir, stat: now, digest: listing_digest(&listing), listing: Some(Arc::clone(&listing)), recorded_ns: started });
+            self.remember(&dir, Entry { kind: Kind::Dir, stat: now, digest: listing_digest(&listing), listing: Some(Arc::clone(&listing)), recorded_ns: started });
         }
         Some(listing)
     }
 
     /// `dir`'s entries as read now. rerail's own files are not in a listing (decision 0284): what they hold changes
     /// with every run.
-    fn read_listing(&self, dir: &Path, own: bool) -> Option<Listing> {
-        let mut entries: Vec<(String, bool)> = std::fs::read_dir(dir)
-            .ok()?
-            .filter_map(|e| e.ok())
-            .filter(|e| own || !self.is_own(&e.path()))
-            .map(|e| {
-                let is_dir = match e.file_type() {
-                    Ok(t) if t.is_symlink() => e.path().is_dir(),
-                    Ok(t) => t.is_dir(),
-                    Err(_) => false,
-                };
-                (e.file_name().to_string_lossy().into_owned(), is_dir)
-            })
-            .collect();
+    /// Read with each entry's kind and stat in one call a directory (`listing::entries`), kept for this run's next
+    /// `stat` of each (`listed`).
+    fn read_listing(&mut self, dir: &Path, own: bool) -> Option<Listing> {
+        let entries = listing::entries(dir).ok()?;
+        Some(self.listing_of(dir, own, entries))
+    }
+
+    /// `dir`'s listing of its entries `read` (`listing::entries`), each one's kind and stat kept (`listed`).
+    fn listing_of(&mut self, dir: &Path, own: bool, read: Vec<(std::ffi::OsString, listing::Listed)>) -> Listing {
+        if self.listed.0 != self.flushes {
+            self.listed = (self.flushes, HashMap::new());
+        }
+        let mut entries: Vec<(String, bool)> = Vec::new();
+        for (name, listed) in read {
+            let path = dir.join(&name);
+            if !own && self.is_own(&path) {
+                continue;
+            }
+            // A symbolic link (or an entry listed with no stat): a directory where what it names is one.
+            let is_dir = match listed {
+                Some((kind, _)) => kind == Kind::Dir,
+                None => path.is_dir(),
+            };
+            // A file's stat as listed; a directory's is its own (a listing gives a directory no size).
+            if let Some(listed @ (Kind::File, _)) = listed {
+                self.listed.1.insert(path, listed);
+            }
+            entries.push((name.to_string_lossy().into_owned(), is_dir));
+        }
         entries.sort();
-        Some(Arc::new(entries))
+        Arc::new(entries)
     }
 
     /// The answers recorded inside the racy window, read again where the window has passed since their path last
@@ -2668,7 +2765,8 @@ mod tests {
             (o.counts, listing, digests)
         };
         let (first, listing, digests) = run(&files, 0);
-        assert!(first.stats >= 6 && first.trusted == 0, "the first run checks every path: {first}");
+        // Each file's stat is its directory's listing's (`pkg`'s, one call): the directory's is its own.
+        assert!(first.stats == 1 && first.listed == 1 && first.hashed == 5 && first.trusted == 0, "the first run checks every path, its files by their directories' listings: {first}");
         // The setup's writes may be named once more (their events may come after the first run's cursor).
         std::thread::sleep(std::time::Duration::from_millis(300));
         let (middle, _, _) = run(&files, 0);
@@ -3641,7 +3739,8 @@ mod tests {
         let (base, root, files) = listing_tree("unchanged");
         let store = base.join("store.files");
         let (first, listing, digests) = listing_run(&store, &root, &files);
-        assert!(first.stats >= 6 && first.trusted == 0, "the first run checks every path: {first}");
+        // Each file's stat is its directory's listing's (one call a directory): a directory's are its own.
+        assert!(first.stats == 2 && first.listed == 2 && first.hashed == 5 && first.trusted == 0, "the first run checks every path, its files by their directories' listings: {first}");
         // Past the racy window of the first run's own recording (the directory's answer too).
         std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
         let (second, again, same) = listing_run(&store, &root, &files);
