@@ -11,8 +11,8 @@
 //                               data: or http(s): import, and no Node built-in the resolver's fallback takes
 //   npm01_lit(n, x, style)      a number, boolean, null or regex literal is the first argument of require() or
 //                               import(), naming the module String() of it ("42"), which never resolves
-//   npm01_leaves_out(dir, rel)  npm leaves the file at rel (a path from dir) out of the package dir/package.json
-//                               describes: getNpmignore(...).match
+//   npm01_leaves_out(d, dir, rel)  npm leaves the file at rel (a path from dir) out of the package dir/package.json
+//                               describes: getNpmignore(...).match, as document d asks it (of its own path or a target's)
 //   npm01_published(d)          document d belongs to a package (node-package's pkg_file) and npm publishes it
 //   npm01_unpublished(n, style, msg)  the plugin's checkPublish (node-resolve's spec_unpublished, over the two above)
 //
@@ -140,17 +140,17 @@ npm01_extset(p, "ts") :- npm01_map(p, "explicit").
 npm01_extset(p, "js") :- npm01_req(_, _, _, p), !npm01_map(p, "explicit").
 // npm01_mains(n): a folder n names resolves through its package.json's main and its index (require, package names).
 .decl npm01_mains(n: node)
-npm01_mains(n) :- npm01_req(n, x, st, _), (st = "require" ; spec_kind(x, "npm") ; spec_kind(x, "node")).
+npm01_mains(n) :- npm01_req(n, _, st, _), (st = "require" ; spec_kind(n, "npm") ; spec_kind(n, "node")).
 
 // ---- the paths a request tries ----------------------------------------------------------------------------------
 // npm01_raw(n, q, slash): n's request as the path q from the root; slash 1 for a trailing `/` (a folder only). A
 // relative name that climbs above the root (npm01_escapes) names no file here.
 .decl npm01_raw(n: node, q: symbol, slash: number)
-npm01_raw(n, @join(@dir(p), x), s) :- npm01_req(n, x, _, p), spec_kind(x, "relative"), !npm01_escapes(n),
+npm01_raw(n, @join(@dir(p), x), s) :- npm01_req(n, x, _, p), spec_kind(n, "relative"), !npm01_escapes(n),
     (suffix("/", x), s = 1 ; !suffix("/", x), s = 0).
 npm01_raw(n, q, s) :- npm01_alias_rw(n, q, s).
 .decl npm01_escapes(n: node)
-npm01_escapes(n) :- npm01_req(n, x, _, p), spec_kind(x, "relative"), d = @dir(p), npm01_depth(d, k),
+npm01_escapes(n) :- npm01_req(n, x, _, p), spec_kind(n, "relative"), d = @dir(p), npm01_depth(d, k),
     u = @replace_all(cat(x, "/"), "^(\\./)?((\\.\\./)*).*$", "${2}"), strlen(u) / 3 > k.
 .decl npm01_depth(d: symbol, k: number)  // how many folders deep d is
 npm01_depth(d, strlen(d) - strlen(@replace_all(d, "/", "")) + 1) :- npm01_req(_, _, _, p), d = @dir(p), d != "".
@@ -159,7 +159,7 @@ npm01_depth("", 0).
 // of it before a `/`: the name is that key's target, from the tsconfig's folder, and the rest. A matched alias is the
 // only way such a name resolves (npm01_alias_hit): node_modules is not tried.
 .decl npm01_alias_rw(n: node, q: symbol, slash: number)
-npm01_alias_rw(n, q, s) :- npm01_req(n, x, _, p), !spec_kind(x, "relative"), npm01_ts(p), tsconfig_for(p, t),
+npm01_alias_rw(n, q, s) :- npm01_req(n, x, _, p), !spec_kind(n, "relative"), npm01_ts(p), tsconfig_for(p, t),
     tsconfig_path(t, pat, to), k = @replace_all(pat, "[/\\\\*]+$", ""), k != "",
     (x = k, rest = "" ; prefix(cat(k, "/"), x), rest = substr(x, strlen(k), strlen(x) - strlen(k))),
     q = cat(@join(t, @replace_all(to, "[/\\\\*]+$", "")), rest), (suffix("/", x), s = 1 ; !suffix("/", x), s = 0).
@@ -207,10 +207,10 @@ npm01_anc(p, @dir(d)) :- npm01_anc(p, d), d != "".
 // An installed package: node_modules/<m> in a folder at or above the file. In a TypeScript file a subpath ending in
 // an aliased extension (`pkg/x.js`) is tried as `pkg/x.ts` only, which a published package does not ship.
 .decl npm01_installed_for(n: node)
-npm01_installed_for(n) :- npm01_req(n, x, _, p), spec_kind(x, "npm"), !npm01_alias_hit(n), spec_package(x, m),
+npm01_installed_for(n) :- npm01_req(n, _, _, p), spec_kind(n, "npm"), !npm01_alias_hit(n), spec_package(n, m),
     npm01_anc(p, d), npm01_installed(d, m), !npm01_pkg_ext_stop(n).
 .decl npm01_pkg_ext_stop(n: node)
-npm01_pkg_ext_stop(n) :- npm01_req(n, x, _, p), spec_kind(x, "npm"), npm01_map(p, m), npm01_ext_alias(m, e, _, _), suffix(e, x).
+npm01_pkg_ext_stop(n) :- npm01_req(n, x, _, p), spec_kind(n, "npm"), npm01_map(p, m), npm01_ext_alias(m, e, _, _), suffix(e, x).
 // `#name`: the nearest package.json's imports maps it to a built-in or to a file of the package.
 .decl npm01_imports_for(n: node)
 npm01_imports_for(n) :- npm01_req(n, x, st, p), prefix("#", x), package_for(p, pd), package_field(pd, k, to),
@@ -224,40 +224,42 @@ npm01_cond("require", "require"). npm01_cond("import", "import"). npm01_cond("ty
 npm01_builtin_path(n) :- npm01_req(n, x, _, _), match("(node:)?(?<b>[^/]+)/.*", x), node_builtin(b).
 
 .decl npm01_failed(n: node)
-npm01_failed(n) :- npm01_req(n, x, st, _), !npm01_resolved(n, _), !npm01_installed_for(n), !npm01_imports_for(n),
-    !builtin_spec(x), !npm01_builtin_path(n), !npm01_as_is(x, st).
-.decl npm01_as_is(x: symbol, style: symbol)  // a data: or http(s): import, whose name is its file
-npm01_as_is(x, "import") :- npm01_req(_, x, "import", _), (spec_kind(x, "data") ; spec_kind(x, "http")).
+npm01_failed(n) :- npm01_req(n, x, _, _), !npm01_resolved(n, _), !npm01_installed_for(n), !npm01_imports_for(n),
+    !builtin_spec(x), !npm01_builtin_path(n), !npm01_as_is(n).
+.decl npm01_as_is(n: node)  // a data: or http(s): import, whose name is its file
+npm01_as_is(n) :- npm01_req(n, _, "import", _), (spec_kind(n, "data") ; spec_kind(n, "http")).
 
 // ---- what npm publishes -----------------------------------------------------------------------------------------
 // npm01_target(n, f): the plugin's target.filePath for a name that is no package: the resolved file; a relative name
 // that does not resolve, the path it names ("<outside>" above the root); an absolute one, outside; any other, the
 // root ("").
 .decl npm01_target(n: node, f: symbol)
-npm01_target(n, f) :- npm01_req(n, x, _, _), !spec_package(x, _), npm01_resolved(n, f).
-npm01_target(n, @join(@dir(p), x)) :- npm01_req(n, x, _, p), spec_kind(x, "relative"), !npm01_escapes(n), !npm01_resolved(n, _).
-npm01_target(n, "<outside>") :- npm01_req(n, x, _, _), spec_kind(x, "relative"), npm01_escapes(n).
-npm01_target(n, "<outside>") :- npm01_req(n, x, _, _), spec_kind(x, "absolute"), !npm01_resolved(n, _).
-npm01_target(n, "") :- npm01_req(n, x, st, _), !spec_package(x, _), !spec_kind(x, "relative"), !spec_kind(x, "absolute"),
-    !npm01_as_is(x, st), !npm01_resolved(n, _).
-// npm01_trel(dir, f, rel): f is inside the package of folder dir, at rel; npm01_tout(dir, f): it is outside.
-.decl npm01_tpair(dir: symbol, f: symbol)
-npm01_tpair(dir, f) :- npm01_target(n, f), docof(n, d), pkg_file(d, dir, _).
-.decl npm01_trel(dir: symbol, f: symbol, rel: symbol)
-npm01_trel("", f, f) :- npm01_tpair("", f), f != "", f != "<outside>".
-npm01_trel(dir, f, substr(f, strlen(dir) + 1, strlen(f) - strlen(dir) - 1)) :- npm01_tpair(dir, f), dir != "",
+npm01_target(n, f) :- npm01_req(n, _, _, _), !spec_package(n, _), npm01_resolved(n, f).
+npm01_target(n, @join(@dir(p), x)) :- npm01_req(n, x, _, p), spec_kind(n, "relative"), !npm01_escapes(n), !npm01_resolved(n, _).
+npm01_target(n, "<outside>") :- npm01_req(n, _, _, _), spec_kind(n, "relative"), npm01_escapes(n).
+npm01_target(n, "<outside>") :- npm01_req(n, _, _, _), spec_kind(n, "absolute"), !npm01_resolved(n, _).
+npm01_target(n, "") :- npm01_req(n, _, _, _), !spec_package(n, _), !spec_kind(n, "relative"), !spec_kind(n, "absolute"),
+    !npm01_as_is(n), !npm01_resolved(n, _).
+// npm01_trel(d, dir, f, rel): a target f of document d is inside the package of folder dir, at rel; npm01_tout(d, dir,
+// f): it is outside. What npm publishes is asked per document, of its own path and its targets' (decision 0677: a
+// table of every file's paths would join them in the cross-file part); the package's lists are the repository's.
+.decl npm01_tpair(d: number, dir: symbol, f: symbol)
+npm01_tpair(d, dir, f) :- npm01_target(n, f), docof(n, d), pkg_file(d, dir, _).
+.decl npm01_trel(d: number, dir: symbol, f: symbol, rel: symbol)
+npm01_trel(d, "", f, f) :- npm01_tpair(d, "", f), f != "", f != "<outside>".
+npm01_trel(d, dir, f, substr(f, strlen(dir) + 1, strlen(f) - strlen(dir) - 1)) :- npm01_tpair(d, dir, f), dir != "",
     prefix(cat(dir, "/"), f).
-.decl npm01_tout(dir: symbol, f: symbol)
-npm01_tout(dir, f) :- npm01_tpair(dir, f), f != dir, !npm01_trel(dir, f, _).
+.decl npm01_tout(d: number, dir: symbol, f: symbol)
+npm01_tout(d, dir, f) :- npm01_tpair(d, dir, f), f != dir, !npm01_trel(d, dir, f, _).
 
-// npm01_ask(dir, rel): a path whose publication is asked: a document's, or a target's; npm01_part its folders and
+// npm01_ask(d, dir, rel): a path whose publication document d asks: its own, or a target's; npm01_part its folders and
 // itself (isdir 0), as node-ignore tests each folder above a path first.
-.decl npm01_ask(dir: symbol, rel: symbol)
-npm01_ask(dir, rel) :- pkg_file(_, dir, rel).
-npm01_ask(dir, rel) :- npm01_trel(dir, _, rel).
-.decl npm01_part(dir: symbol, rel: symbol, a: symbol, isdir: number)
-npm01_part(dir, rel, rel, 0) :- npm01_ask(dir, rel).
-npm01_part(dir, rel, a, 1) :- npm01_part(dir, rel, p, _), match("(?<a>.+)/[^/]+", p).
+.decl npm01_ask(d: number, dir: symbol, rel: symbol)
+npm01_ask(d, dir, rel) :- pkg_file(d, dir, rel).
+npm01_ask(d, dir, rel) :- npm01_trel(d, dir, _, rel).
+.decl npm01_part(d: number, dir: symbol, rel: symbol, a: symbol, isdir: number)
+npm01_part(d, dir, rel, rel, 0) :- npm01_ask(d, dir, rel).
+npm01_part(d, dir, rel, a, 1) :- npm01_part(d, dir, rel, p, _), match("(?<a>.+)/[^/]+", p).
 
 .decl npm01_pkg(dir: symbol)
 npm01_pkg(dir) :- pkg_file(_, dir, _).
@@ -287,10 +289,10 @@ npm01_seq_at(b, lo) :- npm01_seq(b, _, lo, hi, _), lo <= hi.
 npm01_seq_at(b, i + 1) :- npm01_seq_at(b, i), npm01_seq(b, _, _, hi, _), i < hi.
 .decl npm01_has_files(dir: symbol)
 npm01_has_files(dir) :- npm01_files(dir, _, _, _).
-.decl npm01_files_in(dir: symbol, rel: symbol)  // a `files` entry takes rel or a folder above it
-npm01_files_in(dir, rel) :- npm01_files(dir, 0, b, x), npm01_part(dir, rel, a, _), iglob(b, a), (x = "" ; !iglob(x, a)).
-.decl npm01_files_ex(dir: symbol, rel: symbol)  // a `!` entry takes it (one without `/` at any depth)
-npm01_files_ex(dir, rel) :- npm01_files(dir, 1, b, x), npm01_part(dir, rel, a, _),
+.decl npm01_files_in(d: number, dir: symbol, rel: symbol)  // a `files` entry takes rel or a folder above it
+npm01_files_in(d, dir, rel) :- npm01_files(dir, 0, b, x), npm01_part(d, dir, rel, a, _), iglob(b, a), (x = "" ; !iglob(x, a)).
+.decl npm01_files_ex(d: number, dir: symbol, rel: symbol)  // a `!` entry takes it (one without `/` at any depth)
+npm01_files_ex(d, dir, rel) :- npm01_files(dir, 1, b, x), npm01_part(d, dir, rel, a, _),
     (iglob(b, a) ; !contains("/", b), iglob(cat("**/", b), a)), (x = "" ; !iglob(x, a), !iglob(cat("**/", x), a)).
 
 // npm01_ign(dir, k): the ignore file npm reads for package dir: its .npmignore, else (no `files`) its .gitignore.
@@ -308,27 +310,28 @@ npm01_pat(dir, i, n, b, an, dn) :- npm01_ign(dir, k), npm01_ignore_line(dir, k, 
     (suffix("/", t2), dn = 1, t3 = @replace_all(t2, "/+$", "") ; !suffix("/", t2), dn = 0, t3 = t2),
     (prefix("/", t3), an = 1, b = substr(t3, 1, strlen(t3) - 1) ; !prefix("/", t3), contains("/", t3), an = 1, b = t3 ;
      !contains("/", t3), an = 0, b = t3), b != "".
-.decl npm01_ign_hit(dir: symbol, rel: symbol, a: symbol, i: number, neg: number)
-npm01_ign_hit(dir, rel, a, i, n) :- npm01_part(dir, rel, a, isd), npm01_pat(dir, i, n, b, an, dn), (dn = 0 ; isd = 1),
+.decl npm01_ign_hit(d: number, dir: symbol, rel: symbol, a: symbol, i: number, neg: number)
+npm01_ign_hit(d, dir, rel, a, i, n) :- npm01_part(d, dir, rel, a, isd), npm01_pat(dir, i, n, b, an, dn), (dn = 0 ; isd = 1),
     (iglob(b, a) ; an = 0, iglob(cat("**/", b), a)).
-.decl npm01_ign_out(dir: symbol, rel: symbol)  // the last pattern matching rel or a folder above it is no `!`
-npm01_ign_out(dir, rel) :- npm01_ign_hit(dir, rel, a, i, 0), i = max j : { npm01_ign_hit(dir, rel, a, j, _) }.
+.decl npm01_ign_out(d: number, dir: symbol, rel: symbol)  // the last pattern matching rel or a folder above it is no `!`
+npm01_ign_out(d, dir, rel) :- npm01_ign_hit(d, dir, rel, a, i, 0), i = max j : { npm01_ign_hit(d, dir, rel, a, j, _) }.
 
-// npm01_never(dir, rel): published whatever the lists say.
-.decl npm01_never(dir: symbol, rel: symbol)
-npm01_never(dir, "package.json") :- npm01_ask(dir, "package.json").
-npm01_never(dir, rel) :- npm01_ask(dir, rel),
+// npm01_never(d, dir, rel): published whatever the lists say.
+.decl npm01_never(d: number, dir: symbol, rel: symbol)
+npm01_never(d, dir, "package.json") :- npm01_ask(d, dir, "package.json").
+npm01_never(d, dir, rel) :- npm01_ask(d, dir, rel),
     match("(?i)(readme\\.[^.]*|(licen[cs]e|changes|changelog|history)(\\.[^.]*)?)", rel).
-npm01_never(dir, rel) :- npm01_ask(dir, rel), package_field(dir, "main", raw), !suffix("/", raw),
+npm01_never(d, dir, rel) :- npm01_ask(d, dir, rel), package_field(dir, "main", raw), !suffix("/", raw),
     rel = @replace_all(@replace_all(raw, "^/+", ""), "^(\\./)+", "").
 
-.decl npm01_leaves_out(dir: symbol, rel: symbol)
-npm01_leaves_out(dir, rel) :- npm01_ask(dir, rel), npm01_has_files(dir), !npm01_files_in(dir, rel), !npm01_never(dir, rel).
-npm01_leaves_out(dir, rel) :- npm01_files_ex(dir, rel), !npm01_never(dir, rel).
-npm01_leaves_out(dir, rel) :- npm01_ign_out(dir, rel), !npm01_never(dir, rel).
+.decl npm01_leaves_out(d: number, dir: symbol, rel: symbol)
+npm01_leaves_out(d, dir, rel) :- npm01_ask(d, dir, rel), npm01_has_files(dir), !npm01_files_in(d, dir, rel),
+    !npm01_never(d, dir, rel).
+npm01_leaves_out(d, dir, rel) :- npm01_files_ex(d, dir, rel), !npm01_never(d, dir, rel).
+npm01_leaves_out(d, dir, rel) :- npm01_ign_out(d, dir, rel), !npm01_never(d, dir, rel).
 
 .decl npm01_published(d: number)
-npm01_published(d) :- pkg_file(d, dir, rel), !npm01_leaves_out(dir, rel).
+npm01_published(d) :- pkg_file(d, dir, rel), !npm01_leaves_out(d, dir, rel).
 
 // ---- checkPublish -------------------------------------------------------------------------------------------------
 // npm01_checked(d, dir): a published file of package dir that ignorePrivate does not skip.
@@ -339,7 +342,7 @@ npm01_private_skip(dir) :- npm01_private(dir), !option("ignorePrivate", "false")
 .decl npm01_unpublished(n: node, style: symbol, msg: symbol)
 npm01_unpublished(n, st, "npm does not publish this file, so the published package cannot load it.") :-
     npm01_req(n, x, st, _), docof(n, d), npm01_checked(d, dir), !builtin_spec(x), npm01_target(n, f),
-    (npm01_tout(dir, f) ; npm01_trel(dir, f, rel), npm01_leaves_out(dir, rel)).
+    (npm01_tout(d, dir, f) ; npm01_trel(d, dir, f, rel), npm01_leaves_out(d, dir, rel)).
 npm01_unpublished(n, st, "This package is only a devDependency, so the published package cannot load it.") :-
-    npm01_req(n, x, st, _), docof(n, d), npm01_checked(d, dir), !builtin_spec(x), spec_package(x, m),
+    npm01_req(n, x, st, _), docof(n, d), npm01_checked(d, dir), !builtin_spec(x), spec_package(n, m),
     pkg_dep(dir, "devDependencies", m), !pkg_runtime_dep(dir, m), !allow_module(m).
