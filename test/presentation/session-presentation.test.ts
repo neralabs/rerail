@@ -343,8 +343,9 @@ describe("installed session presentation", () => {
     expect(rendered).not.toContain("\u202e");
     expect(rendered).not.toContain("\n");
     // A BEL smuggled into the target is stripped, so it cannot close the sequence early.
-    expect(rendered).toContain("\u001b]8;;http://127.0.0.1/\u0007R E R A I L\u001b]8;;\u0007");
-    expect(rendered).toContain("\u001b]8;;http://127.0.0.1/#rules\u00072 rules\u001b]8;;\u0007");
+    // Each linked label is underlined, so it reads as a link where the terminal draws OSC 8 like plain text.
+    expect(rendered).toContain("\u001b]8;;http://127.0.0.1/\u0007\u001b[4mR E R A I L\u001b[24m\u001b]8;;\u0007");
+    expect(rendered).toContain("\u001b]8;;http://127.0.0.1/#rules\u0007\u001b[4m2 rules\u001b[24m\u001b]8;;\u0007");
     expect(rendered).not.toContain("\u001b\\");
   });
 });

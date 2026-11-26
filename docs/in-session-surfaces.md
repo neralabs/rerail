@@ -412,7 +412,7 @@ On macOS and Linux, where you had no status line of your own, a refresh starts n
 
 ### Links and colour
 
-`R E R A I L` and the steer count link to this session on the dashboard; the rule count links to the rules page.
+`R E R A I L` and the steer count link to this session on the dashboard; the rule count links to the rules page. Each linked item is underlined.
 
 <details>
 <summary>Colours</summary>
@@ -424,7 +424,9 @@ On macOS and Linux, where you had no status line of your own, a refresh starts n
 
 ### Links in the terminal
 
-Steer lines in Claude Code and OMP, and Merge Assist lines in those and Pi, are clickable (OSC 8) links in terminals known to draw them; elsewhere the URL is printed.
+Steer lines in Claude Code and OMP, and Merge Assist lines in those and Pi, are clickable (OSC 8) links in terminals known to draw them; elsewhere the URL is printed. A linked word is underlined (in OMP, drawn in its theme's link colour), since many terminals draw a link like the text around it until you point at it.
+
+Your terminal decides which click opens a link. In iTerm2 it is ⌘-click, and only while **Cmd-Click Opens Filename/URL** is on in Settings › Pointer; a plain click does nothing.
 
 <details>
 <summary>Supported terminals and overrides</summary>
@@ -432,7 +434,7 @@ Steer lines in Claude Code and OMP, and Merge Assist lines in those and Pi, are 
 - **Supported:** kitty, Ghostty, WezTerm, iTerm2, VS Code, Alacritty, Windows Terminal, Orca, and tmux 3.4 or later; never GNU screen.
 - **Override:** `RERAIL_NO_HYPERLINKS=1` or `RERAIL_FORCE_HYPERLINKS=1` (OMP: `PI_NO_HYPERLINKS` / `PI_FORCE_HYPERLINKS`). Pi follows its own detection and its own override, `PI_HYPERLINKS` or the `terminal.hyperlinks` setting.
 
-The footer always carries its links; your terminal decides if they are clickable.
+The footer always carries its links, underlined; your terminal decides if they are clickable. `/rerail` prints this session's dashboard address as text.
 
 </details>
 
