@@ -153,7 +153,7 @@ impl LineTable {
 
     /// The 0-based line holding `byte`; a terminator's bytes belong to the line they end.
     pub fn line(&self, byte: usize) -> usize {
-        rerail_tape_format::reads::f16::line(&self.home, &self.view(), byte.min(self.len as usize) as u32) as usize
+        rerail_tape_format::reads::f16::line(&self.home[..], &self.view(), byte.min(self.len as usize) as u32) as usize
     }
 
     /// The 0-based line and byte column holding `byte`.
@@ -183,7 +183,7 @@ impl LineTable {
 
     /// The first byte of `line`.
     pub fn start(&self, line: usize) -> usize {
-        rerail_tape_format::reads::f16::line_start(&self.home, &self.view(), line as u32) as usize
+        rerail_tape_format::reads::f16::line_start(&self.home[..], &self.view(), line as u32) as usize
     }
 
     /// Each line's first byte, in order.
