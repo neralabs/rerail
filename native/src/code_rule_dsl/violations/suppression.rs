@@ -8,9 +8,10 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::matcher::file_rerail_ignores;
 use crate::code_rule_dsl::model::{Anchor, ViolationSpec};
 use crate::code_rule_dsl::origin::InFile;
-use crate::code_rule_dsl::suppress::{RerailIgnores, root};
+use crate::code_rule_dsl::suppress::{RerailIgnores, Suppress, root};
 use crate::code_rule_dsl::tape::tape_doc;
 use ast_grep_core::{AstGrep, Doc, Node};
+use std::ops::Range;
 use std::rc::Rc;
 
 /// Whether the violation's `suppress` removes a witness: another linter's comments suppress the
@@ -27,9 +28,6 @@ pub fn suppresses<D: Doc>(
     else {
         return false;
     };
-    let Some(file) = InFile::of(node) else {
-        return false;
-    };
     // An AST witness has a span, and so has its anchor.
     let (Some(span), (Some(anchored), _)) =
         (witness.span, anchored_span(&violation.anchor, witness))
@@ -37,20 +35,53 @@ pub fn suppresses<D: Doc>(
         return false;
     };
     // Compiling checked that the query's family honours each linter `suppress` names.
-    let span = (span.start_byte, span.end_byte);
-    {
-        let pack = language_pack::pack(Family::of(file.dialect()));
-        language_pack::suppresses(
-            pack,
-            violation,
-            suppress,
-            node,
-            file.source(),
-            file.lines(),
-            anchored.start_byte..anchored.end_byte,
-            span,
-        )
-    }
+    in_file(
+        violation,
+        suppress,
+        node,
+        anchored.start_byte..anchored.end_byte,
+        (span.start_byte, span.end_byte),
+    )
+}
+
+/// Whether a `.rerail` finding of code `code` is suppressed by the comments its `suppress` lines
+/// name, as a JSON rule's witness is (`suppresses`): `node` is the finding's node in its file's
+/// tree, `anchored` the bytes its `at` stands for, and `witness` the span the linter reads over
+/// (Bandit's lines of the node it visited: `over {c}`, else `anchored`). A family's adapter reads
+/// the comments of the linters it honours, and no others.
+pub fn finding_suppressed<D: Doc>(
+    code: &str,
+    suppress: &Suppress,
+    node: &Node<'_, D>,
+    anchored: Range<usize>,
+    witness: (usize, usize),
+) -> bool {
+    let violation = ViolationSpec::suppressed_by(code, suppress.clone());
+    in_file(&violation, suppress, node, anchored, witness)
+}
+
+/// The family of `node`'s file reads its linters' comments over `anchored` and `witness`.
+fn in_file<D: Doc>(
+    violation: &ViolationSpec,
+    suppress: &Suppress,
+    node: &Node<'_, D>,
+    anchored: Range<usize>,
+    witness: (usize, usize),
+) -> bool {
+    let Some(file) = InFile::of(node) else {
+        return false;
+    };
+    let pack = language_pack::pack(Family::of(file.dialect()));
+    language_pack::suppresses(
+        pack,
+        violation,
+        suppress,
+        node,
+        file.source(),
+        file.lines(),
+        anchored,
+        witness,
+    )
 }
 
 /// Whether a `rerail-ignore` comment naming the violation's code rule covers the byte a witness's

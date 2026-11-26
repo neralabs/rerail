@@ -145,3 +145,44 @@ fn a_finding_at_a_line_spans_its_text_and_one_at_the_file_its_start() {
     assert_eq!((whole.start_byte, whole.end_byte, whole.start_line, whole.end_line), (0, 0, 0, 0));
     assert!(file.span(None, 3).is_none());
 }
+
+/// A policy of `language` that reports each call (a node of kind `call`) of `name()` with `code`, its `.violation`
+/// honouring `suppress`.
+fn calls_of(id: &str, language: &str, call: &str, name: &str, code: &str, suppress: &str) -> String {
+    format!(
+        ".policy \"{id}\" revision 1\n.language {language}\n.mode log\n\
+         .violation Found(at: node) code \"{code}\" \"{name}() is called here\"\n    suppress {suppress}\n\
+         Found(c) :- kind(c, \"{call}\"), field(c, \"function\", f), text(f, \"{name}\").\n"
+    )
+}
+
+/// A `.violation`'s `suppress` lines drop the findings their linter's comments silence, as a JSON rule's `suppress`
+/// does (the product's matchers read them), and keep those a comment names another code for: Ruff's `# noqa` in its
+/// spellings and Bandit's `# nosec` (two policies of one language, run as one pack), and ESLint's directives (a
+/// policy run alone).
+#[test]
+fn suppress_lines_drop_the_findings_the_linters_comments_silence() {
+    let noqa = "shout(1)\nshout(2)  # noqa\nshout(3)  # noqa: SH001\nshout(4)  # NOQA: SH001\nshout(5)  # noqa: E501\nshout(6)  # noqa:SH001,E501\n";
+    let nosec = "debug_run(1)\ndebug_run(2)  # nosec\ndebug_run(3)  # nosec B201\ndebug_run(4)  # nosec B101\n";
+    let eslint = "shout(1);\nshout(2); // eslint-disable-line no-shout\n// eslint-disable-next-line no-shout\nshout(4);\nshout(5); // eslint-disable-line other-rule\n";
+    let root = folder("rr-host-suppress", &[("noqa.py", noqa), ("nosec.py", nosec), ("eslint.js", eslint)]);
+    let rules = folder(
+        "rr-host-suppress-rules",
+        &[
+            ("ruff.rerail", &calls_of("rr-host-ruff", "python", "call", "shout", "SH001", "ruff \"SH001\"")),
+            ("bandit.rerail", &calls_of("rr-host-bandit", "python", "call", "debug_run", "B201", "nosec \"B201\"")),
+            ("eslint.rerail", &calls_of("rr-host-eslint", "javascript", "call_expression", "shout", "no-shout", "eslint \"no-shout\"")),
+        ],
+    );
+    let together = run_over(&root, &[rules.join("ruff.rerail"), rules.join("bandit.rerail")]);
+    let alone = run_over(&root, &[rules.join("eslint.rerail")]);
+    let _ = (std::fs::remove_dir_all(&root), std::fs::remove_dir_all(&rules));
+    let lines = |result: &Value, path: &str| -> Vec<i64> {
+        let mut lines: Vec<i64> = result["findings"].as_array().unwrap().iter().filter(|f| f["path"] == path).map(|f| f["line"].as_i64().unwrap()).collect();
+        lines.sort_unstable();
+        lines
+    };
+    assert_eq!(lines(&together, "noqa.py"), [1, 5], "{together:#}");
+    assert_eq!(lines(&together, "nosec.py"), [1, 4], "{together:#}");
+    assert_eq!(lines(&alone, "eslint.js"), [1, 5], "{alone:#}");
+}

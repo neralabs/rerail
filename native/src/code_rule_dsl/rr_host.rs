@@ -1,11 +1,14 @@
 //! The addon's `.rerail` entry points: `CodeRuleDslRuntime.describeRr` (what each rule file states, checked, nothing
 //! run) and `runRr` (the policies over a corpus root, each finding with its span). The product calls them in a child
 //! process of its own (`src/engine/rr/rr-runner.ts`): the run path's thread pool and store are the process's.
+//! `suppressions` is the findings layer's stage every run of `tools` applies: the linters' comments a finding's
+//! `suppress` lines name.
 
 mod describe;
 mod findings;
 mod run;
 mod spans;
+pub(crate) mod suppressions;
 #[cfg(test)]
 mod tests;
 
