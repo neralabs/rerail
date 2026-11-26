@@ -10,7 +10,7 @@ outlives the daemon. It reads nothing from the Rerail home and makes no network 
 | Path | What it holds |
 |---|---|
 | `src/protocol.rs` | the menu state, the action encoder and the stdin reader |
-| `src/art.rs` | the status circle and the badge drawn onto the icon |
+| `src/art.rs` | the status circle, and the "!" badge drawn onto the icon when something needs attention |
 | `src/desktop.rs` | the macOS menu bar item and the Windows notification-area icon |
 | `src/linux.rs` | the Linux icon, a StatusNotifierItem over D-Bus |
 | `src/main.rs` | the program's entry point |

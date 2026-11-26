@@ -4,7 +4,7 @@ use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::StandardItem;
 use ksni::{Error, Icon, MenuItem, ToolTip, Tray};
 
-use crate::art::{self, Badge, Rgba};
+use crate::art::{self, Rgba};
 use crate::protocol::{self, Action, Incoming, MenuState};
 
 /// The full-colour square, as on Windows.
@@ -93,12 +93,7 @@ impl RerailTray {
 
     /// Brings the icon and the menu up to date with a new state.
     fn show(&mut self, state: MenuState, base: &Rgba) {
-        let badge = if state.attention {
-            Badge::Attention
-        } else {
-            Badge::Good
-        };
-        let icon = art::badged(base, badge, false);
+        let icon = art::icon(base, state.attention, false);
         self.icon = Icon {
             width: icon.width as i32,
             height: icon.height as i32,

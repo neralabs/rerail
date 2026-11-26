@@ -9,7 +9,7 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use crate::art::{self, Badge, Rgba};
+use crate::art::{self, Rgba};
 use crate::protocol::{self, Action, Incoming, MenuState};
 
 /// The base icon: the "n" alone as a template on macOS, which the system tints for the menu bar; the full-colour
@@ -105,8 +105,8 @@ struct Tray {
     update: MenuItem,
     home_shown: bool,
     update_shown: bool,
-    /// The badge the icon shows; none until the first state sets it.
-    badge: Option<Badge>,
+    /// Whether the icon shows the attention badge; none until the first state sets it.
+    attention: Option<bool>,
 }
 
 impl Tray {
@@ -143,7 +143,7 @@ impl Tray {
             update,
             home_shown: false,
             update_shown: false,
-            badge: None,
+            attention: None,
         };
         tray.show(state, base);
         Ok(tray)
@@ -174,14 +174,9 @@ impl Tray {
         if let Err(error) = self.icon.set_tooltip(Some(&state.status)) {
             eprintln!("rerail-tray: could not set the tooltip: {error}");
         }
-        let badge = if state.attention {
-            Badge::Attention
-        } else {
-            Badge::Good
-        };
-        if self.badge != Some(badge) {
-            self.badge = Some(badge);
-            self.set_icon(art::badged(base, badge, TEMPLATE));
+        if self.attention != Some(state.attention) {
+            self.attention = Some(state.attention);
+            self.set_icon(art::icon(base, state.attention, TEMPLATE));
         }
     }
 

@@ -86,10 +86,10 @@ export interface TrayMenuState {
 
 /**
  * The menu for a daemon whose health is `health`, serving `url`, in the Rerail home `home`. `newer` is the newer Rerail
- * the update check found, or null; `update` is where the menu's update is. The badge asks for attention while the
- * daemon is unhealthy or an update is there to click. The update's refresh replaces this daemon with the new version's,
+ * the update check found, or null; `update` is where the menu's update is. The icon carries its "!" badge only while
+ * the daemon is unhealthy or an update is there to click. The update's refresh replaces this daemon with the new version's,
  * whose icon no longer offers it, so the item says it is done only where this daemon outlives the update: when the
- * refresh keeps it running or could not replace it. The badge then goes back to the plain dot, though
+ * refresh keeps it running or could not replace it. The icon then drops its badge, though
  * `health.update.latest` stays newer until the new version replaces this daemon.
  */
 export function trayMenuState(input: {

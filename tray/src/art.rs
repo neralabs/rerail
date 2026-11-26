@@ -10,13 +10,6 @@ pub struct Rgba {
     pub pixels: Vec<u8>,
 }
 
-/// The icon's badge: a plain dot when all is good, a circle with "!" when something needs attention.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Badge {
-    Good,
-    Attention,
-}
-
 const GREEN: [u8; 3] = [0x34, 0xC7, 0x59];
 const RED: [u8; 3] = [0xFF, 0x3B, 0x30];
 const AMBER: [u8; 3] = [0xFF, 0x9F, 0x0A];
@@ -71,29 +64,27 @@ pub fn decode_png(bytes: &[u8]) -> Rgba {
     }
 }
 
-/// The icon with its badge in the lower right corner, cleared around by a thin transparent ring.
+/// The tray icon: the plain base image when all is good; when something needs attention, the base with a "!" badge in
+/// its lower right corner, cleared around by a thin transparent ring.
 ///
-/// In colour, the good badge is a green dot and the attention badge an amber disc with a white "!". As a template
-/// (macOS tints it, so only alpha counts) both are black, and the attention badge's "!" is cut out of its disc.
-pub fn badged(base: &Rgba, badge: Badge, template: bool) -> Rgba {
+/// In colour the badge is an amber disc with a white "!". As a template (macOS tints it, so only alpha counts) the disc
+/// is black, with the "!" cut out of it.
+pub fn icon(base: &Rgba, attention: bool, template: bool) -> Rgba {
     let mut icon = base.clone();
+    if !attention {
+        return icon;
+    }
     let radius = base.width.min(base.height) as f32 * BADGE / 2.0;
     let (cx, cy) = (base.width as f32 - radius, base.height as f32 - radius);
-    let colour = match (template, badge) {
-        (true, _) => BLACK,
-        (false, Badge::Good) => GREEN,
-        (false, Badge::Attention) => AMBER,
-    };
+    let colour = if template { BLACK } else { AMBER };
     icon.each_pixel(|x, y, pixel| {
         erase(pixel, disc(cx, cy, radius + KNOCK_OUT, x, y));
         paint(pixel, colour, disc(cx, cy, radius, x, y));
-        if badge == Badge::Attention {
-            let mark = exclamation(cx, cy, radius, x, y);
-            if template {
-                erase(pixel, mark);
-            } else {
-                paint(pixel, WHITE, mark);
-            }
+        let mark = exclamation(cx, cy, radius, x, y);
+        if template {
+            erase(pixel, mark);
+        } else {
+            paint(pixel, WHITE, mark);
         }
     });
     icon
@@ -250,17 +241,28 @@ mod tests {
     #[test]
     fn badge_sits_in_the_lower_right() {
         let base = solid(32, 32, [10, 20, 30, 255]);
-        let icon = badged(&base, Badge::Good, false);
-        assert_eq!(pixel(&icon, 25, 25), GREEN);
-        assert_eq!(pixel(&icon, 0, 0), [10, 20, 30, 255]);
-        assert_eq!(pixel(&icon, 31, 0), [10, 20, 30, 255]);
-        assert_eq!(pixel(&icon, 0, 31), [10, 20, 30, 255]);
+        let with_badge = icon(&base, true, false);
+        assert_eq!(
+            pixel(&with_badge, 22, 22),
+            [AMBER[0], AMBER[1], AMBER[2], 255]
+        );
+        assert_eq!(pixel(&with_badge, 0, 0), [10, 20, 30, 255]);
+        assert_eq!(pixel(&with_badge, 31, 0), [10, 20, 30, 255]);
+        assert_eq!(pixel(&with_badge, 0, 31), [10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn all_good_is_the_plain_icon() {
+        let colour = decode_png(include_bytes!("../assets/icon.png"));
+        assert_eq!(icon(&colour, false, false), colour);
+        let template = decode_png(include_bytes!("../assets/icon-template.png"));
+        assert_eq!(icon(&template, false, true), template);
     }
 
     #[test]
     fn attention_badge_is_amber_with_a_mark() {
-        let icon = badged(&solid(32, 32, [10, 20, 30, 255]), Badge::Attention, false);
-        let disc = badge_disc(&icon, 5.0);
+        let with_badge = icon(&solid(32, 32, [10, 20, 30, 255]), true, false);
+        let disc = badge_disc(&with_badge, 5.0);
         assert!(
             disc.contains(&[AMBER[0], AMBER[1], AMBER[2], 255]),
             "no amber in the badge"
@@ -272,27 +274,29 @@ mod tests {
     }
 
     #[test]
-    fn template_badges_stay_monochrome() {
+    fn template_badge_stays_monochrome() {
         let base = decode_png(include_bytes!("../assets/icon-template.png"));
-        let good = badged(&base, Badge::Good, true);
-        let attention = badged(&base, Badge::Attention, true);
-        for icon in [&good, &attention] {
-            assert!(
-                icon.pixels.chunks(4).all(|p| p[..3] == [0, 0, 0]),
-                "a template pixel has colour"
-            );
-        }
-        assert_ne!(good.pixels, attention.pixels);
-        // The good badge is a solid disc; the attention badge has its "!" cut out of the disc.
-        assert!(badge_disc(&good, 6.0).iter().all(|p| p[3] == 255));
+        let attention = icon(&base, true, true);
+        assert!(
+            attention.pixels.chunks(4).all(|p| p[..3] == [0, 0, 0]),
+            "a template pixel has colour"
+        );
+        assert_ne!(attention.pixels, base.pixels);
+        // The badge is a solid disc with its "!" cut out.
+        assert!(badge_disc(&attention, 6.0).iter().any(|p| p[3] == 255));
         assert!(badge_disc(&attention, 6.0).iter().any(|p| p[3] == 0));
     }
 
     #[test]
     fn badge_leaves_a_clear_ring_around_its_disc() {
-        let icon = badged(&solid(44, 44, [0, 0, 0, 255]), Badge::Good, true);
-        // Up and left along the diagonal from the badge's centre: the opaque disc, a clear gap, then the opaque base.
-        let alphas: Vec<u8> = (0..=34).rev().map(|at| pixel(&icon, at, at)[3]).collect();
+        let with_badge = icon(&solid(44, 44, [0, 0, 0, 255]), true, true);
+        // Up and left along the diagonal, from inside the badge clear of its "!" (its centre is at 34.1): the opaque
+        // disc, a clear gap, then the opaque base.
+        let alphas: Vec<u8> = (0..=31)
+            .rev()
+            .map(|at| pixel(&with_badge, at, at)[3])
+            .collect();
+        assert_eq!(alphas[0], 255);
         let disc_ends = alphas.iter().position(|&a| a < 255).unwrap();
         let base_starts = disc_ends + alphas[disc_ends..].iter().position(|&a| a == 255).unwrap();
         assert!(
