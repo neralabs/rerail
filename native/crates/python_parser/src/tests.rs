@@ -134,7 +134,19 @@ fn targets_slices_lambdas_yields_and_concatenations_are_the_lean_parsers() {
     // In a block: a region's first part takes its record's marks, not its line break's.
     same(&["def f():\n    x = \"a\" \"b\"\n", "def f():\n    x = (\n        \"a\"\n        \"b\"\n    )\n", "if a:\n    f(\n        \"a\"\n        \"b\"\n    )\n"]);
     // Not read yet: a bare list of expressions as a statement, a tuple as a target.
-    refused(&["a, b\n", "(a, b) = c\n"]);
+    refused(&["a, b\n"]);
+}
+
+#[test]
+fn walrus_bodies_splats_patterns_and_type_parameters_are_the_lean_parsers() {
+    same(&["if (a := b):\n    c\n", "if a := b:\n    c\n", "x = [y for z in w if (y := f(z))]\n", "while (a := f()) is not None:\n    b\n"]);
+    same(&["def f(): ...\n", "def f() -> int: ...\n", "class A: pass\n", "if a: b\n", "while a: b; c\n", "if a: b\nelse: c\n", "class A:\n    def f(self): ...\n    x = 1\n"]);
+    same(&["x = (*a, b)\n", "x = (a, *b)\n", "x = (*a,)\n", "f(*a)\n", "for a, *b in c:\n    d\n"]);
+    same(&["for (a, b) in c:\n    d\n", "for i, (a, b) in c:\n    d\n", "for [a, b] in c:\n    d\n", "[a] = b\n", "[[a]] = b\n", "(a,) = b\n", "(a, b) = c\n", "[a, b] = c, d\n"]);
+    same(&["x = (a) == b\n", "(a)\n", "[a, b]\n", "(a).b = c\n"]);
+    same(&["class A[T]:\n    pass\n", "def f[T](a: T) -> T:\n    pass\n"]);
+    // Not read yet: a statement's splat target, a splat in an expression list, a tuple pattern before a comma.
+    refused(&["*a, b = c\n", "x = *a, b\n", "(a, b), c = d\n", "match a:\n    case 1:\n        b\n", "type X = int\n"]);
 }
 
 #[test]
@@ -153,14 +165,15 @@ fn try_with_and_for_are_the_lean_parsers() {
     same(&["with (\n    a as b,\n    c as d,\n):\n    e\n", "with (a, b):\n    c\n", "with (a(), b()):\n    c\n", "with (a as b, c as d):\n    e\n", "with (a,):\n    c\n", "with (a):\n    c\n"]);
     same(&["for i in range(3):\n    a\nelse:\n    b\n", "for a, b in c:\n    d\n", "for a.b in c:\n    d\n", "for a in b, c:\n    d\n", "for a[0] in b:\n    c\n"]);
     // Not read yet: an `as` in an expression's parentheses, a tuple or list as a loop's target.
-    refused(&["with (a as b):\n    c\n", "with (a, b) as c:\n    d\n", "for (a, b) in c:\n    d\n", "for [a] in c:\n    d\n"]);
+    refused(&["with (a as b):\n    c\n", "with (a, b) as c:\n    d\n"]);
 }
 
 #[test]
 fn assignment_targets_are_the_lean_parsers() {
     same(&["a.b = c\n", "a[0] = c\n", "a = b = c\n", "a.b += 1\n"]);
-    // A list or a call as a target: tree-sitter's `list_pattern`, or no pattern at all. Not read yet.
-    refused(&["[a] = b\n", "[[a]] = b\n", "f() = 1\n", "(a) = b\n"]);
+    // A call as a target: no pattern at all. A parenthesized name: a `tuple_pattern`, as the lean parser's.
+    refused(&["f() = 1\n"]);
+    same(&["(a) = b\n"]);
 }
 
 #[test]

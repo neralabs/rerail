@@ -205,3 +205,13 @@ statements and blocks end.
     that line break's newline, indent and dedent, and its level ended before a concatenation. The JIT's parts had
     the record's.
 37. **A subscript's trailing comma** keeps `,` and `]` as leaves (`trail_bracket`), as a list's.
+38. **A header's body is a `suite`**: an indented block, or the line's simple statements retagged `block`
+    (`def f(): ...`, `if a: b`), as the lean parser's one-line bodies.
+39. **`a := b` is a wrap in the expression's slot** (`walrus`): a `named_expression`, its name with field `name`
+    and its value with `value`.
+40. **Tuple and list patterns** (`tuple_pattern`, `list_pattern`) are patterns, so a loop's target takes them, and
+    a target list's items after the first. A statement's first `(` or `[` is one where a token mark
+    (`target_paren`) finds an `=` after its closer at its depth; else it is an expression. `(a) = b` is a
+    `tuple_pattern` too, as the lean parser's.
+41. **A parenthesized tuple takes splats** (`paren_item`), first or after a comma.
+42. **Type parameters** (`[T]`) after a class's or a function's name are a `type_parameter`, as a generic's.
