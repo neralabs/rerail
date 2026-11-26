@@ -71,3 +71,22 @@ costs went with the chunks (the statistics 4.95 to 0.02 s, the views and tables 
 s to 0); the findings are the same; the peak footprint 1,342 to 1,124 MB, system time 9.0 to 4.7 s.
 
 The chunk-size line prints the blocks' bytes and the heap's rise apart.
+
+## Amended 2026-11-25: the heap the chunk's threads hold at once
+
+The sum of every scope's peak counts each scope as if all of them ran at once. They do not: at most one scope a
+thread runs at a time. On the 300-file bench (the M1 Max, 10 threads) a chunk's scopes summed 280-356 MB, and the
+chunk held 285-415 MB at its most (`held_most`, blocks and heap together), against a measure of 496-642 MB.
+
+The heap part of the measure is now `Written::heap_at_once(threads)`: the `threads + 1` largest scopes' peaks (one
+a thread, and the chunk's own evaluation, which waits on its jobs), plus what every scope allocated and did not free
+by its end (`Written::kept`: rows handed on in the heap, live while later scopes run), at most the sum. It is a
+function of the work, as the sum is: R2 holds. `threads` is the run's (`threads::max`).
+
+- **R4** On threads enough for every scope it is the sum; on fewer, the largest peaks and what was kept
+  (`a_chunks_heap_at_once_is_its_largest_peaks_one_a_thread_and_what_they_kept`).
+
+The bench, one run: the heap part fell to 161-221 MB (75-109 MB of it kept), the measure to 383-507 MB, still above
+`held_most` in every chunk; 5,700-7,200 bytes a node, from 7,900-10,700. The chunks at once went from 2 to 3-4 (bound
+by the room; their size stays the spread's, decision 0690). 22 s wall, 74 s user, against 22 s and 72 s; all 661
+outputs identical.

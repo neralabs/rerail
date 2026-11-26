@@ -191,17 +191,31 @@ impl Drop for Facts {
 /// job carried into it) from the allocator's per-thread peak, reset at the scope's entry, so a scope's is its own
 /// allocation, whatever ran on other threads meanwhile. Their sum bounds what they held at once, and a scope's peak
 /// is a function of its work, not of the threads' timing.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+///
+/// `peaks` are those scopes' peaks, the largest first: at most one scope a thread runs at a time, so the largest of
+/// them, one a thread, bound what they held at once more tightly than their sum (`heap_at_once`), and are as much a
+/// function of the work. `kept` is what the scopes allocated and did not free by their end (each one's own, at least
+/// 0): rows handed on in the heap, live past the scope while later ones run.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Written {
     pub bytes: usize,
     pub held: usize,
     pub heap: usize,
+    pub peaks: Vec<usize>,
+    pub kept: usize,
 }
 
 impl Written {
-    /// What sizes the chunks after it (decision 0469): its blocks' bytes and its scopes' heap at their most.
-    pub fn measure(&self) -> usize {
-        self.bytes + self.heap
+    /// What sizes the chunks after it (decision 0469): its blocks' bytes and its scopes' heap at their most, at once
+    /// on `threads` threads.
+    pub fn measure(&self, threads: usize) -> usize {
+        self.bytes + self.heap_at_once(threads)
+    }
+
+    /// Its scopes' heap at their most that `threads` threads hold at once: the largest peaks, one a thread and one
+    /// more, the chunk's own evaluation waiting on its jobs (a scope that carries a job in holds its own meanwhile).
+    pub fn heap_at_once(&self, threads: usize) -> usize {
+        (self.kept + self.peaks.iter().take(threads.saturating_add(1)).sum::<usize>()).min(self.heap)
     }
 }
 
@@ -421,6 +435,10 @@ pub struct Chunk {
     /// Its scopes' heap at their most, summed (`Written::heap`): each scope's own (`enter_chunk`), whatever ran
     /// beside it.
     peaks: std::sync::atomic::AtomicUsize,
+    /// Each of those scopes' peaks (`Written::peaks`).
+    each_peak: Mutex<Vec<usize>>,
+    /// What those scopes allocated and did not free by their end, each one's own at least 0 (`Written::kept`).
+    kept: std::sync::atomic::AtomicUsize,
 }
 
 impl Chunk {
@@ -520,6 +538,10 @@ impl Drop for ChunkScope {
         if let Some(c) = &self.chunk {
             c.heap.fetch_add(own, std::sync::atomic::Ordering::Relaxed);
             c.peaks.fetch_add(most, std::sync::atomic::Ordering::Relaxed);
+            if most > 0 {
+                c.each_peak.lock().unwrap_or_else(|e| e.into_inner()).push(most);
+            }
+            c.kept.fetch_add(own.max(0) as usize, std::sync::atomic::Ordering::Relaxed);
             c.note();
         }
     }
@@ -602,7 +624,9 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
     drop(leave);
     let held = chunk.held.load(std::sync::atomic::Ordering::Relaxed);
     let heap = chunk.peaks.load(std::sync::atomic::Ordering::Relaxed);
-    (r, Written { bytes: chunk.tally.load(std::sync::atomic::Ordering::Relaxed) + chunk.live.load(std::sync::atomic::Ordering::Relaxed), held, heap })
+    let mut peaks = std::mem::take(&mut *chunk.each_peak.lock().unwrap_or_else(|e| e.into_inner()));
+    peaks.sort_unstable_by(|a, b| b.cmp(a));
+    (r, Written { bytes: chunk.tally.load(std::sync::atomic::Ordering::Relaxed) + chunk.live.load(std::sync::atomic::Ordering::Relaxed), held, heap, peaks, kept: chunk.kept.load(std::sync::atomic::Ordering::Relaxed) })
 }
 
 /// A block of at least `bytes` for relations, from the one block policy (decision 0342): a run bound to the device
@@ -3156,8 +3180,38 @@ mod tests {
         let (w, again) = (run(), run());
         assert_eq!(w.heap, 120 << 20, "{} MB", w.heap >> 20);
         assert_eq!(w, again, "the same work measures the same");
-        assert_eq!(w.measure(), w.bytes + w.heap);
+        assert_eq!(w.measure(usize::MAX), w.bytes + w.heap);
         assert_eq!(other.peaks.load(std::sync::atomic::Ordering::Relaxed), 2 * (50 << 20), "the job's peak is its own chunk's");
+    }
+
+    /// A chunk's heap at once (`Written::heap_at_once`): at most one scope a thread runs at a time, so on `t` threads
+    /// its `t + 1` largest scopes' peaks (the evaluation waits on its jobs), with what each kept past its end, bound
+    /// it; on threads enough for every scope, their sum. A function of the work, as their sum is.
+    #[test]
+    fn a_chunks_heap_at_once_is_its_largest_peaks_one_a_thread_and_what_they_kept() {
+        install_heap_net(net);
+        install_heap_peak(peak, reset);
+        let run = || {
+            in_chunk_measured(|| {
+                alloc(100 << 20);
+                for (most, kept) in [(30i64, 10i64), (20, 0), (10, 0)] {
+                    // A job of this chunk: its own scope, `kept` MB of it handed on past its end.
+                    let _job = enter_chunk(current_chunk());
+                    alloc(most << 20);
+                    alloc((kept - most) << 20);
+                }
+                alloc(-110 << 20);
+            })
+            .1
+        };
+        let (w, again) = (run(), run());
+        assert_eq!(w, again, "the same work measures the same");
+        assert_eq!(w.peaks, [100 << 20, 30 << 20, 20 << 20, 10 << 20], "each scope's own, the largest first");
+        assert_eq!(w.kept, 10 << 20, "the job that handed 10 MB on");
+        assert_eq!(w.heap_at_once(0), (100 + 10) << 20, "one thread: the evaluation's, and what was kept");
+        assert_eq!(w.heap_at_once(1), (100 + 30 + 10) << 20);
+        assert_eq!(w.heap_at_once(usize::MAX), w.heap, "every scope at once: their sum");
+        assert_eq!(w.measure(1), w.bytes + w.heap_at_once(1));
     }
 
     /// Q203 item 3: a chunk is sized by what its own work held, not the process's footprint: what its scope
