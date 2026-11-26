@@ -2404,16 +2404,6 @@
         }
       }
     },
-    "ruff-pt003-pytest-extraneous-scope-function": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 3
-        }
-      }
-    },
     "ruff-pt006-pytest-parametrize-names-wrong-type": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -2450,66 +2440,6 @@
       "counts": {
         "fixtures": {
           "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-pt010-pytest-raises-without-exception": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 6
-        }
-      }
-    },
-    "ruff-pt011-pytest-raises-too-broad": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pt012-pytest-raises-with-multiple-statements": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pt013-pytest-incorrect-pytest-import": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 18,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-pt014-pytest-duplicate-parametrize-test-cases": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-pt015-pytest-assert-always-false": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
           "translationOnly": 4
         }
       }
@@ -2571,16 +2501,6 @@
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pt022-pytest-useless-yield-fixture": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
         }
       }
     },
