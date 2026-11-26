@@ -219,6 +219,22 @@ impl Docs {
         let g = unsafe { self.context.block.ptr::<Given>(self.given).add(i).read() };
         (g[COUNTS] != 0).then(|| std::array::from_fn(|k| g[k]))
     }
+    /// Every document whose views' counts were not given, made on the pool's cores. `counts` makes the one it is
+    /// asked for: `Batch::firsts_at` asked every document's, one after another inside its once, while the pool's
+    /// threads that read the batch waited on it (cold PostHog's statistics: `ast_depth`'s count 6.1 s wall, 1.4 s
+    /// CPU, over the corpus batch's 29,880 documents).
+    pub(super) fn make_uncounted(&self) {
+        use rayon::prelude::*;
+        let todo: Vec<u32> = (0..self.slots.len()).filter(|&i| self.slots[i].made.get().is_none() && self.given(i).is_none()).map(|i| i as u32).collect();
+        if todo.len() < 2 {
+            return;
+        }
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            todo.par_iter().for_each(|&i| {
+                self.made(i as usize);
+            })
+        });
+    }
     /// Document `i`'s views' counts: those given, else its projection's (made if it is not).
     pub fn counts(&self, i: usize) -> ViewCounts {
         match (self.slots[i].made.get(), self.given(i)) {

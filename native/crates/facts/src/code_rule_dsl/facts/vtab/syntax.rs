@@ -4378,6 +4378,11 @@ impl Batch {
         if free.contains(&slot) {
             return made::Firsts::new(&self.docs, slot);
         }
+        // The documents the fill below would make one at a time, made first on the cores, outside its once (a pool
+        // thread that waits on a once runs no job).
+        if self.offsets.counted.get().is_none() {
+            self.docs.make_uncounted();
+        }
         self.offsets.counted.get_or_init(|| {
             let dir = self.docs.dir().cast_mut();
             let (wants_field, wants_sibling) = (self.projection.wants("field"), self.projection.wants("next_sibling"));
