@@ -7,6 +7,7 @@ import { fmt, plural, whenLabel } from "../format.js";
 import { INTERNAL_TESTING, isInternalTesting, isLog, isRunning, notRunningReason, riskLabel, violationOutcomes } from "../derive.js";
 import { isMeasured, isAudited, fires, allFires, activityOf, activityAllOf, rangeLabel, titleOf, panelRuleId, dimensionsOf } from "../state.js";
 import { enforcementTag, ruleTableHead, updateEnforcementTag } from "./enforcement.js";
+import { editedCopyOf } from "./rule-changes.js";
 
 export const CREATE_COMMAND = "/rerail-create";
 
@@ -19,14 +20,16 @@ function createRow(stored) {
   const sw = h("button.sw", { role: "switch", "aria-checked": "false", "data-act": "toggle", "data-i": id });
   const enforcement = enforcementTag();
   const stopped = h("span.badge", { hidden: true }, "Not running");
+  // A rule that is off while its edited copy runs in its place, from Created by you.
+  const edited = h("span.badge", { hidden: true, title: "Your edited copy of this rule runs from Created by you. Open the rule to see it." }, "Edited");
   const internal = h("span.badge", { hidden: true, title: "Not in this release." }, INTERNAL_TESTING);
   const folder = h("span.mono", { title: "Added at" });
   const risk = h("span", { hidden: true });
   const last = h("span");
   const row = h("div.row", { "data-act": "detail", "data-i": id },
     h("div.rmain", null, h("div.rtitle", null, title), h("div.rside", null, enforcement, count, sw),
-      h("div.rmeta", null, internal, stopped, h("span.mono", null, id), risk, folder, last)));
-  row._r = { title, count, sw, enforcement, internal, stopped, folder, risk, last };
+      h("div.rmeta", null, internal, stopped, edited, h("span.mono", null, id), risk, folder, last)));
+  row._r = { title, count, sw, enforcement, internal, stopped, edited, folder, risk, last };
   return row;
 }
 
@@ -69,6 +72,7 @@ function updateRow(row, stored) {
   const id = stored.rule.id, r = row._r, title = titleOf(stored);
   setClass(row, "off", !isRunning(stored));
   updateStopped(r.stopped, stored);
+  setAttr(r.edited, "hidden", stored.enabled || editedCopyOf(stored) === null);
   setAttr(row, "aria-selected", panelRuleId() === id ? "true" : null);
   setText(r.title, title);
   setAttr(r.title, "title", title);

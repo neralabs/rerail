@@ -1,6 +1,6 @@
 /**
  * Overview (`#overview`, the default; `#rules` before v8): the banner the repository's first-open state calls for
- * (`first-open.js`), the banners that ask for approval, a newer Rerail once the daemon reports one, the range's four tiles, then the rules with the most violations logged and the newest sessions,
+ * (`first-open.js`), the banners that ask for approval, what changed in the rules created by you, a newer Rerail once the daemon reports one, the range's four tiles, then the rules with the most violations logged and the newest sessions,
  * or the empty block that says what to do next.
  */
 import { h, setText, setAttr, setClass, setContent, syncChildren, icon, pendingIcon } from "../dom.js";
@@ -13,6 +13,7 @@ import { invalidate } from "../shell.js";
 import { AGENT_UPDATE_COMMAND, updateCopyButton, updateDetailsLink } from "../render/command.js";
 import { rangeControl, syncRange } from "../render/range.js";
 import { loggedTip } from "../render/rules.js";
+import { dismissRuleChanges, ruleChangesKey, ruleChangesNotice } from "../render/rule-changes.js";
 import { enforcementTag, ruleTableHead, updateEnforcementTag } from "../render/enforcement.js";
 import { bannerFor, firstOpenState, liveState, overviewBody, rulesOnSource, steeredTally, topRules } from "../first-open.js";
 
@@ -69,19 +70,35 @@ function stoppedBanner(repo) {
     h("p.acts", null, h("button.btn.sm.solid", { "data-act": "repostart", "data-i": data.repository.repositoryKey, title: `Starts Rerail in every checkout and worktree of ${repo}.` }, "Start Rerail"))));
 }
 
+/** The packs added here, by name, as the menu lists them. */
+const addedPacks = () => [...data.attachedPacks.keys()].map(id => packById(id)).filter(Boolean)
+  .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+
+/**
+ * The welcome's lines under its title: that the added packs are in the menu, and a button to the first one's page,
+ * where its rules show on or off (Add rule packs does not show that). With no pack added the button goes there still.
+ */
+function welcomeBody(packs) {
+  const first = packs[0], one = packs.length === 1;
+  if (first === undefined) return [h("p.acts", null, h("button.btn.sm", { "data-act": "nav", "data-i": "packs" }, "See your rule packs"))];
+  return [
+    h("p", null, `The rule ${one ? "pack you added is" : "packs you added are"} in the menu, under Rule packs: ${andList(packs.map(pack => pack.name))}. `,
+      `${one ? "It starts" : "Each pack starts"} some of its rules on and the rest off. Open ${one ? "it" : "one"} to see which are on, and to turn more on.`),
+    h("p.acts", null, h("button.btn.sm", { "data-act": "nav", "data-i": `pack/${first.id}` }, one ? `View the ${first.name} pack` : "View a rule pack")),
+  ];
+}
+
 /**
  * Day one, before the first session: which rule packs are added, how many rules steer (a pack's rules steer from the
- * start; only the ones it starts off are off), and what Rerail adds to a linter, in set-up's own words. The welcome
- * shows only where Rerail is started: a repository set up but never started reads as stopped.
+ * start; only the ones it starts off are off), and where the packs are. The welcome shows only where Rerail is
+ * started: a repository set up but never started reads as stopped.
  */
 function welcomeBanner(repo) {
   const running = rulesArray().filter(isRunning), log = running.filter(isLog).length, steer = running.length - log;
-  const names = [...data.attachedPacks.keys()].map(id => packById(id)?.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const packs = addedPacks();
   return h("div.welcome", { role: "status" }, icon("wave", 22), h("div", null,
-    h("b", null, `Hi! Rerail is on in ${repo}: ${fmt(names.length)} ${plural(names.length, "rule pack")}, ${fmt(steer)} ${plural(steer, "rule")} steering${log ? `, ${fmt(log)} on Log only` : ""}.`),
-    names.length ? h("p", null, `${andList(names)}. Each pack starts some of its rules on and the rest off; turn more on from its page.`) : null,
-    h("p", null, "Your linter checks code after it’s written; Rerail tells your coding agent as it writes, so problems are fixed in the same turn."),
-    h("p.acts", null, h("button.btn.sm", { "data-act": "nav", "data-i": "packs" }, "See your rule packs"))),
+    h("b", null, `Hi! Rerail is on in ${repo}: ${fmt(packs.length)} ${plural(packs.length, "rule pack")}, ${fmt(steer)} ${plural(steer, "rule")} steering${log ? `, ${fmt(log)} on Log only` : ""}.`),
+    welcomeBody(packs)),
   h("button.x", { "data-act": "dismisswelcome", "aria-label": "Dismiss" }, "✕"));
 }
 
@@ -200,6 +217,15 @@ function renderApprovals(root) {
   const list = othersToApprove();
   const copies = data.loaded && rulesArray().some(stored => awaitingApproval(stored) && stored.copiedFromRuleId);
   setContent(root, JSON.stringify([list, copies]), () => (list.length === 0 ? null : approvalsBanner(list, copies)));
+}
+
+/**
+ * What changed in the rules created by you since this notice was last dismissed: a rule added or edited from a coding
+ * agent's session or a terminal, and approved there, runs as it is set, and this says so. A rule that still waits for
+ * approval is the banners' above, not this one's. It has the ✕ of a notice that asks for nothing.
+ */
+function renderChanges(root) {
+  setContent(root, ruleChangesKey(), ruleChangesNotice);
 }
 
 /* ---------- tiles ---------- */
@@ -361,6 +387,7 @@ function build() {
   const leftOut = h("div.banners");
   const yours = h("div.banners");
   const approvals = h("div.banners");
+  const changes = h("div.banners");
   const update = h("div.banners");
   const range = rangeControl();
   const tiles = TILES.map(tile);
@@ -379,10 +406,10 @@ function build() {
     h("div.colhead.srhead", { "aria-hidden": "true" }, h("span", null, "Session"), h("span", null, "Violations")),
     recentList);
   const lists = h("div.ovlists", null, top, recent);
-  const root = h("div.ov", null, banner, leftOut, yours, approvals, update,
+  const root = h("div.ov", null, banner, leftOut, yours, approvals, changes, update,
     h("div.rollup", null, h("div.rollhead", null, h("h2", null, "Overview"), range), h("div.tiles", null, tiles)),
     empty, lists);
-  page = { root, banner, leftOut, yours, approvals, update, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
+  page = { root, banner, leftOut, yours, approvals, changes, update, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
 }
 
 function renderLists(top, repo) {
@@ -409,6 +436,7 @@ export function render(root) {
   renderLeftOut(page.leftOut);
   renderYours(page.yours);
   renderApprovals(page.approvals);
+  renderChanges(page.changes);
   renderUpdate(page.update);
   syncRange(page.range);
   renderTiles(page.tiles, sources, ruleCount, sessionsEver);
@@ -431,4 +459,5 @@ function renderBody({ ruleCount, sessionsEver }, sources, repo) {
 export const actions = {
   dismisswelcome: () => { dismissWelcome(); invalidate(); },
   dismissupdate: () => { dismissUpdate(); invalidate(); },
+  dismissrulechanges: () => { dismissRuleChanges(); invalidate(); },
 };

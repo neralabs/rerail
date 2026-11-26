@@ -115,6 +115,8 @@ declare module "*/ui/poll.js" {
     folders: string[];
     folderStates: FolderState[];
     mixed: boolean;
+    /** The rule an edited copy was edited from; `null` for any other rule. */
+    copiedFromRuleId: string | null;
     suppressions: Suppressions;
     suppressionsSource: object;
     config: Record<string, unknown> | null;
@@ -440,6 +442,23 @@ declare module "*/ui/merge-model.js" {
   export function settingsSummary(settings: MergeAssistSettings): string;
   export interface FocusControl { act: string; i: string | null }
   export function refocusIndex(used: FocusControl & { index: number }, controls: readonly FocusControl[]): number;
+}
+
+declare module "*/ui/render/rule-changes.js" {
+  type Changed = { origin: string; enabled: boolean; rule: { id: string; mode: string; title?: string; description?: string | null; scope?: object; clauses?: readonly object[] };
+    addedAt: number | null; updatedAt: number | null; copiedFromRuleId: string | null; approval?: { approved: boolean } | null; modeSource?: { by: string } };
+  /** The rules created by you that run as set and were added or edited after `since`; a rule both added and edited counts as added. */
+  export function changedSince<T extends Changed>(rules: readonly T[], since: number): { added: T[]; edited: T[] };
+  /** "2 added and 1 edited". */
+  export function changeCounts(changes: { added: readonly object[]; edited: readonly object[] }): string;
+  /** "set to Steer", "set to Log only", or the counts of each. */
+  export function setToText(rules: readonly Changed[]): string;
+  /** When a rule created by you was last edited, if that was after it was added. */
+  export function lastEditedAt(stored: Changed): number | null;
+  /** The edited copy of `stored` among `rules` that runs (it does not wait for approval), the newest when there are several. */
+  export function editedCopyIn<T extends Changed>(rules: readonly T[], stored: Changed): T | null;
+  /** The sections of a rule's details that an edit changed, in the details' order. */
+  export function changedParts(was: Changed, now: Changed): string[];
 }
 
 declare module "*/ui/render/enforcement.js" {

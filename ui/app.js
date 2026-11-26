@@ -93,8 +93,8 @@ function escape() {
   if (ui.panel !== null) closePanel();
 }
 
-/** Rows that open a pack are role=button divs: Enter and Space act like a click. */
-const pressesRow = e => (e.key === "Enter" || e.key === " ") && e.target.matches?.("div[role=button][data-act]");
+/** Rows that open a pack are role=button divs, and a link inside a sentence a role=link span: Enter and Space act like a click. */
+const pressesRow = e => (e.key === "Enter" || e.key === " ") && e.target.matches?.("div[role=button][data-act], span[role=link][data-act]");
 
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") escape();

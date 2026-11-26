@@ -2,7 +2,7 @@
  * Deleting a rule created by you from this repository, from the rule sheet: one `PUT /api/repository/attachments`
  * that removes its library-rule attachments, queued among the attachment writes in click order. The rule stays in
  * the library (no `DELETE /api/library-rules`, which would take it out of every repository). The toast's Undo
- * (`ruleundo`) adds the same attachments back.
+ * (`ruleundo`) adds the same attachments back. Deleting an edited copy leaves its original off: the toast says so.
  */
 import { data, repoName, titleOf } from "./state.js";
 import { failed as failedText } from "./format.js";
@@ -10,6 +10,7 @@ import { send } from "./api.js";
 import { captureScope, inScope, queueInScope, refreshNow } from "./poll.js";
 import { closePanel, toast } from "./shell.js";
 import { libraryAttachments } from "./render/rule-sheet-model.js";
+import { deletedText } from "./render/rule-changes.js";
 
 const ATTACHMENTS = "/api/repository/attachments";
 
@@ -33,12 +34,13 @@ export async function removeRule(id) {
   const attachments = libraryAttachments(stored), title = titleOf(stored);
   if (attachments.length === 0) return;
   // Undo adds it back here, also once the page shows another repository.
-  const scope = captureScope(), repo = repoName() || "this repo";
+  // Said after the delete, from what the page knew before it: an edited copy's original stays off.
+  const scope = captureScope(), repo = repoName() || "this repo", deleted = deletedText(stored, repo);
   if (!(await write(scope, { remove: attachments }, `Couldn’t delete ${title}`))) return;
   removed.set(id, { title, attachments, scope, repo });
   closePanel();
   await refreshNow();
-  toast(`Deleted from ${repo}.`, { action: { label: "Undo", act: "ruleundo", id } });
+  toast(deleted, { action: { label: "Undo", act: "ruleundo", id } });
 }
 
 /**

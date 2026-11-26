@@ -20,7 +20,7 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   the theme, the writes, opening and closing the sheet, navigation.
 - `actions.js` holds the actions any region may carry (open the sheet, move to a view or repository, a rule's
   switch, a pack's Add and Remove, the time range); `sheet.js` the sheet's own and what a poll loads while it is open.
-- `views/` holds one module per view (`overview`, whose banner for a newer Rerail copies `/rerail-update`; `pack` for
+- `views/` holds one module per view (`overview`, whose banner for a newer Rerail copies `/rerail-update` and whose day-one welcome opens the first added pack's page; `pack` for
   a pack page and Created by you; `packs` for the catalog, which lists the packs Rerail suggests for the repository
   first, each with why, then the others, and after the installed packs of each the ones only published on npm, each
   with the command that installs it, and the review; `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their
@@ -30,6 +30,13 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   is quiet, with Dismiss (not a conflict) as the one action, then the dismissed ones folded with who dismissed each
   and when. It renders other people's titles, summaries, hunks, names and links as text nodes only, and links a pull
   request only when `safePeerUrl` accepts it.
+- `render/rule-changes.js` says what changed in the rules created by you, after the fact: a rule added or edited
+  from a coding agent's session or a terminal, and approved there, runs as it is set, with nothing asked in the
+  dashboard. Overview's notice counts such rules added and edited since it was last dismissed (a week back for a
+  browser that never dismissed it; kept per repository in the browser's storage); a pack's page names its rules that
+  are off while their edited copy runs in their place, and those rows read "Edited"; a rule's Source shows Last edited,
+  what an edited copy was edited from and what changed, and on the original a link to its edited copy. A rule that
+  still waits for approval is left to the approval banners and boxes.
 - `render/` holds what several views or the sheet share: a pack page's rule table (Rule · Enforcement · Violations ·
   On/off, as Overview's Most violations logged) and its controls (`rules.js`, `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
   state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`), a rule pack in the

@@ -40,3 +40,6 @@
 
 .rtable .row{cursor:pointer}
 .rtable .row:hover{background:var(--subtle-fill)}
+/* Under the heading: the notice for rules that are off while their edited copy runs in their place. */
+.ppage > .banners:empty{display:none}
+.ppage > .banners .welcome{margin:0 0 18px}
