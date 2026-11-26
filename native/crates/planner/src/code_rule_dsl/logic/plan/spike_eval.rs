@@ -877,12 +877,12 @@ fn binding<'e>(bound: u64, l: &'e Expr, r: &'e Expr) -> Option<(usize, &'e Expr)
     }
 }
 
-/// `whole = @cat(a, b)` with `whole` known and `a`, `b` unbound variables: `(whole, a, b)`, which a split of
-/// `whole`'s text binds (`Eval::go`).
+/// `whole = @cat(a, b)` with `whole` known and `a`, `b` variables, not both bound: `(whole, a, b)`, which a split of
+/// `whole`'s text binds (`Eval::go`), a bound one's text tested.
 fn split<'e>(bound: u64, l: &'e Expr, r: &'e Expr) -> Option<(&'e Expr, usize, usize)> {
     let parts = |e: &Expr| match e {
         Expr::Call(Fun::Cat, args) => match args[..] {
-            [Expr::A(Arg::Var(a)), Expr::A(Arg::Var(b))] if a != b && bound >> a & 1 == 0 && bound >> b & 1 == 0 => Some((a, b)),
+            [Expr::A(Arg::Var(a)), Expr::A(Arg::Var(b))] if a != b && (bound >> a & 1 == 0 || bound >> b & 1 == 0) => Some((a, b)),
             _ => None,
         },
         _ => None,
@@ -973,9 +973,11 @@ impl<'a> Eval<'a> {
                     && let Some((_, from)) = binding(bound, l, r)
                 {
                     Some((1.0, 0.05 + call_cost(from)))
-                } else if *op == CmpOp::Eq && split(bound, l, r).is_some() {
-                    // A name's splits at its dots: a few.
-                    Some((2.0, 10.0))
+                } else if *op == CmpOp::Eq
+                    && let Some((_, a, b)) = split(bound, l, r)
+                {
+                    // A name's splits at its dots: a few, or with one part bound, at most one.
+                    Some((if (bound >> a | bound >> b) & 1 == 1 { 0.5 } else { 2.0 }, 10.0))
                 } else {
                     None
                 }
@@ -1066,8 +1068,8 @@ impl<'a> Eval<'a> {
         }
     }
 
-    /// The order of rule `rule`'s literals that costs least by `cost`, over every order (by subsets) for a rule of
-    /// at most 14 literals, else greedily; `delta` first.
+    /// The order of rule `rule`'s literals by `cost`, `delta` first: greedy, or where the greedy order's work is more
+    /// than a search's (and the rule has at most 14 literals), the least over every order (by subsets).
     fn order(&self, rule: &RuleP, delta: Option<usize>, locals: u64) -> Result<Vec<usize>, String> {
         let lits = &rule.lits;
         let n = lits.len();
@@ -1080,32 +1082,49 @@ impl<'a> Eval<'a> {
                 LitP::Agg { var, .. } => 1 << var,
             }
         };
-        if n > 14 {
-            let mut left: Vec<usize> = (0..n).collect();
-            let mut bound = 0u64;
-            let mut out = Vec::new();
-            while !left.is_empty() {
-                let pick = match delta.filter(|d| left.contains(d)) {
-                    Some(d) => d,
-                    None => {
-                        let mut best: Option<(f64, usize)> = None;
-                        for &i in &left {
-                            if let Some((fan, unit)) = self.cost(&lits[i], bound, part(i), locals)
-                                && best.is_none_or(|(b, _)| fan + unit < b)
-                            {
-                                best = Some((fan + unit, i));
-                            }
+        // Greedily first: the literal that costs least next, with its price as the search prices it.
+        let mut left: Vec<usize> = (0..n).collect();
+        let mut bound = 0u64;
+        let mut greedy = Vec::new();
+        let (mut work, mut card) = (0.0f64, 1.0f64);
+        while !left.is_empty() {
+            let pick = match delta.filter(|d| left.contains(d)) {
+                Some(d) => self.cost(&lits[d], bound, part(d), locals).map(|p| (p, d)),
+                None => {
+                    let mut best: Option<((f64, f64), usize)> = None;
+                    for &i in &left {
+                        if let Some((fan, unit)) = self.cost(&lits[i], bound, part(i), locals)
+                            && best.is_none_or(|((f, u), _)| fan + unit < f + u)
+                        {
+                            best = Some(((fan, unit), i));
                         }
-                        best.ok_or_else(|| format!("no order binds {}", rule.text))?.1
                     }
-                };
-                left.retain(|&i| i != pick);
-                bound |= adds(pick);
-                out.push(pick);
-            }
-            return Ok(out);
+                    best
+                }
+            };
+            let Some(((fan, unit), pick)) = pick else { return Err(format!("no order binds {}", rule.text)) };
+            work += card * unit + card * fan;
+            card = (card * fan).max(1e-6);
+            left.retain(|&i| i != pick);
+            bound |= adds(pick);
+            greedy.push(pick);
+        }
+        // A search prices each literal after each subset: taken only where the greedy order's work is more than that
+        // (planning no more than running), and for at most 14 literals.
+        if n > 14 || work <= (n << n) as f64 {
+            return Ok(greedy);
         }
         let full = (1usize << n) - 1;
+        // A literal's cost turns only on which of its own variables are bound: priced once for each such set.
+        let mine: Vec<u64> = lits
+            .iter()
+            .map(|l| match l {
+                LitP::Atom(a) => binds(&a.args),
+                LitP::Cmp { l, r, .. } => vars(l) | vars(r),
+                LitP::Agg { var, atom, .. } => binds(&atom.args) | 1 << var,
+            })
+            .collect();
+        let mut priced: Vec<Vec<(u64, Option<(f64, f64)>)>> = vec![Vec::new(); n];
         // Per subset: the least cost of running it first, the rows after it, and the literal run last.
         let mut best: Vec<Option<(f64, f64, usize)>> = vec![None; full + 1];
         let mut bound_of = vec![0u64; full + 1];
@@ -1117,7 +1136,16 @@ impl<'a> Eval<'a> {
                 if mask >> i & 1 == 1 || (mask == 0 && delta.is_some_and(|d| d != i)) {
                     continue;
                 }
-                let Some((fan, unit)) = self.cost(lit, bound, part(i), locals) else { continue };
+                let on = bound & mine[i];
+                let price = match priced[i].iter().find(|&&(b, _)| b == on) {
+                    Some(&(_, p)) => p,
+                    None => {
+                        let p = self.cost(lit, on, part(i), locals);
+                        priced[i].push((on, p));
+                        p
+                    }
+                };
+                let Some((fan, unit)) = price else { continue };
                 let next = mask | 1 << i;
                 let out = card * fan;
                 let c = cost + card * unit + out;
@@ -1157,7 +1185,10 @@ impl<'a> Eval<'a> {
             }
         }
         let locals = inside & !outside;
-        let order = self.order(rule, delta, locals)?;
+        let order = {
+            let _span = super::super::profile::span(|| "spike plan: order".to_string());
+            self.order(rule, delta, locals)?
+        };
         let mut bound = 0u64;
         let mut steps = Vec::new();
         for pick in order {
@@ -1383,20 +1414,29 @@ impl<'a> Eval<'a> {
                     self.go(rule, steps, i + 1, env, out);
                     return;
                 }
-                // `q = @cat(a, b)`, `q` known: each way `@cat` makes `q`: `"" . q`, and `q`'s text split at each dot.
+                // `q = @cat(a, b)`, `q` known: each way `@cat` makes `q`: `"" . q`, and `q`'s text split at each dot past its
+                // first character (`@cat("", y)` is `y`).
                 if *op == CmpOp::Eq
                     && let Some((whole, a, b)) = split(step.bound, l, r)
                 {
                     let Some(q) = self.value(env, whole) else { return };
                     let Some(text) = self.calls.name(q) else { return };
-                    env.r[a] = NONE;
-                    env.r[b] = NONE;
-                    env.v[a] = self.calls.atom("");
-                    env.v[b] = q;
-                    self.go(rule, steps, i + 1, env, out);
-                    for (at, _) in text.match_indices('.') {
-                        env.v[a] = self.calls.atom(&text[..at]);
-                        env.v[b] = self.calls.atom(&text[at + 1..]);
+                    // A bound part's text, which its split's must be.
+                    let fixed = |s: usize| if step.bound >> s & 1 == 1 { self.calls.name(env.v[s]).map(Some) } else { Some(None) };
+                    let (Some(fa), Some(fb)) = (fixed(a), fixed(b)) else { return };
+                    let splits = std::iter::once(("", text.as_str())).chain(text.match_indices('.').filter(|&(at, _)| at > 0).map(|(at, _)| (&text[..at], &text[at + 1..])));
+                    for (n, (pa, pb)) in splits.enumerate() {
+                        if fa.as_deref().is_some_and(|x| x != pa) || fb.as_deref().is_some_and(|x| x != pb) {
+                            continue;
+                        }
+                        if fa.is_none() {
+                            env.r[a] = NONE;
+                            env.v[a] = self.calls.atom(pa);
+                        }
+                        if fb.is_none() {
+                            env.r[b] = NONE;
+                            env.v[b] = if n == 0 { q } else { self.calls.atom(pb) };
+                        }
                         self.go(rule, steps, i + 1, env, out);
                     }
                     return;

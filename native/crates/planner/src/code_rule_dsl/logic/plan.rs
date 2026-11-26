@@ -1422,7 +1422,11 @@ impl<'a> Run<'a, '_> {
         let inputs = Arc::clone(&self.inputs);
         let key = self.spike_key();
         let run_names = SpikeNames { db: self.db, f, tree: &tree, inputs: &inputs, key };
-        let prog = match spike_eval::compile(&names, &pairs, &|r| f.width(r), &run_names) {
+        let compiled = {
+            let _span = super::profile::span(|| "spike compile".to_string());
+            spike_eval::compile(&names, &pairs, &|r| f.width(r), &run_names)
+        };
+        let prog = match compiled {
             Ok(p) => p,
             Err(why) => {
                 spike_eval::declined(&names, &why);
