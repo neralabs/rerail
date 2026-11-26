@@ -551,7 +551,7 @@ pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(
                 at = b;
             }
             t.push_str(&text[at..]);
-            return format!("{t}\n{}", by.code());
+            return format!("{}\n{}", drop_never(&t), by.code());
         }
         for k in keep {
             cands.remove(k);
@@ -762,4 +762,31 @@ pub(super) fn stage1_for_tests(text: &str) -> String {
     text.replacen(head, &format!("        // Stage 1 for the test build's checks alone: the product reads none of it.\n        {cfg}\n{head}"), 1)
         .replacen(fin, &format!("    {cfg}\n{fin}"), 1)
         .replacen(past, &format!("    #[cfg(not(feature = \"test-hooks\"))]\n    let _ = (src, &st, &s1);\n    {cfg}\n{past}"), 1)
+}
+
+/// `text` without the tests at a token's end the bytes' form showed hold nowhere (`if … (false) {`): their comment, the
+/// test and its block.
+fn drop_never(text: &str) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut out: Vec<&str> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let never = |l: &str| {
+            let t = l.trim();
+            t.starts_with("if ") && t.ends_with(" {") && {
+                let c = &t[3..t.len() - 2];
+                c == "(false)" || c.strip_prefix("l + ").and_then(|r| r.split_once(" < n && ")).is_some_and(|(k, r)| k.parse::<u32>().is_ok() && r == "(false)")
+            }
+        };
+        if lines[i].trim_start().starts_with("// ") && lines[i].trim_end().ends_with("where it may hold") && i + 1 < lines.len() && never(lines[i + 1]) {
+            let ind = lines[i + 1].len() - lines[i + 1].trim_start().len();
+            if let Some(e) = (i + 2..lines.len()).find(|&j| lines[j].len() - lines[j].trim_start().len() == ind && lines[j].trim() == "}") {
+                i = e + 1;
+                continue;
+            }
+        }
+        out.push(lines[i]);
+        i += 1;
+    }
+    out.join("\n")
 }

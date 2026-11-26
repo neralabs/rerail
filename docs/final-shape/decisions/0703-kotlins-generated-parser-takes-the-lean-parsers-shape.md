@@ -288,6 +288,13 @@ them.
    terms its run ended in and the bytes there: `a number that ends in _` is `(end_last >> 0 & 1 == 1 || …) && src[l]
    == b'_'`, a hex number's `end_last >> 1 & 1 == 1 && src[l] == b'_'`. The token loop's reads of a fill back: 29,
    against 111 after 33.
+35. **Past a number's end, the byte is none of the class its last term stopped at**: a run read forward ends where no
+   term holds; where it ended in a fill stopped by a class's complement (`fill(…, ~decd)`, `fill(…, ~hexd)`), that
+   fill's stop held at the byte after, so the byte is none of the class. A test at the run's end that asks of that
+   byte a class within it is empty (`past_run`), and a test so emptied is not written. The terms a run ended in are
+   of no byte, so no `prev` or `next` reads them elsewhere. `a digit after a binary number` is then tested in the
+   binary number's row alone, where a digit past `0`, `1` and `_` may follow; a decimal or hex number, whose digits
+   hold every digit, ends at none, as the lean lexer's `digits`.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`

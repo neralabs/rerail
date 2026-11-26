@@ -4778,12 +4778,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     }
                     // a digit after a binary number, as `integer_literal`'s assumptions read it: not proved, a test build checks it.
                     #[cfg(feature = "test-hooks")]
-                    assert!(!(l + 1 < n && true) || (Col { m: &s1.m, k: S1_T82 }[(l + 1) / 64] >> ((l + 1) % 64) & 1 == 1) == ((((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (l + 1 < n && matches!(src[l + 1], b'0'..=b'9'))) && (l + 1 >= 1 && ((((end_last >> 0 & 1 == 1) || (end_last >> 3 & 1 == 1)) || (end_last >> 6 & 1 == 1)) && (end_last >> 0 & 1 == 1))))), "assume in integer_literal: a digit after a binary number at byte {l}");
-                    // a digit after a binary number: at the token's end, where it may hold
-                    if l + 1 < n && ((((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (l + 1 < n && matches!(src[l + 1], b'0'..=b'9'))) && (l + 1 >= 1 && ((((end_last >> 0 & 1 == 1) || (end_last >> 3 & 1 == 1)) || (end_last >> 6 & 1 == 1)) && (end_last >> 0 & 1 == 1))))) {
-                        refused = true;
-                        break 'tokens;
-                    }
+                    assert!(!(l + 1 < n && true) || (Col { m: &s1.m, k: S1_T82 }[(l + 1) / 64] >> ((l + 1) % 64) & 1 == 1) == (false), "assume in integer_literal: a digit after a binary number at byte {l}");
                     // a word touching a real number: at the token's end, where it may hold
                     if (((l < n && !(end_last >> 0 & 1 == 1)) && ((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (l + 1 < n && matches!(src[l + 1], 0x80..=0xff))))) {
                         refused = true;
@@ -4948,12 +4943,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     }
                     // a digit after a binary number, as `real_literal`'s assumptions read it: not proved, a test build checks it.
                     #[cfg(feature = "test-hooks")]
-                    assert!(!(l + 1 < n && true) || (Col { m: &s1.m, k: S1_T82 }[(l + 1) / 64] >> ((l + 1) % 64) & 1 == 1) == ((((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (l + 1 < n && matches!(src[l + 1], b'0'..=b'9'))) && (l + 1 >= 1 && ((((end_last >> 0 & 1 == 1) || (end_last >> 3 & 1 == 1)) || (end_last >> 6 & 1 == 1)) && (end_last >> 0 & 1 == 1))))), "assume in real_literal: a digit after a binary number at byte {l}");
-                    // a digit after a binary number: at the token's end, where it may hold
-                    if l + 1 < n && ((((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (l + 1 < n && matches!(src[l + 1], b'0'..=b'9'))) && (l + 1 >= 1 && ((((end_last >> 0 & 1 == 1) || (end_last >> 3 & 1 == 1)) || (end_last >> 6 & 1 == 1)) && (end_last >> 0 & 1 == 1))))) {
-                        refused = true;
-                        break 'tokens;
-                    }
+                    assert!(!(l + 1 < n && true) || (Col { m: &s1.m, k: S1_T82 }[(l + 1) / 64] >> ((l + 1) % 64) & 1 == 1) == (false), "assume in real_literal: a digit after a binary number at byte {l}");
                     // a word touching a real number: at the token's end, where it may hold
                     if (((l < n && !(end_last >> 0 & 1 == 1)) && ((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (l + 1 < n && matches!(src[l + 1], 0x80..=0xff))))) {
                         refused = true;
@@ -5046,12 +5036,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     }
                     // a digit after a binary number, as `hex_literal`'s assumptions read it: not proved, a test build checks it.
                     #[cfg(feature = "test-hooks")]
-                    assert!(!(l + 1 < n && true) || (Col { m: &s1.m, k: S1_T82 }[(l + 1) / 64] >> ((l + 1) % 64) & 1 == 1) == ((((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (l + 1 < n && matches!(src[l + 1], b'0'..=b'9'))) && (l + 1 >= 1 && (end_last >> 1 & 1 == 1)))), "assume in hex_literal: a digit after a binary number at byte {l}");
-                    // a digit after a binary number: at the token's end, where it may hold
-                    if l + 1 < n && ((((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (l + 1 < n && matches!(src[l + 1], b'0'..=b'9'))) && (l + 1 >= 1 && (end_last >> 1 & 1 == 1)))) {
-                        refused = true;
-                        break 'tokens;
-                    }
+                    assert!(!(l + 1 < n && true) || (Col { m: &s1.m, k: S1_T82 }[(l + 1) / 64] >> ((l + 1) % 64) & 1 == 1) == (false), "assume in hex_literal: a digit after a binary number at byte {l}");
                     // a word touching a real number: at no byte of this token (it holds at a run's end), not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!(s1_past(src, &mut st1, &mut s1, wfirst_in(n, s, l, |p: isize, esc: &mut u64| unsafe { l_t102::<S>(src, n, p, esc, upto(p, l)) })).is_some()), "escape at a token not its anchor's: a word touching a real number");
@@ -5139,9 +5124,9 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     }
                     // a digit after a binary number, as `bin_literal`'s assumptions read it: not proved, a test build checks it.
                     #[cfg(feature = "test-hooks")]
-                    assert!(!(l + 1 < n && true) || (Col { m: &s1.m, k: S1_T82 }[(l + 1) / 64] >> ((l + 1) % 64) & 1 == 1) == ((((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (l + 1 < n && matches!(src[l + 1], b'0'..=b'9'))) && (l + 1 >= 1 && (end_last >> 1 & 1 == 1)))), "assume in bin_literal: a digit after a binary number at byte {l}");
+                    assert!(!(l + 1 < n && true) || (Col { m: &s1.m, k: S1_T82 }[(l + 1) / 64] >> ((l + 1) % 64) & 1 == 1) == ((((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (l + 1 < n && matches!(src[l + 1], b'0'..=b'9'))) && (end_last >> 1 & 1 == 1))), "assume in bin_literal: a digit after a binary number at byte {l}");
                     // a digit after a binary number: at the token's end, where it may hold
-                    if l + 1 < n && ((((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (l + 1 < n && matches!(src[l + 1], b'0'..=b'9'))) && (l + 1 >= 1 && (end_last >> 1 & 1 == 1)))) {
+                    if l + 1 < n && ((((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (l + 1 < n && matches!(src[l + 1], b'0'..=b'9'))) && (end_last >> 1 & 1 == 1))) {
                         refused = true;
                         break 'tokens;
                     }

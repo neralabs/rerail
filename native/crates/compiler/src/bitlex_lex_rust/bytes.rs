@@ -39,6 +39,9 @@ pub(super) struct Bytes<'a> {
     /// byte `l` takes them there: the mask holds at `l`, at `l + 1` it and its terms do not, and its terms at `l` are
     /// those the run ended in (`end_last`).
     fwd: Option<(Expr, Vec<Expr>)>,
+    /// Of each term of that run, a fill stopped by a class's complement: the class, the byte after the run's last being
+    /// none of it where the run ended in that term.
+    fwd_stops: Vec<Option<[bool; 256]>>,
     /// Whether a run was read forward: the loop's blocks then hold `end_last`.
     fwd_used: bool,
     pub(super) failed: std::collections::HashSet<String>,
@@ -100,7 +103,7 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false, tag: "", fwd: None, fwd_used: false }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false, tag: "", fwd: None, fwd_stops: Vec::new(), fwd_used: false }
     }
 
     /// `code` with each read of the masks it has (`locals`) in the windows' form, no block's words (decision 0703): a
@@ -970,6 +973,13 @@ impl<'a> Bytes<'a> {
             }
         }
         self.fwd = Some((self.norm(&e, 0), full.iter().map(|t| self.norm(t, 0)).collect()));
+        self.fwd_stops = parts
+            .iter()
+            .map(|(_, stop)| match stop {
+                Some(Expr::Not(c)) => self.byte_set(c, 0),
+                _ => None,
+            })
+            .collect();
         self.fwd_used = true;
         Some(format!("{{\n        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).\n        let mut q = {s0};\n        let mut last = 0u32;\n        while q < n {{\n            let mut now = 0u32;\n{tests}            if now == 0 && q > {s0} {{\n                break;\n            }}\n{jumps}            last = now;\n            q += 1;\n        }}\n        end_last = last;\n        q.saturating_sub(1)\n    }}"))
     }
@@ -1299,7 +1309,7 @@ impl<'a> Bytes<'a> {
                 Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => match Bytes::shift(f, args) {
                     Some((x, k)) if reads_terms(me, &x, full, 0) => {
                         let inner = go(me, &x, off + k, run, terms, full, all, depth + 1);
-                        if inner == Expr::Empty || inner == *all || !reads_terms(me, &x, full, 0) {
+                        if inner == Expr::Empty || inner == *all || !reads_terms(me, &x, full, 0) || no_byte(&inner) {
                             inner
                         } else {
                             Expr::Call(f.clone(), vec![Arg::E(inner), Arg::N(k.unsigned_abs())])
@@ -1314,7 +1324,80 @@ impl<'a> Bytes<'a> {
                 _ => e.clone(),
             }
         }
-        Some(fold(go(self, &self.norm(e, 0), off, run, terms, &full, &all, 0)))
+        let got = fold(go(self, &self.norm(e, 0), off, run, terms, &full, &all, 0));
+        Some(fold(self.past_run(&got, off)))
+    }
+
+    /// `e` read at `off` from the run's last byte, with each `&` that asks the byte after the run's last of a class
+    /// the run's last term stopped at (`fwd_stops`) empty: the run ends where its fill's stop holds, so that byte is
+    /// none of the class (the lean lexer's `digits` ends at a byte no digit).
+    fn past_run(&self, e: &Expr, off: i64) -> Expr {
+        // The bytes `e` holding says the byte after the run's last is none of.
+        let not_after = |x: &Expr| -> [bool; 256] {
+            fn ex(me: &Bytes, x: &Expr) -> [bool; 256] {
+                match x {
+                    Expr::Name(n) if let Some(k) = n.strip_prefix("\u{0}end") => {
+                        k.parse::<usize>().ok().and_then(|k| me.fwd_stops.get(k).copied().flatten()).unwrap_or([false; 256])
+                    }
+                    Expr::Or(a, b) => {
+                        let (a, b) = (ex(me, a), ex(me, b));
+                        std::array::from_fn(|c| a[c] && b[c])
+                    }
+                    Expr::And(a, b) => {
+                        let (a, b) = (ex(me, a), ex(me, b));
+                        std::array::from_fn(|c| a[c] || b[c])
+                    }
+                    _ => [false; 256],
+                }
+            }
+            ex(self, x)
+        };
+        match e {
+            Expr::And(..) => {
+                let mut cs = Vec::new();
+                fn ands(e: &Expr, out: &mut Vec<Expr>) {
+                    match e {
+                        Expr::And(a, b) => {
+                            ands(a, out);
+                            ands(b, out);
+                        }
+                        e => out.push(e.clone()),
+                    }
+                }
+                ands(e, &mut cs);
+                let cs: Vec<Expr> = cs.iter().map(|c| self.past_run(c, off)).collect();
+                let none: [bool; 256] = cs.iter().fold([false; 256], |acc, c| {
+                    let x = not_after(c);
+                    std::array::from_fn(|i| acc[i] || x[i])
+                });
+                // A conjunct that is a test of the byte after the run's last, of the bytes it is none of.
+                let empty = cs.iter().any(|c| self.shifted_set(c).is_some_and(|(o, set)| off + o == 1 && (0..256).all(|i| !set[i] || none[i])));
+                if empty {
+                    return Expr::Empty;
+                }
+                cs.into_iter().reduce(|a, b| Expr::And(Box::new(a), Box::new(b))).unwrap_or(Expr::Not(Box::new(Expr::Empty)))
+            }
+            Expr::Or(a, b) => Expr::Or(Box::new(self.past_run(a, off)), Box::new(self.past_run(b, off))),
+            Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") && let Some((x, k)) = Bytes::shift(f, args) => {
+                let inner = self.past_run(&x, off + k);
+                // The terms a run ended in are of no byte: no shift reads them elsewhere.
+                if no_byte(&inner) { inner } else { Expr::Call(f.clone(), vec![Arg::E(inner), Arg::N(k.unsigned_abs())]) }
+            }
+            e => e.clone(),
+        }
+    }
+
+    /// `e` as one test of the byte at an offset from the byte asked: the offset and its bytes.
+    fn shifted_set(&self, e: &Expr) -> Option<(i64, [bool; 256])> {
+        match e {
+            Expr::Name(n) if n.starts_with('\u{0}') => None,
+            Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => {
+                let (x, k) = Bytes::shift(f, args)?;
+                let (o, set) = self.shifted_set(&x)?;
+                Some((o + k, set))
+            }
+            e => self.byte_set(e, 0).map(|s| (0, s)),
+        }
     }
 
     /// `e` with every name of a mask in place, down to the classes: one form of a mask however the loop's locals or the
@@ -2635,4 +2718,15 @@ fn fold(e: Expr) -> Expr {
         ),
         e => e,
     })
+}
+
+/// Whether `e` reads no byte: the terms a run read forward ended in (`end_last`) and constants alone.
+fn no_byte(e: &Expr) -> bool {
+    match e {
+        Expr::Empty => true,
+        Expr::Name(n) => n.starts_with("\u{0}end"),
+        Expr::Not(a) => no_byte(a),
+        Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => no_byte(a) && no_byte(b),
+        _ => false,
+    }
 }
