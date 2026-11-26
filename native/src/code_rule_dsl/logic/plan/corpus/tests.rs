@@ -2075,7 +2075,7 @@ fn py_classes_run(dir: &std::path::Path, program: &str) -> (super::Report, std::
     std::fs::write(&rule, program).unwrap();
     // Django's library is the pack's (`packs/django/rules/lib`), included as its rules do: beside the program.
     if program.contains("#include \"lib/django.rerail\"") {
-        let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/django/rules/lib/django.rerail");
+        let lib = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/django/rules/lib/django.rerail");
         std::fs::create_dir_all(dir.join("lib")).unwrap();
         std::fs::copy(lib, dir.join("lib/django.rerail")).unwrap();
     }
