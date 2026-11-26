@@ -471,20 +471,6 @@ impl Tape16 {
     }
 }
 
-/// A stored tape's bytes where they lie, held by someone else (a block's, pinned by an operation that reads it), read
-/// with `lang`'s choices: `Tape16::reader` over bytes it does not hold (decision 0686: an operation's twin reads a
-/// tape in its slot, and nothing copies it).
-pub fn read_in_place<'a>(bytes: &'a [u8], lang: &'a Lang) -> Result<F16<'a>, String> {
-    let p = placement(bytes)?;
-    let source_len = u64_at(bytes, head::SOURCE_LEN)?;
-    if bytes[head::MARK] != lang.revision || p.widths != lang.widths {
-        return Err(format!("a tape of revision {} (widths {:?}), read with revision {} ({:?})", bytes[head::MARK], p.widths, lang.revision, lang.widths));
-    }
-    let frame = p.frame_of(source_len).ok_or("a format 16 tape whose source is past 4 GiB: the reads' offsets do not reach it")?;
-    presence::of_lang(p.presence_in(bytes), lang)?;
-    Ok(F16 { bytes, view: bind(frame, lang)?, lang })
-}
-
 /// Where a format 16 tape's parts lie, as its header says, for a reader that reads them there without this crate
 /// (the device's, `device_tape.h`): block 0's start and the blocks' stride (`column`), each side list's start, each
 /// one's part starts (u32s, a part a block and one more at the end), the newline index, the end; the node count, the

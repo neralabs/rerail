@@ -7,7 +7,7 @@ description = "The slab residency: stored tapes and their sources in slabs of th
 
 [features]
 # The test hooks of the crates below.
-test-hooks = ["rerail-accel/test-hooks", "rerail-blocks/test-hooks", "rerail-clif/test-hooks", "rerail-context/test-hooks", "rerail-prof/test-hooks", "rerail-tape-format/test-hooks"]
+test-hooks = ["rerail-accel/test-hooks", "rerail-blocks/test-hooks", "rerail-clif/test-hooks", "rerail-context/test-hooks", "rerail-prof/test-hooks"]
 
 [dependencies]
 rerail-context = { path = "../context" }
@@ -19,8 +19,6 @@ rerail-accel = { path = "../../../accel" }
 rerail-blocks = { path = "../blocks" }
 rerail-error = { path = "../error" }
 rerail-prof = { path = "../prof" }
-# A placed read's home (`placed`).
-rerail-tape-format = { path = "../tape_format" }
 sha2 = "0.10"
 
 # The device layer's targets (macOS, Linux and Windows), where this crate is (`lib.rs`).

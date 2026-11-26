@@ -142,8 +142,7 @@ pub fn col_at(b: &mut B<'_, '_>) -> Value {
 }
 
 /// `col_get(dir, min_log, i)`: row `i`'s value in the column whose directory is `dir` (a 4-byte column's
-/// unsigned, sign-extended when its values are signed (`rows::SIGNED`), over its run's high bits when it has key runs:
-/// `rows::ColDir`'s `runs`, `col_high`): a reader of many
+/// unsigned, over its run's high bits when it has key runs: `rows::ColDir`'s `runs`, `col_high`): a reader of many
 /// rows of one column resolves its directory once (`rows::ColRead`).
 pub fn col_get(b: &mut B<'_, '_>) -> Value {
     let (min_log, i) = (b.arg(0), b.arg(1));
@@ -186,19 +185,10 @@ fn col_raw(b: &mut B<'_, '_>, dir: Value, min_log: Value, i: Value) -> Value {
                 plain,
                 |_| low,
                 |b| {
-                    // Signed values (`rows::SIGNED`): the high bits are the low bits' sign; else the row's run's.
-                    let signed = b.f.ins().icmp_imm(IntCC::Equal, runs, i64::from(rerail_blocks::rows::SIGNED));
-                    b.either(
-                        I64,
-                        signed,
-                        |b| b.f.ins().sextend(I64, v),
-                        |b| {
-                            let high = col_high(b, dir, runs, i);
-                            let high = b.f.ins().uextend(I64, high);
-                            let high = b.f.ins().ishl_imm(high, 32);
-                            b.f.ins().bor(high, low)
-                        },
-                    )
+                    let high = col_high(b, dir, runs, i);
+                    let high = b.f.ins().uextend(I64, high);
+                    let high = b.f.ins().ishl_imm(high, 32);
+                    b.f.ins().bor(high, low)
                 },
             )
         },
@@ -742,8 +732,7 @@ mod tests {
 
     /// The JIT's relation reads (each called through an exported function, its hot reads inlined into it: the pass
     /// checked as `jit::Reads` builds) read a relation as the blocks crate's host reads do: every row's value in a
-    /// 4-byte, a signed 4-byte (`rows::I32`) and an 8-byte column over many chunks, through its rows and through a
-    /// column resolved once, its dead
+    /// 4-byte and an 8-byte column over many chunks, through its rows and through a column resolved once, its dead
     /// bit and its key's index group, for a frozen base and a frozen delta of it.
     #[test]
     fn the_jits_relation_reads_are_the_hosts() {
@@ -770,11 +759,11 @@ mod tests {
             assert_eq!(rel_key_mix(std::ptr::null(), h, v as u64), rerail_blocks::mix(h, v), "mix of {h:#x} and {v}");
         }
 
-        let spec = Spec { widths: vec![8, 4, rerail_blocks::rows::I32], sort: Some(0), indexes: vec![vec![1]], min_log: 4 };
+        let spec = Spec { widths: vec![8, 4], sort: Some(0), indexes: vec![vec![1]], min_log: 4 };
         let lock = Mutex::new(());
         let base_block = Block::anon(kind::FACTS, 16 << 20);
         let base = Relation::create(&base_block, &spec, None);
-        let rows: Vec<i64> = (0..5_000i64).flat_map(|i| [(i * 7919) << 33 | i, i % 37, [i32::MIN.into(), -1, 0, i32::MAX.into()][i as usize % 4] + i % 4 - i % 4 * (i % 2)]).collect();
+        let rows: Vec<i64> = (0..5_000i64).flat_map(|i| [(i * 7919) << 33 | i, i % 37]).collect();
         RelW { block: &base_block, rel: base, lock: &lock }.extend(&rows);
         freeze(&base_block, base, &spec, None);
         let top_block = Block::anon(kind::FACTS, 16 << 20);
@@ -783,17 +772,16 @@ mod tests {
         for id in (0..base.rows.len()).step_by(13) {
             w.kill(id);
         }
-        w.extend(&(0..700i64).flat_map(|i| [-i - 1, 40 + i % 5, -i]).collect::<Vec<_>>());
+        w.extend(&(0..700i64).flat_map(|i| [-i - 1, 40 + i % 5]).collect::<Vec<_>>());
         freeze(&top_block, top, &spec, Some(base));
 
         for rel in [base, top] {
             let desc = std::ptr::from_ref(rel).cast::<u8>();
             let rows = std::ptr::from_ref(&rel.rows).cast::<u8>();
-            let cols = [rel.rows.col(0), rel.rows.col(1), rel.rows.col(2)];
-            assert!((0..rel.rows.len()).any(|i| rel.rows.get(i, 2) < 0), "the signed column holds negative values");
+            let cols = [rel.rows.col(0), rel.rows.col(1)];
             for i in 0..rel.rows.len() {
                 let id = rel.base_rows + i;
-                for c in 0..3u32 {
+                for c in 0..2u32 {
                     let want = rel.rows.get(i, c as usize);
                     assert_eq!(rows_get(rows, i, c) as i64, want, "rows_get row {i} column {c}");
                     let dir = std::ptr::from_ref(cols[c as usize]).cast::<u8>();
@@ -828,16 +816,15 @@ mod tests {
         let lock = Mutex::new(());
         let base_block = Block::anon(kind::FACTS, 16 << 20);
         let base = Relation::create(&base_block, &spec, None);
-        // Keys 0, 3, 6, ... each three times, unsorted as pushed: freeze sorts them. The second column is not in order
-        // either, or freeze would keep the rows in its order (`relation::in_order_on`).
-        let rows: Vec<i64> = (0..3_000i64).flat_map(|i| [(i * 7) % 1000 * 3 - 600, (i * 31) % 3_000]).collect();
+        // Keys 0, 3, 6, ... each three times, unsorted as pushed: freeze sorts them.
+        let rows: Vec<i64> = (0..3_000i64).flat_map(|i| [(i * 7) % 1000 * 3 - 600, i]).collect();
         RelW { block: &base_block, rel: base, lock: &lock }.extend(&rows);
         freeze(&base_block, base, &spec, None);
         let top_block = Block::anon(kind::FACTS, 16 << 20);
         let top = Relation::create(&top_block, &spec, Some(base));
         RelW { block: &top_block, rel: top, lock: &lock }.extend(&(0..500i64).flat_map(|i| [i * 5 - 700, -i]).collect::<Vec<_>>());
         freeze(&top_block, top, &spec, Some(base));
-        let view = rerail_blocks::relation::View::new(Some(base), top);
+        let view = rerail_blocks::relation::View { base: Some(base), top };
         assert_eq!(view.sort(), Some(ColumnIndex::new(0)));
         let (b, end) = (top.base_rows, view.end().get());
         let mut checked = 0;

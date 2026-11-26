@@ -1,8 +1,0 @@
-// A pattern's rule's name, each metavariable's first node and its column (how many sort before it), and in a
-// literal's clause, the terms that name each metavariable.
-p_rule(pd, r, s) :- p_root(pd, _, r), doc(pd, t, _), s = @cat("~", t, "@", @to_string(r)).
-p_first(pd, r, x, p) :- p_var(pd, r, x, p), !p_var_later(pd, r, x, p).
-p_rank(pd, r, x, n) :- p_var(pd, r, x, _), n = count : { p_vgt(pd, r, _, x) }.
-pat_mv(d, m, x, n) :- pat_root(d, m, pd, r), p_rank(pd, r, x, n).
-mv_use(d, m, x, u) :- pat_mv(d, m, x, _), in_clause(d, c, m), in_clause(d, c, u), read_var(d, u, x).
-mv_later(d, m, x, u) :- mv_use(d, m, x, u), mv_use(d, m, x, w), w < u.

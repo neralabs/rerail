@@ -28,8 +28,6 @@ use std::cmp::Ordering;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicI64, AtomicU16, AtomicU32, AtomicU64, Ordering::*};
 
-pub mod layer_write;
-
 pub const FROZEN: u32 = 1;
 pub const DELTA: u32 = 2;
 /// Its index directory and every index in it were added (`try_reserve_index`), each a chunk of the block's: given back
@@ -176,26 +174,9 @@ structure! {
         /// A frozen delta's change (decision 0678 step 4): the base's ids whose liveness it changes (its kills of
         /// live base rows), ascending, each once. A change is read from these and its own rows alone, never from the
         /// base's liveness. Empty for a full relation, an open one, and a delta that kills nothing.
-        ///
-        /// A trace's layer (`layer_write`, decision 0686 B2) keeps its kills here alone: rows of the layers below it
-        /// that it kills, ascending, each live below. It keeps no dead bits (`dead` empty): a row is live in a state
-        /// when no layer above its own, up to the state's, names it here.
         pub changed: Span<u32>,
-        /// A far base's block (`FAR_BASE`, `try_continue_far`): its block id, which a reader resolves through its
-        /// launch's descriptor table, `base_off` being the base's descriptor's offset in it (a reference by block id
-        /// and offset, decision 0686 B1); `NO_BLOCK` for none.
-        pub base_block: u32,
-        pub pad_far: u32,
-        /// A trace's layer's statistics (P§11.2, O§10 "stats: each layer's sketch"): a directory of a `Span<u8>` a
-        /// column, each that column's `blocks::sketch` in its kept form (`Sketch::encode`), of the state the layer
-        /// ends (the state below's sketch with the layer's rows added and its kills taken), each written by an item of
-        /// its own (`layer_write::sketch`). Empty for any other.
-        pub sketches: Span<u8>,
     }
 }
-
-/// `Relation::base_block` of a relation whose base is in no other block.
-pub const NO_BLOCK: u32 = u32::MAX;
 
 structure! {
     /// Rows `lo..hi` of a relation are in the order on `cols` (`ncols` of them; decision 0180): a writer wrote them
@@ -270,7 +251,6 @@ impl Relation {
             });
             Rows::init_in(&raw mut (*p).rows, cols, &spec.widths, spec.min_log);
             Rows::init_in(&raw mut (*p).killed, cols.add(spec.widths.len()), &[4], 6);
-            (*p).base_block = NO_BLOCK;
             Some(&*p)
         }
     }
@@ -364,105 +344,6 @@ impl Relation {
     #[inline]
     pub fn far_base(&self) -> bool {
         self.flags.load(Relaxed) & FAR_BASE != 0
-    }
-
-    /// A trace's layer (decision 0686 B2; P§12: "a layer is one `blocks::relation::Relation`"): an empty relation
-    /// of `block` that continues `below`, the layer under it, which lies in another block, frozen: `below` is that
-    /// block's id, its descriptor's offset there, and the descriptor, read through the pin of that block. Its ids
-    /// follow `below`'s (`base_rows`: every id `below` reads), and the reference is by block id and offset
-    /// (`base_block`, `base_off`), which a reader resolves through its launch's descriptor table. `None` for the
-    /// first layer of a trace (a relation of its own), when `block` has no room, or when `below` is not frozen.
-    /// `below`'s `end` is the first id past every id it reads: its own rows' end, wherever they lie (a layer's rows
-    /// may lie encoded beside its relation, `layer::OwnRows`).
-    pub fn try_continue_far<'b>(block: &'b Block, spec: &Spec, below: Option<(u32, usize, &Relation, u32)>) -> Option<&'b Relation> {
-        let rel = Relation::try_create(block, spec, None)?;
-        let Some((id, at, b, end)) = below else { return Some(rel) };
-        if !b.is_frozen() || id == NO_BLOCK || at == 0 || block.holds(std::ptr::from_ref(b)) || end < b.len_all() {
-            // SAFETY: just made in `block`; no one has it.
-            unsafe { rel.release(block) };
-            return None;
-        }
-        // SAFETY: just made, this caller's alone.
-        unsafe {
-            let me = std::ptr::from_ref(rel).cast_mut();
-            (*me).base_rows = end;
-            (*me).base_block = id;
-        }
-        rel.base_off.store(at as i64, Release);
-        rel.flags.fetch_or(DELTA | CONTINUES | FAR_BASE, Release);
-        Some(rel)
-    }
-
-    /// The relation whose descriptor lies at `at` of a block's bytes `bytes` (a pinned block's, read in place):
-    /// `None` when it does not fit there or is misaligned. Its spans are relative to itself, so it reads the same
-    /// wherever the block is mapped.
-    pub fn at(bytes: &[u8], at: usize) -> Option<&Relation> {
-        let end = at.checked_add(size_of::<Relation>())?;
-        if end > bytes.len() || at == 0 || !(bytes.as_ptr() as usize + at).is_multiple_of(align_of::<Relation>()) {
-            return None;
-        }
-        // SAFETY: in bounds and aligned; a descriptor is plain words, read as atomics where it changes.
-        Some(unsafe { &*bytes.as_ptr().add(at).cast::<Relation>() })
-    }
-
-    /// The relation whose descriptor lies at `at` of `block` (an offset its maker recorded): `None` past the block's
-    /// reservation.
-    pub fn in_block(block: &Block, at: usize) -> Option<&Relation> {
-        if at == 0 || at + size_of::<Relation>() > block.reserved() || !at.is_multiple_of(align_of::<Relation>()) {
-            return None;
-        }
-        // SAFETY: within the block's reservation and aligned, where its maker put a descriptor.
-        Some(unsafe { &*block.ptr::<Relation>(at) })
-    }
-
-    /// Gives a layer frozen just now a sorted order on `cols` (P§11.2's `Order`; decision 0478 step 5b's form),
-    /// through the write pin of its block: `ids`, its own ids in the key's order, and beside them `fences` (the
-    /// leading value of every `order::FENCE`th) and `prints` (each one's print of its whole key), each written into a
-    /// chunk of the block as the order keeps it. Its number in the directory; `None` when the block or the directory
-    /// has no room.
-    pub fn add_order(&self, pin: &mut crate::region::BlockPin, cols: &[u16], ids: &[u32], fences: &[i64], prints: &[u8]) -> Option<usize> {
-        let block: &Block = pin.block();
-        assert!(block.holds(std::ptr::from_ref(self)) && pin.writes() && self.is_frozen(), "a frozen layer of a block pinned to write");
-        fn chunk<T: Copy>(block: &Block, v: &[T]) -> Option<Given> {
-            if v.is_empty() {
-                return Some(Given::default());
-            }
-            let (at, kept) = block.try_alloc_chunk_fit(size_of_val(v), 8)?;
-            // SAFETY: a chunk of `v`'s bytes, just taken, in the block the caller's pin holds to write.
-            // copy: derived: an order's column, computed by its writer, written once where the relation keeps it
-            unsafe { std::ptr::copy_nonoverlapping(v.as_ptr(), block.ptr::<T>(at), v.len()) };
-            Some(Given { at, len: v.len(), kept })
-        }
-        let order = GivenOrder { rows: OrderRows::Listed(chunk(block, ids)?), fences: chunk(block, fences)?, tags: Given::default(), prints: chunk(block, prints)? };
-        // SAFETY: the pin is the block's one writer, so no one else adds to the directory meanwhile; each chunk is
-        // written and lies in the block.
-        unsafe { self.try_add_order(block, cols, order) }
-    }
-
-    /// The block id and descriptor offset of a far base (`try_continue_far`).
-    pub fn far(&self) -> Option<(u32, usize)> {
-        (self.far_base() && self.base_block != NO_BLOCK).then(|| (self.base_block, self.base_off.load(Acquire) as usize))
-    }
-
-    /// Gives an open relation `n` own rows, to be written (`put_own`), and returns the first. `pin` pins `block`,
-    /// the relation's, to write: no other writer of it can be live. False when the block has no room.
-    pub fn claim_own(&self, pin: &mut crate::region::BlockPin, n: u32) -> Option<u32> {
-        let block: &Block = pin.block();
-        assert!(block.holds(std::ptr::from_ref(self)) && pin.writes() && !self.is_frozen(), "an open relation of a block pinned to write");
-        let at = self.rows.len();
-        if !self.rows.try_reserve(block, u64::from(at) + u64::from(n)) {
-            return None;
-        }
-        // SAFETY: reserved just now, under the block's one write pin.
-        Some(unsafe { self.rows.claim_reserved(n) })
-    }
-
-    /// Writes cell `c` of own row `i` (claimed, `claim_own`) of an open relation, through the write pin of its block.
-    pub fn put_own(&self, pin: &mut crate::region::BlockPin, i: u32, c: usize, v: i64) {
-        assert!(pin.block().holds(std::ptr::from_ref(self)) && pin.writes() && !self.is_frozen(), "an open relation of a block pinned to write");
-        assert!(i < self.rows.len() && c < self.arity as usize, "a claimed row's cell");
-        // SAFETY: claimed, and the pin is the block's one writer.
-        unsafe { self.rows.put(i, c, v) };
     }
 
     /// Whether it continues another relation's rows (`try_continue`).
@@ -1385,102 +1266,6 @@ fn distinct_hashes(scratch: &crate::scratch::Scratch, hs: &[u64]) -> usize {
     d
 }
 
-/// Builds the indexes on `keys` of a relation frozen just now, its live rows `order` (read by `val(column, row)`,
-/// written back in that order, so row `j` of it is id `br + j`), each column's range `lo..=hi`: each key's rows grouped,
-/// in id order within a group, a hashed index's buckets from the number of distinct keys; a key of one column, the
-/// one the rows lie sorted on (`sort`), is that order (`ordered`, no buckets). The directory holds `room` entries
-/// (`keys` first; the rest left for orders added later, `try_add_order`). Freeze's (`freeze_in`) and a trace's layer's
-/// (`layer_write::index`, one of these a call): one builder.
-#[allow(clippy::too_many_arguments)]
-fn build_indexes(block: &Block, keys: &[Vec<u16>], room: usize, every: &[u16], sort: Option<usize>, val: &dyn Fn(usize, usize) -> i64, order: &[u32], lo: &[i64], hi: &[i64], br: usize, scratch: &crate::scratch::Scratch) -> *mut Index {
-    let ixp: *mut crate::relation::Index = block.alloc_t(room.max(keys.len()).max(1));
-    for (x, icols) in keys.iter().enumerate() {
-        // SAFETY: entry `x` of the directory just allocated.
-        build_one_index(block, unsafe { &mut *ixp.add(x) }, icols, every, sort, val, order, lo, hi, br, scratch);
-    }
-    ixp
-}
-
-/// Builds one index of `build_indexes` into its directory entry `ix`: a trace's layer builds each as an item of its
-/// own (`layer_write::index`).
-#[allow(clippy::too_many_arguments)]
-fn build_one_index(block: &Block, ix: &mut Index, icols: &[u16], every: &[u16], sort: Option<usize>, val: &dyn Fn(usize, usize) -> i64, order: &[u32], lo: &[i64], hi: &[i64], br: usize, scratch: &crate::scratch::Scratch) {
-    let live = order.len();
-    {
-        assert!(icols.len() <= MAX_KEY);
-        ix.ncols = icols.len() as u32;
-        for (j, &c) in icols.iter().enumerate() {
-            ix.key[j] = c;
-        }
-        if icols.len() == 1 && sort == Some(icols[0] as usize) {
-            ix.ordered = 1;
-            return;
-        }
-        let kv = |j: usize| -> [i64; MAX_KEY] {
-            let mut k = [0i64; MAX_KEY];
-            for (t, &c) in icols.iter().enumerate() {
-                k[t] = val(c as usize, order[j] as usize);
-            }
-            k
-        };
-        let nk = icols.len();
-        // Distinct keys: a bitmap over the key's packed range when it is at most 2^24, else the hashes sorted.
-        let ibits: Vec<u32> = icols.iter().map(|&c| bits_for((hi[c as usize] as i128 - lo[c as usize] as i128) as u64)).collect();
-        let span: u32 = ibits.iter().sum();
-        let distinct = if live == 0 {
-            0
-        } else if icols == every {
-            live
-        } else if span <= 24 {
-            let words: &mut [u64] = scratch.zeroed((1usize << span).div_ceil(64));
-            let mut d = 0usize;
-            for j in 0..live {
-                let k = kv(j);
-                let mut p = 0u64;
-                for (t, &c) in icols.iter().enumerate() {
-                    p = (p << ibits[t]) | (k[t] - lo[c as usize]) as u64;
-                }
-                let (w, b) = ((p >> 6) as usize, p & 63);
-                d += (words[w] >> b & 1 == 0) as usize;
-                words[w] |= 1 << b;
-            }
-            d
-        } else {
-            let hs: &mut [u64] = scratch.take(live);
-            for (j, h) in hs.iter_mut().enumerate() {
-                *h = key_hash(&kv(j)[..nk]);
-            }
-            distinct_hashes(scratch, hs)
-        };
-        let cap = distinct.next_power_of_two().max(1);
-        let mask = (cap - 1) as u64;
-        // One counting pass: each row's bucket, the buckets' sizes, then the rows placed in order.
-        let bucket: &mut [u32] = scratch.take(live);
-        let bp: *mut u32 = block.alloc_t(cap + 1);
-        let rp: *mut u32 = block.alloc_t(live.max(1));
-        let offs = unsafe { std::slice::from_raw_parts_mut(bp, cap + 1) };
-        for (j, b) in bucket.iter_mut().enumerate() {
-            *b = (key_hash(&kv(j)[..nk]) & mask) as u32;
-            offs[*b as usize + 1] += 1;
-        }
-        for b in 0..cap {
-            offs[b + 1] += offs[b];
-        }
-        let at: &mut [u32] = scratch.take(cap);
-        at.copy_from_slice(&offs[..cap]); // copy: not block data (each bucket's write cursor, in scratch)
-        let rows_out = unsafe { std::slice::from_raw_parts_mut(rp, live.max(1)) };
-        for (j, &b) in bucket.iter().enumerate() {
-            rows_out[at[b as usize] as usize] = (br + j) as u32;
-            at[b as usize] += 1;
-        }
-        ix.mask = mask;
-        unsafe {
-            Span::set(&raw mut ix.offs, bp, cap + 1);
-            Span::set(&raw mut ix.rows, rp, live);
-        }
-    }
-}
-
 /// `freeze`, its temporaries from `scratch`. How, for `n` rows of `a` columns:
 ///
 /// - each column is read once, a chunk at a time, into `n` values;
@@ -1646,7 +1431,81 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     if row_index && !keys.is_empty() {
         keys.push(every.clone());
     }
-    let ixp = build_indexes(block, &keys, keys.len().max(1), &every, sort, &val, order, &lo, &hi, br, scratch);
+    let ixp: *mut crate::relation::Index = block.alloc_t(keys.len().max(1));
+    for (x, icols) in keys.iter().enumerate() {
+        assert!(icols.len() <= MAX_KEY);
+        let ix = unsafe { &mut *ixp.add(x) };
+        ix.ncols = icols.len() as u32;
+        for (j, &c) in icols.iter().enumerate() {
+            ix.key[j] = c;
+        }
+        if icols.len() == 1 && sort == Some(icols[0] as usize) {
+            ix.ordered = 1;
+            continue;
+        }
+        let kv = |j: usize| -> [i64; MAX_KEY] {
+            let mut k = [0i64; MAX_KEY];
+            for (t, &c) in icols.iter().enumerate() {
+                k[t] = val(c as usize, order[j] as usize);
+            }
+            k
+        };
+        let nk = icols.len();
+        // Distinct keys: a bitmap over the key's packed range when it is at most 2^24, else the hashes sorted.
+        let ibits: Vec<u32> = icols.iter().map(|&c| bits_for((hi[c as usize] as i128 - lo[c as usize] as i128) as u64)).collect();
+        let span: u32 = ibits.iter().sum();
+        let distinct = if live == 0 {
+            0
+        } else if *icols == every {
+            live
+        } else if span <= 24 {
+            let words: &mut [u64] = scratch.zeroed((1usize << span).div_ceil(64));
+            let mut d = 0usize;
+            for j in 0..live {
+                let k = kv(j);
+                let mut p = 0u64;
+                for (t, &c) in icols.iter().enumerate() {
+                    p = (p << ibits[t]) | (k[t] - lo[c as usize]) as u64;
+                }
+                let (w, b) = ((p >> 6) as usize, p & 63);
+                d += (words[w] >> b & 1 == 0) as usize;
+                words[w] |= 1 << b;
+            }
+            d
+        } else {
+            let hs: &mut [u64] = scratch.take(live);
+            for (j, h) in hs.iter_mut().enumerate() {
+                *h = key_hash(&kv(j)[..nk]);
+            }
+            distinct_hashes(scratch, hs)
+        };
+        let cap = distinct.next_power_of_two().max(1);
+        let mask = (cap - 1) as u64;
+        // One counting pass: each row's bucket, the buckets' sizes, then the rows placed in order.
+        let bucket: &mut [u32] = scratch.take(live);
+        let bp: *mut u32 = block.alloc_t(cap + 1);
+        let rp: *mut u32 = block.alloc_t(live.max(1));
+        let offs = unsafe { std::slice::from_raw_parts_mut(bp, cap + 1) };
+        for (j, b) in bucket.iter_mut().enumerate() {
+            *b = (key_hash(&kv(j)[..nk]) & mask) as u32;
+            offs[*b as usize + 1] += 1;
+        }
+        for b in 0..cap {
+            offs[b + 1] += offs[b];
+        }
+        let at: &mut [u32] = scratch.take(cap);
+        at.copy_from_slice(&offs[..cap]);
+        let rows_out = unsafe { std::slice::from_raw_parts_mut(rp, live.max(1)) };
+        for (j, &b) in bucket.iter().enumerate() {
+            rows_out[at[b as usize] as usize] = (br + j) as u32;
+            at[b as usize] += 1;
+        }
+        ix.mask = mask;
+        unsafe {
+            Span::set(&raw mut ix.offs, bp, cap + 1);
+            Span::set(&raw mut ix.rows, rp, live);
+        }
+    }
 
     // Dead bits: only the base's rows a delta killed.
     unsafe {
@@ -1684,130 +1543,41 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     FreezeStats { rows: n as u64, live: live as u64, dropped, bytes: (block.used() - before) as u64 }
 }
 
-/// The own rows of a frozen relation whose columns `cols` equal `key`, by its indexes: a range of its sorted rows when
-/// `cols` starts with the column they lie sorted on (`leading`, checked against the rest of the key), else a hashed
-/// index's bucket on exactly `cols` (checked against the key), else every own row checked; with how many rows it read.
-pub fn own_matching<'r>(rel: &'r Relation, cols: &'r [u16], key: &'r [i64]) -> (impl Iterator<Item = u32> + 'r, usize) {
-    let same = move |id: u32| cols.iter().zip(key).all(|(&c, &k)| rel.own(id, c as usize) == k);
-    let lead = rel.sort_col().and_then(|s| cols.iter().position(|&c| c as usize == s));
-    let (ids, read): (Ids<'r>, usize) = if let Some(p) = lead {
-        let r = leading(rel, &cols[p..p + 1], &key[p..p + 1]);
-        let n = r.len();
-        (Ids::Range(rel.base_rows + r.start..rel.base_rows + r.end), n)
-    } else if let Some(x) = rel.find_index(cols, rel.rows.len()) {
-        let g = rel.group(x, key_hash(key));
-        (Ids::Slice(g.iter()), g.len())
-    } else {
-        (Ids::Range(rel.ids()), rel.rows.len() as usize)
-    };
-    (ids.filter(move |&id| same(id)), read)
-}
-
-/// A relation's state as readers see it (P§12's `Version`; the rebuild plan's B2: "its View generalized from a base and
-/// one delta to n layers"), read where its rows lie. Three forms, one definition:
-///
-/// - a full relation alone (`full`): its own rows, less its dead bits;
-/// - a delta and its base in hand (`new`): ids `..base_rows` the base's, the rest the delta's; a base row is live
-///   unless either marks it dead;
-/// - a trace's state (`chain`): a layer and every layer below it, each a frozen continuation of the one below by block
-///   id and offset (`Relation::far`), reached through a launch's descriptor table. Each layer's own ids are
-///   `base_rows ..` its rows' end, and a row is live when no layer above its own, up to the state's, names it in its
-///   kills (`Relation::changed`). Restricted to a partition (`States::restrict`), only that partition's rows: each
-///   layer's range of them and its kills of them, by the layer's `parts` and `gone` (`layer::Layer`).
-///
-/// The empty state (`top` none) has no rows. A probe and the ordered scan come in order on the sort column (a chain's,
-/// in the trace's canonical order). Its reads can be counted (`counted`): every row and liveness word they touch.
+/// A relation as readers see it: a full relation alone, or a base and its delta read as one. Ids `..base_rows`
+/// are the base's, the rest the delta's. A probe and the ordered scan come in order on the sort column.
 #[derive(Clone, Copy)]
 pub struct View<'a> {
     pub base: Option<&'a Relation>,
-    /// Its top relation: `None` for the empty state.
-    pub top: Option<&'a Relation>,
-    pub(crate) arity: u32,
-    /// A trace's state: the launch's descriptor table its layers are reached through, and the top layer's block.
-    pub(crate) far: Option<&'a crate::gens::Table<'a>>,
-    pub(crate) head: Option<crate::gens::Id>,
-    pub(crate) part: Option<i64>,
-    pub(crate) reads: Option<&'a AtomicU64>,
+    pub top: &'a Relation,
 }
 
 impl<'a> View<'a> {
-    /// A delta and its base (or a full relation alone, `base` none).
-    pub fn new(base: Option<&'a Relation>, top: &'a Relation) -> View<'a> {
-        View { base, top: Some(top), arity: top.arity, far: None, head: None, part: None, reads: None }
-    }
-
     pub fn full(r: &'a Relation) -> View<'a> {
-        View::new(None, r)
-    }
-
-    /// Its top relation: a relation's view's, not the empty state's.
-    #[inline]
-    pub fn rel(&self) -> &'a Relation {
-        self.top.expect("a relation's view, not the empty state")
-    }
-
-    /// The same state, its reads counted into `reads`.
-    pub fn counted(self, reads: &'a AtomicU64) -> View<'a> {
-        View { reads: Some(reads), ..self }
-    }
-
-    #[inline]
-    pub(crate) fn touch(&self, n: usize) {
-        if let Some(r) = self.reads {
-            r.fetch_add(n as u64, Relaxed);
-        }
-    }
-
-    /// Whether it is a trace's state (`chain`).
-    #[inline]
-    pub fn is_chain(&self) -> bool {
-        self.far.is_some()
-    }
-
-    /// A trace's state's top layer's block: `None` for the empty state and for a relation's view.
-    pub fn head(&self) -> Option<crate::gens::Id> {
-        self.head
-    }
-
-    /// The partition it is restricted to.
-    pub fn part(&self) -> Option<i64> {
-        self.part
+        View { base: None, top: r }
     }
 
     #[inline]
     pub fn arity(&self) -> usize {
-        self.arity as usize
+        self.top.arity as usize
     }
 
     /// Every id, live or not: `0 .. total`.
     #[inline]
     pub fn total(&self) -> u32 {
-        if self.is_chain() {
-            // A trace's state: its newest layer's end, wherever its rows lie (`layer::OwnRows`).
-            return self.chain_end();
-        }
-        self.top.map_or(0, |t| t.base_rows + t.rows.len())
+        self.top.base_rows + self.top.rows.len()
     }
 
     #[inline]
     pub fn get(&self, id: u32, c: usize) -> i64 {
-        if self.is_chain() {
-            return self.chain_get(id, c);
-        }
-        let t = self.rel();
-        if id < t.base_rows { self.base.expect("a delta's base").rows.get(id, c) } else { t.own(id, c) }
+        if id < self.top.base_rows { self.base.expect("a delta's base").rows.get(id, c) } else { self.top.own(id, c) }
     }
 
     #[inline]
     pub fn live(&self, id: u32) -> bool {
-        if self.is_chain() {
-            return self.chain_live(id);
-        }
-        let Some(t) = self.top else { return false };
-        if t.dead_bit(id) {
+        if self.top.dead_bit(id) {
             return false;
         }
-        if id < t.base_rows {
+        if id < self.top.base_rows {
             return !self.base.expect("a delta's base").dead_bit(id);
         }
         // An open relation's own rows are live; a frozen one's dead bits cover its dropped duplicates.
@@ -1820,7 +1590,7 @@ impl<'a> View<'a> {
 
     /// Two rows by the sort column: equal when it has none (a merge then takes the base's row first).
     fn cmp(&self, x: u32, y: u32) -> Ordering {
-        match self.rel().sort_col() {
+        match self.top.sort_col() {
             None => Ordering::Equal,
             Some(c) => self.get(x, c).cmp(&self.get(y, c)),
         }
@@ -1832,20 +1602,16 @@ impl<'a> View<'a> {
         self.ordered_iter().collect()
     }
 
-    /// `ordered`, read in place: no allocation. A relation and its one base (a chain's is `bistate::Read::scan`).
+    /// `ordered`, read in place: no allocation.
     pub fn ordered_iter(&self) -> impl Iterator<Item = u32> + '_ {
-        assert!(!self.is_chain(), "an ordered read of a relation and its one base (a chain's is `bistate::Read::scan`)");
-        assert!(self.rel().is_frozen(), "an ordered read needs a frozen relation");
-        let own = self.rel().base_rows..self.rel().base_rows + self.rel().rows.len();
+        assert!(self.top.is_frozen(), "an ordered read needs a frozen relation");
+        let own = self.top.base_rows..self.top.base_rows + self.top.rows.len();
         let based = 0..self.base.map_or(0, |b| b.rows.len());
         Merge::new(self, based.filter(|&id| self.live(id)), own)
     }
 
     pub fn live_len(&self) -> usize {
-        if self.is_chain() || self.top.is_none() {
-            return (0..self.total()).filter(|&id| self.live(id)).count();
-        }
-        let own = self.rel().rows.len() as usize;
+        let own = self.top.rows.len() as usize;
         match self.base {
             None => own,
             Some(b) => own + (0..b.rows.len()).filter(|&id| self.live(id)).count(),
@@ -1859,21 +1625,20 @@ impl<'a> View<'a> {
 
     /// `probe`, read in place: both groups filtered and merged as they are walked, no allocation.
     pub fn probe_iter<'k>(&'k self, i: usize, key: &'k [i64]) -> Probe<'k> {
-        assert!(!self.is_chain(), "a probe by index number reads a relation and its one base (a chain's is `bistate::Read::matching`)");
-        let ix = self.rel().index_at(i);
+        let ix = self.top.index_at(i);
         let cols = &ix.key[..ix.ncols as usize];
         let (own, based, exact) = if ix.ordered == 1 {
-            let own = leading(self.rel(), cols, key);
+            let own = leading(self.top, cols, key);
             let based = self.base.map_or(0..0, |b| leading(b, cols, key));
-            (Ids::Range(self.rel().base_rows + own.start..self.rel().base_rows + own.end), Ids::Range(based), true)
+            (Ids::Range(self.top.base_rows + own.start..self.top.base_rows + own.end), Ids::Range(based), true)
         } else {
             let h = key_hash(key);
             let based: &[u32] = self.base.map_or(&[], |b| b.group(i, h));
-            (Ids::Slice(self.rel().group(i, h).iter()), Ids::Slice(based.iter()), false)
+            (Ids::Slice(self.top.group(i, h).iter()), Ids::Slice(based.iter()), false)
         };
-        let own0 = self.rel().rows.reader(cols[0] as usize);
+        let own0 = self.top.rows.reader(cols[0] as usize);
         let base0 = self.base.map_or(own0, |b| b.rows.reader(cols[0] as usize));
-        Probe { v: *self, top: self.rel(), key, cols, own0, base0, exact, own, based, ha: None, hb: None, primed: false }
+        Probe { v: *self, key, cols, own0, base0, exact, own, based, ha: None, hb: None, primed: false }
     }
 
     /// A digest of the live rows: the same for the same set, whatever wrote it, in any order (a sum of each row's
@@ -1893,7 +1658,6 @@ impl<'a> View<'a> {
 /// rows are checked against the key.
 pub struct Probe<'k> {
     v: View<'k>,
-    top: &'k Relation,
     /// The key, and its first column resolved once: the delta's (or the full relation's) own, and its base's. A
     /// key of more columns checks the rest by `cols` (`rest_match`).
     key: &'k [i64],
@@ -1918,14 +1682,14 @@ fn rest_match(rows: &Rows, cols: &[u16], key: &[i64], row: u32) -> bool {
 impl Probe<'_> {
     #[inline(always)]
     fn next_own(&mut self) -> Option<u32> {
-        let br = self.top.base_rows;
+        let br = self.v.top.base_rows;
         loop {
             let id = self.own.next()?;
             if self.exact {
                 return Some(id);
             }
             let row = id - br;
-            if self.own0.get(row) == self.key[0] && (self.cols.len() == 1 || rest_match(&self.top.rows, self.cols, self.key, row)) {
+            if self.own0.get(row) == self.key[0] && (self.cols.len() == 1 || rest_match(&self.v.top.rows, self.cols, self.key, row)) {
                 return Some(id);
             }
         }
@@ -1936,7 +1700,7 @@ impl Probe<'_> {
         let b = self.v.base?;
         loop {
             let id = self.based.next()?;
-            if self.top.dead_bit(id) {
+            if self.v.top.dead_bit(id) {
                 continue;
             }
             if self.exact || (self.base0.get(id) == self.key[0] && (self.cols.len() == 1 || rest_match(&b.rows, self.cols, self.key, id))) {
@@ -1997,7 +1761,7 @@ impl Iterator for Ids<'_> {
 
 /// The positions of `rel`'s own rows (sorted in place) whose columns `cols`, the order key's first ones, equal
 /// `key`: one range, by binary search on each leading column in turn.
-pub fn leading(rel: &Relation, cols: &[u16], key: &[i64]) -> std::ops::Range<u32> {
+fn leading(rel: &Relation, cols: &[u16], key: &[i64]) -> std::ops::Range<u32> {
     let (mut lo, mut hi) = (0u32, rel.rows.len());
     for oc in rel.sort_col().into_iter().take(cols.len()).map(|c| c as u16) {
         let k = key[cols.iter().position(|&c| c == oc).expect("a leading column")];
@@ -2360,7 +2124,7 @@ mod tests {
                 }
             }
             freeze(&dblock, d, &spec, Some(rel));
-            let dv = View::new(Some(rel), d);
+            let dv = View { base: Some(rel), top: d };
             let want: Vec<Vec<i64>> = now.iter().map(|&(b, a, c)| vec![a, b, c]).collect();
             assert_eq!(as_set(&rows_of(&dv)), want, "wide {wide}: the delta's set");
             assert!(sorted_on(&rows_of(&dv), 1), "wide {wide}: the delta's rows merged on its column");
@@ -2417,7 +2181,7 @@ mod tests {
             dw.push(&[9, 0]);
             dw.push(&[8, 3]);
             freeze(&dblock, d, &spec, Some(rel));
-            let dv = View::new(Some(rel), d);
+            let dv = View { base: Some(rel), top: d };
             assert_eq!(d.sort_col(), Some(1));
             assert_eq!(rows_of(&dv), vec![vec![9, 0], vec![5, 1], vec![3, 2], vec![5, 2], vec![8, 3], vec![1, 7], vec![0, 9]], "{want:?}: merged on column 1");
         }
@@ -2448,7 +2212,7 @@ mod tests {
             dw.push(&row(41));
             dw.push(&row(500));
             freeze(&dblock, d, &spec, Some(rel));
-            let dv = View::new(Some(rel), d);
+            let dv = View { base: Some(rel), top: d };
             assert!(!dv.live(gone) && dv.live(back) && dv.live(again), "{a} columns: the kill of a row pushed again is cancelled");
             assert_eq!(d.rows.len(), 1, "{a} columns: only the new row is the delta's own");
             assert_eq!(d.changed.as_slice(), &[gone], "{a} columns: the change is the one kill that stands");

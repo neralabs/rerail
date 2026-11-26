@@ -3282,7 +3282,6 @@ dependencies = [
  "rerail-vector",
  "rustc-hash",
  "serde",
- "sha2 0.11.1",
  "windows-sys 0.61.2",
 ]
 
@@ -3794,42 +3793,6 @@ dependencies = [
  "sha2 0.11.1",
  "tempfile",
  "tree-sitter",
-]
-
-[[package]]
-name = "rerail-delta-device"
-version = "0.1.0"
-dependencies = [
- "rerail-blocks",
- "rerail-delta-device",
- "rerail-delta-exec",
- "rerail-delta-twins",
- "rerail-gpu",
-]
-
-[[package]]
-name = "rerail-delta-exec"
-version = "0.1.0"
-dependencies = [
- "rerail-accel",
- "rerail-blocks",
- "rerail-context",
- "rerail-delta-exec",
- "rerail-delta-twins",
- "rerail-observe",
- "rerail-rr-syntax",
- "rerail-store",
- "rerail-store-base",
- "sha2 0.11.1",
-]
-
-[[package]]
-name = "rerail-delta-twins"
-version = "0.1.0"
-dependencies = [
- "rerail-blocks",
- "rerail-delta-twins",
- "rerail-rr-syntax",
 ]
 
 [[package]]
@@ -6440,7 +6403,6 @@ dependencies = [
  "rerail-error",
  "rerail-prof",
  "rerail-slabs",
- "rerail-tape-format",
  "sha2 0.10.9",
 ]
 

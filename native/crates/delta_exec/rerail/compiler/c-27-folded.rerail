@@ -1,6 +1,0 @@
-// Constant folding (c-26), decided: the equations that go, and each term of a folded variable, the constant's term.
-// c-10 writes the term as that constant and no step of the equation.
-fold(d, r, f, v, c) :- eq_const(d, r, f, v, c), !two_eq(d, r, v), !fold_shared(d, r, v).
-folded(d, r, f) :- fold(d, r, f, _, _).
-fold_term(d, t, c) :- fold(d, r, _, v, c), var_term(d, r, v, t).
-fold_var(d, t) :- fold_term(d, t, _).

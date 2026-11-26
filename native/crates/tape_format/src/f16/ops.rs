@@ -115,12 +115,6 @@ impl Writer {
         Writer { state: Box::default(), parts: Default::default(), presence_words: (0, 0), keep_blocks: false, z: false, given: (0, 0), #[cfg(test)] fixed: None, #[cfg(test)] jit: None }
     }
 
-    /// The tape's bytes (its OUT part) written in `room` from here on: the tape lies where it was written, and
-    /// `finish` gives it there (decision 0686, B4).
-    pub fn out_in(&mut self, room: std::sync::Arc<dyn rerail_vector::Room>) {
-        self.parts[part::OUT as usize] = crate::Vector::new_in(room);
-    }
-
     /// The next document, in this writer: as `new`, its parts' buffers kept from the documents before (each grown only
     /// where it is short, so a writer used again zeroes no room), as simdjson's parser keeps its tape from one document to
     /// the next. A buffer's bytes are the last document's: the ops write each byte before they read it (in tests every

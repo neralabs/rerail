@@ -22,7 +22,7 @@ pub mod writer16;
 pub mod aux_index;
 pub mod doc_index;
 
-pub use rerail_vector::{Pod, Room as VectorRoom, vector::Vector};
+pub use rerail_vector::{Pod, vector::Vector};
 
 pub const CODE_EXTRA: u8 = 1;
 pub const CODE_ERROR: u8 = 2;
@@ -199,9 +199,6 @@ pub type Target = Result<Sixteen, String>;
 /// code the table lacks, and the writer writes no tape).
 #[derive(Clone)]
 pub struct Sixteen {
-    /// Where the tape's bytes are written (`None`: the writer's own vector): a block's room, which the tape lies in
-    /// as written, once (decision 0686, B4; 0353).
-    pub room: Option<std::sync::Arc<dyn rerail_vector::Room>>,
     pub lang: &'static f16::Lang,
     pub terminators: newlines::Terminators,
     pub tag: u8,
@@ -232,7 +229,6 @@ pub struct Named {
 impl Named {
     pub fn new(tag: u8, terminators: newlines::Terminators, name: impl Fn(u32) -> Option<KeyNames> + Send + Sync + 'static) -> Self {
         let target = f16::lang(tag).ok_or_else(|| format!("tape tag {tag} has no format 16 table")).map(|lang| Sixteen {
-            room: None,
             lang,
             terminators,
             tag,
@@ -506,11 +502,7 @@ impl<L: Layout> Writer<L> {
                 return self;
             }
         };
-        let mut w = f16::Writer::empty();
-        if let Some(room) = &t.room {
-            w.out_in(room.clone());
-        }
-        w.begin(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap);
+        let w = f16::Writer::new(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap);
         self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default() }));
         // The columns hold the window: the nodes since the last commit (more grow it).
         if self.cap > WINDOW {
@@ -1438,7 +1430,7 @@ mod tests {
             let (kind, field) = (k & 0x3ff, k >> KIND_BITS & 0x3f);
             (k >> 16 == 0 && kind < 16 && field < 8).then_some(kind + 16 * field)
         };
-        Ok(Sixteen { room: None, lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number) })
+        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number) })
     }
 
     /// The rows of the tape `w` finishes.
@@ -1542,7 +1534,7 @@ mod tests {
             f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).unwrap()
         });
         let number = |k: u32| (k >> 16 == 0 && k & 0x3ff < 16 && k >> 10 < 8).then(|| (k & 0x3ff) + 16 * (k >> 10));
-        let target = || Ok(Sixteen { room: None, lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number) });
+        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number) });
         let src = vec![b' '; 200_000];
         // 0: the calls joined; 1: the joined calls; 2: the plain ones (no chain, no node passed on).
         let build = |way: u8| {

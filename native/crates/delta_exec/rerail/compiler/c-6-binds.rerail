@@ -1,4 +1,0 @@
-// The second stratum (negates the first): the atom that binds each variable, its first, and the atoms a filter waits
-// past, those binding one of its variables before another of them is bound.
-binds(d, r, v, k) :- in_atom(d, r, v, k), !bound_before(d, r, v, k).
-waits(d, r, f, k) :- in_filter(d, r, f, v), binds(d, r, v, k), in_filter(d, r, f, w), binds(d, r, w, j), k < j.

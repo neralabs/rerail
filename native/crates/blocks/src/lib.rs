@@ -19,15 +19,9 @@
 //! Descriptors are never `Copy`: a reference is only meaningful at its own address, so a descriptor is only ever
 //! reached by reference into its block.
 
-// blocks' `clippy.toml` lists the twins' disallowed paths (decision 0686): denied only where the twins' rules hold, in
-// the layer writing the twins call (`relation::layer_write`); the rest of blocks may use them.
-#![allow(clippy::disallowed_methods, clippy::disallowed_types, clippy::disallowed_macros)]
-
 pub mod alloc;
-pub mod answer;
 pub mod atoms;
 pub mod bistate;
-pub mod blob;
 pub mod block;
 pub mod bloom;
 pub mod change;
@@ -37,7 +31,6 @@ pub mod col;
 pub mod deferrable;
 pub mod facts;
 pub mod free;
-pub mod gens;
 pub mod ids;
 /// A relation's reads in UKL, for every kernel that reads a relation in its block (decision 0325; the host's are
 /// written directly, decision 0536, and the CLIF's are the JIT's, `rerail_clif::relation`): the library's header,
@@ -62,7 +55,6 @@ pub mod scratch;
 pub mod sketch;
 pub mod sort;
 pub mod table;
-pub mod layer;
 
 /// The flag an anonymous mapping takes to be address space reserved, its pages committed as they are written: Linux's
 /// `MAP_NORESERVE`. Without it Linux's overcommit heuristic refuses a reservation larger than memory and swap (a 64

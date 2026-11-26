@@ -32,7 +32,7 @@
 //! - **Leases** are the `Arc`s a batch holds: a retired slab's memory goes when the last batch
 //!   reading it lets go.
 //! - **Budget.** Slabs are leased within the one Metal budget, with every other GPU buffer; the
-//!   residency may hold its share of it (`rerail_accel::budget::resident`), the rest being the runs' workspaces. Past either,
+//!   residency may hold `RESIDENT_SHARE` of it, the rest being the runs' workspaces. Past either,
 //!   the least recently used slabs not read by the admission are retired; a batch that still does
 //!   not fit is refused (`Error::BackendCapacity`), and the wave splits it.
 //! - **Eviction.** The residency is the pool's evictor (`set_evictor`, from `device`): when
@@ -44,12 +44,10 @@
 #![cfg(any(target_os = "macos", target_os = "linux", windows))]
 
 pub use rerail_error::Error;
-pub mod placed;
-
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// The process's device in the device layer (the pool's, `rerail_accel::gpu::shared`), or `UnsupportedBackend`
 /// without one. The residency's slabs give way when the budget is short (`evict`, after the pool's idle buffers:
@@ -60,9 +58,12 @@ pub fn device() -> Result<&'static rerail_device::device::Device, Error> {
     rerail_accel::gpu::shared::layer().map(|l| l.device).ok_or(Error::UnsupportedBackend)
 }
 
-/// A slab's bytes, and how long after a full execution everything resident is dropped: the budget's (one definition,
-/// the delta executor's directory takes them too).
-pub use rerail_accel::budget::{DROP_AFTER, SLAB_BYTES};
+/// A slab's bytes (PIAT §20.2.1's default).
+pub const SLAB_BYTES: usize = 64 << 20;
+/// How long after a full execution everything resident is dropped.
+pub const DROP_AFTER: Duration = Duration::from_secs(120);
+/// The share of the Metal buffer budget the residency may hold: half, the rest for the runs.
+const RESIDENT_SHARE: (usize, usize) = (1, 2);
 const ALIGN: usize = 16;
 
 pub fn aligned(length: usize) -> usize {
@@ -444,9 +445,9 @@ pub fn held() -> Held {
     Held { slabs: state.slabs.len(), documents: state.documents.len(), sources: state.sources.len(), pools: state.pools }
 }
 
-/// The residency's limit: its share of the Metal buffer budget (`rerail_accel::budget::resident`).
+/// The residency's limit: its share of the Metal buffer budget.
 fn limit() -> usize {
-    rerail_accel::budget::resident()
+    rerail_accel::budget::metal() / RESIDENT_SHARE.1 * RESIDENT_SHARE.0
 }
 
 

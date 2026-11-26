@@ -116,7 +116,7 @@ impl Code {
 /// of the parser's keys numbered in the language's table through its code (`number`).
 fn sixteen(language: GrammarDialect, terminators: crate::code_rule_dsl::lines::Terminators, number: impl Fn(&'static Lang, u32) -> Option<u32> + Send + Sync + 'static) -> Result<rerail_tape_format::Sixteen, String> {
     let (lang, tag, z) = run_16(language)?;
-    Ok(rerail_tape_format::Sixteen { room: None, lang, terminators, tag, z, blocks: true, number: Arc::new(move |key| number(lang, key)) })
+    Ok(rerail_tape_format::Sixteen { lang, terminators, tag, z, blocks: true, number: Arc::new(move |key| number(lang, key)) })
 }
 
 /// The language's format 16 table, its tag and whether the run stores 16z; `Err` for a language with no tape tag or

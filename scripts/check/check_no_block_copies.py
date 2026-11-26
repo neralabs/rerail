@@ -35,7 +35,6 @@ DIRS = (
     "native/crates/blocks/src/",
     "native/crates/facts/src/",
     "native/crates/device_metal/src/",
-    "native/crates/delta_exec/src/",
     "accel/src/gpu/",
     "accel/gpu/src/gpu/",
 )

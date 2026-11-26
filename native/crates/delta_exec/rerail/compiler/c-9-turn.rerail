@@ -1,3 +1,0 @@
-// The fifth stratum (counts the fourth's order): each step's turn after its atom, how many go before it there.
-turn(d, r, b, n) :- at(d, r, b, _), n = count : { before(d, r, _, b) }.
-placed(d, r, f) :- at(d, r, f, _).
