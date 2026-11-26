@@ -1,4 +1,4 @@
-.policy "ruff-log014-exc-info-outside-except-handler" revision 2
+.policy "ruff-log014-exc-info-outside-except-handler" revision 3
 .description "Remove exc_info from logging calls made outside an except handler; with no active exception it only logs a meaningless None traceback."
 .language python
 .mode steer
@@ -13,10 +13,23 @@
 //   except ...: logger.info("", exc_info=True)    not reported
 #include "python/logging.rerail"
 #include "python/ruff-classes.rerail"
+#include "python/python-31.rerail"
 
 .violation LOG014(at: node) code "LOG014"
     "Remove this `exc_info` argument: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
     suppress ruff "LOG014"
 LOG014(k) :- log_call(c, m, _, how), (log_level(m) ; how = "name"), !log_in_handler(c),
     log_kw(c, "exc_info", k, v), unparen(v, l), py_literal(l), truth_of(v, "true").
+LOG014(k) :- python31_log_call(c, m, how), (m != "log" ; how = "name"), !python31_log_in_handler(c),
+    python31_call_item(c, k, _), kind(k, "keyword_argument"), has(k, n, "identifier"), text(n, "exc_info"),
+    has(k, _, "true").
+LOG014(k) :- python31_log_call(c, m, how), (m != "log" ; how = "name"), !python31_log_in_handler(c),
+    python31_call_item(c, k, _), kind(k, "keyword_argument"), has(k, n, "identifier"), text(n, "exc_info"),
+    has(k, _, "ellipsis").
+LOG014(k) :- python31_log_call(c, m, how), (m != "log" ; how = "name"), !python31_log_in_handler(c),
+    python31_call_item(c, k, _), kind(k, "keyword_argument"), has(k, n, "identifier"), text(n, "exc_info"),
+    has(k, v, t), (t = "integer" ; t = "float"), value(v, x), x != "0".
+LOG014(k) :- python31_log_call(c, m, how), (m != "log" ; how = "name"), !python31_log_in_handler(c),
+    python31_call_item(c, k, _), kind(k, "keyword_argument"), has(k, n, "identifier"), text(n, "exc_info"),
+    has(k, v, "string"), string_form(v, "str"), str(v, s), s != "".
 // Ruff's gate is_literal_expr: a str, bytes, number, bool, None or `...` literal (not `ValueError()` or a tuple).
