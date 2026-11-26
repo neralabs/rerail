@@ -229,7 +229,183 @@ pub(super) fn interleave(text: &str) -> Option<String> {
     if !out.contains(at) {
         return None;
     }
-    Some(test_only(&out.replacen(at, &format!("{helpers}{at}"), 1), &fields))
+    let out = test_only(&out.replacen(at, &format!("{helpers}{at}"), 1), &fields);
+    Some(together(&out).unwrap_or(out))
+}
+
+/// Stage 1's masks kept together a block (decision 0703), as the lean lexer keeps a block's masks in one (`Vec<Masks>`):
+/// one `m: Vec<[u64; K]>`, each mask its column (`Col`), read by the helpers through `Words`. A mask tier 2 takes, the
+/// loop writes, or only a test build keeps stays a vector of its own. `None` where the text is not of that form.
+fn together(text: &str) -> Option<String> {
+    let whole = |t: &str, pat: &str| t.match_indices(pat).filter(|(i, _)| !t[..*i].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.') && !t[i + pat.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')).count();
+    let sd = text.find("struct Stage1 {\n")?;
+    let se = sd + text[sd..].find("\n}\n")?;
+    let def = &text[sd..se];
+    let lines: Vec<&str> = def.lines().collect();
+    let mut cols: Vec<String> = Vec::new();
+    for (i, l) in lines.iter().enumerate() {
+        let Some(f) = l.trim().strip_suffix(": Vec<u64>,") else { continue };
+        if i > 0 && lines[i - 1].trim().starts_with("#[cfg(") {
+            continue;
+        }
+        // Moved (to tier 2's masks, out of the struct) or written: its own vector.
+        let by_value = |p: &str| text.match_indices(p).any(|(i, _)| !text[..i].ends_with('&') && !text[..i].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.'));
+        let moved = by_value(&format!("s1.{f},")) || by_value(&format!("s1.{f};")) || by_value(&format!("s1.{f}\n")) || text.contains(&format!("&mut s1.{f}")) || text.contains(&format!("&mut o.{f}"));
+        // A write but the block's store (`o.f[q] = `).
+        let pat = format!("o.{f}[");
+        let written = text.match_indices(&pat).any(|(i, _)| {
+            let rest = &text[i + pat.len()..];
+            let Some(close) = rest.find(']') else { return true };
+            let after = &rest[close + 1..];
+            let w = (after.starts_with(" = ") || after.starts_with(" |= ") || after.starts_with(" &= ")) && !text[..i].ends_with('.');
+            w && &rest[..close] != "q"
+        });
+        if moved || written {
+            continue;
+        }
+        cols.push(f.to_owned());
+    }
+    if cols.len() < 2 {
+        return None;
+    }
+    // A scan that makes blocks of a mask that is a vector of its own: the vector's form (`_v`), as it was.
+    let mut text = text.to_owned();
+    let lazy_v: Vec<String> = text
+        .match_indices("|o: &Stage1| &o.")
+        .map(|(i, p)| text[i + p.len()..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect::<String>())
+        .filter(|f| !cols.contains(f))
+        .collect();
+    if !lazy_v.is_empty() {
+        for f in &lazy_v {
+            for h in ["s1_first_bit", "s1_run_last"] {
+                text = text.replace(&format!("{h}(src, &mut st1, &mut s1, |o: &Stage1| &o.{f}[..], "), &format!("{h}_v(src, &mut st1, &mut s1, |o: &Stage1| &o.{f}[..], "));
+            }
+        }
+        for h in ["s1_first_bit", "s1_run_last"] {
+            let start = text.find(&format!("\n/// `{}` of a mask of stage 1's", &h[3..]))?;
+            let end = start + 1 + text[start + 1..].find("\n}\n")? + 3;
+            let v = text[start..end].replacen(&format!("fn {h}("), &format!("fn {h}_v("), 1);
+            text.insert_str(end, &v);
+        }
+    }
+    let text = text.as_str();
+    let k = cols.len();
+    let idx = |f: &str| format!("S1_{}", f.to_ascii_uppercase());
+    let mut out = text.to_owned();
+    // The struct and its making.
+    for f in &cols {
+        out = out.replacen(&format!("\n    {f}: Vec<u64>,\n"), "\n", 1);
+        out = out.replacen(&format!(" {f}: vec![0u64; nw],"), "", 1);
+    }
+    out = out.replacen("struct Stage1 {\n", &format!("struct Stage1 {{\n    /// The masks the product reads, a block's together (`S1_*` their columns).\n    m: Vec<[u64; {k}]>,\n"), 1);
+    out = out.replacen("        Stage1 { ", &format!("        Stage1 {{ m: vec![[0u64; {k}]; nw], "), 1);
+    // The stores, the reads, the scans that make blocks.
+    let mut text2 = String::with_capacity(out.len());
+    let b = out.as_bytes();
+    let id = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let mut i = 0;
+    let set: HashSet<&str> = cols.iter().map(String::as_str).collect();
+    while i < b.len() {
+        // `PFX.NAME` with PFX one of `s1`, `s1w`, `o`.
+        if (b[i] == b's' || b[i] == b'o') && (i == 0 || !(id(b[i - 1]) || b[i - 1] == b'.')) {
+            let mut j = i;
+            while j < b.len() && id(b[j]) {
+                j += 1;
+            }
+            let pfx = &out[i..j];
+            if matches!(pfx, "s1" | "s1w" | "o") && b.get(j) == Some(&b'.') {
+                let mut e = j + 1;
+                while e < b.len() && id(b[e]) {
+                    e += 1;
+                }
+                let f = &out[j + 1..e];
+                if set.contains(f) {
+                    let rest = &out[e..];
+                    if pfx == "o" && rest.starts_with("[q] = ") {
+                        let _ = write!(text2, "o.m[q][{}] = ", idx(f));
+                        i = e + "[q] = ".len();
+                        continue;
+                    }
+                    if pfx == "o" && rest.starts_with("[..]") && text2.ends_with("|o: &Stage1| &") {
+                        text2.truncate(text2.len() - "|o: &Stage1| &".len());
+                        text2.push_str(&idx(f));
+                        i = e + "[..]".len();
+                        continue;
+                    }
+                    // A column borrows the blocks alone: the loop may write a vector of its own beside it.
+                    let _ = write!(text2, "Col {{ m: &{pfx}.m, k: {} }}", idx(f));
+                    i = e;
+                    continue;
+                }
+            }
+            text2.push_str(pfx);
+            i = j;
+            continue;
+        }
+        let c = out[i..].chars().next()?;
+        text2.push(c);
+        i += c.len_utf8();
+    }
+    let mut out = text2;
+    // The scans that make blocks: by column.
+    for h in ["s1_first_bit", "s1_run_last"] {
+        let Some(start) = out.find(&format!("\nfn {h}(")) else { continue };
+        let Some(len) = out[start + 1..].find("\n}\n") else { continue };
+        let body = out[start..start + 1 + len].replace("m: impl Fn(&Stage1) -> &[u64], ", "k: usize, ").replace("first_bit(&m(s1)[..made], from)", "first_bit(&Col { m: &s1.m[..made], k }, from)").replace("run_last(&m(s1)[..made], s)", "run_last(&Col { m: &s1.m[..made], k }, s)");
+        out.replace_range(start..start + 1 + len, &body);
+    }
+    // The helpers: of any words, each mask a parameter of its own type.
+    let mut o = String::new();
+    let mut at = 0;
+    for line in out.split_inclusive('\n') {
+        let here = at;
+        at += line.len();
+        let _ = here;
+        let generic = line.starts_with("fn ") && line.contains(": &[u64]") && line.find('(').is_some_and(|o| !line[..o].contains('<'));
+        if !generic {
+            o.push_str(line);
+            continue;
+        }
+        let (Some(open), Some(close)) = (line.find('('), line.find(')')) else {
+            o.push_str(line);
+            continue;
+        };
+        let mut params = line[open..close].to_owned();
+        let mut ws = Vec::new();
+        while let Some(at) = params.find(": &[u64]") {
+            let w = format!("W{}", ws.len());
+            params.replace_range(at..at + ": &[u64]".len(), &format!(": &{w}"));
+            ws.push(w);
+        }
+        let bounds: Vec<String> = ws.iter().map(|w| format!("{w}: Words + core::ops::Index<usize, Output = u64> + ?Sized")).collect();
+        let _ = write!(o, "{}<{}>{params}{}", &line[..open], bounds.join(", "), &line[close..]);
+    }
+    // A generic helper's zips over its masks: of their words (`Words::iter`).
+    let mut out = String::with_capacity(o.len());
+    let mut params: Vec<String> = Vec::new();
+    for line in o.split_inclusive('\n') {
+        if line.starts_with("fn ") && line.contains(": Words + core::ops::Index") {
+            params = line.match_indices(": &W").filter_map(|(i, _)| line[..i].rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).next().map(str::to_owned)).collect();
+        } else if line == "}\n" {
+            params.clear();
+        }
+        let mut l = line.to_owned();
+        for p in &params {
+            l = l.replace(&format!(".zip({p})"), &format!(".zip({p}.iter())"));
+        }
+        out.push_str(&l);
+    }
+    let mut consts = String::new();
+    for (j, f) in cols.iter().enumerate() {
+        let _ = writeln!(consts, "const {}: usize = {j};", idx(f));
+    }
+    let items = format!(
+        "\n/// Each mask's column in stage 1's blocks (`Stage1::m`).\n{consts}\n/// A mask's words in stage 1's blocks: its column.\n#[derive(Clone, Copy)]\nstruct Col<'a> {{\n    m: &'a [[u64; {k}]],\n    k: usize,\n}}\n\nimpl Stage1 {{\n    /// Mask `k`'s words.\n    #[inline(always)]\n    fn col(&self, k: usize) -> Col<'_> {{\n        Col {{ m: &self.m, k }}\n    }}\n}}\n\nimpl core::ops::Index<usize> for Col<'_> {{\n    type Output = u64;\n    #[inline(always)]\n    fn index(&self, q: usize) -> &u64 {{\n        &self.m[q][self.k]\n    }}\n}}\n\n/// A mask's words, a vector's or a column's.\ntrait Words {{\n    fn get(&self, q: usize) -> Option<&u64>;\n    fn len(&self) -> usize;\n    fn iter(&self) -> impl Iterator<Item = &u64> + '_;\n}}\n\nimpl Words for [u64] {{\n    #[inline(always)]\n    fn get(&self, q: usize) -> Option<&u64> {{\n        <[u64]>::get(self, q)\n    }}\n    #[inline(always)]\n    fn len(&self) -> usize {{\n        <[u64]>::len(self)\n    }}\n    #[inline(always)]\n    fn iter(&self) -> impl Iterator<Item = &u64> + '_ {{\n        <[u64]>::iter(self)\n    }}\n}}\n\nimpl Words for Vec<u64> {{\n    #[inline(always)]\n    fn get(&self, q: usize) -> Option<&u64> {{\n        <[u64]>::get(self, q)\n    }}\n    #[inline(always)]\n    fn len(&self) -> usize {{\n        <[u64]>::len(self)\n    }}\n    #[inline(always)]\n    fn iter(&self) -> impl Iterator<Item = &u64> + '_ {{\n        <[u64]>::iter(self)\n    }}\n}}\n\nimpl Words for Col<'_> {{\n    #[inline(always)]\n    fn get(&self, q: usize) -> Option<&u64> {{\n        self.m.get(q).map(|w| &w[self.k])\n    }}\n    #[inline(always)]\n    fn len(&self) -> usize {{\n        self.m.len()\n    }}\n    #[inline(always)]\n    fn iter(&self) -> impl Iterator<Item = &u64> + '_ {{\n        let k = self.k;\n        self.m.iter().map(move |w| &w[k])\n    }}\n}}\n"
+    );
+    let at = out.find("\nconst RING_1: usize")?;
+    let line_end = at + 1 + out[at + 1..].find('\n')?;
+    out.insert_str(line_end + 1, &items);
+    Some(out)
 }
 
 /// The masks only the test build's walk of the regions reads (its own stage 1, `s1w`): stage 1 keeps them in a test

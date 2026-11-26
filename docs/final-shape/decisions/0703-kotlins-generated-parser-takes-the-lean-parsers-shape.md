@@ -74,8 +74,8 @@ them.
    (`first_bit`, `run_last`) makes blocks as it comes to ones not made (`s1_first_bit`, `s1_run_last`); after the
    loop, stage 1 is made to the file's end, for its escapes (which now join the refusal there) and the passes after
    the loop. Every other read of the loop is at or before the token's last byte, which a scan found, or a few bytes
-   past it. So tier 1 reads the bytes once, each block's masks made just before the loop reads them, as the lean
-   lexer's `Blocks::of`. The test build's walk of the regions reads a stage 1 of its own, made whole. Kotlin's is the
+   past it. So tier 1 reads the bytes once, each block's masks made just before the loop reads them. (The lean
+   lexer's `Blocks::of` makes its blocks' masks before its loop, for the whole file; it keeps 5 a block.) The test build's walk of the regions reads a stage 1 of its own, made whole. Kotlin's is the
    only tier 1 of the two-pass form; rr's and JSON's are unchanged. A check's reason with a carriage return in it is
    written with `\r`.
 7. **The gap marks of the bytes before a token are asked by tier 2** (`SPANNED`, `spanned`). A gap mark that is a set
@@ -95,10 +95,17 @@ them.
    lean lexer tests `c == b'/'`, and the mask is then one of the first kind. Kotlin's product stage 1 keeps 100 masks
    of 144: 29 were the walk's alone, and 15 are byte tests. The rest are read over a token's bytes (`any_in`,
    `last_in`, `count_in`), by the scans to a closer, after the loop, or by tier 2.
+9. **A block's masks are kept together** (`interleave::together`), as the lean lexer keeps a block's in one
+   (`Vec<Masks>`). Stage 1's masks the product reads are one `m: Vec<[u64; K]>`, each mask a column (`S1_*`, read as
+   `Col`); the helpers that read masks take any words (`Words`: a vector's, a slice's, a column's). A mask tier 2
+   takes, the loop writes, or only a test build keeps stays a vector of its own, and a scan that makes blocks of one
+   has its vector's form (`_v`). Kotlin's are 95 masks a block together, and 5 vectors, the masks tier 2 reads a
+   string's parts by.
 
-What stays: stage 1 keeps 100 masks in the product build, each a vector of the file's words, where the lean lexer
-keeps 5 in one, and tier 1 computes four marks into the token's code: `head_ctor`'s line break (the lean lexer's
-`nl`), `semi_close` and `as_open` (each of a fill tier 1 keeps over the gap), and `real` (a count of a number's
-bytes). Its strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or t_dollar
-resumes str`), a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in parts, from
-tier 1's masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state (`next_*`).
+What stays: stage 1 makes 95 masks a block, where the lean lexer makes 5 and works out the rest (its strings, escapes,
+comments) from the bytes in its loop; and tier 1 computes four marks into the token's code: `head_ctor`'s line break
+(the lean lexer's `nl`), `semi_close` and `as_open` (each of a fill tier 1 keeps over the gap), and `real` (a count of
+a number's bytes). Its strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or
+t_dollar resumes str`), a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in
+parts, from tier 1's masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state
+(`next_*`).
