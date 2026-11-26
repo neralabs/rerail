@@ -42,6 +42,17 @@ family's Engine Adapter branches on a language.
    rule library's `phases/`, which phase lookup searches after `phase_dir` and before the engine's own programs. The
    engine's own (`struct`, `types`, `values`, `sources`, the `calls` programs) stay. Django's relations leave
    `py_names` for a phase `dj_names` that reads `py_names`' exports.
+   - Phase 0 is handed one `rerail.phase_lib` row per directory, so a phase's candidates in both are on its graph. No
+     name is in both (`phase_programs_are_in_one_directory`).
+   - `dj_names` (`lib/phases/dj_names.rerail`, beside `python/django-shared.rerail`) reads `py_names`' `class`,
+     `ancestor`, `member_method`, `exports`, `defined`, `reads_at` and three exports added for it: `bases`,
+     `member_ref` and `exported_name`. A class body's assignments are `python/scopes`' `class_asg`, one definition
+     for both phases. The Django pack reads `dj_names__model_group`, `dj_names__model_hook`, … .
+   - With `exports` an input rather than a relation the phase derives, the receiver rules are keyed by the connecting
+     call (a node of its file), not by its `"path:line"` place, and a sender's name not exported is a negation, not a
+     count: so they stay per file.
+   - Its cost: `dj_names` runs `python/scopes` over each file once more, the cost 0677 kept the section in
+     `py_names` to avoid. Its per-file part is memoized per file as every phase's is.
 5. **An input nothing produces is an error**, naming the input and its library. An `extensible` relation nothing
    states is still stated empty: that is an extension with no members, not a missing producer.
 

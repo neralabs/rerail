@@ -2244,8 +2244,8 @@ dm(p, x) :- dj_qs_model(q, r), dj_model_has_method(r, x), docof(q, d), doc(d, p,
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A model's Meta options and managers read by its symbol in another file (decision 0677 fix 3c: the phase py_names'
-/// Django section, python/django's dj_model_group and the rest). views.py imports shop.models alone; the Meta options
+/// A model's Meta options and managers read by its symbol in another file (decision 0677 fix 3c: the phase dj_names,
+/// python/django's dj_model_group and the rest). views.py imports shop.models alone; the Meta options
 /// and the manager's methods come from models_base and shop.managers, which it never imports, each by Django's
 /// inheritance: Plank's Meta subclasses its abstract base's (`class Meta(Named.Meta)`), Board declares a Meta of its
 /// own and takes none of Named's, Part takes its concrete base's constraints, and Part's manager builds a queryset
@@ -2315,7 +2315,7 @@ mm(mq, a, x) :- at_view(e, mq), dj_model_manager_method(e, a, x).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A model's hooks read by its symbol in another file (decision 0677 fix 3d: the phase py_names' Django section,
+/// A model's hooks read by its symbol in another file (decision 0677 fix 3d: the phase dj_names,
 /// python/django's dj_model_hook and dj_receiver_def). views.py imports shop.models alone. Book's save() is
 /// inherited from Stamped, in models_base, which views.py never imports; Book's receivers are connected in
 /// shop/signals.py, which nothing imports: a decorated def, and a def connected with `.connect`, both for sender Book.
