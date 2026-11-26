@@ -1977,9 +1977,7 @@ impl Round<'_> {
         made.push(out);
         self.launch(dir, self.ops.emit, &[rule, choice, searched, out, self.memo])?;
         let p = read_block(dir, out, |b| plan_and_keys(b).0)?;
-        for (b, at) in p.reads() {
-            dir.refer(out, b, at)?;
-        }
+        dir.refer_all(out, &p.reads())?;
         dir.freeze(out)?;
         Ok(out)
     }

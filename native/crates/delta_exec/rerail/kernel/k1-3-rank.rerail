@@ -1,0 +1,5 @@
+// Each shared variable's column (negates the third): the least at 0, each next one past it, by the numbers' chain.
+succ(d, x, v, w) :- gt(d, x, v, w), !between(d, x, v, w).
+least(d, x, v) :- shared(d, x, v), !has_smaller(d, x, v).
+rank(d, x, v, 0) :- least(d, x, v).
+rank(d, x, w, m) :- rank(d, x, v, n), succ(d, x, v, w), next(n, m).

@@ -1,7 +1,7 @@
 //! The rebuild's tests (decision 0686): at M0, the pieces that are already the final shape. Each test deleted with
 //! the first build comes back at the milestone the rebuild plan names for it.
 
-use crate::dir::Directory;
+use crate::dir::{BlockId, Directory};
 use crate::files::{BlobId, BlobRows, DocIds, Placed, doc_of, reads};
 use crate::intern::{InternOps, intern};
 use crate::cache::CacheOps;
@@ -203,8 +203,8 @@ fn k0_pass_rows_by_hand() {
     assert!(got(7).is_empty(), "k_order is boot's, not the pass's");
 }
 
-/// K-form's rows stored as traces of their shapes (`kform::shape`): 32-bit columns but a number's value, each row read
-/// back as written.
+/// K-form's rows stored as traces of their shapes (`kform::shape`): 32-bit columns but a number's value and a name,
+/// each row read back as written.
 #[test]
 fn k_form_rows_are_stored_in_32_bits() {
     use crate::op::Tiling;
@@ -217,7 +217,12 @@ fn k_form_rows_are_stored_in_32_bits() {
     for (i, (name, arity)) in RELATIONS.iter().enumerate() {
         let shape = crate::kform::shape(i);
         let wide: Vec<usize> = (0..*arity).filter(|&c| shape.columns[c] == ColType::I64).collect();
-        assert_eq!(wide, if *name == "k_num" { vec![2] } else { vec![] }, "{name}: only a number's value is 64 bits");
+        let want_wide = match *name {
+            "k_num" | "k_rule" | "k_var" => vec![2],
+            "k_step" => vec![5],
+            _ => vec![],
+        };
+        assert_eq!(wide, want_wide, "{name}: only a number's value and a name (a symbol, or a node's name) are 64 bits");
         let mut tr = Trace::new(&shape).unwrap();
         let want: Rows = rows[i].iter().map(|r| r.to_vec()).collect();
         let runs = tr.open(dir, want.len().max(1));
@@ -450,4 +455,45 @@ fn k0_pass_keeps_each_documents_sizes_and_a_gone_one_takes_its_entry() {
     assert_eq!(c::sizes(&bytes, 9).unwrap(), &want_a[..]);
     assert_eq!(c::used(&bytes), used, "the gone document's room, taken");
     runs.into_iter().for_each(|r| fx.dir.release(r));
+}
+
+/// The `name` view (0686, K1-c): a named node's name, `-(d·2³² + n)`, read from the node where it lies; no other node
+/// has one, and naming interns nothing.
+#[test]
+fn the_name_view_names_a_named_node_in_place_and_interns_nothing() {
+    let mut fx = Fx::new();
+    let before = fx.atoms.count(&fx.dir);
+    let doc = fx.doc("h(x) :- e(x, y), (y = 1 ; y = 2).\n", "named.rerail");
+    let named: Vec<(i64, i64)> = fx.read(&doc, |r, syms, names| {
+        let v = TapeView::new(View::Name, 7, r, syms, names);
+        v.scan().map(|id| (Read::get(&v, id, ColumnIndex::new(1)), Read::get(&v, id, ColumnIndex::new(2)))).collect()
+    });
+    // The clause (node 1), the group (12) and its disjunction (13).
+    assert_eq!(named, [(1, -((7 << 32) | 1)), (12, -((7 << 32) | 12)), (13, -((7 << 32) | 13))]);
+    // A document of the same identifiers and more named nodes adds no atom.
+    let after = fx.atoms.count(&fx.dir);
+    assert!(after > before);
+    fx.doc("h(x) :- e(x, y), (y = 1 ; y = 2), (x = 1 ; e(y, x)).\n", "named2.rerail");
+    assert_eq!(fx.atoms.count(&fx.dir), after + 2, "its path and module only");
+}
+
+/// A block refers to any number of blocks (`Directory::refer_all`): through holders past a block's references, each
+/// held and reached as a direct reference is.
+#[test]
+fn a_block_refers_to_more_blocks_than_its_references_hold_through_holders() {
+    let mut dir = Directory::default();
+    let to: Vec<BlockId> = (0..70).map(|_| {
+        let b = dir.make(rerail_blocks::block::kind::FACTS, 8);
+        dir.freeze(b).unwrap();
+        b
+    }).collect();
+    let from = dir.make(rerail_blocks::block::kind::CONTROL, 8);
+    let refs: Vec<(BlockId, usize)> = to.iter().map(|&b| (b, rerail_blocks::gens::BODY_AT)).collect();
+    dir.refer_all(from, &refs).unwrap();
+    let reached = dir.reach(&[from]);
+    assert!(to.iter().all(|b| reached.contains(b)), "every block reached");
+    assert!(dir.refs(from).len() <= rerail_blocks::gens::MAX_REFS);
+    // Each held while `from` is: the directory's own handles let go, the blocks live on.
+    to.iter().for_each(|&b| dir.release(b));
+    assert!(to.iter().all(|&b| dir.block(b).is_some()), "held through the holders");
 }

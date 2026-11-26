@@ -1,0 +1,15 @@
+// A scope's shared variables (negates the reader's): those under it that also occur in its clause outside it, its
+// relation's columns; one term for each, its first occurrence; their order by symbol, and the next of each.
+//
+// A scope's context, which its rules read with each alternative, so that what binds its variables outside it binds
+// them there too: every literal of a conjunction around it that is no scope, and every scope before it that is not
+// around it (the scopes read each other in source order, so none reads itself). Reading them again in the clause's
+// own rule changes nothing: a conjunction holds its literal twice as once.
+ctx(d, x, l) :- up(d, x, b), kind(d, b, "conjunction"), field(d, b, "literal", l), !scope(d, l).
+ctx(d, x, y) :- up(d, x, b), kind(d, b, "conjunction"), field(d, b, "literal", y), scope(d, y), y < x, !up(d, x, y).
+onesplit(d, c) :- alt(d, c, _), !several(d, c).
+shared(d, x, v) :- scope(d, x), in_clause(d, c, x), under(d, x, t), read_var(d, t, v), in_clause(d, c, u), read_var(d, u, v), !under(d, x, u).
+rep(d, x, v, t) :- shared(d, x, v), under(d, x, t), read_var(d, t, v), !later(d, x, v, t).
+gt(d, x, v, w) :- shared(d, x, v), shared(d, x, w), v < w.
+between(d, x, v, w) :- gt(d, x, v, u), gt(d, x, u, w).
+has_smaller(d, x, w) :- gt(d, x, _, w).

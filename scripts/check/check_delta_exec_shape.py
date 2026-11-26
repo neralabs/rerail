@@ -762,7 +762,7 @@ def b8(failures: list) -> None:
         failures.append("boot.rs: the levels' loop does not end at the first level that exports no program (B§8)")
     if "levels.clear_from(" not in boot:
         failures.append("boot.rs: a level run from ∅ does not clear the levels after it")
-    if "pub levels: Vec<LevelPins>" not in boot or "fn refer_all(" not in boot:
+    if "pub levels: Vec<LevelPins>" not in boot or "dir.refer_all(" not in boot or "pub fn refer_all(" not in (src / "dir.rs").read_text():
         failures.append("boot.rs: the levels' heads not in the pins, or the pins not referring to every head kept")
     tests = (src / "phase_tests.rs").read_text() + (src / "body_tests.rs").read_text()
     for t in (
@@ -861,11 +861,13 @@ def k1(failures: list) -> None:
     """B§10 step 7, the first K1 feature in rules: the binding lowerer in K0, one file a stratum (O4), K1's reader
     before it; no lowering in Rust; a level's documents the `load` facts of its facts in and of its program."""
     kernel = CRATE / "rerail" / "kernel"
-    files = ("k1-0-read", "k1-1-rules", "k1-2-steps", "k1-3-binds", "k1-4-place", "k1-5-emit")
-    heads = {"k1-0-read": ("head_of", "several", "alt", "group_alt", "split", "lit_step", "lit_arg"),
-             "k1-1-rules": ("inst", "read_rule", "read_arg", "in_rule", "read_step"),
-             "k1-2-steps": ("in_atom", "filter", "in_filter", "bound_before"), "k1-3-binds": ("binds", "waits"),
-             "k1-4-place": ("place", "moved"), "k1-5-emit": ("k_rule", "k_step", "k_arg", "k_var", "k_order")}
+    files = ("k1-0-numbers", "k1-1-read", "k1-2-shared", "k1-3-rank", "k1-4-rules", "k1-5-steps", "k1-6-binds", "k1-7-place", "k1-8-emit")
+    heads = {"k1-0-numbers": ("next",),
+             "k1-1-read": ("head_of", "several", "alt", "group_alt", "split", "aux_alt", "scope", "under", "up", "lit_step", "lit_arg"),
+             "k1-2-shared": ("onesplit", "ctx", "shared", "rep", "gt"), "k1-3-rank": ("succ", "least", "rank"),
+             "k1-4-rules": ("inst", "read_rule", "read_arg", "in_rule", "read_step"),
+             "k1-5-steps": ("in_atom", "filter", "in_filter", "bound_before"), "k1-6-binds": ("binds", "waits"),
+             "k1-7-place": ("place", "moved"), "k1-8-emit": ("k_rule", "k_step", "k_arg", "k_var", "k_order")}
     for f in files:
         path = kernel / f"{f}.rerail"
         if not path.exists():

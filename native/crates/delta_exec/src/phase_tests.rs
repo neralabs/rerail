@@ -547,13 +547,16 @@ fn a_later_process_resumes_the_levels_where_the_last_run_left_them() {
 
 /// The kernel's files (B§10 step 7), by path relative to the bootstrap's root, in stratum order: K1's reader, then
 /// the binding lowerer, one file a stratum (O4).
-const KERNEL: [(&str, &str); 6] = [
-    ("kernel/k1-0-read.rerail", include_str!("../rerail/kernel/k1-0-read.rerail")),
-    ("kernel/k1-1-rules.rerail", include_str!("../rerail/kernel/k1-1-rules.rerail")),
-    ("kernel/k1-2-steps.rerail", include_str!("../rerail/kernel/k1-2-steps.rerail")),
-    ("kernel/k1-3-binds.rerail", include_str!("../rerail/kernel/k1-3-binds.rerail")),
-    ("kernel/k1-4-place.rerail", include_str!("../rerail/kernel/k1-4-place.rerail")),
-    ("kernel/k1-5-emit.rerail", include_str!("../rerail/kernel/k1-5-emit.rerail")),
+const KERNEL: [(&str, &str); 9] = [
+    ("kernel/k1-0-numbers.rerail", include_str!("../rerail/kernel/k1-0-numbers.rerail")),
+    ("kernel/k1-1-read.rerail", include_str!("../rerail/kernel/k1-1-read.rerail")),
+    ("kernel/k1-2-shared.rerail", include_str!("../rerail/kernel/k1-2-shared.rerail")),
+    ("kernel/k1-3-rank.rerail", include_str!("../rerail/kernel/k1-3-rank.rerail")),
+    ("kernel/k1-4-rules.rerail", include_str!("../rerail/kernel/k1-4-rules.rerail")),
+    ("kernel/k1-5-steps.rerail", include_str!("../rerail/kernel/k1-5-steps.rerail")),
+    ("kernel/k1-6-binds.rerail", include_str!("../rerail/kernel/k1-6-binds.rerail")),
+    ("kernel/k1-7-place.rerail", include_str!("../rerail/kernel/k1-7-place.rerail")),
+    ("kernel/k1-8-emit.rerail", include_str!("../rerail/kernel/k1-8-emit.rerail")),
 ];
 
 /// What L3 reads: the stand-in for the compiler's files (Bootstrap §6: "P3 loads the full compiler"), a K0 file of
@@ -608,7 +611,7 @@ fn hand_run(name: &str, rules: &str) -> Run {
 #[test]
 fn k1s_heads_disjunctions_and_constants_lower_to_their_hand_written_rules() {
     type Want = &'static [(&'static str, &'static [&'static [i64]])];
-    let cases: [(&str, &str, &str, Want); 6] = [
+    let cases: [(&str, &str, &str, Want); 9] = [
         ("heads", "a(x), c(x) :- e(x, _).\n", "a(x) :- e(x, _).\nc(x) :- e(x, _).\n", &[("a", &[&[1], &[2], &[3]]), ("c", &[&[1], &[2], &[3]])]),
         ("or", "h(x) :- e(x, _) ; e(_, x).\n", "h(x) :- e(x, _).\nh(x) :- e(_, x).\n", &[("h", &[&[1], &[2], &[3], &[4]])]),
         ("group", "h(x) :- e(x, y), (y = 1 ; y = 4).\n", "h(x) :- e(x, y), y = 1.\nh(x) :- e(x, y), y = 4.\n", &[("h", &[&[2], &[3]])]),
@@ -616,6 +619,13 @@ fn k1s_heads_disjunctions_and_constants_lower_to_their_hand_written_rules() {
         ("or-bind", "h(x) :- x > 2, e(x, _) ; x < 3, !b(x), e(_, x).\n", "h(x) :- e(x, _), x > 2.\nh(x) :- e(_, x), x < 3, !b(x).\n", &[("h", &[&[1], &[2], &[3]])]),
         ("group-bind", "h(x, y) :- y != x, (e(x, y) ; e(y, x)).\n", "h(x, y) :- e(x, y), y != x.\nh(x, y) :- e(y, x), y != x.\n",
             &[("h", &[&[1, 2], &[2, 3], &[3, 1], &[2, 4], &[2, 1], &[3, 2], &[1, 3], &[4, 2]])]),
+        ("heads-or", "a(x), c(x) :- e(x, _) ; e(_, x).\n", "a(x) :- e(x, _).\na(x) :- e(_, x).\nc(x) :- e(x, _).\nc(x) :- e(_, x).\n",
+            &[("a", &[&[1], &[2], &[3], &[4]]), ("c", &[&[1], &[2], &[3], &[4]])]),
+        ("groups", "h(x, y) :- (e(x, y) ; e(y, x)), (x = 1 ; y = 1).\n",
+            "h(x, y) :- e(x, y), x = 1.\nh(x, y) :- e(x, y), y = 1.\nh(x, y) :- e(y, x), x = 1.\nh(x, y) :- e(y, x), y = 1.\n",
+            &[("h", &[&[1, 2], &[3, 1], &[2, 1], &[1, 3]])]),
+        ("nested", "h(x) :- e(x, y), (e(y, z), (z = 1 ; z = 4) ; b(y)).\n",
+            "h(x) :- e(x, y), e(y, z), z = 1.\nh(x) :- e(x, y), e(y, z), z = 4.\nh(x) :- e(x, y), b(y).\n", &[("h", &[&[1], &[2]])]),
     ];
     for (name, k1, k0, want) in cases {
         let mut r = kernel_run(&format!("phase-k1-{name}"), k1);

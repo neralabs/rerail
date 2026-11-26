@@ -417,6 +417,32 @@ impl Directory {
         Ok(())
     }
 
+    /// `from` made to refer to what lies at each of `to`: directly while they fit a block's references
+    /// (`gens::MAX_REFS`), else through holders, each a frozen block placed where `from` is (a kept file's, or the
+    /// run's) that refers to as many as fit, `from` referring to the holders the same way. A reference holds and
+    /// reaches what it names (`reach` follows holders as any reference), so many and few are one meaning. A holder
+    /// holds no words.
+    pub fn refer_all(&mut self, from: BlockId, to: &[(BlockId, usize)]) -> Result<(), String> {
+        use rerail_blocks::gens::MAX_REFS;
+        if to.len() <= MAX_REFS {
+            return to.iter().try_for_each(|&(b, at)| self.refer(from, b, at));
+        }
+        let place = if self.entry(from)?.file.is_some() { PLACE_KEPT } else { PLACE_RUN };
+        let mut holders = Vec::new();
+        for chunk in to.chunks(MAX_REFS) {
+            let h = self.make_placed(place, kind::FACTS, 8, 0)?;
+            for &(b, at) in chunk {
+                self.refer(h, b, at)?;
+            }
+            self.freeze(h)?;
+            holders.push((h, BODY_AT));
+        }
+        let held = self.refer_all(from, &holders);
+        // Each holder lives while `from` refers to it: the directory's own handle let go.
+        holders.iter().for_each(|&(h, _)| self.release(h));
+        held
+    }
+
     /// The blocks `id` refers to.
     pub fn refs(&self, id: BlockId) -> Vec<BlockId> {
         self.entries.get(id.0 as usize).map_or(Vec::new(), |e| e.held.iter().map(|(r, _)| *r).collect())

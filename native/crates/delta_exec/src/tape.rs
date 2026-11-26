@@ -9,6 +9,10 @@
 //! - `text(d, n, s)`: a name's text (an identifier's, a variable's, an operator's), a symbol; a literal is read by
 //!   `value`;
 //! - `value(d, n, v)`: a literal's value: a string's unescaped contents (a symbol), a number's value;
+//! - `name(d, n, s)`: a named node's own name (a clause, a disjunction, a group, an expression: 0686, K1-c), so a
+//!   lowering in rules names a relation or a variable it makes: `-(d·2³² + n)`, read from the node where it lies.
+//!   It is no atom: a symbol is positive, so a name never meets one, and naming makes nothing, so an edit leaves the
+//!   atoms' count, which every cache's digest holds, as it was;
 //! - `doc(d, path, module)`: the document's path, and the module its answer named (as the engine's `doc` is,
 //!   `Document::module`).
 //!
@@ -42,17 +46,19 @@ pub enum View {
     Child,
     Text,
     Value,
+    Name,
     Doc,
 }
 
 impl View {
-    pub const ALL: [(View, &'static str, usize); 7] = [
+    pub const ALL: [(View, &'static str, usize); 8] = [
         (View::Node, "node", 5),
         (View::Kind, "kind", 3),
         (View::Field, "field", 4),
         (View::Child, "child", 4),
         (View::Text, "text", 3),
         (View::Value, "value", 3),
+        (View::Name, "name", 3),
         (View::Doc, "doc", 3),
     ];
 
@@ -63,7 +69,7 @@ impl View {
     /// The column that names a row's node, which is the row's id.
     fn node_column(self) -> usize {
         match self {
-            View::Node | View::Kind | View::Text | View::Value => 1,
+            View::Node | View::Kind | View::Text | View::Value | View::Name => 1,
             View::Field => 3,
             View::Child => 2,
             View::Doc => 0,
@@ -72,6 +78,19 @@ impl View {
 }
 
 pub use rerail_delta_twins::tape::Reads;
+
+/// Whether a node of kind `k` is named (the `name` view): a node a lowering makes a relation or a variable of.
+pub fn named(k: u16) -> bool {
+    use rerail_rr_syntax::tape::Kind;
+    [Kind::Clause, Kind::Disjunction, Kind::Group, Kind::BinaryExpression, Kind::UnaryExpression, Kind::ParenthesizedExpression, Kind::FunctorCall, Kind::Call, Kind::Aggregate]
+        .iter()
+        .any(|&x| x as u16 == k)
+}
+
+/// Node `n` of document `d`'s name: negative, so no symbol is one (a document's key is under 2³⁰: `blob::doc_key`).
+pub fn name(d: i64, n: usize) -> i64 {
+    -((d << 32) | n as i64)
+}
 
 /// A document's reads, where its tape and source lie.
 pub fn reads(text: &Text) -> Reads<'_> {
@@ -104,6 +123,7 @@ impl<'t> TapeView<'t> {
             View::Field => r.node(n).1 != 0 && r.parent(n).is_some(),
             View::Child => r.counted(n) && r.parent(n).is_some(),
             View::Value => r.has_value(n),
+            View::Name => named(r.node(n).0),
             View::Doc => n == 0,
         }
     }
@@ -124,6 +144,7 @@ impl<'t> TapeView<'t> {
             // The node's symbols, as `intern` wrote them: read, never made here.
             (View::Text, 2) => i64::from(syms::text(self.syms, n)),
             (View::Value, 2) => r.number(n).unwrap_or_else(|| i64::from(syms::value(self.syms, n))),
+            (View::Name, 2) => name(self.d, n),
             _ => n as i64,
         }
     }

@@ -64,7 +64,7 @@ use crate::sym::Atoms;
 use crate::trace::{RollUp, Trace};
 use rerail_blocks::bistate::{ColumnIndex, Read};
 use rerail_blocks::block::kind;
-use rerail_blocks::gens::{BODY_AT, MAX_REFS};
+use rerail_blocks::gens::BODY_AT;
 use std::collections::BTreeSet;
 
 /// The document set as the world and its answerers give it (B§7's first answerer, `load`, then `parse` and
@@ -280,7 +280,7 @@ impl Pins {
         }
         let levels = self.levels.iter().flat_map(LevelPins::heads).map(Some);
         let all: Vec<BlockId> = heads.into_iter().chain(levels).flatten().map(|b| b.0).collect::<BTreeSet<u32>>().into_iter().map(BlockId).collect();
-        refer_all(dir, id, &all)?;
+        dir.refer_all(id, &all.iter().map(|&b| (b, BODY_AT)).collect::<Vec<_>>())?;
         dir.freeze(id)?;
         Ok(id)
     }
@@ -323,28 +323,6 @@ impl Pins {
             atoms: Global { block: BlockId(u32::MAX), count: w[1] as u64 },
         })))
     }
-}
-
-/// `from` made to refer to every block of `to`: directly while they fit a block's references (`MAX_REFS`), else
-/// through holders, each a lasting block that refers to as many as fit, `from` referring to the holders the same way.
-/// A holder holds no words: the pins' words name every head.
-fn refer_all(dir: &mut Directory, from: BlockId, to: &[BlockId]) -> Result<(), String> {
-    if to.len() <= MAX_REFS {
-        return to.iter().try_for_each(|&b| dir.refer(from, b, BODY_AT));
-    }
-    let mut holders = Vec::new();
-    for chunk in to.chunks(MAX_REFS) {
-        let h = dir.make_placed(dir.lasting(), kind::FACTS, 8, 0)?;
-        for &b in chunk {
-            dir.refer(h, b, BODY_AT)?;
-        }
-        dir.freeze(h)?;
-        holders.push(h);
-    }
-    let held = refer_all(dir, from, &holders);
-    // Each holder lives while `from` refers to it: the directory's own handle let go.
-    holders.iter().for_each(|&h| dir.release(h));
-    held
 }
 
 /// The levels a run may take before it is refused: each exported a program, and a chain that never stops exporting

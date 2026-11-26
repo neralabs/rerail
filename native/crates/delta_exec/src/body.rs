@@ -895,9 +895,7 @@ pub(crate) fn plan_block_keyed(dir: &mut Directory, plan: &Plan, keys: &[i64]) -
             set_word::<i64>(bytes, BODY_AT + 8 + 8 * i, x);
         }
     }
-    for (b, at) in plan.reads() {
-        dir.refer(id, b, at)?;
-    }
+    dir.refer_all(id, &plan.reads())?;
     dir.freeze(id)?;
     Ok(id)
 }

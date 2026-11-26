@@ -2184,3 +2184,47 @@ Checks (Relax, local, 131 of 131):
 - `a_k1_rule_lowered_by_p3_gives_the_rows_of_its_hand_ordered_k0_form` now checks each lowered rule's steps in key
   order against the hand-ordered form, since step keys are now nodes.
 - The shape script's K1 section names the six files and their heads.
+
+### K1: names, scopes and numbers (K1-b, K1-c, and K1-e's table; 2026-11-26)
+
+The open points of `0686: K-form and what K1 lowers into it` (https://claude.ai/artifact/Sn9FLH5ZJWeVxUpboU6hGm)
+are built to that page's recommendations here, and the page stays the record of the choice.
+
+- **Names (K1-c).** A view, `name(d, n, s)`, gives a named node its own name: a clause, a disjunction, a group, or an
+  expression (`tape::named`).
+  - The name is `-(d·2³² + n)`, computed where the node lies. It is no atom: a symbol is positive, so a name never
+    meets one.
+  - Naming interns nothing, so an edit leaves the atoms' count as it was. Every cache's digest holds that count, and
+    the first try, a symbol `#<path>:<node>` for each named node, broke the planner's memo across edits
+    (`a_levels_memo_lasts_from_one_run_to_the_next`). It was taken back.
+  - K-form's name columns (`k_rule`'s head, `k_step`'s relation, `k_var`'s variable) are 64 bits, since a name does
+    not fit 32. Every other column stays 32.
+- **Scopes (K1-b).** Each group, wherever it is, and a top-level disjunction under several heads, is a relation of its
+  own, named by its node.
+  - It stands as an atom where it was written, over its shared variables: those under it that also occur in its
+    clause outside it, each with one term, its first occurrence.
+  - Each of its alternatives is a rule of it. A group of one conjunction is a relation of one rule.
+  - Each of its rules also reads its context: every literal of a conjunction around it that is no scope, and each
+    earlier scope that is not around it. So what binds its variables outside it binds them there too, and the
+    scopes read one another in source order, so none reads itself.
+  - This lowers any nesting: two groups, several heads over a disjunction, a group inside an alternative. Before
+    this, such a clause made no rule.
+- **Numbers (K1-e's table).** `k1-0-numbers` holds `next(0, 1). … next(63, 64).` A scope's columns are ranked by
+  symbol along it: the least at 0, each next one past it. K-form's argument places are dense, and K0 counts by no
+  other means.
+- **Many documents.** A block refers to any number of blocks through holders (`Directory::refer_all`, from
+  `boot.rs`'s pins, now the plan blocks' too). A plan reading more than fifteen documents had been refused ("a block
+  refers to at most 30 blocks").
+
+The kernel is nine files, one stratum each: `k1-0-numbers`, `k1-1-read`, `k1-2-shared`, `k1-3-rank`, `k1-4-rules`,
+then the binding lowerer's `k1-5-steps`, `k1-6-binds`, `k1-7-place` and `k1-8-emit`.
+
+Checks (Relax, local, 133 of 133):
+- `k1s_heads_disjunctions_and_constants_lower_to_their_hand_written_rules` covers nine programs. Three are new:
+  several heads over a disjunction, two groups, and a group inside an alternative. Each gives its hand-written rows
+  and its hand-lowered form's, and a cold run gives the same.
+  - Without the context rule, the executor refuses a filter whose variable no step binds.
+  - Without nested groups as scopes, a group inside an alternative was dropped and matched too much (`[3]`).
+- `the_name_view_names_a_named_node_in_place_and_interns_nothing`.
+- `a_block_refers_to_more_blocks_than_its_references_hold_through_holders` (70 blocks).
+- `k_form_rows_are_stored_in_32_bits`, now with the three name columns at 64.

@@ -26,12 +26,15 @@ pub const RELATIONS: [(&str, usize); 8] = [
 ];
 
 /// The K-form relation at `RELATIONS[i]`'s trace shape: partitioned by module, sorted in column order, every
-/// column 32 bits (module and node ids, keys, places, symbols) but a number's value, `k_num`'s last: a stored id
-/// takes the 32 bits it fits in, and only a value the program writes may need 64.
+/// column 32 bits (module and node ids, keys, places, symbols) but a number's value (`k_num`'s last) and a name
+/// (`k_rule`'s head, `k_step`'s relation, `k_var`'s variable): a stored id takes the 32 bits it fits in, a value the
+/// program writes may need 64, and a name is a symbol or a node's name (`tape::name`, `-(d·2³² + n)`), which does not
+/// fit 32.
 pub fn shape(i: usize) -> rerail_blocks::layer::Shape {
     use rerail_blocks::layer::{ColType, Shape};
     let (name, arity) = RELATIONS[i];
-    let columns = (0..arity).map(|c| if name == "k_num" && c == 2 { ColType::I64 } else { ColType::I32 }).collect();
+    let wide = |c: usize| matches!((name, c), ("k_num", 2) | ("k_rule", 2) | ("k_step", 5) | ("k_var", 2));
+    let columns = (0..arity).map(|c| if wide(c) { ColType::I64 } else { ColType::I32 }).collect();
     Shape::run(columns, (0..arity as u16).collect(), Some(0))
 }
 
