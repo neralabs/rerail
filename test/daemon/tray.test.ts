@@ -395,6 +395,9 @@ describe("startTray", () => {
     });
     await until(() => received().length === 3, 10_000, "the done state");
     expect(updateLabels().at(-1)).toBe("Updated to 0.2.3. New sessions use it.");
+    // The click on the done line is handled, and runs nothing, before the next release is found.
+    await delay(150);
+    expect(calls.updates).toBe(1);
     latest = "0.2.4";
     await until(() => received().length === 6, 10_000, "the next update");
     expect(calls.updates).toBe(2);

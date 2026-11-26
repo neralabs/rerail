@@ -495,11 +495,12 @@ export async function runRerailUpdate(
   const { deadlineMs = UPDATE_DEADLINE_MS, pollMs = UPDATE_POLL_MS } = timing;
   const args = [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "update"];
   const launched = launchDetached({ args, cwd: home, env, logFile: join(home, DAEMON_LOG_FILE) }, machine);
-  const deadline = Date.now() + deadlineMs;
+  // A monotonic clock: a change to the wall clock neither ends the wait early nor stretches it.
+  const deadline = performance.now() + deadlineMs;
   for (;;) {
     const code = launched.exitCode();
     if (code !== undefined) return { code: code ?? 1, reason: launched.exitReason() ?? "exited" };
-    if (Date.now() >= deadline) {
+    if (performance.now() >= deadline) {
       const waited = deadlineMs >= 60_000 ? `${Math.round(deadlineMs / 60_000)} minutes` : `${deadlineMs} ms`;
       return { code: 1, reason: `still running after ${waited}, and left to run` };
     }
