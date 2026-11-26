@@ -115,7 +115,8 @@ const REC: usize = 6;
 /// they lie (decision 0628 §2). On format 16 every document of a language shares its table (`f16::Lang`).
 #[derive(Clone)]
 pub struct CodeTable {
-    words: Words,
+    /// The words `at` points into, held so they stay where they lie: read through `at` alone.
+    _words: Words,
     /// `words`' slice, taken once when the table is made (`of_words`): a read of an entry reads the words through it,
     /// not through `words`' dynamic `as_ref` (a call, and a placed region's guard check, about eight to an entry:
     /// the matcher wave's per-node `TapeDoc::entry` was 0.8 µs a node on the M3 with them, t57 §8).
@@ -161,7 +162,7 @@ impl CodeTable {
             let w: &[u32] = (*words).as_ref();
             (w.as_ptr(), w.len())
         };
-        CodeTable { words, at, n }
+        CodeTable { _words: words, at, n }
     }
 
     /// The words of the table of `entries` (`over` reads them).
@@ -281,7 +282,6 @@ impl CodeTable {
     }
 
     #[inline(always)]
-    #[inline(always)]
     fn words(&self) -> &[u32] {
         // SAFETY: `words`' slice, alive and unwritten while `self.words` is (`CodeTable::at`).
         unsafe { std::slice::from_raw_parts(self.at, self.n) }
@@ -349,15 +349,14 @@ impl CodeTable {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    /// Code `number`'s entry.
-    #[inline(always)]
-    #[inline]
     /// Code `number`'s kind, field and flags (`entry`'s), read from its record alone: no alias or classes looked up.
     #[inline]
     pub fn kind_field(&self, number: u32) -> (u16, u16, u8) {
         let r = self.rec(number);
         (r[0] as u16, (r[0] >> 16) as u16, r[1] as u8)
     }
+    /// Code `number`'s entry.
+    #[inline(always)]
     pub fn entry(&self, number: u32) -> EntryRef<'_> {
         let r = self.rec(number);
         let alias = (r[1] >> 8 & 1 != 0).then(|| {

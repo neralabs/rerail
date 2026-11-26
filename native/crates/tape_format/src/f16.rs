@@ -101,42 +101,7 @@ impl Names {
     }
 }
 
-/// A name in a table's text: `\\`, `\n`, `\r`, `\t` and `\0` escaped (C's and Go's tokens hold a newline and a NUL).
-fn escaped(name: &str) -> String {
-    let mut s = String::with_capacity(name.len());
-    for c in name.chars() {
-        match c {
-            '\\' => s.push_str("\\\\"),
-            '\n' => s.push_str("\\n"),
-            '\r' => s.push_str("\\r"),
-            '\t' => s.push_str("\\t"),
-            '\0' => s.push_str("\\0"),
-            c => s.push(c),
-        }
-    }
-    s
-}
-
-/// `escaped`'s inverse; `None` for an escape it does not write.
-fn unescaped(s: &str) -> Option<String> {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        out.push(match chars.next()? {
-            '\\' => '\\',
-            'n' => '\n',
-            'r' => '\r',
-            't' => '\t',
-            '0' => '\0',
-            _ => return None,
-        });
-    }
-    Some(out)
-}
+use crate::codes::escaped;
 
 impl Lang {
     /// `table` by number (the lab's: every code the grammar allows and no other, decision 0631, numbered by how often
@@ -244,34 +209,19 @@ impl Lang {
 
     /// The choices from their text (`to_text`).
     pub fn from_text(text: &str) -> Result<Self, String> {
+        use crate::codes::Line;
         let (mut revision, mut widths, mut entries, mut names) = (None, None, Vec::new(), Names::default());
         for (k, line) in text.lines().enumerate() {
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let bad = || format!("line {}: {line}", k + 1);
-            let c: Vec<&str> = line.split('\t').collect();
-            let num = |s: &str| s.parse::<u64>().map_err(|_| bad());
-            match c[0] {
-                "revision" if c.len() == 2 => revision = Some(num(c[1])? as u8),
-                "widths" if c.len() == 4 => widths = Some([num(c[1])? as usize, num(c[2])? as usize, num(c[3])? as usize]),
-                "code" if c.len() == 6 => {
-                    let alias = match c[4] {
-                        "-" => None,
-                        a => {
-                            let (named, name) = a.split_once(':').ok_or_else(bad)?;
-                            Some((name.to_owned(), named == "1"))
-                        }
-                    };
-                    let classes = if c[5] == "-" { Vec::new() } else { c[5].split(',').map(|x| x.parse::<u16>().map_err(|_| bad())).collect::<Result<_, _>>()? };
-                    entries.push(Entry { kind: num(c[1])? as u16, field: num(c[2])? as u16, flags: num(c[3])? as u8, alias, classes });
-                }
-                "kind" if c.len() == 4 => names.kinds.push((num(c[1])? as u16, c[2] == "1", unescaped(c[3]).ok_or_else(bad)?)),
-                "lookup" if c.len() == 4 => names.lookups.push((c[1] == "1", unescaped(c[2]).ok_or_else(bad)?, num(c[3])? as u16)),
-                "field" if c.len() == 3 => names.fields.push((num(c[1])? as u16, unescaped(c[2]).ok_or_else(bad)?)),
-                "class" if c.len() == 3 => names.classes.push((num(c[1])? as u16, unescaped(c[2]).ok_or_else(bad)?)),
-                "supertype" if c.len() == 3 => names.supertypes.push((unescaped(c[1]).ok_or_else(bad)?, num(c[2])? as u16)),
-                _ => return Err(bad()),
+            match crate::codes::line(line).map_err(|line| format!("line {}: {line}", k + 1))? {
+                Line::Revision(r) => revision = Some(r),
+                Line::Widths(w) => widths = Some(w),
+                Line::Code { kind, field, flags, alias, classes } => entries.push(Entry { kind, field, flags, alias, classes }),
+                Line::Kind(id, named, name) => names.kinds.push((id, named, name)),
+                Line::Lookup(named, name, id) => names.lookups.push((named, name, id)),
+                Line::Field(id, name) => names.fields.push((id, name)),
+                Line::Class(id, name) => names.classes.push((id, name)),
+                Line::Supertype(name, id) => names.supertypes.push((name, id)),
+                Line::None(_) => {}
             }
         }
         Ok(Lang::new(CodeTable::new(entries), widths.ok_or("no widths")?, revision.ok_or("no revision")?)?.with_names(names))
@@ -898,12 +848,41 @@ impl<'a> StoredPresence<'a> {
 /// What a writer's `finish` gives: the tape, its presence laid in its home after it (decision 0434 §4, step 6).
 pub struct Finished {
     pub tape: Written,
+    /// Its nodes as its writer's ops were given them (`aux_index::Nodes`), what its auxiliary index is laid from;
+    /// `None` where they were not all given through them.
+    pub nodes: Option<crate::aux_index::Nodes>,
+    /// Its source's SHA-256, where its writer took it.
+    pub digest: Option<SourceDigest>,
 }
 
-/// The maker of a finished tape's auxiliary index (decision 0656 step 3), from the tape as it lies: given to a
+/// The SHA-256 of the bytes a writer read (`Finished::digest`), and where they lay.
+#[derive(Clone, Copy, Debug)]
+pub struct SourceDigest {
+    pub sha256: [u8; 32],
+    at: (usize, usize),
+}
+
+impl SourceDigest {
+    /// The digest of `bytes`, read where they lie.
+    pub fn of(bytes: &[u8]) -> SourceDigest {
+        SourceDigest { sha256: sha2::Digest::finalize(sha2::Digest::chain_update(sha2::Sha256::default(), bytes)).into(), at: (bytes.as_ptr() as usize, bytes.len()) }
+    }
+    /// `sha256`, the digest its reader took of `bytes`, where they lie.
+    pub fn taken(sha256: [u8; 32], bytes: &[u8]) -> SourceDigest {
+        SourceDigest { sha256, at: (bytes.as_ptr() as usize, bytes.len()) }
+    }
+    /// The digest, where it was taken of `source` itself (the same bytes where they lie): a parser given another text
+    /// of the same length (a template's view) was given other bytes.
+    pub fn of_source(&self, source: &[u8]) -> Option<[u8; 32]> {
+        (self.at == (source.as_ptr() as usize, source.len())).then_some(self.sha256)
+    }
+}
+
+/// The maker of a finished tape's auxiliary index (decision 0656 step 3), from the tape as it lies and its nodes as its
+/// writer recorded them where it has them all (decision 0703: then the tape is not read back for it): given to a
 /// writer's `finish_with`, which lays the index after the presence where the writer wrote the tape, in its room
 /// before giving it out (0353 row 17), as `Written::lay_aux` lays it in a tape's own vector.
-pub type AuxMaker<'a> = &'a dyn Fn(&Written) -> Result<Vec<u8>, String>;
+pub type AuxMaker<'a> = &'a dyn Fn(&Written, Option<&crate::aux_index::Nodes>) -> Result<Vec<u8>, String>;
 
 impl Written {
     /// The nodes.
@@ -3579,12 +3558,22 @@ mod tests {
             while let Some((_, end)) = ends.pop() {
                 w.close(end);
             }
-            match w.finish().unwrap().tape {
-                Written::F16(t) => assert_eq!(t.as_bytes(), want.as_bytes(), "16 retagged"),
+            let f = w.finish().unwrap();
+            // The writer's nodes, its edits in them, lay the index the tape's read does; its digest is the source's.
+            let codes = crate::aux_index::CodeSets { named: crate::aux_index::named_codes(600, |c| c % 2 == 0), comments: crate::aux_index::named_codes(600, |c| c % 5 == 0) };
+            let all = crate::aux_index::Sections::ALL;
+            let laid = crate::aux_index::build_from(f.nodes.as_ref().expect("every node given through the ops"), &source, 7, &codes, all).unwrap();
+            assert_eq!(f.digest.and_then(|d| d.of_source(&source)), Some(sha2::Digest::finalize(sha2::Digest::chain_update(sha2::Sha256::default(), &source)).into()), "the source's digest");
+            match f.tape {
+                Written::F16(t) => {
+                    assert_eq!(t.as_bytes(), want.as_bytes(), "16 retagged");
+                    assert_eq!(laid, crate::aux_index::build(&t.reader(&lang).unwrap(), &source, 7, &codes, all).unwrap(), "16: the writer's index");
+                }
                 Written::F16Z(t) => {
                     let mut d = vec![0u8; t.decoded_len()];
                     t.decode_into(&mut d).unwrap();
                     assert_eq!(d, want.as_bytes(), "16z retagged");
+                    assert_eq!(laid, crate::aux_index::build(&t.reader(&lang, Some(&ZCache::of([&t]))).unwrap(), &source, 7, &codes, all).unwrap(), "16z: the writer's index");
                 }
             }
         }
@@ -4324,8 +4313,10 @@ mod tests {
                     c.reserve_run(2 * ops.len(), 41);
                     c.final_as_written();
                     {
-                        // SAFETY: `c`'s state, its room reserved for every node and level, written by the cursor alone.
-                        let mut cur = unsafe { Cursor::<X>::begin(c.state_address()) };
+                        // SAFETY: `c`'s state and record, its room reserved for every node and level, written by the cursor
+                        // alone.
+                        let (state, record) = c.cursor_parts();
+                        let mut cur = unsafe { Cursor::<X>::recording(state, record, &[]) };
                         for &op in &ops {
                             // SAFETY: as `begin`'s; each close is an open's.
                             unsafe {
@@ -4342,6 +4333,8 @@ mod tests {
                     let (a, b, c) = (a.finish().unwrap(), b.finish().unwrap(), c.finish().unwrap());
                     assert!(a.tape.extent() == b.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the constant widths' bytes");
                     assert!(a.tape.extent() == c.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the cursor's bytes");
+                    // The cursor's record is the ops': its tape's auxiliary index is laid from it, not read back.
+                    assert!(c.nodes.is_some() && a.nodes == c.nodes, "widths {widths:?}, seed {seed}, 16z {z}: the cursor's record");
                 }
             }
             edges

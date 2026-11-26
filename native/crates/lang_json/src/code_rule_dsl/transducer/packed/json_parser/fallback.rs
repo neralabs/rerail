@@ -1,15 +1,16 @@
 //! JSON's parser for a file simdjson refuses (`json_parser::simdjson`): the Bitlex parser (`json_parser::tape::Bitlex`,
-//! the ladder's JSONC grammar: comments, and an exponent's `+`, which tree-sitter-json refuses), then tree-sitter-json
+//! simdjson's form as generated Rust: a number past a double's range, and an exponent's `+`, which tree-sitter-json
+//! refuses), then tree-sitter-json
 //! over the text with each trailing comma blanked (as simdjson's JSONC read passes over one, decision 0158); a file
 //! both refuse goes to tree-sitter-json as it is. simdjson is JSON's route on every target, MSVC's included (clang-cl
 //! compiles its C++ there).
-use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser};
+use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser, Source};
 
 /// JSON's tree parser for what simdjson refuses.
 pub struct Fallback;
 
 impl TreeParser for Fallback {
-    fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+    fn parse(&self, grammar: &Grammar, source: &Source<'_>, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         if !grammar.lang.embeds().is_empty()
             || !matches!(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(grammar.lang)).parse_input(source), std::borrow::Cow::Borrowed(_))
         {
@@ -21,7 +22,7 @@ impl TreeParser for Fallback {
         // A trailing comma: tree-sitter-json's tape of the text without it, which is as long (its spans are the
         // source's). Where that text has an error too, the file is tree-sitter-json's as it is.
         let text = without_trailing_commas(source);
-        if text == source {
+        if text == source.text {
             return None;
         }
         use ast_grep_language::LanguageExt;

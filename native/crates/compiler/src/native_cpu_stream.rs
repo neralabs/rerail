@@ -8006,7 +8006,7 @@ impl CompiledStream {
             let nodes = tape.room_nodes();
             // With each block's presence, as every other producer's writer (decision 0434 §4, step 6).
             let Doc16 { source, lang, numbers, z, lines } = *doc;
-            w.begin_with(&rerail_tape_format::f16::Document { lang, source, tag: self.tag, z, blocks: true, nodes }, lines);
+            w.begin_with(&rerail_tape_format::f16::Document { lang, source, tag: self.tag, z, blocks: true, nodes, sha256: None }, lines);
             // The stack: the program's bound of open nodes where it has one (`open_bound`, which the Rust's run checks
             // once), else a guess, then the nodes' room.
             w.reserve_run(nodes, self.open_bound.map_or(depth.min(nodes), |b| b as usize));
