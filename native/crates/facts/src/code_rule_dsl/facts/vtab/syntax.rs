@@ -5314,9 +5314,30 @@ impl Viewed {
             if kernel
                 && let Some(d) = b.docs.read(doc, false)
             {
+                // The hop's tape node, where it has one (an op's `x` is the anonymous child's, not node `local`'s):
+                // the row's columns then select no node.
                 let i = row - firsts.at(doc);
+                let d = match view {
+                    _ if x == NONE => d,
+                    View::Op => d,
+                    // A field row's node is the child the hop found.
+                    View::Field => d.knowing(local, x, i as u32),
+                    _ => d.knowing(local, x, u32::MAX),
+                };
                 for (o, &c) in vals[..len].iter_mut().zip(columns) {
                     *o = self.read_value(&d, i, c);
+                }
+                // A match by its own id: the tape node its read selected, kept in the read's memo (`node_hint`), so
+                // the next probe of that id selects none.
+                if x == NONE
+                    && let Some(n) = id
+                    && let s = d.selected()
+                    && s.l == local
+                {
+                    let m = node.get();
+                    if m.id == n && m.doc as usize == doc && m.local == local {
+                        node.set(super::NodeMemo { x: s.x, ..m });
+                    }
                 }
                 each(row, &vals[..len]);
                 return;
