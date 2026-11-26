@@ -1138,7 +1138,7 @@ const REPLAN: f64 = 4.0;
 /// ...and by more than this many rows of work: below it, running the kept order costs less than a search (about
 /// 1.6 ms for 12 joins, some 10^4 to 10^5 rows of native joins). A plan made where a text test matched nothing
 /// prices at a few rows, and any later chunk is 4 times that.
-const REPLAN_ROWS: f64 = 10_000.0;
+pub const REPLAN_ROWS: f64 = 10_000.0;
 
 /// What a join-order search costs, in rows of join work (O-live-replan item 1): a fixed part and one row a candidate.
 /// Measured on the P3 bench (debug): a search costs about 0.3 ms plus 0.7 µs a candidate priced, and a join about
@@ -3099,6 +3099,75 @@ impl Model {
         }
         let driven = first.or_else(|| b.demand_first()).is_none_or(|f| order.first().is_some_and(|s| s.at == f));
         driven && (first.is_some() || order.first().is_none_or(|s| b.demand_bounds_lead(s.at)))
+    }
+
+    /// Whether `order` reads, past its first step, a relation or a document whole for each row it is given: a positive
+    /// atom none of whose variables a step before it binds (a cross product), or an input none of whose indexes
+    /// (`Stats::indexes`, the tape views' `vtab_indexes`) starts with a bound column, as `docof(n, d)` read from its
+    /// document (every node of it). Under 0090 §4's floor a maintain mode's line is led by its delta and taken as the
+    /// program planned it (`Stats::lead_free` off): cheap whatever its order where the delta binds the rest, but not
+    /// here. On corpus0's move, `bv(f, x, "inst", s) :- pann(f, x, t), …, uinst(t, c), anc(s, c), docof(f, d9),
+    /// docof(s, e9), rr_cx_reach(d9, e9)` led by `rr_cx_reach`'s 156 changed rows read all of `pann` for each (9.96 M
+    /// rows of work a line, two such lines 20 M of the move's 42 M); led by `pann`'s 37, it walked each reached
+    /// document's nodes for `docof(s, e9)` before `uinst` and `anc` bound `s` (1.32 M a line, eight such 8.3 M).
+    /// With `given`, the variables a lead outside `order` binds (a negated driver's, `Body::with_bound`), every step
+    /// of `order` is past the lead.
+    pub fn reads_whole_past_lead(&self, b: &Body<'_>, given: Option<&VarSet>, order: &[Step]) -> bool {
+        let (mut bound, rest) = match given {
+            Some(g) => (g.clone(), order),
+            None => {
+                let Some(lead) = order.first() else { return false };
+                (b.vars(lead.at).clone(), &order[1..])
+            }
+        };
+        for s in rest {
+            if let Lit::Atom(a) = b.view(s.at)
+                && !a.neg()
+            {
+                let vars = b.vars(s.at);
+                if !vars.is_empty() && !vars.iter().any(|v| bound.contains(v)) {
+                    return true;
+                }
+                let (rel, args) = (b.rel(a), b.args(s.at));
+                let given = |c: usize| b.constant(args[c]).is_some() || matches!(args[c], TermRef::Var(x) if bound.contains(x));
+                if let Some(ixs) = self.stats.indexes.get(rel)
+                    && !ixs.is_empty()
+                    && !ixs.iter().any(|ix| ix.first().is_some_and(|c0| (0..args.len()).any(|c| given(c) && c0.as_str() == self.col(rel, c))))
+                {
+                    return true;
+                }
+            }
+            bound.extend(b.vars(s.at));
+        }
+        false
+    }
+
+    /// A maintain mode's line led by `first`'s delta under 0090 §4's floor (`Stats::lead_free` off), and `led` the
+    /// order the program planned or kept for it: cheap whatever its order where the delta binds the rest, so taken as
+    /// it is. Priced now with the run's sizes over `REPLAN_ROWS` (what a search could save), or reading a relation
+    /// whole a delta row (`reads_whole_past_lead`), it is planned free to start as past the floor, and the cheaper of
+    /// the two taken: the plan, priced now, and whether it is the free one (its key then `reused_key`'s with
+    /// `lead_free` on). Led by `pann`'s 37 changed rows on corpus0's move, eight `bv` lines walked each reached
+    /// document's nodes (`docof(s, e9)` from its document, a tape view read by node alone) before `uinst` and `anc`
+    /// bound `s`: 1.32 M rows of work a line, 8.3 M of the move's 17.4 M. A line a negated driver leads is planned
+    /// so too, its body with the driver's variables bound (`given`, `first` none): led by `!method`'s 18 changed rows,
+    /// `pv(a, k, v)` was read whole for each (177,625 rows of work a line) before `cfn` and `posarg` bound `a`.
+    pub fn under_floor_line(&mut self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, given: Option<&VarSet>, led: Plan) -> (Plan, bool) {
+        let price = if self.reads_whole_past_lead(b, given, &led.0) { f64::INFINITY } else { self.plan_inner(pf, b, first, Some(&led.0), false).map_or(led.1, |p| p.0.1) };
+        let led = if price.is_finite() { (led.0, price, led.2) } else { led };
+        if price <= REPLAN_ROWS {
+            return (led, false);
+        }
+        self.stats.lead_free = true;
+        let free = self.plan_rule_reused(pf, b, first);
+        self.stats.lead_free = false;
+        match free {
+            Ok((p, _)) if p.1 < price => {
+                super::super::profile::decision("a maintain mode's line under the floor, planned free to start (decision 0094 §8)", || format!("{}: {price:.0} led by its delta, {:.0} free", b.show_head(), p.1));
+                (p, true)
+            }
+            _ => (led, false),
+        }
     }
 
     /// Records the work a rule's line did in the engine (`plan_work`, every order it ran in) on its kept plan, for
@@ -5622,7 +5691,7 @@ pub fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &[&["n"], &["s", "n"]],
         // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" | "rr_value_lit" => &[&["n"], &["v", "n"]],
-        "value_type_of" => &[&["n"], &["t", "n"]],
+        "value_type_of" | "static_value_type_of" => &[&["n"], &["t", "n"]],
         "value_type" => &[&["v"], &["t", "v"]],
         "fstring_piece" => &[&["n"], &["v", "n"]],
         "fstring_template" => &[&["n"], &["v", "n"]],

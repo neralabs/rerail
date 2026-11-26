@@ -122,8 +122,17 @@ pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, so
     if let Some(why) = bad {
         return Ok(Err(why));
     }
-    let aux = crate::code_rule_dsl::tape::formats::AuxFor::new(GrammarDialect::Json, source, digest, budget);
-    Ok(w.finish_with(Some(&|t| aux.make(t))).and_then(|f| TapeImage::written_16(f, GrammarDialect::Json, source, aux.digest(), budget)))
+    // The source's digest (the kernel's, where it hashed the source as it read it): the tape's auxiliary index is keyed
+    // by it, and laid by its writer (`aux_of`).
+    let digest = match digest {
+        Some(d) => d,
+        None => match crate::code_rule_dsl::tape::source_digest(source, &budget) {
+            Ok(d) => d,
+            Err(e) => return Ok(Err(e)),
+        },
+    };
+    let lay = |t: &f16::Written| crate::code_rule_dsl::tape::formats::aux_of(t, GrammarDialect::Json, source, &digest);
+    Ok(w.finish_laid(Some(&lay)).and_then(|f| TapeImage::written_16(f, GrammarDialect::Json, source, Some(digest), budget)))
 }
 
 /// The code of a node of kind `kind` and field `field` (`in_value`: a member of `_value`): a comment is an extra.

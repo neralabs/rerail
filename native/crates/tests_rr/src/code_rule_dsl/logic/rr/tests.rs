@@ -430,7 +430,8 @@ best(n, @dot("a", x)) :- name(n, x).
     let best = &lattice["best"];
     assert_eq!((best.keys, best.ty.as_str(), best.merge.as_deref(), best.widen), (1, "sym", Some("shortlex_min"), Some(8)));
     assert_eq!((lattice["cv"].ty.as_str(), lattice["cv"].merge.as_deref()), ("flat", None));
-    assert_eq!(ProgramFields::demand(&*p), vec!["private".to_owned(), "cv".to_owned()]);
+    // Demand is a set, stored sorted (program_facts): a lowering and a link meet its pragmas in different orders.
+    assert_eq!(ProgramFields::demand(&*p), vec!["cv".to_owned(), "private".to_owned()]);
     let rules: Vec<Vec<String>> = rules_of(&p, |h| h == "private").into_iter().map(|r| body_of(&p, r)).collect();
     let one = || "1".to_owned();
     assert_eq!(rules[0][1..], [cmp(call("prefix", vec![v("x"), s("_")]), "=", one()), cmp(call("glob", vec![v("x"), set(&["*_test", "test_*"])]), "=", "0".to_owned())]);
@@ -549,6 +550,28 @@ fn a_context_keeps_the_group_tying_its_variables() {
     assert!(!ctx.is_empty(), "{:#?}", shown(&p, |_| true));
     // Every rule of the context reaches v from c through the comprehension's target t.
     assert!(ctx.iter().all(|r| r.contains("child($c, $fc") && r.contains("field($fc, \"left\", $t)")), "{ctx:#?}");
+}
+
+/// A context asked for a text keeps the literal that binds it, its node bound through an equality (`K = c3, text(K,
+/// KT)`): FAST003's helpers are asked with a capture's text, not its node (decision 0677). Left out, the context's
+/// head held `KT` with nothing binding it ("$KT is unbound in SQL").
+#[test]
+fn a_context_keeps_the_text_it_is_asked_for() {
+    let p = parse(concat!(
+        ".decl holds(p: node, c: node)\n.decl kind(n: node, k: symbol)\n.decl text(n: node, x: symbol)\n",
+        ".decl child(p: node, c: node, i: number)\n.decl named(n: node, x: symbol)\n",
+        ".input holds, kind, text, child, named\n",
+        ".decl unused(n: node, k: node)\n.output unused\n",
+        "unused(n, K) :- kind(n, \"route\"), holds(n, c), K = c, text(K, KT),\n",
+        "    count : { child(n, p, _), named(p, KT) } = 0.\n",
+    ))
+    .unwrap();
+    strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    // The aggregate is asked with `KT`: the rule making its demand is the context, and binds `KT` by `text(K, KT)`.
+    let asks: Vec<String> = shown(&p, |_| true).into_iter().filter(|r| r.starts_with("rr_demand_agg_")).collect();
+    assert_eq!(asks.len(), 1, "{:#?}", shown(&p, |_| true));
+    assert!(asks[0].split(":-").next().is_some_and(|h| h.contains("$KT")), "the aggregate is asked with the text: {}", asks[0]);
+    assert!(asks[0].contains("text($K, $KT)"), "the text asked for is bound in the context: {}", asks[0]);
 }
 
 /// A helper's context (here the demand of strings `parsed` parses) keeps only the literals tied to its variables:
@@ -1991,6 +2014,47 @@ NQ(m, c) :- hit(m, c).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `match_all` over a text a derived relation binds (`piece(c, v)`), or a capture of one: the context of the texts it
+/// scans holds a node that places each (decision 0677), so it and the matches, a function of its texts, are derived in each file. Keyed
+/// by the text alone, they were a table of every file's texts, in the cross-file part (B005's strip arguments). The
+/// program prints back as itself, and each text is scanned as before.
+#[test]
+fn a_match_all_over_a_derived_text_is_placed_by_its_node() {
+    let src = r#"
+.decl piece(c: node, v: symbol)
+piece(c, v) :- kind(c, "string_content"), text(c, v).
+.decl chars(c: node, i: number, x: symbol)
+chars(c, i, x) :- piece(c, v), match_all("(?<x>(?s:.))", v, i, _, _).
+.decl twice(x: symbol)
+twice(x) :- chars(c, i, x), chars(c, j, x), i < j.
+.decl tail(x: symbol)
+tail(x) :- piece(c, v), match("a(?<w>[\\s\\S]*)", v), match_all("(?<x>(?s:.))", w, _, _, _).
+.output twice, tail
+"#;
+    let v = parse(src).unwrap();
+    let contexts: Vec<Vec<String>> = v
+        .decls()
+        .iter()
+        .filter(|d| v.text(d.name()).contains("rr_h_ctx"))
+        .map(|d| d.cols().map(|(_, t)| v.text(t).to_owned()).collect())
+        .collect();
+    assert_eq!(contexts.len(), 2, "a context of the texts each scans: {contexts:?}");
+    assert!(contexts.iter().all(|c| c.get(1).map(String::as_str) == Some("node")), "each context places its texts by a node: {contexts:?}");
+    let printed = print_version(&v).and_then(|t| parse(&t)).unwrap();
+    assert_eq!(difference(&v, &printed), None);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("placedmatch");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "s = \"aba\"\nt = \"xyz\"\n").unwrap();
+    let rule = dir.join("m.rerail");
+    std::fs::write(&rule, src).unwrap();
+    let program = print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "twice").unwrap(), [["a"]]);
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "tail").unwrap(), [["a"], ["b"]]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A text test of a capture in the body that captured it tests the capture's text: `match_all("(?<w>…)", t),
 /// match("…", w)` over a string's content (RUF001's words). It once tested the span's id as a text, and never held.
 #[test]
@@ -2620,14 +2684,16 @@ Other(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), ki
     let joins: Vec<&str> = rules.iter().copied().filter(|l| l.contains("guest_place(") && l.contains("doc(")).collect();
     let placed: Vec<&&str> = joins.iter().filter(|l| l.starts_with(super::lower::findings::PLACED_LINE)).collect();
     assert_eq!(placed.len(), 1, "one rule places a value's node in its file: {joins:#?}");
-    assert!(joins.iter().all(|l| l.starts_with(super::lower::findings::PLACED_AT) || l.starts_with(super::lower::findings::PLACED_LINE)), "no finding joins the placement again: {joins:#?}");
+    assert!(joins.iter().all(|l| l.starts_with(super::lower::findings::PLACED_VALUE) || l.starts_with(super::lower::findings::PLACED_LINE)), "no finding joins the placement again: {joins:#?}");
     let readers = rules.iter().filter(|l| l.contains(&format!("{}(", super::lower::findings::PLACED_LINE)) && !l.starts_with(super::lower::findings::PLACED_LINE)).count();
     assert!(readers >= 4, "each finding's diagnostic and violation read it: {rules:#?}");
 }
 
-/// Decision 0431 R9: a program refuses its unplaced findings in one rule, over its findings' nodes, not in a rule each:
-/// each finding's own rule, negated reads and all, was a negation split, a demand and a join of its own (three strata
-/// a finding, 470 of a pack's on corpus0). A finding writes its clause and node alone, a positive projection.
+/// Decision 0431 R9: a program tests its findings' places with one negation, not one a finding: each finding's own
+/// rule, negated reads and all, was a negation split, a demand and a join of its own (three strata a finding, 470 of a
+/// pack's on corpus0). The negation is in one rule, the nodes no file places, each file's own; each finding's
+/// `rr_unplaced` rule is a positive join with it (decision 0677: no relation of the cross-file part holds the finding's
+/// node but the finding's own).
 #[test]
 fn a_program_refuses_its_unplaced_findings_in_one_rule() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("unplaced-once");
@@ -2649,17 +2715,25 @@ Other(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), ki
 Name(i) :- kind(i, "identifier").
 Number(i) :- kind(i, "integer").
 "#;
-    for (name, program, found) in [("guests", guests, super::lower::findings::FOUND_THROUGH), ("plain", plain, super::lower::findings::FOUND_NODE)] {
+    for (name, program, found) in [("guests", guests, super::lower::findings::UNPLACED_THROUGH), ("plain", plain, super::lower::findings::UNPLACED_NODE)] {
         let rule = dir.join(format!("{name}.rerail"));
         std::fs::write(&rule, program).unwrap();
         let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let rules: Vec<&str> = flat.lines().filter(|l| l.contains(":-")).collect();
-        let unplaced: Vec<&&str> = rules.iter().filter(|l| l.starts_with(super::lower::findings::UNPLACED)).collect();
-        assert_eq!(unplaced.len(), 1, "{name}: one rule refuses the unplaced findings: {unplaced:#?}");
-        assert!(unplaced[0].contains(&format!("{found}(")), "{name}: it reads the findings' nodes: {unplaced:#?}");
-        let projections: Vec<&&str> = rules.iter().filter(|l| l.starts_with(&format!("{found}("))).collect();
-        assert_eq!(projections.len(), 2, "{name}: a projection a finding: {projections:#?}");
-        assert!(projections.iter().all(|l| !l.contains('!')), "{name}: each positive: {projections:#?}");
+        let of_found: Vec<&&str> = rules.iter().filter(|l| l.starts_with(&format!("{found}("))).collect();
+        assert_eq!(of_found.len(), 1, "{name}: one rule of the nodes no file places: {of_found:#?}");
+        // The negation, once: of the nodes, or, placed through a string, of the tape values, whose nodes are placed
+        // together (and the nodes of those unplaced read, positive).
+        use super::lower::findings::{PLACED_VALUE, UNPLACED_VALUE};
+        let negating: Vec<&&str> = rules.iter().filter(|l| l.contains("!doc(") && [found, UNPLACED_VALUE].iter().any(|h| l.starts_with(&format!("{h}(")))).collect();
+        assert_eq!(negating.len(), 1, "{name}: one rule holds the negation: {rules:#?}");
+        if found == super::lower::findings::UNPLACED_THROUGH {
+            assert!(negating[0].starts_with(UNPLACED_VALUE) && negating[0].contains(&format!("!{PLACED_VALUE}(")), "{name}: of the values: {negating:#?}");
+            assert!(!of_found[0].contains('!'), "{name}: the values' nodes: {of_found:#?}");
+        }
+        let unplaced: Vec<&&str> = rules.iter().filter(|l| l.starts_with(&format!("{}(", super::lower::findings::UNPLACED))).collect();
+        assert_eq!(unplaced.len(), 2, "{name}: a rule a finding: {unplaced:#?}");
+        assert!(unplaced.iter().all(|l| !l.contains('!') && l.contains(&format!("{found}("))), "{name}: each a positive join with it: {unplaced:#?}");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -4333,11 +4407,27 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             // numbers change) are compared by their stem; every other rule exactly, its helpers' numbers masked. A
             // widened copy (`rr_wide_node_text_rr_up9`) is compared by its rules.
             let numbered = |rel: &str| helper.is_match(rel) && !rel.starts_with("rr_wide_");
+            // A helper named by its content (`rr_h_cover_<digest>`, a phase's `rr_pass_<phase>_rr_h_…` too, `content_names`) is one helper whatever clause made it
+            // first, and its variables and columns are that clause's (`posarg`'s `$al` where `bb_arg`'s is `$l`): its
+            // rules and declaration are compared with their variables renamed in order of first sight.
+            let by_content = regex::Regex::new(r"(?:^|_)rr_h_[a-z_]*[a-z]_[0-9a-f]{32}$").unwrap();
+            let var = regex::Regex::new(r"\$[A-Za-z_][A-Za-z0-9_]*").unwrap();
+            let canonical = |shown: &str| {
+                let mut seen: Vec<String> = Vec::new();
+                var.replace_all(shown, |c: &regex::Captures| {
+                    let k = seen.iter().position(|x| x == &c[0]).unwrap_or_else(|| {
+                        seen.push(c[0].to_owned());
+                        seen.len() - 1
+                    });
+                    format!("$v{k}")
+                })
+                .into_owned()
+            };
             let mut rules: Vec<String> = p
                 .rules()
                 .map(|r| (head(r), p.show_rule(r)))
                 .filter(|(_, shown)| !place_variant(shown))
-                .map(|(h, shown)| if numbered(&h) { format!("helper {}", mask(&h)) } else { mask(&shown) })
+                .map(|(h, shown)| if numbered(&h) { format!("helper {}", mask(&h)) } else if by_content.is_match(&h) { canonical(&mask(&shown)) } else { mask(&shown) })
                 .collect();
             rules.sort();
             let named: BTreeSet<String> = p.rules().flat_map(|r| std::iter::once(head(r)).chain(reads(r))).collect();
@@ -4347,7 +4437,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 .filter(|r| named.contains(r))
                 .map(|r| {
                     let c = p.columns_of(&r).unwrap_or_default();
-                    if numbered(&r) { format!("{}/{}", mask(&r), c.len()) } else { mask(&format!("{r}{c:?}")) }
+                    if numbered(&r) { format!("{}/{}", mask(&r), c.len()) } else if by_content.is_match(&r) { format!("{r}{:?}", c.iter().map(|(_, t)| t).collect::<Vec<_>>()) } else { mask(&format!("{r}{c:?}")) }
                 })
                 .collect();
             decls.sort();
@@ -4842,6 +4932,35 @@ entered(p) :- c_pp_included(_, _, _, _, p, _).
     assert_eq!(unres, ["a.c\tnone.h"]);
     let closure: Vec<String> = res.iter().map(|r| r.split('\t').nth(1).unwrap().to_owned()).collect();
     assert_eq!(entered, closure);
+}
+
+/// The same search over a configuration every table of which the program states (or which is stated empty, decision
+/// 0677): a run constant, so `c_pp_tu_req` is a file's by its unit's path. It is a request, asked in the cross-file
+/// part's cone of requests, which reads no base relation: located by its path, its rule read `doc` there and the run
+/// was refused. Locate leaves a request where it is asked.
+#[test]
+fn c_includes_resolve_over_a_configuration_of_stated_tables() {
+    let rule = r#"
+.language c
+#include "c/includes.rerail"
+.decl c_file(p: symbol)
+c_file(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
+c_lang("c", "c", "gnu17").
+c_include_dir("c", 0, "sys1", "angle").
+c_include_dir("c", 0, "sys2", "system").
+c_predefine("c", 0, "X", "1").
+c_config_undef("c", 1, "Y").
+c_feature("c", "__has_builtin", "__builtin_expect", 1).
+c_fixed("c", "__DATE__", "Jan  1 1970").
+c_tu(p, "c") :- c_file(p).
+.decl res(f: symbol, p: symbol)
+res(f, p) :- c_resolved(_, f, _, _, p).
+.output res
+"#;
+    let a = "#include \"h.h\"\n#include <x.h>\n";
+    let files = [("a.c", a), ("h.h", ""), ("x.h", ""), ("sys1/x.h", "#include_next <x.h>\n"), ("sys2/x.h", "")];
+    let [res] = <[Vec<String>; 1]>::try_from(joined(guests_run("cincludes-stated", &files, rule, &["res"]))).unwrap();
+    assert_eq!(res, ["a.c\th.h", "a.c\tsys1/x.h", "sys1/x.h\tsys2/x.h"]);
 }
 
 /// Decision 0327: phase 1 (`sources.rerail`) loads the headers a C run's units include, to the closure's fixed point, as
@@ -5454,7 +5573,7 @@ fn a_demand_split_stays_linear_in_the_modules() {
         std::fs::write(root.join(format!("m{m}.py")), &source).unwrap();
     }
     let rule = directory.path().join("calls.rerail");
-    std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
+    std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, \"nothing.has.this.symbol\").\n").unwrap();
     let profile = directory.path().join("profile");
     let mut child = std::process::Command::new(std::env::current_exe().unwrap());
     child
@@ -5738,7 +5857,7 @@ fn a_run_on_two_threads_ends() {
         std::fs::write(root.join(format!("m{m}.py")), format!("def f{m}(x):\n    return len(x)\n\n\ndef g{m}():\n    print(f{m}([1]))\n")).unwrap();
     }
     let rule = directory.path().join("calls.rerail");
-    std::fs::write(&rule, ".policy \"two-threads\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
+    std::fs::write(&rule, ".policy \"two-threads\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, \"nothing.has.this.symbol\").\n").unwrap();
     let mut child = std::process::Command::new(std::env::current_exe().unwrap());
     child
         .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])

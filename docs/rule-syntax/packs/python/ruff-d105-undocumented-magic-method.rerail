@@ -15,4 +15,4 @@
 .violation D105(at: node, x: symbol) code "D105"
     "Add a docstring to magic method `{x}` describing its behavior, arguments and return value."
     suppress ruff "D105"
-D105(nm, x) :- doc_missing(_, "method", nm, x), dunder(x), x != "__init__", x != "__new__", x != "__call__".
+D105(nm, x) :- doc_missing(_, "method", nm, x), dunder(nm, x), x != "__init__", x != "__new__", x != "__call__".

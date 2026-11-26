@@ -106,6 +106,39 @@ fn without_core_repeats(linked: Arc<Version>, counts: &[usize], core: &BTreeSet<
     Ok((b.finish().map_err(plan)?.0, counts))
 }
 
+/// Each `extensible` relation of the whole program `b` (its words `qualifiers`) that nothing states, stated empty. Its
+/// rows come only from the files that include its own (decision 0263), and the program is all of them: no rule's rows
+/// and no stated ones, it has none. Stated, it is a run constant, as stated rows are; unstated, the split takes it for a
+/// base relation of no location, as it must in a library module planned alone (decision 0639, whose includer's rows it
+/// does not see), and every reader of a value through it went to the cross-file part (decision 0677): node-trace's
+/// `module_global` in a program that names no global, or in a batch, where each part's rows go to its own copy
+/// (`q<k>_module_global`). A derived one stays derived: the split reads a stated relation as a constant only where no
+/// rule heads it. The t50 precedent: the lowering states a `.references` setting's relations, empty when unset.
+pub(super) fn extensible_stated(b: &mut Builder<'static>, qualifiers: &BTreeMap<String, BTreeSet<String>>) {
+    for rel in unstated(&*b, qualifiers) {
+        b.fields().set_facts(&rel, &[]);
+    }
+}
+
+/// `extensible_stated`'s relations of a program linked alone, `p`.
+pub(super) fn extensible_unstated(p: &dyn ProgramFields) -> Vec<String> {
+    unstated(p, &p.qualifiers())
+}
+
+/// Not core's: its `extensible` relations are the run's too (`env`, `option`, `load`), given by the engine. Not one with
+/// a node column, which places its readers' nodes however many rows it has.
+fn unstated(p: &dyn ProgramFields, qualifiers: &BTreeMap<String, BTreeSet<String>>) -> Vec<String> {
+    let stated: BTreeSet<String> = p.fact_names().into_iter().collect();
+    let inputs: BTreeSet<String> = p.input_names().into_iter().collect();
+    let core = crate::code_rule_dsl::logic::rr::core_names();
+    let values = |rel: &str| p.columns_of(rel).is_some_and(|cols| cols.iter().all(|(_, t)| !matches!(t.as_str(), "node" | "loc" | "tape")));
+    qualifiers
+        .iter()
+        .filter(|(rel, words)| words.contains("extensible") && !core.contains(*rel) && p.declares(rel) && !stated.contains(*rel) && !inputs.contains(*rel) && values(rel))
+        .map(|(rel, _)| rel.clone())
+        .collect()
+}
+
 /// The names a part's relations take in the linked program: its request's (`q<k>_`), its own (`p<i>_`), the axes
 /// over its kind sets by the shared set's, the library's as they are (decision 0089 §2).
 pub(super) struct Names {
@@ -274,6 +307,9 @@ impl Merged {
     /// The linked fields, every gathered one stated.
     pub(super) fn finish(mut self) -> Builder<'static> {
         use crate::code_rule_dsl::logic::program_facts::Field;
+        let qualifiers = std::mem::take(&mut self.qualifiers);
+        extensible_stated(&mut self.all, &qualifiers);
+        self.qualifiers = qualifiers;
         let mut all = self.all.fields();
         if !self.nullary.is_empty() {
             all.set_field(Field::Nullary(&self.nullary));

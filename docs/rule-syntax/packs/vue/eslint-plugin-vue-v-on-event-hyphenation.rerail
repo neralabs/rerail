@@ -16,9 +16,10 @@
     "v-on event '{k}' {verb}."
     suppress eslint "vue/v-on-event-hyphenation"
 event_hyphenation(a, k, verb) :- vdir(e, a, "on", x), x != "", !vdyn(a), vcustom(e), !vtag_ignored(e),
-    !ignored(x), wrong(x, verb), vkey_text(a, k).
-.decl ignored(x: symbol)
-ignored(x) :- vdir(_, _, "on", x), option_item("ignore", _, p), contains(p, x).
-.decl wrong(x: symbol, verb: symbol)
-wrong(x, "must be hyphenated") :- vdir(_, _, "on", x), !option("option", "never"), @lower(x) != x.
-wrong(x, "can't be hyphenated") :- vdir(_, _, "on", x), option("option", "never"), contains("-", x).
+    !ignored(a), wrong(a, verb), vkey_text(a, k).
+// ignored(a), wrong(a, verb): tests of directive a's event name, keyed by the directive (decision 0677).
+.decl ignored(a: node)
+ignored(a) :- vdir(_, a, "on", x), option_item("ignore", _, p), contains(p, x).
+.decl wrong(a: node, verb: symbol)
+wrong(a, "must be hyphenated") :- vdir(_, a, "on", x), !option("option", "never"), @lower(x) != x.
+wrong(a, "can't be hyphenated") :- vdir(_, a, "on", x), option("option", "never"), contains("-", x).

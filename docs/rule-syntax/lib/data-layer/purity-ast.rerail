@@ -91,12 +91,3 @@ walk_qualname(f, @dot(@dot(p, "<locals>"), @nfkc(x))) :- walk_qualname(g, p), ki
 body_member(b, f) :- body_node(b), child(b, f, _), (kind(f, "function_definition") ; kind(f, "class_definition")).
 body_member(b, f) :- body_node(b), child(b, s, _), kind(s, "decorated_definition"), field(s, "definition", f).
 
-// py_repr(s, r): `repr(s)` for a str, as messages built from `{x!r}` print it: 'a' in single quotes, "it's" in
-// double quotes when s has a single quote and no double one, backslashes doubled. Control characters are not
-// escaped (\n stays a newline). The check lists the strings it needs in repr_want.
-//   py_repr("cache", "'cache'")      py_repr("'Run'", "\"'Run'\"")
-.decl repr_want(s: symbol) extensible
-.decl py_repr(s: symbol, r: symbol)
-py_repr(s, cat("'", @replace_all(@replace_all(s, "\\\\", "\\\\"), "'", "\\'"), "'")) :- repr_want(s),
-    (!contains("'", s) ; contains("\"", s)).
-py_repr(s, cat("\"", @replace_all(s, "\\\\", "\\\\"), "\"")) :- repr_want(s), contains("'", s), !contains("\"", s).

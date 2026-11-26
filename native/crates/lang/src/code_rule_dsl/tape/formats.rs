@@ -201,11 +201,11 @@ impl TreeOps {
         Ok(n)
     }
 
-    /// The tape, or why the nodes are not a format 16 tape; its auxiliary index laid where it lies (`AuxFor`).
-    pub(super) fn finish(mut self, aux: &AuxFor<'_>) -> Result<f16::Finished, String> {
+    /// The tape, or why the nodes are not a format 16 tape; its auxiliary index laid where `lay` builds one.
+    pub(super) fn finish(mut self, lay: Option<f16::LayAux<'_>>) -> Result<f16::Finished, String> {
         match self.bad.take() {
             Some(why) => Err(why),
-            None => self.w.finish_with(Some(&|t| aux.make(t))),
+            None => self.w.finish_laid(lay),
         }
     }
 }
@@ -275,8 +275,14 @@ impl rerail_tape_format::Sink<Result<TapeImage, String>> for Lean<'_> {
     }
 
     fn finish(&mut self, mut w: Writer) -> Result<Result<TapeImage, String>, Redo> {
-        let aux = AuxFor::new(self.grammar.lang, self.source, None, self.budget);
-        Ok(w.finish_16_with(Some(&|t| aux.make(t)))?.and_then(|f| TapeImage::written_16(f, self.grammar.lang, self.source, aux.digest(), self.budget)))
+        // The source's digest first: the tape's auxiliary index is keyed by it, and laid by its writer (`aux_of`).
+        let digest = match super::source_digest(self.source, &self.budget) {
+            Ok(d) => d,
+            Err(e) => return Ok(Err(e)),
+        };
+        let (language, source) = (self.grammar.lang, self.source);
+        let lay = |t: &f16::Written| aux_of(t, language, source, &digest);
+        Ok(w.finish_16_laid(Some(&lay))?.and_then(|f| TapeImage::written_16(f, language, source, Some(digest), self.budget)))
     }
 }
 
@@ -289,7 +295,7 @@ impl TapeImage {
             None => super::source_digest(source, &budget)?,
         };
         let mut written = written;
-        // Laid by its writer where it wrote the tape in a room (`AuxFor`), else here in the tape's own vector.
+        // Laid by its writer where it wrote the tape (`aux_of` through `finish_laid`), else here.
         if written.tape.aux_bytes().is_none() {
             lay_aux(&mut written.tape, language, source, &digest)?;
         }
@@ -310,55 +316,27 @@ impl TapeImage {
     }
 }
 
-/// Lays `tape`'s auxiliary index in its home after its presence (decision 0656 step 3): every section, built once
-/// here, where the tape is written, and stored, placed and loaded with it, so every reader (the host's and the
+/// Lays `tape`'s auxiliary index in its home after its presence (decision 0656 step 3), where its writer did not
+/// (`aux_of`, laid by `f16::ops::Writer::finish_laid` in a room before the room is given out): every section, built
+/// once where the tape is written, and stored, placed and loaded with it, so every reader (the host's and the
 /// device's) reads it where the tape lies. Keyed by the tape's content: its header holds the source digest's first
-/// eight bytes, and the store keys the home by its layout (`F16_LAYOUT`). A tape without a presence (one no
-/// producer of the engine writes) is refused: its index lies after it.
+/// eight bytes, and the store keys the home by its layout (`F16_LAYOUT`). A tape without a presence (one no producer
+/// of the engine writes) is left without one.
 fn lay_aux(tape: &mut f16::Written, language: GrammarDialect, source: &str, digest: &[u8; 32]) -> Result<(), String> {
-    let aux = aux_of(tape, language, source, digest)?;
-    tape.lay_aux(&aux)
-}
-
-/// The maker of a document's auxiliary index, for its writer to lay where it writes the tape (`f16::AuxMaker`): a
-/// tape written in a room is given out with its index, as a room is never written after (0353 row 17). The source's
-/// digest is computed once, when the index is made (or given, where the parse computed it), and kept for the image
-/// (`digest`).
-pub struct AuxFor<'a> {
-    language: GrammarDialect,
-    source: &'a str,
-    budget: &'a dyn Fn() -> bool,
-    digest: std::cell::Cell<Option<[u8; 32]>>,
-}
-
-impl<'a> AuxFor<'a> {
-    pub fn new(language: GrammarDialect, source: &'a str, digest: Option<[u8; 32]>, budget: &'a dyn Fn() -> bool) -> Self {
-        AuxFor { language, source, budget, digest: std::cell::Cell::new(digest) }
+    if tape.aux_bytes().is_some() {
+        return Ok(());
     }
-
-    /// The index of `tape`, the writer's tape of the source as it lies.
-    pub fn make(&self, tape: &f16::Written) -> Result<Vec<u8>, String> {
-        let digest = match self.digest.get() {
-            Some(d) => d,
-            None => {
-                let d = super::source_digest(self.source, &self.budget)?;
-                self.digest.set(Some(d));
-                d
-            }
-        };
-        aux_of(tape, self.language, self.source, &digest)
-    }
-
-    /// The source's digest, where it was given or made.
-    pub fn digest(&self) -> Option<[u8; 32]> {
-        self.digest.get()
+    match aux_of(tape, language, source, digest)? {
+        Some(aux) => tape.lay_aux(&aux),
+        None => Ok(()),
     }
 }
 
-/// `tape`'s auxiliary index, every section (decision 0656 step 3).
-fn aux_of(tape: &f16::Written, language: GrammarDialect, source: &str, digest: &[u8; 32]) -> Result<Vec<u8>, String> {
+/// The auxiliary index of `tape` (`lay_aux`'s), built from it where it lies: `None` for a tape without a presence.
+/// What a writer given rooms lays before it gives the room out (`f16::LayAux`).
+pub fn aux_of(tape: &f16::Written, language: GrammarDialect, source: &str, digest: &[u8; 32]) -> Result<Option<Vec<u8>>, String> {
     if tape.presence_bytes().is_none() {
-        return Err("a written tape without its presence".into());
+        return Ok(None);
     }
     let key = u64::from_le_bytes(digest[..8].try_into().expect("8 bytes"));
     let tag = match tape {
@@ -377,13 +355,14 @@ fn aux_of(tape: &f16::Written, language: GrammarDialect, source: &str, digest: &
         }
     };
     let _span = crate::code_rule_dsl::logic::profile::span(|| "auxiliary index built".into());
-    match tape {
-        f16::Written::F16(t) => rerail_tape_format::aux_index::build(&t.reader(lang)?, source.as_bytes(), key, named, rerail_tape_format::aux_index::Sections::ALL),
+    let aux = match tape {
+        f16::Written::F16(t) => rerail_tape_format::aux_index::build(&t.reader(lang)?, source.as_bytes(), key, named, rerail_tape_format::aux_index::Sections::ALL)?,
         f16::Written::F16Z(t) => {
             let cache = f16::ZCache::of([t]);
-            rerail_tape_format::aux_index::build(&t.reader(lang, Some(&cache))?, source.as_bytes(), key, named, rerail_tape_format::aux_index::Sections::ALL)
+            rerail_tape_format::aux_index::build(&t.reader(lang, Some(&cache))?, source.as_bytes(), key, named, rerail_tape_format::aux_index::Sections::ALL)?
         }
-    }
+    };
+    Ok(Some(aux))
 }
 
 /// The named codes of a tape's table, a bit a code (`aux_index::named_codes`): as a node's flags say it is named
@@ -418,10 +397,11 @@ pub fn code_sets(table: &rerail_tape_format::tape::CodeTable, language: GrammarD
 
 /// `source`'s tape from the `.rerail` parser, in the run's format: the parser's own sink (`lean::Sink16`, its keys
 /// numbered in the language's table), with each block's presence, through `lean::tape_to` (compiled in the parser's
-/// crate).
-pub(super) fn rr_tape(source: &str, aux: &AuxFor<'_>) -> Result<f16::Finished, String> {
+/// crate), its auxiliary index laid by its writer (`aux_of`, keyed by `digest`, the source's).
+pub(super) fn rr_tape(source: &str, digest: &[u8; 32]) -> Result<f16::Finished, String> {
     let (_, _, z) = run_16(GrammarDialect::Rr)?;
-    rerail_rr_syntax::lean::tape_to(source, z, true, super::placed::rooms(), Some(&|t| aux.make(t)))
+    let lay = |t: &f16::Written| aux_of(t, GrammarDialect::Rr, source, digest);
+    rerail_rr_syntax::lean::tape_to(source, z, true, super::placed::rooms(), Some(&lay))
 }
 
 /// A document's tape as held (its image), shared by the document (`TapeDoc`) and the facts read off it

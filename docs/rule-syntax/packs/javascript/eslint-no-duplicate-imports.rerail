@@ -59,7 +59,9 @@ mergeable(x, p) :- decl(x, _, m), decl(p, _, m), shape(x, s), shape(p, t), x != 
     !types_apart(x, p).
 .decl types_apart(x: node, p: node)  // import type D from "m" and import type { N } from "m"
 types_apart(x, p) :- typed(x), typed(p), shape(x, s), shape(p, t), (s = "default", t = "named" ; s = "named", t = "default").
-.decl apart(s: symbol, t: symbol)  // these shapes never merge, in either order
-apart("all", t) :- shape(_, t), t != "all", t != "bare".
-apart(t, "all") :- shape(_, t), t != "all", t != "bare".
+// apart(s, t): these shapes never merge, in either order. Facts over the shapes `shape` gives, not over every
+// file's imports (decision 0677).
+.decl apart(s: symbol, t: symbol)
+apart("all", "named"). apart("all", "namespace"). apart("all", "default").
+apart("named", "all"). apart("namespace", "all"). apart("default", "all").
 apart("namespace", "named"). apart("named", "namespace").

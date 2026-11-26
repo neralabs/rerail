@@ -67,7 +67,7 @@ pth210_plain_string(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
 PTH210(n, S) :- kind(n, "call"), field(n, "function", c1), pth210_with_suffix(c1),
     pth210_arg_suffix_1(n, a2), S = a2, field(n, "arguments", c3), kind(c3, "argument_list"),
     k5 = count : { child(c3, c4, _), !pth210_alt_5(c4) }, k5 >= 1, k5 <= 1, pth210_plain_string(S),
-    value(S, v6), value_type(v6, "str"), match("[^.].*", v6).
+    value(S, v6), value_type_of(S, "str"), match("[^.].*", v6).
 
 // PTH210_single_dot_suffix(n): a finding at node n, from clause `single-dot-suffix`.
 // Each rule below is one way the JSON `rule` can match.
@@ -78,7 +78,7 @@ PTH210(n, S) :- kind(n, "call"), field(n, "function", c1), pth210_with_suffix(c1
 PTH210_single_dot_suffix(n) :- kind(n, "call"), field(n, "function", c1),
     pth210_with_suffix(c1), pth210_arg_suffix_1(n, a2), S = a2, field(n, "arguments", c3),
     kind(c3, "argument_list"), k5 = count : { child(c3, c4, _), !pth210_alt_5(c4) }, k5 >= 1,
-    k5 <= 1, pth210_plain_string(S), value(S, v6), value_type(v6, "str"), v6 = ".".
+    k5 <= 1, pth210_plain_string(S), value(S, v6), value_type_of(S, "str"), v6 = ".".
 
 // args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
 .decl pth210_args_plain(l: node, a: node, i: number)

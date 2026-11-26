@@ -900,11 +900,6 @@ pub struct Finished {
     pub tape: Written,
 }
 
-/// The maker of a finished tape's auxiliary index (decision 0656 step 3), from the tape as it lies: given to a
-/// writer's `finish_with`, which lays the index after the presence where the writer wrote the tape, in its room
-/// before giving it out (0353 row 17), as `Written::lay_aux` lays it in a tape's own vector.
-pub type AuxMaker<'a> = &'a dyn Fn(&Written) -> Result<Vec<u8>, String>;
-
 impl Written {
     /// The nodes.
     pub fn len(&self) -> usize {
@@ -1006,6 +1001,10 @@ impl Written {
         Ok(())
     }
 }
+
+/// What builds a tape's auxiliary index from it, for its writer to lay in its home (`ops::Writer::finish_laid`):
+/// `None` where the tape gets none.
+pub type LayAux<'a> = &'a dyn Fn(&Written) -> Result<Option<Vec<u8>>, String>;
 
 /// A tape's presence in its home (decision 0434 §4, step 6): after the tape, at its end rounded up to 8 bytes, a
 /// header of four u32s (its kinds' words, its fields' words, its presences, its faults), then the document's words
@@ -3891,6 +3890,52 @@ mod tests {
             }
             let (a, b) = (tapes[0].extent().as_ptr_range(), tapes[1].extent().as_ptr_range());
             assert!(b.start >= a.end || b.end <= a.start, "z {z}: the second tape in bytes of its own, the first kept");
+        }
+    }
+
+    /// Decision 0656 step 3 with 0353 row 17: a writer given rooms lays its tape's auxiliary index in the room after its
+    /// presence, before the room is given out (a room is never written after): the home a writer without rooms lays
+    /// (tape, presence, index), in one room; a region refused leaves the tape and its index in the writer's own bytes.
+    #[test]
+    fn a_writer_with_rooms_lays_its_auxiliary_index_in_the_room() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        let named = crate::aux_index::CodeSets { named: crate::aux_index::named_codes(600, |c| c % 2 == 0), comments: crate::aux_index::named_codes(600, |_| false) };
+        let lay = |t: &Written| -> Result<Option<Vec<u8>>, String> {
+            let all = crate::aux_index::Sections::ALL;
+            Ok(Some(match t {
+                Written::F16(t) => crate::aux_index::build(&t.reader(&lang)?, &source, 7, &named, all)?,
+                Written::F16Z(t) => {
+                    let cache = ZCache::of([t]);
+                    crate::aux_index::build(&t.reader(&lang, Some(&cache))?, &source, 7, &named, all)?
+                }
+            }))
+        };
+        let home = |t: &Written| -> crate::home::Home {
+            match t {
+                Written::F16(t) => t.home().clone(),
+                Written::F16Z(t) => t.home().clone(),
+            }
+        };
+        for z in [false, true] {
+            let mut own = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
+            by_ops(&mut own, &nodes, 1);
+            let want = Writer::finish_laid(&mut own, Some(&lay)).expect("the tape").tape;
+            assert!(want.aux_bytes().is_some(), "z {z}: a writer without rooms lays the index in its own bytes");
+            for refuse in [0, 1, 2] {
+                let mut w = Writer::placing(test_rooms(refuse));
+                w.begin(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
+                by_ops(&mut w, &nodes, 1);
+                let got = Writer::finish_laid(&mut w, Some(&lay)).expect("the tape").tape;
+                if refuse == 0 {
+                    assert!(home(&got).placed(), "z {z}: the tape, its presence and its index given out of the region");
+                }
+                assert_eq!(&*home(&got), &*home(&want), "z {z}, refuse {refuse}: the home a writer without rooms lays");
+                assert_eq!(got.aux_bytes(), want.aux_bytes(), "z {z}, refuse {refuse}: the index found where it lies");
+            }
         }
     }
 

@@ -50,8 +50,9 @@ pub const VALUES: &str = "values:";
 /// a value `@parse` or `@splice` asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Answered {
-    /// The string at node `at`, parsed as `grammar`.
-    Embed { at: i64, grammar: String },
+    /// The string at node `at`, parsed as `grammar`, and its text: a hit's run names its tape's source by it, as the
+    /// run that parsed it did (`guests::Parses::name_kept`). Empty in an entry kept before it was.
+    Embed { at: i64, grammar: String, text: String },
     /// `@parse`'s or `@splice`'s request.
     Value(super::guests::Request),
 }
@@ -66,17 +67,25 @@ impl Answered {
     }
 
     /// The rows `VALUES` holds them in: a kind (0 `Embed`, 1 `@parse`, 2 `@splice`), the node, and two texts (a
-    /// grammar and a text, a grammar, or the tape spliced in).
+    /// grammar and a text, or the tape spliced in).
     pub fn rows() -> super::super::output::Rows {
         use super::super::output::col;
         super::super::output::Rows::new(vec![col::INT, col::INT, col::TEXT, col::TEXT])
+    }
+
+    /// The grammar and text of the value it was answered with, where its row holds them (not a splice's).
+    pub fn text(&self) -> Option<(&str, &str)> {
+        match self {
+            Self::Embed { grammar, text, .. } | Self::Value(super::guests::Request::Parse { grammar, text, .. }) if !text.is_empty() => Some((grammar, text)),
+            _ => None,
+        }
     }
 
     /// Its row of `rows`.
     pub fn push(&self, rows: &mut super::super::output::Rows) {
         use super::super::output::Cell;
         let (kind, a, b) = match self {
-            Self::Embed { grammar, .. } => (0, grammar.as_str(), ""),
+            Self::Embed { grammar, text, .. } => (0, grammar.as_str(), text.as_str()),
             Self::Value(super::guests::Request::Parse { grammar, text, .. }) => (1, grammar.as_str(), text.as_str()),
             Self::Value(super::guests::Request::Splice { with, .. }) => (2, with.as_str(), ""),
         };
@@ -88,7 +97,7 @@ impl Answered {
         use super::super::output::Cell;
         (0..rows.len())
             .filter_map(|i| match (rows.cell(i, 0), rows.cell(i, 1), rows.cell(i, 2), rows.cell(i, 3)) {
-                (Cell::Int(0), Cell::Int(at), Cell::Text(g), _) => Some(Self::Embed { at, grammar: g.to_owned() }),
+                (Cell::Int(0), Cell::Int(at), Cell::Text(g), t) => Some(Self::Embed { at, grammar: g.to_owned(), text: if let Cell::Text(t) = t { t.to_owned() } else { String::new() } }),
                 (Cell::Int(1), Cell::Int(at), Cell::Text(g), Cell::Text(t)) => Some(Self::Value(super::guests::Request::Parse { at, grammar: g.to_owned(), text: t.to_owned() })),
                 (Cell::Int(2), Cell::Int(node), Cell::Text(w), _) => Some(Self::Value(super::guests::Request::Splice { node, with: w.to_owned() })),
                 _ => None,
@@ -271,7 +280,7 @@ pub enum SettingsScope {
 /// path, a variable its head drops) is of every file's rows, and so is a memoised relation still keyed by one.
 pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> BTreeMap<String, SettingsScope> {
     use crate::code_rule_dsl::logic::program_image::TermRef;
-    use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, setting_by_path};
+    use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path};
     /// A relation's reads of the settings: of any file's, of its own file's, and keyed by its columns' paths or folders.
     #[derive(Clone, Default, PartialEq)]
     struct Reach {
@@ -282,7 +291,7 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
     }
     let v = &local.v;
     let base = |rel: &str| -> Option<Reach> {
-        if SETTINGS_BY_FOLDER.contains(&rel) {
+        if setting_by_folder(rel) {
             Some(Reach { folder: [0].into(), ..Reach::default() })
         } else if setting_by_path(rel).is_some() {
             Some(Reach { path: [0].into(), ..Reach::default() })
@@ -298,7 +307,7 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
         let own: HashSet<_> = atoms.iter().filter(|a| v.rel_name(a.rel()) == "doc").filter_map(|a| a.args().nth(1).and_then(|t| t.var())).collect();
         let mut folders: HashSet<_> = atoms
             .iter()
-            .filter_map(|a| setting_by_path(v.rel_name(a.rel())).map(|c| (a, c)))
+            .filter_map(|a| setting_by_path(v.rel_name(a.rel())).flatten().map(|c| (a, c)))
             .filter(|(a, _)| a.args().next().and_then(|t| t.var()).is_some_and(|p| own.contains(&p)))
             .filter_map(|(a, c)| a.args().nth(c).and_then(|t| t.var()))
             .collect();
@@ -390,7 +399,7 @@ pub struct SettingsDigests {
 impl SettingsDigests {
     /// Of `rels`: each setting the run binds, by name.
     pub fn of(rels: &[(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)]) -> Self {
-        use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, setting_by_path};
+        use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path};
         let mut out = SettingsDigests::default();
         let mut hash = Sha256::new();
         hash.update(b"rerail.settings/v1\0");
@@ -405,10 +414,12 @@ impl SettingsDigests {
             for row in &rows {
                 row.iter().for_each(|x| hash.update(x.to_le_bytes()));
             }
-            let keyed = if let Some(c) = setting_by_path(name) {
-                out.hop.insert(k, c);
+            let keyed = if let Some(hop) = setting_by_path(name) {
+                if let Some(c) = hop {
+                    out.hop.insert(k, c);
+                }
                 Some(&mut out.by_path)
-            } else if SETTINGS_BY_FOLDER.contains(name) {
+            } else if setting_by_folder(name) {
                 Some(&mut out.by_folder)
             } else {
                 None

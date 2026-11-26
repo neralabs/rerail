@@ -937,7 +937,9 @@ pub fn tape_identity(source: &[u8; 32], tape: &[u8]) -> [u8; 32] {
     key.sha256_bytes().expect("a SHA-256 identity")
 }
 
-fn source_digest(source: &str, budget: &impl Fn() -> bool) -> Result<[u8; 32], String> {
+/// `source`'s SHA-256, the documents' and the memo's key and its tape's auxiliary index's (`formats::aux_of`): read in
+/// chunks, the budget checked between them.
+pub fn source_digest(source: &str, budget: &impl Fn() -> bool) -> Result<[u8; 32], String> {
     let mut digest = Sha256::new();
     for chunk in source.as_bytes().chunks(4096) {
         checked(budget)?;
@@ -1552,8 +1554,8 @@ impl TapeImage {
         }
         // In the run's format, written as the parser goes (`formats::rr_tape`), with its source's digest (not stored
         // since format 12): the documents and the memo are keyed by it.
-        let aux = formats::AuxFor::new(grammar.lang, source, None, budget);
-        Self::written_16(formats::rr_tape(source, &aux)?, grammar.lang, source, aux.digest(), budget)
+        let digest = source_digest(source, budget)?;
+        Self::written_16(formats::rr_tape(source, &digest)?, grammar.lang, source, Some(digest), budget)
     }
 
     /// The tape `walk` writes in preorder, in the run's format (decision 0434 §2): by format 16's ops. `nodes` is about
@@ -1579,8 +1581,9 @@ impl TapeImage {
     ) -> Result<Self, String> {
         let mut ops = formats::TreeOps::of_run_as(grammar.lang, source.as_bytes(), nodes, packed)?;
         walk(&mut ops)?;
-        let aux = formats::AuxFor::new(grammar.lang, source, None, budget);
-        Self::written_16(ops.finish(&aux)?, grammar.lang, source, aux.digest(), budget)
+        let digest = source_digest(source, budget)?;
+        let lay = |t: &f16::Written| formats::aux_of(t, grammar.lang, source, &digest);
+        Self::written_16(ops.finish(Some(&lay))?, grammar.lang, source, Some(digest), budget)
     }
 
     /// `source`'s lines as `terminators` end them (decision 0612): the tape's line index, read where it lies, where

@@ -12,4 +12,4 @@
 
 .violation F525(at: node) code "F525" "`.format` string mixes automatic and manual numbering"
     suppress ruff "F525"
-F525(c) :- format_call(c, v), brace_auto(v, n), n > 0, brace_index(v, _).
+F525(c) :- format_call(c, _), brace_auto(c, n), n > 0, brace_index(c, _).

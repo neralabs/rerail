@@ -188,6 +188,8 @@ fn solve(trees: &Trees<'_>, sets: &[Vector<i64>], binding: Binding) -> StoreResu
 mod on_version;
 pub use on_version::FileLocal;
 pub use on_version::reads_a_node;
+mod node_crossings;
+pub use node_crossings::{NodeColumns, NodeCrossing, crossings_under, node_crossings, nodes_checked, strict_nodes};
 mod passes;
 pub use passes::{FactorCaches, FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, factorize_intermediates, locate_all};
 #[cfg(any(test, feature = "test-hooks"))]
@@ -215,28 +217,35 @@ pub fn option_input(rel: &str) -> bool {
 /// `package.json`'s name and string fields, its exports, each tsconfig's base and paths, the package and tsconfig a
 /// file is under) and the run's environment (`env`), the same beside every chunk. A source file's edit changes none of
 /// them. Placeless to the split, as the options are: a per-file rule joins them and stays per-file. Bound whole beside
-/// every chunk, a setting keyed by a file's path (`SETTINGS_BY_PATH`) holds every file's row, so its path places no
-/// document; which rows a file's results can read, and so its memo entry's key, is `corpus::memo::settings_scopes`'.
-/// The module resolution the phase `tsx_names` hands on is read so too (decision 0665): each file's targets by its
-/// path, each target's exports and whether it is a workspace module by the target. A source file's edit can change
-/// them, but only the files whose own rows, or their targets' rows, changed read a change: a file's memo entry is
-/// keyed by those rows (`settings_scopes`), as one under a `package.json` is by its package's, and the phase, run
-/// again first, hands on the new rows (0083 §2.3's every-file miss is a read of every file's rows, which this is not).
+/// every chunk, a setting keyed by a file's path holds every file's row, so its path places no document; which rows a
+/// file's results can read, and so its memo entry's key, is `corpus::memo::settings_scopes`'.
+/// A phase's export declared with a key (`.export target_at by_path 2, exports by_key`, decision 0705) is read so
+/// too: `tsx_names`' module resolution, `py_names`' interfaces, `points_to`'s answers. A source file's edit can change
+/// them, but only the files whose own rows, or their keys' rows, changed read a change: a file's memo entry is keyed
+/// by those rows (`settings_scopes`), as one under a `package.json` is by its package's, and the phase, run again
+/// first, hands on the new rows (0083 §2.3's every-file miss is a read of every file's rows, which this is not).
+///
+/// Which relations are settings, and how each is keyed, is their makers' to declare (`phased::declared_key`): the
+/// library's `core.rerail` for the project's (`.keyed package_for by_path 1, package by_key, env`), each phase for
+/// its exports. No list here names them.
 pub fn setting_input(rel: &str) -> bool {
-    matches!(rel, "package" | "package_field" | "package_export" | "tsconfig" | "tsconfig_path" | "package_for" | "tsconfig_for" | "env")
-        || SETTINGS_BY_PATH.iter().any(|(r, _)| *r == rel)
-        || SETTINGS_BY_FOLDER.contains(&rel)
+    crate::code_rule_dsl::logic::plan::phased::declared_key(rel).is_some()
 }
 
-/// The settings with a row per file (decision 0665), keyed by its path in column 0, and the column that names the
-/// folder (`package_for(path, dir)`, `tsconfig_for(path, dir)`) or target (`tsx_names__target_at(path, spec, t)`)
-/// whose rows it reads. `SETTINGS_BY_FOLDER` holds those keyed by such a folder or target, in column 0.
-pub const SETTINGS_BY_PATH: [(&str, usize); 3] = [("package_for", 1), ("tsconfig_for", 1), ("tsx_names__target_at", 2)];
-pub const SETTINGS_BY_FOLDER: [&str; 6] = ["package", "package_field", "tsconfig", "tsconfig_path", "tsx_names__exports", "tsx_names__module"];
+/// The folder, target, module or key column of a setting keyed by a file's path in column 0 (declared `by_path C`):
+/// `None` when the relation is not one, `Some(None)` when it is and names none (`points_to`'s answers, decision 0677,
+/// note t55: each row is about a node of the file at its path, and that file reads its own rows alone).
+pub fn setting_by_path(rel: &str) -> Option<Option<usize>> {
+    match crate::code_rule_dsl::logic::plan::phased::declared_key(rel) {
+        Some(crate::code_rule_dsl::logic::plan::phased::Keyed::ByPath(c)) => Some(c),
+        _ => None,
+    }
+}
 
-/// The folder or target column of a setting keyed by a file's path (`SETTINGS_BY_PATH`).
-pub fn setting_by_path(rel: &str) -> Option<usize> {
-    SETTINGS_BY_PATH.iter().find(|(r, _)| *r == rel).map(|(_, c)| *c)
+/// Whether `rel` is a setting keyed by a folder, target, module or key in column 0 (declared `by_key`), read where a
+/// row of the file's own path names it.
+pub fn setting_by_folder(rel: &str) -> bool {
+    crate::code_rule_dsl::logic::plan::phased::declared_key(rel) == Some(crate::code_rule_dsl::logic::plan::phased::Keyed::ByKey)
 }
 
 /// The column of a base relation that holds a file's path (decision 0665): `doc`'s. A path names one document (a guest
@@ -302,7 +311,7 @@ pub fn push_equal_columns() -> bool {
 pub use crate::code_rule_dsl::logic::front::document_column;
 
 /// Base relations whose rows a chunk makes for itself and that name no document (decision 0058 §4).
-const CHUNK_VALUES: [&str; 3] = ["parse_of", "unparse_of", "splice_of"];
+pub const CHUNK_VALUES: [&str; 3] = ["parse_of", "unparse_of", "splice_of"];
 
 use std::collections::BTreeMap;
 
@@ -344,6 +353,8 @@ pub struct Programs {
     pub crossings: std::collections::BTreeMap<String, String>,
     /// The moved relations that are unions of one document's rows (`FileLocal::moved_unions`, decision 0680).
     pub moved_unions: std::collections::BTreeSet<String>,
+    /// The cross part's relations that hold or read a node id (decision 0677, `node_crossings`).
+    pub nodes: Vec<NodeCrossing>,
 }
 
 /// The relations a node's place in its document is (decision 0649): an edit moves them for every node after it, so
@@ -409,6 +420,8 @@ pub fn programs_of(version: std::sync::Arc<crate::code_rule_dsl::logic::program_
     programs.causes = split.causes.clone();
     programs.crossings = split.crossings.clone();
     programs.moved_unions = split.moved_unions.clone();
+    crossings_under(&programs.program, &mut programs.nodes, &programs.causes);
+    nodes_checked(&programs.nodes, strict_nodes())?;
     Ok(programs)
 }
 
@@ -458,7 +471,13 @@ pub fn assemble(
     let outputs: std::collections::BTreeSet<&str> = f.outputs().collect();
     let positions = position_reads(&versions.cross, &outputs);
     positions_checked(&positions, strict_positions())?;
-    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, versions, program: version, causes: Default::default(), positions, crossings: Default::default(), moved_unions: Default::default() })
+    // No node id crosses into the cross part (decision 0677): found here, reported (and refused under
+    // `RERAIL_STRICT_NODES`) where the program is split from its source (`programs_of`), by the causes found there.
+    let nodes = {
+        let _step = crate::code_rule_dsl::logic::profile::span(|| "the cross-file part's node ids (decision 0677)".into());
+        node_crossings(&version, &f, &versions.cross, &local)
+    };
+    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, versions, program: version, causes: Default::default(), positions, crossings: Default::default(), moved_unions: Default::default(), nodes })
 }
 
 /// Whether the factorized store is on (decision 0099): it is, unless `RERAIL_FACTORIZE=off` or the run's option
@@ -703,7 +722,12 @@ fn placement_only(v: &crate::code_rule_dsl::logic::program_image::Version, f: &c
 /// One refused relation: its name, the relation of the source that reads it when the lowering made it (`rr_…`), and
 /// why, with its rule.
 fn crossing_shown(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str, why: &str) -> String {
-    let of = match lowering_source(v, rel) {
+    crossing_shown_with(lowering_source(v, rel).as_deref(), rel, why)
+}
+
+/// A refused relation shown (`crossing_shown`), its lowering's source relation `source` found.
+fn crossing_shown_with(source: Option<&str>, rel: &str, why: &str) -> String {
+    let of = match source {
         Some(s) => format!(" (made by the lowering of {s})"),
         None => String::new(),
     };
@@ -713,6 +737,11 @@ fn crossing_shown(v: &crate::code_rule_dsl::logic::program_image::Version, rel: 
 /// For a relation the lowering made (`rr_…`, under a program's prefix), the first relation, reader by reader, that it
 /// did not make; `None` for a relation of the source.
 fn lowering_source(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str) -> Option<String> {
+    lowering_source_in(v, rel, &|r: &str| v.rules().filter(|x| x.body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()) == r)).map(|x| v.rel_name(x.head().rel()).to_owned()).collect())
+}
+
+/// `lowering_source`, each relation's readers' heads given by `readers` (an index made once, for many relations).
+fn lowering_source_in(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str, readers: &dyn Fn(&str) -> Vec<String>) -> Option<String> {
     // `rr_…` under a program's prefix (`p3_rr_…`), and the passes' helpers by their hashed prefixes (`helper_name`):
     // a factor `fz…_`, its key `fzk…_`, a pushed join's `fl…_`, an export's `xd_`.
     let hashed = |r: &str| ["fzk", "fz", "fl"].iter().any(|p| r.strip_prefix(p).and_then(|x| x.split_once('_')).is_some_and(|(h, _)| !h.is_empty() && h.bytes().all(|b| b.is_ascii_digit())));
@@ -722,9 +751,13 @@ fn lowering_source(v: &crate::code_rule_dsl::logic::program_image::Version, rel:
             || hashed(r)
             || r.split_once('_').is_some_and(|(p, rest)| p.len() > 1 && p.starts_with(['p', 'q']) && p[1..].bytes().all(|b| b.is_ascii_digit()) && (rest.starts_with("rr_") || hashed(rest)))
     };
+    // A relation of the source names itself: no reader is read for it.
+    if !made(rel) {
+        return None;
+    }
     // A guest's copy of a relation (`rr_in_<label>_<rel>`, `hide.rs`), or a context's (`rr_pass_<context>_<rel>`,
     // decision 0597), copies of copies too: that relation, its rows over the guest's or the context's documents.
-    if made(rel) && let Some(rest) = rel.split_once("rr_in_").or_else(|| rel.split_once("rr_pass_")).map(|(_, r)| r) {
+    if let Some(rest) = rel.split_once("rr_in_").or_else(|| rel.split_once("rr_pass_")).map(|(_, r)| r) {
         let copied = rest.match_indices('_').map(|(i, _)| &rest[i + 1..]).find(|r| v.rel(r).is_some() && !made(r));
         if let Some(r) = copied {
             return Some(r.to_owned());
@@ -736,17 +769,20 @@ fn lowering_source(v: &crate::code_rule_dsl::logic::program_image::Version, rel:
     if hashed(named) && let Some((_, r)) = named.split_once('_') && v.rel(r).is_some() && !made(r) {
         return Some(r.to_owned());
     }
-    // The first relation, reader by reader, that the lowering did not make.
+    // The first relation, reader by reader, that the lowering did not make (the least by name of the first round
+    // that has one).
     let mut source = None;
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::from([rel.to_owned()]);
     let mut round = vec![rel.to_owned()];
     while source.is_none() && !round.is_empty() {
         let mut next = Vec::new();
         for r in &round {
-            for rule in v.rules().filter(|x| x.body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()) == r)) {
-                let h = v.rel_name(rule.head().rel()).to_owned();
+            for h in readers(r) {
                 if !made(&h) {
-                    source.get_or_insert(h);
+                    // The least of the round's: the same whichever order the readers are found in.
+                    if source.as_ref().is_none_or(|s: &String| h < *s) {
+                        source = Some(h);
+                    }
                 } else if seen.insert(h.clone()) {
                     next.push(h);
                 }
@@ -754,6 +790,6 @@ fn lowering_source(v: &crate::code_rule_dsl::logic::program_image::Version, rel:
         }
         round = next;
     }
-    source.filter(|_| made(rel))
+    source
 }
 

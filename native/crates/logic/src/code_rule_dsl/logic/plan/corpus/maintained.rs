@@ -130,6 +130,9 @@ pub(in crate::code_rule_dsl) fn run_with(
             super::driven_part(&cut, prog, &mut given)?
         } else {
             // No kept part, or gates: the cut's strata derived again from their reads (decision 0364: no forms).
+            if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
+                eprintln!("RERAIL_MODE_TRACE *: {} ({} strata; kept part {}, gated {gated})", maintain::NOT_WALKED, cut.strata.0, kept.is_some());
+            }
             (maintain::Maintained::again(cut.program(prog)?, cut.strata.0), Vec::new(), BTreeSet::new())
         }
     };

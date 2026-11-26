@@ -18,7 +18,7 @@
     suppress eslint "no-warning-comments"
     suppress oxlint "no-warning-comments"
 no_warning_comments(c, term, shown) :- js_comment(c, _, v), warn_term(term, re), match(re, v),
-    !names_this_rule(c), shown_text(v, shown).
+    !names_this_rule(c), shown_text(c, shown).
 // names_this_rule(c): c is an ESLint directive that names this rule (`/* eslint-disable no-warning-comments */`).
 .decl names_this_rule(c: node)
 names_this_rule(c) :- eslint_directive(c), js_comment(c, _, v), match("[\\s\\S]*\\bno-warning-comments\\b[\\s\\S]*", v).
@@ -39,11 +39,11 @@ lead(t, "[\\s\\S]*") :- term(t), option("location", "anywhere"), !match("\\w[\\s
 .decl decoration(d: symbol)  // the decoration characters, escaped for a character class
 decoration(@replace_all(s, "([-\\\\\\]^])", "\\${1}")) :- s = join x by i sep "" : { option_item("decoration", i, x) }.
 
-// shown_text(v, s): the comment's words joined by single spaces, cut to the words that fit in 40 characters,
-// with "..." when cut (ESLint's CHAR_LIMIT).
-.decl shown_text(v: symbol, s: symbol)
-shown_text(v, w) :- words(v, w), strlen(w) <= 40.
-shown_text(v, cat(P, "...")) :- words(v, w), strlen(w) > 40, match("(?<P>.{0,40})(?: .*)?", w).
-shown_text(v, "...") :- words(v, w), strlen(w) > 40, !match(".{0,40}(?: .*)?", w).  // a first word over 40
-.decl words(v: symbol, w: symbol)
-words(v, @replace_all(@replace_all(v, "^\\s+|\\s+$", ""), "\\s+", " ")) :- js_comment(_, _, v).
+// shown_text(c, s): comment c's words joined by single spaces, cut to the words that fit in 40 characters,
+// with "..." when cut (ESLint's CHAR_LIMIT). Keyed by the comment, not its text (decision 0677).
+.decl shown_text(c: node, s: symbol)
+shown_text(c, w) :- words(c, w), strlen(w) <= 40.
+shown_text(c, cat(P, "...")) :- words(c, w), strlen(w) > 40, match("(?<P>.{0,40})(?: .*)?", w).
+shown_text(c, "...") :- words(c, w), strlen(w) > 40, !match(".{0,40}(?: .*)?", w).  // a first word over 40
+.decl words(c: node, w: symbol)
+words(c, @replace_all(@replace_all(v, "^\\s+|\\s+$", ""), "\\s+", " ")) :- js_comment(c, _, v).

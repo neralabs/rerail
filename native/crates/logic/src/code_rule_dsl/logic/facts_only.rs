@@ -205,9 +205,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/lanes.rs", "OPEN"),
     ("code_rule_dsl/logic/lanes.rs", "DONE"),
     ("code_rule_dsl/logic/lanes.rs", "QUEUED"),
-    // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
-    // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
-    // pending atoms no committed row may hold yet, not a result kept.
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
@@ -234,7 +231,6 @@ const STATE: &[(&str, &str)] = &[
     // The stores this process owns or was refused, with their held locks, and the slot it took of each base store
     // (`corpus::owner`): which files are this process's, not results.
     ("code_rule_dsl/logic/plan/corpus/owner.rs", "CLAIMS"),
-    ("code_rule_dsl/logic/plan/corpus/owner.rs", "SLOTS"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HandedDown"),
     // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
@@ -290,6 +286,9 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
+    // The spaces the open write transaction has written once (decision 0677 fix 3: one sweep a space a transaction),
+    // cleared when its scope closes: state of an open thing, kept for no later use.
+    ("content_store/connection.rs", "WRITTEN_SPACES"),
     // A switch: testing mode's store (decision 0130).
     ("code_rule_dsl/logic/plan/corpus/base.rs", "UseStore"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.

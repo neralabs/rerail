@@ -40,11 +40,15 @@ member(p, "parameterProperties", "parameter property", x) :- param_property(p), 
 class_member(m) :- (kind(m, "method_definition") ; kind(m, "method_signature")), child(b, m, _), kind(b, "class_body").
 class_member(m) :- kind(m, "abstract_method_signature").
 
-// level(c, l): the override for c, else `accessibility`, else explicit.
+// level(c, l): the override for c, else `accessibility`, else explicit. Over the kinds `member` gives, as facts
+// (member_kind), not over every file's members (decision 0677).
+.decl member_kind(c: symbol)
+member_kind("constructors"). member_kind("methods"). member_kind("accessors"). member_kind("properties").
+member_kind("parameterProperties").
 .decl level(c: symbol, l: symbol)
-level(c, l) :- member(_, c, _, _), option(cat("overrides/", c), l).
-level(c, l) :- member(_, c, _, _), !option(cat("overrides/", c), _), option("accessibility", l).
-level(c, "explicit") :- member(_, c, _, _), !option(cat("overrides/", c), _), !option("accessibility", _).
+level(c, l) :- member_kind(c), option(cat("overrides/", c), l).
+level(c, l) :- member_kind(c), !option(cat("overrides/", c), _), option("accessibility", l).
+level(c, "explicit") :- member_kind(c), !option(cat("overrides/", c), _), !option("accessibility", _).
 .decl modified(m: node)
 modified(m) :- child(m, a, _), kind(a, "accessibility_modifier").
 .decl public(m: node)

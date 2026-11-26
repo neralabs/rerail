@@ -15,8 +15,8 @@
 .violation N817(at: node, x: symbol, a: symbol) code "N817"
     "Import `{x}` under its own name, or a descriptive CamelCase alias, instead of the acronym `{a}`, and update its uses; keep the alias if your project's convention requires it."
     suppress ruff "N817"
-N817(i, x, a) :- alias_import(i, x, a), camel_name(x), cased_upper(a), acronym_of(x, a), !conventional(i, a),
-    !naming_ignored(x), !naming_ignored(a).
+N817(i, x, a) :- alias_import(i, x, a), camel_name(i, x), cased_upper(i, a), acronym_of(i, x, a), !conventional(i, a),
+    !naming_ignored(i, x), !naming_ignored(i, a).
 // conventional(i, a): the import's full name and alias are a convention entry.
 .decl conventional(i: node, a: symbol)
 conventional(i, "ET") :- import_alias(s, i, m, x, "ET"), !relative_from(s),

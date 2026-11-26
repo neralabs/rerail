@@ -175,13 +175,38 @@ struct ModelKey {
     checksums: [String; 3],
 }
 
-/// The models some engine of this process still holds. Every session opens its own conversation engine, and the model
-/// (its weights and two tokenizers, about 14 MB) is the same for all of them.
-static SHARED_MODELS: Mutex<Vec<(ModelKey, Weak<LoadedModel>)>> = Mutex::new(Vec::new());
+/// The models some engine of one shared object still holds (decision 0442: shared by design, so held by the object
+/// its callers pass). Every session opens its own conversation engine, and the model (its weights and two tokenizers,
+/// about 14 MB) is the same for all of them: the Node environment's engines share its `conversations` object.
+pub type Models = Held<LoadedModel>;
 
-/// The model in `root`, loaded and verified as `load_model` does when no engine holds it already, and otherwise the copy
-/// that engine holds. A changed manifest is a different model and loads anew.
-pub fn shared_model(root: &Path) -> Result<Arc<LoadedModel>> {
+/// What some holder still holds of each key: the one copy while a holder lives, made again once none does.
+pub struct Held<T>(Mutex<Vec<(ModelKey, Weak<T>)>>);
+
+impl<T> Default for Held<T> {
+    fn default() -> Self {
+        Self(Mutex::new(Vec::new()))
+    }
+}
+
+impl<T> Held<T> {
+    /// The copy of `key` some holder still holds, else `load`'s, held from here on. The lock is held while loading,
+    /// so two engines opening at once load one copy.
+    fn get_or(&self, key: ModelKey, load: impl FnOnce() -> Result<T>) -> Result<Arc<T>> {
+        let mut held = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        held.retain(|(_, model)| model.strong_count() > 0);
+        if let Some(model) = held.iter().find(|(k, _)| *k == key).and_then(|(_, model)| model.upgrade()) {
+            return Ok(model);
+        }
+        let model = Arc::new(load()?);
+        held.push((key, Arc::downgrade(&model)));
+        Ok(model)
+    }
+}
+
+/// The model in `root`, loaded and verified as `load_model` does when no engine of `models` holds it already, and
+/// otherwise the copy that engine holds. A changed manifest is a different model and loads anew.
+pub fn shared_model(models: &Models, root: &Path) -> Result<Arc<LoadedModel>> {
     let manifest = read_manifest(root).map_err(|fault| invalid(fault.message))?;
     let key = ModelKey {
         root: dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()),
@@ -191,19 +216,7 @@ pub fn shared_model(root: &Path) -> Result<Arc<LoadedModel>> {
             manifest.files.config.sha256,
         ],
     };
-    // Held while loading, so two engines opening at once load one copy.
-    let mut shared = SHARED_MODELS.lock().unwrap_or_else(PoisonError::into_inner);
-    shared.retain(|(_, model)| model.strong_count() > 0);
-    if let Some(model) = shared
-        .iter()
-        .find(|(held, _)| *held == key)
-        .and_then(|(_, model)| model.upgrade())
-    {
-        return Ok(model);
-    }
-    let model = Arc::new(load_model(root)?);
-    shared.push((key, Arc::downgrade(&model)));
-    Ok(model)
+    models.get_or(key, || load_model(root))
 }
 
 #[cfg(test)]
@@ -252,6 +265,25 @@ mod tests {
         ("tokenizer.json", b"{}"),
         ("config.json", b"{}"),
     ];
+
+    #[test]
+    fn one_object_holds_one_copy_of_a_model_and_two_objects_two() {
+        let key = |n: &str| ModelKey { root: PathBuf::from(n), checksums: Default::default() };
+        let (one, other) = (Held::<String>::default(), Held::<String>::default());
+        let mut loads = 0;
+        let mut load = || {
+            loads += 1;
+            Ok(format!("model {loads}"))
+        };
+        let first = one.get_or(key("m"), &mut load).unwrap();
+        let again = one.get_or(key("m"), &mut load).unwrap();
+        assert!(Arc::ptr_eq(&first, &again), "one object's engines share the copy");
+        let apart = other.get_or(key("m"), &mut load).unwrap();
+        assert!(!Arc::ptr_eq(&first, &apart), "another object loads its own");
+        drop((first, again));
+        let after = one.get_or(key("m"), &mut load).unwrap();
+        assert_eq!((after.as_str(), loads), ("model 3", 3), "a copy no engine holds is loaded again");
+    }
 
     #[test]
     fn verification_names_the_file_that_breaks_the_manifest() {

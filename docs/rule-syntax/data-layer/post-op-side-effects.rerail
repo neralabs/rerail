@@ -97,13 +97,19 @@ pos_later_verifier(f) :- pos_verifier_def(f), pos_verifier_def(g), earlier(g, f)
 .decl pos_verify_line(f: node, l: number)
 pos_verify_line(f, l) :- pos_verifier(f), within(c, f), call_name(c, x),
     (x = "_post_op_allowlist_signature_valid" ; x = "verify_allowlist"), line(c, l).
-// Cross-file: whether any file has the verifier (decision 0652).
+// Cross-file: whether any file has the verifier (decision 0652). What the allowlist module says is found in its file,
+// by its document (pos_module_bypass, pos_has_verifier); the cross-file part reads those (decision 0677).
 .decl pos_bypass(why: symbol) cross_file
-pos_bypass("boolean opt-out") :- pos_top_assign("allowlist", _, "ENFORCE_POST_OP_RUNTIME_ALLOWLIST").
-pos_bypass("verifier missing") :- !pos_verifier(_).
-pos_bypass("no signature verification") :- pos_verifier(f), !pos_verify_line(f, _).
-pos_bypass("early return") :- pos_verifier(f), pos_verify_line(f, _), v = min l : { pos_verify_line(f, l) },
-    within(r, f), kind(r, "return_statement"), line(r, k), k < v.
+pos_bypass(w) :- pos_module_bypass(_, w).
+pos_bypass("verifier missing") :- !pos_has_verifier(_).
+.decl pos_has_verifier(d: number)
+pos_has_verifier(d) :- pos_verifier(f), docof(f, d).
+.decl pos_module_bypass(d: number, why: symbol)
+pos_module_bypass(d, "boolean opt-out") :- pos_top_assign("allowlist", a, "ENFORCE_POST_OP_RUNTIME_ALLOWLIST"),
+    docof(a, d).
+pos_module_bypass(d, "no signature verification") :- pos_verifier(f), !pos_verify_line(f, _), docof(f, d).
+pos_module_bypass(d, "early return") :- pos_verifier(f), pos_verify_line(f, _), v = min l : { pos_verify_line(f, l) },
+    within(r, f), kind(r, "return_statement"), line(r, k), k < v, docof(f, d).
 .violation POSTOP203(at: loc, why: symbol) "assert_post_op_symbol_signed: runtime post-op signature enforcement: {why}"
 POSTOP203(@place("l2070_batching/post_op.py", 1), w) :- pos_bypass(w), pos_allow_read(_), !pos_allow_broken().
 
@@ -123,13 +129,21 @@ pos_signed_assign(v) :- pos_signed_first(a), assign_value(a, v0), unparen(v0, v)
 .decl pos_signed_display(v: node)
 pos_signed_display(v) :- pos_signed_value(v), (kind(v, "set") ; kind(v, "list") ; kind(v, "tuple")).
 // pos_allow_broken(): the plugin's reader of the allowlist file raises, so the file gives no facts at all.
-// Cross-file: a gate over the allowlist file, read by every file's rules (decision 0652).
+// Cross-file: a gate over the allowlist file, read by every file's rules (decision 0652). Its causes are all that
+// file's, found there by its document (pos_allow_fault); the cross-file part reads that (decision 0677).
 .decl pos_allow_broken() cross_file
-pos_allow_broken() :- pos_allow_read(_), !pos_signed_first(_).
-pos_allow_broken() :- pos_allow_read(_), !pos_signed_display(_).
-pos_allow_broken() :- pos_allow_read(_), pos_signed_display(v), child(v, c, _),
+pos_allow_broken() :- pos_allow_fault(_).
+.decl pos_allow_fault(d: number)  // allowlist module d's reader raises
+pos_allow_fault(d) :- pos_allow_read(d), !pos_has(d, "symbols").
+pos_allow_fault(d) :- pos_allow_read(d), !pos_has(d, "display").
+pos_allow_fault(d) :- pos_allow_read(d), pos_signed_display(v), docof(v, d), child(v, c, _),
     !kind(c, "comment"), !str_const(c, _).
-pos_allow_broken() :- pos_allow_read(_), !pos_runtime_sig(_, _).
+pos_allow_fault(d) :- pos_allow_read(d), !pos_has(d, "signature").
+// pos_has(d, what): module d has a first SIGNED_POST_OP_SYMBOLS, its display, an ALLOWLIST_SIGNATURE.
+.decl pos_has(d: number, what: symbol)
+pos_has(d, "symbols") :- pos_signed_first(a), docof(a, d).
+pos_has(d, "display") :- pos_signed_display(v), docof(v, d).
+pos_has(d, "signature") :- pos_sig_at(a, _), docof(a, d).
 .violation FACT_EXTRACTION_FAILED(at: loc) code "FACT-EXTRACTION-FAILED"
     "post_op_side_effects could not extract the runtime allowlist from l2070_batching/post_op_allowlist.py"
 FACT_EXTRACTION_FAILED(@place("l2070_batching/post_op_allowlist.py", 1)) :- pos_allow_broken().
@@ -164,9 +178,10 @@ POSTOP206(@place("l2070_batching/post_op.py", 1), e) :- pos_signed(e), !pos_reac
 // module-level `ALLOWLIST_SIGNATURE: str = "…"` (or `= NEEDS_SIGNING` / `= UNSIGNED`); none reads as unsigned.
 allow_entry("pos_runtime", e) :- pos_signed(e).
 .decl pos_runtime_sig(s: symbol, i: number)
-pos_runtime_sig(s, i) :- pos_top_assign("allowlist", a, "ALLOWLIST_SIGNATURE"), field(a, "type", _),
-    assign_value(a, v), (str_const(v, s) ; kind(v, "identifier"), text(v, s), unsigned_sig(s)), visit_index(a, i),
-    docof(a, d), pos_allow_read(d).
+pos_runtime_sig(s, i) :- pos_sig_at(a, s), visit_index(a, i), docof(a, d), pos_allow_read(d).
+.decl pos_sig_at(a: node, s: symbol)
+pos_sig_at(a, s) :- pos_top_assign("allowlist", a, "ALLOWLIST_SIGNATURE"), field(a, "type", _),
+    assign_value(a, v), (str_const(v, s) ; kind(v, "identifier"), text(v, s), unsigned_sig(s)).
 .decl pos_runtime_sig_ok(s: symbol)
 pos_runtime_sig_ok(s) :- pos_runtime_sig(s, i), i = min j : { pos_runtime_sig(_, j) }, !pos_allow_broken().
 allow_sig("pos_runtime", "post_op_runtime_allowlist", @replace_all(s, "[^A-Za-z0-9+/=]", "")) :- pos_runtime_sig_ok(s).

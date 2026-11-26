@@ -372,9 +372,14 @@ la_ffind("LA-011", f, l) :- la_fact(f, d, _, _, x), la_server_phase(x), la_in(d,
 la_ffind("LA-011", f, l) :- la_fact(f, d, _, _, _), la_in(d, "server_plan"), la_first(f, "hydrate", l).
 la_ffind("LA-012", f, l) :- la_fact(f, _, _, _, _), !la_legacy(f), la_first(f, "lazy_resolve", l).
 // *_lazy without @pure_lazy, deferring to a delegate whose own calls do plan I/O: at the first such deferral.
-la_ffind("LA-009", f, l) :- la_fact(f, _, _, _, x), suffix("_lazy", x), !la_pure(f),
-    i = min j : { la_deferred(f, c2, s2), la_eager_delegate(s2), visit_index(c2, j) },
-    la_deferred(f, c, s), la_eager_delegate(s), visit_index(c, i), line(c, l).
+// la_defer(p, s, k, j, l, t): such a fact, of file p, allowlist symbol s and line k, defers to symbol t at the call
+// of visit index j and line l. Found in the fact's file; the delegate, maybe another file's, is joined by its
+// symbol in the cross-file part, and the finding is a path and a line (decision 0677).
+.decl la_defer(p: symbol, s: symbol, k: number, j: number, l: number, t: symbol)
+la_defer(p, s, k, j, l, t) :- la_fact(f, d, s, _, x), suffix("_lazy", x), !la_pure(f), doc(d, p, _), line(f, k),
+    la_deferred(f, c, t), visit_index(c, j), line(c, l).
+la_find("LA-009", p, l, s) :- la_defer(p, s, k, i, l, t), la_eager_delegate(t),
+    i = min j : { la_defer(p, s, k, j, _, t2), la_eager_delegate(t2) }.
 la_ffind("LA-002", f, l) :- la_at(f, "intent", _), la_at(f, "io", l).
 la_ffind("LA-003", f, l) :- la_fact(f, d, _, _, _), la_in(d, "feature"), la_is(f, "public"), !la_lazy(f),
     la_at(f, "io", l), !la_at(f, "intent", _).
@@ -399,11 +404,16 @@ la_ffind("LA-014", f, l) :- !la_skip(f), la_fact(f, d, _, _, _), la_in(d, "servi
 la_server_phase("lower"). la_server_phase("compile"). la_server_phase("preprocess"). la_server_phase("pre_op").
 la_server_phase("post_op").
 // la_eager_delegate(s): fact s does plan I/O itself, or calls something whose symbol ends in a plan I/O name.
-// Cross-file: a symbol deferred in one file, its facts in another (decision 0652).
+// Cross-file: a symbol deferred in one file, its facts in another (decision 0652). Each side is found in its file,
+// by symbol (la_defers_to, la_does_io); the cross-file part joins the symbols (decision 0677).
 .decl la_eager_delegate(s: symbol) cross_file
-la_eager_delegate(s) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_has(t, "io").
-la_eager_delegate(s) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_call(t, c), la_func(c, g),
-    la_local_last(t, g, x), la_set("PLAN_IO_NAMES", x).
+la_eager_delegate(s) :- la_defers_to(s), la_does_io(s).
+.decl la_defers_to(s: symbol)
+la_defers_to(s) :- la_deferred(_, _, s).
+.decl la_does_io(s: symbol)
+la_does_io(s) :- la_fact(t, _, s, _, _), la_canon(t), la_has(t, "io").
+la_does_io(s) :- la_fact(t, _, s, _, _), la_canon(t), la_call(t, c), la_func(c, g), la_local_last(t, g, x),
+    la_set("PLAN_IO_NAMES", x).
 
 // LA-008: in a transaction module, f (the last fact named f) and f_async: f uses grammar calls, f_async async
 // plan or grammar calls, each directly or down its calls. At f.

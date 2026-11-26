@@ -16,4 +16,4 @@
 
 .violation F521(at: node) code "F521" "`.format` call has invalid format string"
     suppress ruff "F521"
-F521(c) :- format_call(c, v), !brace_ok(v).
+F521(c) :- format_call(c, _), !brace_ok(c).
