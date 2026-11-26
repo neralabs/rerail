@@ -1,0 +1,122 @@
+[
+  {
+    "id": "react-button-has-type",
+    "status": "different",
+    "reason": "Every translation-only key is a finding a suppression comment for the rule silences (eslint-disable-next-line, eslint-disable-line or a file-level /* eslint-disable */), which the original honours: suppression comments not applied by run-policies. The translation declares the JSON's suppress lines. With ESLint's noInlineConfig on, ESLint (eslint-plugin-react 7.37.5) reports exactly the translation's keys on samples-react (NOTES-react-tsc-01.md).",
+    "right": "original",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "samples-react": {
+        "originalOnly": 0,
+        "translationOnly": 6
+      }
+    }
+  },
+  {
+    "id": "react-jsx-no-constructed-context-values",
+    "status": "different",
+    "reason": "Every translation-only key is a finding a suppression comment for the rule silences (eslint-disable-next-line, eslint-disable-line or a file-level /* eslint-disable */), which the original honours: suppression comments not applied by run-policies. The translation declares the JSON's suppress lines. With ESLint's noInlineConfig on, ESLint (eslint-plugin-react 7.37.5) reports exactly the translation's keys on samples-react (NOTES-react-tsc-01.md).",
+    "right": "original",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "samples-react": {
+        "originalOnly": 0,
+        "translationOnly": 4
+      }
+    }
+  },
+  {
+    "id": "react-no-array-index-key",
+    "status": "different",
+    "reason": "Every translation-only key is a finding a suppression comment silences: suppression comments not applied by run-policies. 7 are eslint-disable comments for react/no-array-index-key; 4 are `eslint-disable-next-line @eslint-react/no-array-index-key`, which the product reads as oxlint does (names without their plugin) for the JSON's oxlint \"no-array-index-key\" (ESLint itself reports those 4). The translation declares the same suppress lines (NOTES-react-tsc-01.md).",
+    "right": "original",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "samples-react": {
+        "originalOnly": 0,
+        "translationOnly": 11
+      }
+    }
+  },
+  {
+    "id": "react-no-children-prop",
+    "status": "different",
+    "reason": "Every translation-only key is a finding a suppression comment for the rule silences (eslint-disable-next-line, eslint-disable-line or a file-level /* eslint-disable */), which the original honours: suppression comments not applied by run-policies. The translation declares the JSON's suppress lines. With ESLint's noInlineConfig on, ESLint (eslint-plugin-react 7.37.5) reports exactly the translation's keys on samples-react (NOTES-react-tsc-01.md).",
+    "right": "original",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "samples-react": {
+        "originalOnly": 0,
+        "translationOnly": 7
+      }
+    }
+  },
+  {
+    "id": "react-no-direct-mutation-state",
+    "status": "different",
+    "reason": "Every translation-only key is a finding a suppression comment for the rule silences (eslint-disable-next-line, eslint-disable-line or a file-level /* eslint-disable */), which the original honours: suppression comments not applied by run-policies. The translation declares the JSON's suppress lines. With ESLint's noInlineConfig on, ESLint (eslint-plugin-react 7.37.5) reports exactly the translation's keys on samples-react (NOTES-react-tsc-01.md).",
+    "right": "original",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "samples-react": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      }
+    }
+  },
+  {
+    "id": "react-no-unstable-nested-components",
+    "status": "different",
+    "reason": "Every translation-only key is a finding a suppression comment for the rule silences (eslint-disable-next-line, eslint-disable-line or a file-level /* eslint-disable */), which the original honours: suppression comments not applied by run-policies. The translation declares the JSON's suppress lines. With ESLint's noInlineConfig on, ESLint (eslint-plugin-react 7.37.5) reports exactly the translation's keys on samples-react (NOTES-react-tsc-01.md).",
+    "right": "original",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "samples-react": {
+        "originalOnly": 0,
+        "translationOnly": 4
+      }
+    }
+  }
+]
