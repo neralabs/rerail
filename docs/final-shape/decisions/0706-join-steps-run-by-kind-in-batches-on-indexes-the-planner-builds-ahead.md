@@ -262,6 +262,18 @@ On `all` (m1max, load 8–15, two runs each, same rows), steps 2 and 5 together:
 2,310 MB after. W: 48.7 s, 472 G. No change: the batches take the rows (29.4 M node reads, the keyed probes and
 `within`'s pairs), and the reads under them cost what they did.
 
+### Step 5 (E5's probe off the walker), as built
+
+A keyed batch handed every row back to the walker's entry (`enter`), which probed it with its generic checks. Now a
+keyed batch over a held input (`Src::In`, not negated, with no range, delta restriction, factor or screen at the step)
+probes there: each row's key through `candidates` with the step's hints and memo (the sorted keys merge against the
+order's runs), its candidates checked and bound, each passing row handed to the next step (`go`: into that step's
+batch where it has one, the chain). Other keyed steps are entered again as before.
+
+On `all` (m1max, load 7–11, two runs each, same rows): instructions 1,370 / 1,356 G before, 1,348 / 1,345 G after;
+CPU 122.4 / 120.8 s before, 121.7 / 123.1 s after (within the load's spread); peak 2,295 / 2,287 MB before, 2,359 /
+2,303 MB after. W: 48.6 s, 472 G.
+
 ## Consequences
 
 - 0694's node bits are made by the build batch, not at a key's first test.

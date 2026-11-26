@@ -9029,12 +9029,52 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     if a == kinds::Answer::Yes { go(cx, i + 1, &mut slots) } else { again(cx, &mut slots) }
                 }
             }
-            // The rows in their keys' order, each probed as the walker probes one (E5).
+            // The rows in their keys' order (E5). A held input's probe runs here, not through the walker's entry: each
+            // row's key probed with the step's hints and memo (so the sorted keys merge against the order's runs),
+            // its candidates checked and bound, and each passing row handed to the next step (the chain). A step the
+            // walker restricts (a range, a delta's rows, a factored or screened step) is entered again instead.
             kinds::Batched::Keyed(t) => {
-                for r in t.order(&rows, w) {
-                    let r = r as usize;
-                    slots.copy_from_slice(&rows[r * w..(r + 1) * w]);
-                    again(cx, &mut slots);
+                let (j, store) = (cx.j, cx.store);
+                let direct = match &j.steps[i] {
+                    Step::Atom { src: Src::In(..), neg: false, .. } => {
+                        j.ranges[i].is_none() && i != cx.only_step && cx.factor[i].is_none() && cx.screen.is_none_or(|f| f.step != i) && i > 0
+                    }
+                    _ => false,
+                };
+                let order = t.order(&rows, w);
+                if let (true, Step::Atom { src, keys, binds, tests, .. }) = (direct, &j.steps[i]) {
+                    use self::cands::candidates;
+                    let exact: u64 = cands::exact_cols(j, src, false);
+                    let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c)
+                        | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0)
+                        | binds.iter().fold(0u64, |m, &(c, _)| m | 1 << c);
+                    let mut last = cx.last[i].take().expect("the step's probe state, put back after each entry");
+                    for r in order {
+                        if cx.stop || cx.error.is_some() {
+                            break;
+                        }
+                        let r = r as usize;
+                        slots.copy_from_slice(&rows[r * w..(r + 1) * w]);
+                        cx.key.clear();
+                        cx.key.extend(keys.iter().map(|&(_, k)| val(&slots, k)));
+                        let (held, cands) = candidates(j, src, store, &cx.key, keys, &mut cx.hints[i], &mut last, need, None, true);
+                        held.each(cands, need, &mut last, |id, row| {
+                            if cx.stop { return true; }
+                            if held.dead(id) { return false; }
+                            if !keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(&slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
+                            for &(c, s) in binds { slots[s] = row.at(c); }
+                            let made = cx.n;
+                            go(cx, i + 1, &mut slots);
+                            i >= cx.cut_from && cx.n > made
+                        });
+                    }
+                    cx.last[i] = Some(last);
+                } else {
+                    for r in order {
+                        let r = r as usize;
+                        slots.copy_from_slice(&rows[r * w..(r + 1) * w]);
+                        again(cx, &mut slots);
+                    }
                 }
             }
         }
