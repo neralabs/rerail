@@ -611,6 +611,8 @@ impl<'a> Ev<'a> {
         let (mut resume, mut last, mut lv) = (0usize, None::<usize>, 0u8);
         let nest = level.nest.as_ref().map_or(1, |x| usize::from(x.0));
         let mut around: Vec<(Option<usize>, u8)> = Vec::new();
+        // The frames open in templates' code, the templates' and the brackets': `max` bounds them.
+        let mut total = 0u8;
         let (mut d0, mut d1) = (Mask::zeros(n), Mask::zeros(n));
         loop {
             let mut best: Option<(usize, usize)> = None;
@@ -627,13 +629,18 @@ impl<'a> Ev<'a> {
                 let (o, c) = (next(&opens, resume, limit), next(&closes, resume, limit));
                 if let Some(b) = o.into_iter().chain(c).min() {
                     if o == Some(b) {
-                        if lv == level.max {
+                        if total == level.max {
                             deep.set(b);
                         } else {
                             lv += 1;
+                            total += 1;
                         }
+                    } else if lv == 0 {
+                        // A close with a template's frame on top.
+                        deep.set(b);
                     } else {
-                        lv = lv.saturating_sub(1);
+                        lv -= 1;
+                        total -= 1;
                     }
                     resume = b + 1;
                     continue;
@@ -666,17 +673,23 @@ impl<'a> Ev<'a> {
             set(&mut fill[k], t, c);
             let wide = ins[k].2.as_ref().filter(|(c2, _)| c2.get(c)).map(|x| x.1);
             if kind.after.is_empty() && wide.is_some() {
-                if last.is_some() && nest > 1 {
+                if last.is_some() {
                     if around.len() + 1 < nest {
                         around.push((last, lv));
                     } else {
                         deep.set(c);
                     }
                 }
+                if total == level.max {
+                    deep.set(c);
+                } else {
+                    total += 1;
+                }
                 (last, lv) = (Some(k), 0);
             }
             if kind.resumes && wide.is_none() {
                 (last, lv) = around.pop().unwrap_or((None, 0));
+                total = total.saturating_sub(1);
             }
             let to = if kind.outside { c } else { c + usize::from(wide.unwrap_or(kind.bytes)) };
             set(&mut hidden, t + 1, to);

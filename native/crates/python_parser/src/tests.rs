@@ -26,7 +26,20 @@ fn same(texts: &[&str]) {
         let nodes = rerail_compiler::stream::run(&c.program, text.as_bytes(), &run).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why:?}"));
         let interp = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, text.as_bytes());
         assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
+        assert_eq!(rounds_differ(text.as_bytes()), None, "the regions as rounds, Metal's form, against the walk, {text:?}");
     }
+}
+
+/// The first output whose words differ between the regions walked and run as rounds (Metal's
+/// form, `rounds_values`), with the first byte they differ at; `None` where they are one.
+fn rounds_differ(bytes: &[u8]) -> Option<(usize, usize)> {
+    let program = &compiled().expect("compiles").program.block_programs[0];
+    let (walked, spans) = program.all_values(&[bytes]);
+    let (rounds, _) = program.rounds_values(&[bytes]);
+    program.outputs.iter().enumerate().find_map(|(k, &v)| {
+        let (a, b) = (&walked[usize::from(v)][spans[0].clone()], &rounds[usize::from(v)][spans[0].clone()]);
+        a.iter().zip(b).position(|(x, y)| x != y).map(|i| (k, 64 * i + (a[i] ^ b[i]).trailing_zeros() as usize))
+    })
 }
 
 /// Each of `texts` refused by the compiled grammar (to the lean parser).
@@ -154,6 +167,13 @@ fn f_strings_in_an_interpolation_are_the_lean_parsers() {
 fn brackets_in_an_interpolation_are_the_lean_parsers() {
     same(&["x = f\"{a[1:2]}\"\n", "x = f\"{a[b[1]:2]:>4}\"\n", "x = f\"{(lambda y: y)(1)}\"\n", "x = f\"{a[:]} {b}\"\n"]);
     same(&["x = f\"{ {'k': v} }\"\n", "x = f\"{g({'a': 1})}?q\"\n", "x = f\"{d['k']:x}\"\n", "x = f\"\"\"{\n  {1: 2}\n}\"\"\"\n", "x = f\"{ {a} }\"\n"]);
+    // `max` bounds the frames of every template open, the templates' own among them: two
+    // templates and 5 brackets are 7; one bracket more is past it.
+    let nested = |n: usize| format!("x = f\"{{f'{{{}a{}}}'}}\"\n", "(".repeat(n), ")".repeat(n));
+    same(&[nested(5).as_str()]);
+    refused(&[nested(6).as_str()]);
+    // A close with a template's frame on top: no bracket of the code's to close.
+    refused(&["x = f\"{a)}\"\n", "x = f\"{f'{a]}'}\"\n"]);
 }
 
 #[test]
@@ -266,7 +286,9 @@ fn what_the_grammar_does_not_read_is_refused() {
 fn corpus() {
     let dir = std::env::var("RERAIL_PYTHON_CORPUS").expect("set RERAIL_PYTHON_CORPUS");
     let c = compiled().expect("compiles");
-    let (mut same, mut refused, mut differ, mut lean_refused) = (0, 0, 0, 0);
+    let (mut same, mut refused, mut differ, mut lean_refused, mut rounds_off) = (0, 0, 0, 0, 0);
+    let mut taken: std::collections::BTreeMap<(usize, u32), usize> = Default::default();
+    let (mut voted, mut alone) = (0usize, 0usize);
     let mut why: std::collections::BTreeMap<String, usize> = Default::default();
     let mut paths = Vec::new();
     let mut dirs = vec![std::path::PathBuf::from(&dir)];
@@ -322,7 +344,23 @@ fn corpus() {
                     *why.entry(w).or_default() += 1;
                 }
             }
-            Some(image) if image_text(&image).as_deref() == Ok(&want) => same += 1,
+            Some(image) if image_text(&image).as_deref() == Ok(&want) => {
+                same += 1;
+                // The regions as rounds (Metal's form) against the walk, and the rounds each block took.
+                if let Some((k, at)) = rounds_differ(text.as_bytes()) {
+                    rounds_off += 1;
+                    eprintln!("rounds-differ output {k} at byte {at} :: {}", p.display());
+                }
+                let rounds = c.program.block_programs[0].rounds_taken(&[text.as_bytes()]);
+                for &(g, r) in &rounds {
+                    *taken.entry((g, r)).or_default() += 1;
+                }
+                // Metal's SIMD group runs 32 of a stream's blocks together, to the rounds of the slowest (a vote).
+                for w in rounds.chunks(32) {
+                    voted += w.iter().map(|x| x.1).max().unwrap_or(0) as usize * w.len();
+                    alone += w.iter().map(|x| x.1 as usize).sum::<usize>();
+                }
+            }
             Some(image) => {
                 differ += 1;
                 let got = image_text(&image).unwrap_or_default();
@@ -340,6 +378,16 @@ fn corpus() {
     for (n, w) in why.iter().take(shown) {
         eprintln!("refused {n:5}: {w}");
     }
-    eprintln!("python corpus: {same} the same, {refused} refused, {differ} differ ({lean_refused} the lean parser refuses)");
+    // Each rounds group's operations, and how many blocks took each number of rounds.
+    let program = &c.program.block_programs[0];
+    let groups = rerail_compiler::block::groups(&program.ops, &program.rounds).expect("verified");
+    for (g, group) in groups.iter().enumerate() {
+        let blocks: Vec<String> = taken.iter().filter(|((h, _), _)| *h == g).map(|((_, r), n)| format!("{r}: {n}")).collect();
+        eprintln!("rounds group {g}: {} operations, {} carries; blocks by rounds {}", group.members.len(), group.carries.len(), blocks.join(", "));
+    }
+    let blocks: usize = taken.values().sum();
+    eprintln!("rounds a block: {:.2} alone, {:.2} voted in 32s; {blocks} blocks", alone as f64 / blocks.max(1) as f64, voted as f64 / blocks.max(1) as f64);
+    eprintln!("python corpus: {same} the same, {refused} refused, {differ} differ ({lean_refused} the lean parser refuses); {rounds_off} whose rounds differ from the walk");
     assert_eq!(differ, 0);
+    assert_eq!(rounds_off, 0);
 }

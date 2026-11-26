@@ -1450,10 +1450,26 @@ impl Lowering {
         // at its own closer, in the round before (the string ended): from there no template is
         // open, and none opens there. A `prev` on its way (`groups`' strict rule); each round is
         // right a place further, as the hidden places are.
-        let ends = regions.kinds.iter().any(|r| r.resumes).then(|| {
+        let ends = (regions.level.is_none() && regions.kinds.iter().any(|r| r.resumes)).then(|| {
             self.program.ops.push(BlockOp::Carry(zero));
             (self.program.ops.len() - 1) as u16
         });
+        // With a level, in its place a carry per template kind (a plain kind with `or`): whether
+        // the innermost frame open before each byte is a template of that kind (decision 0698,
+        // 60). A tail opens only there; the frames are a count's, below.
+        let tops: Vec<(usize, u16)> = match &regions.level {
+            Some(_) => regions
+                .kinds
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| r.after.is_empty() && r.or.is_some() && !r.outside)
+                .map(|(k, _)| {
+                    self.program.ops.push(BlockOp::Carry(zero));
+                    (k, (self.program.ops.len() - 1) as u16)
+                })
+                .collect(),
+            None => Vec::new(),
+        };
         let mut ended: Vec<u16> = Vec::new();
         let code = self.op(BlockOp::AndNot(w, hidden));
         let mut hide: Vec<u16> = Vec::new();
@@ -1473,7 +1489,18 @@ impl Lowering {
         for (at, (r, &(opener, closer, c_before, or))) in regions.kinds.iter().zip(&ins).enumerate() {
             let mut taken = self.op(BlockOp::And(opener, code));
             let mut after = 0u16;
-            if !r.after.is_empty() {
+            if !r.after.is_empty() && !tops.is_empty() {
+                // Taken where the innermost frame is a template of a kind `after` names.
+                let mut gate = None;
+                for &(k, top) in tops.iter().filter(|(k, _)| r.after.contains(&regions.kinds[*k].kind)) {
+                    after |= 1 << k;
+                    gate = Some(match gate {
+                        Some(g) => self.op(BlockOp::Or(g, top)),
+                        None => top,
+                    });
+                }
+                taken = self.op(BlockOp::And(taken, gate.expect("verified: a kind named")));
+            } else if !r.after.is_empty() {
                 // Taken where the last template a plain kind's region closed at before is one of
                 // a kind `after` names (the lean lexer's string reader, back from the template).
                 let mut named = None;
@@ -1561,19 +1588,140 @@ impl Lowering {
             self.toggles.push((f, flips));
             kinds.push(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty, or, after, resumes: r.resumes });
         }
-        // A level's brackets, and its deep ones: empty in its rounds, which count no level
-        // (`block::Walk`), and a member of the group, as a part of the hidden places' next (a
-        // `prev` of it, as the group's strict rule asks).
+        // A level (decision 0698, 60): the frames open in templates' code, each a template or a
+        // bracket, are a count's (`lv`), and the templates alone another's (`nest`). A template
+        // opens at a plain kind's second closer and ends at a tail's own closer; a bracket counts
+        // in a template's code (`nest` above 0), but not a byte a kind opens at (a tail's `}`).
+        // Each carry `top_q` is again, per level `L`, "the count before is `L`, and the last
+        // frame opened at `L` was a template of kind `q`": a `prev` on every way to it.
+        let mut top_next: Vec<u16> = Vec::new();
         let level = match (&regions.level, brackets) {
             (Some(l), Some((o, c))) => {
-                let (opens, closes) = (clean(self, o, d)?, clean(self, c, d)?);
-                let deep = self.op(BlockOp::And(code, zero));
+                let (opens_b, closes_b) = (clean(self, o, d)?, clean(self, c, d)?);
+                let any = |me: &mut Self, xs: &mut dyn Iterator<Item = u16>| xs.fold(None, |a: Option<u16>, x| Some(a.map_or(x, |a| me.op(BlockOp::Or(a, x))))).unwrap_or(zero);
+                let pushes: Vec<Option<u16>> = templates.clone();
+                let tpush = any(self, &mut pushes.iter().flatten().copied());
+                let tpop = any(self, &mut ended.iter().copied());
+                // A count of `up` and `down` with room for `max`: its planes, the value after each
+                // byte, as `count` keeps one (the module's "Counts and frames").
+                let count = |me: &mut Self, up: u16, down: u16, max: u32| -> Vec<u16> {
+                    let down = me.op(BlockOp::AndNot(down, up));
+                    let mut w = 1u32;
+                    while (1u64 << w) < u64::from(max) + 2 {
+                        w += 1;
+                    }
+                    let (mut planes, mut before): (Vec<u16>, Vec<u16>) = (Vec::new(), Vec::new());
+                    for k in 0..w as usize {
+                        let flips = if k == 0 {
+                            me.op(BlockOp::Or(up, down))
+                        } else {
+                            let (mut ones, mut some) = (before[0], before[0]);
+                            for &b in &before[1..k] {
+                                ones = me.op(BlockOp::And(ones, b));
+                                some = me.op(BlockOp::Or(some, b));
+                            }
+                            let carry = me.op(BlockOp::And(up, ones));
+                            let borrow = me.op(BlockOp::AndNot(down, some));
+                            me.op(BlockOp::Or(carry, borrow))
+                        };
+                        let plane = me.op(BlockOp::Toggle(flips));
+                        before.push(me.op(BlockOp::Prev(plane, 1)));
+                        planes.push(plane);
+                    }
+                    planes
+                };
+                let equals = |me: &mut Self, planes: &[u16], m: u64| -> u16 {
+                    let mut out: Option<u16> = None;
+                    for (k, &p) in planes.iter().enumerate() {
+                        let one = m >> k & 1 == 1;
+                        out = Some(match out {
+                            None if one => p,
+                            None => me.op(BlockOp::Not(p)),
+                            Some(e) if one => me.op(BlockOp::And(e, p)),
+                            Some(e) => me.op(BlockOp::AndNot(e, p)),
+                        });
+                    }
+                    out.expect("a plane")
+                };
+                // Above `m`: past the bound, or below zero (all ones). From the top plane down, as
+                // `Lowering::above`: above at plane `k` where the planes above it are `m`'s, `k` is
+                // 1 and `m`'s bit `k` is 0.
+                let above = |me: &mut Self, planes: &[u16], m: u64| -> u16 {
+                    let mut out = zero;
+                    let mut equal: Option<u16> = None;
+                    for k in (0..planes.len()).rev() {
+                        let p = planes[k];
+                        if m >> k & 1 == 0 {
+                            let here = equal.map_or(p, |e| me.op(BlockOp::And(e, p)));
+                            out = me.op(BlockOp::Or(out, here));
+                            equal = Some(match equal {
+                                Some(e) => me.op(BlockOp::AndNot(e, p)),
+                                None => me.op(BlockOp::Not(p)),
+                            });
+                        } else {
+                            equal = Some(equal.map_or(p, |e| me.op(BlockOp::And(e, p))));
+                        }
+                    }
+                    out
+                };
+                let nest = l.nest.as_ref().map_or(1, |x| x.0);
+                let np = count(self, tpush, tpop, u32::from(nest));
+                let nb: Vec<u16> = np.iter().map(|&p| self.op(BlockOp::Prev(p, 1))).collect();
+                let in_t = any(self, &mut nb.iter().copied());
+                let not_opened = self.op(BlockOp::Not(earlier.expect("a kind")));
+                let code_t = self.op(BlockOp::And(code, in_t));
+                let code_t = self.op(BlockOp::And(code_t, not_opened));
+                let bo = self.op(BlockOp::And(opens_b, code_t));
+                let bc = self.op(BlockOp::And(closes_b, code_t));
+                let up = self.op(BlockOp::Or(tpush, bo));
+                let down = self.op(BlockOp::Or(tpop, bc));
+                let lp = count(self, up, down, u32::from(l.max));
+                // Per level, the openers there (shared by the kinds' frames).
+                let mut at_level: Vec<(u16, u16)> = Vec::new();
+                for lv in 1..=u64::from(l.max) {
+                    let after = equals(self, &lp, lv);
+                    let before = self.op(BlockOp::Prev(after, 1));
+                    let openers = self.op(BlockOp::And(up, after));
+                    at_level.push((before, openers));
+                }
+                for &(k, _) in &tops {
+                    let a = templates[k].expect("a template kind's second closer");
+                    let mut t = zero;
+                    for &(before, openers) in &at_level {
+                        let from = self.op(BlockOp::And(openers, a));
+                        let to = self.op(BlockOp::AndNot(openers, a));
+                        let open = self.op(BlockOp::Fill(from, to));
+                        let was = self.op(BlockOp::Prev(open, 1));
+                        let kept = self.op(BlockOp::And(before, was));
+                        t = self.op(BlockOp::Or(t, kept));
+                    }
+                    top_next.push(t);
+                }
+                // Deep: a frame past `max`, a template past `nest`, or a close on a template.
+                let on_t = any(self, &mut tops.iter().map(|t| t.1));
+                let stray = self.op(BlockOp::And(bc, on_t));
+                let moved = self.op(BlockOp::Or(up, down));
+                let over = above(self, &lp, u64::from(l.max));
+                let over = self.op(BlockOp::And(moved, over));
+                let n_over = above(self, &np, u64::from(nest));
+                let n_over = self.op(BlockOp::And(tpush, n_over));
+                let deep = self.op(BlockOp::Or(stray, over));
+                let deep = self.op(BlockOp::Or(deep, n_over));
                 named(self, l.deep.clone(), deep);
                 hide.push(self.op(BlockOp::Prev(deep, 1)));
-                // The depth bits: two more such members, each its own operation.
+                // The depth bits at each opener: the templates around it, `nest` before the byte;
+                // a tail's, around its string, one fewer.
                 let depths = match &l.nest {
                     Some((m, a, b)) => {
-                        let (x, y) = (self.op(BlockOp::And(zero, code)), self.op(BlockOp::AndNot(zero, code)));
+                        let plain = any(self, &mut regions.kinds.iter().zip(&opens).filter(|(r, _)| !r.resumes).map(|(_, &o)| o));
+                        let tails = any(self, &mut regions.kinds.iter().zip(&opens).filter(|(r, _)| r.resumes).map(|(_, &o)| o));
+                        let (p0, p1) = (nb[0], nb[1]);
+                        let n0 = self.op(BlockOp::Not(p0));
+                        let m1 = self.op(BlockOp::Xor(p1, n0));
+                        let (x0, x1) = (self.op(BlockOp::And(plain, p0)), self.op(BlockOp::And(tails, n0)));
+                        let x = self.op(BlockOp::Or(x0, x1));
+                        let (y0, y1) = (self.op(BlockOp::And(plain, p1)), self.op(BlockOp::And(tails, m1)));
+                        let y = self.op(BlockOp::Or(y0, y1));
                         named(self, a.clone(), x);
                         named(self, b.clone(), y);
                         hide.push(self.op(BlockOp::Prev(x, 1)));
@@ -1583,7 +1731,7 @@ impl Lowering {
                     }
                     None => None,
                 };
-                Some(crate::block::Level { opens, closes, max: l.max, deep, nest: l.nest.as_ref().map_or(1, |x| x.0), depths })
+                Some(crate::block::Level { opens: opens_b, closes: closes_b, max: l.max, deep, nest, depths })
             }
             _ => None,
         };
@@ -1593,6 +1741,7 @@ impl Lowering {
         }
         named(self, regions.hidden.clone(), hidden);
         let mut pairs = vec![(hidden, next)];
+        pairs.extend(tops.iter().zip(&top_next).map(|(&(_, c), &x)| (c, x)));
         if let Some(e) = ends {
             let mut x = *ended.first().ok_or("a kind that resumes with no closer of its own")?;
             for &y in &ended[1..] {

@@ -272,3 +272,26 @@ statements and blocks end.
       `open_slot` holds a word a depth, chosen by the depth bits in the read's flags (`DEPTH_SHIFT`). A
       token read again finds its own depth's word, as one slot did before. Tier 1's interpreter already
       kept a stack, now bounded by `M`. Tier 2 counts open strings, so it nests as it is.
+60. **A level's rounds count its frames, so Metal's form is the walk's** (`regions()`). Before, the rounds counted no
+    level: its deep and depth values were empty, and its tails opened after any template. On the posthog corpus that
+    form differed from the walk in 181 of 1642 files. Now the rounds hold two counts, as bit-planes:
+    - `nest`: the templates open (opened at a plain kind's second closer, closed at a tail's own closer);
+    - `lv`: every frame in templates' code, each template's and each bracket's. A bracket counts only in a template's
+      code (`nest` above 0), and not at a byte a kind opens at (a tail's `}`).
+
+    Each template kind has a carry: "the innermost frame before the byte is a template of this kind". It is computed
+    per level `L` of `lv`, as "the count before is `L`, and the last frame opened at `L` was this kind's template",
+    with a `prev` on every way. A tail opens only where a kind it names holds; this replaces the "string ended" carry
+    that a walk without a level keeps. The depth bits are `nest`'s planes before the opener (one fewer for a tail).
+    `deep` is `lv` past `max`, `nest` past its bound, or a close with a template's frame on top.
+
+    The rounds form fixed two rules, and the three walks (the interpreter's, the evaluator's, the JIT's) now keep
+    them as well:
+    - `max` bounds all of the open templates' frames together, not each template's brackets;
+    - a close with no bracket of the code's to close is deep (the walk had ignored it).
+
+    The Python tests and the corpus check every output as rounds against the walk.
+61. **Python's `max` is 7.** The regions group is 168 operations without the counts, and with them 657 at `max 15`,
+    418 at 7 and 379 at 6. The counts barely change the rounds: on the corpus, 2.49 rounds a block before, 2.53
+    after; 6.10 and 6.33 where 32 blocks round together, as Metal's SIMD group does. At 7 the corpus reads every file
+    it read at 15.

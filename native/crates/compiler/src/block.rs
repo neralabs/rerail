@@ -884,9 +884,13 @@ impl BlockProgram {
         for (w, walk) in self.walks.iter().enumerate() {
             let g = usize::from(walk.group);
             let Some(group) = groups.get(g) else { return Err(format!("walk {w}: no group {g}")) };
-            let carries = 1 + usize::from(walk.kinds.iter().any(|k| k.resumes));
+            // With a level, a carry per template kind (its frames); else one more with a kind that resumes.
+            let carries = 1 + match walk.level {
+                Some(_) => walk.kinds.iter().filter(|k| k.after == 0 && k.or.is_some() && !k.outside).count(),
+                None => usize::from(walk.kinds.iter().any(|k| k.resumes)),
+            };
             if std::mem::replace(&mut seen[g], true) || group.carries.len() != carries || usize::from(walk.hidden) != group.carries[0].0 || walk.kinds.is_empty() {
-                return Err(format!("walk {w}: a group of one carry (two with a kind that resumes), walked once"));
+                return Err(format!("walk {w}: a group of its carries (one; two with a kind that resumes; with a level, one more a template kind), walked once"));
             }
             if walk.kinds.iter().any(|k| k.resumes && (k.after == 0 || k.or.is_none())) {
                 return Err(format!("walk {w}: a kind that resumes with no `after` or no `or`"));
@@ -1180,16 +1184,24 @@ impl BlockProgram {
     /// With each file's span of blocks. For checks of what is claimed about a value
     /// (`token_local`).
     pub fn all_values(&self, files: &[&[u8]]) -> (Vec<Vec<u64>>, Vec<std::ops::Range<usize>>) {
-        self.values_by(files, true)
+        self.values_by(files, true, &mut Vec::new())
     }
 
     /// `all_values` with each walk's group run as rounds, not walked: the other backend's form
     /// (Metal's), for the check that the two are one.
     pub fn rounds_values(&self, files: &[&[u8]]) -> (Vec<Vec<u64>>, Vec<std::ops::Range<usize>>) {
-        self.values_by(files, false)
+        self.values_by(files, false, &mut Vec::new())
     }
 
-    fn values_by(&self, files: &[&[u8]], walk: bool) -> (Vec<Vec<u64>>, Vec<std::ops::Range<usize>>) {
+    /// The rounds each group took at each block, as `rounds_values` runs them: `(group, rounds)`
+    /// in order, a group's blocks together.
+    pub fn rounds_taken(&self, files: &[&[u8]]) -> Vec<(usize, u32)> {
+        let mut taken = Vec::new();
+        self.values_by(files, false, &mut taken);
+        taken
+    }
+
+    fn values_by(&self, files: &[&[u8]], walk: bool, taken: &mut Vec<(usize, u32)>) -> (Vec<Vec<u64>>, Vec<std::ops::Range<usize>>) {
         let extra = usize::from(self.delay);
         // Each block's file (its length, and its block number within it), and whether it is
         // the file's first.
@@ -1272,7 +1284,11 @@ impl BlockProgram {
                 let g = usize::MAX - x;
                 match walk_of[g] {
                     Some(w) => self.walk_group(w, &first, &mut values),
-                    None => self.rounds_group(&groups[g], &first, &mut values),
+                    None => {
+                        for r in self.rounds_group(&groups[g], &first, &mut values) {
+                            taken.push((g, r));
+                        }
+                    }
                 }
                 continue;
             }
@@ -1369,6 +1385,8 @@ impl BlockProgram {
             // (none: 16, which no `after` names), and the level in its code (`Level`).
             let mut last = 16u32;
             let mut level = 0u8;
+            // The frames open in templates' code, the templates' and the brackets': `max` bounds them.
+            let mut total = 0u8;
             // The templates around the one open, each its kind and level (`Level::nest`).
             let mut around: Vec<(u32, u8)> = Vec::new();
             let nest = walk.level.map_or(1, |l| usize::from(l.nest));
@@ -1391,13 +1409,18 @@ impl BlockProgram {
                     let c = next_bit(&values[usize::from(l.closes)], resume, limit);
                     if let Some(b) = o.into_iter().chain(c).min() {
                         if o == Some(b) {
-                            if level == l.max {
+                            if total == l.max {
                                 set(&mut values[usize::from(l.deep)], b, b + 1);
                             } else {
                                 level += 1;
+                                total += 1;
                             }
+                        } else if level == 0 {
+                            // A close with a template's frame on top.
+                            set(&mut values[usize::from(l.deep)], b, b + 1);
                         } else {
-                            level = level.saturating_sub(1);
+                            level -= 1;
+                            total -= 1;
                         }
                         resume = b + 1;
                         continue;
@@ -1433,11 +1456,18 @@ impl BlockProgram {
                 let wide = kind.or.filter(|&(c2, _)| (values[usize::from(c2)][c / 64] >> (c % 64)) & 1 != 0);
                 if kind.after == 0 && wide.is_some() {
                     // A template in a template's code: the outer one waits, to `nest` deep.
-                    if last < 16 && nest > 1 {
+                    if last < 16 {
                         if around.len() + 1 < nest {
                             around.push((last, level));
                         } else if let Some(l) = walk.level {
                             set(&mut values[usize::from(l.deep)], c, c + 1);
+                        }
+                    }
+                    if let Some(l) = walk.level {
+                        if total == l.max {
+                            set(&mut values[usize::from(l.deep)], c, c + 1);
+                        } else {
+                            total += 1;
                         }
                     }
                     (last, level) = (k as u32, 0);
@@ -1446,6 +1476,7 @@ impl BlockProgram {
                 // template around it, if one is, goes on.
                 if kind.resumes && wide.is_none() {
                     (last, level) = around.pop().unwrap_or((16, 0));
+                    total = total.saturating_sub(1);
                 }
                 let to = if kind.outside { c } else { c + usize::from(wide.map_or(kind.bytes, |o| o.1)) };
                 set(&mut values[hidden], t + 1, to.min(end));
@@ -1457,8 +1488,9 @@ impl BlockProgram {
     /// A rounds group over every block, block by block: from the carries' initial words, its
     /// members again until no carry changes, each carried member from the settled block before
     /// (zero at a file's first block). The values the group does not hold are made already.
-    fn rounds_group(&self, group: &Group, first: &[bool], values: &mut [Vec<u64>]) {
+    fn rounds_group(&self, group: &Group, first: &[bool], values: &mut [Vec<u64>]) -> Vec<u32> {
         let blocks = first.len();
+        let mut taken = Vec::with_capacity(blocks);
         let mut local = vec![0u64; self.ops.len()];
         let mut state = vec![0u64; group.members.len()];
         let mut outs = vec![0u64; group.members.len()];
@@ -1479,7 +1511,7 @@ impl BlockProgram {
                 })
                 .collect();
             let mut settled = false;
-            for _ in 0..MAX_ROUNDS {
+            for round in 0..MAX_ROUNDS {
                 for (k, &m) in group.members.iter().enumerate() {
                     let get = |o: u16| if group.members.binary_search(&usize::from(o)).is_ok() { local[usize::from(o)] } else { values[usize::from(o)][i] };
                     let (w, c) = match self.ops[m] {
@@ -1502,6 +1534,7 @@ impl BlockProgram {
                 let next: Vec<u64> = group.carries.iter().map(|&(_, x)| local[x]).collect();
                 if next == cur {
                     settled = true;
+                    taken.push(round as u32 + 1);
                     break;
                 }
                 cur = next;
@@ -1512,6 +1545,7 @@ impl BlockProgram {
             }
             state.copy_from_slice(&outs);
         }
+        taken
     }
 }
 

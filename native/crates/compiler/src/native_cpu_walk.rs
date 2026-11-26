@@ -276,15 +276,22 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
             let is_open = f.ins().band_imm(is_open, 1);
             let depth = f.ins().ushr_imm(last, 4);
             let depth = f.ins().band_imm(depth, 15);
-            let full = f.ins().icmp_imm(IntCC::Equal, depth, i64::from(level.max));
+            // `max` bounds the frames of every template open, not the top one's alone.
+            let total = frames_total(&mut f, last);
+            let full = f.ins().icmp_imm(IntCC::Equal, total, i64::from(level.max));
             let full = f.ins().uextend(types::I64, full);
             let over = f.ins().band(is_open, full);
+            // A close with a template's frame on top: deep too.
+            let shut = f.ins().bxor_imm(is_open, 1);
+            let none = f.ins().icmp_imm(IntCC::Equal, depth, 0);
+            let none = f.ins().uextend(types::I64, none);
+            let stray = f.ins().band(shut, none);
+            let over = f.ins().bor(over, stray);
             let over_all = f.ins().ineg(over);
             let deep_bit = f.ins().band(bit, over_all);
             or(&mut f, level.deep, deep_bit);
             let up = f.ins().bxor_imm(full, 1);
             let up = f.ins().band(is_open, up);
-            let shut = f.ins().bxor_imm(is_open, 1);
             let some = f.ins().icmp_imm(IntCC::NotEqual, depth, 0);
             let some = f.ins().uextend(types::I64, some);
             let down = f.ins().band(shut, some);
@@ -377,7 +384,8 @@ fn emit_cont(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, (closer
 /// a template's code puts the outer one's frame above it (one past `nest`: `deep` at `c`), and
 /// a string's end takes it back.
 fn template_last(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, k: usize, (c, second): (Value, Value), last: Value, level: Option<crate::block::Level>, or: &dyn Fn(&mut FunctionBuilder<'_>, u16, Value)) -> Value {
-    let nest = level.filter(|l| l.nest > 1);
+    // With a level, frames (one past `nest`: deep); without, the last template alone.
+    let nest = level;
     // A kind that resumes, closed at its own closer: the string ended, none (decision 0600), or
     // the template around it.
     if kind.resumes {
@@ -400,10 +408,16 @@ fn template_last(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, k: 
     let top = f.ins().ushr_imm(last, 8 * i64::from(l.nest - 1));
     let full = f.ins().icmp_imm(IntCC::NotEqual, top, 0);
     let full = f.ins().uextend(types::I64, full);
+    // A template's frame past `max` (the frames of every template open): deep too.
+    let total = frames_total(&mut *f, last);
+    let over = f.ins().icmp_imm(IntCC::Equal, total, i64::from(l.max));
+    let over = f.ins().uextend(types::I64, over);
+    let either = f.ins().bor(full, over);
+    let either = f.ins().band(either, at);
     let full = f.ins().band(full, at);
     let one = f.ins().iconst(types::I64, 1);
     let bit = f.ins().ishl(one, c);
-    let all = f.ins().ineg(full);
+    let all = f.ins().ineg(either);
     let deep = f.ins().band(bit, all);
     or(&mut *f, l.deep, deep);
     let pushed = f.ins().ishl_imm(last, 8);
@@ -413,6 +427,22 @@ fn template_last(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, k: 
     let kept = f.ins().bor(kept, me);
     let now = f.ins().select(full, kept, pushed);
     f.ins().select(at, now, last)
+}
+
+/// The frames open in `last` (`block::Level`): each template's, and its level's brackets. A
+/// frame byte's low four bits are its kind (none: 0), its high four its level: per byte, one where
+/// the kind is not 0 and the level, summed over the bytes.
+fn frames_total(f: &mut FunctionBuilder<'_>, last: Value) -> Value {
+    let levels = f.ins().ushr_imm(last, 4);
+    let levels = f.ins().band_imm(levels, 0x0F0F_0F0F);
+    let kinds = f.ins().band_imm(last, 0x0F0F_0F0F);
+    let used = f.ins().iadd_imm(kinds, 0x0F0F_0F0F);
+    let used = f.ins().ushr_imm(used, 4);
+    let used = f.ins().band_imm(used, 0x0101_0101);
+    let per = f.ins().iadd(levels, used);
+    let sum = f.ins().imul_imm(per, 0x0101_0101);
+    let sum = f.ins().ushr_imm(sum, 24);
+    f.ins().band_imm(sum, 255)
 }
 
 /// Where templates nest, the depth bits at an opener `bit` (`block::Level::depths`): the frames
