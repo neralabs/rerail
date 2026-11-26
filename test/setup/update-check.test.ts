@@ -120,6 +120,24 @@ describe("the daemon's daily update check", () => {
     expect(checks.newest()?.latest).toBe("0.3.1");
   });
 
+  it("says nothing where rerail update installs from beta, which never reaches latest, and asks once that changes", async () => {
+    const folder = home(), time = clock(), npm = registry("0.3.0");
+    const state = (channel: string): void => writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel, current: { version: "0.2.0-beta.1", packageRoot: folder } }));
+    state("beta");
+    const checks = start(folder, npm, time.now);
+    await time.advance(2 * DAY);
+    expect(npm.asked).toEqual([]);
+    expect(checks.newest()).toBeNull();
+
+    state("latest");
+    await time.advance(HOUR);
+    expect(npm.asked).toEqual(["latest"]);
+    expect(checks.newest()?.latest).toBe("0.3.0");
+    // Back on beta, the answer about latest is not reported.
+    state("beta");
+    expect(checks.newest()).toBeNull();
+  });
+
   it("drops an older daemon's answer about next, and asks about latest at its first look", async () => {
     const folder = home(), time = clock(), npm = registry("0.3.0");
     writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: "next", current: { version: "0.3.0-next.2", packageRoot: folder } }));

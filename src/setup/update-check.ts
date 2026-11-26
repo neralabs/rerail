@@ -1,7 +1,8 @@
 /**
  * The daemon's daily update check: once a day it asks npm for the version under the `latest` dist-tag, and keeps the
  * answer, so `/healthz` and the dashboard can say a newer Rerail is out. It asks about `latest` whatever channel
- * `rerail update` installs from: a release candidate under `next` is never recommended. Unless a remote is added or Merge
+ * `rerail update` installs from: a release candidate under `next` is never recommended. It checks only where a bare
+ * `rerail update` reaches what it names, on `latest` and `next`, and says nothing on another channel (`beta`). Unless a remote is added or Merge
  * Assist is on (internal testing), it is the only request Rerail makes on its own, apart from an npm rebuild of the
  * SQLite binding when it fails to load (docs/privacy.md). It installs nothing: `rerail update` stays the only way a
  * new version arrives.
@@ -16,9 +17,9 @@ import { join } from "node:path";
 import { z } from "zod";
 import { ACTIVE_PROFILE_FILE } from "../activation/customer-profile.js";
 import { replaceFileSync } from "../engine/file-replace.js";
-import { UPDATE_CHECK_FILE } from "../engine/storage/rerail-home.js";
+import { UPDATE_CHECK_FILE, UPDATE_STATE_FILE } from "../engine/storage/rerail-home.js";
 import { type NpmRunner, runNpm } from "../runtime/npm.js";
-import { NpmPackageRegistry, type PackageRegistry } from "./updater.js";
+import { DEFAULT_UPDATE_CHANNEL, NpmPackageRegistry, type PackageRegistry } from "./updater.js";
 
 export { UPDATE_CHECK_FILE };
 
@@ -30,6 +31,8 @@ const DUE_LOOK_MS = 60 * 60_000;
 const FIRST_LOOK_MS = 60_000;
 /** The dist-tag the check asks about: released versions only, never a `next` release candidate. */
 const CHECKED_CHANNEL = "latest";
+/** The channels whose bare `rerail update` installs every version under `latest`: a promotion raises `next` to it. */
+const CHANNELS_REACHING_LATEST: ReadonlySet<string> = new Set([CHECKED_CHANNEL, "next"]);
 
 /** The newest Rerail under `latest` and when npm said so (epoch ms), as `/healthz.update` reports it. */
 export interface NewestRelease {
@@ -41,7 +44,8 @@ export interface NewestRelease {
 export interface UpdateChecks {
   /**
    * The last answer about `latest`; null before the first one (an older daemon's answer about another channel does
-   * not count), and while a signed customer profile is active.
+   * not count), while `rerail update` installs from a channel other than `latest` or `next`, and while a signed
+   * customer profile is active.
    */
   newest(): NewestRelease | null;
   /** Stops asking. An ask still out is not awaited: its answer is dropped, and npm ends on its own timeout. */
@@ -86,9 +90,23 @@ function profileActive(home: string): boolean {
   return existsSync(join(home, ACTIVE_PROFILE_FILE));
 }
 
-/** The channel the check asks about, `latest`; undefined while a signed customer profile is active. */
+/**
+ * The channel the check asks about, `latest`; undefined while a signed customer profile is active, and while a bare
+ * `rerail update` installs from a channel that does not reach `latest` (`beta`): its "Update available" would stay
+ * after the update.
+ */
 function checkedChannel(home: string): string | undefined {
-  return profileActive(home) ? undefined : CHECKED_CHANNEL;
+  return profileActive(home) || !CHANNELS_REACHING_LATEST.has(recordedChannel(home)) ? undefined : CHECKED_CHANNEL;
+}
+
+/** The channel a bare `rerail update` installs from: the one `update-state.json` records, else `latest`. */
+function recordedChannel(home: string): string {
+  try {
+    const { channel } = JSON.parse(readFileSync(join(home, UPDATE_STATE_FILE), "utf8")) as { channel?: unknown };
+    return typeof channel === "string" ? channel : DEFAULT_UPDATE_CHANNEL;
+  } catch {
+    return DEFAULT_UPDATE_CHANNEL;
+  }
 }
 
 function readRecord(path: string): UpdateCheckRecord | undefined {
@@ -166,7 +184,7 @@ export function startUpdateChecks(options: UpdateCheckOptions): UpdateChecks {
   const timer = setInterval(look, options.lookEveryMs ?? DUE_LOOK_MS);
   timer.unref();
   return {
-    // Read on every `/healthz`: a profile can be activated between two looks.
+    // Read on every `/healthz`: the channel can change, or a profile be activated, between two looks.
     newest: () => answerFor(record, checkedChannel(home)),
     stop: () => {
       stopped = true;
