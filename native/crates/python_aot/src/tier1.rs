@@ -2914,6 +2914,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             break 'tokens;
                         }
                     }
+                    clear(&mut code_l, s, l);
                     at = l + 1;
                     if at >= base + 64 {
                         b = at / 64;
@@ -2981,6 +2982,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             break 'tokens;
                         }
                     }
+                    clear(&mut code_l, s, l);
                     at = l + 1;
                     if at >= base + 64 {
                         b = at / 64;
@@ -3043,6 +3045,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             break 'tokens;
                         }
                     }
+                    clear(&mut code_l, s, l);
                     at = l + 1;
                     if at >= base + 64 {
                         b = at / 64;
@@ -3105,6 +3108,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             break 'tokens;
                         }
                     }
+                    clear(&mut code_l, s, l);
                     at = l + 1;
                     if at >= base + 64 {
                         b = at / 64;

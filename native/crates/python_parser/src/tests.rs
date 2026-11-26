@@ -79,6 +79,8 @@ fn blocks_are_the_lean_parsers() {
     // (tree-sitter's scanner dedents past them); one less deep than the next line is the block's.
     same(&["if a:\n  b\n  # c\nd\n", "if a:\n  b\n# c\nd\n", "if a:\n  b\n  # c\n", "if a:\n  if b:\n    c\n  # d\ne\n", "if a:\n  b\n  # c\n# d\ne\n"]);
     same(&["if a:\n  b\n# c\n  d\n", "if a:\n  b\n      # c\nd\n"]);
+    // A dedent past two levels ends both: the `else` after it is the outer statement's, not the inner `while`'s or `if`'s.
+    same(&["if a:\n  while b:\n    c\nelse:\n  d\n", "if a:\n  if b:\n    c\n  elif d:\n    e\nelse:\n  f\n", "try:\n  for a in b:\n    c\nexcept E:\n  d\n"]);
 }
 
 #[test]
@@ -296,6 +298,8 @@ fn corpus() {
     let dir = std::env::var("RERAIL_PYTHON_CORPUS").expect("set RERAIL_PYTHON_CORPUS");
     let c = compiled().expect("compiles");
     let (mut same, mut refused, mut differ, mut lean_refused, mut rounds_off) = (0, 0, 0, 0, 0);
+    // The parser as Rust where the interpreter is the lean parser: its tier 1 the interpreter's, then its tape.
+    let (mut aot_same, mut aot_off) = (0usize, 0usize);
     let mut taken: std::collections::BTreeMap<(usize, u32), usize> = Default::default();
     let (mut voted, mut alone) = (0usize, 0usize);
     let mut why: std::collections::BTreeMap<String, usize> = Default::default();
@@ -355,6 +359,26 @@ fn corpus() {
             }
             Some(image) if image_text(&image).as_deref() == Ok(&want) => {
                 same += 1;
+                let aot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tier1_differs(&c, &text).map_or_else(|| aot_text(&text).map_err(|at| format!("refused at byte {at}")), Err)));
+                match aot {
+                    Ok(Ok(t)) if t == want => aot_same += 1,
+                    Ok(Ok(got)) => {
+                        aot_off += 1;
+                        let at = got.lines().zip(want.lines()).position(|(a, b)| a != b).unwrap_or(0);
+                        let line = |t: &str| t.lines().nth(at).unwrap_or("").to_owned();
+                        let before = want.lines().nth(at.saturating_sub(1)).unwrap_or("").trim().to_owned();
+                        eprintln!("aot-differs tape: `{}` for `{}` after `{before}` :: {}", line(&got).trim(), line(&want).trim(), p.display());
+                    }
+                    Ok(Err(e)) => {
+                        aot_off += 1;
+                        eprintln!("aot-differs {} :: {}", e.chars().take(200).collect::<String>(), p.display());
+                    }
+                    Err(e) => {
+                        aot_off += 1;
+                        let m = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
+                        eprintln!("aot-panics {m} :: {}", p.display());
+                    }
+                }
                 // The regions as rounds (Metal's form) against the walk, and the rounds each block took.
                 if let Some((k, at)) = rounds_differ(text.as_bytes()) {
                     rounds_off += 1;
@@ -397,7 +421,9 @@ fn corpus() {
     let blocks: usize = taken.values().sum();
     eprintln!("rounds a block: {:.2} alone, {:.2} voted in 32s; {blocks} blocks", alone as f64 / blocks.max(1) as f64, voted as f64 / blocks.max(1) as f64);
     eprintln!("python corpus: {same} the same, {refused} refused, {differ} differ ({lean_refused} the lean parser refuses); {rounds_off} whose rounds differ from the walk");
+    eprintln!("python corpus as Rust: {aot_same} of the {same} the same, {aot_off} not");
     assert_eq!(differ, 0);
+    assert_eq!(aot_off, 0);
     assert_eq!(rounds_off, 0);
 }
 

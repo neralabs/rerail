@@ -1,6 +1,7 @@
-//! The parser as Rust against the lean parser, over the `.py` files under a directory, each side many times:
-//! `compare <dir> <seconds a side>`. Only the files both parse are timed. Each side's lexer alone (the AOT's tier 1,
-//! the lean parser's tokens), then its whole parse (to the format's columns, to the lean tape), on one thread.
+//! The parser as Rust (`rerail-python-aot`, the Bitlex compiler's) against the lean parser, over the `.py` files under a
+//! directory, each side many times: `compare_aot <dir> <seconds a side>`. Only the files both parse are timed. Each
+//! side's lexer alone (the AOT's tier 1, the lean parser's tokens), then its whole parse (to the format's columns, to
+//! the lean tape), on one thread.
 fn files(dir: &std::path::Path, out: &mut Vec<Vec<u8>>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     let mut paths: Vec<_> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();

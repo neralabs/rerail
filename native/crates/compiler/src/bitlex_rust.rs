@@ -1164,7 +1164,10 @@ impl<'a> G<'a> {
                 }
             }
             Gram::Star(a) | Gram::Plus(a) => {
-                let mut r: Vec<&Gram> = vec![g];
+                // After an element the repetition goes on or ends: a `+` past its first is a `*`, so what follows an
+                // element may be what follows the repetition (a block's last statement, the marks that end the block).
+                let again = Gram::Star(a.clone());
+                let mut r: Vec<&Gram> = vec![&again];
                 r.extend_from_slice(rest);
                 self.sites(a, &r, caller, out)?;
             }
@@ -1338,11 +1341,13 @@ impl<'a> G<'a> {
             }
             Gram::Star(a) | Gram::Plus(a) => {
                 let mut out = Block::new();
+                // After an element the repetition goes on or ends: a `+` past its first is a `*` (`sites`).
+                let again = Gram::Star(a.clone());
                 if let Gram::Plus(_) = g {
-                    let r: Vec<&Gram> = std::iter::once(g).chain(rest.iter().copied()).collect();
+                    let r: Vec<&Gram> = std::iter::once(&again).chain(rest.iter().copied()).collect();
                     out.extend(self.code(a, &r, rule)?);
                 }
-                let r: Vec<&Gram> = std::iter::once(g).chain(rest.iter().copied()).collect();
+                let r: Vec<&Gram> = std::iter::once(&again).chain(rest.iter().copied()).collect();
                 let arms = self.arms(a, &r, rule)?;
                 let ex = self.exits_ending(rest, rule)?;
                 let arms: Vec<(Vec<First>, Block)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();

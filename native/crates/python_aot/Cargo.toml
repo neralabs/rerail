@@ -17,5 +17,3 @@ rerail-tape-format = { path = "../tape_format" }
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-python-aot = { path = ".", features = ["test-hooks"] }
-# The lean parser the example `compare` times it against.
-rerail-python-lean = { path = "../python_lean", features = ["test-hooks"] }

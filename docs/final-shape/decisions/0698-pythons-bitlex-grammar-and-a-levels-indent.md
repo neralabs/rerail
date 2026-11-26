@@ -320,3 +320,15 @@ statements and blocks end.
       false: a name's start excludes a string prefix's first letter, and an operator's excludes an ellipsis's and a
       conversion's second byte. The token loop asks the rows whose start reads a region's `open` first, so a tail's
       `}` is a tail and not punct.
+63. **The AOT's checks run in the tests, and the corpus reads it.** The parsers' test builds depend on their AOT crates
+    with `test-hooks` (Python, Kotlin, JSON; rr's already did), so the generated checks (`code_l` against the walk's
+    `code`, the `at starts` assumes) run in every test. They had not, and the corpus found two faults they hold:
+    - a read that resumes a string clears its bytes from the loop's code, as a record does;
+    - after an element, a repetition goes on as a `*`, also for a `+` (`sites`, `code`). Read as the `+` itself, the
+      rest could not end, so a block's last statement had none of the marks that end the block in its follow. The
+      optional `else` of a `while` inside it was then asked without `dedent`, and took an outer `if`'s `else` after a
+      dedent of two levels.
+
+    The corpus test checks the AOT where the interpreter matches the lean parser: tier 1's records, then the tape. It
+    matches on all 1642 posthog files. The comparison with the lean parser is python_lean's example `compare_aot`, which
+    builds the AOT without its checks.

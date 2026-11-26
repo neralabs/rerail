@@ -5549,7 +5549,6 @@ name = "rerail-python-aot"
 version = "0.1.0"
 dependencies = [
  "rerail-python-aot",
- "rerail-python-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -5558,6 +5557,7 @@ dependencies = [
 name = "rerail-python-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-python-aot",
  "rerail-python-lean",
  "rerail-simd8",
  "rerail-tape-format",

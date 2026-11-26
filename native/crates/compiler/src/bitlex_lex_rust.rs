@@ -5575,7 +5575,9 @@ impl Gen<'_> {
                         Some((c2, _)) => format!("if !bit(&{}, close) {{\n                        held = None;\n                        template = usize::MAX;\n                    }}", self.val(&c2)?),
                         None => "held = None;".to_owned(),
                     };
-                    Some(format!("            // Resumes the open string's record: no record of its own.\n            match held {{\n                Some(o) => {{\n                    // SAFETY: record `o` is written (`o < len`).\n                    unsafe {{ (*out.add(o)).last = l as u32 }};\n                    {again}\n                }}\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}\n            at = l + 1;\n            if at >= base + 64 {{\n                b = at / 64;\n                continue 'tokens;\n            }}\n            firsts &= !0u64 << (at - base);\n            continue;\n        }}"))
+                    // Its bytes are a region token's, out of the code the loop keeps (`code_l`), as a record's are.
+                    let code_l = if self.code_after.is_empty() { "" } else { "            clear(&mut code_l, s, l);\n" };
+                    Some(format!("            // Resumes the open string's record: no record of its own.\n            match held {{\n                Some(o) => {{\n                    // SAFETY: record `o` is written (`o < len`).\n                    unsafe {{ (*out.add(o)).last = l as u32 }};\n                    {again}\n                }}\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}\n{code_l}            at = l + 1;\n            if at >= base + 64 {{\n                b = at / 64;\n                continue 'tokens;\n            }}\n            firsts &= !0u64 << (at - base);\n            continue;\n        }}"))
                 }
                 _ => None,
             };
