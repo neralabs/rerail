@@ -398,4 +398,4 @@ pub fn merge_case<'r>(shape: &'r Shape, runs: &'r [Vec<(Vec<i64>, i32)>], count:
 
 #[cfg(test)]
 #[path = "trace_tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -1239,3 +1239,43 @@ Checks (Relax, local, 73 of 73): `intern_names_only_identifiers_and_strings` int
 are exactly its path, its module, its identifiers and variables, and its string's value. A number's text, a string's
 quoted text and an operator are not among them. The operator reads in `text` as the language's `!=`. The shape
 script refuses interning every leaf, and the language's names interned without the one guard.
+
+**Slabs as directory blocks (for item 4)**. P§11.4 has sources and tapes read in place in residency slabs. The
+directory already makes a block in a pinned slab (`make_placed(PLACE_SLAB, …)`, from the source `with_slabs` gives
+it), and a trace's layers lie there under `Placement::PinnedSlab` (`a_slab_trace_lies_in_its_slabs`). A document's
+tape block did not: it was always a sparse reservation in the run's memory. `files::tape_block` now makes it in a
+slab when the directory has a source of them, and in the run's memory otherwise.
+
+- A slab is a directory block like any other. It is referred to, frozen, housed as a blob and read by launches as
+  the reservation was, so no reader changed.
+- When nothing holds the block, its slab goes back to its source at the sweep.
+- A slab is sized at the reservation's bound (80 times the source). A run-memory block is sparse, so only what is
+  written is resident; a slab is not.
+
+Checks (Relax, local, 74 of 74): `a_documents_tape_block_lies_in_a_slab_when_the_directory_has_slabs` reads l0 with a
+slab source. Its tape block lies in a slab, and its source and tape read there as in run memory. It is one slab, and
+the slab is given back once the block is let go. The test slab source moved out of the trace test so both tests share
+it.
+
+**P§12 item 7's trait against ours, re-read**. P§12's `DeltaOp` has associated `Ports` and `Cache` types, and
+`delta(ins: &In<Self::Ports>, want: &Bistate, cache: &mut CacheW<Self::Cache>, out: &mut Out<Self::Ports>, asks:
+&mut LayerW) -> Work`, with `run(ins: &At<Self::Ports>, out)`. `contract::DeltaOp` differs as follows:
+
+- **A context, `cx: &mut Cx`** (the registry, the directory, the blobs, the trace and cache operations). P§12's
+  trait has no way to reach the directory its launches run in. Without `cx`, an operator would hold it itself, or
+  reach it as global state, which the engine does not have.
+- **`Result<Work, String>`, and `run` returns `Result`**. K0 refuses a construct outside it, naming its node, and the
+  refusal must reach the caller (`k0_pass_refuses_an_aggregate_through_l1`). P§12's `Work` names excess, not refusal.
+- **`want: Option<&Bistate>`**. `None` stands for all of the outputs. Every caller so far passes `None`: no operator
+  yet takes demand.
+- **No associated `Ports` or `Cache` types**. Ports are a value (`fn ports() -> Ports`), `In`, `At` and `Out` hold
+  vectors by port index, and `CacheW` is untyped. Nothing forces this: every use of `DeltaOp` is generic
+  (`Instance::step<O>`, `apply`, `reference`, `harness_on`) and none is `dyn`. So a port's count and shape are
+  checked when the instance is made, not when the operator compiles.
+- **`Out` carries each port's kept head** beside its δ runs block. This is P§3's "the file's last result is its output
+  trace's before": L1 retracts a gone document from the rows its output keeps.
+- **`asks` is an `Out`**, a runs block an input port, where P§12 has one `LayerW`.
+
+P§3 and §11.3 give the cache plans and compiled code only: the last result is the output trace's before, not a cache
+entry. So L1's cache stays empty, and L5's check (a cache read as ∅ unless it names the run's before) passes for L1
+without testing anything; the toy operator's tests are the ones that exercise it.

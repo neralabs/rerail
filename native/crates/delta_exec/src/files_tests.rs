@@ -137,3 +137,27 @@ fn a_file_that_does_not_parse_is_refused_naming_its_path() {
     let e = files.answer("missing.rerail", &reg, &mut blobs, &mut dir).unwrap_err();
     assert!(e.starts_with("missing.rerail: "), "{e}");
 }
+
+/// With a source of pinned slabs, a document's tape block lies in a slab (P§11.4: sources and tapes read in place in
+/// residency slabs): its source and tape read there as they do in the run's memory, and the slab goes back to its
+/// source when nothing holds the block.
+#[test]
+fn a_documents_tape_block_lies_in_a_slab_when_the_directory_has_slabs() {
+    let (_, mut files) = root("slab");
+    let (slabs, live) = crate::trace::tests::test_slabs();
+    let mut reg = crate::op::Registry::default();
+    let traces = crate::trace::TraceOps::declare(&mut reg).unwrap();
+    let (mut blobs, mut dir) = (Blobs::new(&traces), Directory::default().with_slabs(slabs));
+    let d = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
+    let (s, t) = (blobs.get(&dir, &d.after.source).unwrap().unwrap(), blobs.get(&dir, &d.after.tape).unwrap().unwrap());
+    assert!(dir.block(t.block).unwrap().in_slab(), "the tape block in a slab");
+    assert_eq!(live.load(std::sync::atomic::Ordering::Relaxed), 1, "one slab: the tape block's");
+    {
+        let l = dir.read("t", &[s.block, t.block]).unwrap();
+        assert_eq!(&l.block(0)[s.at..s.at + s.len], crate::L0.as_bytes());
+        assert!(reads(l.block(0), s, l.block(1), t).len() > 100);
+    }
+    dir.release(t.block);
+    dir.sweep();
+    assert_eq!(live.load(std::sync::atomic::Ordering::Relaxed), 0, "the slab given back");
+}

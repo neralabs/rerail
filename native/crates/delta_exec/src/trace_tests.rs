@@ -937,11 +937,9 @@ impl Drop for TestSlab {
     }
 }
 
-/// P§12's placement, a pinned slab: each layer's block lies in a slab from the directory's source (the device's
-/// memory, read in place), and reads as its set; a rolled-up generation's slab goes back to its source.
-#[test]
-fn a_slab_trace_lies_in_its_slabs() {
-    use rerail_blocks::layer::Placement;
+/// A source of pinned slabs for a test (the device's pool stands behind it in the engine): heap pages, and the count
+/// of slabs live.
+pub(crate) fn test_slabs() -> (crate::dir::Slabs, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
     let live = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let l2 = live.clone();
     let slabs: crate::dir::Slabs = Box::new(move |bytes| {
@@ -951,6 +949,15 @@ fn a_slab_trace_lies_in_its_slabs() {
         l2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Some(Box::new(TestSlab { base, layout, live: l2.clone() }) as Box<dyn rerail_blocks::block::Backing>)
     });
+    (slabs, live)
+}
+
+/// P§12's placement, a pinned slab: each layer's block lies in a slab from the directory's source (the device's
+/// memory, read in place), and reads as its set; a rolled-up generation's slab goes back to its source.
+#[test]
+fn a_slab_trace_lies_in_its_slabs() {
+    use rerail_blocks::layer::Placement;
+    let (slabs, live) = test_slabs();
     let mut s = shape();
     s.placement = Placement::PinnedSlab;
     let mut reg = Registry::default();
