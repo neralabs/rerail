@@ -266,7 +266,7 @@ pub enum SettingsScope {
 /// path, a variable its head drops) is of every file's rows, and so is a memoised relation still keyed by one.
 pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> BTreeMap<String, SettingsScope> {
     use crate::code_rule_dsl::logic::program_image::TermRef;
-    use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, setting_by_path};
+    use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path};
     /// A relation's reads of the settings: of any file's, of its own file's, and keyed by its columns' paths or folders.
     #[derive(Clone, Default, PartialEq)]
     struct Reach {
@@ -277,7 +277,7 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
     }
     let v = &local.v;
     let base = |rel: &str| -> Option<Reach> {
-        if SETTINGS_BY_FOLDER.contains(&rel) {
+        if setting_by_folder(rel) {
             Some(Reach { folder: [0].into(), ..Reach::default() })
         } else if setting_by_path(rel).is_some() {
             Some(Reach { path: [0].into(), ..Reach::default() })
@@ -385,7 +385,7 @@ pub struct SettingsDigests {
 impl SettingsDigests {
     /// Of `rels`: each setting the run binds, by name.
     pub fn of(rels: &[(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)]) -> Self {
-        use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, setting_by_path};
+        use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path};
         let mut out = SettingsDigests::default();
         let mut hash = Sha256::new();
         hash.update(b"rerail.settings/v1\0");
@@ -405,7 +405,7 @@ impl SettingsDigests {
                     out.hop.insert(k, c);
                 }
                 Some(&mut out.by_path)
-            } else if SETTINGS_BY_FOLDER.contains(name) {
+            } else if setting_by_folder(name) {
                 Some(&mut out.by_folder)
             } else {
                 None

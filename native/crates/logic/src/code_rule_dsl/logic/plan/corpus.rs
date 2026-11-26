@@ -1995,6 +1995,9 @@ fn run_observed_within(
     } else {
         phases::facts(&*v, &shape, root, modes, binding, chunk_nodes, typing, options)?
     };
+    // How the phases' exports are keyed in the per-file memo, as they declare it (decision 0705), for the rest of the
+    // run: `file_local::setting_by_path` and `setting_by_folder` read them. A phase's own run keeps its reader's.
+    let _declared_keys = (!phase_runs.is_empty()).then(|| crate::code_rule_dsl::logic::plan::phased::bind_keys(phase_runs.iter().flat_map(|r| r.keys.iter().cloned()).collect::<Vec<_>>()));
     phased.extend(git::inputs(&*v, root, options, &mut source_checks));
     if let Some(history) = analysis_history::Read::needed(&v) {
         let (rows, digest) = history.records()?;
@@ -2351,6 +2354,13 @@ fn run_observed_within(
         // make the next run cold.
         for switch in PREPARING {
             hash.update(format!("\0{switch}={}", crate::code_rule_dsl::logic::profile::var(switch).unwrap_or_default()).as_bytes());
+        }
+        // Its inputs' declared keys (decision 0705): which are settings, and how each keys a file's entry, as the
+        // library and the phases declare them. An edit of a declaration is another prepared program.
+        for rel in crate::code_rule_dsl::logic::program_image::fields::ProgramFields::input_names(&*v) {
+            if let Some(keyed) = crate::code_rule_dsl::logic::plan::phased::declared_key(&rel) {
+                hash.update(format!("\0keyed {rel} {keyed:?}").as_bytes());
+            }
         }
         hash.finalize().into()
     };

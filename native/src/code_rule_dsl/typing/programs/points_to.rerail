@@ -19,7 +19,9 @@
 //   type_of_at(p, t, u)       value position t may hold an instance of class u (a workspace class's qualified name,
 //                             or a builtin's name), and so on for the rest of python/points-to's types
 .phase points_to
-.export call_target_at, call_open_at, type_of_at, type_open_at, proven_type_at, possible_type_at, possible_open_at
+// Each keyed by the path of the file whose node it is about, and naming no other key (decision 0677, note t55; 0705).
+.export call_target_at by_path, call_open_at by_path, type_of_at by_path, type_open_at by_path, proven_type_at by_path,
+    possible_type_at by_path, possible_open_at by_path
 
 #include "python/points-to-solve.rerail"
 
