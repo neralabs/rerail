@@ -740,6 +740,20 @@ impl ProgramPass for DemandExports {
                             Filter::Key(k, x) => filters.push((may_name(k), x.clone())),
                         }
                     }
+                    // Each variable named by its first place, so reads that differ only in their rules' names are
+                    // one rule (SPIKE C: xd_rf_ref's four scans of rf_ref were one rule under four namings).
+                    let mut canon: HashMap<String, String> = HashMap::new();
+                    let canonical = std::env::var("RERAIL_SPIKE_XD_CANON").as_deref() != Ok("off");
+                    for (p, x) in vars.iter_mut().enumerate() {
+                        if canonical && !x.starts_with("xd_c") {
+                            *x = canon.entry(x.clone()).or_insert_with(|| format!("xd_v{p}")).clone();
+                        }
+                    }
+                    for (_, x) in filters.iter_mut() {
+                        if let Some(c) = canon.get(x.as_str()) {
+                            *x = c.clone();
+                        }
+                    }
                     // The rule's text, as the tree's dedupe reads it.
                     let text = format!(
                         "{xd}({}) :- {rel}({}){}{}",

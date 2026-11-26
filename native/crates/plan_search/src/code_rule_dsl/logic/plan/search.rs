@@ -3057,7 +3057,22 @@ impl Model {
             return true;
         }
         let driven = first.or_else(|| b.demand_first()).is_none_or(|f| order.first().is_some_and(|s| s.at == f));
-        driven && (first.is_some() || order.first().is_none_or(|s| b.demand_bounds_lead(s.at)))
+        driven && (first.is_some() || order.first().is_none_or(|s| self.lead_bounded(b, s.at)))
+    }
+
+    /// Q59's test of a demanded relation's rule's lead (`Body::demand_bounds_lead`), or (SPIKE C) a positive atom of
+    /// a relation already made (not being solved) with no more rows than the demand: `bind_only`'s `tgt($t)`, 51 k
+    /// rows, was replanned from its 1.9 M-row demand.
+    pub fn lead_bounded(&self, b: &Body<'_>, lead: usize) -> bool {
+        if b.demand_bounds_lead(lead) {
+            return true;
+        }
+        if std::env::var("RERAIL_SPIKE_SMALL_LEAD").as_deref() == Ok("off") {
+            return false;
+        }
+        let (Some(d), Some(a)) = (b.own_demand().and_then(|d| b.plain_atom(d)), b.plain_atom(lead)) else { return false };
+        let rel = b.rel(a);
+        !a.neg() && !self.stats.solving.contains(rel) && self.card(rel) <= self.card(b.rel(d))
     }
 
     /// Records the work a rule's line did in the engine (`plan_work`, every order it ran in) on its kept plan, for
@@ -3658,7 +3673,7 @@ impl Model {
             if first.is_none()
                 && fixed.is_none()
                 && let Some(d) = b.own_demand()
-                && got.0.0.first().is_some_and(|s| !b.demand_bounds_lead(s.at))
+                && got.0.0.first().is_some_and(|s| !self.lead_bounded(b, s.at))
             {
                 return self.plan_search(pf, b, Some(d), None, explain, cx);
             }
