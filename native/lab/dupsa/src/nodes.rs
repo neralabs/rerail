@@ -276,3 +276,50 @@ pub fn tape_lines(capture: &Capture, key: LineKey) -> crate::lines::LineDocs {
     docs.distinct = ids_of.len() as u32;
     docs
 }
+
+/// The leaves `tape_lines` keys each counted line by, for one captured file: (line, [(kind name, token text)]).
+pub fn tape_line_tokens(capture: &Capture, file: usize) -> Vec<(u32, Vec<(String, String)>)> {
+    let f = &capture.files[file];
+    let mut out: Vec<(u32, Vec<(String, String)>)> = Vec::new();
+    let Some(lang) = f16::lang(f.tag) else { return out };
+    let t = &capture.bytes[f.image.clone()];
+    let src = &capture.bytes[f.source.clone()];
+    let Ok(v) = f16::placement(t).and_then(|p| p.view(lang, 0)) else { return out };
+    let name = |num: u32| {
+        let kind = lang.table().entry(num).kind;
+        lang.names().kind_name(kind).unwrap_or("?").to_owned()
+    };
+    let mut j = 0u32;
+    while j < v.nodes {
+        let num = reads::number(t, &v, j);
+        if name(num).ends_with("comment") {
+            j += reads::size(t, &v, j).max(1);
+            continue;
+        }
+        if reads::slot(t, &v, j) & 1 == 1 {
+            let (s, e) = (reads::start(t, &v, j), reads::end(t, &v, j));
+            if e > s {
+                let line = reads::line(t, &v, s) + 1;
+                let tok = (name(num), String::from_utf8_lossy(&src[s as usize..e as usize]).into_owned());
+                match out.last_mut() {
+                    Some((l, toks)) if *l == line => toks.push(tok),
+                    _ => out.push((line, vec![tok])),
+                }
+            }
+        }
+        j += 1;
+    }
+    out
+}
+
+/// Node `j`'s kind name and source line (from 1), for `explain`.
+impl NodeDocs<'_> {
+    pub fn kind_and_line(&self, d: usize, j: usize) -> (String, u32) {
+        let f = &self.capture.files[self.files[d]];
+        let lang = f16::lang(f.tag).expect("a table");
+        let (t, v) = (self.image(d), &self.views[d]);
+        let kind = lang.table().entry(reads::number(t, v, j as u32)).kind;
+        let name = lang.names().kind_name(kind).unwrap_or("?").to_owned();
+        (name, reads::line(t, v, reads::start(t, v, j as u32)) + 1)
+    }
+}

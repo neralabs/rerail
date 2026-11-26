@@ -250,12 +250,121 @@ fn probe_command(o: Opts) -> Result<(), String> {
     Ok(())
 }
 
+fn json_str(s: &str) -> String {
+    let mut o = String::with_capacity(s.len() + 2);
+    o.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            '\n' => o.push_str("\\n"),
+            '\t' => o.push_str("\\t"),
+            c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+/// `explain <capture>`: every method's symbols for a small capture, as JSON, for the explorer's method pages: per
+/// method, per document, each unit's source line, a label (what the symbol is made of) and its key (the interned
+/// symbol, shared across documents).
+fn explain_command(o: Opts) -> Result<(), String> {
+    let [cap] = &o.pos[..] else { return Err("usage: dupsa explain <capture>".into()) };
+    let capture = Capture::load(Path::new(cap))?;
+    let mut methods = Vec::new();
+    // Lines: Jeff's normalisation over the captured sources.
+    {
+        let mut ids = std::collections::HashMap::new();
+        let mut norm = String::new();
+        let mut docs = Vec::new();
+        for f in &capture.files {
+            let text = String::from_utf8_lossy(&capture.bytes[f.source.clone()]).into_owned();
+            let mut units = Vec::new();
+            for (k, raw) in text.split('\n').enumerate() {
+                if lines::normalise(raw, lines::hash_comments(&f.path), &mut norm) {
+                    let next = ids.len();
+                    let id = *ids.entry(norm.clone()).or_insert(next);
+                    units.push(format!("[{},{},{}]", k + 1, json_str(&norm), id));
+                }
+            }
+            docs.push(units);
+        }
+        methods.push(("lines", docs));
+    }
+    // Tape tokens and shapes.
+    for (name, key) in [("tlines-text", rerail_dupsa_lab::nodes::LineKey::Text), ("tlines-shape", rerail_dupsa_lab::nodes::LineKey::Shape)] {
+        let ld = rerail_dupsa_lab::nodes::tape_lines(&capture, key);
+        let mut docs = Vec::new();
+        for (d, _) in capture.files.iter().enumerate() {
+            let toks = rerail_dupsa_lab::nodes::tape_line_tokens(&capture, d);
+            let units: Vec<String> = ld.ids[d]
+                .iter()
+                .zip(&ld.lines[d])
+                .map(|(&id, &line)| {
+                    let label = toks
+                        .iter()
+                        .find(|(l, _)| *l == line)
+                        .map(|(_, ts)| {
+                            ts.iter()
+                                .map(|(k, t)| if key == rerail_dupsa_lab::nodes::LineKey::Text { format!("{k}:{t}") } else { format!("{k}:{}", t.len()) })
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        })
+                        .unwrap_or_default();
+                    format!("[{line},{},{id}]", json_str(&label))
+                })
+                .collect();
+            docs.push(units);
+        }
+        methods.push((name, docs));
+    }
+    // Nodes: rows and local symbols, one language (the capture's first file's).
+    let tag = capture.files.first().ok_or("an empty capture")?.tag;
+    for (name, cells) in [("nodes-row", Cells::Row), ("nodes-local", Cells::Local)] {
+        let nd = NodeDocs::new(&capture, tag, cells)?;
+        let mut docs = Vec::new();
+        for d in 0..nd.count() {
+            let units: Vec<String> = (0..nd.doc_len(d))
+                .map(|j| {
+                    let (kind, line) = nd.kind_and_line(d, j);
+                    let v = nd.value(d, j, cells);
+                    let label = match cells {
+                        Cells::Row => format!("{kind} | code {} slot {} gap {} len {}", v & 0xff, (v >> 8) & 0xffff_ffff, (v >> 40) & 0xffff_ffff, v >> 72),
+                        _ => {
+                            let gap = (v >> 40) & 0x1_ffff_ffff;
+                            let gap = if gap >> 32 == 1 { format!("newline+{}", gap & 0xffff_ffff) } else { gap.to_string() };
+                            format!("{kind} | code {} {} gap {gap} len {}", v & 0xff, if (v >> 8) & 1 == 1 { "leaf" } else { "inner" }, v >> 80)
+                        }
+                    };
+                    format!("[{line},{},{}]", json_str(&label), nd.at(d, j))
+                })
+                .collect();
+            docs.push(units);
+        }
+        methods.push((name, docs));
+    }
+    let docs_json: Vec<String> = capture
+        .files
+        .iter()
+        .map(|f| format!("{{\"path\":{},\"source\":{}}}", json_str(&f.path), json_str(&String::from_utf8_lossy(&capture.bytes[f.source.clone()]))))
+        .collect();
+    let methods_json: Vec<String> = methods
+        .iter()
+        .map(|(m, docs)| format!("{}:[{}]", json_str(m), docs.iter().map(|u| format!("[{}]", u.join(","))).collect::<Vec<_>>().join(",")))
+        .collect();
+    println!("{{\"docs\":[{}],\"methods\":{{{}}}}}", docs_json.join(","), methods_json.join(","));
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
         Some("lines") => opts(&args[1..]).and_then(lines_command),
         Some("nodes") => opts(&args[1..]).and_then(nodes_command),
         Some("tlines") => opts(&args[1..]).and_then(tlines_command),
+        Some("explain") => opts(&args[1..]).and_then(explain_command),
         Some("probe") => opts(&args[1..]).and_then(probe_command),
         _ => Err("usage: dupsa lines <root> … | dupsa nodes <capture> …".into()),
     };

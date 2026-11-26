@@ -1,0 +1,20 @@
+#note	Release builds: Jeff's engine from his commit, this branch's engine for parsing, dupsa. The lesser of two rounds by instructions; CPU is user + system. This Mac's load average was 35–38 throughout, which inflates CPU and wall but not instructions. Node and tape-line runs read tapes made by the parse rows, which every engine rule shares.
+group	method	instructions (G)	CPU (s)	wall (s)	peak (MB)
+native/src (Rust), 1,502 files	Jeff's rule (engine, .rerail)	361.4	21.44	6.08	959
+native/src (Rust), 1,502 files	Lines (Jeff's rule on a suffix array)	3.4	0.48	1.91	77
+native/src (Rust), 1,502 files	Tape tokens	10.7	1.24	1.67	363
+native/src (Rust), 1,502 files	Tape shapes	10.0	1.14	1.74	316
+native/src (Rust), 1,502 files	Node rows	40.3	7.94	8.10	460
+native/src (Rust), 1,502 files	Node symbols	59.3	8.52	10.30	389
+native/src (Rust), 1,502 files	Union: Lines + Node symbols + merge	62.9	9.03	12.21	389
+native/src (Rust), 1,502 files	Parse to tapes (capture-tapes)	16.2	1.62	1.30	120
+native/src (Rust), 1,502 files	Parse to tapes, every token (for tape tokens/shapes)	60.4	5.48	2.08	181
+src, test, packs, 1,350 files	Jeff's rule (engine, .rerail)	148.4	7.57	4.81	633
+src, test, packs, 1,350 files	Lines (Jeff's rule on a suffix array)	1.9	0.21	0.35	44
+src, test, packs, 1,350 files	Tape tokens	5.7	0.60	0.67	314
+src, test, packs, 1,350 files	Tape shapes	5.4	0.56	0.61	294
+src, test, packs, 1,350 files	Node rows	22.7	4.28	5.98	328
+src, test, packs, 1,350 files	Node symbols	33.9	4.51	5.53	291
+src, test, packs, 1,350 files	Union: Lines + Node symbols + merge	36.0	4.75	5.88	291
+src, test, packs, 1,350 files	Parse to tapes (capture-tapes)	21.2	1.71	0.27	169
+src, test, packs, 1,350 files	Parse to tapes, every token (for tape tokens/shapes)	67.0	5.46	0.81	382

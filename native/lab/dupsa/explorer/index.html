@@ -3,59 +3,77 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
 <style>
-/* Layout: a header strip with scope and summary, then a list of clone classes beside the selected class's detail;
-   the detail is detection first (who found which copy), then the two copies aligned line for line. */
+/* Layout: a header with three views. Findings: how-to, an UpSet diagram of the methods' intersections, then the class
+   list beside the selected class (detection, then two copies aligned). Methods: a worked example per method.
+   Speed: bar charts per scope with a hover table. */
 :root {
   --bg: #f6f7f5; --panel: #ffffff; --ink: #1a1e1b; --muted: #5d6660; --line: #d9ded9; --soft: #eceeea;
-  --accent: #1f5f8b; --add: #fbe9c8; --tok: #f2c46b; --dim: #a1a8a2;
-  --m-lines: #b06d12; --m-tlines-text: #17786a; --m-tlines-shape: #6a4ea3; --m-nodes-row: #b23e58; --m-nodes-local: #2b67b0;
+  --accent: #1f5f8b; --add: #fbe9c8; --tok: #f2c46b; --dim: #a1a8a2; --neutral: #4a524c; --hit: #dcebf6;
+  --m-lines: #b06d12; --m-tlines-text: #00826b; --m-tlines-shape: #6a4ea3; --m-nodes-row: #b23e58; --m-nodes-local: #2b67b0;
   --display: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
   --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #131614; --panel: #1b1f1c; --ink: #e4e8e4; --muted: #9aa39c; --line: #2f3531; --soft: #232825;
-  --accent: #6fb0e0; --add: #3d3420; --tok: #8a6a1f; --dim: #5f6862;
-  --m-lines: #e0a14a; --m-tlines-text: #4cc2ae; --m-tlines-shape: #a98ee6; --m-nodes-row: #ec7f96; --m-nodes-local: #73a8ee;
+  --accent: #6fb0e0; --add: #3d3420; --tok: #8a6a1f; --dim: #5f6862; --neutral: #b7bfb9; --hit: #1d3446;
+  --m-lines: #c98a2e; --m-tlines-text: #2aa58f; --m-tlines-shape: #9579d8; --m-nodes-row: #d9677f; --m-nodes-local: #5a8fd8;
   color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #131614; --panel: #1b1f1c; --ink: #e4e8e4; --muted: #9aa39c; --line: #2f3531; --soft: #232825;
-  --accent: #6fb0e0; --add: #3d3420; --tok: #8a6a1f; --dim: #5f6862;
-  --m-lines: #e0a14a; --m-tlines-text: #4cc2ae; --m-tlines-shape: #a98ee6; --m-nodes-row: #ec7f96; --m-nodes-local: #73a8ee;
+  --accent: #6fb0e0; --add: #3d3420; --tok: #8a6a1f; --dim: #5f6862; --neutral: #b7bfb9; --hit: #1d3446;
+  --m-lines: #c98a2e; --m-tlines-text: #2aa58f; --m-tlines-shape: #9579d8; --m-nodes-row: #d9677f; --m-nodes-local: #5a8fd8;
   color-scheme: dark }
 * { box-sizing: border-box }
 body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--body); }
 .wrap { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 18px 32px; max-width: 1600px; margin: 0 auto; display: grid; gap: 16px }
 header { display: grid; gap: 10px }
 h1 { font: 600 24px/1.2 var(--display); margin: 0; text-wrap: balance; letter-spacing: -0.01em }
-h2 { font: 600 17px/1.3 var(--display); margin: 0 }
-h3 { font: 600 13px/1.3 var(--body); margin: 0; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted) }
-.sub { color: var(--muted); max-width: 75ch; margin: 0 }
+h2 { font: 600 17px/1.3 var(--display); margin: 0; text-wrap: balance }
+h3 { font: 600 12px/1.3 var(--body); margin: 0; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted) }
+p { margin: 0 }
+code { font: 12.5px var(--mono); background: var(--soft); padding: 0 4px; border-radius: 3px }
+.sub { color: var(--muted); max-width: 80ch }
 .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
-.tabs button, .seg button { font: 500 13px var(--body); border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 6px 12px; cursor: pointer }
-.tabs button:first-child, .seg button:first-child { border-radius: 6px 0 0 6px } .tabs button:last-child, .seg button:last-child { border-radius: 0 6px 6px 0 }
-.tabs button + button, .seg button + button { margin-left: -1px }
-.tabs button[aria-pressed="true"], .seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink) }
-button:focus-visible, input:focus-visible, select:focus-visible, .row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px }
-.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle }
+.seg { display: inline-flex; flex-wrap: wrap }
+.seg button { font: 500 13px var(--body); border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 6px 12px; cursor: pointer; margin-left: -1px }
+.seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0 } .seg button:last-child { border-radius: 0 6px 6px 0 }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink) }
+button:focus-visible, input:focus-visible, select:focus-visible, .row:focus-visible, summary:focus-visible, .col:focus-visible, .mlist button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; flex: none }
 .chip { display: inline-flex; align-items: center; gap: 6px; font: 500 12px var(--body); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; background: var(--panel); color: var(--ink); cursor: pointer; white-space: nowrap }
-.chip[data-state="need"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink) }
-.chip[data-state="not"] { opacity: .55; text-decoration: line-through }
-.chip .n { color: var(--muted); font-variant-numeric: tabular-nums }
-.combos { display: grid; gap: 4px }
-.combo { display: grid; grid-template-columns: 92px 1fr 44px; gap: 10px; align-items: center; cursor: pointer; border-radius: 4px; padding: 2px 4px; border: 0; background: none; color: var(--ink); font: inherit; text-align: left }
-.combo:hover { background: var(--soft) }
-.combo .ms { display: flex; gap: 4px } .combo .ms .dot { opacity: .18 } .combo .ms .dot.on { opacity: 1 }
-.combo .b { height: 8px; background: var(--soft); border-radius: 2px; overflow: hidden } .combo .b i { display: block; height: 100%; background: var(--muted) }
-.combo .c { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted) }
+.btn { font: 500 12px var(--body); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; background: var(--panel); color: var(--ink); cursor: pointer }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0 }
+.pad { padding: 14px 16px; display: grid; gap: 12px; min-width: 0 }
+details.howto summary { cursor: pointer; font: 600 14px var(--body) }
+details.howto ol { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 6px; max-width: 95ch }
+.note { font-size: 12px; color: var(--muted) }
+/* UpSet */
+.upset { overflow-x: auto }
+.ugrid { display: grid; column-gap: 4px; align-items: end; width: max-content }
+.ulab { display: flex; align-items: center; gap: 8px; justify-content: flex-end; padding-right: 8px; font-size: 12.5px; white-space: nowrap; height: 22px; cursor: pointer; border: 0; background: none; color: var(--ink); font-family: inherit }
+.ulab[data-state="need"] { font-weight: 600 } .ulab[data-state="not"] { color: var(--dim); text-decoration: line-through }
+.ulab .st { font: 500 10px var(--body); text-transform: uppercase; letter-spacing: .05em; color: var(--muted); min-width: 52px; text-align: left }
+.usize { height: 22px; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums }
+.usize i { display: block; height: 8px; border-radius: 0 3px 3px 0; background: var(--neutral); opacity: .55 }
+.col { display: grid; justify-items: center; cursor: pointer; border-radius: 4px; padding: 0 1px; border: 0; background: none; color: var(--ink); font: inherit }
+.col .cnt { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; height: 14px }
+.col .vb { width: 14px; border-radius: 3px 3px 0 0; background: var(--dim) }
+.col.on .vb { background: var(--accent) } .col.on .cnt { color: var(--ink); font-weight: 600 }
+.col:hover { background: var(--soft) }
+.col .mat { display: grid; justify-items: center; position: relative; margin-top: 4px }
+.col .mat span { width: 22px; height: 22px; display: grid; place-items: center }
+.col .mat span i { width: 10px; height: 10px; border-radius: 50%; background: var(--line) }
+.col .mat span i.f { background: var(--ink) } .col.on .mat span i.f { background: var(--accent) }
+.col .mat b { position: absolute; width: 2px; background: var(--ink); left: calc(50% - 1px) } .col.on .mat b { background: var(--accent) }
+.seeing { font-size: 13.5px } .seeing b { font-weight: 600 }
 .main { display: grid; grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); gap: 16px; align-items: start }
 @media (max-width: 900px) { .main { grid-template-columns: minmax(0, 1fr) } .list { max-height: 50vh } }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0 }
 .side { display: grid; gap: 10px; padding: 12px }
-.side input[type=search], select { font: 13px var(--body); padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); width: 100%; min-width: 0 }
-.list { max-height: calc(100vh - 290px); min-height: 300px; overflow: auto; border-top: 1px solid var(--line) }
+input[type=search], select { font: 13px var(--body); padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); width: 100%; min-width: 0 }
+.list { max-height: 78vh; min-height: 300px; overflow: auto; border-top: 1px solid var(--line) }
 .row { display: grid; gap: 2px; padding: 8px 12px; border-bottom: 1px solid var(--soft); cursor: pointer }
-.row:hover { background: var(--soft) } .row[aria-selected="true"] { background: var(--soft); box-shadow: inset 3px 0 0 var(--accent) }
+.row:hover { background: var(--soft) } .row[aria-selected="true"] { background: var(--hit); box-shadow: inset 3px 0 0 var(--accent) }
 .row .t { display: flex; justify-content: space-between; gap: 8px; font-variant-numeric: tabular-nums }
 .row .t b { font-weight: 600 } .row .p { font: 12px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .ms { display: inline-flex; gap: 3px }
@@ -67,10 +85,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, .row:focus-visi
 table.det { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 13px }
 table.det th, table.det td { border-bottom: 1px solid var(--soft); padding: 6px 8px; text-align: left; vertical-align: top }
 table.det th { font-weight: 500; color: var(--muted); font-size: 12px }
-table.det td.copy { font: 12px var(--mono); white-space: nowrap }
+table.det .copy { font: 12px var(--mono); white-space: nowrap }
 .blk { display: grid; gap: 1px } .blk .o { color: var(--muted); font-size: 12px }
 .none { color: var(--dim) }
-.why { font-size: 12px; color: var(--muted) }
 .pick { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px }
 .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted) }
 .legend span { display: inline-flex; align-items: center; gap: 6px }
@@ -87,25 +104,62 @@ tr.ctx td.c { color: var(--dim) }
 td.c.ch { background: var(--add) } td.c.gone { background: var(--soft) }
 td.c.uncounted { color: var(--dim); font-style: italic }
 td.c mark { background: var(--tok); color: inherit; border-radius: 2px }
-.note { font-size: 12px; color: var(--muted) }
-.prose { max-width: 78ch; display: grid; gap: 12px } .prose p { margin: 0 }
-.mcard { display: grid; gap: 4px; padding: 12px 14px; border-left: 3px solid var(--line) }
-.mcard h2 { display: flex; gap: 8px; align-items: center }
+.empty { padding: 24px; color: var(--muted) }
+/* Methods */
+.mwrap { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 16px; align-items: start }
+@media (max-width: 900px) { .mwrap { grid-template-columns: minmax(0, 1fr) } }
+.mlist { display: grid; gap: 6px; padding: 12px }
+.mlist button { display: grid; gap: 2px; text-align: left; font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; cursor: pointer; border-left-width: 4px }
+.mlist button[aria-pressed="true"] { background: var(--hit) }
+.mlist button small { color: var(--muted); font-size: 12px }
+.srcs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px }
+@media (max-width: 700px) { .srcs { grid-template-columns: minmax(0, 1fr) } }
+pre.src { margin: 0; font: 12px/1.6 var(--mono); border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; padding: 6px 0 }
+pre.src div { padding: 0 10px; white-space: pre } pre.src div.cov { background: var(--hit) } pre.src div.nc { color: var(--dim); font-style: italic }
+pre.src div span.ln { display: inline-block; width: 26px; color: var(--muted); user-select: none }
+.strip { display: flex; flex-wrap: wrap; gap: 2px }
+.strip span { min-width: 12px; height: 18px; border-radius: 2px; background: var(--soft); border: 1px solid var(--line); font: 10px/16px var(--mono); color: var(--muted); padding: 0 2px; text-align: center; cursor: default }
+.strip span.lin { min-width: 0; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; text-align: left; font-size: 11px }
+.strip span.inblk { background: var(--hit); border-color: var(--accent); color: var(--ink) }
+.strip span.same { outline: 2px solid var(--ink); outline-offset: 0 }
+.sa { overflow: auto; max-height: 420px; border: 1px solid var(--line); border-radius: 6px }
+table.sat { border-collapse: collapse; font-size: 12px; width: 100%; font-variant-numeric: tabular-nums }
+table.sat th, table.sat td { padding: 2px 8px; border-bottom: 1px solid var(--soft); text-align: left; white-space: nowrap }
+table.sat th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 500 }
+table.sat tr.dup td { background: var(--hit) }
+table.sat td.syms { font: 11px var(--mono); color: var(--muted); max-width: 520px; overflow: hidden; text-overflow: ellipsis }
+.lcpbar { display: inline-block; height: 8px; background: var(--accent); border-radius: 0 2px 2px 0; vertical-align: middle; margin-right: 6px }
+.lcpbar.lo { background: var(--dim) }
+.ctl { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 13px }
+.ctl input[type=range] { width: 200px }
+.result { font-size: 13.5px }
+/* Speed */
+.chart { display: grid; gap: 4px }
+.crow { display: grid; grid-template-columns: minmax(140px, 300px) minmax(0, 1fr); gap: 12px; align-items: center; min-height: 26px; cursor: default }
+.crow .lab { text-align: right; font-size: 12.5px; display: flex; gap: 6px; justify-content: flex-end; align-items: center }
+.crow .track { position: relative; height: 16px }
+.crow .b { position: absolute; left: 0; top: 2px; height: 12px; border-radius: 0 4px 4px 0 }
+.crow .b.parse { background-image: repeating-linear-gradient(45deg, transparent 0 4px, var(--panel) 4px 6px) }
+.crow .v { position: absolute; top: -1px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap }
+.crow:hover { background: var(--soft) }
+.axis { display: grid; grid-template-columns: minmax(140px, 300px) minmax(0, 1fr); gap: 12px }
+.axis .ticks { position: relative; height: 18px; border-top: 1px solid var(--line) }
+.axis .ticks span { position: absolute; top: 2px; transform: translateX(-50%); font-size: 11px; color: var(--muted) }
+.grid-l { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--soft) }
+.tip { position: fixed; z-index: 20; pointer-events: none; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12); max-width: 340px }
+.tip table { border-collapse: collapse; font-variant-numeric: tabular-nums } .tip td { padding: 1px 6px 1px 0 } .tip td:last-child { text-align: right; padding-right: 0 }
 table.speed { border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; width: 100%; min-width: 720px }
-table.speed th, table.speed td { padding: 6px 10px; border-bottom: 1px solid var(--soft); text-align: right }
+table.speed th, table.speed td { padding: 5px 10px; border-bottom: 1px solid var(--soft); text-align: right }
 table.speed th:first-child, table.speed td:first-child { text-align: left }
 table.speed th { color: var(--muted); font-weight: 500; font-size: 12px }
-table.speed tr.jeff td { font-weight: 600 }
-.ratio { color: var(--muted) }
-.empty { padding: 24px; color: var(--muted) }
-@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important } }
 </style>
 
 <div class="wrap">
   <header>
     <div class="bar" style="justify-content: space-between">
       <h1>Duplicate Block Explorer</h1>
-      <div class="tabs bar" role="tablist" style="gap:0">
+      <div class="seg" role="tablist">
         <button id="tab-findings" aria-pressed="true">Findings</button>
         <button id="tab-methods" aria-pressed="false">Methods</button>
         <button id="tab-speed" aria-pressed="false">Speed</button>
@@ -114,15 +168,28 @@ table.speed tr.jeff td { font-weight: 600 }
     <p class="sub" id="lede">Duplicated blocks in Jeff's tree, found by five suffix-array methods over lines and format 16 tape nodes, merged by file and grouped into clone classes.</p>
   </header>
 
-  <section id="view-findings">
-    <div class="panel side" style="margin-bottom:16px">
+  <section id="view-findings" style="display:grid; gap:16px">
+    <div class="panel pad">
+      <details class="howto" open id="howto">
+        <summary>How to use this page</summary>
+        <ol>
+          <li><b>Pick a scope</b> below: Jeff's <code>native/src</code> Rust, or his <code>src</code>, <code>test</code> and <code>packs</code>.</li>
+          <li><b>Read the diagram.</b> It is a Venn diagram for five sets, drawn as columns. Each column is one exact intersection: the clone classes found by the methods with a filled dot, and by none of the others. The bar is how many classes that is. The bars beside the method names are each method's total.</li>
+          <li><b>Filter.</b> Click a method's name to require it, again to exclude it, again to leave it open. Click a column to show exactly that intersection. Columns drawn in blue are the ones the list shows; the sentence under the diagram says the same in words.</li>
+          <li><b>Pick a class</b> in the list. The table shows, for each copy, the block each method reported there (its lines, its units, and the other places it named), or that it did not find it.</li>
+          <li><b>Compare two copies</b> under the table. Lines are aligned by their text; changed lines and tokens are tinted, the coloured bars in the gutter show which methods covered each line, and lines Jeff's rule does not count are dimmed.</li>
+          <li><b>Show dropped noise</b> brings back the blocks post-processing removed, with the reason. The <b>Methods</b> tab shows each method at work on a small example, and <b>Speed</b> compares the runs.</li>
+        </ol>
+      </details>
       <div class="bar" style="justify-content: space-between">
-        <div class="seg bar" style="gap:0" id="scopes"></div>
-        <label class="bar note" for="noise"><input type="checkbox" id="noise"> Show dropped noise</label>
+        <div class="seg" id="scopes"></div>
+        <div class="bar">
+          <button class="btn" id="clear">Clear filters</button>
+          <label class="bar note" for="noise"><input type="checkbox" id="noise"> Show dropped noise</label>
+        </div>
       </div>
-      <div class="bar" id="mchips"></div>
-      <div class="note">Click a method to require it, again to exclude it, again to clear. Rows below: classes by the exact set of methods that found them.</div>
-      <div class="combos" id="combos"></div>
+      <div class="upset" id="upset"></div>
+      <p class="seeing" id="seeing"></p>
     </div>
     <div class="main">
       <div class="panel">
@@ -144,84 +211,133 @@ table.speed tr.jeff td { font-weight: 600 }
     </div>
   </section>
 
-  <section id="view-methods" hidden><div class="panel detail prose" id="methods"></div></section>
+  <section id="view-methods" hidden>
+    <div class="mwrap">
+      <div class="panel"><div class="mlist" id="mlist"></div></div>
+      <div class="panel detail" id="mdetail"></div>
+    </div>
+  </section>
+
   <section id="view-speed" hidden><div class="panel detail" id="speed"></div></section>
 </div>
+<div class="tip" id="tip" hidden></div>
 
 <script>
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const short = p => p.replace(/^native\/src\/code_rule_dsl\//, "…/");
-let D, scope = "native", showNoise = false, req = {}, selected = null, pair = [0, 1];
+const mc = m => `var(--m-${m})`;
+let D, EX, scope = "native", showNoise = false, req = {}, selected = null, pair = [0, 1], method = "lines", metric = "instr";
 
-const METHOD_TEXT = {
-  "lines": ["Jeff's rule, on a suffix array", "Each line normalised as in no-duplicate-blocks.rerail (whitespace collapsed, trimmed; blank and comment-looking lines left out). Each distinct line is interned; the suffix array is over the line ids. A window of 30 counted lines that occurs twice is duplicated; consecutive duplicated windows make one block."],
-  "tlines-text": ["Lines keyed by tape tokens", "Jeff's units and blocks, but a line's key is the sequence of tape leaves that start on it: each leaf's code and its token text. Comments are dropped by node kind, so block comments and `*deref` lines are told apart; spacing inside a line does not matter. String literals are one token on their first line."],
-  "tlines-shape": ["Lines keyed by tape shapes", "As tape tokens, but each leaf contributes its code and length instead of its text: a renamed identifier of the same length, or a changed literal, still matches."],
-  "nodes-row": ["Format 16 rows", "The suffix array over nodes in preorder, one per language. A node's symbol is its row as the uncompressed tape stores it: code byte, slot, gap, length. Blocks are runs of at least 150 nodes covering at least 30 lines. Indentation (in gaps) and enclosing sizes (in slots) make copies differ."],
-  "nodes-local": ["Format 16 nodes, local symbols", "As rows, with the parts that depend on surroundings taken out: a gap that crosses a line break is a flag plus the distance to the line's end (no indentation), inner nodes drop their length, and slots keep only the leaf tag (sizes and sibling steps reach outside a copy)."],
-};
-
-function methodColor(m) { return `var(--m-${m})` }
-function dots(ms, all) { return `<span class="ms">${(all || D.methods.map(x => x.id)).map(m => `<span class="dot" title="${esc(D.methods.find(x => x.id === m).name)}" style="background:${methodColor(m)};opacity:${ms.includes(m) ? 1 : .15}"></span>`).join("")}</span>` }
+// ---- tooltip ------------------------------------------------------------------------------------------------
+const tip = $("#tip");
+function showTip(e, html) { tip.innerHTML = html; tip.hidden = false; moveTip(e) }
+function moveTip(e) {
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + w > innerWidth - 8) x = e.clientX - w - 14;
+  if (y + h > innerHeight - 8) y = e.clientY - h - 14;
+  tip.style.left = Math.max(8, x) + "px"; tip.style.top = Math.max(8, y) + "px";
+}
+function hideTip() { tip.hidden = true }
+function hover(el, html) { el.onmouseenter = e => showTip(e, html()); el.onmousemove = moveTip; el.onmouseleave = hideTip }
 
 async function boot() {
-  try { D = await (await fetch("findings.json")).json() } catch (e) { $("#detail").innerHTML = `<div class="empty">The findings file did not load (${esc(e.message)}). Reload the page.</div>`; return }
+  try { [D, EX] = await Promise.all([fetch("findings.json").then(r => r.json()), fetch("explain.json").then(r => r.json())]) }
+  catch (e) { $("#detail").innerHTML = `<div class="empty">The data did not load (${esc(e.message)}). Reload the page.</div>`; return }
+  try { if (localStorage.getItem("howto") === "closed") $("#howto").open = false } catch (e) {}
+  $("#howto").addEventListener("toggle", () => { try { localStorage.setItem("howto", $("#howto").open ? "open" : "closed") } catch (e) {} });
   const s = $("#scopes");
   s.innerHTML = D.scopes.map(x => `<button data-scope="${x.id}">${esc(x.name)}</button>`).join("");
-  s.addEventListener("click", e => { const b = e.target.closest("button"); if (b) { scope = b.dataset.scope; selected = null; render() } });
+  s.addEventListener("click", e => { const b = e.target.closest("button"); if (b) { scope = b.dataset.scope; render() } });
   $("#noise").addEventListener("change", e => { showNoise = e.target.checked; render() });
+  $("#clear").onclick = () => { req = {}; $("#q").value = ""; render() };
   $("#q").addEventListener("input", renderList);
   $("#sort").addEventListener("change", renderList);
-  for (const t of ["findings", "methods", "speed"]) $("#tab-" + t).addEventListener("click", () => { location.hash = t === "findings" ? (selected ? "class-" + selected : "findings") : t });
+  for (const t of ["findings", "methods", "speed"]) $("#tab-" + t).addEventListener("click", () => { location.hash = t === "findings" ? (selected ? "class-" + selected : "findings") : t === "methods" ? "method-" + method : t });
   window.addEventListener("hashchange", route);
-  renderMethods(); renderSpeed(); route();
+  renderSpeed(); route();
 }
 
 function route() {
   const h = location.hash.slice(1);
-  const tab = h === "methods" || h === "speed" ? h : "findings";
+  const tab = h === "speed" ? "speed" : h.startsWith("method") ? "methods" : "findings";
   for (const t of ["findings", "methods", "speed"]) { $("#tab-" + t).setAttribute("aria-pressed", t === tab); $("#view-" + t).hidden = t !== tab }
-  const m = /^class-(\d+)$/.exec(h);
+  let m = /^class-(\d+)$/.exec(h);
   if (m) { const c = D.classes[+m[1] - 1]; if (c) { scope = c.scope; if (c.noise) { showNoise = true; $("#noise").checked = true } selected = c.id } }
+  m = /^method-([a-z-]+)$/.exec(h); if (m && D.methods.some(x => x.id === m[1])) method = m[1];
   if (tab === "findings") render();
+  if (tab === "methods") renderMethods();
 }
 
-function classesIn() {
-  return D.classes.filter(c => c.scope === scope && (showNoise || !c.noise));
-}
-function passes(c) {
+// ---- findings -----------------------------------------------------------------------------------------------
+function classesIn() { return D.classes.filter(c => c.scope === scope && (showNoise || !c.noise)) }
+function methodsPass(ms) {
   for (const [m, st] of Object.entries(req)) {
-    if (st === "need" && !c.methods.includes(m)) return false;
-    if (st === "not" && c.methods.includes(m)) return false;
+    if (st === "need" && !ms.includes(m)) return false;
+    if (st === "not" && ms.includes(m)) return false;
   }
-  const q = $("#q").value.trim().toLowerCase();
-  if (q && !c.findings.some(i => D.findings[i].path.toLowerCase().includes(q))) return false;
   return true;
 }
+function passes(c) {
+  if (!methodsPass(c.methods)) return false;
+  const q = $("#q").value.trim().toLowerCase();
+  return !q || c.findings.some(i => D.findings[i].path.toLowerCase().includes(q));
+}
+const mname = m => D.methods.find(x => x.id === m).name;
 
 function render() {
   for (const b of $("#scopes").children) b.setAttribute("aria-pressed", b.dataset.scope === scope);
   const sc = D.scopes.find(x => x.id === scope);
-  const cs = classesIn();
-  $("#mchips").innerHTML = D.methods.map(m => {
-    const n = cs.filter(c => c.methods.includes(m.id)).length;
-    return `<button class="chip" data-m="${m.id}" data-state="${req[m.id] || ""}"><span class="dot" style="background:${methodColor(m.id)}"></span>${esc(m.name)} <span class="n">${n} classes · ${sc.blocks[m.id]} blocks</span></button>`;
-  }).join("");
-  for (const b of $("#mchips").children) b.onclick = () => { const s = req[b.dataset.m]; req[b.dataset.m] = s === undefined || s === "" ? "need" : s === "need" ? "not" : ""; render() };
-  // Combos: classes by exact method set.
-  const by = new Map();
-  for (const c of cs) { const k = c.methods.join(","); by.set(k, (by.get(k) || 0) + 1) }
-  const rows = [...by.entries()].sort((a, b) => b[1] - a[1]);
-  const max = Math.max(1, ...rows.map(r => r[1]));
-  $("#combos").innerHTML = rows.map(([k, n]) => {
-    const ms = k.split(",");
-    return `<button class="combo" data-k="${k}" title="Show only classes found by exactly these methods"><span class="ms">${D.methods.map(m => `<span class="dot ${ms.includes(m.id) ? "on" : ""}" style="background:${methodColor(m.id)}"></span>`).join("")}</span><span class="b"><i style="width:${(100 * n / max).toFixed(1)}%"></i></span><span class="c">${n}</span></button>`;
-  }).join("");
-  for (const b of $("#combos").children) b.onclick = () => { const ms = b.dataset.k.split(","); req = {}; for (const m of D.methods) req[m.id] = ms.includes(m.id) ? "need" : "not"; render() };
   const j = sc.jeff;
-  $("#lede").textContent = `${sc.name}: ${cs.filter(c => !c.noise).length} clone classes from five suffix-array methods over lines and format 16 tape nodes.` + (j ? ` Jeff's rule run in the engine gives ${j.engine} findings, row for row identical to the Lines method (${j.identical} of ${j.sa}).` : "");
+  $("#lede").textContent = `${sc.name}: ${D.classes.filter(c => c.scope === scope && !c.noise).length} clone classes from five suffix-array methods over lines and format 16 tape nodes.` + (j ? ` Jeff's rule run in the engine gives ${j.engine} findings, row for row identical to the Lines method (${j.identical} of ${j.sa}).` : "");
+  renderUpset();
   renderList();
+}
+
+function renderUpset() {
+  const cs = classesIn();
+  const ms = D.methods.map(m => m.id);
+  const by = new Map();
+  for (const c of cs) { const k = c.methods.join(","); if (!by.has(k)) by.set(k, []); by.get(k).push(c) }
+  const cols = [...by.entries()].sort((a, b) => b[1].length - a[1].length);
+  const max = Math.max(1, ...cols.map(c => c[1].length));
+  const total = Object.fromEntries(ms.map(m => [m, cs.filter(c => c.methods.includes(m)).length]));
+  const tmax = Math.max(1, ...Object.values(total));
+  const H = 110;
+  // Grid: column 1 the method names, column 2 their totals, then one column per intersection.
+  let html = `<div class="ugrid" style="grid-template-columns: auto 110px repeat(${cols.length}, 24px)">`;
+  html += `<div></div><div class="note" style="align-self:end;padding-bottom:4px">classes per method</div>`;
+  for (const [k, list] of cols) {
+    const on = methodsPass(k.split(",")) ? " on" : "";
+    html += `<button class="col${on}" data-k="${k}" aria-label="${list.length} classes found by ${esc(k.split(",").map(mname).join(", "))} only"><span class="cnt">${list.length}</span><span class="vb" style="height:${Math.max(2, Math.round(H * list.length / max))}px"></span></button>`;
+  }
+  ms.forEach((m, i) => {
+    const st = req[m] || "";
+    html += `<button class="ulab" data-m="${m}" data-state="${st}" style="grid-row:${i + 3};grid-column:1"><span class="st">${st === "need" ? "required" : st === "not" ? "excluded" : ""}</span><span class="dot" style="background:${mc(m)}"></span>${esc(mname(m))}</button>`;
+    html += `<div class="usize" style="grid-row:${i + 3};grid-column:2"><i style="width:${Math.round(80 * total[m] / tmax)}px"></i>${total[m]}</div>`;
+  });
+  cols.forEach(([k], ci) => {
+    const set = k.split(","), idx = set.map(m => ms.indexOf(m));
+    const on = methodsPass(set) ? " on" : "";
+    const top = Math.min(...idx), bot = Math.max(...idx);
+    html += `<button class="col${on}" data-k="${k}" tabindex="-1" aria-hidden="true" style="grid-row:3 / span ${ms.length};grid-column:${ci + 3};align-self:start;padding:0"><span class="mat">${ms.map(m => `<span><i class="${set.includes(m) ? "f" : ""}"></i></span>`).join("")}${bot > top ? `<b style="top:${top * 22 + 11}px;height:${(bot - top) * 22}px"></b>` : ""}</span></button>`;
+  });
+  html += `</div>`;
+  $("#upset").innerHTML = html;
+  for (const b of $("#upset").querySelectorAll(".ulab")) b.onclick = () => { const s = req[b.dataset.m]; req[b.dataset.m] = !s ? "need" : s === "need" ? "not" : ""; render() };
+  for (const b of $("#upset").querySelectorAll(".col")) {
+    const set = b.dataset.k.split(","), list = by.get(b.dataset.k);
+    b.onclick = () => { req = {}; for (const m of ms) req[m] = set.includes(m) ? "need" : "not"; render() };
+    hover(b, () => `<b>${list.length} class${list.length === 1 ? "" : "es"}</b><br>found by ${set.map(m => `<span class="dot" style="background:${mc(m)}"></span> ${esc(mname(m))}`).join(", ")}<br>${ms.filter(m => !set.includes(m)).length ? "not by " + ms.filter(m => !set.includes(m)).map(m => esc(mname(m))).join(", ") : "every method"}<br><span class="note">${list.reduce((a, c) => a + c.lines, 0).toLocaleString()} lines in their largest copies</span>`);
+  }
+  // In words.
+  const need = ms.filter(m => req[m] === "need"), not = ms.filter(m => req[m] === "not");
+  const shown = cs.filter(c => methodsPass(c.methods)).length;
+  let words = need.length || not.length
+    ? `Showing <b>${shown}</b> of ${cs.length} classes: ${need.length ? "found by " + need.map(m => `<b>${esc(mname(m))}</b>`).join(" and ") : "found by any method"}${not.length ? ", and not by " + not.map(m => `<b>${esc(mname(m))}</b>`).join(" or ") : ""}.`
+    : `Showing all <b>${cs.length}</b> classes${showNoise ? ", noise included" : ""}. Click a method or a column to narrow it.`;
+  $("#seeing").innerHTML = words;
 }
 
 function renderList() {
@@ -233,20 +349,23 @@ function renderList() {
     : sort === "few" ? a.methods.length - b.methods.length || b.lines - a.lines
     : b.lines - a.lines);
   $("#count").textContent = `${cs.length} class${cs.length === 1 ? "" : "es"}`;
+  // The selection follows the list: a class the filters hide is not kept in the detail pane.
+  if (!cs.some(c => c.id === selected)) {
+    selected = cs.length ? cs[0].id : null;
+    if (location.hash.startsWith("#class-")) { try { history.replaceState(null, "", selected ? "#class-" + selected : "#findings") } catch (e) {} }
+  }
   $("#list").innerHTML = cs.length ? cs.map(c => {
     const f = fs(c);
     const copies = f.length + c.unreported.length;
     return `<div class="row" role="option" tabindex="0" data-id="${c.id}" aria-selected="${c.id === selected}">
-      <div class="t"><span><b>${c.lines}</b> lines · ${copies} cop${copies === 1 ? "y" : "ies"}${c.noise ? ` <span class="noise-tag">noise</span>` : ""}</span>${dots(c.methods)}</div>
+      <div class="t"><span><b>${c.lines}</b> lines · ${copies} cop${copies === 1 ? "y" : "ies"}${c.noise ? ` <span class="noise-tag">noise</span>` : ""}</span><span class="ms">${D.methods.map(m => `<span class="dot" style="background:${mc(m.id)};opacity:${c.methods.includes(m.id) ? 1 : .15}"></span>`).join("")}</span></div>
       ${f.slice(0, 3).map(x => `<div class="p" title="${esc(x.path)}">${esc(short(x.path))}:${x.s}-${x.e}</div>`).join("")}${f.length > 3 ? `<div class="p">+ ${f.length - 3} more</div>` : ""}
     </div>`;
-  }).join("") : `<div class="empty">No class matches these filters.</div>`;
+  }).join("") : `<div class="empty">No class matches these filters. Clear them, or require fewer methods.</div>`;
   for (const r of $("#list").children) if (r.dataset.id) {
     r.onclick = () => { location.hash = "class-" + r.dataset.id };
     r.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); r.click() } };
   }
-  if (!selected || !cs.some(c => c.id === selected)) { if (cs.length && !location.hash.startsWith("#class-")) selected = cs[0].id }
-  const sel = $(`.row[data-id="${selected}"]`, $("#list")); if (sel) sel.setAttribute("aria-selected", "true");
   renderDetail();
 }
 
@@ -255,8 +374,8 @@ function copiesOf(c) {
 }
 
 function renderDetail() {
-  const c = D.classes[selected - 1];
-  if (!c || c.scope !== scope) { $("#detail").innerHTML = `<div class="empty">Pick a class on the left.</div>`; return }
+  const c = selected ? D.classes[selected - 1] : null;
+  if (!c) { $("#detail").innerHTML = `<div class="empty">No class to show: the filters leave the list empty.</div>`; return }
   const cp = copiesOf(c);
   if (pair[0] >= cp.length || pair[1] >= cp.length || pair[0] === pair[1]) pair = [0, Math.min(1, cp.length - 1)];
   const unit = m => D.methods.find(x => x.id === m).unit;
@@ -266,21 +385,20 @@ function renderDetail() {
       if (!bs.length) return `<td class="none">${f.reported ? "not found" : "—"}</td>`;
       return `<td>${bs.map(b => `<div class="blk"><span>${b.s}–${b.e} · ${b.units} ${unit(m.id)}${b.noise ? ` <span class="noise-tag">${esc(b.noise)}</span>` : ""}</span>${b.others.length ? `<span class="o">also at ${b.others.slice(0, 4).map(o => esc(short(o))).join(", ")}${b.others.length > 4 ? ` +${b.others.length - 4}` : ""}</span>` : ""}</div>`).join("")}</td>`;
     }).join("");
-    return `<tr><th scope="row" style="white-space:nowrap"><span class="dot" style="background:${methodColor(m.id)}"></span> ${esc(m.name)}</th>${cells}</tr>`;
+    return `<tr><th scope="row" style="white-space:nowrap"><span class="dot" style="background:${mc(m.id)}"></span> <a href="#method-${m.id}" style="color:inherit">${esc(m.name)}</a></th>${cells}</tr>`;
   }).join("");
   const opts = sel => cp.map((f, i) => `<option value="${i}" ${i === sel ? "selected" : ""}>${esc(short(f.path))}:${f.s}-${f.e}${f.reported ? "" : " (not reported)"}</option>`).join("");
   $("#detail").innerHTML = `
     <div class="dh"><h2>Class ${c.id}${c.noise ? ` <span class="noise-tag">dropped as noise</span>` : ""}</h2><span class="meta">${c.lines} lines · ${cp.length} copies · found by ${c.methods.length} of 5 methods</span></div>
-    <div><h3>How each copy was detected</h3>
+    <div style="display:grid;gap:6px"><h3>How each copy was detected</h3>
       <div class="tscroll"><table class="det"><thead><tr><th>Method</th>${cp.map(f => `<th class="copy" title="${esc(f.path)}">${esc(short(f.path))}:${f.s}${f.reported ? "" : " (not reported)"}</th>`).join("")}</tr></thead><tbody>${det}</tbody></table></div>
-      <p class="why">${c.noise ? "Every block here was dropped by post-processing: the reason is beside it." : c.unreported.length ? "A copy marked not reported is a place a method named that no finding covers: its own block fell under a floor (lines or nodes) on that side." : "Spans are the block each method reported in that copy, in file lines; units are what that method counts."}</p>
+      <p class="note">${c.noise ? "Every block here was dropped by post-processing; the reason is beside it." : c.unreported.length ? "A copy marked not reported is a place a method named that no finding covers: its own block fell under a floor (lines or nodes) on that side." : "Each cell is the block a method reported in that copy: its file lines, how many units it counts, and the other places it named. A method name opens its worked example."}</p>
     </div>
     <div style="display:grid; gap:8px">
       <h3>Compare two copies</h3>
       ${cp.length > 1 ? `<div class="pick"><select id="pa" aria-label="Left copy">${opts(pair[0])}</select><select id="pb" aria-label="Right copy">${opts(pair[1])}</select></div>` : ""}
-      <div class="legend">${D.methods.map(m => `<span><span class="sw" style="background:${methodColor(m.id)}"></span>${esc(m.name)}</span>`).join("")}<span><span class="sw" style="background:var(--add)"></span>line differs</span><span><span class="sw" style="background:var(--tok)"></span>token differs</span><span style="font-style:italic">dimmed italic: a line Jeff's rule does not count</span></div>
+      <div class="legend">${D.methods.map(m => `<span><span class="sw" style="background:${mc(m.id)}"></span>${esc(m.name)}</span>`).join("")}<span><span class="sw" style="background:var(--add)"></span>line differs</span><span><span class="sw" style="background:var(--tok)"></span>token differs</span><span style="font-style:italic">dimmed: a line Jeff's rule does not count</span></div>
       <div class="code" id="code"></div>
-      <p class="note">Gutter bars show which methods' blocks cover each line. Lines are aligned by their normalised text, so lines that differ only in indentation line up as equal.</p>
     </div>`;
   if (cp.length > 1) {
     $("#pa").onchange = e => { pair[0] = +e.target.value; renderCode(cp) };
@@ -298,18 +416,17 @@ function counted(path, l) {
 
 function lcsAlign(a, b, eq) {
   const n = a.length, m = b.length;
-  if (n * m > 6e6) { const out = []; for (let i = 0; i < Math.max(n, m); i++) out.push([i < n ? i : -1, i < m ? i : -1]); return out }
+  if (n * m > 6e6) { const out = []; for (let i = 0; i < Math.max(n, m); i++) out.push([i < n ? i : -1, i < m ? i : -1, true]); return out }
   const w = m + 1, T = new Int32Array((n + 1) * w);
   for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
     T[i * w + j] = eq(a[i], b[j]) ? T[(i + 1) * w + j + 1] + 1 : Math.max(T[(i + 1) * w + j], T[i * w + j + 1]);
   const out = []; let i = 0, j = 0;
   while (i < n && j < m) {
-    if (eq(a[i], b[j])) { out.push([i++, j++]) }
+    if (eq(a[i], b[j])) out.push([i++, j++]);
     else if (T[(i + 1) * w + j] >= T[i * w + j + 1]) out.push([i++, -1]);
     else out.push([-1, j++]);
   }
   while (i < n) out.push([i++, -1]); while (j < m) out.push([-1, j++]);
-  // Pair a run of deletions with the run of insertions after it, so changed lines sit side by side.
   const res = [];
   for (let k = 0; k < out.length;) {
     if (out[k][1] === -1 && out[k][0] !== -1) {
@@ -337,67 +454,155 @@ function tokenDiff(x, y) {
 }
 
 function gutter(f, line) {
-  return D.methods.map(m => {
-    const on = (f.by[m.id] || []).some(b => b.s <= line && line <= b.e);
-    return `<span style="background:${on ? methodColor(m.id) : "transparent"}"></span>`;
-  }).join("");
+  return D.methods.map(m => `<span style="background:${(f.by[m.id] || []).some(b => b.s <= line && line <= b.e) ? mc(m.id) : "transparent"}"></span>`).join("");
 }
 
 function renderCode(cp) {
   const A = cp[pair[0]], B = cp.length > 1 ? cp[pair[1]] : null;
-  const side = (f, i, other, otherLine, changed) => {
+  const side = (f, i, otherLine, changed) => {
     if (!f || i < 0) return `<td class="g"></td><td class="n"></td><td class="c gone"></td>`;
     const ln = f.from + i, text = f.code[i] ?? "";
-    let cls = "c";
-    if (!counted(f.path, text)) cls += " uncounted";
+    let cls = "c" + (counted(f.path, text) ? "" : " uncounted");
     let html = esc(text);
-    if (changed && otherLine !== undefined) { cls += " ch"; html = tokenDiff(text, otherLine)[0] }
-    else if (changed) cls += " ch";
+    if (changed) { cls += " ch"; if (otherLine !== undefined) html = tokenDiff(text, otherLine)[0] }
     return `<td class="g">${gutter(f, ln)}</td><td class="n">${ln}</td><td class="${cls}">${html}</td>`;
   };
-  let rows;
   if (!B) {
-    rows = A.code.map((_, i) => `<tr class="${A.from + i < A.s || A.from + i > A.e ? "ctx" : ""}">${side(A, i)}</tr>`).join("");
+    const rows = A.code.map((_, i) => `<tr class="${A.from + i < A.s || A.from + i > A.e ? "ctx" : ""}">${side(A, i)}</tr>`).join("");
     $("#code").innerHTML = `<table class="cmp" style="min-width:480px"><colgroup><col class="g"><col class="n"><col></colgroup>${rows}</table>`;
     return;
   }
   const al = lcsAlign(A.code, B.code, (x, y) => norm(x) === norm(y));
-  rows = al.map(([i, j, paired]) => {
+  const rows = al.map(([i, j, paired]) => {
     const la = i >= 0 ? A.from + i : null, lb = j >= 0 ? B.from + j : null;
     const ctx = (la === null || la < A.s || la > A.e) && (lb === null || lb < B.s || lb > B.e);
     const changed = paired || i < 0 || j < 0;
     const ta = i >= 0 ? A.code[i] : undefined, tb = j >= 0 ? B.code[j] : undefined;
-    const left = side(A, i, B, tb, changed), right = side(B, j, A, ta, changed);
-    return `<tr class="${ctx ? "ctx" : ""}">${left}${right.replace('<td class="g">', '<td class="g sep">')}</tr>`;
+    return `<tr class="${ctx ? "ctx" : ""}">${side(A, i, tb, changed)}${side(B, j, ta, changed).replace('<td class="g">', '<td class="g sep">')}</tr>`;
   }).join("");
   $("#code").innerHTML = `<table class="cmp"><colgroup><col class="g"><col class="n"><col><col class="g"><col class="n"><col></colgroup>${rows}</table>`;
 }
 
-function renderMethods() {
-  $("#methods").innerHTML = `
-    <h2>How the findings were made</h2>
-    <p>Every method builds one suffix array (SA-IS, with Kasai's LCP) over a sequence of symbols, through MLDB's multi-document adapters: documents are joined virtually, so no symbol array is copied out of the tape or the text. A window is duplicated when another suffix shares at least the window's length with it; consecutive duplicated windows in a file are one block, and the block's other places are the suffixes sharing its first window. Jeff's <code>no-duplicate-blocks.rerail</code> reports exactly this with a 30-line window.</p>
-    ${D.methods.map(m => `<div class="mcard" style="border-left-color:${methodColor(m.id)}"><h2><span class="dot" style="background:${methodColor(m.id)}"></span>${esc(m.name)}</h2><strong>${esc(METHOD_TEXT[m.id][0])}</strong><p>${esc(METHOD_TEXT[m.id][1])}</p></div>`).join("")}
-    <h2>Post-processing</h2>
-    <p>Per file, the blocks of every method that overlap become one finding; findings that name each other's places become one clone class. Two kinds of block are dropped as noise (shown with “Show dropped noise”): a block whose other places all lie inside it, which is a structure repeated every few lines matching itself shifted; and, for the structure-based methods (tape shapes and both node methods), a block in a JSON or markdown file, where a record's structure is its schema and matches whatever its values.</p>
-    <p>Lines that Jeff's normalisation does not count (blank, or starting with <code>//</code>, <code>/*</code>, <code>*</code>, or <code>#</code> in hash-comment languages) are dimmed in the code view. Its <code>*</code> rule also drops Rust dereference lines.</p>`;
+// ---- methods: each method's real symbols on a two-file example, its suffix array, its blocks ----------------------
+const MINFO = {
+  "lines": { what: "A counted line, normalised", how: "Each line has its whitespace runs collapsed and is trimmed. Blank lines and lines starting with //, /* or * are left out. Each distinct normalised line is one symbol, so two lines are equal only when their text is.", window: 3, max: 8 },
+  "tlines-text": { what: "A counted line, keyed by its tape tokens", how: "The tape's leaves that start on a line, each as its kind and token text, make the line's symbol. Comments are left out by their node kind. Spacing inside a line no longer matters, but a renamed identifier still changes the symbol.", window: 3, max: 8 },
+  "tlines-shape": { what: "A counted line, keyed by token kinds and lengths", how: "As tape tokens, but each leaf contributes its kind and its length, not its text. A variable renamed to another name of the same length (v to x) keeps the line's symbol.", window: 3, max: 8 },
+  "nodes-row": { what: "A node, as its format 16 row", how: "Every node in preorder is a symbol: its row exactly as the uncompressed tape stores it (code byte, slot, gap, length). The slot holds a subtree size and the gap holds the bytes since the last node, indentation included, so an enclosing change or a re-indent changes many symbols.", window: 20, max: 60 },
+  "nodes-local": { what: "A node, with only what is local to it", how: "The row with its outside-dependent parts removed: a gap that crosses a line break becomes a flag plus the distance to the line's end, inner nodes drop their length, and slots keep only the leaf tag. Indentation and the size of what encloses the copy no longer matter.", window: 20, max: 60 },
+};
+let win = {};
+
+function exampleOf(m) {
+  const order = ["a.rs", "b.rs"].map(p => EX.docs.findIndex(d => d.path === p));
+  const docs = order.map(d => ({ path: EX.docs[d].path, src: EX.docs[d].source.replace(/\n$/, "").split("\n"), units: EX.methods[m][d].map(([line, label, key]) => ({ line, label, key })) }));
+  // The joined text: each document's symbols, then a separator of its own (never equal to anything).
+  const seq = [], at = [];
+  docs.forEach((d, k) => { d.units.forEach((u, i) => { seq.push(u.key); at.push([k, i]) }); seq.push(-1 - k); at.push(null) });
+  const n = seq.length;
+  const sa = [...Array(n).keys()].filter(i => at[i]);
+  const cmp = (a, b) => { while (a < n && b < n) { if (seq[a] !== seq[b]) return seq[a] - seq[b]; a++; b++ } return (n - a) - (n - b) };
+  sa.sort(cmp);
+  const common = (a, b) => { let h = 0; while (a + h < n && b + h < n && seq[a + h] === seq[b + h] && seq[a + h] >= 0) h++; return h };
+  const lcp = sa.map((p, r) => r ? common(sa[r - 1], p) : 0);
+  return { docs, seq, at, sa, lcp };
 }
+
+function renderMethods() {
+  $("#mlist").innerHTML = `<p class="note" style="margin-bottom:4px">The same two files, read by each method. Pick one.</p>` + D.methods.map(m => `<button data-m="${m.id}" aria-pressed="${m.id === method}" style="border-left-color:${mc(m.id)}"><b>${esc(m.name)}</b><small>${esc(MINFO[m.id].what)}</small></button>`).join("") +
+    `<p class="note" style="margin-top:8px">Every method then does the same thing: one suffix array over the symbols of all files, joined with a separator after each (MLDB's multi-document adapters, without copying the symbols out). Adjacent suffixes that share at least a window's length are duplicated windows; consecutive ones are a block.</p>`;
+  for (const b of $("#mlist").querySelectorAll("button")) b.onclick = () => { location.hash = "method-" + b.dataset.m };
+  const info = MINFO[method], E = exampleOf(method);
+  const w = win[method] ?? info.window;
+  const isNode = method.startsWith("nodes");
+  // Duplicated windows: a suffix whose neighbour shares at least w symbols; blocks: runs of them per document.
+  const rank = new Map(E.sa.map((p, r) => [p, r]));
+  const dupAt = p => { const r = rank.get(p); return E.lcp[r] >= w || (r + 1 < E.sa.length && E.lcp[r + 1] >= w) };
+  const inBlock = E.docs.map(d => new Array(d.units.length).fill(false));
+  const blocks = [];
+  let base = 0;
+  E.docs.forEach((d, k) => {
+    for (let i = 0; i < d.units.length; i++) {
+      if (!dupAt(base + i)) continue;
+      const s = i; while (i + 1 < d.units.length && dupAt(base + i + 1)) i++;
+      const e = i + w - 1;
+      for (let x = s; x <= e && x < d.units.length; x++) inBlock[k][x] = true;
+      blocks.push({ k, s, e: Math.min(e, d.units.length - 1) });
+    }
+    base += d.units.length + 1;
+  });
+  const covLines = E.docs.map((d, k) => new Set(d.units.filter((u, i) => inBlock[k][i]).map(u => u.line)));
+  const unitLines = E.docs.map(d => new Set(d.units.map(u => u.line)));
+  const best = Math.max(0, ...E.lcp.filter((h, r) => r && E.at[E.sa[r]][0] !== E.at[E.sa[r - 1]][0]));
+  const blockText = blocks.length ? blocks.map(b => `${E.docs[b.k].path} lines ${E.docs[b.k].units[b.s].line}–${E.docs[b.k].units[b.e].line} (${b.e - b.s + 1} ${isNode ? "nodes" : "counted lines"})`).join("; ") : "none";
+  $("#mdetail").innerHTML = `
+    <div class="dh"><h2><span class="dot" style="background:${mc(method)}"></span> ${esc(mname(method))}</h2><span class="meta">one symbol = ${esc(info.what.toLowerCase())}</span></div>
+    <p style="max-width:80ch">${esc(info.how)}</p>
+    <div class="ctl"><label for="win">Window: at least <b id="wv">${w}</b> ${isNode ? "nodes" : "counted lines"} in common</label><input type="range" id="win" min="1" max="${info.max}" value="${w}">
+      <span class="note">The real runs use ${isNode ? "150 nodes and 30 lines" : "30 counted lines"}; the example is small, so its window is too.</span></div>
+    <p class="result">Longest run shared by the two files: <b>${best}</b> ${isNode ? "nodes" : "counted lines"}. Blocks at this window: <b>${esc(blockText)}</b>.</p>
+    <div style="display:grid;gap:6px"><h3>1. The two files</h3>
+      <div class="srcs">${E.docs.map((d, k) => `<div style="display:grid;gap:4px;min-width:0"><span class="note">${esc(d.path)}</span><pre class="src">${d.src.map((l, i) => `<div class="${covLines[k].has(i + 1) ? "cov" : ""} ${unitLines[k].has(i + 1) ? "" : "nc"}"><span class="ln">${i + 1}</span>${esc(l) || " "}</div>`).join("")}</pre></div>`).join("")}</div>
+      <p class="note">Shaded: lines in a block at this window. Dimmed: lines that are no symbol for this method${isNode ? "" : " (blank, comment, or no token left)"}.</p>
+    </div>
+    <div style="display:grid;gap:6px"><h3>2. Each file as symbols</h3>
+      ${E.docs.map((d, k) => `<div style="display:grid;gap:4px"><span class="note">${esc(d.path)}: ${d.units.length} ${isNode ? "nodes" : "counted lines"}</span><div class="strip" data-k="${k}">${d.units.map((u, i) => `<span class="${isNode ? "" : "lin"} ${inBlock[k][i] ? "inblk" : ""}" data-key="${u.key}" data-i="${i}">${isNode ? u.key : esc(u.label)}</span>`).join("")}</div></div>`).join("")}
+      <p class="note">${isNode ? "Each box is one node, numbered by its symbol: equal numbers are equal symbols." : "Each box is one counted line's symbol."} Hover a box to see what it is made of and where the same symbol occurs; boxes in a block are shaded.</p>
+    </div>
+    <div style="display:grid;gap:6px"><h3>3. The suffix array</h3>
+      <div class="sa"><table class="sat"><thead><tr><th>Rank</th><th>Suffix starts at</th><th>Shared with the row above</th><th>Its first symbols</th></tr></thead><tbody>
+      ${E.sa.map((p, r) => { const [k, i] = E.at[p], d = E.docs[k], h = E.lcp[r]; const cross = r && E.at[E.sa[r - 1]][0] !== k;
+        return `<tr class="${h >= w ? "dup" : ""}"><td>${r}</td><td>${esc(d.path)} #${i} (line ${d.units[i].line})</td><td><span class="lcpbar ${h >= w ? "" : "lo"}" style="width:${Math.min(240, h * (isNode ? 4 : 24))}px"></span>${h}${cross && h ? " · other file" : ""}</td><td class="syms">${d.units.slice(i, i + 4).map(u => esc(isNode ? u.label.split(" | ")[0] : u.label)).join(" ‖ ")}</td></tr>` }).join("")}
+      </tbody></table></div>
+      <p class="note">Every suffix of both files, sorted. A row's shared length is its common prefix with the row above (LCP). Rows shaded share at least the window: their start is a duplicated window.</p>
+    </div>`;
+  $("#win").oninput = e => { win[method] = +e.target.value; renderMethods() };
+  for (const strip of $("#mdetail").querySelectorAll(".strip")) for (const s of strip.children) {
+    const k = +strip.dataset.k, u = E.docs[k].units[+s.dataset.i];
+    s.onmouseenter = e => {
+      for (const o of $("#mdetail").querySelectorAll(`.strip span[data-key="${u.key}"]`)) o.classList.add("same");
+      const n = $("#mdetail").querySelectorAll(`.strip span[data-key="${u.key}"]`).length;
+      showTip(e, `<b>${esc(E.docs[k].path)} line ${u.line}</b><br><span style="font-family:var(--mono);font-size:11.5px">${esc(u.label)}</span><br><span class="note">symbol ${u.key} · occurs ${n} time${n === 1 ? "" : "s"} in the two files</span>`);
+    };
+    s.onmousemove = moveTip;
+    s.onmouseleave = () => { hideTip(); for (const o of $("#mdetail").querySelectorAll(".same")) o.classList.remove("same") };
+  }
+}
+
+// ---- speed --------------------------------------------------------------------------------------------------
+const MROW = { "Jeff's rule": "jeff", "Lines": "lines", "Tape tokens": "tlines-text", "Tape shapes": "tlines-shape", "Node rows": "nodes-row", "Node symbols": "nodes-local", "Union": "union", "Parse to tapes, every": "parse-all", "Parse to tapes": "parse" };
+function rowKind(name) { for (const [k, v] of Object.entries(MROW)) if (name.startsWith(k)) return v; return "other" }
+function rowColor(kind) { return kind === "jeff" ? "var(--neutral)" : kind === "union" ? "var(--accent)" : kind.startsWith("parse") ? "var(--dim)" : mc(kind) }
 
 function renderSpeed() {
   const t = D.timings;
   if (!t.length) { $("#speed").innerHTML = `<div class="empty">No timings in this build of the data.</div>`; return }
-  const head = t[0], body = t.slice(1);
-  const groups = {};
-  for (const r of body) (groups[r[0]] ||= []).push(r);
-  $("#speed").innerHTML = `<h2>Speed, release builds</h2><p class="note" id="speednote"></p>` + Object.entries(groups).map(([g, rs]) => {
-    const jeff = rs.find(r => r[1].startsWith("Jeff"));
-    const ji = jeff ? parseFloat(jeff[2]) : null;
-    return `<h3 style="margin-top:12px">${esc(g)}</h3><div class="tscroll"><table class="speed"><thead><tr>${head.slice(1).map(h => `<th>${esc(h)}</th>`).join("")}<th>vs Jeff (instr.)</th></tr></thead><tbody>${rs.map(r => {
-      const x = parseFloat(r[2]);
-      return `<tr class="${r[1].startsWith("Jeff") ? "jeff" : ""}">${r.slice(1).map(v => `<td>${esc(v)}</td>`).join("")}<td class="ratio">${ji && x && !r[1].startsWith("Jeff") ? (ji / x >= 10 ? (ji / x).toFixed(0) : (ji / x).toFixed(1)) + "× fewer" : ""}</td></tr>`;
-    }).join("")}</tbody></table></div>`;
-  }).join("");
-  const note = D.timings_note; if (note) $("#speednote").textContent = note;
+  const body = t.slice(1).map(r => ({ group: r[0], name: r[1], instr: +r[2], cpu: +r[3], wall: +r[4], peak: +r[5], kind: rowKind(r[1]) }));
+  const groups = [...new Set(body.map(r => r.group))];
+  const M = { instr: ["Instructions (G)", "instr", true], cpu: ["CPU, user + system (s)", "cpu", true], peak: ["Peak memory (MB)", "peak", false] };
+  const [label, key, log] = M[metric];
+  const vals = body.map(r => r[key]);
+  const lo = log ? Math.pow(10, Math.floor(Math.log10(Math.min(...vals)))) : 0;
+  const hi = log ? Math.pow(10, Math.ceil(Math.log10(Math.max(...vals)))) : Math.ceil(Math.max(...vals) / 200) * 200;
+  const x = v => log ? (Math.log10(v) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)) : v / hi;
+  const ticks = log ? (() => { const a = []; for (let v = lo; v <= hi * 1.0001; v *= 10) a.push(v); return a })() : [0, hi / 4, hi / 2, 3 * hi / 4, hi];
+  const fmt = v => key === "peak" ? Math.round(v) + " MB" : key === "cpu" ? v.toFixed(2) + " s" : (v >= 10 ? v.toFixed(0) : v.toFixed(1)) + " G";
+  const tickTxt = v => key === "peak" ? Math.round(v) : v >= 1 ? v : v;
+  const jeffOf = g => body.find(r => r.group === g && r.kind === "jeff");
+  $("#speed").innerHTML = `
+    <div class="dh"><h2>Speed against Jeff's rule, release builds</h2><div class="seg" id="metric">${Object.entries(M).map(([k, v]) => `<button data-k="${k}" aria-pressed="${k === metric}">${esc(v[0].replace(/ \(.*/, ""))}</button>`).join("")}</div></div>
+    <p class="note" style="max-width:90ch">${esc(D.timings_note || "")} ${log ? "The scale is logarithmic: each gridline is ten times the one before." : ""} Hatched bars are the parse to tapes, which the node and tape-line methods read but every engine rule shares. Hover a bar for its numbers.</p>
+    ${groups.map(g => { const rows = body.filter(r => r.group === g); return `
+      <div style="display:grid;gap:6px"><h3>${esc(g)}</h3>
+        <div class="chart">${rows.map((r, i) => `<div class="crow" data-g="${esc(g)}" data-i="${i}"><div class="lab">${esc(r.name)} <span class="dot" style="background:${rowColor(r.kind)}"></span></div><div class="track">${ticks.map(tv => `<span class="grid-l" style="left:${(100 * x(Math.max(tv, lo || tv))).toFixed(2)}%"></span>`).join("")}<span class="b ${r.kind.startsWith("parse") ? "parse" : ""}" style="width:${Math.max(0.5, 100 * x(r[key])).toFixed(2)}%;background-color:${rowColor(r.kind)}"></span><span class="v" style="left:calc(${Math.max(0.5, 100 * x(r[key])).toFixed(2)}% + 6px)">${fmt(r[key])}</span></div></div>`).join("")}
+          <div class="axis"><div class="note" style="text-align:right">${esc(label)}</div><div class="ticks">${ticks.map(tv => `<span style="left:${(100 * x(Math.max(tv, lo || tv))).toFixed(2)}%">${tickTxt(tv)}</span>`).join("")}</div></div>
+        </div></div>` }).join("")}
+    <details><summary class="note" style="cursor:pointer">Show the table</summary><div class="tscroll" style="margin-top:8px"><table class="speed"><thead><tr><th>Scope</th><th>Method</th><th>Instructions (G)</th><th>CPU (s)</th><th>Wall (s)</th><th>Peak (MB)</th><th>vs Jeff, instructions</th></tr></thead><tbody>${body.map(r => { const j = jeffOf(r.group); return `<tr><td>${esc(r.group)}</td><td>${esc(r.name)}</td><td>${r.instr.toFixed(1)}</td><td>${r.cpu.toFixed(2)}</td><td>${r.wall.toFixed(2)}</td><td>${r.peak}</td><td>${r.kind === "jeff" ? "" : (j.instr / r.instr).toFixed(1) + "× fewer"}</td></tr>` }).join("")}</tbody></table></div></details>`;
+  for (const b of $("#metric").children) b.onclick = () => { metric = b.dataset.k; renderSpeed() };
+  for (const el of $("#speed").querySelectorAll(".crow")) {
+    const r = body.filter(x => x.group === el.dataset.g)[+el.dataset.i], j = jeffOf(r.group);
+    hover(el, () => `<b>${esc(r.name)}</b><br><span class="note">${esc(r.group)}</span><table style="margin-top:4px"><tr><td>Instructions</td><td>${r.instr.toFixed(1)} G</td></tr><tr><td>CPU</td><td>${r.cpu.toFixed(2)} s</td></tr><tr><td>Wall</td><td>${r.wall.toFixed(2)} s</td></tr><tr><td>Peak memory</td><td>${r.peak} MB</td></tr>${r.kind === "jeff" ? "" : `<tr><td>Against Jeff's rule</td><td>${(j.instr / r.instr).toFixed(1)}× fewer instr.</td></tr>`}</table>`);
+  }
 }
 
 boot();
