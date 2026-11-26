@@ -1,4 +1,4 @@
-.policy "ruff-pth101-os-chmod" revision 2
+.policy "ruff-pth101-os-chmod" revision 3
 .description "Use Path.chmod() instead of os.chmod(); path objects read better than string-based os calls."
 .language python
 .mode steer
@@ -11,11 +11,20 @@
 //   os.chmod(3, 0o644)                   not reported: a file descriptor
 //   fd = 3; os.chmod(fd, 0o644)          not reported: fd's only binding is an int
 //   os.chmod("f", 0o644, dir_fd=d)       not reported; `dir_fd=None` is reported
-#include "python/pathlib.rerail"
-//   pth_call(c, q, f)   c calls q; f the callee      fd_arg(c, x)   x's argument is a file descriptor
-//   kw_set(c, k)        keyword k is not None        (python/pathlib)
+#include "python/python-21.rerail"
+//   pth_checked_call(c, q, f)   c calls q in code Ruff checks; f the callee
+//   fd_arg(c, x)                x's argument is a file descriptor
+//   kw_set(c, k)                keyword k is not None
+//
+// The library follows a nested class through its definition. Ruff stops doing so when a later class-body binding
+// replaces that class: `class O: class B: y = 3; B = None`; `O.B.y` is therefore not known to be an integer.
+.decl replaced_nested_class(a: node)
+replaced_nested_class(a) :- attr_of(a, o, _), attr_of(o, p, x), pth_class_of(p, k), defn(k, x, n),
+    binding(k, x, b, _), n < b.
 
 .violation PTH101(at: node) code "PTH101"
     "Use `Path(path).chmod(mode)` instead of `os.chmod(path, mode)`; leave it where the path is a file descriptor or bytes, or `dir_fd` comes through `**kwargs`."
     suppress ruff "PTH101"
-PTH101(f) :- pth_call(c, "os.chmod", f), !fd_arg(c, "path"), !kw_set(c, "dir_fd").
+PTH101(f) :- pth_checked_call(c, "os.chmod", f), !fd_arg(c, "path"), !kw_set(c, "dir_fd").
+PTH101(f) :- pth_checked_call(c, "os.chmod", f), fd_arg(c, "path"), arg_value(c, "path", 0, a),
+    replaced_nested_class(a), !kw_set(c, "dir_fd").
