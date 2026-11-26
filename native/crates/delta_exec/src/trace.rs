@@ -37,7 +37,7 @@ const fn ph(name: &'static str, found: Found, unit: Unit, inside: Inside, across
 /// - the partitions' change (8): each row out's start flag, the starts numbered (in order), then a partition an item;
 /// - the freeze where the layer lies: a column's range a lane, a hashed index (18) a group, the seal (one group);
 /// - its orders and Bloom filters (18), an index a group; its statistics (9), a column a lane; the header, last.
-static PIPELINE: [Phase; 20] = {
+static PIPELINE: [Phase; 22] = {
     use Found::*;
     use Output::*;
     use Unit::*;
@@ -50,6 +50,8 @@ static PIPELINE: [Phase; 20] = {
         ph("scan", Fixed, Threadgroup, Inside::Nothing, Across::Ordered, ByScan, &[]),
         ph("open", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, InPlace, &[]),
         ph("place", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, ByScan, &[]),
+        ph("encode", Fixed, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("perm", Fixed, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
         ph("kills", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
         ph("ksort", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
         ph("kpasses", Indirect, Threadgroup, Inside::Nothing, Across::Rounds, ByIndex, PASSES),
@@ -132,7 +134,7 @@ pub fn facts_of(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     let l = Layer::new(bytes).expect("a committed layer");
     let a = l.head.shape.arity();
     let mut out = Vec::new(); // copy: derived (a check's reading of facts)
-    for id in l.rows.ids() {
+    for id in l.own.ids() {
         let mut r = vec![0, i64::from(id)];
         r.extend((0..a).map(|c| l.get(id, c)));
         out.push(r);
@@ -151,7 +153,7 @@ pub fn facts_of(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
             continue;
         }
         let cols: Vec<u16> = s.index_key(x).iter().map(|&c| u16::from(c)).collect();
-        let Some(o) = l.rows.find_order(&cols, l.rows.rows.len()) else { continue };
+        let Some(o) = l.rows.find_order(&cols, l.n() as u32) else { continue };
         let ix = l.rows.index_at(o);
         out.extend(ix.rows.as_slice().iter().enumerate().map(|(i, &id)| vec![5, x as i64, i as i64, i64::from(id)]));
         out.extend(ix.fences.as_slice().iter().enumerate().map(|(i, &f)| vec![6, x as i64, i as i64, f]));

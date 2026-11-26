@@ -164,13 +164,15 @@ impl Shape {
                 ));
             }
         }
-        if self.encoding != Encoding::Open {
-            return Err(format!(
-                "encoding {:?} is the form of a block that leaves its run (P§13: kept, journaled or a pinned slab); a run \
-                 block's layers are Open",
-                self.encoding
-            ));
-        }
+        // Its layers' own rows: open (the relation's rows chunks), or written once in the fewest bits, read in place:
+        // `packed::Packed` (a column an `IntCol`, the smallest of `col`'s), `Dict` (the same, `DICT` taken where
+        // smallest: `col::choose_for_reads`), or `ranged::Columns` (a column cut in ranges, each its own encoding).
+        let encoding = match self.encoding {
+            Encoding::Open => ENC_OPEN,
+            Encoding::Packed => ENC_PACKED,
+            Encoding::Ranged => ENC_RANGED,
+            Encoding::Dict => ENC_DICT,
+        };
         // Where its layers' blocks lie: the run's memory, a kept file (`blocks::kept`'s place: the traces'
         // directory, mapped where it lies), or a pinned slab (the device's, read in place).
         let placement = match self.placement {
@@ -195,7 +197,7 @@ impl Shape {
             arity: a as u32,
             partition: self.partition.map_or(NONE, u32::from),
             levels: u32::from(self.levels),
-            encoding: 0,
+            encoding,
             placement,
             retention,
             nidx: self.indexes.len() as u32,
@@ -213,12 +215,16 @@ impl Shape {
         for (i, ix) in self.indexes.iter().enumerate() {
             let (kind, key) = match ix {
                 IndexSpec::Order { key, fences, prints } => (IX_ORDER | if *fences { IX_FENCES } else { 0 } | if *prints { IX_PRINTS } else { 0 }, key),
-                IndexSpec::Perm(_) => {
-                    return Err(format!(
-                        "index {i}: Perm is packed's permutation (P§12), an index of the Packed encoding, which a run \
-                         block's Open layers are not (encoding Packed comes with the kept stores, after L1): an Order \
-                         serves an Open layer"
-                    ));
+                IndexSpec::Perm(key) => {
+                    // Packed's permutation (`packed::PIndex`): an index of a packed layer, on one column its order
+                    // does not lead.
+                    if !matches!(self.encoding, Encoding::Packed | Encoding::Dict) {
+                        return Err(format!("index {i}: Perm is packed's permutation (P§12), an index of a Packed or Dict layer"));
+                    }
+                    if key.len() != 1 || self.order.first() == key.first() {
+                        return Err(format!("index {i}: a permutation is on one column the order does not lead, not {key:?}"));
+                    }
+                    (IX_PERM, key)
                 }
                 IndexSpec::Hash(key) => (IX_HASH, key),
                 IndexSpec::Bloom(key) => (IX_BLOOM, key),
@@ -245,6 +251,14 @@ pub const IX_FENCES: u32 = 2;
 pub const IX_PRINTS: u32 = 4;
 pub const IX_HASH: u32 = 8;
 pub const IX_BLOOM: u32 = 16;
+/// Packed's permutation index on one column (`packed::PIndex`), in a packed layer's encoding.
+pub const IX_PERM: u32 = 32;
+
+/// A shape's encoding, as its blocks hold it (P§12's `Encoding`).
+pub const ENC_OPEN: u32 = 0;
+pub const ENC_PACKED: u32 = 1;
+pub const ENC_RANGED: u32 = 2;
+pub const ENC_DICT: u32 = 3;
 
 /// A shape's retention, as its blocks hold it: run data (two states during a run, one at rest), or a cache (one
 /// state, mutated: P§11.3).
@@ -510,6 +524,9 @@ pub struct LayerHead {
     pub pad: u32,
     /// The sum of its partitions' digests.
     pub digest: u64,
+    /// Its own rows in its shape's encoding (P§12; not Open): the `packed::Packed` or `ranged::Columns`'s offset in
+    /// the block, which its readers read in place (`OwnRows`); 0 when Open, its rows its relation's.
+    pub enc: u64,
     /// Each Bloom index's filter (`blocks::bloom`, in the block): its descriptor's offset; 0 for another kind.
     pub blooms: [u64; MAX_IX],
     pub shape: ShapeW,
@@ -532,6 +549,7 @@ impl LayerHead {
             nparts: 0,
             pad: 0,
             digest: 0,
+            enc: 0,
             blooms: [0; MAX_IX],
             shape,
         }
@@ -601,7 +619,109 @@ pub fn gone_spec(n: usize) -> Spec {
     Spec { widths: vec![crate::rows::I32, 4], sort: Some(0), indexes: Vec::new(), min_log: one_chunk(n) }
 }
 
-/// A committed layer, read in place: its block's bytes, its header, and its three relations.
+/// A layer's own rows, read where they lie, in its shape's encoding (P§12): its relation's rows (Open), or a
+/// `packed::Packed` or `ranged::Columns` in its block, its rows in the layer's order. Ids from `start`.
+#[derive(Clone, Copy)]
+pub enum OwnRows<'a> {
+    Open(&'a Relation),
+    Packed { p: &'a crate::packed::Packed, start: u32 },
+    Ranged { cols: &'a crate::ranged::Columns, start: u32 },
+}
+
+impl<'a> OwnRows<'a> {
+    /// A layer's own rows: its header's encoded form at `head.enc` of `bytes`, else its relation's.
+    pub fn of(bytes: &'a [u8], head: &LayerHead, rows: &'a Relation) -> OwnRows<'a> {
+        let start = rows.base_rows;
+        let at = head.enc as usize;
+        if at == 0 || head.shape.encoding == ENC_OPEN {
+            return OwnRows::Open(rows);
+        }
+        assert!(at.is_multiple_of(8) && at + 64 <= bytes.len(), "a layer's encoded rows lie in its block");
+        // SAFETY: its writer laid the encoded form out at `at` of the block (`layer_write::encode_open`), frozen since;
+        // its spans are self-relative, read in place.
+        unsafe {
+            match head.shape.encoding {
+                ENC_RANGED => OwnRows::Ranged { cols: &*bytes.as_ptr().add(at).cast::<crate::ranged::Columns>(), start },
+                _ => OwnRows::Packed { p: &*bytes.as_ptr().add(at).cast::<crate::packed::Packed>(), start },
+            }
+        }
+    }
+
+    /// A layer being written's own rows, in its block (its writer's phases after the rows are written or encoded).
+    pub fn in_block(block: &'a crate::block::Block, head: &LayerHead, rows: &'a Relation) -> OwnRows<'a> {
+        let start = rows.base_rows;
+        let at = head.enc as usize;
+        if at == 0 || head.shape.encoding == ENC_OPEN {
+            return OwnRows::Open(rows);
+        }
+        assert!(at.is_multiple_of(8) && block.holds(block.ptr::<u8>(at)), "a layer's encoded rows lie in its block");
+        // SAFETY: laid out at `at` of the block by `layer_write::encode_open`; read after its columns are written.
+        unsafe {
+            match head.shape.encoding {
+                ENC_RANGED => OwnRows::Ranged { cols: &*block.ptr::<crate::ranged::Columns>(at), start },
+                _ => OwnRows::Packed { p: &*block.ptr::<crate::packed::Packed>(at), start },
+            }
+        }
+    }
+
+    pub fn start(&self) -> u32 {
+        match *self {
+            OwnRows::Open(r) => r.base_rows,
+            OwnRows::Packed { start, .. } | OwnRows::Ranged { start, .. } => start,
+        }
+    }
+
+    /// Its rows' count.
+    pub fn n(&self) -> u32 {
+        match *self {
+            OwnRows::Open(r) => r.rows.len(),
+            OwnRows::Packed { p, .. } => p.len() as u32,
+            OwnRows::Ranged { cols, .. } => cols.len() as u32,
+        }
+    }
+
+    pub fn ids(&self) -> std::ops::Range<u32> {
+        self.start()..self.start() + self.n()
+    }
+
+    /// Own row `id`'s value in column `c`.
+    #[inline]
+    pub fn get(&self, id: u32, c: usize) -> i64 {
+        match *self {
+            OwnRows::Open(r) => r.own(id, c),
+            OwnRows::Packed { p, start } => p.get((id - start) as usize, c),
+            OwnRows::Ranged { cols, start } => cols.get((id - start) as usize, c),
+        }
+    }
+
+    /// Its packed form, when it has one (`Perm` indexes lie there).
+    pub fn packed(&self) -> Option<&'a crate::packed::Packed> {
+        match *self {
+            OwnRows::Packed { p, .. } => Some(p),
+            _ => None,
+        }
+    }
+}
+
+/// A layer's rows as a packer reads them (`packed::RowsIn`): row `r` is own row `start + r`.
+impl crate::packed::RowsIn for OwnRows<'_> {
+    fn n(&self) -> usize {
+        OwnRows::n(self) as usize
+    }
+    fn arity(&self) -> usize {
+        match *self {
+            OwnRows::Open(r) => r.arity as usize,
+            OwnRows::Packed { p, .. } => p.arity as usize,
+            OwnRows::Ranged { cols, .. } => cols.arity as usize,
+        }
+    }
+    fn get(&self, r: usize, c: usize) -> i64 {
+        OwnRows::get(self, self.start() + r as u32, c)
+    }
+}
+
+/// A committed layer, read in place: its block's bytes, its header, its three relations, and its own rows where they
+/// lie (`OwnRows`).
 #[derive(Clone, Copy)]
 pub struct Layer<'a> {
     pub bytes: &'a [u8],
@@ -609,6 +729,7 @@ pub struct Layer<'a> {
     pub rows: &'a Relation,
     pub parts: &'a Relation,
     pub gone: &'a Relation,
+    pub own: OwnRows<'a>,
 }
 
 impl<'a> Layer<'a> {
@@ -625,7 +746,8 @@ impl<'a> Layer<'a> {
             return Err("a layer read before it was committed".into());
         }
         let rel = |at: u64, what: &str| Relation::at(bytes, at as usize).filter(|r| r.is_frozen()).ok_or_else(|| format!("the layer's {what}, frozen"));
-        Ok(Layer { bytes, head, rows: rel(head.rows, "rows")?, parts: rel(head.parts, "parts")?, gone: rel(head.gone, "gone")? })
+        let rows = rel(head.rows, "rows")?;
+        Ok(Layer { bytes, head, rows, parts: rel(head.parts, "parts")?, gone: rel(head.gone, "gone")?, own: OwnRows::of(bytes, &head, rows) })
     }
 
     /// Its first own row's id: every id the layer below reads.
@@ -634,12 +756,12 @@ impl<'a> Layer<'a> {
     }
 
     pub fn end(&self) -> u32 {
-        self.rows.base_rows + self.rows.rows.len()
+        self.start() + self.own.n()
     }
 
     /// Its own rows.
     pub fn n(&self) -> usize {
-        self.rows.rows.len() as usize
+        self.own.n() as usize
     }
 
     /// The layer below: its block id, and its relation's offset there (the reference, `Relation::far`).
@@ -650,7 +772,7 @@ impl<'a> Layer<'a> {
     /// Own row `id`'s value in column `c`.
     #[inline]
     pub fn get(&self, id: u32, c: usize) -> i64 {
-        self.rows.own(id, c)
+        self.own.get(id, c)
     }
 
     /// Its kills: rows of the layers below, ascending.
@@ -740,6 +862,23 @@ impl<'a> Layer<'a> {
         Some(&ids[lo..hi])
     }
 
+    /// The own rows whose column `cols[0]` equals `key[0]` by a packed layer's permutation index on it (`Perm`): its
+    /// positions' range in the index's `perm`. `None` without one.
+    pub fn perm_range(&self, cols: &[u16], key: &[i64]) -> Option<(crate::col::Dec<'a>, std::ops::Range<usize>)> {
+        let p = self.own.packed()?;
+        if cols.len() != 1 {
+            return None;
+        }
+        let ix = p.indexes.as_slice().iter().find(|ix| ix.col == u32::from(cols[0]))?;
+        let keys = ix.keys.dec();
+        let k = keys.lower_bound(0, keys.len(), key[0]);
+        if k >= keys.len() || keys.get(k) != key[0] {
+            return Some((ix.perm.dec(), 0..0));
+        }
+        let starts = ix.starts.dec();
+        Some((ix.perm.dec(), starts.get(k) as usize..starts.get(k + 1) as usize))
+    }
+
     /// Index `x`'s Bloom filter, for a Bloom index.
     pub fn bloom(&self, x: usize) -> Option<&'a Bloom> {
         let at = self.head.blooms[x];
@@ -815,6 +954,11 @@ impl<'a> View<'a> {
     fn try_layer(&self, id: Id) -> Result<Layer<'a>, String> {
         let b = self.table().block(id).ok_or_else(|| format!("layer #{id} is not reachable from the launch"))?;
         Layer::new(b).map_err(|e| format!("block #{id}: {e}"))
+    }
+
+    /// The first id past the state's: its newest layer's end (0 for the empty state).
+    pub(crate) fn chain_end(&self) -> u32 {
+        self.head.map_or(0, |h| self.layer(h).end())
     }
 
     /// Layer `id`, checked when the state was made.
@@ -1024,6 +1168,8 @@ pub struct ProbeIter<'a> {
 enum Candidates<'a> {
     Range(std::ops::Range<u32>),
     Listed(std::slice::Iter<'a, u32>),
+    /// A packed layer's permutation index: positions `at` of its `perm`, each an own row from `start`.
+    Perm { perm: crate::col::Dec<'a>, at: std::ops::Range<usize>, start: u32 },
 }
 
 impl Iterator for Candidates<'_> {
@@ -1032,6 +1178,7 @@ impl Iterator for Candidates<'_> {
     fn next(&mut self) -> Option<u32> {
         match self {
             Candidates::Range(r) => r.next(),
+            Candidates::Perm { perm, at, start } => at.next().map(|i| *start + perm.get(i) as u32),
             Candidates::Listed(s) => s.next().copied(),
         }
     }
@@ -1064,7 +1211,9 @@ impl Iterator for ProbeIter<'_> {
                 Candidates::Range(r)
             } else if let Some(p) = l.order_range(cs, ks) {
                 Candidates::Listed(p.iter())
-            } else if let Some(x) = l.rows.find_index(cs, l.rows.rows.len()) {
+            } else if let Some((perm, at)) = l.perm_range(cs, ks) {
+                Candidates::Perm { perm, at, start: l.start() }
+            } else if let Some(x) = l.rows.find_index(cs, l.n() as u32) {
                 Candidates::Listed(l.rows.group(x, crate::key_hash(ks)).iter())
             } else {
                 Candidates::Range(self.chain.span(&l))

@@ -259,7 +259,7 @@ fn form_of(form: Form, x: i64, b: i64) -> i64 {
 /// each of those less column 0's. Only a column whose values span past `2^ID_SPLIT` is tried split or relative:
 /// below it its high part is constant. Every form's statistics come from one pass over the rows, each row's value
 /// and column 0's read once where they lie (decision 0353 step 8; `col::Stats` is `choose`'s).
-fn plan_col<'s>(src: Src<'s>, order: Option<&'s [u32]>, n: usize, c: usize, may_rel: Rel) -> ColPlan<'s> {
+fn plan_col<'s>(src: Src<'s>, order: Option<&'s [u32]>, n: usize, c: usize, may_rel: Rel, par: bool) -> ColPlan<'s> {
     use crate::col::{Stats, Vals};
     let rel = may_rel != Rel::Never && c > 0;
     let forms: &[Form] = if rel { &[Form::Whole, Form::Hi, Form::Lo, Form::RelWhole, Form::RelHi, Form::RelLo] } else { &[Form::Whole, Form::Hi, Form::Lo] };
@@ -273,7 +273,7 @@ fn plan_col<'s>(src: Src<'s>, order: Option<&'s [u32]>, n: usize, c: usize, may_
         forms.iter().map(|&f| (form_of(f, x0, b0), form_of(f, x1, b1))).collect()
     };
     // Each piece: every form's statistics, and whether a difference from column 0 wraps.
-    let pieces = crate::col::over_pieces(n, |r| {
+    let pieces = crate::col::over_pieces(par, n, |r| {
         let before = (r.start > 0).then(|| read(r.start - 1));
         let mut st: Vec<Stats> = forms.iter().zip(&ends).map(|(&f, &(first, last))| Stats::piece(first, last, n, before.map(|(x, b)| form_of(f, x, b)))).collect();
         let mut wraps = false;
@@ -296,7 +296,8 @@ fn plan_col<'s>(src: Src<'s>, order: Option<&'s [u32]>, n: usize, c: usize, may_
         });
     }
     let stats = joined.unwrap_or_default();
-    let part = |k: usize| -> (Part<'s>, Choice) { (Part { src, order, n, c, form: forms[k] }, stats.get(k).map_or_else(|| choose(&x), |s| s.choice(n))) };
+    let pick = |v: &Part<'s>| if par { choose(v) } else { crate::col::choose_serial(v) };
+    let part = |k: usize| -> (Part<'s>, Choice) { (Part { src, order, n, c, form: forms[k] }, stats.get(k).map_or_else(|| pick(&x), |s| s.choice(n))) };
     let (lo, hi) = stats.first().map_or((0, 0), |s| s.range());
     let max = (n > 0).then_some(hi);
     let whole = ColPlan { split: 0, rel: false, parts: vec![part(0)], max };
@@ -322,6 +323,46 @@ fn plan_col<'s>(src: Src<'s>, order: Option<&'s [u32]>, n: usize, c: usize, may_
     best
 }
 
+/// A permutation index on column `c` planned: its distinct values (sorted), where each value's positions start, and
+/// the positions grouped by value, in canonical order within a value; each with its encoding, chosen in parallel
+/// when `par`.
+fn plan_perm<'s>(scratch: &'s Scratch, src: Src<'s>, order: Option<&'s [u32]>, n: usize, c: usize, par: bool) -> IxPlan<'s> {
+    use crate::col::Vals;
+    let v = Part { src, order, n, c, form: Form::Whole };
+    // Positions grouped by the column's value: a radix sort of the values (less their minimum), stable, so
+    // positions stay in canonical order within a value.
+    let lo = (0..n).map(|i| v.at(i)).min().unwrap_or(0);
+    let hi = (0..n).map(|i| v.at(i)).max().unwrap_or(0);
+    let keys: &mut [u64] = scratch.take(n);
+    let perm: &mut [u32] = scratch.take(n);
+    for (i, (k, p)) in keys.iter_mut().zip(perm.iter_mut()).enumerate() {
+        *k = (v.at(i) as i128 - lo as i128) as u64;
+        *p = i as u32;
+    }
+    let bits = 64 - ((hi as i128 - lo as i128) as u64).leading_zeros();
+    crate::sort::radix_pairs(keys, perm, bits, scratch.take(n), scratch.take(n));
+    let distinct = if n == 0 { 0 } else { 1 + keys.windows(2).filter(|w| w[0] != w[1]).count() };
+    let kv: &mut [i64] = scratch.take(distinct);
+    let st: &mut [i64] = scratch.take(distinct + 1);
+    let mut d = 0;
+    for i in 0..n {
+        if i == 0 || keys[i] != keys[i - 1] {
+            kv[d] = lo + keys[i] as i64;
+            st[d] = i as i64;
+            d += 1;
+        }
+    }
+    st[distinct] = n as i64;
+    let pm: &mut [i64] = scratch.take(n);
+    for (o, &p) in pm.iter_mut().zip(perm.iter()) {
+        *o = p as i64;
+    }
+    let (kv, st, pm) = (&*kv, &*st, &*pm);
+    let pick = |j: usize| if par { choose([kv, st, pm][j]) } else { crate::col::choose_serial([kv, st, pm][j]) };
+    let [ck, cs, cp]: [Choice; 3] = each(par && n >= PAR_MIN, 3, pick).try_into().unwrap();
+    IxPlan { col: c as u32, parts: [(kv, ck), (st, cs), (pm, cp)] }
+}
+
 /// Whether a column may be relative to column 0: `Any` off the order key; `Searched` in it after column 0, which
 /// leads it (a probe searches it only within a range of one column-0 value, `Packed::probe`, where less column 0's
 /// value is less a constant); `Never` in an order column 0 does not lead (searched where column 0 varies).
@@ -332,54 +373,25 @@ enum Rel {
     Never,
 }
 
+/// Whether column `c` may be relative to column 0, under the order recorded `lead`.
+fn rel_to(lead: &[u16], c: usize) -> Rel {
+    match () {
+        _ if !lead.contains(&(c as u16)) => Rel::Any,
+        _ if lead.first() == Some(&0) => Rel::Searched,
+        _ => Rel::Never,
+    }
+}
+
 fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, lead: &[u16], src: Src<'s>, order: Option<&'s [u32]>, n: usize) -> Plan<'s> {
-    use crate::col::Vals;
     let mut indexes = Vec::new();
     for ix in &spec.indexes {
         if on_order(lead, ix) {
             continue;
         }
         assert_eq!(ix.len(), 1, "a packed index off the order is on one column");
-        let c = ix[0] as usize;
-        let v = Part { src, order, n, c, form: Form::Whole };
-        // Positions grouped by the column's value: a radix sort of the values (less their minimum), stable, so
-        // positions stay in canonical order within a value.
-        let lo = (0..n).map(|i| v.at(i)).min().unwrap_or(0);
-        let hi = (0..n).map(|i| v.at(i)).max().unwrap_or(0);
-        let keys: &mut [u64] = scratch.take(n);
-        let perm: &mut [u32] = scratch.take(n);
-        for (i, (k, p)) in keys.iter_mut().zip(perm.iter_mut()).enumerate() {
-            *k = (v.at(i) as i128 - lo as i128) as u64;
-            *p = i as u32;
-        }
-        let bits = 64 - ((hi as i128 - lo as i128) as u64).leading_zeros();
-        crate::sort::radix_pairs(keys, perm, bits, scratch.take(n), scratch.take(n));
-        let distinct = if n == 0 { 0 } else { 1 + keys.windows(2).filter(|w| w[0] != w[1]).count() };
-        let kv: &mut [i64] = scratch.take(distinct);
-        let st: &mut [i64] = scratch.take(distinct + 1);
-        let mut d = 0;
-        for i in 0..n {
-            if i == 0 || keys[i] != keys[i - 1] {
-                kv[d] = lo + keys[i] as i64;
-                st[d] = i as i64;
-                d += 1;
-            }
-        }
-        st[distinct] = n as i64;
-        let pm: &mut [i64] = scratch.take(n);
-        for (o, &p) in pm.iter_mut().zip(perm.iter()) {
-            *o = p as i64;
-        }
-        let (kv, st, pm) = (&*kv, &*st, &*pm);
-        let [ck, cs, cp]: [Choice; 3] = each(n >= PAR_MIN, 3, |j| choose([kv, st, pm][j])).try_into().unwrap();
-        indexes.push(IxPlan { col: c as u32, parts: [(kv, ck), (st, cs), (pm, cp)] });
+        indexes.push(plan_perm(scratch, src, order, n, ix[0] as usize, true));
     }
-    let rel = |c: usize| match () {
-        _ if !lead.contains(&(c as u16)) => Rel::Any,
-        _ if lead.first() == Some(&0) => Rel::Searched,
-        _ => Rel::Never,
-    };
-    let choices = each(n * arity >= PAR_MIN, arity, |c| plan_col(src, order, n, c, rel(c)));
+    let choices = each(n * arity >= PAR_MIN, arity, |c| plan_col(src, order, n, c, rel_to(lead, c), true));
     Plan { arity, n, choices, indexes, levels: None }
 }
 
@@ -724,6 +736,96 @@ impl Prepared<'_> {
         let p = place_at(block, &self.plan, &self.order);
         // SAFETY: placed in `block`, which lives as long as the reference.
         (unsafe { &*p }, stats_of(&self.plan, block.used() - before))
+    }
+}
+
+/// A packed relation written an item at a time, in a block its writer holds open (a trace's layer, decision 0686):
+/// `lay_out` lays its descriptors out, then each column is written by `write_col` and each permutation index by
+/// `write_perm`, each call by itself, one after another inside (its parallel work is its caller's items). Its rows
+/// are `rows`, read where they lie, in their order; nothing is made of them first.
+pub mod writer {
+    use super::*;
+
+    /// Lays out a packed relation of `n` rows and `arity` columns in `block`: its descriptor, recorded order `okey`
+    /// (its rows lie in that order), a column descriptor a column and an index descriptor for each column of
+    /// `perms`, each empty until written. `None` when the block has no room.
+    pub fn lay_out(block: &Block, arity: usize, n: usize, okey: &[u16], perms: &[u16]) -> Option<*mut Packed> {
+        let p: *mut Packed = block.try_alloc_t(1)?;
+        let cp: *mut PCol = block.try_alloc_t(arity.max(1))?;
+        let ip: *mut PIndex = block.try_alloc_t(perms.len().max(1))?;
+        // SAFETY: just allocated in `block`, open, zero; the descriptors' spans set to their chunks.
+        unsafe {
+            (*p).arity = arity as u32;
+            (*p).n = n as u32;
+            (*p).nokey = okey.len().min(8) as u32;
+            for (i, &c) in okey.iter().take(8).enumerate() {
+                (*p).okey[i] = c;
+            }
+            for (x, &c) in perms.iter().enumerate() {
+                (*ip.add(x)).col = u32::from(c);
+            }
+            (*p).nindex = perms.len() as u32;
+            Span::set(&raw mut (*p).cols, cp, arity);
+            Span::set(&raw mut (*p).indexes, ip, perms.len());
+        }
+        Some(p)
+    }
+
+    /// Lays `c`'s encoding out at `this` in `block`, its words allocated there, and writes `v` into them.
+    ///
+    /// # Safety
+    /// `this` is zeroed memory of `block` (open), written by this call alone.
+    pub(crate) unsafe fn put<V: crate::col::Vals + ?Sized>(block: &Block, this: *mut IntCol, ch: &Choice, v: &V) -> bool {
+        let words = ch.data_words + ch.runs_words;
+        let Some(w) = block.try_alloc_t::<u64>(words.max(1)) else { return false };
+        // SAFETY: `w` holds `words` zeroed words, just allocated; `this` is the caller's.
+        let (d, r) = unsafe { IntCol::lay_out_at(this, w, ch) };
+        crate::col::write_serial(ch, v, d, r);
+        true
+    }
+
+    /// Column `c` of `p` (laid out by `lay_out` in `block`), from `rows`: planned as `pack` plans it (`plan_col`:
+    /// whole or split, relative to column 0 where it may be, the smallest), or, `dict`, whole, by
+    /// `col::choose_for_reads` (`DICT` where it is smallest). False when the block has no room.
+    ///
+    /// # Safety
+    /// `p` lies in `block`, open, laid out by `lay_out`; column `c` is written by this call alone.
+    pub unsafe fn write_col(block: &Block, p: &Packed, c: usize, rows: &dyn RowsIn, dict: bool) -> bool {
+        let n = p.n as usize;
+        let src = Src::Rows(rows);
+        let lead = &p.okey[..p.nokey as usize];
+        let plan = if dict {
+            let v = Part { src, order: None, n, c, form: Form::Whole };
+            ColPlan { split: 0, rel: false, parts: vec![(v, crate::col::choose_for_reads_serial(&v))], max: None }
+        } else {
+            plan_col(src, None, n, c, rel_to(lead, c), false)
+        };
+        // SAFETY: column `c`'s descriptor, this call's alone (the caller's contract).
+        let pc = unsafe { p.cols.as_ptr().cast_mut().add(c) };
+        unsafe {
+            (*pc).split = plan.split;
+            (*pc).rel = u32::from(plan.rel);
+            for (k, (v, ch)) in plan.parts.iter().enumerate() {
+                let at = if k == 0 { &raw mut (*pc).hi } else { &raw mut (*pc).lo };
+                if !put(block, at, ch, v) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Permutation index `x` of `p` (its column, `lay_out`'s `perms[x]`), from `rows`, its temporaries from
+    /// `scratch`. False when the block has no room.
+    ///
+    /// # Safety
+    /// As `write_col`'s, for index `x`.
+    pub unsafe fn write_perm(block: &Block, p: &Packed, x: usize, rows: &dyn RowsIn, scratch: &Scratch) -> bool {
+        let ix = unsafe { p.indexes.as_ptr().cast_mut().add(x) };
+        let c = unsafe { (*ix).col } as usize;
+        let plan = plan_perm(scratch, Src::Rows(rows), None, p.n as usize, c, false);
+        let [(k, kc), (s, sc), (m, mc)] = &plan.parts;
+        unsafe { put(block, &raw mut (*ix).keys, kc, *k) && put(block, &raw mut (*ix).starts, sc, *s) && put(block, &raw mut (*ix).perm, mc, *m) }
     }
 }
 

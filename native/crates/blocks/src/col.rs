@@ -85,11 +85,15 @@ fn words(n: usize, bits: u32) -> usize {
 /// Values a piece of a parallel pass holds. A multiple of 64, so a piece's values pack into whole words of its own.
 pub(crate) const PIECE: usize = 1 << 16;
 
-/// The pieces of `0..n`, each `PIECE` values (the last the rest), run by `f` in parallel when there are several.
-pub(crate) fn over_pieces<T: Send>(n: usize, f: impl Fn(std::ops::Range<usize>) -> T + Sync) -> Vec<T> {
+/// The pieces of `0..n`, each `PIECE` values (the last the rest), run by `f` in parallel when there are several and
+/// `par`; one after another when not (a caller whose own items are the parallel work: a twin's, decision 0686).
+pub(crate) fn over_pieces<T: Send>(par: bool, n: usize, f: impl Fn(std::ops::Range<usize>) -> T + Sync) -> Vec<T> {
     let k = n.div_ceil(PIECE).max(1);
     if k == 1 {
         return vec![f(0..n)];
+    }
+    if !par {
+        return (0..k).map(|p| f(p * PIECE..((p + 1) * PIECE).min(n))).collect();
     }
     use rayon::prelude::*;
     rerail_context::on_cores(|| (0..k).into_par_iter().map(|p| f(p * PIECE..((p + 1) * PIECE).min(n))).collect())
@@ -97,9 +101,13 @@ pub(crate) fn over_pieces<T: Send>(n: usize, f: impl Fn(std::ops::Range<usize>) 
 
 /// Packs `vals` (each under `2^bits`) into `out`, which is zero and `words(vals.len(), bits)` long.
 pub fn pack_into(out: &mut [u64], vals: &[u64], bits: u32) {
+    pack_into_in(out, vals, bits, true)
+}
+
+fn pack_into_in(out: &mut [u64], vals: &[u64], bits: u32, par: bool) {
     // SAFETY: `u64` and `i64` have one layout; the packer reads `v - 0` modulo 2^64, the same bits.
     let v = unsafe { std::slice::from_raw_parts(vals.as_ptr().cast::<i64>(), vals.len()) };
-    pack_resid(out, v, Line { base: 0, slope: 0, rmin: 0 }, bits);
+    pack_resid(out, v, Line { base: 0, slope: 0, rmin: 0 }, bits, par);
 }
 
 /// What a column's packed values are taken from: `v[i] - base - floor(i * slope / 2^16) - rmin`, modulo 2^64
@@ -157,7 +165,7 @@ impl<V: Vals + ?Sized> Vals for &V {
 /// Packs `v`'s values less `line` into `out` (zero, `words(v.len(), bits)` long), the residuals computed as they
 /// are packed (no pass to a temporary). A piece of `PIECE` values is `PIECE * bits / 64` whole words, so pieces
 /// are packed in parallel and share no word.
-fn pack_resid<V: Vals + ?Sized>(out: &mut [u64], v: &V, line: Line, bits: u32) {
+fn pack_resid<V: Vals + ?Sized>(out: &mut [u64], v: &V, line: Line, bits: u32, par: bool) {
     if bits == 0 {
         return;
     }
@@ -165,7 +173,7 @@ fn pack_resid<V: Vals + ?Sized>(out: &mut [u64], v: &V, line: Line, bits: u32) {
     let line = if line.slope == 0 { Line { base: line.base.wrapping_add(line.rmin), slope: 0, rmin: 0 } } else { line };
     let n = v.len();
     let full = n / PIECE;
-    if full < 2 {
+    if full < 2 || !par {
         return pack_piece(out, v, 0..n, line, bits);
     }
     use rayon::prelude::*;
@@ -336,7 +344,7 @@ fn resid<V: Vals + ?Sized>(v: &V, slope: i64, i: usize) -> i128 {
 /// range's read): it is within the full one, so when it already needs `bits`, the full pass is skipped. The pass
 /// runs in pieces in parallel, in `i64` when `slope * n` and the values (`lo..=hi`) cannot overflow it
 /// (vectorized), else in `i128`.
-fn line_fit<V: Vals + ?Sized>(v: &V, slope: i64, bits: u32, lo: i64, hi: i64, sample: (i128, i128)) -> (usize, u32, i64) {
+fn line_fit<V: Vals + ?Sized>(v: &V, slope: i64, bits: u32, lo: i64, hi: i64, sample: (i128, i128), par: bool) -> (usize, u32, i64) {
     let n = v.len();
     let no = (usize::MAX, 64, 0);
     let resid = |i: usize| resid(v, slope, i);
@@ -345,7 +353,7 @@ fn line_fit<V: Vals + ?Sized>(v: &V, slope: i64, bits: u32, lo: i64, hi: i64, sa
         return no;
     }
     let small = (slope as i128).abs() * n as i128 <= (1i128 << 62) && lo > -(1 << 61) && hi < 1 << 61;
-    let parts = over_pieces(n, |r| {
+    let parts = over_pieces(par, n, |r| {
         if small {
             let (v0, slope) = (v.at(0), slope);
             let (mut lo, mut hi, mut t) = (i64::MAX, i64::MIN, r.start as i64 * slope);
@@ -394,7 +402,12 @@ fn runs_in<V: Vals + ?Sized>(v: &V, r: std::ops::Range<usize>) -> usize {
 /// The smallest encoding of `v`: one pass for the range and the runs, one for the line's residuals (when a sample
 /// says the line may win), each in pieces in parallel.
 pub fn choose<V: Vals + ?Sized>(v: &V) -> Choice {
-    choose_with(v, usize::MAX, false)
+    choose_with(v, usize::MAX, false, true)
+}
+
+/// `choose`, one piece after another (`over_pieces`): for a caller whose items are the parallel work.
+pub fn choose_serial<V: Vals + ?Sized>(v: &V) -> Choice {
+    choose_with(v, usize::MAX, false, false)
 }
 
 /// The runs past which `choose_for_reads` takes no `RUNS`: a read's search of their starts is then 5 steps at most.
@@ -404,7 +417,12 @@ pub const RUNS_FOR_READS: usize = 32;
 /// words. `RUNS` only with few runs, its read a search of their starts; `GROUPS` holds long runs about as small, its
 /// read three words. `DICT` where it is smaller than all of them, its read two words.
 pub fn choose_for_reads<V: Vals + ?Sized>(v: &V) -> Choice {
-    choose_with(v, RUNS_FOR_READS, true)
+    choose_with(v, RUNS_FOR_READS, true, true)
+}
+
+/// `choose_for_reads`, one piece after another.
+pub fn choose_for_reads_serial<V: Vals + ?Sized>(v: &V) -> Choice {
+    choose_with(v, RUNS_FOR_READS, true, false)
 }
 
 /// The most distinct values a `DICT` of `n` values `bits` wide (their range's) may have and still take fewer words
@@ -434,7 +452,7 @@ fn distinct_upto<V: Vals + ?Sized>(v: &V, limit: usize) -> Option<Vec<i64>> {
     Some(d)
 }
 
-fn choose_with<V: Vals + ?Sized>(v: &V, max_runs: usize, dict: bool) -> Choice {
+fn choose_with<V: Vals + ?Sized>(v: &V, max_runs: usize, dict: bool, par: bool) -> Choice {
     let n = v.len();
     let none = Choice { tag: CONST, bits: 0, rbits: 0, nruns: 0, base: 0, slope: 0, rmin: 0, n, data_words: 1, runs_words: 0 };
     if n == 0 {
@@ -446,7 +464,7 @@ fn choose_with<V: Vals + ?Sized>(v: &V, max_runs: usize, dict: bool) -> Choice {
     // every 64th row (LINE's sample) in the same read.
     // The range a group at a time (a piece is whole groups): `GROUPS`' widths, summed, and its minima's range come
     // from the same read.
-    let parts = over_pieces(n, |r| {
+    let parts = over_pieces(par, n, |r| {
         let (mut a, mut b, mut gbits, mut ghi) = (i64::MAX, i64::MIN, 0usize, i64::MIN);
         for g in groups_of(r.clone()) {
             let len = g.len();
@@ -469,7 +487,7 @@ fn choose_with<V: Vals + ?Sized>(v: &V, max_runs: usize, dict: bool) -> Choice {
     let pack_words = words(n, bits);
     let rbits = bits_for(n as u64);
     let runs = (words(nruns, bits), words(nruns, rbits));
-    let (line_words, lbits, rlo) = line_fit(v, slope, bits, lo, hi, sample);
+    let (line_words, lbits, rlo) = line_fit(v, slope, bits, lo, hi, sample, par);
     // `GROUPS`: the residuals (two spare words: a group of width 0 at the end reads at the last bit), each group's
     // minimum less the column's (`lo`, the least of them), and each group's entry (width, offset).
     let ngroups = n.div_ceil(GROUP);
@@ -617,14 +635,23 @@ impl Stats {
 /// Packs `v` as `c` chose into `data` and `runs` (zero, `c.data_words` and `c.runs_words` long), in pieces in
 /// parallel. RUNS counts each piece's runs, so each piece knows its first run, then writes its runs from there.
 pub fn write<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [u64]) {
+    write_in(c, v, data, runs, true)
+}
+
+/// `write`, one piece after another (`over_pieces`): for a caller whose items are the parallel work.
+pub fn write_serial<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [u64]) {
+    write_in(c, v, data, runs, false)
+}
+
+fn write_in<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [u64], par: bool) {
     match c.tag {
         CONST => {}
-        PACK => pack_resid(data, v, Line { base: c.base, slope: 0, rmin: 0 }, c.bits),
-        LINE => pack_resid(data, v, Line { base: c.base, slope: c.slope, rmin: c.rmin }, c.bits),
-        GROUPS => write_groups(c, v, data, runs),
-        DICT => write_dict(c, v, data, runs),
+        PACK => pack_resid(data, v, Line { base: c.base, slope: 0, rmin: 0 }, c.bits, par),
+        LINE => pack_resid(data, v, Line { base: c.base, slope: c.slope, rmin: c.rmin }, c.bits, par),
+        GROUPS => write_groups(c, v, data, runs, par),
+        DICT => write_dict(c, v, data, runs, par),
         _ => {
-            let counts = over_pieces(v.len(), |r| runs_in(v, r));
+            let counts = over_pieces(par, v.len(), |r| runs_in(v, r));
             let (d, s) = (atomics(data), atomics(runs));
             let mut first = Vec::with_capacity(counts.len());
             let mut at = 0;
@@ -632,7 +659,7 @@ pub fn write<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [
                 first.push(at);
                 at += k;
             }
-            over_pieces(v.len(), |r| {
+            over_pieces(par, v.len(), |r| {
                 let k = first[r.start / PIECE];
                 let (mut wv, mut ws) = (BitW::new(d, k * c.bits as usize, c.bits), BitW::new(s, k * c.rbits as usize, c.rbits));
                 let mut push = |i: usize, x: i64| {
@@ -657,13 +684,13 @@ pub fn write<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [
 
 /// `DICT`'s words: the distinct values, sorted, less `base` into `runs`; then in pieces in parallel each row's index
 /// among them into `data` (a piece is `PIECE` values, so its codes start on a word of their own).
-fn write_dict<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [u64]) {
+fn write_dict<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [u64], par: bool) {
     let d = distinct_upto(v, c.nruns as usize).expect("as chosen");
     let vals: Vec<u64> = d.iter().map(|&x| x.wrapping_sub(c.base) as u64).collect();
-    pack_into(runs, &vals, c.bits);
+    pack_into_in(runs, &vals, c.bits, par);
     let code: rustc_hash::FxHashMap<i64, u64> = d.iter().enumerate().map(|(k, &x)| (x, k as u64)).collect();
     let out = atomics(data);
-    over_pieces(v.len(), |r| {
+    over_pieces(par, v.len(), |r| {
         let mut w = BitW::new(out, r.start * c.rbits as usize, c.rbits);
         for i in r {
             w.push(code[&v.at(i)]);
@@ -674,9 +701,9 @@ fn write_dict<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut 
 
 /// `GROUPS`' words: each group's minimum and width (a pass in pieces), their offsets (a prefix sum), then in pieces
 /// in parallel each group's residuals into `data` and its minimum and entry into `runs`.
-fn write_groups<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [u64]) {
+fn write_groups<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [u64], par: bool) {
     let n = v.len();
-    let gs: Vec<(i64, u32)> = over_pieces(n, |r| {
+    let gs: Vec<(i64, u32)> = over_pieces(par, n, |r| {
         groups_of(r)
             .map(|g| {
                 let (x, y) = range_of(v, g);
@@ -693,7 +720,7 @@ fn write_groups<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mu
     }
     let (d, s) = (atomics(data), atomics(runs));
     let entries = words(gs.len(), c.bits) * 64;
-    over_pieces(n, |r| {
+    over_pieces(par, n, |r| {
         let (k0, k1) = (r.start >> GROUP_LOG, r.end.div_ceil(GROUP));
         let mut mins = BitW::new(s, k0 * c.bits as usize, c.bits);
         let mut ents = BitW::new(s, entries + k0 * c.rbits as usize, c.rbits);
@@ -1228,7 +1255,7 @@ mod tests {
         ];
         for v in &cols {
             let n = v.len();
-            let parts = over_pieces(n, |r| {
+            let parts = over_pieces(true, n, |r| {
                 let mut st = Stats::piece(v[0], v[n - 1], n, (r.start > 0).then(|| v[r.start - 1]));
                 for i in r {
                     st.push(i, v[i]);

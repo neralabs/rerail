@@ -7,6 +7,8 @@
 //! - `stat`: one column's range;
 //! - `index`: one of its spec's hashed indexes (`build_indexes`' builder, one index a call), after its columns' ranges;
 //! - `kills_mut`: its change's ids, which the kills' sort writes in place;
+//! - `encode_open`, `encode_col`, `encode_perm`: its own rows in its shape's encoding (P§12: Packed, Dict, Ranged),
+//!   laid out once, then a column a call and a permutation index a call, read where the rows lie;
 //! - `seal`: the relation frozen (its sort column, its directory's count, its live rows), its rows' every other item
 //!   done;
 //! - `sketch`: one column's statistics, in its kept form, into its entry of the directory.
@@ -23,6 +25,8 @@
 #![deny(clippy::disallowed_methods, clippy::disallowed_types, clippy::disallowed_macros)]
 
 use super::{ADDED_INDEXES, ColStats, FROZEN, Index, Relation, Spec, build_one_index};
+use crate::layer::{ENC_DICT, ENC_RANGED};
+use crate::packed::RowsIn;
 use crate::refs::Span;
 use crate::region::BlockPin;
 use crate::scratch::Scratch;
@@ -70,12 +74,13 @@ pub fn open(pin: &mut BlockPin, rel: &Relation, spec: &Spec, kills: usize, sketc
     true
 }
 
-/// Column `c`'s range over the layer's own rows, into its statistics (`open`'s).
-pub fn stat(pin: &mut BlockPin, rel: &Relation, c: usize) {
+/// Column `c`'s range over the layer's own rows `rows` (its relation's, or its encoded form's: `layer::OwnRows`), into
+/// its statistics (`open`'s).
+pub fn stat(pin: &mut BlockPin, rel: &Relation, c: usize, rows: &dyn RowsIn) {
     check_open(pin, rel);
     let (mut lo, mut hi) = (i64::MAX, i64::MIN);
-    for i in 0..rel.rows.len() {
-        let v = rel.rows.get(i, c);
+    for i in 0..rows.n() {
+        let v = rows.get(i, c);
         lo = lo.min(v);
         hi = hi.max(v);
     }
@@ -83,12 +88,12 @@ pub fn stat(pin: &mut BlockPin, rel: &Relation, c: usize) {
     unsafe { rel.stats.as_mut_slice()[c] = ColStats { min: lo, max: hi } };
 }
 
-/// Index `x` of `spec.indexes`, over the layer's own rows (in id order, as they lie), into its directory entry
+/// Index `x` of `spec.indexes`, over the layer's own rows `rows` (in id order, as they lie), into its directory entry
 /// (`open`'s), its temporaries from `scratch`: after every column's range (`stat`).
-pub fn index(pin: &mut BlockPin, rel: &Relation, spec: &Spec, x: usize, scratch: &Scratch) {
+pub fn index(pin: &mut BlockPin, rel: &Relation, spec: &Spec, x: usize, scratch: &Scratch, rows: &dyn RowsIn) {
     check_open(pin, rel);
     let a = rel.arity as usize;
-    let n = rel.rows.len() as usize;
+    let n = rows.n();
     let stats = rel.stats.as_slice();
     let lo: Vec<i64> = stats.iter().map(|s| s.min).collect(); // copy: not block data (the key columns' bounds)
     let hi: Vec<i64> = stats.iter().map(|s| s.max).collect(); // copy: not block data (the key columns' bounds)
@@ -97,11 +102,51 @@ pub fn index(pin: &mut BlockPin, rel: &Relation, spec: &Spec, x: usize, scratch:
         *o = i as u32;
     }
     let every: Vec<u16> = (0..a as u16).collect(); // copy: not block data (the columns' numbers)
-    let val = |c: usize, i: usize| rel.rows.get(i as u32, c);
+    let val = |c: usize, i: usize| rows.get(i, c);
     let sort = spec.sort.map(usize::from);
     // SAFETY: entry `x` of the open relation's directory (`open`'s); this call is its one writer.
     let ix = unsafe { &mut rel.indexes.as_mut_slice()[x] };
     build_one_index(pin.block(), ix, &spec.indexes[x], &every, sort, &val, order, &lo, &hi, rel.base_rows as usize, scratch);
+}
+
+/// Lays out the layer's own rows in `encoding` (not Open: `layer::ENC_*`) in `rel`'s block, for `n` rows of `arity`
+/// columns lying in canonical order `order`, with a permutation index on each column of `perms` (Packed and Dict
+/// only): a `packed::Packed`, or a `ranged::Columns`, empty until each column and index is written. Its offset in the
+/// block (the layer's header's `enc`), or `None` when the block has no room.
+pub fn encode_open(pin: &mut BlockPin, rel: &Relation, encoding: u32, arity: usize, n: usize, order: &[u16], perms: &[u16]) -> Option<usize> {
+    check_open(pin, rel);
+    let block = pin.block();
+    let p = if encoding == ENC_RANGED {
+        assert!(perms.is_empty(), "a permutation is a packed layer's");
+        crate::ranged::writer::lay_out(block, arity, n)?.cast::<u8>()
+    } else {
+        crate::packed::writer::lay_out(block, arity, n, order, perms)?.cast::<u8>()
+    };
+    Some(block.offset_of(p))
+}
+
+/// Column `c` of the encoded rows at `at` (`encode_open`'s), from the layer's rows `rows` where they lie. False when
+/// the block has no room.
+pub fn encode_col(pin: &mut BlockPin, rel: &Relation, encoding: u32, at: usize, c: usize, rows: &dyn RowsIn) -> bool {
+    check_open(pin, rel);
+    let block = pin.block();
+    // SAFETY: laid out at `at` by `encode_open` in the block the pin holds to write; column `c` is this call's alone.
+    unsafe {
+        if encoding == ENC_RANGED {
+            crate::ranged::writer::write_col(block, &*block.ptr::<crate::ranged::Columns>(at), c, rows)
+        } else {
+            crate::packed::writer::write_col(block, &*block.ptr::<crate::packed::Packed>(at), c, rows, encoding == ENC_DICT)
+        }
+    }
+}
+
+/// Permutation index `x` of the packed rows at `at` (`encode_open`'s), from `rows`, its temporaries from `scratch`.
+/// False when the block has no room.
+pub fn encode_perm(pin: &mut BlockPin, rel: &Relation, at: usize, x: usize, rows: &dyn RowsIn, scratch: &Scratch) -> bool {
+    check_open(pin, rel);
+    let block = pin.block();
+    // SAFETY: as `encode_col`'s, for index `x`.
+    unsafe { crate::packed::writer::write_perm(block, &*block.ptr::<crate::packed::Packed>(at), x, rows, scratch) }
 }
 
 /// The layer's change: room for its kills (`open`'s), written in place by the kills' sort, ascending, each once.
@@ -114,15 +159,16 @@ pub fn kills_mut<'p>(pin: &'p mut BlockPin, rel: &Relation) -> &'p mut [u32] {
 }
 
 /// Freezes the layer: sorted on `spec.sort` (its rows were written in the trace's canonical order), its directory
-/// holding `spec.indexes` (each built, `index`), every own row live. After every item of its other phases, and before
-/// its orders (`Relation::add_order`) and sketches (`sketch`).
-pub fn seal(pin: &mut BlockPin, rel: &Relation, spec: &Spec) {
+/// holding `spec.indexes` (each built, `index`), its `n` own rows live (its relation's, or its encoded form's). After
+/// every item of its other phases, and before its orders (`Relation::add_order`) and sketches (`sketch`).
+pub fn seal(pin: &mut BlockPin, rel: &Relation, spec: &Spec, n: u32) {
     check_open(pin, rel);
     let ch = rel.changed.as_slice();
     assert!(ch.windows(2).all(|w| w[0] < w[1]) && ch.last().is_none_or(|&k| k < rel.base_rows), "a layer's kills: rows below it, ascending, once");
     rel.set_sort_col(spec.sort.map(usize::from));
     rel.nindex.store(spec.indexes.len() as u32, Relaxed);
-    rel.live.store(rel.rows.len(), Relaxed);
+    assert!(rel.rows.is_empty() || rel.rows.len() == n, "a layer's rows are its relation's or its encoded form's");
+    rel.live.store(n, Relaxed);
     rel.flags.fetch_or(FROZEN, Release);
 }
 

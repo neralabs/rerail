@@ -22,9 +22,13 @@ fn shape() -> Shape {
 
 /// A trace that keeps a layer a run (`RollUp::Never`): its tests read every state it was at, each a head kept.
 fn setup() -> (Registry, TraceOps, Directory, Trace) {
+    setup_of(&shape())
+}
+
+fn setup_of(s: &Shape) -> (Registry, TraceOps, Directory, Trace) {
     let mut reg = Registry::default();
     let ops = TraceOps::declare(&mut reg).unwrap();
-    (reg, ops, Directory::default(), Trace::new(&shape()).unwrap().with_roll_up(RollUp::Never))
+    (reg, ops, Directory::default(), Trace::new(s).unwrap().with_roll_up(RollUp::Never))
 }
 
 fn rng(seed: u64) -> impl FnMut() -> u64 {
@@ -125,13 +129,13 @@ fn a_random_trace_reads_as_its_set() {
     // The rebuild plan's B2: "24 rounds of pushes and kills, 7 seeds".
     std::thread::scope(|sc| {
         for seed in [42, 7, 13, 99, 1234, 5, 77] {
-            sc.spawn(move || random_trace(seed, 24));
+            sc.spawn(move || random_trace(&shape(), seed, 24));
         }
     });
 }
 
-fn random_trace(seed: u64, rounds: usize) {
-    let (reg, ops, mut dir, mut t) = setup();
+fn random_trace(s: &Shape, seed: u64, rounds: usize) {
+    let (reg, ops, mut dir, mut t) = setup_of(s);
     let mut r = rng(seed);
     let mut sets: Vec<Rows> = vec![Rows::new()];
     let mut heads: Vec<Option<BlockId>> = vec![None];
@@ -372,7 +376,14 @@ fn a_shape_the_plan_puts_elsewhere_is_refused_saying_where() {
         },
         "level column",
     );
-    refused(&|s| s.encoding = Encoding::Packed, "leaves its run");
+    // A permutation is a packed layer's, on one column the order does not lead.
+    refused(
+        &|s| {
+            s.encoding = Encoding::Packed;
+            s.indexes = vec![rerail_blocks::layer::IndexSpec::Perm(vec![0])];
+        },
+        "does not lead",
+    );
     refused(&|s| s.retention = Retention::History, "two states");
     refused(&|s| s.indexes = vec![rerail_blocks::layer::IndexSpec::Perm(vec![2])], "packed's permutation");
     let s = Shape::run(vec![ColType::I32, ColType::I64], vec![1, 0], Some(0));
@@ -985,5 +996,85 @@ fn a_slab_trace_lies_in_its_slabs() {
         }
         dir.sweep();
         assert_eq!(live.load(std::sync::atomic::Ordering::Relaxed), ids.len(), "step {step}: a slab a layer reached, the others given back");
+    }
+}
+
+/// P§12's encodings: a layer's own rows written once in the fewest bits, read in place: `packed::Packed`, the same
+/// with `DICT` where smallest (Dict), and `ranged::Columns` (Ranged); and packed's permutation index (`Perm`) on a
+/// column the order does not lead. Each reads as an Open trace does (B2's random chains: states, least changes,
+/// restrictions, probes), its layers merged as committed ones are, and consolidate and merge write the same facts at
+/// every tiling.
+#[test]
+fn every_encoding_reads_as_its_set() {
+    use rerail_blocks::layer::{Encoding, IndexSpec, OwnRows};
+    for enc in [Encoding::Packed, Encoding::Dict, Encoding::Ranged] {
+        let mut s = shape();
+        s.encoding = enc;
+        s.indexes = vec![IndexSpec::Order { key: vec![1], fences: true, prints: true }, IndexSpec::Hash(vec![2, 1]), IndexSpec::Bloom(vec![1, 2])];
+        if enc != Encoding::Ranged {
+            s.indexes.push(IndexSpec::Perm(vec![2]));
+        }
+        for seed in [3, 8, 21] {
+            random_trace(&s, seed, 10);
+        }
+        // Its layers lie encoded, their relations holding no rows; a probe on the permutation's column reads it.
+        let (reg, ops, mut dir, mut t) = setup_of(&s);
+        let mut r = rng(4);
+        let mut set = Rows::new();
+        for step in 0..4u64 {
+            let (pairs, next) = random_run(&mut r, &set);
+            let id = runs(&mut dir, &t, &pairs);
+            t.commit(&reg, &ops, &mut dir, id, Tiling { tile: 2, seed: step }).unwrap();
+            set = next;
+        }
+        t.roll_up(&reg, &ops, &mut dir, 3, Tiling { tile: 3, seed: 1 }).unwrap();
+        let l = t.read(&dir, &[t.head()]).unwrap();
+        let table = l.table();
+        let st = t.state(&table, t.head()).unwrap();
+        assert_eq!(rows_of(&st), set, "{enc:?}: rolled up, its set");
+        for (_, layer) in st.layers() {
+            assert!(layer.rows.rows.is_empty(), "{enc:?}: an encoded layer's relation holds no rows");
+            match (enc, layer.own) {
+                (Encoding::Ranged, OwnRows::Ranged { .. }) => {}
+                (Encoding::Packed | Encoding::Dict, OwnRows::Packed { p, .. }) => assert_eq!(p.nindex, 1, "its permutation index"),
+                (_, _) => panic!("{enc:?}: a layer's rows lie in its encoding"),
+            }
+        }
+        for x in set.iter().take(60) {
+            for cols in [&[2u16][..], &[1], &[2, 1], &[0, 1, 2]] {
+                let cs: Vec<ColumnIndex> = cols.iter().map(|&c| ColumnIndex::new(c)).collect();
+                let key: Vec<i64> = cols.iter().map(|&c| x[c as usize]).collect();
+                let got: Rows = st.matching(&cs, &key).map(|id| row(&st, id)).collect();
+                let want: Rows = set.iter().filter(|y| cols.iter().zip(&key).all(|(&c, &k)| y[c as usize] == k)).cloned().collect();
+                assert_eq!(got, want, "{enc:?}: probe {cols:?} = {key:?}");
+            }
+        }
+        // A probe of the permutation's column reads its positions alone (counted where the reads are made), not the
+        // layer's rows.
+        if enc != Encoding::Ranged {
+            let reads = std::sync::atomic::AtomicU64::new(0);
+            let counted = st.counted(&reads);
+            let x = set.iter().next().unwrap();
+            let found = counted.matching(&[ColumnIndex::new(2)], &[x[2]]).count();
+            let n = reads.load(std::sync::atomic::Ordering::Relaxed);
+            assert!(found > 0 && n <= 4 * found as u64 + 8, "{enc:?}: a Perm probe read {n} rows for {found}, of {}", set.len());
+        }
+        drop(l);
+        // The version check: consolidate and merge write the same facts at every tiling.
+        let tilings = [Tiling::WHOLE, Tiling { tile: 1, seed: 2 }, Tiling { tile: 4, seed: 6 }];
+        let (pairs, _) = random_run(&mut r, &Rows::new());
+        let mut reg2 = Registry::default();
+        let ops2 = TraceOps::declare(&mut reg2).unwrap();
+        let tiled = Version { status: Status::Default, ..Version::twin(ops2.consolidate, "consolidate, tiled", rerail_delta_twins::trace::CONSOLIDATE, &PIPELINE) };
+        reg2.check(&tiled, &consolidate_case(&s, &pairs), &tilings).unwrap_or_else(|e| panic!("{enc:?}: {e}"));
+        let mut runs_of = Vec::new();
+        let mut set = Rows::new();
+        for _ in 0..4 {
+            let (pairs, next) = random_run(&mut r, &set);
+            runs_of.push(pairs);
+            set = next;
+        }
+        let tiled = Version { status: Status::Default, ..Version::twin(ops2.merge, "merge, tiled", rerail_delta_twins::trace::MERGE, &PIPELINE) };
+        reg2.check(&tiled, &merge_case(&s, &runs_of, 3), &tilings).unwrap_or_else(|e| panic!("{enc:?}: {e}"));
     }
 }

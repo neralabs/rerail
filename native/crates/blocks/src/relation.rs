@@ -372,10 +372,12 @@ impl Relation {
     /// follow `below`'s (`base_rows`: every id `below` reads), and the reference is by block id and offset
     /// (`base_block`, `base_off`), which a reader resolves through its launch's descriptor table. `None` for the
     /// first layer of a trace (a relation of its own), when `block` has no room, or when `below` is not frozen.
-    pub fn try_continue_far<'b>(block: &'b Block, spec: &Spec, below: Option<(u32, usize, &Relation)>) -> Option<&'b Relation> {
+    /// `below`'s `end` is the first id past every id it reads: its own rows' end, wherever they lie (a layer's rows
+    /// may lie encoded beside its relation, `layer::OwnRows`).
+    pub fn try_continue_far<'b>(block: &'b Block, spec: &Spec, below: Option<(u32, usize, &Relation, u32)>) -> Option<&'b Relation> {
         let rel = Relation::try_create(block, spec, None)?;
-        let Some((id, at, b)) = below else { return Some(rel) };
-        if !b.is_frozen() || id == NO_BLOCK || at == 0 || block.holds(std::ptr::from_ref(b)) {
+        let Some((id, at, b, end)) = below else { return Some(rel) };
+        if !b.is_frozen() || id == NO_BLOCK || at == 0 || block.holds(std::ptr::from_ref(b)) || end < b.len_all() {
             // SAFETY: just made in `block`; no one has it.
             unsafe { rel.release(block) };
             return None;
@@ -383,7 +385,7 @@ impl Relation {
         // SAFETY: just made, this caller's alone.
         unsafe {
             let me = std::ptr::from_ref(rel).cast_mut();
-            (*me).base_rows = b.len_all();
+            (*me).base_rows = end;
             (*me).base_block = id;
         }
         rel.base_off.store(at as i64, Release);
@@ -1780,6 +1782,10 @@ impl<'a> View<'a> {
     /// Every id, live or not: `0 .. total`.
     #[inline]
     pub fn total(&self) -> u32 {
+        if self.is_chain() {
+            // A trace's state: its newest layer's end, wherever its rows lie (`layer::OwnRows`).
+            return self.chain_end();
+        }
         self.top.map_or(0, |t| t.base_rows + t.rows.len())
     }
 

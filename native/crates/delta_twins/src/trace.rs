@@ -25,7 +25,7 @@ use rerail_blocks::block::Block;
 use rerail_blocks::bloom::{self, Bloom};
 use rerail_blocks::gens::{BODY_AT, Id, Table, set_word, word, words, words_mut};
 use rerail_blocks::layer::{
-    IX_BLOOM, IX_FENCES, IX_ORDER, IX_PRINTS, LAYER_BODY, Layer, LayerHead, MAX_IX, NONE, Runs, ShapeW, bloom_key, bloom_words, gone_spec,
+    ENC_OPEN, IX_BLOOM, IX_FENCES, IX_ORDER, IX_PERM, IX_PRINTS, LAYER_BODY, Layer, LayerHead, MAX_IX, NONE, OwnRows, Runs, ShapeW, bloom_key, bloom_words, gone_spec,
     parts_spec, rows_spec, sketch_room,
 };
 use rerail_blocks::order::{FENCE, print_vals};
@@ -201,6 +201,8 @@ struct Work {
     abefore: usize,
     st: usize,
     pstart: usize,
+    /// An encoded layer's added rows' source items, in the layer's order (`place`; read by `encode`).
+    addsrc: usize,
     len: usize,
 }
 
@@ -248,6 +250,7 @@ fn work(cap: usize) -> Work {
         abefore: next(4 * (cap + 1)),
         st: next(4 * cap),
         pstart: next(4 * (cap + 1)),
+        addsrc: next(4 * cap),
         len: 0,
     };
     Work { len: at, ..w }
@@ -475,16 +478,24 @@ fn open<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let pin = c.pin_mut(OUT);
     let block = Arc::clone(pin.block());
     let rs = rows_spec(&shape, n_add);
-    let rows = Relation::try_continue_far(&block, &rs, below_layer.map(|(id, l)| (id, l.head.rows as usize, l.rows))).expect("room for the layer");
+    let rows = Relation::try_continue_far(&block, &rs, below_layer.map(|(id, l)| (id, l.head.rows as usize, l.rows, l.end()))).expect("room for the layer");
     let parts = Relation::try_create(&block, &parts_spec(n_out), None).expect("room for the layer's partitions");
     let gone = Relation::try_create(&block, &gone_spec(n_gone), None).expect("room for the layer's kills by partition");
     assert!(layer_write::open(pin, rows, &rs, n_gone, true), "room for the layer's freeze");
     assert!(layer_write::open(pin, parts, &parts_spec(n_out), 0, false), "room for the partitions' freeze");
     assert!(layer_write::open(pin, gone, &gone_spec(n_gone), 0, false), "room for the kills' freeze");
-    rows.claim_own(pin, n_add as u32).expect("room for the layer's rows");
+    // An Open layer's rows are its relation's; an encoded one's lie in its encoded form (`encode`), beside it.
+    let enc = if shape.encoding == ENC_OPEN {
+        rows.claim_own(pin, n_add as u32).expect("room for the layer's rows");
+        0
+    } else {
+        let order: Vec<u16> = shape.order().iter().map(|&c| u16::from(c)).collect(); // copy: not block data (the order's columns)
+        layer_write::encode_open(pin, rows, shape.encoding, shape.arity(), n_add, &order, &perm_cols(&shape)).expect("room for the layer's encoded rows")
+    };
     gone.claim_own(pin, n_gone as u32).expect("room for the layer's kills by partition");
     let at = |r: &Relation| block.offset_of(std::ptr::from_ref(r));
-    let head = LayerHead::open(shape, at(rows), at(parts), at(gone));
+    let mut head = LayerHead::open(shape, at(rows), at(parts), at(gone));
+    head.enc = enc as u64;
     set_word(pin.bytes_mut().expect("a write pin"), BODY_AT, head);
 }
 
@@ -529,6 +540,19 @@ fn place<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
         }
     }
     let (block, head) = out_block(c);
+    if head.shape.encoding != ENC_OPEN {
+        // Encoded: each added row's source item, in the layer's order; its values are written by `encode`.
+        let v = view::<O>(c);
+        let n_add = v.word(W_NADD) as usize;
+        let addsrc = v.w.addsrc;
+        let to = words_mut::<u32>(v.work, addsrc, n_add.max(1));
+        for &(_, i, at, add) in &placed {
+            if add {
+                to[at] = i;
+            }
+        }
+        return;
+    }
     let rows = rel(&block, head.rows);
     let (table, params) = (c.table, c.params);
     let (sb, pin) = c.read_and_pin(SRC, OUT);
@@ -540,6 +564,75 @@ fn place<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
                 rows.put_own(pin, at as u32, col, src.get(i as usize, col));
             }
         }
+    }
+}
+
+// ---- encode: an encoded layer's rows, a column an item ------------------------------------------------------------
+
+/// The columns of the shape's permutation indexes (`Perm`), in its index order.
+fn perm_cols(shape: &ShapeW) -> Vec<u16> {
+    (0..shape.nidx as usize).filter(|&x| shape.index_kind(x) & IX_PERM != 0).map(|x| u16::from(shape.index_key(x)[0])).collect() // copy: not block data (the indexes' columns)
+}
+
+/// An encoded layer's added rows, read where they lie: row `r` is source item `addsrc[r]` (`place`'s).
+struct Added<'a> {
+    src: &'a Src<'a>,
+    addsrc: &'a [u32],
+}
+
+impl rerail_blocks::packed::RowsIn for Added<'_> {
+    fn n(&self) -> usize {
+        self.addsrc.len()
+    }
+    fn arity(&self) -> usize {
+        self.src.shape().arity()
+    }
+    fn get(&self, r: usize, c: usize) -> i64 {
+        self.src.get(self.addsrc[r] as usize, c)
+    }
+}
+
+fn encode_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
+    let shape = O::src(c.read(SRC), c.table, c.params).shape();
+    if refused_so_far::<O>(c) || shape.encoding == ENC_OPEN { 0 } else { shape.arity() as u32 }
+}
+
+fn perm_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
+    let shape = O::src(c.read(SRC), c.table, c.params).shape();
+    if refused_so_far::<O>(c) || shape.encoding == ENC_OPEN { 0 } else { perm_cols(&shape).len() as u32 }
+}
+
+/// An encoded layer's rows, a column an item (`layer_write::encode_col`), read from the source where they lie.
+fn encode<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    encoded::<O>(c, t, false);
+}
+
+/// An encoded layer's permutation indexes, an index an item (`layer_write::encode_perm`).
+fn perm<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    encoded::<O>(c, t, true);
+}
+
+fn encoded<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile, perms: bool) {
+    let (block, head) = out_block(c);
+    let rows = rel(&block, head.rows);
+    let (table, params) = (c.table, c.params);
+    let (n_add, addsrc_at) = {
+        let v = view::<O>(c);
+        (v.word(W_NADD) as usize, v.w.base + v.w.addsrc)
+    };
+    let (sb, pin) = c.read_and_pin(SRC, OUT);
+    let src = O::src(sb, table, params);
+    // The added rows' source items, in the block's work (`place` wrote them; this phase only reads them).
+    let addsrc: &[u32] = words(block.bytes(addsrc_at, addsrc_at + 4 * n_add.max(1)), 0, n_add.max(1));
+    let added = Added { src: &src, addsrc: &addsrc[..n_add] };
+    let s = scratch_for(n_add);
+    for x in t.items() {
+        let ok = if perms {
+            layer_write::encode_perm(pin, rows, head.enc as usize, x, &added, &s)
+        } else {
+            layer_write::encode_col(pin, rows, head.shape.encoding, head.enc as usize, x, &added)
+        };
+        assert!(ok, "room for the layer's encoded rows");
     }
 }
 
@@ -832,7 +925,8 @@ fn stats<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
         } else {
             (rel(&block, head.gone), x - a - PARTS_COLS)
         };
-        layer_write::stat(pin, r, col);
+        let own = if x < a { OwnRows::in_block(&block, &head, r) } else { OwnRows::Open(r) };
+        layer_write::stat(pin, r, col, &own);
     }
 }
 
@@ -847,11 +941,12 @@ fn indexes<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     }
     let (block, head) = out_block(c);
     let rows = rel(&block, head.rows);
-    let spec = rows_spec(&head.shape, rows.rows.len() as usize);
-    let s = scratch_for(rows.rows.len() as usize);
+    let own = OwnRows::in_block(&block, &head, rows);
+    let spec = rows_spec(&head.shape, own.n() as usize);
+    let s = scratch_for(own.n() as usize);
     let pin = c.pin_mut(OUT);
     for x in t.items() {
-        layer_write::index(pin, rows, &spec, x, &s);
+        layer_write::index(pin, rows, &spec, x, &s, &own);
     }
 }
 
@@ -864,9 +959,10 @@ fn freeze<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let (block, head) = out_block(c);
     let (rows, pr, gr) = (rel(&block, head.rows), rel(&block, head.parts), rel(&block, head.gone));
     let pin = c.pin_mut(OUT);
-    layer_write::seal(pin, rows, &rows_spec(&head.shape, rows.rows.len() as usize));
-    layer_write::seal(pin, pr, &parts_spec(pr.rows.len() as usize));
-    layer_write::seal(pin, gr, &gone_spec(gr.rows.len() as usize));
+    let n = OwnRows::in_block(&block, &head, rows).n();
+    layer_write::seal(pin, rows, &rows_spec(&head.shape, n as usize), n);
+    layer_write::seal(pin, pr, &parts_spec(pr.rows.len() as usize), pr.rows.len());
+    layer_write::seal(pin, gr, &gone_spec(gr.rows.len() as usize), gr.rows.len());
 }
 
 /// The shape's orders and Bloom filters, an index an item (a `Hash` index is the relation's, built at its freeze).
@@ -876,24 +972,25 @@ fn orders<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     }
     let (block, head) = out_block(c);
     let rows = rel(&block, head.rows);
+    let own = OwnRows::in_block(&block, &head, rows);
     let shape = head.shape;
     let mut blooms = Vec::new(); // copy: not block data (this tile's filters' offsets)
     for x in t.items() {
         let (kind, key) = (shape.index_kind(x), shape.index_key(x));
         let cols: Vec<u16> = key.iter().map(|&c| u16::from(c)).collect(); // copy: not block data (the key's columns)
-        let vals = |id: u32| cols.iter().map(move |&c| rows.own(id, c as usize));
+        let vals = |id: u32| cols.iter().map(move |&c| own.get(id, c as usize));
         if kind & IX_BLOOM != 0 {
-            let at = Bloom::try_create(&block, bloom_words(rows.rows.len() as usize)).expect("room for a Bloom filter");
+            let at = Bloom::try_create(&block, bloom_words(own.n() as usize)).expect("room for a Bloom filter");
             let b = Bloom::in_block(&block, at).expect("just made");
-            for id in rows.ids() {
+            for id in own.ids() {
                 b.add_hashed(bloom::hash(bloom_key(vals(id))));
             }
             blooms.push((x, at));
         } else if kind & IX_ORDER != 0 {
             // Its ids in the key's order, ties by id; the leading value at every `FENCE`th; each one's print.
-            let mut ids: Vec<u32> = rows.ids().collect(); // copy: derived (the order, written into the layer below)
+            let mut ids: Vec<u32> = own.ids().collect(); // copy: derived (the order, written into the layer below)
             ids.sort_by(|&p, &q| vals(p).cmp(vals(q)).then(p.cmp(&q)));
-            let fences: Vec<i64> = if kind & IX_FENCES != 0 { ids.iter().step_by(FENCE).map(|&id| rows.own(id, cols[0] as usize)).collect() } else { Vec::new() }; // copy: derived (its fences)
+            let fences: Vec<i64> = if kind & IX_FENCES != 0 { ids.iter().step_by(FENCE).map(|&id| own.get(id, cols[0] as usize)).collect() } else { Vec::new() }; // copy: derived (its fences)
             let prints: Vec<u8> = if kind & IX_PRINTS != 0 { ids.iter().map(|&id| print_vals(vals(id))).collect() } else { Vec::new() }; // copy: derived (its prints)
             rows.add_order(c.pin_mut(OUT), &cols, &ids, &fences, &prints).expect("room for an order");
         }
@@ -917,6 +1014,7 @@ fn sketch<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     }
     let (block, head) = out_block(c);
     let rows = rel(&block, head.rows);
+    let own = OwnRows::in_block(&block, &head, rows);
     let a = head.shape.arity();
     let below = O::below(c.params);
     let table = c.table;
@@ -925,8 +1023,8 @@ fn sketch<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     let pin = c.pin_mut(OUT);
     for col in t.items() {
         let mut s = below_layer.and_then(|l| l.sketch(col)).unwrap_or_else(|| Sketch::new_in(sketch_room()));
-        for id in rows.ids() {
-            s.add(rows.own(id, col));
+        for id in own.ids() {
+            s.add(own.get(id, col));
         }
         for &id in rows.changed.as_slice() {
             s.remove(chain.get(id, col));
@@ -951,7 +1049,7 @@ fn seal<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     if refused == 0 {
         let (block, mut head) = out_block(c);
         let (rows, pr) = (rel(&block, head.rows), rel(&block, head.parts));
-        head.added = rows.rows.len();
+        head.added = OwnRows::in_block(&block, &head, rows).n();
         head.ngone = rows.changed.len() as u32;
         head.nparts = pr.rows.len();
         head.digest = pr.ids().fold(0u64, |d, id| d.wrapping_add(pr.own(id, 1) as u64));
@@ -1033,6 +1131,8 @@ macro_rules! pipeline {
             TwinPhase { name: "scan", items: scan_items::<$o>, run: scan::<$o>, again: None },
             TwinPhase { name: "open", items: |_| 1, run: open::<$o>, again: None },
             TwinPhase { name: "place", items: src_chunks::<$o>, run: place::<$o>, again: None },
+            TwinPhase { name: "encode", items: encode_items::<$o>, run: encode::<$o>, again: None },
+            TwinPhase { name: "perm", items: perm_items::<$o>, run: perm::<$o>, again: None },
             TwinPhase { name: "kills", items: n_out::<$o>, run: kills::<$o>, again: None },
             TwinPhase { name: "ksort", items: |c| chunks(n_out::<$o>(c) as usize), run: ksort::<$o>, again: None },
             TwinPhase { name: "kpasses", items: kpass_items::<$o>, run: kpass::<$o>, again: Some(kpass_next::<$o>) },

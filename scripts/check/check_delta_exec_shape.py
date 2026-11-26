@@ -211,7 +211,12 @@ def b2(failures: list) -> None:
         (r"pub rows: &'a Relation", "a layer's rows are a Relation"),
         (r"pub parts: &'a Relation", "a layer's partitions' change is a Relation"),
         (r"Sketch::decode", "a layer's statistics are blocks' sketch, read back from its kept form"),
-        (r"IndexSpec::Perm\(_\) => \{\s*return Err", "a Perm index refused (packed's permutation, P§12)"),
+        # A permutation is packed's (`packed::PIndex`): an index of a Packed or Dict layer alone, read in place.
+        (r"IndexSpec::Perm\(key\) => \{\s*if !matches!\(self\.encoding, Encoding::Packed \| Encoding::Dict\)", "a Perm index of a Packed or Dict layer alone (packed's permutation, P§12)"),
+        # An encoded layer's rows are blocks' own encodings, read in place through one reader (P§12).
+        (r"pub own: OwnRows<'a>", "a layer's own rows read where they lie, in its encoding (OwnRows)"),
+        (r"crate::packed::Packed", "a packed layer's rows are packed::Packed"),
+        (r"crate::ranged::Columns", "a ranged layer's rows are ranged::Columns"),
     ):
         if not re.search(want, code):
             failures.append(f"{layer.relative_to(ROOT)}: {why}")
@@ -260,8 +265,9 @@ def b2(failures: list) -> None:
     # relations; `gone` is (partition, id); the twins make exactly those three.
     m = re.search(r"pub struct Layer<'a> \{(.*?)\}", lcode, re.S)
     fields = re.findall(r"pub (\w+):", m.group(1)) if m else []
-    if fields != ["bytes", "head", "rows", "parts", "gone"]:
-        failures.append(f"{layer.relative_to(ROOT)}: a layer holds {fields}; its rows, parts and gone alone")
+    # `own` is the reader of its rows where they lie (its relation's, or its encoded form's), not a store.
+    if fields != ["bytes", "head", "rows", "parts", "gone", "own"]:
+        failures.append(f"{layer.relative_to(ROOT)}: a layer holds {fields}; its rows, parts and gone alone, and its rows' reader")
     if "Spec { widths: vec![crate::rows::I32, 4], sort: Some(0)" not in lcode:
         failures.append(f"{layer.relative_to(ROOT)}: gone is (partition, id), sorted on the partition")
     tcode = strip_rust((TWINS / "src/trace.rs").read_text())
