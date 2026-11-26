@@ -4870,6 +4870,35 @@ impl View {
     fn keys_tested(&self, cols: &[usize]) -> bool {
         self.eqs.is_empty() && self.ids.is_none() && (1..=READ).contains(&cols.len())
     }
+    /// The one row of key `key` (view columns `keys`, in order) where a key column is the source's `row_column` (a
+    /// node's own facts by its id): read in place (`Source::read_one_at`), its values of view columns `need`, the
+    /// other keys and `tests` in `out`. Whether it is there and holds the keys and tests; `None` where the source has
+    /// no such read.
+    fn read_one(&self, keys: &[usize], key: &[i64], tests: &[(usize, usize)], need: u64, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, out: &mut [i64; READ]) -> Option<bool> {
+        if !self.eqs.is_empty() || self.ids.is_some() || self.cols.len() > READ {
+            return None;
+        }
+        let own = self.src.row_column()?;
+        let lead = keys.iter().position(|&c| self.cols[c] == own)?;
+        let read = (need | keys.iter().fold(0u64, |m, &c| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0)) & !(1 << keys[lead]);
+        let (mut src, mut at, mut m) = ([0usize; READ], [0usize; READ], 0);
+        for c in 0..self.cols.len() {
+            if read >> c & 1 != 0 {
+                src[m] = self.cols[c];
+                at[m] = c;
+                m += 1;
+            }
+        }
+        let mut got = [0i64; READ];
+        if !self.src.read_one_at(own, key[lead], &src[..m], &mut got[..m], cursor)? {
+            return Some(false);
+        }
+        out[keys[lead]] = key[lead];
+        for k in 0..m {
+            out[at[k]] = got[k];
+        }
+        Some(keys.iter().zip(key).all(|(&c, &k)| out[c] == k) && tests.iter().all(|&(c, c0)| out[c] == out[c0]))
+    }
     /// Whether some row of the view has values `key` in view columns `cols`: the source's matches by the lead column
     /// read with the other key columns and compared as found, the first equal one ending it (a membership step's
     /// probe, `exists`: no row of it read into the step). `None` where the source has no such read.
@@ -8974,6 +9003,20 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 {
                     if found != *neg { go(cx, i + 1, slots); }
                     return;
+                }
+                // A step of a view by a key with at most one row (a node's own facts by its id: `kind(n, k)` by `n`):
+                // that row read in place, no candidates (`cands::read_one`). Not a first step, a delta's, a fused or
+                // ranged one.
+                if i > 0 && !keys.is_empty() && i != cx.only_step && j.fused[i].is_none() && j.ranges[i].is_none() {
+                    let need = binds.iter().fold(0u64, |m, &(c, _)| m | 1 << c);
+                    let mut row = [0i64; READ];
+                    if let Some(found) = cands::read_one(j, src, keys, tests, &cx.key, need, &mut cx.last[i].cursor, &mut row) {
+                        if found && !*neg {
+                            for &(c, s) in binds { slots[s] = row[c]; }
+                        }
+                        if found != *neg { go(cx, i + 1, slots); }
+                        return;
+                    }
                 }
                 // The key columns the probe matched exactly, which its rows need not be read or checked for
                 // (`cands::exact_cols`). Candidates handed to the step were not found by its probe. A membership probe
