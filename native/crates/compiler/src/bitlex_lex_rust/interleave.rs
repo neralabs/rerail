@@ -620,7 +620,7 @@ pub(super) fn code_pass_in_loop(text: &str) -> String {
         let _ = decls;
         let upto = if p == 0 { "upto".to_owned() } else { format!("if upto == nw {{ nw }} else {{ upto.saturating_sub({p}) }}") };
         let code = if p == 0 {
-            "            // The word's bytes outside the region tokens read (`code`).\n            let mut code_w = lv_w;\n            for &(a, b) in &code_spans {\n                if a > 64 * i + 63 {\n                    break;\n                }\n                if b >= 64 * i {\n                    let (lo, hi) = (a.max(64 * i), b.min(64 * i + 63));\n                    code_w &= !((if hi - lo == 63 { !0 } else { (1u64 << (hi - lo + 1)) - 1 }) << (lo - 64 * i));\n                }\n            }\n            code_spans.retain(|&(_, b)| b > 64 * i + 63);\n            #[cfg(feature = \"test-hooks\")]\n            assert_eq!(code_w, code_l[i] & lv_w, \"`code_spans` against `code_l` at word {i}\");\n            code_r[i & 3] = code_w;\n".to_owned()
+            "            // The word's bytes outside the region tokens read (`code`).\n            let mut code_w = lv_w;\n            for &(a, b) in &code_spans[code_k..] {\n                if a > 64 * i + 63 {\n                    break;\n                }\n                if b >= 64 * i {\n                    let (lo, hi) = (a.max(64 * i), b.min(64 * i + 63));\n                    code_w &= !((if hi - lo == 63 { !0 } else { (1u64 << (hi - lo + 1)) - 1 }) << (lo - 64 * i));\n                }\n            }\n            // The spans the words after start from (every span is kept: an escape's test reads `code` back).\n            while code_k < code_spans.len() && code_spans[code_k].1 <= 64 * i + 63 {\n                code_k += 1;\n            }\n            #[cfg(feature = \"test-hooks\")]\n            assert_eq!(code_w, code_l[i] & lv_w, \"`code_spans` against `code_l` at word {i}\");\n            code_r[i & 3] = code_w;\n".to_owned()
         } else {
             "            let code_w = code_r[i & 3];\n".to_owned()
         };
@@ -651,7 +651,7 @@ pub(super) fn code_pass_in_loop(text: &str) -> String {
     out.push_str("    // The escapes made of `code`: the words the loop left.\n    code_pass!(nw);\n");
     out.push_str(&text[end..]);
     // The spans, not the vector; the vector the test build's.
-    let mut out = out.replacen(decl, &format!("    // The region tokens' spans not yet passed by the escapes made of `code` (`code_pass`), in order.\n    let mut code_spans: Vec<(usize, usize)> = Vec::with_capacity(64);\n    #[cfg(feature = \"test-hooks\")]\n{decl}"), 1);
+    let mut out = out.replacen(decl, &format!("    // The region tokens' spans, in order, and the first not yet passed by the escapes made of `code` (`code_pass`).\n    let mut code_k = 0usize;\n    let mut code_spans: Vec<(usize, usize)> = Vec::with_capacity(64);\n    #[cfg(feature = \"test-hooks\")]\n{decl}"), 1);
     out = out.replacen(zip, &format!("    #[cfg(feature = \"test-hooks\")]\n{zip}"), 1);
     let mut lines: Vec<String> = Vec::new();
     for l in out.split_inclusive('\n') {

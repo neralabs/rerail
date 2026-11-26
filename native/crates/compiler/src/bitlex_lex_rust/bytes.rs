@@ -41,6 +41,8 @@ pub(super) struct Bytes<'a> {
     /// Whether `code` is a closure's question of a byte (`code(q)`), as tier 2 asks it of its records (`code_at`): the
     /// tests then take it, and are named apart (`ca_*`).
     pub(super) code_fn: bool,
+    /// A prefix of the tests' names (`at_*`, `ca_*`, `af_*`), where two sets of them are in one file.
+    pub(super) tag: &'static str,
     amemo: std::cell::RefCell<HashMap<Expr, String>>,
     /// The operators' pairs masks the loop reads (`k_pair_K`): each row's pairs of bytes, a pair's first byte's bit where
     /// the second is the byte after (lean's `pair`), made of the block's classes too.
@@ -92,7 +94,7 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false, tag: "" }
     }
 
     /// `code` with each read of the masks it has (`locals`) in the windows' form, no block's words (decision 0703): a
@@ -265,7 +267,7 @@ impl<'a> Bytes<'a> {
                 Some(f) => f,
                 None => {
                     let body = self.at_raw(e, "q", depth)?;
-                    let f = format!("{}af_{}", if self.code_fn { "c" } else { "" }, self.amemo.borrow().len());
+                    let f = format!("{}{}af_{}", self.tag, if self.code_fn { "c" } else { "" }, self.amemo.borrow().len());
                     self.amemo.borrow_mut().insert(e.clone(), f.clone());
                     let param = if self.code_fn { ", code: &dyn Fn(usize) -> bool" } else { "" };
                     let code = format!("/// Whether a fill or an escape holds at byte `q`, from the bytes.\n#[inline]\n#[allow(unused_variables, dead_code)]\nfn {f}(src: &[u8], n: usize, q: usize{param}) -> bool {{\n    {body}\n}}\n\n");
@@ -300,7 +302,7 @@ impl<'a> Bytes<'a> {
                 } else if let Some(d) = self.defs.get(n) {
                     if self.partial {
                         // Each mask's test written once (`at_M`), as the lean lexer writes a read once.
-                        let f = format!("{}_{}", if self.code_fn { "ca" } else { "at" }, ident(n));
+                        let f = format!("{}{}_{}", self.tag, if self.code_fn { "ca" } else { "at" }, ident(n));
                         if !self.named.borrow().iter().any(|x| x.0 == f) {
                             self.named.borrow_mut().push((f.clone(), String::new()));
                             match self.at(&d.clone(), "q", depth + 1) {

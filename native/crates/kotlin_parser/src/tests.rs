@@ -1111,6 +1111,10 @@ fn what_the_grammar_does_not_read_is_refused() {
         "val a = 1\n// c\n;val b = 2\n",
         "val a = 1\n/* c */\n;val b = 2\n",
         "val a = 1\n/* c */ ;val b = 2\n",
+        // A blank, a comment or a `\r` after a type the lean parser may split: it refuses them too.
+        "fun f() {\n  val a = x as a.B<C> \n  foo()\n}\n",
+        "fun f() {\n  val a = x as a.B<C>// c\n  foo()\n}\n",
+        "fun f() {\n  val a = x as a.B<C>\r\n  foo()\n}\n",
         "/* open\n",
         "val x = 1d\n",
         "val x = 1.5L\n",

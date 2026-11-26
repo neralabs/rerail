@@ -1229,6 +1229,9 @@ type Rect = (u16, u16);
 
 struct Gen<'a> {
     x: &'a Input<'a>,
+    /// The tests at a byte of the escapes made of `code` (`code_escape`), each where its bytes' factors hold: `code`
+    /// asked of the region spans the loop has read (`code_of`).
+    rare: Option<bytes::Bytes<'a>>,
     /// The body of `lex` so far, after stage 1: the regions and what reads them, in the
     /// statements' order.
     body: String,
@@ -4812,6 +4815,20 @@ impl Gen<'_> {
         })
     }
 
+    /// Whether `e` is made of the bytes alone: classes, texts and their shifts, no region's mask, no fill.
+    fn bytes_only(&self, e: &Expr, depth: usize) -> bool {
+        if depth > 32 {
+            return false;
+        }
+        match e {
+            Expr::Name(n) => n != "code" && !self.regional.contains(n) && self.defs.get(n).is_none_or(|d| self.bytes_only(d, depth + 1)),
+            Expr::Not(a) => self.bytes_only(a, depth + 1),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => self.bytes_only(a, depth + 1) && self.bytes_only(b, depth + 1),
+            Expr::Call(f, args) => matches!(f.as_str(), "prev" | "next" | "text") && args.iter().all(|a| !matches!(a, Arg::E(x) if !self.bytes_only(x, depth + 1))),
+            Expr::Empty | Expr::Test { .. } => false,
+        }
+    }
+
     /// Escape `why` of `e`, made of the regions through `code` alone: after the loop, of the bytes
     /// outside its region tokens, which it records (`code_l`). The test build checks the record is
     /// the regions' `code`.
@@ -4825,11 +4842,35 @@ impl Gen<'_> {
             self.forget_name("code_l");
             self.names.insert("code_l".to_owned(), "code_l".to_owned());
         }
+        let why_l = why.replace('\n', "\\n").replace('\r', "\\r");
+        // Its factors of the bytes alone (`semicolon`, `prev(gt)`): where they hold, the escape is tested at the byte,
+        // the rest read back from there, as the lean lexer looks at a `;`'s line only at the `;`.
+        let bytes_part = conjuncts(e).into_iter().filter(|f| self.bytes_only(f, 0)).reduce(|a, b| Expr::And(Box::new(a), Box::new(b)));
+        if let Some(bp) = bytes_part {
+            let stmts = self.x.stmts;
+            let rare = self.rare.get_or_insert_with(|| {
+                let mut b = bytes::Bytes::new(stmts, HashMap::new(), HashMap::new());
+                b.set_partial();
+                b.code_fn = true;
+                b.tag = "r";
+                b
+            });
+            if let Ok(call) = rare.at(e, "q", 0) {
+                let before = std::mem::take(&mut self.body);
+                let v = self.val(&bp);
+                let lines = std::mem::replace(&mut self.body, before);
+                let v = v?;
+                let k = self.next;
+                self.next += 1;
+                let _ = write!(self.code_after, "{lines}    let rare_{k}: Vec<u64> = (0..nw).map(|i| {v}[i]).collect();\n    // {why_l}\n    refused |= any_at(&rare_{k}, |q| {call});\n");
+                return Ok(true);
+            }
+        }
         let before = std::mem::take(&mut self.body);
         let v = self.val(&x);
         let lines = std::mem::replace(&mut self.body, before);
         let v = v?;
-        let _ = write!(self.code_after, "{lines}    // {}\n    refused |= any(&{v});\n", why.replace('\n', "\\n").replace('\r', "\\r"));
+        let _ = write!(self.code_after, "{lines}    // {why_l}\n    refused |= any(&{v});\n");
         Ok(true)
     }
 
@@ -7772,6 +7813,11 @@ impl Gen<'_> {
             out.push_str("        _ => false,\n    }\n}\n");
         }
         out.push_str(&code_bytes.named_code());
+        // The escapes made of `code` tested at their bytes (`code_escape`): their tests, and `code` of the spans.
+        if let Some(r) = &self.rare {
+            out.push_str(&r.named_code());
+            out.push_str("/// Whether byte `q` is code: in none of the region tokens' spans read (`code_spans`, in order).\n#[inline]\nfn code_of(spans: &[(usize, usize)], q: usize) -> bool {\n    let k = spans.partition_point(|&(a, _)| a <= q);\n    k == 0 || spans[k - 1].1 < q\n}\n\n");
+        }
         // Whether a byte is code, of the records: no extra, nor a region's token, holds it.
         let mut rk = region_kinds.clone();
         rk.sort_unstable();
@@ -8769,7 +8815,7 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), t2_spans: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [Bytes::ALL; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), shapes: Default::default(), regional_ids: Default::default(), opener_ids: Default::default(), def_ids: Default::default(), end_names: Default::default(), shape_ids: Default::default(), name_strs: Default::default(), name_ids: Default::default(), kept: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default() }.source().map(|t| interleave::generic_lex(&interleave::code_pass_in_loop(&interleave::interleave(&t).unwrap_or(t))))
+    Gen { x, rare: None, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), t2_spans: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [Bytes::ALL; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), shapes: Default::default(), regional_ids: Default::default(), opener_ids: Default::default(), def_ids: Default::default(), end_names: Default::default(), shape_ids: Default::default(), name_strs: Default::default(), name_ids: Default::default(), kept: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default() }.source().map(|t| interleave::generic_lex(&interleave::code_pass_in_loop(&interleave::interleave(&t).unwrap_or(t))))
 }
 
 /// Whether `e` names `n`.
@@ -9719,6 +9765,7 @@ fn one_pass_after(code: &str) -> Option<String> {
         Pass(&'a str, &'a str),
         Fill(&'a str, &'a str, &'a str),
         Any(&'a str),
+        At(&'a str, &'a str),
     }
     let mut lines = Vec::new();
     for l in code.lines() {
@@ -9731,6 +9778,8 @@ fn one_pass_after(code: &str) -> Option<String> {
             lines.push(L::Fill(name, a, b));
         } else if let Some(x) = t.strip_prefix("refused |= any(&").and_then(|r| r.strip_suffix(");")) {
             lines.push(L::Any(x));
+        } else if let Some((x, call)) = t.strip_prefix("refused |= any_at(&").and_then(|r| r.strip_suffix(");")).and_then(|r| r.split_once(", |q| ")) {
+            lines.push(L::At(x, call));
         } else if !t.is_empty() {
             return None;
         }
@@ -9783,7 +9832,7 @@ fn one_pass_after(code: &str) -> Option<String> {
         let text: Vec<&str> = match l {
             L::Pass(_, e) => vec![*e],
             L::Fill(_, a, b) => vec![*a, *b],
-            L::Any(x) => vec![*x],
+            L::Any(x) | L::At(x, _) => vec![*x],
             L::Note(_) => vec![],
         };
         for t in &masks {
@@ -9843,6 +9892,10 @@ fn one_pass_after(code: &str) -> Option<String> {
                 }
                 L::Any(x) => {
                     let _ = writeln!(body, "        refused |= {} != 0;", word(x));
+                }
+                // At each byte the escape's bytes hold at, the escape: `code` of the region spans read.
+                L::At(x, call) => {
+                    let _ = writeln!(body, "        {{\n            let mut h = {};\n            let code = &|q: usize| code_of(&code_spans, q);\n            while h != 0 {{\n                let q = 64 * i + h.trailing_zeros() as usize;\n                h &= h - 1;\n                refused |= {call};\n            }}\n        }}", word(x));
                 }
             }
             if let L::Pass(n, _) | L::Fill(n, _, _) = l

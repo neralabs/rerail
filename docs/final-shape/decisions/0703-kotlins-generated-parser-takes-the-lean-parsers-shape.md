@@ -233,6 +233,15 @@ them.
    reads them, no longer a scan of the pair masks over every operator's and number's bytes.
    Measured with 27 (same run, m1max, best of 15): tier 1 45 ms against 229 ms after 26, the AOT parse 278 ms against
    469 ms. rr and JSON are unchanged.
+29. **An escape made of `code` is tested at its bytes, its context read back** (in place of step 17's masks over the
+   words): its factors of the bytes alone (`semicolon`, `high`, `prev(gt)` and a blank, a `/` or a `\r`) are a word's
+   window as the loop passes the word, and at each byte they hold at the whole escape is tested there
+   (`rca_*`, `rcaf_*`), its fills read back from the byte and `code` of the region spans the loop has read (`code_of`),
+   as the lean lexer looks at a `;`'s line only at the `;`. No fill is carried from word to word, and every span is
+   kept. An escape with no factor of the bytes alone keeps step 17's form. Kotlin's three ("a name's letter past ASCII
+   touching a number", "a `;` after a line break and a comment", "a blank, a comment or a `\r` after a type the lean
+   parser may split", the last now with refusal tests of its own). Measured (same run, m1max, best of 15): tier 1
+   34 ms against 45 ms after 28.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
