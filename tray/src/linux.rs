@@ -160,9 +160,6 @@ impl Tray for RerailTray {
             line(&state.version),
             line(&state.dashboard),
         ];
-        if let Some(home) = &state.home {
-            menu.push(line(home));
-        }
         menu.push(MenuItem::Separator);
         menu.push(button("Open dashboard", true, Action::Open));
         if let Some(update) = &state.update {
@@ -191,8 +188,8 @@ mod tests {
     #[test]
     fn labels_keep_their_underscores() {
         assert_eq!(
-            label("Home: /srv/my_repo/.rerail"),
-            "Home: /srv/my__repo/.rerail"
+            label("Dashboard at my_host:4737"),
+            "Dashboard at my__host:4737"
         );
         assert_eq!(label("Version 0.2.2"), "Version 0.2.2");
     }

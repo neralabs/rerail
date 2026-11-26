@@ -11,7 +11,6 @@ pub struct MenuState {
     pub status: String,
     pub version: String,
     pub dashboard: String,
-    pub home: Option<String>,
     pub update: Option<UpdateItem>,
     pub attention: bool,
 }
@@ -97,7 +96,7 @@ pub fn read_states(
 mod tests {
     use super::*;
 
-    const FULL: &str = r#"{"healthy":true,"status":"Rerail is running","version":"Version 0.2.2","dashboard":"Dashboard at 127.0.0.1:4737","home":null,"update":{"label":"Update to 0.2.3","enabled":true},"attention":true}"#;
+    const FULL: &str = r#"{"healthy":true,"status":"Rerail is running","version":"Version 0.2.2","dashboard":"Dashboard at 127.0.0.1:4737","update":{"label":"Update to 0.2.3","enabled":true},"attention":true}"#;
 
     /// What `read_states` sends for `input`, and the notes it writes.
     fn collect(input: impl BufRead) -> (Vec<Incoming>, String) {
@@ -116,7 +115,6 @@ mod tests {
                 status: "Rerail is running".into(),
                 version: "Version 0.2.2".into(),
                 dashboard: "Dashboard at 127.0.0.1:4737".into(),
-                home: None,
                 update: Some(UpdateItem {
                     label: "Update to 0.2.3".into(),
                     enabled: true
@@ -131,6 +129,30 @@ mod tests {
         let line = FULL.replace(r#"{"label":"Update to 0.2.3","enabled":true}"#, "null");
         let state: MenuState = serde_json::from_str(&line).unwrap();
         assert_eq!(state.update, None);
+    }
+
+    #[test]
+    fn reads_a_state_from_a_daemon_that_still_sends_home() {
+        let line = FULL.replacen(
+            r#""update""#,
+            r#""home":"Home: /tmp/x/.rerail","update""#,
+            1,
+        );
+        assert_eq!(
+            serde_json::from_str::<MenuState>(&line).unwrap(),
+            serde_json::from_str::<MenuState>(FULL).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_tray_that_still_reads_home_takes_a_state_without_it() {
+        // The shape of MenuState while it had the Home line: its `home` is an Option, which serde fills with None when
+        // the key is absent.
+        #[derive(Deserialize)]
+        struct WithHome {
+            home: Option<String>,
+        }
+        assert_eq!(serde_json::from_str::<WithHome>(FULL).unwrap().home, None);
     }
 
     #[test]

@@ -23,8 +23,7 @@ const TEMPLATE: bool = cfg!(target_os = "macos");
 /// The status line's circle, in pixels. macOS draws a menu item's icon at most 18 pt tall.
 const CIRCLE_SIZE: u32 = 32;
 
-/// Where the optional lines go in the menu: home after the dashboard line, update after Open dashboard.
-const HOME_AT: usize = 4;
+/// Where the update line goes when there is one: after Open dashboard.
 const UPDATE_AT: usize = 6;
 
 /// Runs the tray until stdin closes. The icon appears with the first menu state.
@@ -101,9 +100,7 @@ struct Tray {
     status: IconMenuItem,
     version: MenuItem,
     dashboard: MenuItem,
-    home: MenuItem,
     update: MenuItem,
-    home_shown: bool,
     update_shown: bool,
     /// Whether the icon shows the attention badge; none until the first state sets it.
     attention: Option<bool>,
@@ -116,7 +113,6 @@ impl Tray {
         let status = IconMenuItem::with_id("status", "", true, None, None);
         let version = MenuItem::new("", false, None);
         let dashboard = MenuItem::new("", false, None);
-        let home = MenuItem::new("", false, None);
         let update = MenuItem::with_id("update", "", true, None);
         let menu = Menu::new();
         menu.append_items(&[
@@ -141,9 +137,7 @@ impl Tray {
             status,
             version,
             dashboard,
-            home,
             update,
-            home_shown: false,
             update_shown: false,
             attention: None,
         };
@@ -158,20 +152,15 @@ impl Tray {
             .set_icon(menu_icon(art::status_circle(state.healthy, CIRCLE_SIZE)));
         self.version.set_text(label(&state.version));
         self.dashboard.set_text(label(&state.dashboard));
-        if let Some(home) = &state.home {
-            self.home.set_text(label(home));
-        }
-        self.home_shown = self.toggle(&self.home, self.home_shown, state.home.is_some(), HOME_AT);
         if let Some(update) = &state.update {
             self.update.set_text(label(&update.label));
             self.update.set_enabled(update.enabled);
         }
-        let update_at = UPDATE_AT + usize::from(self.home_shown);
         self.update_shown = self.toggle(
             &self.update,
             self.update_shown,
             state.update.is_some(),
-            update_at,
+            UPDATE_AT,
         );
         if let Err(error) = self.icon.set_tooltip(Some(&state.status)) {
             eprintln!("rerail-tray: could not set the tooltip: {error}");
@@ -261,8 +250,8 @@ mod tests {
     #[test]
     fn labels_keep_their_ampersands() {
         assert_eq!(
-            label("Home: /Users/a&b/.rerail"),
-            "Home: /Users/a&&b/.rerail"
+            label("Rerail needs attention: a & b"),
+            "Rerail needs attention: a && b"
         );
         assert_eq!(label("Version 0.2.2"), "Version 0.2.2");
     }
