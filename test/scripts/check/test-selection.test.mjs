@@ -1,5 +1,8 @@
 // scripts/check/ci/test-selection.mjs: which unit test files a change can affect, and the shards that run them.
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -169,12 +172,29 @@ describe("shards and outputs", () => {
   });
 
   // On this repository: vitest's list and every test file's import closure, which take seconds.
-  it("give a change of prose alone no Windows shard, and one that also changes code its Windows shards", { timeout: 120_000 }, async () => {
+  const ON_THE_REPOSITORY = { timeout: 120_000 };
+
+  it("give a change of prose alone no Windows shard, and one that also changes code its Windows shards", ON_THE_REPOSITORY, async () => {
     const prose = await select(ROOT, [".changeset/x.md", "docs/release.md"]);
     expect(prose.prose).toBe(true);
     expect(outputs(prose)["windows-shards"]).toBe("[]");
     const code = await select(ROOT, [".changeset/x.md", "docs/release.md", "src/cli/cli.ts"]);
     expect(code.prose).toBe(false);
     expect(JSON.parse(outputs(code)["windows-shards"]).length).toBeGreaterThan(0);
+  });
+
+  // CI's select-tests job starts the script with plain Node, which strips the types of the .ts files it imports but,
+  // unlike vitest, finds no .ts file for a .js import: an import it cannot find fails the script, and the job's fallback
+  // runs every shard.
+  it("come from the script under plain Node as CI starts it, for a change of prose alone", ON_THE_REPOSITORY, () => {
+    const list = join(mkdtempSync(join(tmpdir(), "rerail-test-selection-")), "changed.txt");
+    writeFileSync(list, "CHANGELOG.md\n");
+    const run = spawnSync(process.execPath, ["scripts/check/ci/test-selection.mjs", list, "--github"], { cwd: ROOT, encoding: "utf8" });
+    const said = `exit status ${run.status}, signal ${run.signal}, start error ${run.error?.message ?? "none"}, stderr:\n${run.stderr}`;
+    expect(run.status, said).toBe(0);
+    const lines = run.stdout.split(/\r?\n/u);
+    expect(lines.filter((line) => /^unit-shards=\[[\d,]*\]$/u.test(line)), run.stdout).toHaveLength(1);
+    expect(lines, run.stdout).toContain("windows-shards=[]");
+    expect(run.stderr.split(/\r?\n/u).filter((line) => line !== "" && !line.startsWith("test-selection: ")), said).toEqual([]);
   });
 });
