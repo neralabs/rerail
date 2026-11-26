@@ -38,6 +38,10 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("slice", &[Text, Number, Number], Text),
     ("count_matches", &[Text, Text], Number),
     ("sha256", &[Text], Text),
+    // A key as a number (`core.rerail`'s `@hash64`, `@hash64_pair`): the first 8 bytes of a SHA-256, big-endian, so it
+    // is the same on every machine and in every run, and is stored as an integer, not a 64-character symbol.
+    ("hash64", &[Text], Number),
+    ("hash64_pair", &[Number, Number], Number),
     // Git objects of the repository holding the run's root (`strings::git`): never stale, so never invalidated.
     ("git_commit", &[Text], Number),
     ("git_has", &[Text, Text], Number),
@@ -351,6 +355,13 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
             use sha2::Digest;
             Some(sha2::Sha256::digest(t(0).as_bytes()).iter().map(|b| format!("{b:02x}")).collect())
         }
+        "hash64" => return Value::Integer(hash64(t(0).as_bytes())),
+        "hash64_pair" => {
+            let mut bytes = [0u8; 16];
+            bytes[..8].copy_from_slice(&numbers[0].to_be_bytes());
+            bytes[8..].copy_from_slice(&numbers[1].to_be_bytes());
+            return Value::Integer(hash64(&bytes));
+        }
         "json_str" => Some(json_str(t(0))),
         "str_concat" => Some(format!("{}{}", t(0), t(1))),
         // A numeral past the doubles (`2e999`) is Infinity, which toPrecision prints as such.
@@ -369,6 +380,13 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         _ => None,
     };
     out.map_or(Value::Null, Value::Text)
+}
+
+/// `@hash64`'s value of `bytes`: the first 8 bytes of their SHA-256, as a big-endian signed integer.
+fn hash64(bytes: &[u8]) -> i64 {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(bytes);
+    i64::from_be_bytes(digest[..8].try_into().expect("a SHA-256 has 32 bytes"))
 }
 
 /// SQLite's `substr(x, y, z)` over characters (`z` none for `substr(x, y)`): `y` from 1, or from the end where

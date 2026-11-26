@@ -498,6 +498,12 @@
 // Text for keys and signatures.
 .functor count_matches(re: symbol, s: symbol): number    // non-overlapping matches of re anywhere in s
 .functor sha256(s: symbol): symbol                       // hex digest of s's UTF-8 bytes
+// @hash64(s): the first 8 bytes of s's SHA-256, as a signed 64-bit number; @hash64_pair(a, b): the same of a's and b's
+// 8-byte big-endian encodings. A key that is a number, the same on every machine and run: a relation of them holds
+// integers, where @sha256's keys are 64-character symbols. Chained (@hash64_pair(@hash64(x), @hash64(y))), they key
+// a sequence; two different texts share a key with probability 2^-64 per pair.
+.functor hash64(s: symbol): number
+.functor hash64_pair(a: number, b: number): number
 // @json_str(s): s as a JSON string literal, quotes included, as W's signed-list stages write an element
 // (json_group_array: `"`, `\` and controls escaped, non-ASCII kept), so rebuilt messages match the bytes W checks.
 // Python's json.dumps (ensure_ascii) escapes non-ASCII too: a repository that signs non-ASCII entries needs that.
