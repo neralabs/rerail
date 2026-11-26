@@ -302,9 +302,11 @@ mark future     = tokens "from" "__future__"
 mark generic    = tokens identifier "["
 # A number with a `.` or an exponent: a float.
 mark real       = empty, at integer when count(n_dot | exp_at) at least 1
-# `with (`: tree-sitter reads a parenthesized clause of items there, not a tuple. Not read yet:
-# no state takes it, so the file is refused.
-mark with_paren = tokens "with" "("
+# `with (`: the clause's parentheses, not an expression's, where a comma at their depth has more
+# after it (the lean parser's `paren_is_clause`): `(a, b)`, not `(a,)` or `(a as b)`. The lean
+# parser asks for a `:` after them too; where none follows (`with (a, b) as c:`) the clause's
+# reading refuses at the `as`.
+mark w_paren    = tokens after "with" "(" (~("def"))* nest ("(" | "[" | "{" to ")" | "]" | "}") "," ~(")")
 # A `*` alone in a parameter list: a keyword separator (a leaf), not a splat's.
 mark kw_sep     = tokens "*" "," | ")"
 
@@ -329,7 +331,7 @@ tree python {
   # `with`: its keyword a leaf, its items a clause.
   node with_statement   = 'with' with_rest
   choice with_rest      = with_clause ':' indent body: block
-  node with_clause      = with_item (',' with_item)*
+  node with_clause      = w_paren '(' with_item (',' with_item)* (trail_paren | ')') | with_item (',' with_item)*
   node with_item        = value: as_value
   # An expression, or one bound by `as` (an `as_pattern` in the expression's slot).
   choice as_value supertype expression = expression [wrap as_pattern _ in expression 'as' alias: as_pattern_target]
@@ -453,7 +455,7 @@ tree python {
   choice await_operand supertype primary_expression nested = primary
   choice postfix        = wrap attribute object in primary_expression '.' attribute: identifier
                         | wrap call function in primary_expression arguments: argument_list
-                        | wrap subscript value in primary_expression '[' subscript: sub_item (',' subscript: sub_item)* ']'
+                        | wrap subscript value in primary_expression '[' subscript: sub_item (',' subscript: sub_item)* (trail_bracket | ']')
   # A subscript's item: an expression, or a slice (its `:` leaves), the expression before it moved in.
   choice sub_item       = expression [wrap slice _ in expression slice_rest] | slice
   node slice            = slice_rest
@@ -465,7 +467,7 @@ tree python {
   # target read as one: a name, its attributes and subscripts.
   choice pattern supertype pattern = identifier pattern_postfix*
   choice pattern_postfix = wrap attribute object in primary_expression '.' attribute: identifier
-                        | wrap subscript value in primary_expression '[' subscript: sub_item (',' subscript: sub_item)* ']'
+                        | wrap subscript value in primary_expression '[' subscript: sub_item (',' subscript: sub_item)* (trail_bracket | ']')
 
   # A generator as a call's only argument stands for its list (`arguments:`).
   node argument_list    = '(' (')' | argument (relabel body retag generator_expression comprehension ')' | (',' argument)* (trail_paren | ')')))
@@ -510,7 +512,7 @@ tree python {
   # A backslash that starts no escape is a leaf of its own (lean's `Backslash`); a raw string's
   # are its text.
   node string_content   = (str_text | escape_sequence | '\\' | escape_interpolation)+
-  hidden newline indent dedent trail future generic kw_sep real
+  hidden newline indent dedent trail future generic kw_sep real w_paren
   # The tokens tree-sitter's grammar implies: no leaf on the tape.
   implied pass_statement 'pass'
   implied string_content str_text
@@ -525,7 +527,7 @@ tree python {
   implied try_statement 'try' ':'
   implied finally_clause 'finally' ':'
   implied with_rest ':'
-  implied with_clause ','
+  implied with_clause ',' ')'
   implied as_value 'as'
   implied pattern_postfix '.' '[' ']' ','
   implied assign_rest '=' ':'

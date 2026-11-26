@@ -127,10 +127,12 @@ fn await_ellipsis_and_async_are_the_lean_parsers() {
 #[test]
 fn targets_slices_lambdas_yields_and_concatenations_are_the_lean_parsers() {
     same(&["a, b = c\n", "a, b = c, d\n", "a, = c\n", "a, *b = c\n", "a.x, b[0] = c\n", "a, b, = c\n"]);
-    same(&["x = a[1:2]\n", "x = a[:2]\n", "x = a[1:]\n", "x = a[::2]\n", "x = a[:, 0]\n", "x = a[1:-1]\n", "x = a[:]\n", "a[1:] = b\n"]);
+    same(&["x = a[1:2]\n", "x = a[:2]\n", "x = a[1:]\n", "x = a[::2]\n", "x = a[:, 0]\n", "x = a[1:-1]\n", "x = a[:]\n", "a[1:] = b\n", "x = a[b, c,]\n", "x = a[b,]\n"]);
     same(&["x = lambda: a\n", "x = lambda a, *b, **c: a\n", "f(key=lambda k: k)\n", "x = lambda a=1: a if a else b\n"]);
     same(&["def f():\n    yield a\n", "def f():\n    yield\n", "def f():\n    x = yield a\n", "def f():\n    yield from a\n", "def f():\n    yield a, b\n"]);
     same(&["x = \"a\" \"b\"\n", "x = (\"a\"\n     \"b\")\n", "x = \"a\" r\"b\" f\"{c}\"\n"]);
+    // In a block: a region's first part takes its record's marks, not its line break's.
+    same(&["def f():\n    x = \"a\" \"b\"\n", "def f():\n    x = (\n        \"a\"\n        \"b\"\n    )\n", "if a:\n    f(\n        \"a\"\n        \"b\"\n    )\n"]);
     // Not read yet: a bare list of expressions as a statement, a tuple as a target.
     refused(&["a, b\n", "(a, b) = c\n"]);
 }
@@ -147,9 +149,11 @@ fn types_are_the_lean_parsers() {
 fn try_with_and_for_are_the_lean_parsers() {
     same(&["try:\n    a\nexcept E as e:\n    b\nexcept:\n    c\nelse:\n    d\nfinally:\n    e\n", "try:\n    a\nexcept (A, B):\n    b\n", "try:\n    a\nfinally:\n    b\n"]);
     same(&["with a as b, c:\n    d\n", "with a(x) as b:\n    d\n", "with a as b.c:\n    d\n"]);
+    // A parenthesized clause: a comma inside with more after it, and the `:` after.
+    same(&["with (\n    a as b,\n    c as d,\n):\n    e\n", "with (a, b):\n    c\n", "with (a(), b()):\n    c\n", "with (a as b, c as d):\n    e\n", "with (a,):\n    c\n", "with (a):\n    c\n"]);
     same(&["for i in range(3):\n    a\nelse:\n    b\n", "for a, b in c:\n    d\n", "for a.b in c:\n    d\n", "for a in b, c:\n    d\n", "for a[0] in b:\n    c\n"]);
-    // Not read yet: a parenthesized `with`, a tuple or list as a loop's target.
-    refused(&["with (\n    a as b,\n):\n    c\n", "with (a(), b()):\n    c\n", "with (a):\n    c\n", "for (a, b) in c:\n    d\n", "for [a] in c:\n    d\n"]);
+    // Not read yet: an `as` in an expression's parentheses, a tuple or list as a loop's target.
+    refused(&["with (a as b):\n    c\n", "with (a, b) as c:\n    d\n", "for (a, b) in c:\n    d\n", "for [a] in c:\n    d\n"]);
 }
 
 #[test]
@@ -233,7 +237,10 @@ fn corpus() {
                             None => match c.refused_at(&text) {
                                 Some(a) => {
                                     let a = a as usize;
-                                    let near: String = text[a..].chars().take(12).collect::<String>().replace('\n', "⏎");
+                                    // `RERAIL_PYTHON_NEAR=N`: N characters from the refusal, and 30 before it.
+                                    let n = std::env::var("RERAIL_PYTHON_NEAR").ok().and_then(|v| v.parse().ok()).unwrap_or(12);
+                                    let before: String = if n > 12 { text[..a].chars().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect::<String>() + "‸" } else { String::new() };
+                                    let near: String = (before + &text[a..].chars().take(n).collect::<String>()).replace('\n', "⏎");
                                     format!("the grammar at `{near}`")
                                 }
                                 None => "the grammar".into(),

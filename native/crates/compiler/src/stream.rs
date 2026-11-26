@@ -607,6 +607,11 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                             }
                             let (s, l): (Vec<u32>, Vec<u32>) = tokens.iter().map(|&(a, b)| (a as u32, b as u32)).unzip();
                             let (codes, _) = crate::records::pass(r, table, bytes, &s, &l, &tier1.outputs);
+                            // The first part's gap is the record's, not the one from the file's
+                            // start the parts' own pass sees: it takes the record's marks (a
+                            // string after a block's indent has none of its line break's).
+                            let low = (1u32 << crate::records::MARK_SHIFT) - 1;
+                            let codes: Vec<u32> = codes.iter().enumerate().map(|(i, &c)| if i == 0 { c & low | code & !low } else { c }).collect();
                             parts.extend(s.iter().zip(&l).zip(&codes).map(|((&a, &b), &c)| (a, b, c)));
                             let (s, l, c) = parts.pop_front().expect("the opener");
                             (start, end, rec_end, code) = (s, s, l + 1, c);

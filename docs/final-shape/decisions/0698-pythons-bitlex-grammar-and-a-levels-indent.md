@@ -196,3 +196,12 @@ statements and blocks end.
     - `yield` is a node, not an expression, its keyword and `from` leaves; a statement or an assignment's right
       side.
     - Strings side by side are a `concatenated_string` of them, the first moved in.
+35. **A parenthesized `with` clause by a token mark** (`w_paren`, after `with` at its `(`): a run to a comma at the
+    parentheses' depth with more after it. Then `(` is a leaf, `)` implied, and a trailing comma's `,` and `)`
+    leaves, as the lean parser's. The lean parser asks for a `:` after the `)` too; a pattern holds one run, so
+    where none follows (`with (a, b) as c:`) the clause's reading refuses at the `as`.
+36. **A region's first part takes its record's marks** (`stream.rs`, the parts a reader splits a record into). The
+    parts' own pass measures the first part's gap from the file's start, so a string after a block's indent took
+    that line break's newline, indent and dedent, and its level ended before a concatenation. The JIT's parts had
+    the record's.
+37. **A subscript's trailing comma** keeps `,` and `]` as leaves (`trail_bracket`), as a list's.
