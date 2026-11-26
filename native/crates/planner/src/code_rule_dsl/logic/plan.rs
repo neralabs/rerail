@@ -197,6 +197,13 @@ impl Fx<'_> {
         }
         Ok(super::native::component::step_cpu(self.db, name)?)
     }
+    /// SPIKE (join shapes): per probe, its plan steps' shapes (`step_shapes`); none for T's extension engine.
+    fn step_shapes(&self, name: &str) -> Result<Vec<Vec<String>>> {
+        if !self.direct {
+            return Ok(Vec::new());
+        }
+        Ok(super::native::component::step_shapes(self.db, name)?)
+    }
     /// Each relation's live statistics, in spec order.
     fn stats(&self, name: &str, symbols_text: &dyn Fn(usize, usize) -> bool) -> Result<Vec<LiveRel>> {
         let _span = super::profile::span(|| "engine live statistics".into());
@@ -4762,7 +4769,20 @@ impl<'a> Run<'a, '_> {
         if super::profile::on() {
             let empty = Vec::new();
             let kinds = seeds.iter().map(|&r| format!("seed {}", vs.at(r).head_text())).chain(probes.iter().map(|&(r, ai, _)| format!("join {} (delta at {ai})", vs.at(r).head_text())));
+            // SPIKE (join shapes): each plan's steps' shapes, its rows in and out and CPU per step, a line each, to
+            // the file RERAIL_SPIKE_SHAPES names.
+            let shaped = if std::env::var_os("RERAIL_SPIKE_SHAPES").is_some() { self.fx().step_shapes(&name).unwrap_or_default() } else { Vec::new() };
             for ((k, o), kind) in orders.iter().map(|(_, o)| o).chain(probes.iter().map(|p| &p.2)).zip(&line_bodies).map(|(o, b)| Order::new(b, o)).enumerate().zip(kinds) {
+                if let Some(sh) = shaped.get(k).filter(|s| !s.is_empty()) {
+                    spike_shapes_line(&format!(
+                        "{}\t{kind}: {}\t{}\t{}\t{}",
+                        name,
+                        shown(o).join(" , "),
+                        sh.join(" "),
+                        counted.get(k).map_or_else(String::new, |c| c.iter().map(|(a, b)| format!("{a}:{b}")).collect::<Vec<_>>().join(",")),
+                        stepped.get(k).map_or_else(String::new, |c| c.iter().map(|t| format!("{t:.4}")).collect::<Vec<_>>().join(",")),
+                    ));
+                }
                 // Each earlier order with its own counts (its time is in the current order's).
                 for (was, c) in earlier.get(k).into_iter().flatten() {
                     super::profile::native(format!("{kind}: {}", shown(Order::new(o.b, was)).join(" , ")), c, 0.0, &[]);
@@ -9895,5 +9915,17 @@ mod climb_tests {
         let walk = sccs.iter().find(|s| s.contains("walk")).expect("walk's stratum");
         assert!(walk.contains("look"), "a reader of the row alone is answered in the climb: {sccs:?}");
         assert!(!walk.contains("chained"), "a reader that joins out from the row is a stratum of its own: {sccs:?}");
+    }
+}
+
+/// SPIKE (join shapes): appends `line` to the file `RERAIL_SPIKE_SHAPES` names.
+fn spike_shapes_line(line: &str) {
+    use std::io::Write;
+    static FILE: std::sync::LazyLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::LazyLock::new(|| {
+        let p = std::env::var_os("RERAIL_SPIKE_SHAPES")?;
+        std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(std::sync::Mutex::new)
+    });
+    if let Some(f) = FILE.as_ref() {
+        let _ = writeln!(f.lock().unwrap(), "{line}");
     }
 }

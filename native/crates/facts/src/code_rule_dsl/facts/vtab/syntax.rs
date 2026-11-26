@@ -2393,8 +2393,26 @@ impl Projected {
     pub fn local_of(&self, low: u32) -> Option<u32> {
         match &self.defs {
             Some(_) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| self.len() + self.ranks.count(Item::Token) + i),
+            // SPIKE (local fixes, 1): a node's, from the entry's nodes by id where it is made (`ViewDoc::node_by_id`).
+            Some(_) if let Some(l) = self.node_by_id(low) => Some(l),
             Some(d) => d.table.number_of(&self.ranks, low).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
             None => Some(low),
+        }
+    }
+    /// SPIKE (local fixes, 1): the node whose id's low bits are `low`, from the entry's nodes by place (`ViewDoc::
+    /// node_by_id`) once the entry is made: the numbering's slot entry, then one load. `None` for no such node (a
+    /// token's id), or no table.
+    #[inline]
+    fn node_by_id(&self, low: u32) -> Option<u32> {
+        self.codes.get()?;
+        // SAFETY: the entry's run, set where it was made (before `codes` was) to cells of its block, or empty; the
+        // numbering is the projection's, read as every read of it.
+        unsafe {
+            let by = self.entry.node_by_id.as_slice::<u32>();
+            if by.is_empty() {
+                return None;
+            }
+            by.get(self.ranks.numbering().own_place_of(low)? as usize).copied()
         }
     }
     /// The included children of `local`, in order.

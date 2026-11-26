@@ -83,6 +83,15 @@ impl ViewEntry {
             })
             .expect("a batch's block holds its entries")
         });
+        // SPIKE (local fixes, 1): the nodes' locals by their place among the granules' own nodes (`local_of`).
+        let node_by_id = node_table.as_ref().filter(|_| p.defs.is_some()).map(|_| {
+            let num = p.ranks().numbering();
+            // SAFETY: the projection's numbering, read as every read of it.
+            let places = unsafe { num.own_places() };
+            // copy: derived (each node's number by its id's place, computed once from the numbering)
+            Cells::build(block, places.max(1), |out: &mut [u32]| unsafe { num.own_numbers(out) })
+                .expect("a batch's block holds its entries")
+        });
         let d = desc.as_ptr();
         // SAFETY: the entry is written by this alone (inside its projection's `OnceLock`), and its runs point at cells
         // of the same block (the numbering's descriptor among them), which live as long as it.
@@ -91,6 +100,9 @@ impl ViewEntry {
             (*d).nodes = p.len();
             if let Some(t) = &node_table {
                 Run::set(&raw mut (*d).node_table, t.as_ptr(), t.len());
+            }
+            if let Some(t) = &node_by_id {
+                Run::set(&raw mut (*d).node_by_id, t.as_ptr(), t.len());
             }
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
             Run::set(&raw mut (*d).kinds, kinds.as_ptr(), kinds.len());

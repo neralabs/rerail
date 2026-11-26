@@ -94,6 +94,13 @@ impl Region {
         !self.queued.is_null() && unsafe { (*self.queued).load(std::sync::atomic::Ordering::Relaxed) } != 0
     }
 
+    /// Its guard's count of queued device uses (`Guard::queued`), null with no guard: what a vector of it keeps beside
+    /// its pointer (`Vector::check`). It lives as long as the region's guard.
+    #[inline(always)]
+    pub fn queued_ptr(&self) -> *const std::sync::atomic::AtomicUsize {
+        self.queued
+    }
+
     /// Its guard and its first byte's offset in the guard's block.
     #[inline]
     pub fn guard(&self) -> Option<&(Arc<dyn Guard>, usize)> {
