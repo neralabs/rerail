@@ -213,6 +213,8 @@ function refuseUnboundedFolder(located: RepositoryIdentityLocation): void {
   if (located.git) return;
   const physical = physicalPath(located.workspaceRoot);
   if (physical === parse(physical).root || physical === physicalPath(homedir())) {
+    // Git gave no answer: the folder may be a checkout (a home folder that is one), and Git's missing answer is why.
+    if (located.unanswered !== undefined) throw located.unanswered;
     throw new Error(`${physical} is not a git checkout; Rerail won't treat a filesystem root or your home folder as one`);
   }
 }

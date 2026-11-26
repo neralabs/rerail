@@ -29,10 +29,13 @@ interface Ask {
 const LOCATE: Ask = { none: 128, question: folder => `where the repository of ${folder} is` };
 const LEGACY_ID: Ask = { none: 1, question: folder => `which clone id the config of the repository of ${folder} holds` };
 
-/** Git could not answer a question about a folder's repository, and the message names how Git ended. */
+/**
+ * Git could not answer a question about a folder's repository, and the message names how Git ended; `cause` is the
+ * error of Git's start, when it has one (could not start, past its time limit, ended by a signal).
+ */
 export class GitCouldNotAnswerError extends Error {
-  constructor(readonly folder: string, readonly ending: string, question = LOCATE.question(folder)) {
-    super(`Git could not say ${question}: ${ending}`);
+  constructor(readonly folder: string, readonly ending: string, question = LOCATE.question(folder), cause?: Error) {
+    super(`Git could not say ${question}: ${ending}`, { cause });
     this.name = "GitCouldNotAnswerError";
   }
 }
@@ -43,12 +46,15 @@ export type LocateAnswer =
   | { readonly kind: "outside" }
   | { readonly kind: "no-answer"; readonly error: GitCouldNotAnswerError };
 
-/** For each folder whose ask failed in this process, the line last said; it goes once an ask there is answered. */
-const said = new Map<string, string>();
+/**
+ * For each question of a folder whose ask failed in this process (the ask and the folder), the lines said; they go
+ * once that question is answered there. It holds no more lines than the daemon wrote since those answers.
+ */
+const said = new Map<string, Set<string>>();
 
 /**
  * Git's answer for `requested` in `result` ({@link LocateAnswer}). For an ask Git gave no answer to, the daemon, whose
- * error output is `daemon.log`, writes the error's line there, once for each folder and line until an ask there is
+ * error output is `daemon.log`, writes the error's line there, once for each folder and line until that ask there is
  * answered.
  */
 export function locateAnswer(requested: string, result: GitResult): LocateAnswer {
@@ -70,16 +76,18 @@ export function legacyIdAnswer(requested: string, result: GitResult): string {
 
 /**
  * Undefined when Git answered `ask`: exit 0, or `ask.none`, its answer that there is nothing. Else the error naming
- * how Git ended, its line written by the daemon once for each folder and line until an ask there is answered.
+ * how Git ended, its line written by the daemon once for each folder, ask and line until that ask there is answered.
  */
 function noAnswer(requested: string, result: GitResult, ask: Ask): GitCouldNotAnswerError | undefined {
+  const question = ask.question(requested);
   if (result.status === 0 || result.status === ask.none) {
-    said.delete(requested);
+    said.delete(question);
     return undefined;
   }
-  const error = new GitCouldNotAnswerError(requested, endingOf(result), ask.question(requested));
-  if (gitLivesOnHere() && said.get(requested) !== error.message) {
-    said.set(requested, error.message);
+  const error = new GitCouldNotAnswerError(requested, endingOf(result), question, result.error);
+  const lines = said.get(question) ?? new Set<string>();
+  if (gitLivesOnHere() && !lines.has(error.message)) {
+    said.set(question, lines.add(error.message));
     process.stderr.write(`rerail: ${error.message}\n`);
   }
   return error;

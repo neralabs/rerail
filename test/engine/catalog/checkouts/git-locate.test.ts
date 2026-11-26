@@ -14,10 +14,11 @@
  */
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
+import { locateAnswer } from "../../../../src/engine/catalog/checkouts/git-locate.js";
 import { placeWithoutBlocking, repositoryIdentityLocation, repositoryIdentityLocationAsync } from "../../../../src/engine/catalog/repository-identity.js";
 import { recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
 import { openRerailDatabase } from "../../../../src/engine/storage/database.js";
@@ -87,18 +88,25 @@ afterAll(() => {
   removeFolderSync(root);
 });
 
-function git(cwd: string, ...args: string[]): void {
-  runProgram("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", ...args], { cwd });
+function git(cwd: string, ...args: string[]): string {
+  return runProgram("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", ...args], { cwd });
 }
 
-/** A new checkout with one commit, which no read in this process has placed yet. */
-function checkout(): string {
+/** A new checkout with one commit in `parent`, which no read in this process has placed yet. */
+function checkout(parent = root): string {
   made += 1;
-  const top = join(root, `checkout-${made}`);
+  const top = join(parent, `checkout-${made}`);
   git(root, "init", "-q", top);
   writeFileSync(join(top, "a.txt"), "a\n");
   git(top, "commit", "-q", "--allow-empty", "-m", "seed");
   return top;
+}
+
+/** Makes `inner`, a checkout in `outer`, a submodule `outer` declares: a `.gitmodules` path and a gitlink in its index. */
+function declare(outer: string, inner: string): void {
+  const path = basename(inner);
+  git(outer, "config", "-f", ".gitmodules", `submodule.${path}.path`, path);
+  git(outer, "update-index", "--add", "--cacheinfo", `160000,${git(inner, "rev-parse", "HEAD").trim()},${path}`);
 }
 
 /** What the failure of an ask that ended so says, after the folder: each names the status in decimal and hex, or none. */
@@ -161,6 +169,70 @@ describe("a read of where a folder's repository is, whose Git gives no answer", 
     expect(owners.ownerOf(join(top, "a.txt"))).toBeUndefined();
     expect(next.ending).toBeUndefined();
     expect(owners.ownerOf(join(top, "a.txt"))?.checkoutRoot).toBe(physicalPath(top));
+  });
+
+  it("names no owner for a checkout in another whose own ask failed, not the one around it, and finds it next", () => {
+    const inner = checkout(checkout());
+    const owners = new CheckoutOwners();
+    next.ending = "never-ran";
+    expect(owners.ownerOf(inner)).toBeUndefined();
+    expect(owners.ownerOf(inner)?.checkoutRoot).toBe(inner);
+  });
+
+  it("names no recorded plain folder as the owner of a file in a checkout in it whose ask failed, and finds it next", () => {
+    made += 1;
+    const plain = join(root, `plain-${made}`);
+    mkdirSync(plain);
+    const inner = checkout(plain);
+    const owners = new CheckoutOwners();
+    owners.addPlainRoot(plain);
+    next.ending = "never-ran";
+    expect(owners.ownerOf(join(inner, "a.txt"))).toBeUndefined();
+    expect(owners.ownerOf(join(inner, "a.txt"))?.checkoutRoot).toBe(inner);
+  });
+
+  it("keeps no answer on a declared submodule when the ask for the checkout around it failed", () => {
+    const outer = checkout();
+    const inner = checkout(outer);
+    declare(outer, inner);
+    const owners = new CheckoutOwners();
+    next.ending = "never-ran";
+    expect(owners.isDeclaredSubmodule(inner)).toBe(false);
+    expect(next.ending).toBeUndefined();
+    expect(owners.isDeclaredSubmodule(inner)).toBe(true);
+  });
+
+  it("keeps no answer on a declared submodule when its own ask failed", () => {
+    const outer = checkout();
+    const inner = checkout(outer);
+    declare(outer, inner);
+    const owners = new CheckoutOwners();
+    expect(owners.ownerOf(join(outer, "a.txt"))?.checkoutRoot).toBe(outer);
+    next.ending = "never-ran";
+    expect(owners.isDeclaredSubmodule(inner)).toBe(false);
+    expect(next.ending).toBeUndefined();
+    expect(owners.isDeclaredSubmodule(inner)).toBe(true);
+  });
+
+  it("names Git's missing answer, not the refusal of a home folder, for a checkout that is the home folder", () => {
+    const top = checkout();
+    vi.stubEnv("HOME", top);
+    vi.stubEnv("USERPROFILE", top);
+    const database = openRerailDatabase(join(root, `home-${made}.sqlite`));
+    try {
+      next.ending = "never-ran";
+      expect(() => recordCheckout(database, top)).toThrow(SAID["never-ran"]!);
+      expect(existsSync(join(top, ".rerail"))).toBe(false);
+      expect(recordCheckout(database, top).git).toBe(true);
+    } finally {
+      database.$client.close();
+    }
+  });
+
+  it("keeps the error of Git's start as the cause of its own", () => {
+    const cause = new Error("spawnSync git ETIMEDOUT");
+    const answer = locateAnswer(join(root, "any"), { status: null, stdout: "", stderr: "", error: cause });
+    expect(answer.kind === "no-answer" ? answer.error.cause : answer).toBe(cause);
   });
 
   it("reads a stopped read as outside Git, as before, and says nothing", async () => {
@@ -275,10 +347,12 @@ describe("Git's own answer that a folder is outside any repository", () => {
 });
 
 describe("the daemon's line for an ask Git gave no answer", () => {
-  it("is written once for each folder and ending, and again after an ask there is answered", async () => {
+  /** The modules imported afresh in a process working as the daemon's, a checkout, an ask of it that ends so, and the lines said. */
+  async function asTheDaemon() {
     vi.resetModules();
     const git = await import("../../../../src/engine/git.js");
     const identity = await import("../../../../src/engine/catalog/repository-identity.js");
+    const locate = await import("../../../../src/engine/catalog/checkouts/git-locate.js");
     git.gitLivesOn();
     const top = checkout();
     const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -286,14 +360,35 @@ describe("the daemon's line for an ask Git gave no answer", () => {
       next.ending = ending;
       expect((await identity.repositoryIdentityLocationAsync(top)).unanswered?.message).toMatch(SAID[ending]!);
     };
+    return { identity, locate, top, fail, lines: () => write.mock.calls.map(([text]) => String(text)) };
+  }
+
+  it("is written once for each folder and ending, and again after an ask there is answered", async () => {
+    const { identity, top, fail, lines: said } = await asTheDaemon();
     await fail("failed");
     await fail("failed");
     await fail("never-ran");
     await expect(identity.repositoryIdentityLocationAsync(top)).resolves.toMatchObject({ git: true });
     await fail("never-ran");
-    const lines = write.mock.calls.map(([text]) => String(text));
+    const lines = said();
     expect(lines).toHaveLength(3);
     expect(lines.every(line => line.startsWith(`rerail: Git could not say where the repository of ${top} is: `))).toBe(true);
     expect(lines.map(line => line.match(/exit status (\d+)/u)?.[1])).toEqual(["1", ...Array<string>(2).fill(process.platform === "win32" ? "3221225794" : "127")]);
+  });
+
+  it("says a line once though another came between with no answer", async () => {
+    const { fail, lines } = await asTheDaemon();
+    await fail("failed");
+    await fail("never-ran");
+    await fail("failed");
+    expect(lines().map(line => line.match(/exit status (\d+)/u)?.[1])).toEqual(["1", process.platform === "win32" ? "3221225794" : "127"]);
+  });
+
+  it("keeps the line of where a folder's repository is said when Git answers the read of its legacy id", async () => {
+    const { locate, top, fail, lines } = await asTheDaemon();
+    await fail("failed");
+    expect(locate.legacyIdAnswer(top, { status: 1, stdout: "", stderr: "" })).toBe("");
+    await fail("failed");
+    expect(lines()).toHaveLength(1);
   });
 });
