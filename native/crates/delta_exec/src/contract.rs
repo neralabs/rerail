@@ -24,6 +24,7 @@
 
 use crate::cache::{CacheOps, OpCache, cache_facts};
 use crate::dir::{BlockId, Directory};
+use crate::files::Blobs;
 use crate::op::{Registry, Tiling};
 use crate::trace::{RollUp, Trace, TraceOps};
 use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
@@ -91,11 +92,13 @@ impl GlobalIn {
     }
 }
 
-/// What an operator's run reaches: the registry its operations are declared in, the directory of their blocks, and
-/// the trace's and the cache's operations.
+/// What an operator's run reaches: the registry its operations are declared in, the directory of their blocks, the
+/// blobs (P§11: with traces, the two kinds of stored thing; a row names a blob by its id), and the trace's and the
+/// cache's operations.
 pub struct Cx<'c> {
     pub reg: &'c Registry,
     pub dir: &'c mut Directory,
+    pub blobs: &'c Blobs,
     pub traces: &'c TraceOps,
     pub caches: &'c CacheOps,
 }
@@ -410,11 +413,12 @@ pub fn harness<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize) -> Result<(), 
     harness_on(op, &mut bench, &mut ins, &heads, &globals, drop_at)
 }
 
-/// What a harness runs in: a registry with the trace's and the cache's operations (and any its operator's own), and a
-/// directory.
+/// What operators run in (a run's, a harness's): a registry with the trace's and the cache's operations (and any
+/// its operators' own), a directory and the blobs.
 pub struct Bench {
     pub reg: Registry,
     pub dir: Directory,
+    pub blobs: Blobs,
     pub traces: TraceOps,
     pub caches: CacheOps,
 }
@@ -424,11 +428,11 @@ impl Bench {
         let mut reg = Registry::default();
         let traces = TraceOps::declare(&mut reg)?;
         let caches = CacheOps::declare(&mut reg)?;
-        Ok(Bench { reg, dir: Directory::default(), traces, caches })
+        Ok(Bench { reg, dir: Directory::default(), blobs: Blobs::default(), traces, caches })
     }
 
     pub fn cx(&mut self) -> Cx<'_> {
-        Cx { reg: &self.reg, dir: &mut self.dir, traces: &self.traces, caches: &self.caches }
+        Cx { reg: &self.reg, dir: &mut self.dir, blobs: &self.blobs, traces: &self.traces, caches: &self.caches }
     }
 }
 

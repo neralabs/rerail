@@ -3,12 +3,12 @@
 //! `rerail_delta_twins::intern`.
 
 use crate::dir::{BlockId, Directory};
-use crate::files::{BlobId, Blobs, Doc, DocBlob};
+use crate::files::{BlobId, Blobs, Doc, Placed};
 use crate::op::{Across, Found, Independence, Inside, Mode, OpId, Output, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
 use crate::sym::Atoms;
 use rerail_blocks::atoms::{count_in, name_in};
 use rerail_blocks::block::kind;
-use rerail_blocks::gens::Table;
+use rerail_blocks::gens::{BODY_AT, Table};
 use rerail_blocks::region::pin_block;
 use rerail_delta_twins::Params;
 use rerail_delta_twins::intern::{self as twin, InternP};
@@ -59,44 +59,66 @@ impl InternOps {
     }
 }
 
-/// Interns document `doc`, answered at `path` as `module`: its symbols block (node → symbol), made here and written
-/// by `intern`, which adds its new names to `atoms`.
-pub fn intern(reg: &Registry, ops: &InternOps, dir: &mut Directory, atoms: Atoms, doc: &DocBlob, path: &str, module: &str) -> Result<BlockId, String> {
-    let n = crate::tape::reads(&doc.text).len();
-    let id = dir.make(kind::FACTS, twin::syms_bytes(n, path, module));
-    {
-        let b = dir.block(id).expect("just made");
-        let mut w = pin_block(&b, "intern", true)?;
-        twin::init_syms(w.bytes_mut().expect("a write pin"), n, path, module);
+/// Interns the document whose source and tape lie at `src` and `tape` (one tape block), answered at `path` as
+/// `module`: its symbols block (node → symbol), made here, written by `intern` (which adds its new names to `atoms`),
+/// frozen and housed as a blob.
+#[allow(clippy::too_many_arguments)]
+pub fn intern(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut Blobs, atoms: Atoms, src: Placed, tape: Placed, path: &str, module: &str) -> Result<BlobId, String> {
+    if src.block != tape.block {
+        return Err("a document's source and tape in two blocks".into());
     }
-    let mut p = vec![0u8; InternP::SIZE];
-    InternP { src_at: doc.src.0 as u64, src_len: doc.src.1 as u64, tape_at: doc.tape.0 as u64, tape_len: doc.tape.1 as u64 }.write(&mut p);
-    if let Err(e) = run_cpu(reg, dir, ops.intern, &[doc.block, atoms.0, id], &p, Tiling::WHOLE) {
-        dir.release(id);
-        return Err(e);
+    let n = {
+        let l = dir.read("intern", &[tape.block])?;
+        crate::files::reads(l.block(0), src, tape).len()
+    };
+    let body = twin::syms_bytes(n, path, module);
+    let id = dir.make(kind::FACTS, body);
+    let made = (|| {
+        {
+            let b = dir.block(id).expect("just made");
+            let mut w = pin_block(&b, "intern", true)?;
+            twin::init_syms(w.bytes_mut().expect("a write pin"), n, path, module);
+        }
+        let mut p = vec![0u8; InternP::SIZE];
+        InternP { src_at: src.at as u64, src_len: src.len as u64, tape_at: tape.at as u64, tape_len: tape.len as u64 }.write(&mut p);
+        run_cpu(reg, dir, ops.intern, &[tape.block, atoms.0, id], &p, Tiling::WHOLE)?;
+        dir.freeze(id)?;
+        blobs.house(dir, Placed { block: id, at: BODY_AT, len: body })
+    })();
+    match made {
+        Ok((s, new)) => {
+            if !new {
+                dir.release(id);
+            }
+            Ok(s)
+        }
+        Err(e) => {
+            dir.release(id);
+            Err(e)
+        }
     }
-    Ok(id)
 }
 
-/// Each document's symbols block, by its path and the blob it was interned from: an unchanged tape's is the one it had,
-/// and `intern` runs only for a changed one. A symbols block lives as long as its blob (never versioned): a kept state
-/// of the tape port names both.
+/// Each document's symbols blob, by its path and its tape: an unchanged tape's is the one it had, and `intern` runs
+/// only for a changed one.
 #[derive(Default)]
 pub struct Interned {
-    syms: std::collections::HashMap<(String, BlobId), BlockId>,
+    syms: std::collections::HashMap<(String, BlobId), BlobId>,
     /// `intern`'s runs.
     pub runs: u64,
 }
 
 impl Interned {
-    /// Document `doc`'s symbols block: kept when its tape was interned at its path, else `intern`'s.
-    pub fn of(&mut self, reg: &Registry, ops: &InternOps, dir: &mut Directory, atoms: Atoms, blobs: &Blobs, doc: &Doc) -> Result<BlockId, String> {
-        let key = (doc.path.clone(), doc.after);
+    /// Document `doc`'s symbols blob: kept when its tape was interned at its path, else `intern`'s.
+    #[allow(clippy::too_many_arguments)]
+    pub fn of(&mut self, reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut Blobs, atoms: Atoms, doc: &Doc) -> Result<BlobId, String> {
+        let key = (doc.path.clone(), doc.after.tape);
         if let Some(&s) = self.syms.get(&key) {
             return Ok(s);
         }
-        let blob = blobs.get(&doc.after).ok_or_else(|| format!("{}: a tape no blob holds", doc.path))?;
-        let s = intern(reg, ops, dir, atoms, blob, &doc.path, &doc.module)?;
+        let get = |id: &BlobId| blobs.get(id).ok_or_else(|| format!("{}: a blob nothing holds", doc.path));
+        let (src, tape) = (get(&doc.after.source)?, get(&doc.after.tape)?);
+        let s = intern(reg, ops, dir, blobs, atoms, src, tape, &doc.path, &doc.module)?;
         self.runs += 1;
         self.syms.insert(key, s);
         Ok(s)

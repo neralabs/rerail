@@ -3,6 +3,7 @@
 //! an item), and the call that runs it over one document into L1's δ runs blocks, a K-form relation each.
 
 use crate::dir::{BlockId, Directory};
+use crate::files::Placed;
 use crate::kform::{RELATIONS, Refused};
 use crate::op::{Across, Found, Independence, Inside, Mode, OpId, Output, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
 use rerail_blocks::block::kind;
@@ -73,14 +74,11 @@ impl K0Ops {
     }
 }
 
-/// One document for `k0_pass`: its tape block, where its source and tape lie in it, its node count, and its symbols
-/// block.
+/// One document for `k0_pass`: where its source and its tape lie (one tape block), and its symbols block.
 #[derive(Clone, Copy, Debug)]
 pub struct K0Doc {
-    pub tape: BlockId,
-    pub src: (usize, usize),
-    pub at: (usize, usize),
-    pub nodes: usize,
+    pub src: Placed,
+    pub tape: Placed,
     pub syms: BlockId,
 }
 
@@ -89,7 +87,11 @@ pub struct K0Doc {
 #[allow(clippy::too_many_arguments)]
 pub fn k0_pass(reg: &Registry, ops: &K0Ops, dir: &mut Directory, atoms: BlockId, doc: K0Doc, d: i64, diff: i32, runs: &[BlockId]) -> Result<u64, Refused> {
     let fail = |why: String| Refused { module: d, rule: -1, why };
-    let control = dir.make(kind::CONTROL, twin::control_bytes(doc.nodes));
+    let nodes = {
+        let l = dir.read("k0_pass", &[doc.tape.block]).map_err(fail)?;
+        crate::files::reads(l.block(0), doc.src, doc.tape).len()
+    };
+    let control = dir.make(kind::CONTROL, twin::control_bytes(nodes));
     let ran = (|| {
         {
             let b = dir.block(control).expect("just made");
@@ -97,9 +99,9 @@ pub fn k0_pass(reg: &Registry, ops: &K0Ops, dir: &mut Directory, atoms: BlockId,
             twin::init_control(w.bytes_mut().expect("a write pin"));
         }
         let mut p = vec![0u8; K0P::SIZE];
-        let (src_at, src_len, tape_at, tape_len) = (doc.src.0 as u64, doc.src.1 as u64, doc.at.0 as u64, doc.at.1 as u64);
+        let (src_at, src_len, tape_at, tape_len) = (doc.src.at as u64, doc.src.len as u64, doc.tape.at as u64, doc.tape.len as u64);
         K0P { src_at, src_len, tape_at, tape_len, module: d, diff: i64::from(diff) }.write(&mut p);
-        let slots: Vec<BlockId> = [doc.tape, doc.syms, atoms, control].into_iter().chain(runs.iter().copied()).collect();
+        let slots: Vec<BlockId> = [doc.tape.block, doc.syms, atoms, control].into_iter().chain(runs.iter().copied()).collect();
         run_cpu(reg, dir, ops.k0_pass, &slots, &p, Tiling::WHOLE).map_err(fail)?;
         let l = dir.read("k0_pass", &[control]).map_err(fail)?;
         match twin::refused(l.block(0)) {

@@ -33,12 +33,12 @@ impl Disk {
 
     /// l0 read by the world (B§8's run, its first line).
     fn answer(&mut self, bench: &mut Bench) -> Doc {
-        self.tape.read(&bench.reg, &bench.traces, &mut bench.dir, PATH).unwrap()
+        self.tape.read(&bench.reg, &bench.traces, &mut bench.dir, &mut bench.blobs, PATH).unwrap()
     }
 
     /// B§8's run, its first two lines.
     fn run(&mut self, bench: &mut Bench, inst: &mut Instance) -> Result<(Doc, Work), String> {
-        crate::boot::run(&mut self.tape, &self.l1, inst, &mut bench.cx(), PATH)
+        crate::boot::run(&mut self.tape, &self.l1, inst, bench, PATH)
     }
 
     fn edit(&self, text: &str, ago: u64) {

@@ -11,7 +11,7 @@
 //! its new rows added, an unchanged one's the identity (no layer). `run` steps L1's instance over the ports between
 //! the last two states. The rest of B§8's run (the loop, loads, the program's δ) comes after the target.
 
-use crate::contract::{Cx, Global, GlobalIn, InPort, Instance, Work, push_layer};
+use crate::contract::{Bench, Global, GlobalIn, InPort, Instance, Work, push_layer};
 use crate::dir::{BlockId, Directory};
 use crate::files::{Blobs, Doc, Files};
 use crate::intern::{InternOps, Interned};
@@ -24,7 +24,6 @@ use std::collections::HashMap;
 /// L1's tape port and its facts in (the atoms), as the world reads them.
 pub struct Tape {
     pub files: Files,
-    pub blobs: Blobs,
     pub interned: Interned,
     pub iops: InternOps,
     pub atoms: Atoms,
@@ -42,18 +41,17 @@ impl Tape {
     pub fn new(files: Files, iops: InternOps, atoms: Atoms) -> Result<Tape, String> {
         let ins = vec![Trace::new(&tape_shape())?.with_roll_up(RollUp::Never)];
         let globals = vec![vec![Global { block: atoms.0, count: 0 }]];
-        Ok(Tape { files, blobs: Blobs::default(), interned: Interned::default(), iops, atoms, ins, heads: vec![vec![None]], globals, last: HashMap::new() })
+        Ok(Tape { files, interned: Interned::default(), iops, atoms, ins, heads: vec![vec![None]], globals, last: HashMap::new() })
     }
 
     /// Reads document `path` (B§8's first line): its answer, and the ports' next state.
-    pub fn read(&mut self, reg: &Registry, traces: &TraceOps, dir: &mut Directory, path: &str) -> Result<Doc, String> {
-        let doc = self.files.answer(path, &mut self.blobs, dir)?;
+    pub fn read(&mut self, reg: &Registry, traces: &TraceOps, dir: &mut Directory, blobs: &mut Blobs, path: &str) -> Result<Doc, String> {
+        let doc = self.files.answer(path, blobs, dir)?;
         let mut now = self.heads.last().cloned().expect("a state");
         if !doc.is_identity() {
-            let syms = self.interned.of(reg, &self.iops, dir, self.atoms, &self.blobs, &doc)?;
+            let syms = self.interned.of(reg, &self.iops, dir, blobs, self.atoms, &doc)?;
             let d = self.atoms.find(dir, &doc.module).ok_or("the module, interned")?;
-            let blob = self.blobs.get(&doc.after).ok_or("the answer's blob")?;
-            let row = tape_row(d, blob, syms);
+            let row = tape_row(d, &doc.after, &syms);
             let mut pairs = vec![(row.clone(), 1)];
             if let Some(o) = self.last.get(path) {
                 pairs.push((o.clone(), -1));
@@ -83,9 +81,9 @@ impl Tape {
 }
 
 /// B§8's run, its first two lines: `path` read, then L1 stepped over the tape since the last read.
-pub fn run(tape: &mut Tape, l1: &L1, inst: &mut Instance, cx: &mut Cx<'_>, path: &str) -> Result<(Doc, Work), String> {
-    let doc = tape.read(cx.reg, cx.traces, cx.dir, path)?;
+pub fn run(tape: &mut Tape, l1: &L1, inst: &mut Instance, bench: &mut Bench, path: &str) -> Result<(Doc, Work), String> {
+    let doc = tape.read(&bench.reg, &bench.traces, &mut bench.dir, &mut bench.blobs, path)?;
     let k = tape.now();
-    let work = inst.step(l1, cx, &tape.since(k), &tape.globals_since(k))?;
+    let work = inst.step(l1, &mut bench.cx(), &tape.since(k), &tape.globals_since(k))?;
     Ok((doc, work))
 }

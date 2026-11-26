@@ -7,6 +7,7 @@ use rerail_rr_syntax::tape_format::f16::{F16, read_in_place};
 use rerail_rr_syntax::tape_format::tape::Tape as _;
 
 /// A tape's reads: a node's kind, field, children and text, where the tape lies.
+#[derive(Clone, Copy)]
 pub struct Reads<'t> {
     r: F16<'t>,
     src: &'t str,

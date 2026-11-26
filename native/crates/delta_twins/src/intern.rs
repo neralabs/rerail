@@ -7,8 +7,9 @@
 //! The symbols block is the document's node → symbol relation, partitioned by the document (its node ids are its own,
 //! L9) and laid out by node id: for each node, the symbol of its text when it is a leaf (an identifier, a variable, an
 //! operator, a literal: what the `text` view reads) and the symbol of its value when it is a string (what `value`
-//! reads), 0 where it has none. Its header: the nodes' count, the document's path and module (the answer's, written
-//! by the host) and their symbols. The language's names (its kinds and fields) and K-form's step kinds are interned
+//! reads), 0 where it has none. Its header: the body's length (a block's first word, what a freeze keeps), the nodes'
+//! count, the document's path and module (the answer's, written by the host) and their symbols. Once written it is
+//! frozen, and housed as a blob. The language's names (its kinds and fields) and K-form's step kinds are interned
 //! too, so a read finds every name a view or a pass compares.
 //!
 //! A symbol is an atom's id: the same text has the same id across runs and documents. Nothing reads the atoms to
@@ -38,12 +39,13 @@ const TAPE: usize = 0;
 const ATOMS: usize = 1;
 const SYMS: usize = 2;
 
-const N_AT: usize = BODY_AT;
-const PATH_SYM_AT: usize = BODY_AT + 8;
-const MODULE_SYM_AT: usize = BODY_AT + 12;
-const PATH_LEN_AT: usize = BODY_AT + 16;
-const MODULE_LEN_AT: usize = BODY_AT + 20;
-const NAMES_AT: usize = BODY_AT + 24;
+const LEN_AT: usize = BODY_AT;
+const N_AT: usize = BODY_AT + 8;
+const PATH_SYM_AT: usize = BODY_AT + 16;
+const MODULE_SYM_AT: usize = BODY_AT + 20;
+const PATH_LEN_AT: usize = BODY_AT + 24;
+const MODULE_LEN_AT: usize = BODY_AT + 28;
+const NAMES_AT: usize = BODY_AT + 32;
 
 fn nodes_at(path_len: usize, module_len: usize) -> usize {
     NAMES_AT + (path_len + module_len).next_multiple_of(8)
@@ -56,6 +58,7 @@ pub fn syms_bytes(n: usize, path: &str, module: &str) -> usize {
 
 /// A symbols block's header, written by the host before `intern` runs: the nodes' count, the path and the module.
 pub fn init_syms(bytes: &mut [u8], n: usize, path: &str, module: &str) {
+    set_word::<u64>(bytes, LEN_AT, syms_bytes(n, path, module) as u64);
     set_word::<u64>(bytes, N_AT, n as u64);
     set_word::<u32>(bytes, PATH_LEN_AT, path.len() as u32);
     set_word::<u32>(bytes, MODULE_LEN_AT, module.len() as u32);

@@ -37,28 +37,33 @@ fn a_document_is_its_path_its_module_and_a_tape_from_nothing() {
     let (mut blobs, mut dir) = (Blobs::default(), Directory::default());
     let d = files.answer("bootstrap-l0.rerail", &mut blobs, &mut dir).unwrap();
     assert_eq!((d.path.as_str(), d.module.as_str(), d.before), ("bootstrap-l0.rerail", "bootstrap-l0", None));
-    let t = blobs.get(&d.after).unwrap();
-    assert_eq!(t.text.src.as_str(), crate::L0);
-    assert!(!t.text.tape.is_empty());
+    let (s, t) = (blobs.get(&d.after.source).unwrap(), blobs.get(&d.after.tape).unwrap());
+    let l = dir.read("t", &[t.block]).unwrap();
+    assert_eq!(&l.block(0)[s.at..s.at + s.len], crate::L0.as_bytes());
+    assert!(reads(l.block(0), s, t).len() > 100, "l0's tape");
 }
 
 /// The source lies where the read placed it, and the tape where the parser wrote it: both in the document's tape
-/// block, which an operation reads as a slot.
+/// block, frozen, each a blob named by the sha256 of its bytes where they lie.
 #[test]
-fn the_source_and_the_tape_lie_in_the_documents_tape_block() {
+fn the_source_and_the_tape_are_blobs_in_the_documents_frozen_tape_block() {
+    use sha2::{Digest as _, Sha256};
     let (_, mut files) = root("room");
     let (mut blobs, mut dir) = (Blobs::default(), Directory::default());
     let d = files.answer("bootstrap-l0.rerail", &mut blobs, &mut dir).unwrap();
-    let t = blobs.get(&d.after).unwrap();
-    let home::Home::Own(v) = t.text.tape.home() else { panic!("a tape the parser wrote is its writer's") };
-    let (block, at) = v.place().expect("the tape's bytes in a block");
-    assert_eq!(block.header().kind, kind::TAPE);
-    assert!(Arc::ptr_eq(block, &dir.block(t.block).unwrap()));
-    assert_eq!(t.tape, (at, t.text.tape.as_bytes().len()));
+    let (s, t) = (blobs.get(&d.after.source).unwrap(), blobs.get(&d.after.tape).unwrap());
+    assert_eq!(s.block, t.block);
+    assert!(dir.is_frozen(t.block), "a blob is never versioned");
+    assert_eq!(dir.block(t.block).unwrap().header().kind, kind::TAPE);
     let l = dir.read("t", &[t.block]).unwrap();
     let b = l.block(0);
-    assert_eq!(&b[t.src.0..t.src.0 + t.src.1], crate::L0.as_bytes(), "the source, read where it lies in the block");
-    assert_eq!(&b[t.tape.0..t.tape.0 + t.tape.1], t.text.tape.as_bytes());
+    assert_eq!(&b[s.at..s.at + s.len], crate::L0.as_bytes(), "the source, read where it lies in the block");
+    assert_eq!(d.after.source.0, <[u8; 32]>::from(Sha256::digest(crate::L0.as_bytes())));
+    assert_eq!(d.after.tape.0, <[u8; 32]>::from(Sha256::digest(&b[t.at..t.at + t.len])));
+    // The same bytes housed again are the first blob, and their block is let go.
+    let again = doc_of(&mut dir, &mut blobs, crate::L0).unwrap();
+    assert_eq!(again, d.after);
+    assert_eq!(blobs.len(), 2);
 }
 
 #[test]
@@ -76,7 +81,7 @@ fn an_unchanged_file_gives_the_identity_with_no_read_past_its_stat() {
     assert_eq!((c.hashed, c.bytes), (0, 0), "no byte read: {c:?}");
     assert_eq!(c.reused, 1, "the answer reused on its stat: {c:?}");
     assert_eq!(files.reads, reads);
-    assert_eq!(blobs.len(), 1);
+    assert_eq!(blobs.len(), 2, "its source and its tape");
 }
 
 #[test]
@@ -91,7 +96,9 @@ fn an_edited_file_is_read_once_and_placed_once() {
     assert_ne!(edited.after, first.after);
     assert_eq!(files.reads, reads + 1, "read once, placed once (read_placed places what it reads)");
     assert_eq!(files.counts().since(&c0).hashed, 1);
-    assert!(blobs.get(&edited.after).unwrap().text.src.as_str().contains("b4_added"));
+    let s = blobs.get(&edited.after.source).unwrap();
+    let l = dir.read("t", &[s.block]).unwrap();
+    assert!(std::str::from_utf8(&l.block(0)[s.at..s.at + s.len]).unwrap().contains("b4_added"));
 }
 
 #[test]

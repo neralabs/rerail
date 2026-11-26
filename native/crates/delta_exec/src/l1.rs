@@ -3,10 +3,9 @@
 //!
 //! Its ports, B§4's exactly:
 //!
-//! - **tape** (B4): a row a document, `(d, tape block, source at, source length, tape at, tape length, nodes,
-//!   symbols block)`, where the file layer placed its source and the parser wrote its tape, with the node → symbol
-//!   facts `intern` wrote for it; a changed file is its old row gone and its new row added, an unchanged one the
-//!   identity;
+//! - **tape** (B4): a row a document, `(d, source, tape, symbols)`, each a blob by its id (P§11.4's document set,
+//!   path → tape id): its source, its tape, and the node → symbol facts `intern` wrote for it; a changed file is its
+//!   old row gone and its new row added, an unchanged one the identity;
 //! - **no program**: L1 reads no K-form;
 //! - **facts in** (B5): the program globals, a global port each (`contract::Global`): the atoms, the one every level
 //!   shares, read in place;
@@ -19,7 +18,7 @@
 
 use crate::contract::{At, CacheW, Cx, DeltaOp, In, Out, Port, Ports, Work};
 use crate::dir::BlockId;
-use crate::files::DocBlob;
+use crate::files::{BlobId, Blobs, DocIds};
 use crate::k0::{K0Doc, K0Ops, k0_pass};
 use crate::kform::{self, RELATIONS};
 use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
@@ -30,17 +29,15 @@ use rerail_blocks::relation::View;
 pub const TAPE: usize = 0;
 pub const ATOMS: usize = 0;
 
-/// The tape port's rows: `(d, tape block, source at, source length, tape at, tape length, nodes, symbols block)`, by
-/// document.
+/// The tape port's rows: `(d, source, tape, symbols)`, each blob by its four words, by document.
 pub fn tape_shape() -> Shape {
-    let c = vec![ColType::I32, ColType::I32, ColType::I64, ColType::I64, ColType::I64, ColType::I64, ColType::I64, ColType::I32];
-    Shape::run(c, (0..8).collect(), Some(0))
+    let c = std::iter::once(ColType::I32).chain(std::iter::repeat_n(ColType::I64, 12)).collect();
+    Shape::run(c, (0..13).collect(), Some(0))
 }
 
-/// Document `doc`'s row in the tape port, as module `d`, with its symbols block.
-pub fn tape_row(d: i64, doc: &DocBlob, syms: BlockId) -> Vec<i64> {
-    let nodes = crate::tape::reads(&doc.text).len();
-    vec![d, i64::from(doc.block.0), doc.src.0 as i64, doc.src.1 as i64, doc.tape.0 as i64, doc.tape.1 as i64, nodes as i64, i64::from(syms.0)]
+/// Document `doc`'s row in the tape port, as module `d`, with its symbols blob.
+pub fn tape_row(d: i64, doc: &DocIds, syms: &BlobId) -> Vec<i64> {
+    std::iter::once(d).chain(doc.source.words()).chain(doc.tape.words()).chain(syms.words()).collect()
 }
 
 /// L1: `k0_pass` over its tape port's changed documents.
@@ -52,10 +49,13 @@ fn cell(v: &View<'_>, id: RowId, c: u16) -> i64 {
     Read::get(v, id, ColumnIndex::new(c))
 }
 
-/// The document of tape row `id` of `tape`.
-fn doc_at(tape: &View<'_>, id: RowId) -> (i64, K0Doc) {
-    let c = |k| cell(tape, id, k) as usize;
-    (cell(tape, id, 0), K0Doc { tape: BlockId(c(1) as u32), src: (c(2), c(3)), at: (c(4), c(5)), nodes: c(6), syms: BlockId(c(7) as u32) })
+/// The document of tape row `id` of `tape`, its blobs where `blobs` has them.
+fn doc_at(blobs: &Blobs, tape: &View<'_>, id: RowId) -> Result<(i64, K0Doc), String> {
+    let blob = |at: u16| {
+        let w: Vec<i64> = (at..at + 4).map(|c| cell(tape, id, c)).collect();
+        blobs.get(&BlobId::of_words(&w)).ok_or("a blob the tape port names, which nothing holds")
+    };
+    Ok((cell(tape, id, 0), K0Doc { src: blob(1)?, tape: blob(5)?, syms: blob(9)?.block }))
 }
 
 fn live<'v>(v: &'v View<'_>) -> impl Iterator<Item = RowId> + 'v {
@@ -89,11 +89,11 @@ impl DeltaOp for L1 {
         let (tape, atoms) = (&ins.ports[TAPE], ins.globals[ATOMS].block);
         if let Some(tb) = tape.before() {
             for id in tape.gone() {
-                self.pass(cx, atoms, doc_at(tb, id), -1, out, &mut work)?;
+                self.pass(cx, atoms, doc_at(cx.blobs, tb, id)?, -1, out, &mut work)?;
             }
         }
         for id in tape.added() {
-            self.pass(cx, atoms, doc_at(tape.after(), id), 1, out, &mut work)?;
+            self.pass(cx, atoms, doc_at(cx.blobs, tape.after(), id)?, 1, out, &mut work)?;
         }
         Ok(work)
     }
@@ -102,7 +102,7 @@ impl DeltaOp for L1 {
         let (tape, atoms) = (&ins.ports[TAPE], ins.globals[ATOMS].block);
         let mut work = Work::default();
         for id in live(tape) {
-            self.pass(cx, atoms, doc_at(tape, id), 1, out, &mut work)?;
+            self.pass(cx, atoms, doc_at(cx.blobs, tape, id)?, 1, out, &mut work)?;
         }
         Ok(())
     }

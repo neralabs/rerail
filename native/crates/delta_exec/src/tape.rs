@@ -108,8 +108,9 @@ pub struct TapeView<'t> {
 }
 
 impl<'t> TapeView<'t> {
-    pub fn new(view: View, d: i64, text: &'t Text, syms: &'t [u8], names: &'t Names) -> Self {
-        TapeView { view, d, reads: reads(text), syms, names }
+    /// View `view` of document `d`, its tape and source read where they lie (`reads`), its symbols block `syms`.
+    pub fn new(view: View, d: i64, reads: Reads<'t>, syms: &'t [u8], names: &'t Names) -> Self {
+        TapeView { view, d, reads, syms, names }
     }
 
     /// Whether node `n` is a row of the view.
