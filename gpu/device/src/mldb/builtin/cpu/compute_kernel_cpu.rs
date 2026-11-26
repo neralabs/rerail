@@ -778,6 +778,12 @@ enum Grid {
 /// The groups a Rust launch has at least for the pool's threads to run them (`Run::Host`), and the groups a task of
 /// theirs takes at least.
 const POOL_GROUPS: u64 = 32;
+/// The groups from which an inline flush's launch (`CpuQueueRoot::inline`, the engine's CPU joins) is split across
+/// the engine's pool. Its thread is one of that pool's, beside the other strata's: a smaller launch handed to the pool
+/// wakes its idle threads, which spin before they sleep again, and gains no wall. The data layer's 57 rules over 50
+/// files, every inline launch of 32 groups or more split: 17.3-18.9 s user, 3.9-4.8 s sys; from 4096: 16.7 s, 2.6 s;
+/// none split: 16.3-16.7 s, 2.1 s; the wall the same (7.1-8.7 s against 7.2-7.5 s).
+const INLINE_POOL_GROUPS: u64 = 4096;
 const POOL_TASK_GROUPS: u64 = 4;
 
 /// Threads that run a Rust launch's groups beside its queue's thread (`Run::Host`, a root's thread's `Worker`):
@@ -1044,9 +1050,12 @@ impl CpuBindContext<'_> {
                         // groups (a recursive stratum's rounds are thousands of launches of a few groups each).
                         if groups < POOL_GROUPS {
                             (0..groups).for_each(one);
+                        } else if w.inline && groups < INLINE_POOL_GROUPS {
+                            // On the flushing thread, one of the engine's pool's: the cores are its strata's.
+                            (0..groups).for_each(one);
                         } else if w.inline {
-                            // On the flushing thread, one of the engine's pool's (its CPU joins'): the pool's other
-                            // threads take its tasks as they are free.
+                            // A launch of many groups on the flushing thread: the pool's other threads take its tasks
+                            // as they are free.
                             use rayon::prelude::*;
                             (0..groups as usize).into_par_iter().with_min_len(POOL_TASK_GROUPS as usize).for_each(|i| one(i as u64));
                         } else {
