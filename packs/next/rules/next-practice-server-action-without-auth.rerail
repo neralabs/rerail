@@ -77,10 +77,12 @@ ServerActionWithoutAuthWrapped(n, x, w, what, p, o) :- nsaw_report(f, n, x), nsa
 .decl nsaw_report(f: node, n: node, x: symbol)
 nsaw_report(f, n, x) :- nsaw_action(f, n, x), docof(f, d), doc(d, p, _), nsaw_next_doc(d), !nsaw_test_doc(d),
     !nsaw_public_name(x), !nsaw_public_path(p).
-// nsaw_next_doc(d): the nearest package.json above document d lists next (dependencies, devDependencies or
+// nsaw_next_doc(d): document d is Next.js code: it imports `next` or a `next/…` module (`next/cache`,
+// `next/headers`), or the nearest package.json above it lists next (dependencies, devDependencies or
 // peerDependencies). 'use server' is React's, not only Next.js's: a React Router or Waku app has it too.
 .decl nsaw_next_doc(d: number)
 nsaw_next_doc(d) :- doc(d, p, _), package_for(p, dir), nsaw_next_pkg(dir).
+nsaw_next_doc(d) :- nsaw_import(d, _, s, _), (s = "next" ; prefix("next/", s)).
 .decl nsaw_next_pkg(dir: symbol)
 nsaw_next_pkg(dir) :- package_field(dir, k, _),
     (k = "dependencies/next" ; k = "devDependencies/next" ; k = "peerDependencies/next").

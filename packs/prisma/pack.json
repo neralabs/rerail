@@ -53,11 +53,11 @@
       "examples": {
         "caught": {
           "path": "app/orders/queries.ts",
-          "text": "import { prisma } from \"@/lib/db\";\n\nexport async function ordersWithItems(userId: string) {\n  const orders = await prisma.order.findMany({ where: { userId } });\n  for (const o of orders) {\n    o.items = await prisma.orderItem.findMany({ where: { orderId: o.id } });\n  }\n  return orders;\n}\n"
+          "text": "import { prisma } from \"@/lib/prisma\";\n\nexport async function ordersWithItems(userId: string) {\n  const orders = await prisma.order.findMany({ where: { userId } });\n  for (const o of orders) {\n    o.items = await prisma.orderItem.findMany({ where: { orderId: o.id } });\n  }\n  return orders;\n}\n"
         },
         "passes": {
           "path": "app/orders/queries.ts",
-          "text": "import { prisma } from \"@/lib/db\";\n\nexport async function ordersWithItems(userId: string) {\n  return prisma.order.findMany({ where: { userId }, include: { items: true } });\n}\n\nexport async function ownersOf(ids: string[]) {\n  return Promise.all(ids.map((id) => prisma.user.findUnique({ where: { id } })));\n}\n"
+          "text": "import { prisma } from \"@/lib/prisma\";\n\nexport async function ordersWithItems(userId: string) {\n  return prisma.order.findMany({ where: { userId }, include: { items: true } });\n}\n\nexport async function ownersOf(ids: string[]) {\n  return Promise.all(ids.map((id) => prisma.user.findUnique({ where: { id } })));\n}\n"
         }
       }
     }

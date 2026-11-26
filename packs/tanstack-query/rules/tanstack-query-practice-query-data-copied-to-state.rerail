@@ -50,11 +50,13 @@ QueryDataCopiedToState(a, m) :- qdc_initial(a, s), !qdc_set_elsewhere(s), !qdc_e
     docof(a, d), qdc_tq_pkg(d).
 QueryDataCopiedToState(k, m) :- qdc_effect_copy(k, s), !qdc_set_elsewhere(s), qdc_says("effect", m), docof(k, d),
     qdc_tq_pkg(d).
-// qdc_tq_pkg(d): document d's package (its nearest package.json; the workspace root's for a file under no other)
-// depends on TanStack Query (`@tanstack/react-query`, v3's `react-query`) or tRPC's React Query integration, so an
-// `x.y.useQuery()` there is tRPC's TanStack hook and not another SDK's.
+// qdc_tq_pkg(d): document d uses TanStack Query: it imports it itself, or its package (its nearest package.json; the
+// workspace root's for a file under no other) depends on TanStack Query (`@tanstack/react-query`, v3's
+// `react-query`) or tRPC's React Query integration, so an `x.y.useQuery()` there is tRPC's TanStack hook and not
+// another SDK's.
 .decl qdc_tq_pkg(d: number)
 qdc_tq_pkg(d) :- doc(d, f, _), package_for(f, dir), qdc_tq_dep(dir).
+qdc_tq_pkg(d) :- import_binding(sp, _, src, _), qdc_pkg(src), docof(sp, d).
 .decl qdc_tq_dep(dir: symbol)
 qdc_tq_dep(dir) :- package_field(dir, k, _),
     match("(dependencies|devDependencies|peerDependencies)/(@tanstack~1react-query|react-query|@trpc~1(react-query|tanstack-react-query|next))", k).

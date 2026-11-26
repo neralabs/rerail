@@ -229,11 +229,11 @@
       "examples": {
         "caught": {
           "path": "src/app/admin/actions.ts",
-          "text": "\"use server\";\n\nimport { prisma } from \"@/lib/db\";\n\nexport async function deleteProject(id: string) {\n  await prisma.project.delete({ where: { id } });\n}\n"
+          "text": "\"use server\";\n\nimport { revalidatePath } from \"next/cache\";\nimport { prisma } from \"@/lib/db\";\n\nexport async function deleteProject(id: string) {\n  await prisma.project.delete({ where: { id } });\n  revalidatePath(\"/projects\");\n}\n"
         },
         "passes": {
           "path": "src/app/admin/actions.ts",
-          "text": "\"use server\";\n\nimport { auth } from \"@/auth\";\nimport { prisma } from \"@/lib/db\";\n\nexport async function deleteProject(id: string) {\n  const session = await auth();\n  if (!session?.user) throw new Error(\"Unauthorized\");\n  await prisma.project.delete({ where: { id, ownerId: session.user.id } });\n}\n"
+          "text": "\"use server\";\n\nimport { revalidatePath } from \"next/cache\";\nimport { auth } from \"@/auth\";\nimport { prisma } from \"@/lib/db\";\n\nexport async function deleteProject(id: string) {\n  const session = await auth();\n  if (!session?.user) throw new Error(\"Unauthorized\");\n  await prisma.project.delete({ where: { id, ownerId: session.user.id } });\n  revalidatePath(\"/projects\");\n}\n"
         }
       }
     },
