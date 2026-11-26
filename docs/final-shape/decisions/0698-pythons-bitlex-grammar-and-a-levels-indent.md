@@ -113,3 +113,27 @@ statements and blocks end.
     with its own. It is the indented level's own node only: a statement it closes on the way out (an inner `if`)
     takes none. `newline` and `dedent` settle (`, settles`), so a comment before a statement's line break is the
     statement's block's. Whether a dedent comes at all stays the next code line's column, as the scanner's.
+16. **Operators by precedence, as Kotlin's.** Each level's operator is a wrap of the operand so far, whose right side
+    is a `nested` choice of the tighter levels: `power` (`**`, right-associative), the unary operators, then `*`,
+    `+`, `<<`, `&`, `^`, `|`, each a `binary_operator` in slot `primary_expression`. A comparison wraps a primary
+    (`comparison_operator`, slot `expression`), its operators `operators:`; `not in` and `is not` are one node over
+    their two leaves (`wrap 'not in' _ 'in'`: a wrap's kind may be quoted). `not`, `and`, `or` and the conditional
+    expression are in slot `expression`. `expression` is `nested`, and so is the comparison's rest: a wrap stays at
+    its caller's level, and the part after it is a level of its own, else the follow analysis finds a call whose
+    uses differ in its hidden marks.
+17. **A supertype's rows merge across its choices** (`grammar::super_classes`): each `(supertype, kind)` pair is one
+    row, whatever choices name the supertype, as the table is sorted by it.
+18. **A call-only state may close first.** Tier 2's verifier lets a state that only calls begin with `CLOSE`, as a
+    level ending at a wrap's end then enters the next.
+19. **A number is one `integer` token; a float is a test of its bytes** (`mark real = empty, at integer when
+    count(n_dot | exp_at) at least 1`, as Kotlin's `real`). Its bytes: the word from its first digit, a `.` and the
+    word after it, a `.` before a digit not after a word (`.5`), an exponent's sign and the word after it. A hex
+    number takes its digits, an exponent its `e`, a last `j`; `_` between digits. Octal, binary, `L` and the rest
+    are refused. A back fill (whether a later `.` makes the number a float) is not Bitlex's (decision 0416).
+20. **A mark's waiting field and supertypes go past it** (`grammar::build`, `SPECIAL` states). A mark makes no
+    node, so where a slot's first token is a mark (`real integer as float` in an expression's slot) the field and
+    supertypes go to a state past the mark, its position's with them, and the next token's leaf takes them. Where
+    the level may end past the mark, the grammar is refused.
+21. **An extra's reader gives its mark where a mark tests a token** (`Reader::retag`). The token loop passes over an
+    extra's tokens by its mark, which only a reader gives; a comment whose first byte (`#`) gives its kind had no
+    retag. Where a mark's token test exists, the extra's reader now gives its own kind with the mark.

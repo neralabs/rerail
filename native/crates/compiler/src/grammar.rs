@@ -277,6 +277,10 @@ enum Pos {
     Merge { token: u16, into: u16 },
 }
 
+/// An arm's target past a mark where a field or supertypes wait (`arms_from`): `SPECIAL + j`,
+/// the `j`th such state.
+const SPECIAL: usize = usize::MAX / 2;
+
 /// A `Pos::Tok`'s leaf kind for a token the grammar implies (`implied`): it makes no leaf.
 const NO_LEAF: u16 = u16::MAX - 3;
 
@@ -385,13 +389,14 @@ pub fn super_classes(stmts: &[Stmt], ids: &Ids<'_>) -> Result<Vec<(u16, u16, Vec
         }
         Ok(())
     }
-    let mut rows: Vec<(u16, u16, Vec<u16>)> = Vec::new();
+    // By slot and kind, over every choice of the supertype (a slot several choices name: an
+    // operator's operands, each a choice of `primary_expression`).
+    let mut seen: std::collections::BTreeMap<(u16, u16), Vec<u16>> = Default::default();
     for (name, &(sup, body)) in &choices {
         let Some(s) = sup else { continue };
         let mut out = Vec::new();
         heads(body, &choices, &retagged, &mut vec![*name], &mut out)?;
         let sid = (ids.kind)(s)?;
-        let mut seen: HashMap<u16, Vec<u16>> = HashMap::default();
         for (k, below) in out {
             let Ok(kid) = (ids.kind)(&k) else { continue };
             let mut cs = vec![sid];
@@ -400,18 +405,16 @@ pub fn super_classes(stmts: &[Stmt], ids: &Ids<'_>) -> Result<Vec<(u16, u16, Vec
             }
             cs.sort_unstable();
             cs.dedup();
-            match seen.get(&kid) {
+            match seen.get(&(sid, kid)) {
                 Some(was) if *was != cs => return Err(format!("supertype `{s}` reaches `{k}` two ways, through other supertypes")),
                 Some(_) => {}
                 None => {
-                    seen.insert(kid, cs);
+                    seen.insert((sid, kid), cs);
                 }
             }
         }
-        rows.extend(seen.into_iter().map(|(k, cs)| (sid, k, cs)));
     }
-    rows.sort_unstable();
-    Ok(rows)
+    Ok(seen.into_iter().map(|((s, k), cs)| (s, k, cs)).collect())
 }
 
 /// The level a `balanced` leaf's name: its kind, then a byte no name holds.
@@ -746,7 +749,7 @@ fn follow(e: &E, out: &mut Vec<Edge>) {
 }
 
 /// Field and supertypes waiting for the next node on a path.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, PartialEq, Eq)]
 struct Pending {
     field: u16,
     supers: Vec<u16>,
@@ -1505,6 +1508,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
         by_rules: Option<&[u16]>,
         marks: &[u16],
         returned: &mut HashMap<usize, u16>,
+        specials: &mut Vec<(usize, Pending)>,
         out: &mut Vec<(u16, Vec<Act>, usize, Vec<usize>, bool)>,
     ) -> Result<(), String> {
         if depth > 16 {
@@ -1535,6 +1539,18 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                     acts.push(Act::Settle);
                     let Some(acts) = settled(acts) else { continue };
                     out.push((kind, acts, q, push.clone(), false));
+                }
+                // A mark makes no node: the field and supertypes waiting are the next token's, in
+                // a state of its own past the mark (`SPECIAL`), as a slot whose first token is a
+                // mark (`real integer as float` in an expression's slot) has.
+                Pos::Tok(kind, leaf, 0) if marks.contains(&kind) && (p.field != 0 || !p.supers.is_empty()) => {
+                    let j = specials.iter().position(|x| x.0 == q && x.1 == p).unwrap_or_else(|| {
+                        specials.push((q, p.clone()));
+                        specials.len() - 1
+                    });
+                    acts.push(Act::Leaf { field: 0, supers: vec![], kind: leaf });
+                    let Some(acts) = settled(acts) else { continue };
+                    out.push((kind, acts, SPECIAL + j, push.clone(), false));
                 }
                 Pos::Tok(kind, leaf, remembered) => {
                     acts.push(Act::Leaf { field: p.field, supers: p.supers, kind: leaf });
@@ -1597,7 +1613,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                     }
                     if by_rules.is_some() {
                         let mut firsts = Vec::new();
-                        arms_from(levels, positions, level_of_rule, child, None, Vec::new(), Pending::default(), Vec::new(), depth + 1, by_rules, marks, returned, &mut firsts)?;
+                        arms_from(levels, positions, level_of_rule, child, None, Vec::new(), Pending::default(), Vec::new(), depth + 1, by_rules, marks, returned, specials, &mut firsts)?;
                         let through = !field_after && !levels[child].own && (p.field != 0 || !p.supers.is_empty() || levels[child].supertype.is_some());
                         if !through {
                             acts.extend(levels[child].own.then(|| Act::Open { kind: levels[child].kind, field: p.field, supers: p.supers.clone() }));
@@ -1623,7 +1639,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                         }
                         p
                     };
-                    arms_from(levels, positions, level_of_rule, child, None, acts, inner, calls, depth + 1, by_rules, marks, returned, out)?;
+                    arms_from(levels, positions, level_of_rule, child, None, acts, inner, calls, depth + 1, by_rules, marks, returned, specials, out)?;
                 }
             }
         }
@@ -1632,27 +1648,40 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
 
     // Raw states: 0 is the root's start, then one per position; a function a rule, then each
     // nested level's start (a call goes to it, `arms_from`).
+    // Then the states past a mark where a field or supertypes wait for the next node
+    // (`SPECIAL`), each its position's with them.
     let mut raw: Vec<Raw> = Vec::new();
     let state_of = |p: usize| p + 1;
     let marks = by_rules.then_some(ids.marks);
     let starts = if by_rules { levels.len() - 1 } else { 0 };
+    let base = 1 + positions.len() + starts;
+    let to_state = |q: usize| if q >= SPECIAL { base + (q - SPECIAL) } else { state_of(q) };
     let mut returned: HashMap<usize, u16> = HashMap::default();
-    for k in 0..1 + positions.len() + starts {
-        let (level, from) = if k == 0 {
-            (0, None)
+    let mut specials: Vec<(usize, Pending)> = Vec::new();
+    let mut k = 0;
+    while k < base + specials.len() {
+        let (level, from, pending) = if k == 0 {
+            (0, None, Pending::default())
         } else if k <= positions.len() {
-            (positions[k - 1].0, Some(k - 1))
+            (positions[k - 1].0, Some(k - 1), Pending::default())
+        } else if k < base {
+            (k - positions.len(), None, Pending::default())
         } else {
-            (k - positions.len(), None)
+            let (q, p) = specials[k - base].clone();
+            if levels[positions[q].0].edges.iter().any(|e| e.from == Some(q) && e.to.is_none()) {
+                return Err("a field or a supertype waits past a mark where its level may end: a mark makes no node".into());
+            }
+            (positions[q].0, Some(q), p)
         };
+        k += 1;
         let mut arms = Vec::new();
         // The root's start opens the root node first.
-        let prefix = if k == 0 && !whole { vec![Act::Open { kind: levels[0].kind, field: 0, supers: vec![] }] } else { vec![] };
-        arms_from(&levels, &positions, &level_of_rule, level, from, prefix, Pending::default(), Vec::new(), 0, marks, ids.marks, &mut returned, &mut arms)?;
-        let mut arms: Vec<_> = arms.into_iter().map(|(t, a, q, push, call)| (t, a, state_of(q), push.into_iter().map(state_of).collect::<Vec<_>>(), call)).collect();
+        let prefix = if k == 1 && !whole { vec![Act::Open { kind: levels[0].kind, field: 0, supers: vec![] }] } else { vec![] };
+        arms_from(&levels, &positions, &level_of_rule, level, from, prefix, pending, Vec::new(), 0, marks, ids.marks, &mut returned, &mut specials, &mut arms)?;
+        let mut arms: Vec<_> = arms.into_iter().map(|(t, a, q, push, call)| (t, a, to_state(q), push.into_iter().map(state_of).collect::<Vec<_>>(), call)).collect();
         let end = match from {
             // A whole root that may be empty ends at its start: the file has no token.
-            None if k == 0 => (whole && root_empty).then_some(0),
+            None if k == 1 => (whole && root_empty).then_some(0),
             // A nested level's start: it may not be empty.
             None => None,
             Some(p) => levels[level].edges.iter().find(|e| e.from == Some(p) && e.to.is_none()).map(|e| {

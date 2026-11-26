@@ -5100,7 +5100,19 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 // A token's own rows: a row inside a region of the same name (a closer `"`) is not its.
                 let inside_rows = low.inside.clone();
                 let retag_of = |k: &String| moved.iter().find(|&&(r, _)| token_rows[r].0 == *k && !inside_rows.get(r).copied().unwrap_or(false)).map(|&(_, f)| (kinds[usize::from(f)], extra_marks(k)));
-                let retag = retag_of(&kind);
+                let mut retag = retag_of(&kind);
+                // An extra's reader whose first bytes give its kind: where a mark tests a token
+                // (`at K when ...`), the token loop passes over the extra's tokens by its mark,
+                // which only a reader gives (`Reader::retag`): its own kind, with the mark.
+                if retag.is_none() && low.extra.contains(&kind) && low.token_escapes.iter().any(|e| e.4.marks()) {
+                    let rf = &real_first;
+                    let mut ks: Vec<u8> = (0..rows.len()).filter(|&r| token_rows[r].0 == kind && !low.inside.get(r).copied().unwrap_or(false)).flat_map(|r| (0..256).filter(move |&b| rf[r][b / 64] >> (b % 64) & 1 == 1)).map(|b| kinds[b]).collect();
+                    ks.sort_unstable();
+                    ks.dedup();
+                    if let [k] = ks.as_slice() {
+                        retag = Some((*k, extra_marks(&kind)));
+                    }
+                }
                 // An output of its own: one shared with a mark's may be the token loop's alone
                 // (`loop_marks`), not stored.
                 let last = low.token_closer_last.get(&kind).copied().map(|l| {

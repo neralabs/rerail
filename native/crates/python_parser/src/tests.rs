@@ -109,8 +109,23 @@ fn dictionaries_are_the_lean_parsers() {
 }
 
 #[test]
+fn numbers_are_the_lean_parsers() {
+    same(&["x = 1j\n", "x = 1.5j\n", "x = 0x1F\n", "x = 1_000\n", "x = 1.\n", "x = .5\n", "x = 1e5\n", "x = 1.5e-3\n", "x = 1E+5\n", "x = 0XAB\n"]);
+    same(&["x = 1_0.2_5\n", "x = a.b + 1.5\n", "x = 2e-3 - e - 5\n", "x = [1.5, .25]\n", "x = f(1.)\n", "x = 0\n", "x = 007\n", "x = 0x_1\n"]);
+}
+
+#[test]
+fn operators_are_the_lean_parsers() {
+    same(&["x = a if b else c\n", "x = -a ** b\n", "x = a ** -b\n", "x = ~a\n", "x = a not in b\n", "x = a is not b\n", "x = a < b <= c\n", "x = -1\n"]);
+    // `^` binds tighter than `&`; each operator left to right but `**`.
+    same(&["x = a | b & c ^ d\n", "x = a << b + c\n", "x = a // b @ c\n", "x = (a + b) * c\n", "x = a ** b ** c\n", "x = a - b - c\n", "x = -a * b\n"]);
+    same(&["x = not a == b\n", "x = a or not b\n", "x = a and b and c\n", "x = a or b and c\n", "x = a and b or c\n", "x = a if b else c if d else e\n", "x: a | None = None\n"]);
+    same(&["if a is not None:\n    b\n", "x = a in b == c\n", "x = a is b\n", "x = not not a\n", "f(a + 1, b=c or d)\n", "x = a[b + 1]\n"]);
+}
+
+#[test]
 fn what_the_grammar_does_not_read_is_refused() {
-    refused(&["x.5\n", "0x1f\n", "x\\\n", "\tx\n"]);
+    refused(&["x.5\n", "x\\\n", "\tx\n", "x = 0o17\n", "x = 1L\n", "x = 1e5e3\n", "x = 1__0\n", "x = 0x\n"]);
     // An f-string, a `\N{…}`, a raw string of backslashes only (its end starts at them), an open
     // string, a triple closed by four quotes, a three-letter prefix, `\u` in bytes.
     refused(&["f'{x}'\n", "u\"\\N{DASH}\"\n", "r'\\\\'\n", "r'\\''\n", "'a\n", "'''a''''\n", "rbu'x'\n", "b'\\u1234'\n"]);

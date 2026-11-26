@@ -665,7 +665,7 @@ pub enum Gram {
     /// `merge 'K' A`, `A` a token: its leaf and the leaf just before it become one leaf of kind
     /// `K`, from the first's start to its end (`.` and `decl`, `.decl`).
     Merge(String, Box<Gram>),
-    /// `wrap K F [as M] REST…`: a node `K` around the node just made at this level (the last
+    /// `wrap K F [as M] REST…` (`K` a name or quoted): a node `K` around the node just made at this level (the last
     /// child of the innermost open node) and what `REST` matches. `K` takes the moved node's
     /// field and its slot; the moved node takes field `F` (`_`: none), with `as M` kind `M`, and
     /// with `in S`: the moved node's slot, supertype `S` (none without it; decision 0698).
@@ -1489,7 +1489,8 @@ impl P {
             // `wrap K F [as M] [in S]`: the rest of the sequence is its body.
             if matches!(self.peek(), Some(Tok::Ident(w)) if w == "wrap") {
                 self.i += 1;
-                let kind = self.ident()?;
+                // A quoted kind: one no name spells (`'not in'`).
+                let kind = self.kind()?;
                 let field = Some(self.ident()?).filter(|f| f != "_");
                 let moved = if self.eat_kw("as") { Some(self.kind()?) } else { None };
                 let slot = if self.eat_kw("in") { Some(self.ident()?) } else { None };

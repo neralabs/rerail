@@ -38,6 +38,13 @@ class u_l       = 'u'
 class uu_l      = 'U'
 class nn_l      = 'N'
 class bytes_esc = 'N' 'u' 'U'
+class letter    = 'a'..'z' 'A'..'Z'
+class us        = '_'
+class sign      = '+' '-'
+class zero      = '0'
+class x_any     = 'x' 'X'
+class exp_l     = 'e' 'E'
+class imag_l    = 'j' 'J'
 class punct     = '(' ')' '[' ']' '{' '}' ',' ':' ';' '.' '=' '+' '-' '*' '/' '%' '&' '|' '^' '~' '<' '>' '@' '!'
 
 # --- Regions -----------------------------------------------------------------------------------
@@ -120,26 +127,48 @@ escape "a tab or a form feed starting the file" when tab_ff & ~prev(~empty)
 # --- Words and numbers -------------------------------------------------------------------------
 
 mask w          = code & word
-mask word_start = w & alpha & ~prev(w) & ~p1 & ~p2
+
+# A number (tree-sitter-python's `integer` and `float`): the word from its first digit (a digit
+# after a `.` or an exponent's sign is no number's first), a `.` right after that word and the
+# word after it, or a `.` before a digit not after a word (`.5`); an exponent's sign and the
+# word after it. One token, an `integer`; a float has a `.` or an exponent (`real`, a test of
+# the token's bytes, as Kotlin's).
+mask num0       = w & digit & ~prev(w)
+mask e_sign0    = code & sign & prev(exp_l & fill(num0, ~w)) & next(digit)
+mask int_start  = num0 & ~prev(dot) & ~prev(e_sign0)
+mask n_word     = fill(int_start, ~w)
+mask hex_n      = fill(int_start & zero & next(x_any), ~w)
+mask dot_start  = code & dot & next(digit) & ~prev(w)
+mask n_dot      = code & dot & prev(n_word & ~hex_n) | dot_start
+mask f_word     = fill(prev(n_dot) & w, ~w)
+mask d_word     = n_word & ~hex_n | f_word
+mask n_sign     = code & sign & prev(d_word & exp_l) & next(digit)
+mask e_word     = fill(prev(n_sign) & w, ~w)
+mask number     = n_word | n_dot | f_word | n_sign | e_word
+mask exp_at     = d_word & exp_l & (next(digit) | next(n_sign))
+# The letters a number takes: a hex number's `x` and digits, an exponent's `e`, a last `j`.
+# Octal and binary numbers, `L`, and the rest are not read yet.
+mask n_letter   = hex_n & (hex | x_any & prev(int_start)) | exp_at | imag_l & (d_word | e_word) & ~next(number)
+escape "a number with a letter it does not take" when number & letter & ~n_letter
+escape "a number with an `_` not between digits" when number & us & ~(prev(digit) & next(digit) & ~hex_n | hex_n & prev(hex | x_any) & next(hex))
+escape "a number with more after its exponent" when (exp_at | n_dot) & fill(prev(exp_at) & number, ~number)
+escape "a hex number with no digits" when hex_n & x_any & prev(int_start) & ~next(hex | us)
+
+mask word_start = w & alpha & ~prev(w) & ~p1 & ~p2 & ~number
 mask name_more  = fill(word_start, ~w) & ~word_start
-mask num_start  = w & digit & ~prev(w)
-mask digits     = fill(num_start, ~w)
-escape "a number with a letter or `_`" when digits & ~digit
-escape "a number with a `.`" when code & dot & (prev(digits) | next(digit))
 
 assume "a name starts at a word's first letter: a start is never in a word" at starts word_start = alpha
-assume "a number starts at a digit: a start is never in a word" at starts num_start = digit
 assume "a name runs over its word's bytes" in identifier name_more = word
 assume "a number's bytes are code" in integer code = ~empty
 
 token identifier = start word_start run name_more
-token integer   = start num_start run digit
+token integer   = start int_start | dot_start run number
 
 # --- Operators ---------------------------------------------------------------------------------
 
 pairs two_start = "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>="
 mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
-mask p_start    = code & punct & ~second
+mask p_start    = code & punct & ~second & ~number
 assume "an operator starts at its first byte: a start is never a pair's second" at starts p_start = punct
 token punct     = start p_start pair two_start
 
@@ -188,6 +217,8 @@ mark trail      = tokens "," ")" | "]" | "}"
 mark future     = tokens "from" "__future__"
 # A name before `[`: in a type, a generic type's (tree-sitter-python's `generic_type`).
 mark generic    = tokens identifier "["
+# A number with a `.` or an exponent: a float.
+mark real       = empty, at integer when count(n_dot | exp_at) at least 1
 # A `*` alone in a parameter list: a keyword separator (a leaf), not a splat's.
 mark kw_sep     = tokens "*" "," | ")"
 
@@ -262,13 +293,44 @@ tree python {
   node wildcard_import  = '*'
   node future_import_statement = future 'from' '__future__' 'import' import_names
   # --- Expressions
-  choice expression supertype expression = primary_expression
+  # By tree-sitter-python's precedences, each operation around the left side so far, as Kotlin's
+  # (decision 0492): an operator's right operand takes every operator that binds tighter, so the
+  # loop never meets one after a looser one. A comparison is one node over all its operands.
+  choice expression supertype expression nested = (not_operator | primary_expression [comparison]) (and_op | or_op)* [conditional]
+  # Its operators a level of their own: the comparison ends at a line break after some uses only.
+  choice comparison     = wrap comparison_operator _ in primary_expression compare_rest
+  choice compare_rest nested = (operators: compare_op primary_expression)+
+  choice compare_op     = '<' | '<=' | '==' | '!=' | '>=' | '>' | '<>' | 'in' | 'not' wrap 'not in' _ 'in'
+                        | 'is' [wrap 'is not' _ 'not']
+  choice and_op         = wrap boolean_operator left in expression operator: 'and' right: not_operand
+  choice or_op          = wrap boolean_operator left in expression operator: 'or' right: or_operand
+  choice or_operand supertype expression nested = (not_operator | primary_expression [comparison]) and_op*
+  node not_operator     = 'not' argument: not_operand
+  choice not_operand supertype expression nested = not_operator | primary_expression [comparison]
+  choice conditional    = wrap conditional_expression _ in expression 'if' expression 'else' expression
+  # The binary operators are primaries: `|` loosest, then `&`, `^` (tighter than `&`, as
+  # tree-sitter-python has it), shifts, `+ -`, `* / // % @`; a unary operator; `**`, right to left.
+  choice primary_expression supertype primary_expression = (unary_operator | power) (mul_op | add_op | shift_op | xor_op | band_op | bor_op)*
+  choice power          = primary [wrap binary_operator left in primary_expression operator: '**' right: power_operand]
+  choice power_operand supertype primary_expression nested = unary_operator | power
+  node unary_operator   = operator: ('+' | '-' | '~') argument: power_operand
+  choice mul_op         = wrap binary_operator left in primary_expression operator: ('*' | '/' | '//' | '%' | '@') right: power_operand
+  choice add_op         = wrap binary_operator left in primary_expression operator: ('+' | '-') right: add_operand
+  choice shift_op       = wrap binary_operator left in primary_expression operator: ('<<' | '>>') right: shift_operand
+  choice xor_op         = wrap binary_operator left in primary_expression operator: '^' right: xor_operand
+  choice band_op        = wrap binary_operator left in primary_expression operator: '&' right: band_operand
+  choice bor_op         = wrap binary_operator left in primary_expression operator: '|' right: bor_operand
+  choice add_operand supertype primary_expression nested = (unary_operator | power) mul_op*
+  choice shift_operand supertype primary_expression nested = (unary_operator | power) (mul_op | add_op)*
+  choice xor_operand supertype primary_expression nested = (unary_operator | power) (mul_op | add_op | shift_op)*
+  choice band_operand supertype primary_expression nested = (unary_operator | power) (mul_op | add_op | shift_op | xor_op)*
+  choice bor_operand supertype primary_expression nested = (unary_operator | power) (mul_op | add_op | shift_op | xor_op | band_op)*
   # A primary and its postfix operations, each a wrap of the primary so far.
-  choice primary_expression supertype primary_expression = atom postfix*
+  choice primary        = atom postfix*
   choice postfix        = wrap attribute object in primary_expression '.' attribute: identifier
                         | wrap call function in primary_expression arguments: argument_list
                         | wrap subscript value in primary_expression '[' subscript: expression (',' subscript: expression)* ']'
-  choice atom           = identifier | integer | string | list | parenthesized_expression | dictionary
+  choice atom           = identifier | real integer as float | integer | string | list | parenthesized_expression | dictionary
                         | 'True' as true | 'False' as false | 'None' as none
   # The patterns an assignment's target is in (tree-sitter-python's `pattern`).
   choice pattern supertype pattern = identifier | attribute | subscript
@@ -300,7 +362,7 @@ tree python {
   # A backslash that starts no escape is a leaf of its own (lean's `Backslash`); a raw string's
   # are its text.
   node string_content   = (str_text | escape_sequence | '\\')+
-  hidden newline indent dedent trail future generic kw_sep
+  hidden newline indent dedent trail future generic kw_sep real
   # The tokens tree-sitter's grammar implies: no leaf on the tape.
   implied pass_statement 'pass'
   implied string_content str_text
@@ -333,6 +395,8 @@ tree python {
   implied list '[' ']' ','
   implied type_parameter '[' ']' ','
   implied parenthesized_expression '(' ')'
+  implied not_operator 'not'
+  implied conditional 'if' 'else'
   implied paren_more ',' ')'
   implied function_definition '->' ':'
   implied class_definition 'class' ':'
