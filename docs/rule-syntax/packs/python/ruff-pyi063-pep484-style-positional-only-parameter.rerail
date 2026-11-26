@@ -1,20 +1,24 @@
-.policy "ruff-pyi063-pep484-style-positional-only-parameter" revision 2
+.policy "ruff-pyi063-pep484-style-positional-only-parameter" revision 3
 .description "Mark positional-only parameters with a slash in the signature instead of a double-underscore name prefix; the slash is enforced at runtime, the prefix only by type checkers."
 .language python
 .mode steer
 .scope include "**/*"
 
-// Ruff PYI063 (flake8-pyi), every file: a def with no `/` whose first parameter (after `self`/`cls` in
-// instance and class methods) is named `__x`: the PEP 484 way to say positional-only. Dunder names (`__x__`)
-// do not count, nor do keyword-only parameters.
+// Ruff PYI063 (flake8-pyi), every file: a def with no `/` whose first positional parameter (after `self`/`cls`
+// in instance and class methods) is named `__x`: the PEP 484 way to say positional-only. Dunder names (`__x__`)
+// do not count, nor do keyword-only parameters. Names are compared as Python reads them, NFKC-normalised:
+// `_＿x` is `__x`.
 //   def f(__x, y): ...        ← PYI063: write `def f(x, /, y)`
+//   def g(*, __x): ...           not reported: keyword-only
 #include "python/typing.rerail"
 
 .violation PYI063(at: node, x: symbol) code "PYI063" "Drop the `__` prefix from `{x}` and from the `__`-prefixed parameters right after it (renaming their uses), then add `/` after the last one; skip this if the code supports Python before 3.8."
     suppress ruff "PYI063"
+// The s-th positional parameter: sig_param's position also counts comments and the `*` separator.
 PYI063(p, x) :- kind(f, "function_definition"), !sig_param(f, _, _, _, "posonly", _, _), skip(f, s),
-    sig_param(f, p, n, s, "pos", _, _), text(n, x), match("__.*", x), !match(".*__", x).
-// skip(f, s): the position of the first parameter that is not the receiver.
+    sig_param(f, p, n, i, "pos", _, _), s = count : { sig_param(f, q, m, j, "pos", a, d), j < i },
+    text(n, x), y = @nfkc(x), match("__.*", y), !match(".*__", y).
+// skip(f, s): how many positional parameters come before the one checked: the receiver's.
 .decl skip(f: node, s: number)
 skip(f, 1) :- method_kind(f, k), (k = "instance" ; k = "class").
 skip(f, 0) :- kind(f, "function_definition"), !method_kind(f, "instance"), !method_kind(f, "class").

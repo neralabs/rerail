@@ -1,4 +1,4 @@
-.policy "ruff-pyi058-generator-return-from-iter-method" revision 2
+.policy "ruff-pyi058-generator-return-from-iter-method" revision 3
 .description "Annotate a simple iteration method as returning an iterator, not a generator; the kind of iterator it returns is an implementation detail."
 .language python
 .mode steer
@@ -11,6 +11,7 @@
 // counts (plain_body). Reported at the method name.
 //   def __iter__(self) -> Generator[int, None, None]: ...     ← PYI058: write `Iterator[int]`
 #include "python/typing.rerail"
+#include "layout.rerail"
 
 .violation PYI058(at: node, msg: symbol) code "PYI058" "{msg}"
     suppress ruff "PYI058"
@@ -24,7 +25,8 @@ sent(t) :- tsub(t, _, i, a), i > 0, !kind(a, "none"), !typing_sym(a, "Any").
 gen("__iter__", "Generator", 3, "Annotate `__iter__` as returning `Iterator[...]` with the same yield type, not `Generator`; keep `Generator` only if callers rely on `send` or `throw`.").
 gen("__aiter__", "AsyncGenerator", 2, "Annotate `__aiter__` as returning `AsyncIterator[...]` with the same yield type, not `AsyncGenerator`; keep `AsyncGenerator` only if callers rely on `asend` or `athrow`.").
 // plain_body(f): in a stub, any body; elsewhere, one that only yields: each statement is `pass`, a string or
-// `...`, `yield …` / `yield from …`, or a `return` that returns nothing (or None) once a yield has run.
+// `...`, `yield …` / `yield from …`, or a `return` that returns nothing (or None) once a yield has run. A
+// trailing comma makes the statement a tuple: `"x",` is not a string.
 //   yield 1; return 5        not reported: the generator returns a value
 //   for x in xs: yield x     not reported: Ruff reads only these simple bodies
 .decl plain_body(f: node)
@@ -32,8 +34,13 @@ plain_body(f) :- returns(f, _), in_stub(f).
 plain_body(f) :- returns(f, _), !in_stub(f), def_body(f, b), count : { body_stmt(b, s, i), !plain_stmt(b, s, i) } = 0.
 .decl plain_stmt(b: node, s: node, i: number)
 plain_stmt(b, s, i) :- body_stmt(b, s, i), pass_stmt(s).
-plain_stmt(b, s, i) :- body_stmt(b, s, i), kind(s, "expression_statement"), child(s, e0, 0), !child(s, _, 1),
-    unparen(e0, e), (plain_str(e, _) ; kind(e, "ellipsis") ; kind(e, "yield")).
+plain_stmt(b, s, i) :- body_expr(b, s, i, e0), !trailing_comma(e0), unparen(e0, e),
+    (plain_str(e, _) ; kind(e, "ellipsis") ; kind(e, "yield")).
+.decl body_expr(b: node, s: node, i: number, e: node)
+body_expr(b, s, i, e) :- body_stmt(b, s, i), kind(s, "expression_statement"), child(s, e, 0), !child(s, _, 1).
+layout_at(e) :- body_expr(_, _, _, e).
+.decl trailing_comma(e: node)
+trailing_comma(e) :- body_expr(_, _, _, e), next_code(e, t), match("(?s)\\s*,.*", t).
 plain_stmt(b, s, i) :- body_stmt(b, s, i), kind(s, "return_statement"), !value_after_yield(b, s, i).
 .decl value_after_yield(b: node, s: node, i: number)  // return statement s returns a value, after a yield
 value_after_yield(b, s, i) :- body_stmt(b, s, i), child(s, v0, 0), unparen(v0, v), !kind(v, "none"),
