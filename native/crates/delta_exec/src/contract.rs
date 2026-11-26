@@ -23,6 +23,7 @@
 //! edits.
 
 use crate::cache::{CacheOps, OpCache, cache_facts};
+use std::marker::PhantomData;
 use crate::dir::{BlockId, Directory};
 use crate::files::Blobs;
 use crate::op::{Registry, Tiling};
@@ -57,12 +58,78 @@ pub struct Port {
     pub shape: Shape,
 }
 
-/// An operator's ports (P§12's `type Ports`): the traces it reads, the program globals it reads as facts in (B§4),
-/// and the traces it writes.
+/// An operator's ports, declared: the traces it reads, the program globals it reads as facts in (B§4), and the
+/// traces it writes.
 pub struct Ports {
     pub ins: Vec<Port>,
     pub globals: Vec<&'static str>,
     pub outs: Vec<Port>,
+}
+
+/// An operator's port set (P§12's `type Ports`): its ports, declared, and typed handles on them (`PortIn`,
+/// `PortGlobal`, `PortOut`), so an operator reads and writes its own ports only: a handle of one port set is no
+/// index of another's `In`, `At` or `Out`.
+pub trait PortSet {
+    /// Its input ports', globals' and output ports' counts.
+    const INS: usize;
+    const GLOBALS: usize;
+    const OUTS: usize;
+    /// Its ports: their names and shapes, `INS`, `GLOBALS` and `OUTS` of them.
+    fn ports() -> Ports;
+}
+
+macro_rules! port_handle {
+    ($(#[$m:meta])* $name:ident) => {
+        $(#[$m])*
+        pub struct $name<P>(usize, PhantomData<fn() -> P>);
+
+        impl<P> $name<P> {
+            pub const fn new(i: usize) -> Self {
+                $name(i, PhantomData)
+            }
+            pub fn index(self) -> usize {
+                self.0
+            }
+        }
+
+        impl<P> Clone for $name<P> {
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+
+        impl<P> Copy for $name<P> {}
+    };
+}
+
+port_handle!(
+    /// Input port `i` of port set `P`.
+    PortIn
+);
+port_handle!(
+    /// Global `i` of port set `P`.
+    PortGlobal
+);
+port_handle!(
+    /// Output port `i` of port set `P`.
+    PortOut
+);
+
+/// Every output port of port set `P`, in order.
+pub fn outs<P: PortSet>() -> impl Iterator<Item = PortOut<P>> {
+    (0..P::OUTS).map(PortOut::new)
+}
+
+/// An operator's cache body (P§12's `type Cache`, `Cache<T>`'s `T`): what it keeps in its cache block, read through
+/// its own type (`CacheW::body`). The block and its header are the operator cache's (`cache`); `()` keeps nothing.
+pub trait CacheBody {
+    type Read<'a>;
+    fn read(bytes: &[u8]) -> Self::Read<'_>;
+}
+
+impl CacheBody for () {
+    type Read<'a> = ();
+    fn read(_: &[u8]) -> Self::Read<'_> {}
 }
 
 /// A program global at one state (B§4's facts in: "only facts in which are program globals"): a block every level
@@ -103,56 +170,100 @@ pub struct Cx<'c> {
     pub caches: &'c CacheOps,
 }
 
-/// A bistate per input port, read where its layers lie, with the heads it is between (a frozen layer's block id).
-pub struct In<'t> {
-    pub ports: Vec<Bistate<View<'t>>>,
-    pub heads: Vec<(Option<BlockId>, Option<BlockId>)>,
-    pub globals: Vec<GlobalIn>,
+/// A bistate per input port of `P`, read where its layers lie, with the heads it is between (a frozen layer's block
+/// id), and each global between two states.
+pub struct In<'t, P> {
+    ports: Vec<Bistate<View<'t>>>,
+    heads: Vec<(Option<BlockId>, Option<BlockId>)>,
+    globals: Vec<GlobalIn>,
+    of: PhantomData<fn() -> P>,
 }
 
-impl In<'_> {
+impl<'t, P> In<'t, P> {
+    /// Input port `p`'s bistate.
+    pub fn port(&self, p: PortIn<P>) -> &Bistate<View<'t>> {
+        &self.ports[p.0]
+    }
+
+    /// The heads input port `p`'s bistate is between.
+    pub fn heads(&self, p: PortIn<P>) -> (Option<BlockId>, Option<BlockId>) {
+        self.heads[p.0]
+    }
+
+    /// Global `g` between the run's two states.
+    pub fn global(&self, g: PortGlobal<P>) -> GlobalIn {
+        self.globals[g.0]
+    }
+
     /// Whether every input is the identity, by the layers' counts and the globals' (L4's check).
     pub fn is_identity(&self) -> bool {
         self.ports.iter().all(|b| b.is_identity()) && self.globals.iter().all(GlobalIn::is_identity)
     }
 }
 
-/// A state per input port and per global: the plain function's inputs.
-pub struct At<'t> {
-    pub ports: Vec<View<'t>>,
-    pub heads: Vec<Option<BlockId>>,
-    pub globals: Vec<Global>,
+/// A state per input port of `P` and per global: the plain function's inputs.
+pub struct At<'t, P> {
+    ports: Vec<View<'t>>,
+    globals: Vec<Global>,
+    of: PhantomData<fn() -> P>,
+}
+
+impl<'t, P> At<'t, P> {
+    /// Input port `p`'s state.
+    pub fn port(&self, p: PortIn<P>) -> &View<'t> {
+        &self.ports[p.0]
+    }
+
+    /// Global `g` at its state.
+    pub fn global(&self, g: PortGlobal<P>) -> Global {
+        self.globals[g.0]
+    }
 }
 
 /// A δ runs block a port (P§12's `LayerW` a port): the run's `(row, ±1)` pushed there, by host writers or by the
 /// operations that take the block as a slot; and each port's kept state, the run's before (P§3: "the file's last
 /// result is its output trace's before"), read where it lies.
-pub struct Out {
+pub struct Out<P> {
     runs: Vec<BlockId>,
     kept: Vec<Option<BlockId>>,
+    of: PhantomData<fn() -> P>,
 }
 
-impl Out {
-    /// No ports: an operator that asks nothing of its inputs.
-    pub fn none() -> Out {
-        Out { runs: Vec::new(), kept: Vec::new() }
+/// An operator's asks of its inputs (P§12's `asks`): a runs block per input port of `P`, the demand on it; none when
+/// it asks nothing.
+pub struct Asks<P> {
+    runs: Vec<BlockId>,
+    of: PhantomData<fn() -> P>,
+}
+
+impl<P> Asks<P> {
+    /// No asks: demand is not built (every run wants all of each output).
+    pub fn none() -> Asks<P> {
+        Asks { runs: Vec::new(), of: PhantomData }
     }
 
-    /// Port `port`'s δ runs block.
-    pub fn block(&self, port: usize) -> BlockId {
-        self.runs[port]
+    /// Whether it asks anything.
+    pub fn is_empty(&self) -> bool {
+        self.runs.is_empty()
+    }
+}
+
+impl<P> Out<P> {
+    /// Output port `port`'s δ runs block.
+    pub fn block(&self, port: PortOut<P>) -> BlockId {
+        self.runs[port.0]
     }
 
-    /// Port `port`'s kept state: its trace's head before the run (`None`: ∅, as a cold run's and `run`'s are).
-    pub fn kept(&self, port: usize) -> Option<BlockId> {
-        self.kept[port]
+    /// Output port `port`'s kept state: its trace's head before the run (`None`: ∅, as a cold run's and `run`'s are).
+    pub fn kept(&self, port: PortOut<P>) -> Option<BlockId> {
+        self.kept[port.0]
     }
 
     /// Port `port`'s runs with room for `cap` rows: opened again at that room when it has less and nothing is pushed
     /// yet. An operator that knows the room its run needs (its cache's) asks for it before its first write, and the
     /// run does not outgrow its runs and run again.
-    pub fn room(&mut self, dir: &mut Directory, port: usize, cap: usize) -> Result<(), String> {
-        let r = self.runs[port];
+    pub fn room(&mut self, dir: &mut Directory, port: PortOut<P>, cap: usize) -> Result<(), String> {
+        let (port, r) = (port.0, self.runs[port.0]);
         let h = {
             let l = dir.read("room", &[r])?;
             Runs::new(l.block(0)).head
@@ -169,8 +280,8 @@ impl Out {
     }
 
     /// A writer of port `port`, pinned to write while it lives.
-    pub fn writer(&self, dir: &Directory, port: usize) -> Result<Writer, String> {
-        let b = dir.block(self.runs[port]).ok_or("an output's runs, held by nothing")?;
+    pub fn writer(&self, dir: &Directory, port: PortOut<P>) -> Result<Writer, String> {
+        let b = dir.block(self.runs[port.0]).ok_or("an output's runs, held by nothing")?;
         Ok(Writer { pin: pin_block(&b, "an operator's output", true)? })
     }
 }
@@ -188,15 +299,29 @@ impl Writer {
     }
 }
 
-/// A run's cache (P§12's `CacheW`): read as ∅ unless it holds the state the run starts from; its header marked open
-/// before the run's first write.
-pub struct CacheW {
+/// A run's cache (P§12's `CacheW<T>`), its body `C`: read as ∅ unless it holds the state the run starts from; its
+/// header marked open before the run's first write.
+pub struct CacheW<C> {
     cache: OpCache,
     from: u64,
     begun: bool,
+    of: PhantomData<fn() -> C>,
 }
 
-impl CacheW {
+impl<C: CacheBody> CacheW<C> {
+    /// The cache `cache` for a run from state `from`.
+    pub(crate) fn new(cache: OpCache, from: u64) -> CacheW<C> {
+        CacheW { cache, from, begun: false, of: PhantomData }
+    }
+
+    /// `f` of its body, read where it lies, when it holds the run's before (or this run has begun writing it):
+    /// `None` when it reads as ∅.
+    pub fn body<R>(&self, cx: &Cx<'_>, f: impl FnOnce(C::Read<'_>) -> R) -> Result<Option<R>, String> {
+        let Some(c) = self.read(cx)? else { return Ok(None) };
+        let l = cx.dir.read("an operator's cache", &[c])?;
+        Ok(Some(f(C::read(l.block(0)))))
+    }
+
     /// The cache block to read, when it holds the run's before (or this run has begun writing it): `None` when it
     /// reads as ∅, open or naming another state.
     pub fn read(&self, cx: &Cx<'_>) -> Result<Option<BlockId>, String> {
@@ -225,16 +350,26 @@ impl CacheW {
 
 /// A delta operator (P§12 item 7).
 pub trait DeltaOp {
-    /// The traces it reads, and those it writes.
-    fn ports(&self) -> Ports;
+    /// Which traces it reads and writes, and which globals it reads (P§12's `type Ports`).
+    type Ports: PortSet;
+    /// What its cache keeps (P§12's `type Cache`).
+    type Cache: CacheBody;
 
     /// L1: equal to `run` on both sides, diffed. P1: its work follows the deltas. `want` is the demand on its outputs
-    /// (`None`: all of them); `asks` its demand on its inputs, a runs block an input port (`Out::none()` when it asks
-    /// nothing).
-    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_>, want: Option<&Bistate<View<'_>>>, cache: &mut CacheW, out: &mut Out, asks: &mut Out) -> Result<Work, String>;
+    /// (`None`: all of them); `asks` its demand on its inputs.
+    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_, Self::Ports>, want: Option<&Bistate<View<'_>>>, cache: &mut CacheW<Self::Cache>, out: &mut Out<Self::Ports>, asks: &mut Asks<Self::Ports>) -> Result<Work, String>;
 
     /// The plain function: the reference path, and the tests' oracle.
-    fn run(&self, cx: &mut Cx<'_>, ins: &At<'_>, out: &mut Out) -> Result<(), String>;
+    fn run(&self, cx: &mut Cx<'_>, ins: &At<'_, Self::Ports>, out: &mut Out<Self::Ports>) -> Result<(), String>;
+}
+
+/// Operator `O`'s ports, declared, checked against its port set's counts.
+fn ports_of<O: DeltaOp>() -> Result<Ports, String> {
+    let p = O::Ports::ports();
+    if (p.ins.len(), p.globals.len(), p.outs.len()) != (O::Ports::INS, O::Ports::GLOBALS, O::Ports::OUTS) {
+        return Err("a port set's ports are not its counts".into());
+    }
+    Ok(p)
 }
 
 /// An input port's trace and the heads of the run's two states.
@@ -266,8 +401,8 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn new<O: DeltaOp>(op: &O, dir: &mut Directory) -> Result<Instance, String> {
-        let outs = op.ports().outs.iter().map(|p| Trace::new(&p.shape)).collect::<Result<_, _>>()?;
+    pub fn new<O: DeltaOp>(_: &O, dir: &mut Directory) -> Result<Instance, String> {
+        let outs = ports_of::<O>()?.outs.iter().map(|p| Trace::new(&p.shape)).collect::<Result<_, _>>()?;
         Ok(Instance { outs, cache: OpCache::new(dir) })
     }
 
@@ -296,10 +431,10 @@ impl Instance {
         let mut again = 0;
         loop {
             let runs: Vec<BlockId> = self.outs.iter().zip(&cap).map(|(t, &c)| t.open(cx.dir, c)).collect();
-            let mut out = Out { runs, kept: self.heads() };
+            let mut out = Out::<O::Ports> { runs, kept: self.heads(), of: PhantomData };
             // After an attempt that outgrew its runs, a cache it wrote is open: it reads as ∅, and its first write
             // resets it.
-            let mut cache = CacheW { cache: self.cache, from, begun: false };
+            let mut cache = CacheW::<O::Cache>::new(self.cache, from);
             let work = {
                 let heads: Vec<BlockId> = ins.iter().flat_map(|p| [p.1, p.2]).flatten().collect();
                 let l = cx.dir.read("an operator's inputs", &heads)?;
@@ -312,8 +447,8 @@ impl Instance {
                         Some(_) => Bistate::new(t.state(&table, *b)?, after),
                     });
                 }
-                let input = In { ports, heads: ins.iter().map(|p| (p.1, p.2)).collect(), globals: globals.to_vec() };
-                op.delta(cx, &input, None, &mut cache, &mut out, &mut Out::none())
+                let input = In { ports, heads: ins.iter().map(|p| (p.1, p.2)).collect(), globals: globals.to_vec(), of: PhantomData };
+                op.delta(cx, &input, None, &mut cache, &mut out, &mut Asks::none())
             };
             let work = match work {
                 Ok(w) => w,
@@ -378,18 +513,18 @@ pub struct Change {
 
 /// The plain function's output on the inputs' states `heads`: `run` into fresh output traces, committed, read.
 pub fn apply<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId>)], globals: &[Global]) -> Result<Vec<BTreeSet<Vec<i64>>>, String> {
-    let ports = op.ports();
+    let ports = ports_of::<O>()?;
     let mut outs: Vec<Trace> = ports.outs.iter().map(|p| Trace::new(&p.shape).map(|t| t.with_roll_up(RollUp::Never))).collect::<Result<_, _>>()?;
     let mut cap = vec![FIRST_RUNS; outs.len()];
     loop {
         let runs: Vec<BlockId> = outs.iter().zip(&cap).map(|(t, &c)| t.open(cx.dir, c)).collect();
-        let mut out = Out { runs, kept: vec![None; outs.len()] };
+        let mut out = Out::<O::Ports> { runs, kept: vec![None; outs.len()], of: PhantomData };
         {
             let heads: Vec<BlockId> = ins.iter().filter_map(|p| p.1).collect();
             let l = cx.dir.read("the reference's inputs", &heads)?;
             let table = l.table();
             let views = ins.iter().map(|(t, h)| t.state(&table, *h)).collect::<Result<Vec<_>, _>>()?;
-            op.run(cx, &At { ports: views, heads: ins.iter().map(|p| p.1).collect(), globals: globals.to_vec() }, &mut out)?;
+            op.run(cx, &At { ports: views, globals: globals.to_vec(), of: PhantomData }, &mut out)?;
         }
         let mut over = false;
         for (k, &r) in out.runs.iter().enumerate() {
@@ -477,7 +612,7 @@ impl Bench {
 #[allow(clippy::type_complexity)]
 fn inputs<O: DeltaOp>(op: &O, bench: &mut Bench, chain: &Chain) -> Result<(Vec<Trace>, Vec<Vec<Option<BlockId>>>), String> {
     let Bench { reg, dir, traces, .. } = &mut *bench;
-    let mut ins: Vec<Trace> = op.ports().ins.iter().map(|p| Trace::new(&p.shape).map(|t| t.with_roll_up(RollUp::Never))).collect::<Result<_, _>>()?;
+    let mut ins: Vec<Trace> = ports_of::<O>()?.ins.iter().map(|p| Trace::new(&p.shape).map(|t| t.with_roll_up(RollUp::Never))).collect::<Result<_, _>>()?;
     let mut heads: Vec<Vec<Option<BlockId>>> = vec![vec![None; ins.len()]];
     for step in chain {
         let mut now = heads.last().cloned().expect("a state");
@@ -512,7 +647,7 @@ pub fn push_layer(reg: &Registry, traces: &TraceOps, dir: &mut Directory, t: &mu
 pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], heads: &[Vec<Option<BlockId>>], globals: &[Vec<Global>], drop_at: usize) -> Result<(), Broken> {
     let fail = |law, step, what: String| Broken { law, step, what };
     let setup = |e: String| fail("setup", 0, e);
-    let ports = op.ports();
+    let ports = ports_of::<O>().map_err(|e| fail("setup", 0, e))?;
     let ins: &[Trace] = ins;
     let mut cx = bench.cx();
     let at = |k: usize| -> Vec<(&Trace, Option<BlockId>)> { ins.iter().zip(&heads[k]).map(|(t, &h)| (t, h)).collect() };

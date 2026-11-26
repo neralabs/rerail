@@ -82,6 +82,46 @@ pub fn cache_facts(_: &Table<'_>, _: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     out
 }
 
+/// A cache body of documents' sizes (a per-file operator's, L1's): each document's rows by output port.
+pub struct Sizes;
+
+/// `Sizes` read where they lie.
+pub struct SizesRead<'a>(&'a [u8]);
+
+impl SizesRead<'_> {
+    /// Document `d`'s sizes, if the cache holds them.
+    pub fn of(&self, d: u32) -> Option<&[u32]> {
+        twin::sizes(self.0, d)
+    }
+}
+
+impl crate::contract::CacheBody for Sizes {
+    type Read<'a> = SizesRead<'a>;
+    fn read(bytes: &[u8]) -> SizesRead<'_> {
+        SizesRead(bytes)
+    }
+}
+
+/// A cache body of orders: layers' row ids in other column orders, with fences (`order`).
+pub struct Orders;
+
+/// `Orders` read where they lie.
+pub struct OrdersRead<'a>(&'a [u8]);
+
+impl<'a> OrdersRead<'a> {
+    /// Layer `layer`'s order by `cols`, if the cache holds it.
+    pub fn order(&self, layer: BlockId, cols: &[u16]) -> Option<twin::Order<'a>> {
+        twin::order(self.0, layer.0, cols)
+    }
+}
+
+impl crate::contract::CacheBody for Orders {
+    type Read<'a> = OrdersRead<'a>;
+    fn read(bytes: &[u8]) -> OrdersRead<'_> {
+        OrdersRead(bytes)
+    }
+}
+
 /// The cache operations, declared and their twins registered as references.
 pub struct CacheOps {
     pub open: OpId,

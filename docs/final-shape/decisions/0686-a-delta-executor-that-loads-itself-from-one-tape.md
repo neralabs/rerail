@@ -1359,3 +1359,22 @@ Checks (Relax, local, 76 of 76):
 
 **Item 4 kept** (the user's answer, 2026-11-26): sources and tapes as rooms of shared slabs, as built in
 `4b631818bc`.
+
+**`DeltaOp` typed by its ports and its cache** (P§12 item 7: `type Ports; type Cache;`). The trait re-read above
+found ports passed as values and an untyped `CacheW`. Now:
+
+- **Port sets.** `type Ports: PortSet` is the operator's port set. It declares its ports (`ports()`) and their
+  counts (`INS`, `GLOBALS`, `OUTS`). `In<'_, P>`, `At<'_, P>`, `Out<P>` and `Asks<P>` are typed by it, and their
+  ports are read through the set's handles (`PortIn<P>`, `PortGlobal<P>`, `PortOut<P>`): `ins.port(L1Ports::TAPE)`,
+  `ins.global(L1Ports::ATOMS)`, `out.block(L1Ports::relation(k))`. A handle of one operator's ports does not compile
+  as another's, and no port is read by a bare index. An instance whose port set's ports are not its counts is
+  refused.
+- **Cache bodies.** `type Cache: CacheBody` is what its cache keeps, read through its own type:
+  `CacheW<C>::body(cx, f)` gives `f` the body read where it lies, or `None` when the cache reads as ∅. L1's is
+  `Sizes` (`sizes.of(d)`), the toy's is `Orders` (`orders.order(layer, cols)`), and `()` keeps nothing.
+- **Asks.** P§12's `asks` is `Asks<P>`, one runs block per input port. Every run passes `Asks::none()`, since no
+  operator asks of its inputs yet.
+
+Checks (Relax, local): `a_port_set_whose_ports_are_not_its_counts_is_refused`. The toy's and L1's harnesses pass
+over the typed contract. The shape script holds the trait to P§12's associated types and typed signatures, and
+refuses a port read by a bare index.

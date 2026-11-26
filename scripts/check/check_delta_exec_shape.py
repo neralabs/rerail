@@ -377,10 +377,14 @@ def contract(failures: list) -> None:
         failures.append("native/crates/delta_exec/src/contract.rs is missing (B3)")
         return
     text = strip_rust(p.read_text())
-    if not re.search(r"fn delta\(&self, cx: &mut Cx<'_>, ins: &In<'_>, want: Option<&Bistate<View<'_>>>, cache: &mut CacheW, out: &mut Out, asks: &mut Out\) -> Result<Work, String>", text):
-        failures.append("contract.rs: DeltaOp::delta is not P§12's (ins, want, cache, out, asks) -> Work")
-    if not re.search(r"fn run\(&self, cx: &mut Cx<'_>, ins: &At<'_>, out: &mut Out\)", text):
+    if not re.search(r"type Ports: PortSet;\s*(///[^\n]*\n\s*)*type Cache: CacheBody;", text):
+        failures.append("contract.rs: DeltaOp has not P§12's associated types (type Ports; type Cache)")
+    if not re.search(r"fn delta\(&self, cx: &mut Cx<'_>, ins: &In<'_, Self::Ports>, want: Option<&Bistate<View<'_>>>, cache: &mut CacheW<Self::Cache>, out: &mut Out<Self::Ports>, asks: &mut Asks<Self::Ports>\) -> Result<Work, String>", text):
+        failures.append("contract.rs: DeltaOp::delta is not P§12's (ins, want, cache, out, asks) -> Work, typed by its ports and cache")
+    if not re.search(r"fn run\(&self, cx: &mut Cx<'_>, ins: &At<'_, Self::Ports>, out: &mut Out<Self::Ports>\)", text):
         failures.append("contract.rs: DeltaOp::run, the plain function, is not P§12's (ins at a state, out)")
+    if re.search(r"pub struct (In|At)<'t, P> \{[^}]*\bpub ports", text) or re.search(r"pub fn (block|kept|writer|room)\(&(mut )?self,[^)]*port: usize", text):
+        failures.append("contract.rs: a port read by a bare index, not its port set's handle")
     if not re.search(r"pub fn reference<O: DeltaOp>", text):
         failures.append("contract.rs: the generic reference is not written once")
     raw = p.read_text()
@@ -471,7 +475,7 @@ def b6(failures: list) -> None:
         failures.append("files.rs: the blobs are not rows in a trace, as the store's objects are (P§12 item 1)")
     l1 = (CRATE / "src/l1.rs").read_text()
     k0h = (CRATE / "src/k0.rs").read_text()
-    if not re.search(r"fn delta\([^)]*\bcache: &mut CacheW", l1) or "cache.write(cx)" not in l1 or "cache_twin::sizes(" not in l1:
+    if not re.search(r"fn delta\([^)]*\bcache: &mut CacheW", l1) or "cache.write(cx)" not in l1 or "cache.body(cx," not in l1 or "type Cache = Sizes;" not in l1:
         failures.append("l1.rs: L1 keeps no cache, or reads none (Bootstrap, Figure 2: k0_pass rw L1's cache)")
     if not re.search(r'SlotSpec \{ name: "cache", mode: Mode::ReadWrite, kind: kind::CACHE \}', k0h):
         failures.append("k0.rs: k0_pass has no read-write slot for L1's cache")

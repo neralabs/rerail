@@ -41,13 +41,28 @@ fn live_ids(s: &impl Read) -> impl Iterator<Item = RowId> + '_ {
     (0..s.end().get() as u32).map(RowId::new).filter(|&id| s.live(id))
 }
 
-impl DeltaOp for Toy {
-    fn ports(&self) -> Ports {
+/// The toys' port set: one input, one output.
+struct ToyPorts;
+
+const IN: PortIn<ToyPorts> = PortIn::new(0);
+const OUT: PortOut<ToyPorts> = PortOut::new(0);
+
+impl PortSet for ToyPorts {
+    const INS: usize = 1;
+    const GLOBALS: usize = 0;
+    const OUTS: usize = 1;
+
+    fn ports() -> Ports {
         Ports { ins: vec![Port { name: "in", shape: in_shape() }], globals: Vec::new(), outs: vec![Port { name: "out", shape: out_shape() }] }
     }
+}
 
-    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_>, _: Option<&Bistate<View<'_>>>, cache: &mut CacheW, out: &mut Out, _: &mut Out) -> Result<Work, String> {
-        let x = &ins.ports[0];
+impl DeltaOp for Toy {
+    type Ports = ToyPorts;
+    type Cache = crate::cache::Orders;
+
+    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_, ToyPorts>, _: Option<&Bistate<View<'_>>>, cache: &mut CacheW<crate::cache::Orders>, out: &mut Out<ToyPorts>, _: &mut Asks<ToyPorts>) -> Result<Work, String> {
+        let x = ins.port(IN);
         let mut work = Work::default();
         if ins.is_identity() {
             if self.0 == Flaw::Busy {
@@ -56,7 +71,7 @@ impl DeltaOp for Toy {
             return Ok(work);
         }
         let held = cache.read(cx)?.is_some();
-        let w = out.writer(cx.dir, 0)?;
+        let w = out.writer(cx.dir, OUT)?;
         let skip_gone = self.0 == Flaw::Kills || (self.0 == Flaw::Cache && !held && x.before().is_some());
         if let Some(b) = x.before().filter(|_| !skip_gone) {
             for id in x.gone() {
@@ -76,11 +91,12 @@ impl DeltaOp for Toy {
         let added = x.added().count();
         let mut layers = Vec::new();
         {
-            let heads: Vec<BlockId> = ins.heads[0].1.into_iter().collect();
+            let (before, after) = ins.heads(IN);
+            let heads: Vec<BlockId> = after.into_iter().collect();
             let l = cx.dir.read("the toy's layers", &heads)?;
             let table = l.table();
-            let mut at = ins.heads[0].1.map(|h| h.0);
-            while let Some(id) = at.filter(|&id| Some(BlockId(id)) != ins.heads[0].0) {
+            let mut at = after.map(|h| h.0);
+            while let Some(id) = at.filter(|&id| Some(BlockId(id)) != before) {
                 layers.push(BlockId(id));
                 at = rerail_blocks::layer::Layer::new(table.block(id).ok_or("a layer below")?)?.below().map(|(b, _)| b);
             }
@@ -93,20 +109,23 @@ impl DeltaOp for Toy {
         let mut seen = 0;
         for layer in layers {
             OpCache(c).order(cx.reg, cx.caches, cx.dir, layer, &[1])?;
-            let l = cx.dir.read("the toy's cache", &[c])?;
-            let order = cache_twin::order(l.block(0), layer.0, &[1]).ok_or("the order just added")?;
-            for &id in order.ids {
-                let id = RowId::new(id);
-                if !Read::live(a, id) || x.before().is_some_and(|b| Read::live(b, id)) {
-                    continue;
+            let read = cache.body(cx, |orders| -> Result<(), String> {
+                let order = orders.order(layer, &[1]).ok_or("the order just added")?;
+                for &id in order.ids {
+                    let id = RowId::new(id);
+                    if !Read::live(a, id) || x.before().is_some_and(|b| Read::live(b, id)) {
+                        continue;
+                    }
+                    seen += 1;
+                    work.probes += 1;
+                    if keep(cell(a, id, 0)) {
+                        w.push(&[cell(a, id, 1), cell(a, id, 0)], 1);
+                        work.rows_written += 1;
+                    }
                 }
-                seen += 1;
-                work.probes += 1;
-                if keep(cell(a, id, 0)) {
-                    w.push(&[cell(a, id, 1), cell(a, id, 0)], 1);
-                    work.rows_written += 1;
-                }
-            }
+                Ok(())
+            })?;
+            read.ok_or("the cache this run writes, read as ∅")??;
         }
         if seen != added {
             return Err(format!("the newest layer's order holds {seen} of the {added} rows added"));
@@ -114,9 +133,9 @@ impl DeltaOp for Toy {
         Ok(work)
     }
 
-    fn run(&self, cx: &mut Cx<'_>, ins: &At<'_>, out: &mut Out) -> Result<(), String> {
-        let x = &ins.ports[0];
-        let w = out.writer(cx.dir, 0)?;
+    fn run(&self, cx: &mut Cx<'_>, ins: &At<'_, ToyPorts>, out: &mut Out<ToyPorts>) -> Result<(), String> {
+        let x = ins.port(IN);
+        let w = out.writer(cx.dir, OUT)?;
         for id in live_ids(x) {
             let a = cell(x, id, 0);
             if keep(a) {
@@ -244,8 +263,35 @@ fn a_runs_cache_left_open_or_of_another_state_reads_as_empty() {
     let cx = Cx { reg: &reg, dir: &mut dir, blobs: &crate::files::Blobs::new(&traces), traces: &traces, caches: &caches };
     c.open(cx.reg, cx.caches, cx.dir, 0).unwrap();
     c.commit(cx.reg, cx.caches, cx.dir, 7).unwrap();
-    assert_eq!(CacheW { cache: c, from: 7, begun: false }.read(&cx).unwrap(), Some(c.0));
-    assert_eq!(CacheW { cache: c, from: 8, begun: false }.read(&cx).unwrap(), None, "another state");
+    assert_eq!(CacheW::<()>::new(c, 7).read(&cx).unwrap(), Some(c.0));
+    assert_eq!(CacheW::<()>::new(c, 8).read(&cx).unwrap(), None, "another state");
     c.open(cx.reg, cx.caches, cx.dir, 7).unwrap();
-    assert_eq!(CacheW { cache: c, from: 7, begun: false }.read(&cx).unwrap(), None, "left open");
+    assert_eq!(CacheW::<()>::new(c, 7).read(&cx).unwrap(), None, "left open");
+}
+
+/// A port set whose declared ports are not its counts (P§12's `type Ports`): its operator's instance is refused.
+#[test]
+fn a_port_set_whose_ports_are_not_its_counts_is_refused() {
+    struct Two;
+    impl PortSet for Two {
+        const INS: usize = 2;
+        const GLOBALS: usize = 0;
+        const OUTS: usize = 1;
+        fn ports() -> Ports {
+            ToyPorts::ports()
+        }
+    }
+    struct Bad;
+    impl DeltaOp for Bad {
+        type Ports = Two;
+        type Cache = ();
+        fn delta(&self, _: &mut Cx<'_>, _: &In<'_, Two>, _: Option<&Bistate<View<'_>>>, _: &mut CacheW<()>, _: &mut Out<Two>, _: &mut Asks<Two>) -> Result<Work, String> {
+            Err("never run".into())
+        }
+        fn run(&self, _: &mut Cx<'_>, _: &At<'_, Two>, _: &mut Out<Two>) -> Result<(), String> {
+            Err("never run".into())
+        }
+    }
+    let e = Instance::new(&Bad, &mut Directory::default()).map(|_| ()).unwrap_err();
+    assert!(e.contains("not its counts"), "{e}");
 }

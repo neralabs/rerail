@@ -25,8 +25,8 @@
 //! output traces' before (P§3). Dropped, the cache costs the next run an attempt; its rows are the same (L5).
 //! Its Rust beyond `k0_pass` and `drop_parts` is the wiring of these ports.
 
-use crate::contract::{At, CacheW, Cx, DeltaOp, In, Out, Port, Ports, Work};
-use rerail_delta_twins::cache as cache_twin;
+use crate::cache::Sizes;
+use crate::contract::{Asks, At, CacheW, Cx, DeltaOp, In, Out, Port, PortGlobal, PortIn, PortOut, PortSet, Ports, Work, outs};
 use crate::dir::{BlockId, Directory};
 use crate::drop::{DropOps, drop_parts};
 use crate::files::{BlobId, Blobs, DocIds};
@@ -36,9 +36,35 @@ use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
 use rerail_blocks::layer::{ColType, Shape};
 use rerail_blocks::relation::View;
 
-/// The tape port's place among L1's inputs; the atoms' among its globals.
-pub const TAPE: usize = 0;
-pub const ATOMS: usize = 0;
+/// L1's port set (B§4's ports): the tape, the atoms, and K-form's eight relations.
+pub struct L1Ports;
+
+impl L1Ports {
+    /// The tape port.
+    pub const TAPE: PortIn<L1Ports> = PortIn::new(0);
+    /// The atoms, the one program global.
+    pub const ATOMS: PortGlobal<L1Ports> = PortGlobal::new(0);
+
+    /// The output port of K-form relation `RELATIONS[k]`.
+    pub fn relation(k: usize) -> PortOut<L1Ports> {
+        assert!(k < RELATIONS.len(), "a K-form relation");
+        PortOut::new(k)
+    }
+}
+
+impl PortSet for L1Ports {
+    const INS: usize = 1;
+    const GLOBALS: usize = 1;
+    const OUTS: usize = RELATIONS.len();
+
+    fn ports() -> Ports {
+        Ports {
+            ins: vec![Port { name: "tape", shape: tape_shape() }],
+            globals: vec!["atoms"],
+            outs: RELATIONS.iter().enumerate().map(|(i, (name, _))| Port { name, shape: kform::shape(i) }).collect(),
+        }
+    }
+}
 
 /// The tape port's rows: `(d, source, tape, symbols)`, each blob by its four words, by document.
 pub fn tape_shape() -> Shape {
@@ -78,8 +104,8 @@ impl L1 {
     /// `k0_pass` over documents `docs`, one launch, into the outputs' runs (+1), their sizes kept in `cache` where the
     /// modules `gone` let go of theirs.
     #[allow(clippy::too_many_arguments)]
-    fn pass(&self, cx: &mut Cx<'_>, atoms: BlockId, docs: &[K0Doc], gone: &[i64], out: &Out, cache: Option<BlockId>, work: &mut Work) -> Result<(), String> {
-        let runs: Vec<BlockId> = (0..RELATIONS.len()).map(|k| out.block(k)).collect();
+    fn pass(&self, cx: &mut Cx<'_>, atoms: BlockId, docs: &[K0Doc], gone: &[i64], out: &Out<L1Ports>, cache: Option<BlockId>, work: &mut Work) -> Result<(), String> {
+        let runs: Vec<BlockId> = outs::<L1Ports>().map(|k| out.block(k)).collect();
         work.rows_read += docs.len() as u64;
         work.rows_written += k0_pass(cx.reg, &self.ops, cx.dir, atoms, docs, gone, 1, &runs, cache).map_err(|e| e.to_string())?;
         Ok(())
@@ -87,45 +113,36 @@ impl L1 {
 }
 
 impl DeltaOp for L1 {
-    fn ports(&self) -> Ports {
-        Ports {
-            ins: vec![Port { name: "tape", shape: tape_shape() }],
-            globals: vec!["atoms"],
-            outs: RELATIONS.iter().enumerate().map(|(i, (name, _))| Port { name, shape: kform::shape(i) }).collect(),
-        }
-    }
+    type Ports = L1Ports;
+    type Cache = Sizes;
 
-    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_>, _: Option<&Bistate<View<'_>>>, cache: &mut CacheW, out: &mut Out, _: &mut Out) -> Result<Work, String> {
+    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_, L1Ports>, _: Option<&Bistate<View<'_>>>, cache: &mut CacheW<Sizes>, out: &mut Out<L1Ports>, _: &mut Asks<L1Ports>) -> Result<Work, String> {
         let mut work = Work::default();
         if ins.is_identity() {
             return Ok(work);
         }
-        let (tape, atoms) = (&ins.ports[TAPE], ins.globals[ATOMS].block);
+        let (tape, atoms) = (ins.port(L1Ports::TAPE), ins.global(L1Ports::ATOMS).block);
         let mut parts: Vec<i64> = tape.before().map_or_else(Vec::new, |tb| tape.gone().map(|id| cell(tb, id, 0)).collect()); // copy: derived (the gone documents' ids)
         parts.sort_unstable();
         parts.dedup();
         let docs = tape.added().map(|id| doc_at(cx.blobs, cx.dir, tape.after(), id)).collect::<Result<Vec<_>, _>>()?; // copy: derived (the documents' places, from their blobs)
         // The room the run needs, from the cache's sizes: each gone document's kept rows, and each added one's as they
         // were, an eighth more for an edit that grew.
-        if let Some(c) = cache.read(cx)? {
-            let need: Vec<usize> = {
-                let l = cx.dir.read("L1's cache", &[c])?;
-                let sizes = |d: i64| cache_twin::sizes(l.block(0), d as u32);
-                let mut need = vec![0usize; RELATIONS.len()];
-                for d in parts.iter().copied().chain(docs.iter().map(|d| d.module)) {
-                    for (k, &n) in sizes(d).unwrap_or(&[]).iter().enumerate() {
-                        need[k] += n as usize;
-                    }
+        let need = cache.body(cx, |sizes| {
+            let mut need = vec![0usize; RELATIONS.len()];
+            for d in parts.iter().copied().chain(docs.iter().map(|d| d.module)) {
+                for (k, &n) in sizes.of(d as u32).unwrap_or(&[]).iter().enumerate() {
+                    need[k] += n as usize;
                 }
-                need
-            };
-            for (k, n) in need.into_iter().enumerate() {
-                out.room(cx.dir, k, n + n / 8)?;
             }
+            need
+        })?;
+        for (k, n) in need.into_iter().flatten().enumerate() {
+            out.room(cx.dir, L1Ports::relation(k), n + n / 8)?;
         }
         let cache = cache.write(cx)?;
         work.rows_read += parts.len() as u64;
-        for k in 0..RELATIONS.len() {
+        for k in outs::<L1Ports>() {
             if let Some(kept) = out.kept(k) {
                 work.rows_written += drop_parts(cx.reg, &self.drops, cx.dir, kept, &parts, -1, out.block(k))?;
             }
@@ -134,8 +151,8 @@ impl DeltaOp for L1 {
         Ok(work)
     }
 
-    fn run(&self, cx: &mut Cx<'_>, ins: &At<'_>, out: &mut Out) -> Result<(), String> {
-        let (tape, atoms) = (&ins.ports[TAPE], ins.globals[ATOMS].block);
+    fn run(&self, cx: &mut Cx<'_>, ins: &At<'_, L1Ports>, out: &mut Out<L1Ports>) -> Result<(), String> {
+        let (tape, atoms) = (ins.port(L1Ports::TAPE), ins.global(L1Ports::ATOMS).block);
         let mut work = Work::default();
         let docs = live(tape).map(|id| doc_at(cx.blobs, cx.dir, tape, id)).collect::<Result<Vec<_>, _>>()?; // copy: derived (the documents' places, from their blobs)
         self.pass(cx, atoms, &docs, &[], out, None, &mut work)?;
