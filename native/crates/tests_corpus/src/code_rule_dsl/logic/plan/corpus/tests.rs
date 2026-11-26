@@ -3118,11 +3118,11 @@ fn python_names_through_the_phase_are_the_cross_file_rules_answers() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Decision 0677, fix 2: an edit misses the files whose `py_names` rows changed. A body edit in pkg/core.py misses that
-/// file alone. A method added to `App` adds a row to pkg.core's `defined`: a file's entry is keyed by the rows its
-/// probes read (decision 0709 §3, each at the module and name a file looks up, the module itself read through
-/// `reads_at`), so core.py misses, and use.py, which reads `App`'s members; pkg/__init__.py and chain.py, which
-/// re-export `App` itself, and more.py and nall.py are read from the memo. The rows are a fresh run's.
+/// Decision 0677, fix 2, and 0705's keying by a file's asks: an edit misses the files whose asks' answers changed. A
+/// body edit in pkg/core.py misses that file alone. A method added to `App`, which no file asks for, misses it alone
+/// too. `App.run` renamed `App.go` changes the answer to use.py's ask `App.run`: core.py and use.py miss, and
+/// pkg/__init__.py and chain.py, which re-export App but ask nothing of its members, are read from the memo. The rows
+/// are a fresh run's.
 #[test]
 fn a_python_files_entry_is_kept_under_its_own_names_resolution() {
     let body = ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        return 1\n");
@@ -3135,8 +3135,16 @@ fn a_python_files_entry_is_kept_under_its_own_names_resolution() {
     assert_eq!(edited.memo.0, edited.files - 1, "a body edit misses its own file alone: {:?} of {}", edited.memo, edited.files);
     std::fs::write(dir.join("ws").join(method.0), method.1).unwrap();
     let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
-    assert_eq!(edited.memo.0, edited.files - 2, "core.py and use.py, which reads App's members, alone miss: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(edited.memo.0, edited.files - 1, "a method no file asks for misses its own file alone: {:?} of {}", edited.memo, edited.files);
     let fresh = py_names_workspace("py-names-memo-fresh", &[method]);
+    assert_eq!(rows, py_names_run(&fresh, PY_NAMES_PROGRAM).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let renamed = ("pkg/core.py", method.1.replace("def run(self)", "def go(self)"));
+    std::fs::write(dir.join("ws").join(renamed.0), &renamed.1).unwrap();
+    let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    assert_eq!(edited.memo.0, edited.files - 2, "core.py and use.py, whose ask App.run changed, alone miss: {:?} of {}", edited.memo, edited.files);
+    assert!(!rows["used"].contains(&vec!["use.py".to_owned(), "5".to_owned(), "pkg.core.App.run".to_owned()]), "App.run is gone: {rows:?}");
+    let fresh = py_names_workspace("py-names-memo-fresh", &[(renamed.0, &renamed.1)]);
     assert_eq!(rows, py_names_run(&fresh, PY_NAMES_PROGRAM).1, "the rows are a fresh run's");
     let _ = std::fs::remove_dir_all(&fresh);
     let _ = std::fs::remove_dir_all(&dir);
@@ -3482,9 +3490,10 @@ rd(p, x, mq) :- dj_receiver_def(f, mq), def_name(f, x), docof(f, d), doc(d, p, _
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A body edit misses its own file alone; a changed base misses the files whose rules read an ancestry row that
-/// changes (decision 0709 §3's probes: the rows at the classes a file's rules ask about), not a file that reads none:
-/// other.py, which reaches no module of the hierarchy, and app/__init__.py, which defines no class.
+/// A body edit misses its own file alone; a changed base misses the files whose own classes' ancestry changes
+/// (decision 0705's keys: a file's own definitions that facts are handed on of, `own_at`, and their facts; decision
+/// 0709 §3's probes read those rows): not other.py, which reaches no class of the hierarchy, nor app/__init__.py,
+/// which re-exports Mid and defines no class.
 #[test]
 fn a_python_files_entry_is_kept_under_its_own_classes_ancestry() {
     let body = ("app/base.py", "from models_base import Base\n\n\nclass Mid(Base):\n    x = 1\n");
@@ -3497,7 +3506,7 @@ fn a_python_files_entry_is_kept_under_its_own_classes_ancestry() {
     assert_eq!(edited.memo.0, edited.files - 1, "a body edit misses its own file alone: {:?} of {}", edited.memo, edited.files);
     std::fs::write(dir.join("ws").join(rebased.0), rebased.1).unwrap();
     let (edited, rows) = py_classes_run(&dir, PY_CLASSES_PROGRAM);
-    assert_eq!(edited.memo.0, 2, "other.py and app/__init__.py, which read no ancestry row, alone hit: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(edited.memo.0, 2, "other.py and app/__init__.py alone hit: {:?} of {}", edited.memo, edited.files);
     let fresh = py_classes_workspace("py-classes-memo-fresh", &[body, rebased]);
     assert_eq!(rows, py_classes_run(&fresh, PY_CLASSES_PROGRAM).1, "the rows are a fresh run's");
     let _ = std::fs::remove_dir_all(&fresh);
@@ -3606,15 +3615,28 @@ root(n) :- kind(n, "function_definition"), package_field(".", "type", "module").
 .decl none(n: node)
 none(n) :- kind(n, "function_definition").
 .output none
+.decl tsx_names__target_at(p: symbol, s: symbol, t: symbol)
+.decl tsx_names__module(m: symbol)
+.decl tgt(d: number, s: symbol, t: symbol)
+tgt(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
+.decl resolved(n: node, t: symbol)
+resolved(n, t) :- kind(n, "identifier"), text(n, s), docof(n, d), tgt(d, s, t), tsx_names__module(t).
+.output resolved
+.decl other(n: node, t: symbol)
+other(n, t) :- kind(n, "identifier"), text(n, t), tsx_names__module(t).
+.output other
 "#).unwrap();
     let v = crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap();
     let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(v);
-    let rels = ["own", "any", "root", "none"].map(str::to_owned).into_iter().collect();
+    let rels = ["own", "any", "root", "none", "resolved", "other"].map(str::to_owned).into_iter().collect();
     let scopes = settings_scopes(&placed, &rels);
     assert_eq!(scopes.get("own"), Some(&SettingsScope::OwnFile), "{scopes:?}");
     assert_eq!(scopes.get("any"), Some(&SettingsScope::All), "{scopes:?}");
     assert_eq!(scopes.get("root"), Some(&SettingsScope::All), "{scopes:?}");
     assert_eq!(scopes.get("none"), None, "{scopes:?}");
+    // A target its own path's row names, carried by a derived relation (`tgt`), keys its module's read as its own.
+    assert_eq!(scopes.get("resolved"), Some(&SettingsScope::OwnFile), "{scopes:?}");
+    assert_eq!(scopes.get("other"), Some(&SettingsScope::All), "{scopes:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3894,7 +3916,7 @@ fn a_finding_no_file_holds_is_refused_naming_its_clause() {
     let shown = v.show();
     // The nodes of no file's document, and the finding's rule refusing one of them by its clause.
     let unplaced = crate::code_rule_dsl::logic::rr::UNPLACED_NODE;
-    assert!(shown.contains(&format!("rr_unplaced(\"Assert\") :- ")) && shown.contains(&format!("{unplaced}($rr_n) :- ")) && shown.contains("!doc("), "the lowering writes R9's rules:\n{shown}");
+    assert!(shown.contains("rr_unplaced(\"Assert\") :- ") && shown.contains(&format!("{unplaced}($rr_n) :- ")) && shown.contains("!doc("), "the lowering writes R9's rules:\n{shown}");
     assert!(v.output_names().iter().any(|o| o == crate::code_rule_dsl::logic::rr::UNPLACED));
     let out = dir.join("out");
     let run = |text: &str, out: &std::path::Path| super::run(text, &dir.join("ws"), None, out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);

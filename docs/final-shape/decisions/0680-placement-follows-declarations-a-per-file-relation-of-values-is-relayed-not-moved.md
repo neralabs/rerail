@@ -64,6 +64,14 @@ values got a move that 0652 §3 refuses. The relation was not wrong, so the refu
    it is computed (decision 0353). The forms carry the `located_form` qualifier (`LOCATED_FORM`), which the split
    reads as a twin of its original (`twin_of`).
 
+   An output is the exception: relayed, it would stay a file-local output with no location column, and the run's
+   memo would be off. So `locate` looks at an output read per-file again after the round's other targets. A reader the
+   round has placed through the output's twin no longer reads the output, so the output is located itself. It is
+   blocked, and moved, only if a reader still reads it. Before this, a reader later in the round than the output it
+   read moved the output to the cross part, with its body: 0705's `answer(k, q)`, read by `resolved(k, q) :-
+   answer(k, q)`, took `sig(f, x, t)`, a node column, across files (amended at the merge of 0705's line,
+   2026-11-26; `a_later_round_derives_only_the_rules_that_read_its_asks`).
+
 0652's check is unchanged: a relation in the cross-file part whose cause is its own is still an error unless it is
 declared. What changes is that a per-file relation of values no longer lands there. A rule that inherited its
 crossing from such a relation now shows its own: `e(x, y) :- s(x), s(y)`, pairs of values of any two files, must be

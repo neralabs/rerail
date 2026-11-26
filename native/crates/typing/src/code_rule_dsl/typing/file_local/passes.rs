@@ -307,7 +307,12 @@ impl ProgramPass for Locate {
         };
         let mut at_of: HashMap<String, usize> = HashMap::new();
         let mut wanted: Vec<String> = Vec::new();
-        for rel in &targets {
+        // An output read by file-local rules is looked at again once the other targets are (`again`): a reader the
+        // round places through its twin (`resolved(k, q) :- answer(k, q)`, made `resolved_at`'s) no longer reads it,
+        // so it is located itself, its node-holding body left in the chunks. Blocked only if a reader still reads it.
+        let mut queue: std::collections::VecDeque<(String, bool)> = targets.iter().map(|r| (r.clone(), false)).collect();
+        while let Some((rel, again)) = queue.pop_front() {
+            let rel = &rel;
             let left = view_targets.contains(rel);
             if requests.contains(rel.as_str()) {
                 if !left {
@@ -340,6 +345,10 @@ impl ProgramPass for Locate {
                 at_of.insert(rel.clone(), k);
                 items.push(Item::Relay { rel: rel.clone(), at: k, width: cols.len(), col, doc_width });
                 self.located.push(rel.clone());
+                continue;
+            }
+            if read_locally && !again && outputs.contains(rel.as_str()) {
+                queue.push_back((rel.clone(), true));
                 continue;
             }
             let Some(cols) = f.columns(rel).filter(|_| !f.lattice(rel) && !(read_locally && outputs.contains(rel.as_str()))) else {

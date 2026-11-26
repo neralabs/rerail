@@ -157,7 +157,8 @@ What each file's statements say (`import_spec`, `export_from`, `star_export`, `e
 `lib/tsx/exports.rerail`, included by both. `names.rerail` reads the exports as `tsx_names__*`: `target(d, s, t)` is
 its own path's `target_at` rows, and `sym_of`'s imported cases read the name's own target's rows
 (`resolved_name(n, t, x)`, then `tsx_names__exports(t, x, q)` or `!tsx_names__module(t)`). A phase naming no
-`.language` runs in its reader's (TypeScript's dialects, Vue's).
+`.language` runs in its reader's (TypeScript's dialects, Vue's). (0705: `tsx_names` is asked, and hands on `asked_at` and `resolved`, keyed by
+the file's asks, in place of `exports`.)
 
 **Read as a setting, keyed per file.** 0083 §2.3 kept a phase's exports placed nowhere: a per-file rule joining one
 made every file's memo entry a function of all its rows, and each edit that changed them missed every file. These

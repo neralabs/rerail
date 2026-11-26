@@ -2,87 +2,121 @@
 // by file), and what crosses files, read through the phase py_names (decision 0677): no node crosses into the
 // cross-file part.
 //
-// The phase (native/src/code_rule_dsl/typing/programs/py_names.rerail) runs first, over the same files, and hands on
-// symbols alone, read from the modules' definitions and import statements (never a name's use):
-//   py_names__reads_at(p, m)    the file at path p can name something of workspace module m
-//   py_names__exports(m, x, q)  module m exposes x, which denotes q, re-exports and star imports followed
-//   py_names__class(m, c)       module m defines class c
-//   py_names__defined(m, q)     module m defines q (a def or class, nested ones too)
-//   py_names__public(m, x)      x is part of module m's public interface (python/imports' public_name)
-//   py_names__ancestor(m, q, b) class q of module m inherits from b, at any depth (bases resolved as class_base)
-//   py_names__library_ancestor(m, q, b)  the same where no module of the run defines b: a library's class
-//   py_names__anc_call(m, q, x, f), py_names__anc_kw(m, q, x, k, v), py_names__anc_ref(m, q, x, s),
-//   py_names__anc_method(m, q, x)  what class q's ancestors of the run assign and define in their bodies
-//   py_names__member_call(m, q, x, f), py_names__member_kw(m, q, x, k, v), py_names__member_method(m, q, x)
+// The phase (native/src/code_rule_dsl/typing/programs/py_names.rerail) runs first, over the
+// same files, and hands on symbols alone, read from the modules' definitions and import statements (never a name's
+// use), as python/py-names-handed states them. A file reads them keyed by its own asks:
+//   py_names__asked_at(p, k)    the file at path p may read a fact of symbol k: a node of it may denote k
+//   py_names__own_at(p, q)      q is a class of the file at path p
+//   py_names__denotes(k, q)     k denotes q: itself, an import's definition, an attribute's of a class of the run
+//   py_names__resolved(k, q)    k, `m.x` through an import, is module m's export x, which denotes q
+// and the facts about a symbol q so denoted or defined, by q, with the module m that defines it:
+//   py_names__class(q, m), py_names__class_named(q, m)   q is a class (of an attribute's object; of any node)
+//   py_names__defined(q, m)     q is a def or class (nested ones too)
+//   py_names__star_public(p, x)  x is public in the module of the file at path p through a star import
+//   py_names__ancestor(q, m, b) class q inherits from b, at any depth (bases resolved as class_base)
+//   py_names__library_ancestor(q, m, b)  the same where no module of the run defines b: a library's class
+//   py_names__anc_call(q, m, x, f), py_names__anc_kw(q, m, x, k, v), py_names__anc_ref(q, m, x, s),
+//   py_names__anc_method(q, m, x)  what class q's ancestors of the run assign and define in their bodies
+//   py_names__member_call(q, m, x, f), py_names__member_kw(q, m, x, k, v), py_names__member_method(q, m, x)
 //                               the same of class q's own body
-//   py_names__plain_def(m, q)   module m defines function q with no decorator
-// Each is read by a module the file's own `reads_at` rows name, so a rule reading them stays file-local, and a file's
-// memo entry is keyed by those rows alone (decision 0665): an edit misses the files whose modules' rows changed.
+//   py_names__plain_def(q, m)   q is a function with no decorator
+//   py_names__dj_number_fields(q, m, x)  class q, or an ancestor of the run, declares x a number field
+// and, by the module, what a rule asks of every class of a module it reads:
+//   py_names__dj_model_class(m, q)  class q of module m is a model by python/django's tests (dj_model_at)
+// and, of the whole run: py_names__dj_app_defers(b), the run's Celery app makes b every task's class.
+// A file's memo entry is keyed by its own asks' rows (decisions 0665, 0705: `asked_at` and `own_at by_path 1`,
+// `denotes by_key 1`, the facts `by_key`): an edit misses the files whose answers changed.
 #include "python/scopes.rerail"
 
 .decl py_names__reads_at(p: symbol, m: symbol)
-.decl py_names__exports(m: symbol, x: symbol, q: symbol)
-.decl py_names__class(m: symbol, c: symbol)
-.decl py_names__defined(m: symbol, q: symbol)
-.decl py_names__public(m: symbol, x: symbol)
-.decl py_names__ancestor(m: symbol, q: symbol, b: symbol)
-.decl py_names__library_ancestor(m: symbol, q: symbol, b: symbol)
-.decl py_names__anc_call(m: symbol, q: symbol, x: symbol, f: symbol)
-.decl py_names__anc_kw(m: symbol, q: symbol, x: symbol, k: symbol, v: symbol)
-.decl py_names__anc_ref(m: symbol, q: symbol, x: symbol, s: symbol)
-.decl py_names__anc_method(m: symbol, q: symbol, x: symbol)
-.decl py_names__plain_def(m: symbol, q: symbol)
-.decl py_names__member_call(m: symbol, q: symbol, x: symbol, f: symbol)
-.decl py_names__member_kw(m: symbol, q: symbol, x: symbol, k: symbol, v: symbol)
-.decl py_names__member_method(m: symbol, q: symbol, x: symbol)
+.decl py_names__asked_at(p: symbol, k: symbol)
+.decl py_names__denotes(k: symbol, q: symbol)
+.decl py_names__resolved(k: symbol, q: symbol)
+.decl py_names__class(q: symbol, m: symbol)
+.decl py_names__class_named(q: symbol, m: symbol)
+.decl py_names__defined(q: symbol, m: symbol)
+.decl py_names__star_public(p: symbol, x: symbol)
+.decl py_names__own_at(p: symbol, q: symbol)
+.decl py_names__ancestor(q: symbol, m: symbol, b: symbol)
+.decl py_names__library_ancestor(q: symbol, m: symbol, b: symbol)
+.decl py_names__anc_call(q: symbol, m: symbol, x: symbol, f: symbol)
+.decl py_names__anc_kw(q: symbol, m: symbol, x: symbol, k: symbol, v: symbol)
+.decl py_names__anc_ref(q: symbol, m: symbol, x: symbol, s: symbol)
+.decl py_names__anc_method(q: symbol, m: symbol, x: symbol)
+.decl py_names__plain_def(q: symbol, m: symbol)
+.decl py_names__dj_model_class(m: symbol, q: symbol)
+.decl py_names__dj_number_fields(q: symbol, m: symbol, x: symbol)
+.decl py_names__member_call(q: symbol, m: symbol, x: symbol, f: symbol)
+.decl py_names__member_kw(q: symbol, m: symbol, x: symbol, k: symbol, v: symbol)
+.decl py_names__member_method(q: symbol, m: symbol, x: symbol)
 
 // export_at(n, q0, q): in n's file, the qualified name q0 ("m.x") is q: module m's export x, followed through
 // re-exports to its definition. With `from pkg import App` where pkg/__init__.py has `from .core import App`,
 // "pkg.App" is "pkg.core.App". None where q0's module is no workspace module, or exports no x.
 .decl export_at(n: node, q0: symbol, q: symbol)
-export_at(n, q0, q) :- qn(n, q0), split_dot(q0, m, x), docof(n, d), doc(d, p, _), py_names__reads_at(p, m),
-    py_names__exports(m, x, q).
+export_at(n, q0, q) :- qn(n, q0), split_dot(q0, m, _), docof(n, d), doc(d, p, _), py_names__reads_at(p, m),
+    py_names__asked_at(p, q0), py_names__resolved(q0, q).
 // sym_of (python/scopes) rule 1: through an import (qn), then re-exports; q0 itself where nothing re-exports it.
 sym_of(n, q) :- export_at(n, _, q).
 sym_of(n, q0) :- qn(n, q0), !export_at(n, q0, _).
 // Rule 3: a def or class of the run read as an attribute of its class, by its qualname. A class's members are
-// defined in its own module, which its file reads.
+// defined in its own module, which its file reads. The class and the attribute are each a symbol one of the file's
+// asks denotes.
 sym_of(n, q) :- attr_of(n, o, a), sym_of(o, c), docof(n, d), doc(d, p, _), py_names__reads_at(p, m),
-    py_names__class(m, c), q = @dot(c, a), py_names__defined(m, q).
+    py_names__asked_at(p, k), py_names__denotes(k, c), py_names__class(c, m), py_names__asked_at(p, k2),
+    py_names__denotes(k2, q), split_dot(q, c, a), py_names__defined(q, m).
 
-// site_exported(site): a module-level binding listed in __all__ or not underscore-private. A star import makes a
-// module's public names depend on another's, so the phase hands them on.
+// site_exported(site): a module-level binding whose name is public in its module (python/imports' public_name): its
+// file's `__all__` lists it, or the file assigns none and the name has no leading `_` and is exported, by a def or
+// class at module level or an import run at import time (exported's first two cases, the file's own). The third
+// case, a star import, makes a module's public names depend on another's: the phase hands those on at the file's
+// path (`star_public`).
 .decl site_exported(site: node)  // a module-level binding listed in __all__ or not underscore-private
-site_exported(site) :- binding(s, x, site, _), kind(s, "module"), docof(s, d), doc(d, p, m), py_names__reads_at(p, m),
-    py_names__public(m, x).
+site_exported(site) :- binding(s, x, site, _), kind(s, "module"), docof(s, d), site_public(d, x).
+.decl site_public(d: number, x: symbol)
+site_public(d, x) :- kind(a, "assignment"), docof(a, d), field(a, "left", l), text(l, "__all__"), field(a, "right", r),
+    child(r, s, _), value(s, x), nearest(a, sc, scope), kind(sc, "module").
+site_public(d, x) :- site_own_export(d, x), !site_all(d), !prefix("_", x).
+site_public(d, x) :- doc(d, p, _), py_names__star_public(p, x).
+// site_all(d): document d assigns `__all__` at module level, even an empty one.
+.decl site_all(d: number)
+site_all(d) :- kind(a, "assignment"), docof(a, d), field(a, "left", l), text(l, "__all__"), nearest(a, sc, scope),
+    kind(sc, "module").
+// site_own_export(d, x): document d's module exports x itself: a def or class at module level, or an import run at
+// import time binding x.
+.decl site_own_export(d: number, x: symbol)
+site_own_export(d, x) :- def_name(f, x), docof(f, d), nearest(f, s, scope), kind(s, "module").
+site_own_export(d, l) :- import_alias(i, _, _, x, l), import_time(i), docof(i, d), x != "".
 
-// class_anc(c, b): class c inherits from b, at any depth, by its own module's rows (0677 fix 3a). What a rule reads
+// class_anc(c, b): class c inherits from b, at any depth, by the class's own symbol (0677 fix 3a). What a rule reads
 // for a class's own ancestry, where `class_def(c, q), subclass(q, b)` read python/scopes' closure over every file's
 // classes, and so took c into the cross-file part.
 //   class Leaf(Mid) where Mid(Base), Base(models.Model)    class_anc(<Leaf>, "django.db.models.Model")
 .decl class_anc(c: node, b: symbol)
-// Read by a module its file's reads_at rows name (its own among them), as every read of the phase here: a module
-// read from `doc`'s own column is no key the memo's settings scopes know (0665), so the read was of every module's
-// rows, and a changed ancestry missed every file.
-class_anc(c, b) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, m), py_names__ancestor(m, q, b).
+// Read by the class's own symbol, one of its file's own definitions a fact is handed on of.
+class_anc(c, b) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__own_at(p, q),
+    py_names__ancestor(q, m, b).
 // class_lib_anc(c, b): class c inherits from library class b (one no module of the run defines), at any depth: what
 // `class_base(_, q), !class_def(_, q)` asked of every file's classes.
 .decl class_lib_anc(c: node, b: symbol)
-class_lib_anc(c, b) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, m),
-    py_names__library_ancestor(m, q, b).
+class_lib_anc(c, b) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__own_at(p, q),
+    py_names__library_ancestor(q, m, b).
 // What class c's ancestors of the run hold, by symbol (0677 fix 3b): the phase py_names joins each ancestor's body to
 // the class, so no node of another file is read. class_anc_call(c, x, f): an ancestor's body assigns `x = f(...)`;
 // class_anc_kw(c, x, k, v): with keyword argument k of text v; class_anc_ref(c, x, s): its `x = …` names s;
 // class_anc_method(c, x): an ancestor defines method x.
 .decl class_anc_call(c: node, x: symbol, f: symbol)
-class_anc_call(c, x, f) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, m), py_names__anc_call(m, q, x, f).
+class_anc_call(c, x, f) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__own_at(p, q),
+    py_names__anc_call(q, m, x, f).
 .decl class_anc_kw(c: node, x: symbol, k: symbol, v: symbol)
-class_anc_kw(c, x, k, v) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, m),
-    py_names__anc_kw(m, q, x, k, v).
+class_anc_kw(c, x, k, v) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__own_at(p, q),
+    py_names__anc_kw(q, m, x, k, v).
 .decl class_anc_ref(c: node, x: symbol, s: symbol)
-class_anc_ref(c, x, s) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, m), py_names__anc_ref(m, q, x, s).
+class_anc_ref(c, x, s) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__own_at(p, q),
+    py_names__anc_ref(q, m, x, s).
 .decl class_anc_method(c: node, x: symbol)
-class_anc_method(c, x) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, m), py_names__anc_method(m, q, x).
+class_anc_method(c, x) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__own_at(p, q),
+    py_names__anc_method(q, m, x).
 
 // ---- tests ---------------------------------------------------------------------------------------------------------
 // sym_of of an attribute of a class: of the same module, of an imported class, and of what is no definition of the run.

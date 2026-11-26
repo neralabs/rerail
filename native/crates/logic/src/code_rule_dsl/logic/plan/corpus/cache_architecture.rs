@@ -42,8 +42,9 @@ const NOT_CACHES: &[&str] = &[
     // Each guest's key, the store's name for its identity (decisions 0323, 0391), and the observer's journal of the
     // paths that changed, by the check's generation (decision 0399 step 1): names and sources' bookkeeping.
     "guest_keys", "observed_changes",
-    // The segments sources (and tapes) are in (decision 0295 step 5).
-    "object_segments",
+    // The segments sources (and tapes) are in (decision 0295 step 5), and the bytes of the files the store's rows name
+    // (`store_bytes`, kept by those rows' triggers): the store's bookkeeping, as `store_state` is.
+    "object_segments", "store_bytes",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "store_sessions", "object_archive", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     // Analysis claims, release receipts, and collection work. Their rows reference results held elsewhere.
     "analysis_scope_snapshot", "analysis_scope_workspace_snapshot", "analysis_scope_manifest",

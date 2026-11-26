@@ -321,8 +321,7 @@ asks(p, x) :- q__ask_in(p, x).
 .output r, unresolved, answered, asks
 "#;
 
-    /// A tree for an asked phase's tests: its files, its phase directory, its store, and a run of a reader there with
-    /// `RERAIL_ASKED_PHASES` on (`on`) or off.
+    /// A tree for an asked phase's tests: its files, its phase directory, its store, and a run of a reader there.
     struct AskedTree {
         dir: std::path::PathBuf,
         src: std::path::PathBuf,
@@ -357,10 +356,8 @@ asks(p, x) :- q__ask_in(p, x).
             crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join(name)));
         }
 
-        fn run(&self, reader: &str, on: bool) -> Result<crate::code_rule_dsl::logic::plan::corpus::Report, String> {
+        fn run(&self, reader: &str) -> Result<crate::code_rule_dsl::logic::plan::corpus::Report, String> {
             let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
-            let switch = crate::code_rule_dsl::logic::plan::corpus::phases::ASKED_PHASES.to_owned();
-            let _on = crate::code_rule_dsl::logic::profile::bind(crate::code_rule_dsl::logic::profile::Switches(std::sync::Arc::new(vec![(switch, if on { "1" } else { "0" }.to_owned())])));
             crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &self.src, None, &self.out, "program", Binding::Cpu, 1 << 18, &Default::default(), &self.options).map_err(|e| e.to_string())
         }
 
@@ -389,13 +386,11 @@ asks(p, x) :- q__ask_in(p, x).
 
     /// An asked phase answers only what a file asks (decision 0705): `a.py` asks `m.x`, so `m.py` answers `x` and not
     /// `y`, and `k.py`, which no file imports, answers nothing. Round 1 makes the asks, round 2 answers them and
-    /// finds no new ask, and in round 2 only `m.py`, whose asks changed, is built again. Off, the phase is refused.
+    /// finds no new ask, and in round 2 only `m.py`, whose asks changed, is built again.
     #[test]
     fn an_asked_phase_answers_only_what_is_asked() {
         let t = AskedTree::new("asked-only", &[("q", ASKED_PHASE)], &[("a.py", "from m import x\n"), ("m.py", "def x(a):\n    return a\n\ndef y():\n    return 2\n"), ("k.py", "def z():\n    return 3\n")]);
-        let refused = t.run(ASKED_READER, false).err().unwrap_or_default();
-        assert!(refused.contains("RERAIL_ASKED_PHASES"), "off, an asked phase is refused: {refused}");
-        let report = t.run(ASKED_READER, true).unwrap();
+        let report = t.run(ASKED_READER).unwrap();
         assert_eq!(t.rows("r"), [["a.py", "m.x.(a)"]]);
         assert_eq!(t.rows("answered"), [["m.x", "m.x.(a)"]], "no answer for y or z, which no file asks");
         assert_eq!(t.rows("asks"), [["m.py", "x"]]);
@@ -421,7 +416,7 @@ asks(p, x) :- q__ask_in(p, x).
                 ("c2.py", "from c1 import *\n"),
             ],
         );
-        let report = t.run(ASKED_READER, true).unwrap();
+        let report = t.run(ASKED_READER).unwrap();
         assert_eq!(t.rows("r"), [["a.py", "pkg.impl.x.(b)"]]);
         assert_eq!(t.rows("unresolved"), [["d.py", "c1.w"]], "the cycle answers nothing, and only it is unresolved");
         assert_eq!(rounds_of(&report).len(), 3, "the ask, its forward, its answer: {:?}", rounds_of(&report));
@@ -442,7 +437,7 @@ ask_in(p, "x") :- doc(_, p, _).
 ask_in(p, y) :- doc(_, p, _), g__ask_in(p, x), y = @cat(x, "x").
 "#;
         let t = AskedTree::new("asked-bound", &[("g", grows)], &[("a.py", "v = 1\n")]);
-        let err = t.run("#include \"core.rerail\"\n.decl g__ask_in(p: symbol, x: symbol)\n.decl r(p: symbol, x: symbol)\nr(p, x) :- g__ask_in(p, x).\n.output r\n", true).err().unwrap_or_default();
+        let err = t.run("#include \"core.rerail\"\n.decl g__ask_in(p: symbol, x: symbol)\n.decl r(p: symbol, x: symbol)\nr(p, x) :- g__ask_in(p, x).\n.output r\n").err().unwrap_or_default();
         assert!(err.contains("after 16 rounds") && err.contains("x.x.x"), "the run fails past 16 rounds, naming what the last added: {err}");
     }
 
@@ -454,34 +449,82 @@ ask_in(p, y) :- doc(_, p, _), g__ask_in(p, x), y = @cat(x, "x").
     fn an_edit_reruns_the_files_its_asks_reach() {
         let m = "def x(a):\n    return a\n\ndef y():\n    return 2\n\ndef w():\n    return 4\n";
         let t = AskedTree::new("asked-edits", &[("q", ASKED_PHASE)], &[("a.py", "from m import x\n"), ("b.py", "from m import y\n"), ("m.py", m), ("k.py", "def z():\n    return 3\n")]);
-        t.run(ASKED_READER, true).unwrap();
+        t.run(ASKED_READER).unwrap();
         assert_eq!(t.rows("r"), [["a.py", "m.x.(a)"], ["b.py", "m.y.()"]]);
         // A body edit, the same imports: one round (it starts from the last asks), a.py alone built.
         t.write(&[("a.py", "from m import x\nv = 1\n")]);
-        let one = t.run(ASKED_READER, true).unwrap();
+        let one = t.run(ASKED_READER).unwrap();
         assert_eq!(rounds_of(&one), [(2, 1)], "one round, a.py built");
         assert_eq!(built(&one), 1, "the reader builds a.py alone");
         // A new import: a.py in round 1, m.py, newly asked, in round 2.
         t.write(&[("a.py", "from m import x\nfrom m import w\nv = 1\n")]);
-        let two = t.run(ASKED_READER, true).unwrap();
+        let two = t.run(ASKED_READER).unwrap();
         assert_eq!(rounds_of(&two), [(3, 1), (3, 1)], "a.py, then m.py");
         assert_eq!(built(&two), 2, "the reader builds a.py, and m.py, whose own rows of `q__ask_in` (the reader's `asks`) grew; not b.py, whose answers did not change");
         assert_eq!(t.rows("r"), [["a.py", "m.w.()"], ["a.py", "m.x.(a)"], ["b.py", "m.y.()"]]);
         // A def nobody imports: m.py's round alone, and of the readers m.py alone (its own content).
         t.write(&[("m.py", &format!("{m}\ndef u():\n    return 5\n"))]);
-        let three = t.run(ASKED_READER, true).unwrap();
+        let three = t.run(ASKED_READER).unwrap();
         assert_eq!(rounds_of(&three), [(3, 1)], "m.py, no ask changed");
         assert_eq!(built(&three), 1, "no asker of m.py is built again");
         // A changed answer: m.py, and a.py, which asks m.x; b.py, which asks m.y alone, is not built.
         t.write(&[("m.py", &format!("{}\ndef u():\n    return 5\n", m.replace("def x(a)", "def x(a, c)")))]);
-        let four = t.run(ASKED_READER, true).unwrap();
+        let four = t.run(ASKED_READER).unwrap();
         assert_eq!(rounds_of(&four), [(3, 1)]);
         assert_eq!(built(&four), 2, "m.py and a.py, and not b.py");
         let after: Vec<Vec<Vec<String>>> = ["r", "unresolved", "answered", "asks"].iter().map(|r| t.rows(r)).collect();
         assert_eq!(after[0], [["a.py", "m.w.()"], ["a.py", "m.x.(a, c)"], ["b.py", "m.y.()"]]);
         t.store("fresh.sqlite");
-        t.run(ASKED_READER, true).unwrap();
+        t.run(ASKED_READER).unwrap();
         assert_eq!(["r", "unresolved", "answered", "asks"].iter().map(|r| t.rows(r)).collect::<Vec<_>>(), after, "the same rows as a fresh run's");
+    }
+
+    /// A reader keyed through two hops (decision 0705, `by_key C`): its asks at its own path (`asked_at by_path 1`),
+    /// each ask's answer by the ask (`resolved by_key 1`), the facts about the answer by it (`params by_key`). An edit
+    /// to a fact no file's ask resolves to builds no reader but its own file's; one to a fact an ask resolves to,
+    /// through a re-export or directly, builds the files asking it alone.
+    #[test]
+    fn a_reader_is_keyed_by_the_answers_to_its_asks() {
+        const PHASE: &str = r#"
+#include "core.rerail"
+.phase s
+.export asked_at by_path 1, resolved by_key 1, params by_key
+.decl imp(p: symbol, m: symbol, x: symbol)
+imp(p, m, x) :- kind(s, "import_from_statement"), field(s, "module_name", mn), text(mn, m), field(s, "name", nn), text(nn, x), docof(s, d), doc(d, p, _).
+.decl asked_at(p: symbol, k: symbol)
+asked_at(p, @cat(m, x)) :- imp(p, m, x).
+.decl defn(m: symbol, x: symbol, t: symbol)
+defn(m, x, t) :- kind(f, "function_definition"), field(f, "name", i), text(i, x), field(f, "parameters", ps), text(ps, t), docof(f, d), doc(d, _, m).
+.decl resolved(k: symbol, q: symbol)
+resolved(k, q) :- asked_at(_, k), split_dot(k, m, x), imp(p2, m2, x), doc(_, p2, m), q = @cat(m2, x).
+resolved(k, k) :- asked_at(_, k), split_dot(k, m, x), defn(m, x, _).
+.decl params(q: symbol, t: symbol)
+params(@cat(m, x), t) :- defn(m, x, t).
+"#;
+        const READER: &str = r#"
+#include "core.rerail"
+.decl s__asked_at(p: symbol, k: symbol)
+.decl s__resolved(k: symbol, q: symbol)
+.decl s__params(q: symbol, t: symbol)
+.decl r(p: symbol, t: symbol)
+r(p, t) :- doc(_, p, _), s__asked_at(p, k), s__resolved(k, q), s__params(q, t).
+.output r
+"#;
+        let impl_ = "def x(a):\n    return a\n\ndef z():\n    return 3\n";
+        let t = AskedTree::new("keyed-hops", &[("s", PHASE)], &[("a.py", "from m import x\n"), ("b.py", "from m import y\n"), ("m.py", "from impl import x\n\ndef y():\n    return 2\n"), ("impl.py", impl_)]);
+        t.run(READER).unwrap();
+        assert_eq!(t.rows("r"), [["a.py", "(a)"], ["b.py", "()"], ["m.py", "(a)"]]);
+        let report = t.run(READER).unwrap();
+        let s = report.phase_runs.iter().find(|r| r.name == "s").unwrap();
+        assert!(s.keys.contains(&("s__resolved".to_owned(), crate::code_rule_dsl::logic::plan::phased::Keyed::ByKey(Some(1)))), "{:?}", s.keys);
+        // impl.z, which no ask resolves to: impl.py alone (its own content).
+        t.write(&[("impl.py", &impl_.replace("def z()", "def z(b)"))]);
+        assert_eq!(built(&t.run(READER).unwrap()), 1, "impl.py alone");
+        // impl.x, which a.py's m.x resolves to through m's re-export, and m.py's own import: impl.py, a.py and m.py,
+        // not b.py, which reads m.py's own y.
+        t.write(&[("impl.py", &impl_.replace("def z()", "def z(b)").replace("def x(a)", "def x(a, c)"))]);
+        assert_eq!(built(&t.run(READER).unwrap()), 3, "impl.py, a.py and m.py");
+        assert_eq!(t.rows("r"), [["a.py", "(a, c)"], ["b.py", "()"], ["m.py", "(a, c)"]]);
     }
 
     /// An export's key in its readers' memo is the phase's to declare (`.export asked_at by_path 1, resolved
@@ -493,19 +536,78 @@ ask_in(p, y) :- doc(_, p, _), g__ask_in(p, x), y = @cat(x, "x").
             assert!(!crate::code_rule_dsl::typing::file_local::setting_input(name), "{name} is a setting only where q's declaration is bound");
         }
         let t = AskedTree::new("asked-keys", &[("q", ASKED_PHASE)], &[("a.py", "from m import x\n"), ("m.py", "def x():\n    return 1\n")]);
-        let report = t.run(ASKED_READER, true).unwrap();
+        let report = t.run(ASKED_READER).unwrap();
         let q = report.phase_runs.iter().find(|r| r.name == "q").unwrap();
         assert_eq!(
             q.keys,
-            [("q__ask_in".to_owned(), Keyed::ByPath(None)), ("q__asked_at".to_owned(), Keyed::ByPath(Some(1))), ("q__answer".to_owned(), Keyed::ByKey), ("q__resolved".to_owned(), Keyed::ByKey)]
+            [("q__ask_in".to_owned(), Keyed::ByPath(None)), ("q__asked_at".to_owned(), Keyed::ByPath(Some(1))), ("q__answer".to_owned(), Keyed::ByKey(None)), ("q__resolved".to_owned(), Keyed::ByKey(None))]
                 .into_iter()
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect::<Vec<_>>()
         );
         let bad = AskedTree::new("asked-keys-bad", &[("q", &ASKED_PHASE.replace("asked_at by_path 1", "asked_at by_path 3"))], &[("a.py", "from m import x\n")]);
-        let err = bad.run(ASKED_READER, true).err().unwrap_or_default();
+        let err = bad.run(ASKED_READER).err().unwrap_or_default();
         assert!(err.contains("column 3"), "a key column the export lacks is refused: {err}");
+    }
+
+    /// `ASKED_PHASE` with its answer read through a chain of per-file relations that read no ask (`defn`, `sig`,
+    /// `named`), as py_names' `ans_def` reads `def_name` and `qualname`.
+    const ASKED_HELD_PHASE: &str = r#"
+#include "core.rerail"
+.phase q
+.rounds ask_in
+.export asked_at by_path 1, ask_in by_path, answer by_key, resolved by_key
+.decl asked_at(p: symbol, k: symbol)
+asked_at(p, @cat(m, x)) :- kind(s, "import_from_statement"), field(s, "module_name", mn), text(mn, m), field(s, "name", nn), text(nn, x), docof(s, d), doc(d, p, _).
+.decl asked(m: symbol, x: symbol)
+asked(m, x) :- kind(s, "import_from_statement"), field(s, "module_name", mn), text(mn, m), field(s, "name", nn), text(nn, x).
+.decl ask_in(p: symbol, x: symbol)
+ask_in(p, x) :- asked(m, x), doc(_, p, m).
+.decl q__ask_in(p: symbol, x: symbol)
+.decl defn(f: node, x: symbol)
+defn(f, x) :- kind(f, "function_definition"), field(f, "name", i), text(i, x).
+.decl sig(f: node, x: symbol, t: symbol)
+sig(f, x, t) :- defn(f, x), field(f, "parameters", ps), text(ps, t0), t = @cat(x, t0).
+.decl named(f: node, x: symbol, t: symbol)
+named(f, x, t) :- sig(f, x, t), docof(f, _).
+.decl answer(k: symbol, q: symbol)
+answer(@cat(m, x), @cat(m, t)) :- doc(d, p, m), q__ask_in(p, x), named(f, x, t), docof(f, d).
+.decl resolved(k: symbol, q: symbol)
+resolved(k, q) :- answer(k, q).
+"#;
+
+    /// A later round's partial hits derive the rules that read the asks alone (decision 0705): the relations those
+    /// read without reading an ask (`named`, a per-file relation made by three rules) are held in the file's entry
+    /// from round 1, so round 2's chunk of `m.py` runs `answer`'s rule and `resolved`'s (a union of `answer`'s rows,
+    /// per-file by decision 0680, located through `answer`'s twin), not `named`'s, `sig`'s and `defn`'s. Its
+    /// constants are round 1's, not measured again (`phases::RoundsMeasured`).
+    #[test]
+    fn a_later_round_derives_only_the_rules_that_read_its_asks() {
+        let t = AskedTree::new("asked-held", &[("q", ASKED_HELD_PHASE)], &[("a.py", "from m import x\n"), ("m.py", "def x(a):\n    return a\n\ndef y():\n    return 2\n")]);
+        let report = t.run(ASKED_READER).unwrap();
+        assert_eq!(t.rows("r"), [["a.py", "m.x.(a)"]]);
+        assert_eq!(t.rows("answered"), [["m.x", "m.x.(a)"]]);
+        let q = report.phase_runs.iter().find(|r| r.name == "q").expect("q ran");
+        assert_eq!(q.rounds.iter().map(|r| (r.asks, r.files - r.memo.0)).collect::<Vec<_>>(), [(1, 2), (1, 1)], "round 2 builds m.py alone");
+        assert_eq!(q.rounds[0].partial_rules, 0, "round 1 has no partial hit");
+        assert_eq!(q.rounds[1].partial_rules, 2, "round 2's partial hit of m.py runs answer's rule and resolved's alone, named read from its entry");
+        assert_eq!((q.rounds[0].constants_measured, q.rounds[1].constants_measured), (1, 0), "round 2 reads its chunk's constants as round 1 measured them");
+    }
+
+    /// A held relation is stored, never recomputed in its readers (decision 0705). tsx_names' `exported_decl`, which
+    /// `ans_def` reads beside the asks, is held; over a 560-file sample the estimates inlined it, so the chunk made no
+    /// rows of it, kept no entry of its files, and round 2 built every file again. Told to inline it here
+    /// (`RERAIL_INLINE_ONLY`), the chunks store it all the same: round 2 builds `d.ts`, the asked file, alone.
+    #[test]
+    fn a_held_relation_is_never_inlined() {
+        let _inline = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_INLINE_ONLY", "exported_decl")]);
+        let reader = ".language typescript\n#include \"tsx/names.rerail\"\n.decl s(p: symbol, q: symbol)\ns(p, q) :- sym_of(n, q), docof(n, d), doc(d, p, _).\n.output s\n";
+        let t = AskedTree::new("asked-held-inline", &[], &[("a.ts", "import { g } from \"./d\";\ng();\n"), ("d.ts", "export function g() {}\nexport function h() {}\n")]);
+        let report = t.run(reader).unwrap();
+        assert_eq!(t.rows("s"), [["a.ts", "d#g"]]);
+        let rounds: Vec<(usize, usize)> = report.phase_runs.iter().find(|r| r.name == "tsx_names").expect("tsx_names ran").rounds.iter().map(|r| (r.asks, r.files - r.memo.0)).collect();
+        assert_eq!(rounds, [(1, 2), (1, 1)], "round 2 builds d.ts alone: round 1's entries were kept");
     }
 
     /// An asked phase's run starts from the asks its last run over the root ended with (decision 0705): over an
@@ -514,39 +616,91 @@ ask_in(p, y) :- doc(_, p, _), g__ask_in(p, x), y = @cat(x, "x").
     #[test]
     fn an_asked_phase_starts_from_its_last_asks() {
         let t = AskedTree::new("asked-kept", &[("q", ASKED_PHASE)], &[("a.py", "from m import x\nfrom m import y\n"), ("m.py", "def x():\n    return 1\n\ndef y():\n    return 2\n")]);
-        assert_eq!(rounds_of(&t.run(ASKED_READER, true).unwrap()).len(), 2);
-        assert_eq!(rounds_of(&t.run(ASKED_READER, true).unwrap()).len(), 1, "unchanged: one round");
+        assert_eq!(rounds_of(&t.run(ASKED_READER).unwrap()).len(), 2);
+        assert_eq!(rounds_of(&t.run(ASKED_READER).unwrap()).len(), 1, "unchanged: one round");
         t.write(&[("a.py", "from m import x\n")]);
-        let shrunk = t.run(ASKED_READER, true).unwrap();
+        let shrunk = t.run(ASKED_READER).unwrap();
         assert_eq!(rounds_of(&shrunk), [(1, 1), (1, 1)], "a.py's asks shrink in round 1, and m.py, which lost one, answers again in round 2");
         assert_eq!(t.rows("asks"), [["m.py", "x"]], "the removed import's ask is in no export");
         assert_eq!(t.rows("answered"), [["m.x", "m.x.()"]]);
     }
 
-    /// The asked `py_names` (decision 0705), run in place of the eager one while asked phases run, resolves the names
-    /// a file uses as the eager one does, through a re-export and a star import, and hands on fewer `exports` rows:
-    /// those the files ask for, not every module's whole interface.
+    /// The asked `py_names` (decision 0705) resolves the names a file uses through a re-export and a star import, and
+    /// the attributes of a class of the run (rule 3), as the eager program it replaced did: the rows below are the
+    /// eager program's. It runs in rounds.
     #[test]
-    fn the_asked_py_names_resolves_the_names_the_eager_one_does() {
+    fn the_asked_py_names_resolves_names_through_reexports_and_stars() {
         let files = [
             ("pkg/__init__.py", "from .core import App\nfrom .util import *\n"),
-            ("pkg/core.py", "class App:\n    pass\n\ndef unused():\n    return 0\n"),
+            ("pkg/core.py", "class App:\n    def run(self):\n        return 0\n\n    class Inner:\n        def go(self):\n            return 1\n\ndef unused():\n    return 0\n\nclass Spare:\n    pass\n"),
             ("pkg/util.py", "def helper():\n    return 1\n\ndef other():\n    return 2\n"),
-            ("use.py", "from pkg import App, helper\nimport pkg.core\n\nApp()\nhelper()\npkg.core.App()\n"),
+            ("use.py", "from pkg import App, helper\nimport pkg.core\n\nclass Here:\n    def mine(self):\n        return 2\n\nApp()\nApp.run\nApp.Inner.go\nhelper()\npkg.core.App.run\nHere.mine\n"),
         ];
-        let reader = ".language python\n#include \"python/names.rerail\"\n.decl r(q0: symbol, q: symbol)\nr(q0, q) :- export_at(_, q0, q).\n.output r\n";
+        // r: a name through an import, re-exports followed (rule 1). s: every symbol a node denotes, an attribute of a
+        // class of the run through `class` and `defined` (rule 3) among them.
+        let reader = ".language python\n#include \"python/names.rerail\"\n.decl r(q0: symbol, q: symbol)\nr(q0, q) :- export_at(_, q0, q).\n.output r\n.decl s(q: symbol)\ns(q) :- sym_of(_, q).\n.output s\n";
         let t = AskedTree::new("asked-py-names", &[], &files);
-        let exports = |report: &crate::code_rule_dsl::logic::plan::corpus::Report| {
-            report.phase_runs.iter().find(|r| r.name == "py_names").and_then(|r| r.exports.iter().find(|(e, _)| e == "exports").map(|(_, n)| *n)).expect("py_names hands on exports")
-        };
-        let eager = t.run(reader, false).unwrap();
-        let eager_rows = t.rows("r");
-        t.store("asked.sqlite");
-        let asked = t.run(reader, true).unwrap();
-        assert_eq!(t.rows("r"), eager_rows, "the same names resolved");
-        for want in [["pkg.App", "pkg.core.App"], ["pkg.helper", "pkg.util.helper"], ["pkg.core.App", "pkg.core.App"]] {
-            assert!(eager_rows.iter().any(|r| *r == want), "{want:?} in {eager_rows:?}");
+        let asked = t.run(reader).unwrap();
+        let (rows, syms) = (t.rows("r"), t.rows("s"));
+        for want in ["pkg.core.App.run", "pkg.core.App.Inner.go", "use.Here.mine"] {
+            assert!(syms.iter().any(|r| r[0] == want), "{want} by rule 3, in {syms:?}");
         }
-        assert!(exports(&asked) < exports(&eager), "the asked phase hands on fewer exports: {} against {}", exports(&asked), exports(&eager));
+        assert_eq!(rows, [["pkg.App", "pkg.core.App"], ["pkg.core.App", "pkg.core.App"], ["pkg.helper", "pkg.util.helper"]], "the names resolved");
+        let want_syms = ["pkg", "pkg.App.Inner", "pkg.App.Inner.go", "pkg.App.run", "pkg.core", "pkg.core.App", "pkg.core.App.Inner", "pkg.core.App.Inner.go", "pkg.core.App.run", "pkg.util.helper", "use.Here", "use.Here.mine"];
+        assert_eq!(syms, want_syms.map(|q| vec![q.to_owned()]), "the symbols");
         assert!(!asked.phase_runs.iter().find(|r| r.name == "py_names").unwrap().rounds.is_empty(), "it ran in rounds");
+    }
+
+    /// A relative specifier spelled as the file's output names its TypeScript file, as TypeScript's ESM resolution
+    /// does: "./c.js" is c.ts, "./m.mjs" m.mts, "./n.cjs" n.cts. (A `.tsx` or `.js` file is a document of its own
+    /// dialect's run, not of a `.language typescript` one.)
+    #[test]
+    fn tsx_names_resolves_a_js_specifier_to_its_typescript_file() {
+        let files = [
+            ("a.ts", "import { g } from \"./c.js\";\nimport { k } from \"./m.mjs\";\nimport { w } from \"./n.cjs\";\ng();\nk();\nw();\n"),
+            ("c.ts", "export function g() {}\n"),
+            ("m.mts", "export function k() {}\n"),
+            ("n.cts", "export function w() {}\n"),
+        ];
+        let reader = ".language typescript\n#include \"tsx/names.rerail\"\n.decl s(p: symbol, q: symbol)\ns(p, q) :- sym_of(n, q), docof(n, d), doc(d, p, _).\n.output s\n";
+        let t = AskedTree::new("tsx-js-spelled", &[], &files);
+        t.run(reader).unwrap();
+        assert_eq!(t.rows("s"), [["a.ts", "c#g"], ["a.ts", "m#k"], ["a.ts", "n#w"]]);
+    }
+
+    /// The asked `tsx_names` (decision 0705) resolves an import through a re-export (`export { g } from`), a star
+    /// (`export * from`) and a namespace import's member, each ask answered by the file of the module that defines it.
+    /// An export nobody imports added to `d.ts` builds `d.ts` alone, in the phase and in the reader; an answer that
+    /// changes (`b.ts` defines `g` itself) builds `b.ts` and `a.ts`, its asker, not `e.ts`. Then the rows equal a fresh
+    /// run's.
+    #[test]
+    fn the_asked_tsx_names_answers_only_what_is_imported() {
+        let files = [
+            ("a.ts", "import { g, h } from \"./b\";\nimport * as E from \"./e\";\ng();\nh();\nE.k();\n"),
+            ("b.ts", "export { g } from \"./c\";\nexport * from \"./d\";\n"),
+            ("c.ts", "export function g() {}\nexport function unused() {}\n"),
+            ("d.ts", "export function h() {}\n"),
+            ("e.ts", "export function k() {}\n"),
+        ];
+        let reader = ".language typescript\n#include \"tsx/names.rerail\"\n.decl s(p: symbol, q: symbol)\ns(p, q) :- sym_of(n, q), docof(n, d), doc(d, p, _).\n.output s\n";
+        let t = AskedTree::new("asked-tsx-names", &[], &files);
+        let cold = t.run(reader).unwrap();
+        let rounds = |r: &crate::code_rule_dsl::logic::plan::corpus::Report| -> Vec<(usize, usize)> {
+            r.phase_runs.iter().find(|r| r.name == "tsx_names").expect("tsx_names ran").rounds.iter().map(|r| (r.asks, r.files - r.memo.0)).collect()
+        };
+        assert_eq!(t.rows("s"), [["a.ts", "c#g"], ["a.ts", "d#h"], ["a.ts", "e#k"]], "g through b's re-export, h through its star, E.k a namespace member");
+        assert_eq!(rounds(&cold), [(6, 5), (6, 4)], "round 1 makes every ask (b's g and h, c's g, d's g and h, e's k); round 2 builds the four files asked, and asks nothing new");
+        t.write(&[("d.ts", "export function h() {}\nexport function spare() {}\n")]);
+        let spare = t.run(reader).unwrap();
+        assert_eq!(rounds(&spare), [(6, 1)], "d.ts alone, no ask changed");
+        assert_eq!(built(&spare), 1, "the reader builds d.ts alone: no asker of d is built again");
+        t.write(&[("b.ts", "export function g() {}\nexport * from \"./d\";\n")]);
+        let moved = t.run(reader).unwrap();
+        assert_eq!(t.rows("s"), [["a.ts", "b#g"], ["a.ts", "d#h"], ["a.ts", "e#k"]]);
+        assert_eq!(rounds(&moved), [(5, 1), (5, 1)], "b.ts in round 1; c.ts, whose ask is gone, in round 2");
+        assert_eq!(built(&moved), 2, "the reader builds b.ts and a.ts, whose answer changed; not e.ts or c.ts");
+        let after = t.rows("s");
+        t.store("fresh.sqlite");
+        t.run(reader).unwrap();
+        assert_eq!(t.rows("s"), after, "the same rows as a fresh run's");
     }
