@@ -489,6 +489,31 @@ describe("startTray", () => {
     expect(received()).toHaveLength(1);
   });
 
+  it("a menu state that cannot be made again, after the state was read once more, is logged again", async () => {
+    let fails = false;
+    const calls = start({
+      current: () => {
+        if (fails) throw new Error("database closed");
+        return health();
+      },
+      intervalMs: 20,
+    });
+    await until(() => received().length === 1, 10_000, "the first state");
+    fails = true;
+    await until(() => calls.logs.length === 1, 10_000, "the first failed read");
+    // The read comes back with the state the menu already shows, so nothing is sent, and then fails again.
+    fails = false;
+    const reads = calls.health;
+    await until(() => calls.health > reads + 2, 10_000, "reads that succeed");
+    fails = true;
+    await until(() => calls.logs.length === 2, 10_000, "the second failed read");
+    expect(calls.logs).toEqual([
+      "rerail tray: could not read the daemon's state for the menu: database closed",
+      "rerail tray: could not read the daemon's state for the menu: database closed",
+    ]);
+    expect(received()).toHaveLength(1);
+  });
+
   it("a tray whose pipes could not be opened is logged once", async () => {
     const options = (logs: string[]): TrayOptions => ({
       trayPath: process.execPath,

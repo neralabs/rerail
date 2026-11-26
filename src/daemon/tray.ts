@@ -235,7 +235,10 @@ export function startTray(options: TrayOptions): TrayHandle {
     setImmediate(() => end("rerail tray: could not start: its pipes could not be opened"));
     return { close: () => end(undefined) };
   }
-  /** Set once a menu state could not be made, so that is logged once, not at every tick. */
+  /**
+   * Set while menu states cannot be made, so an outage is logged once, not at every tick; the next state made clears
+   * it, and the outage after is logged again.
+   */
   let menuFailed = false;
 
   /** The newer Rerail the daemon's update check found, if any. */
@@ -264,6 +267,7 @@ export function startTray(options: TrayOptions): TrayHandle {
       menuFailed = true;
       return;
     }
+    menuFailed = false;
     if (line === sent) return;
     sent = line;
     stdin.write(`${line}\n`);
