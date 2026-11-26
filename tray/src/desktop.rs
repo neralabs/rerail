@@ -14,7 +14,7 @@ use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 use crate::art::{self, Rgba};
 use crate::protocol::{self, Action, Incoming, MenuState, Repositories};
 
-/// The base icon: the "n" alone as a template on macOS, which the system tints for the menu bar; the full-colour
+/// The base icon: the Rerail mark alone as a template on macOS, which the system tints for the menu bar; the full-colour
 /// square on Windows.
 #[cfg(target_os = "macos")]
 const ICON: &[u8] = include_bytes!("../assets/icon-template.png");
