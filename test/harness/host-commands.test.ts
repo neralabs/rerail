@@ -251,7 +251,8 @@ describe("/rerail-create", () => {
     // The session's own launcher, as one POSIX shell word: OMP and Pi run Git Bash on Windows.
     const cli = shellWord("posix", join(resolve("."), "dist", "cli", "cli.js"));
     expect(sent[0]).toContain(`${cli} rules test <draft.json> --json`);
-    expect(sent[0]).toContain("Add this rule?");
+    // One approval: the card, then rules add, which the person allows; no question of the agent's own in the chat.
+    expect(sent[0]).toContain("Show the rule's card, then run `rules add`: do not ask \"Add this rule?\" in the chat.");
     expect(sent[0]).toContain(`${cli} rules add <draft.json>`);
     expect(sent[0]).toContain(`${cli} rules evidence --json`);
     expect(sent[0]).toContain(`Read ${resolve(".")}/skills/rerail-create/SKILL.md and follow it.`);

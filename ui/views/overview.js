@@ -136,12 +136,15 @@ function renderLeftOut(root) {
     h("p", null, "Fix the file and this updates on its own. ", h("span.mono", null, "rerail packs list"), " in the worktree says the same.")))));
 }
 
-/** The rules created by you that wait for your approval, by title: the ones `/rerail-create` added in Log. */
+/**
+ * The rules created by you that wait for your approval, by title: the ones a coding agent added in Log, where it did
+ * not ask you before it ran `rerail rules add` (Cursor, Pi) or wrote them through MCP.
+ */
 export const yourRulesToApprove = () => (data.loaded ? rulesArray().filter(awaitingYourApproval) : [])
   .sort((a, b) => titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: "base" }) || a.rule.id.localeCompare(b.rule.id));
 
 /**
- * The rules your coding agent added that wait for your approval (`/rerail-create` adds the rules it suggests this way):
+ * The rules your coding agent added that wait for your approval (where it did not ask you first):
  * how many, what they caught in Log that the agent was not told, and one button to Created by you, where each is opened
  * and read in full before it is approved from its sheet. Not dismissible: a rule left here keeps running in Log.
  */

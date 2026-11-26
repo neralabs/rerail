@@ -1024,6 +1024,27 @@ describe("rerail rules add", () => {
       ]);
     });
 
+    it("in the session of a coding agent that does not ask first (Cursor), waits in Log beside the original, which keeps running", async () => {
+      const repo = await repository();
+      setUpWithComplexity(repo, "api");
+      const shown = await show(repo, SHIPPED);
+      const file = writeDraft(repo, { ...shown.draft, rule: { ...shown.draft.rule, scope: { include: ["**/*.py"], exclude: ["**/tests/**"] } } });
+      vi.stubEnv("CURSOR_AGENT", "1");
+      try {
+        const { exit, stdout } = await run("add", [file, "--repo", repo]);
+
+        expect(exit).toBe(0);
+        expect(stdout).toContain(`It runs in Log beside ${SHIPPED} until a person approves it on its page in the dashboard, which turns ${SHIPPED} off there.\n`);
+        // The library is this file's, so an earlier test's copy may hold the first copy id.
+        expect(rulesNamed(repo, SHIPPED)).toEqual([
+          { id: SHIPPED, kind: "pack", folder: "api", on: true },
+          { id: expect.stringMatching(new RegExp(`^${SHIPPED}-copy(-\\d+)?$`)) as string, kind: "library_rule", folder: "api", on: true },
+        ]);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     /** A Python function over the complexity pack's limit: one place its Python rule matches, at line 1. */
     const BRANCHY = `def branchy(n):\n${Array.from({ length: 7 }, (_, i) => `    if n == ${i}:\n        return ${i}\n`).join("")}    return -1\n`;
 
@@ -1383,6 +1404,22 @@ describe("rerail rules add", () => {
       expect(getLibraryRuleDocument(id)).toEqual(edit(id));
     });
   });
+  it("in the session of a coding agent that does not ask first (Cursor, Pi), adds a new rule in Log until a person approves it", async () => {
+    const repo = await repository();
+    setUpEmpty(repo);
+    const rule = { ...noConsolePolicy(), id: "acme:waits-in-cursor" };
+    for (const [variable, value] of [["CURSOR_AGENT", "1"], ["PI_CODING_AGENT", "true"]] as const) {
+      vi.stubEnv(variable, value);
+      try {
+        const { exit, stdout } = await run("add", [writeDraft(repo, { kind: "code", rule }), "--repo", repo]);
+        expect(exit).toBe(0);
+        expect(stdout).toContain("  It runs in Log until a person approves it on its page in the dashboard.\n");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    }
+  });
+
   describe("in the session of a coding agent that asks the person before it runs rules add (Claude Code, Codex)", () => {
     afterEach(() => { vi.unstubAllEnvs(); });
 

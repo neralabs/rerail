@@ -34,8 +34,9 @@ export const packOriginName = pack => (isRerailPack(pack) || isWorktreePack(pack
 export const awaitingApproval = item => item.approval?.approved === false;
 
 /**
- * Whether a rule is one created by you (the library) that waits for your approval: `/rerail-create` adds the rules it
- * finds there, unapproved, so they run in Log until you approve them. A worktree's own rules and packs Rerail did not
+ * Whether a rule is one created by you (the library) that waits for your approval: a coding agent that did not ask you
+ * before it ran `rerail rules add` (Cursor, Pi), or that wrote it through MCP, adds it unapproved, so it runs in Log
+ * until you approve it. A worktree's own rules and packs Rerail did not
  * publish are not: someone else wrote those, and each is read on its own page before it is approved. Nor is an edited
  * copy (of a rule Rerail ships, or of your approved rule a coding agent edited): approving it turns the original off
  * where the copy is added, which its page says.

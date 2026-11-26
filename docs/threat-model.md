@@ -501,8 +501,9 @@ write the database, and run `rerail rules approve`. In such a mode, or under a p
 - The host's prompt for `rules add` shows the command, not the rule. `/rerail-create` shows the rule's card just above
   it, but a prompt-injected agent could show one card and add another draft file; the rule is on its dashboard page
   afterwards, where the person can read and remove it.
-- An agent can unset its session variable so `rules add` looks like the person's terminal, but no command file
-  pre-allows that command either, so its host asks for it as for any other.
+- An agent can unset its session variable so `rules add` looks like the person's terminal. Claude Code and Codex still
+  ask for that command, since no command file pre-allows it; Cursor and Pi ask for nothing, so there the rule is
+  approved unseen. That is the gap `rerail rules approve` already has: the variable is no boundary.
 - The passkey control is not built. It would require a WebAuthn assertion before any weakening change, so a leaked
   capability could not weaken rules either.
 
