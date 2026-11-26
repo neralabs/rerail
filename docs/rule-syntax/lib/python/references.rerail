@@ -140,7 +140,7 @@ rf_bind(i, x, m) :- rf_forward(i, x, m).
 rf_forward(i, x, m) :- rf_annot_head(i, x, d), kind(m, "module"), docof(m, d), rf_mlatest(m, x, _, form), form != "del".
 // rf_annot_head(i, x, d): name read i, of x, inside an annotation of document d that reads its annotations late. Its own
 // relation, so the join starts from the annotations' names, not from every binding against every identifier.
-.decl rf_annot_head(i: node, x: symbol, d: number)
+.decl rf_annot_head(i: node, x: symbol, d: number) no_inline
 rf_annot_head(i, x, d) :- rf_in_annot(i), rf_head(i), docof(i, d), rf_future(d), text(i, x).
 // rf_in_annot(n): n is inside an annotation, found down from each annotation: `within(i, a)` from every name read
 // went up every name's ancestors (20M rows on `all` for 48k kept).
