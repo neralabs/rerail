@@ -3307,25 +3307,28 @@ mod tests {
     /// gives its chunk back to the block's free list when dropped.
     #[test]
     fn an_index_array_lies_in_its_relations_block() {
-        let mut rows = Rows::new(1);
-        // copy: not block data: a test's rows
-        rows.extend_from_slice(&[1, 2, 3]);
-        let home = rows.home().expect("a relation with rows has a home");
-        let mut v = collect_in(Some(&home), 0..100u32);
-        assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "in the relation's block");
-        let cap = v.capacity();
-        v.extend(100..cap as u32 + 50);
-        assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "grown in the same block");
-        assert!(v.iter().copied().eq(0..cap as u32 + 50));
-        let c = v.clone();
-        assert!(Arc::ptr_eq(c.facts().expect("a chunk"), &home.facts) && *c == *v);
-        let free = home.facts.block.free_bytes();
-        drop((v, c));
-        assert!(home.facts.block.free_bytes() > free, "its chunks back on the free list");
-        // Without a home: a run's open block.
-        let lone = collect_in(None, [7i64, 8]);
-        assert_eq!(*lone, [7, 8]);
-        assert!(Vector::<u8>::new().facts().is_none(), "empty holds no chunk");
+        // In a chunk of its own: the run's open block is shared with the tests beside it, which take a chunk given back.
+        in_chunk(|| {
+            let mut rows = Rows::new(1);
+            // copy: not block data: a test's rows
+            rows.extend_from_slice(&[1, 2, 3]);
+            let home = rows.home().expect("a relation with rows has a home");
+            let mut v = collect_in(Some(&home), 0..100u32);
+            assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "in the relation's block");
+            let cap = v.capacity();
+            v.extend(100..cap as u32 + 50);
+            assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "grown in the same block");
+            assert!(v.iter().copied().eq(0..cap as u32 + 50));
+            let c = v.clone();
+            assert!(Arc::ptr_eq(c.facts().expect("a chunk"), &home.facts) && *c == *v);
+            let free = home.facts.block.free_bytes();
+            drop((v, c));
+            assert!(home.facts.block.free_bytes() > free, "its chunks back on the free list");
+            // Without a home: the open block of the chunk it is made in.
+            let lone = collect_in(None, [7i64, 8]);
+            assert_eq!(*lone, [7, 8]);
+            assert!(Vector::<u8>::new().facts().is_none(), "empty holds no chunk");
+        });
     }
 
     /// Decision 0487 R4 at a relation's arrays: with a GPU read of a relation array's items queued, a CPU write of them
