@@ -29,10 +29,51 @@ async function installOutsideGit(root: string): Promise<string> {
   return realpathSync(packageRoot);
 }
 
-async function rerail(cli: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<{ code: number | null; stdout: string }> {
-  const { promise, resolve: settle } = Promise.withResolvers<{ code: number | null; stdout: string }>();
-  const child = execFile(process.execPath, [cli, ...args], { env }, (_error, stdout) => settle({ code: child.exitCode, stdout }));
+/** How a `rerail` command exited, and what it wrote. */
+interface Ran {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+async function rerail(cli: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<Ran> {
+  const { promise, resolve: settle } = Promise.withResolvers<Ran>();
+  const child = execFile(process.execPath, [cli, ...args], { env }, (_error, stdout, stderr) => settle({ code: child.exitCode, stdout, stderr }));
   return await promise;
+}
+
+/** The case's own limit, from its start. */
+const CASE_LIMIT_MS = 120_000;
+/**
+ * The part of the case's limit kept for what follows the daemon's answer: a second start, the status, the bundle and the
+ * clean-up, whose wait for the daemon's exit (`endProcess`) takes up to 30 s twice. A daemon slow to answer is waited
+ * for until the rest of the limit is spent.
+ */
+const AFTER_ANSWER_MS = 60_000;
+/** `rerail status`'s exit codes when no daemon answers it (docs/reference.md): 3 when none runs, 4 when it does not answer. */
+const NO_ANSWER = [3, 4];
+
+/** The pid the daemon's state file names, when the daemon has written it. */
+async function recordedPid(home: string): Promise<number | undefined> {
+  const state = join(home, "daemon.json");
+  // Test boundary: the daemon's own record of itself.
+  return existsSync(state) ? (JSON.parse(await readFile(state, "utf8")) as { pid: number }).pid : undefined;
+}
+
+/**
+ * The lines `rerail daemon start` prints for the daemon that runs. A start whose daemon answers within the start's own
+ * wait printed them. One whose daemon has not, as on a busy machine, exits 1 and prints nothing on stdout, saying on
+ * stderr that the daemon may still be starting and that it leaves it running: the case then waits, until `answerBy`,
+ * for `rerail status` to find the daemon answering, and takes the lines a second start prints for a daemon that runs,
+ * after "The Rerail daemon is already running.".
+ */
+async function runningDaemonLines(cli: string, env: NodeJS.ProcessEnv, started: Ran, answerBy: number): Promise<string> {
+  if (started.code === 0) return started.stdout;
+  expect(started).toMatchObject({ code: 1, stdout: "", stderr: expect.stringContaining("may still be starting; this start leaves it running") });
+  await expect.poll(async () => (await rerail(cli, ["status"], env)).code, { timeout: answerBy - Date.now(), interval: 250 }).not.toBeOneOf(NO_ANSWER);
+  const again = await rerail(cli, ["daemon", "start", "--port", "0"], env);
+  expect(again).toMatchObject({ code: 0, stdout: expect.stringMatching(/^The Rerail daemon is already running\.\n/u) });
+  return again.stdout;
 }
 
 /** Whether a process this account may signal runs as `pid`: signal 0 asks and sends nothing. */
@@ -64,6 +105,7 @@ async function endProcess(pid: number): Promise<void> {
 describe("a Rerail package with no content store", () => {
   // Every code rule audit of such a Rerail fails to open its workspace; each place that reports the engine says so.
   test("says on each surface that no code rule can run, and why", async () => {
+    const answerBy = Date.now() + CASE_LIMIT_MS - AFTER_ANSWER_MS;
     const root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-no-store-")));
     const home = join(root, "rerail-home");
     const env: NodeJS.ProcessEnv = { ...process.env, RERAIL_HOME: home };
@@ -76,10 +118,9 @@ describe("a Rerail package with no content store", () => {
       const why = `no code rule can run: Rerail at ${packageRoot} is neither the managed installation under ` +
         `${join(home, "versions")} nor in a Git checkout, so it has no content store`;
       const started = await rerail(cli, ["daemon", "start", "--port", "0"], env);
-      // Test boundary: the state file the start wrote, read before any assertion for the pid the clean-up ends.
-      const state = join(home, "daemon.json");
-      if (existsSync(state)) daemonPid = (JSON.parse(await readFile(state, "utf8")) as { pid: number }).pid;
-      expect(started.stdout).toContain(`Engine: unavailable: ${why}\n`);
+      // Read before any assertion, for the clean-up to end that daemon.
+      daemonPid = await recordedPid(home);
+      expect(await runningDaemonLines(cli, env, started, answerBy)).toContain(`Engine: unavailable: ${why}\n`);
       expect(await rerail(cli, ["status"], env)).toMatchObject({ code: 5, stdout: expect.stringContaining(`Engine: unavailable: ${why}\n`) });
       expect(await readFile(join(home, "daemon.log"), "utf8")).toContain(`native kernel: unavailable: ${why}\n`);
       const bundle = join(root, "bundle.json");
@@ -89,6 +130,8 @@ describe("a Rerail package with no content store", () => {
       expect(JSON.parse(await readFile(bundle, "utf8"))).toMatchObject({ daemon: { status: "running", engine: { ok: false, error: expect.stringMatching(redacted) } } });
     } finally {
       try {
+        // A daemon still in its start when the start returned writes its state file later.
+        daemonPid ??= await recordedPid(home);
         if (cli !== undefined) await rerail(cli, ["daemon", "stop"], env);
         // The daemon runs in the Rerail home, inside the folder removed next: its exit comes first.
         if (daemonPid !== undefined) await endProcess(daemonPid);
@@ -96,5 +139,5 @@ describe("a Rerail package with no content store", () => {
         await removeFolder(root);
       }
     }
-  }, 120_000);
+  }, CASE_LIMIT_MS);
 });
