@@ -11,16 +11,24 @@
 //       v = make()
 //       yield v              ← PT022
 #include "python/pytest.rerail"
-//   pytest_fixture(f, d, e), pytest_seen(f, n), pytest_deco(o, d, e, q)
+//   pytest_fixture(f, d, e), pytest_seen(f, n), pytest_hidden(f, n), pytest_deco(o, d, e, q)
 
 .violation PT022(at: node, x: symbol) code "PT022"
     "Nothing runs after this `yield` in fixture `{x}`: use `return`, and annotate the value type instead of `Generator[T, ...]` or `Iterator[T]`. Keep `yield` if a local object (temp dir, open file) must stay alive."
     suppress ruff "PT022"
 PT022(s, x) :- pytest_fixture(f, _, _), !abstract(f), def_name(f, x), field(f, "body", b), child(b, s, i),
     kind(s, "expression_statement"), child(s, y, 0), plain_yield(y), count : { child(b, t, j), j > i, !kind(t, "comment") } = 0,
-    count : { pytest_seen(f, n), plain_yield(n) } = 1.
+    count : { seen_yield(f, n) } = 1.
 .decl plain_yield(y: node)
 plain_yield(y) :- kind(y, "yield"), !op(y, "from").
+// The yields Ruff's visitor counts: pytest_seen's, and those in the decorators of a class in the fixture, which
+// pytest_seen leaves out (it skips a nested def with its decorators, and Ruff walks a class with its own).
+//   @deco((yield))      counted: the fixture has two yields, so PT022 is not reported
+//   class C: ...
+.decl seen_yield(f: node, n: node)
+seen_yield(f, n) :- pytest_seen(f, n), plain_yield(n).
+seen_yield(f, n) :- pytest_fixture(f, _, _), plain_yield(n), nearest(n, dc, def_mark), kind(dc, "decorator"),
+    child(dd, dc, _), field(dd, "definition", c), kind(c, "class_definition"), def_frame(dd, f), !pytest_hidden(f, n).
 .decl abstract(f: node)
 abstract(f) :- pytest_deco(f, _, e, q), !kind(e, "call"), (q = "abc.abstractmethod" ; q = "abc.abstractclassmethod" ;
     q = "abc.abstractstaticmethod" ; q = "abc.abstractproperty").

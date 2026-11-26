@@ -6,16 +6,27 @@
 
 // Ruff PT012 (flake8-pytest-style): a `with pytest.raises(…)` block holding more than the one simple statement
 // that should raise; anything else may raise first and pass the test. A lone def or class is fine (it tests a
-// decorator), as is `for x in it: pass` (or `...`), and a nested `with` whose body is one simple statement.
+// decorator), as is `for x in it: pass` (or `...`, `(...)`, but not `...,`), and a nested `with` whose body is one
+// simple statement.
 //   with pytest.raises(ValueError):      ← PT012
 //       x = make()
 //       x.check()
 //   with pytest.raises(ValueError):      not reported
 //       make().check()
 #include "python/pytest.rerail"
-//   pytest_with(w, q), pytest_crowded(w)
+//   pytest_with(w, q), pytest_crowded(w), pytest_only(b, s)
 
 .violation PT012(at: node) code "PT012"
     "Keep only the statement that should raise inside `pytest.raises`; move setup and follow-up statements before or after the `with` block, unless each one is needed to trigger the error."
     suppress ruff "PT012"
-PT012(w) :- pytest_with(w, "pytest.raises"), pytest_crowded(w).
+PT012(w) :- pytest_with(w, "pytest.raises"), pytest_crowded(w), !lone_for(w, _).
+PT012(w) :- pytest_with(w, "pytest.raises"), lone_for(w, s), field(s, "body", b), !light_loop(b).
+
+// A lone `for` is judged here, not by pytest_crowded: Ruff reads its body's `...` through parentheses, `(...)`,
+// and `...,` is a tuple, not the ellipsis (pytest_light_loop has both the other way round).
+.decl lone_for(w: node, s: node)
+lone_for(w, s) :- kind(w, "with_statement"), field(w, "body", b), pytest_only(b, s), kind(s, "for_statement").
+.decl light_loop(b: node)  // `pass`, `...` or `(...)`: the loop's own body, its else aside
+light_loop(b) :- pytest_only(b, t), kind(t, "pass_statement").
+light_loop(b) :- pytest_only(b, t), kind(t, "expression_statement"), child(t, e0, 0), !child(t, _, 1), unparen(e0, e),
+    kind(e, "ellipsis"), text(t, x), !match("[\\s\\S]*,[\\s\\\\]*", x).
