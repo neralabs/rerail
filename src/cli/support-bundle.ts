@@ -810,7 +810,7 @@ function readDatabaseSections(context: DatabaseReadContext, repository: SupportB
 
 function readOpenDatabase(database: RerailDatabase, context: DatabaseReadContext, repository: SupportBundle["repository"]): DatabaseSections {
   const { attempt, knownValues } = context;
-  const repositories = attempt("repositories", () => listRepositories(database), []);
+  const repositories = attempt("repositories", () => listRepositories(database, context.stderr), []);
   knownValues.push(...repositories.flatMap(repositoryLiterals));
   knownValues.push(...attempt("session owners", () => database.select({ token: policySessionOwners.token }).from(policySessionOwners).all(), [])
     .map(row => ({ value: row.token, label: REDACTED })));

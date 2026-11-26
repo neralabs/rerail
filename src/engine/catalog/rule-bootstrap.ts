@@ -13,6 +13,7 @@ import {
 } from "../storage/schema.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { normalizeFolder, RULE_SETTING_ORIGINS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS, type RuleCatalog } from "./repository-model.js";
+import { aliasesAfter, readableRepositoryRows } from "./repository-registry.js";
 import { approve, isApproved, ruleSubject } from "./rule-approval.js";
 import { listLibraryRules, quarantinedLibraryRules, validateLibraryDocument, writeLibraryRule } from "./rule-library.js";
 import { RULE_MODES } from "./rule-mode.js";
@@ -140,7 +141,7 @@ export function exportRulesDump(db: RerailDatabase, now = new Date()): RulesDump
     .orderBy(asc(ruleAttachments.repositoryKey), asc(ruleAttachments.folder), asc(ruleAttachments.sourceKind), asc(ruleAttachments.sourceId)).all();
   const settings = db.select().from(ruleSettings).where(eq(ruleSettings.ownerKind, "repository"))
     .orderBy(asc(ruleSettings.ownerId), asc(ruleSettings.folder), asc(ruleSettings.targetKind), asc(ruleSettings.targetId)).all();
-  const repositoryRows = db.select().from(repositories).orderBy(asc(repositories.repositoryKey)).all();
+  const repositoryRows = readableRepositoryRows(db);
   return {
     version: RULES_DUMP_VERSION,
     exportedAt: now.toISOString(),
@@ -168,9 +169,10 @@ export function exportRulesDump(db: RerailDatabase, now = new Date()): RulesDump
  * Import a rules dump, all or nothing: every code rule must compile first. Library rules are upserted, including one
  * that takes a By Rerail rule's id (the library rule wins). Each listed repository's attachments and repository settings
  * are replaced and its set-up time kept, while this machine's start state is left alone; a repository this machine
- * knows under another key or an alias receives them, and keeps every key as an alias. Approvals are this machine's
- * (`rule-approval.ts`): an imported rule whose content was not approved here runs in Log until a person approves it, or
- * is approved by the import itself with `approve`.
+ * knows under another key or an alias receives them, and keeps every key as an alias, unless its stored aliases hold
+ * no JSON array (a damaged file or a hand edit): the import leaves that text as it is, so the dump's keys are not
+ * stored for it. Approvals are this machine's (`rule-approval.ts`): an imported rule whose content was not approved
+ * here runs in Log until a person approves it, or is approved by the import itself with `approve`.
  */
 export function importRulesDump(db: RerailDatabase, ruleCatalog: RuleCatalog, value: unknown, options: RulesDumpImportOptions = {}): RulesDumpImportReport {
   const now = options.now ?? Date.now();
@@ -198,38 +200,7 @@ export function importRulesDump(db: RerailDatabase, ruleCatalog: RuleCatalog, va
         shadowBundled: true,
       });
     }
-    const known = tx.select().from(repositories).all();
-    for (const repository of dump.repositories) {
-      // A repository this machine knows under another key, or under one of its aliases, takes the dump's configuration.
-      const names = [repository.repositoryKey, ...repository.aliases];
-      const existing = known.find(row => names.includes(row.repositoryKey) || row.aliases.some(alias => names.includes(alias)));
-      const key = existing?.repositoryKey ?? repository.repositoryKey;
-      const aliases = [...new Set([...(existing?.aliases ?? []), ...names])].filter(alias => alias !== key);
-      const displayName = existing === undefined || existing.repositoryKey === repository.repositoryKey ? repository.displayName : existing.displayName;
-      tx.insert(repositories).values({
-        repositoryKey: key,
-        displayName,
-        aliases,
-        configuredAt: repository.configuredAt,
-        createdAt: now,
-        updatedAt: now,
-      }).onConflictDoUpdate({
-        target: repositories.repositoryKey,
-        set: { displayName, aliases, configuredAt: repository.configuredAt, updatedAt: now },
-      }).run();
-      tx.delete(ruleAttachments).where(eq(ruleAttachments.repositoryKey, key)).run();
-      // The dump's configuration is not the review's, so set-up no longer waits on one it offered.
-      clearSetupReview(tx, key);
-      tx.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, key))).run();
-      for (const attachment of repository.attachments) {
-        tx.insert(ruleAttachments).values({ repositoryKey: key, ...attachment, folder: normalizeFolder(attachment.folder), createdAt: now })
-          .onConflictDoNothing().run();
-      }
-      for (const setting of repository.settings) {
-        tx.insert(ruleSettings).values({ ownerKind: "repository", ownerId: key, ...setting, folder: normalizeFolder(setting.folder), updatedAt: now })
-          .onConflictDoNothing().run();
-      }
-    }
+    importRepositories(tx, db, dump.repositories, now);
     // Approved last, as `rerail rules approve` would right after the import: an edited copy of a By Rerail rule approved
     // the first time switches its original off where the imported configuration adds it.
     const stored = documents.length === 0 ? [] : tx.select({ ruleId: libraryRules.ruleId, payloadHash: libraryRules.payloadHash }).from(libraryRules)
@@ -251,4 +222,50 @@ export function importRulesDump(db: RerailDatabase, ruleCatalog: RuleCatalog, va
       .map(setting => (setting.targetKind === "pack" ? `pack ${setting.targetId}` : setting.targetId))),
   ]);
   return { library: documents.length, repositories: dump.repositories.length, onBlock: [...onBlock], approved, waiting };
+}
+
+type DumpRepository = RulesDump["repositories"][number];
+type RepositoryWriter = Pick<RerailDatabase, "insert" | "delete">;
+
+/**
+ * The dump's repositories, each into the one this machine knows under its key or an alias, else a new one. The rows are
+ * read as the export reads them, through `db`, whose file the line naming a damaged row names; `tx` runs on its connection.
+ */
+function importRepositories(tx: RepositoryWriter, db: RerailDatabase, entries: readonly DumpRepository[], now: number): void {
+  const known = readableRepositoryRows(db);
+  for (const repository of entries) importRepository(tx, known, repository, now);
+}
+
+/** One repository of a dump: its row written, its attachments and repository settings replaced. */
+function importRepository(tx: RepositoryWriter, known: ReturnType<typeof readableRepositoryRows>, repository: DumpRepository, now: number): void {
+  // A repository this machine knows under another key, or under one of its aliases, takes the dump's configuration.
+  const names = [repository.repositoryKey, ...repository.aliases];
+  const existing = known.find(row => names.includes(row.repositoryKey) || row.aliases.some(alias => names.includes(alias)));
+  const key = existing?.repositoryKey ?? repository.repositoryKey;
+  // Undefined where its stored aliases hold no array: the import then leaves that text as it is.
+  const aliases = aliasesAfter([existing], names, key);
+  const displayName = existing === undefined || existing.repositoryKey === repository.repositoryKey ? repository.displayName : existing.displayName;
+  tx.insert(repositories).values({
+    repositoryKey: key,
+    displayName,
+    aliases,
+    configuredAt: repository.configuredAt,
+    createdAt: now,
+    updatedAt: now,
+  }).onConflictDoUpdate({
+    target: repositories.repositoryKey,
+    set: { displayName, aliases, configuredAt: repository.configuredAt, updatedAt: now },
+  }).run();
+  tx.delete(ruleAttachments).where(eq(ruleAttachments.repositoryKey, key)).run();
+  // The dump's configuration is not the review's, so set-up no longer waits on one it offered.
+  clearSetupReview(tx, key);
+  tx.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, key))).run();
+  for (const attachment of repository.attachments) {
+    tx.insert(ruleAttachments).values({ repositoryKey: key, ...attachment, folder: normalizeFolder(attachment.folder), createdAt: now })
+      .onConflictDoNothing().run();
+  }
+  for (const setting of repository.settings) {
+    tx.insert(ruleSettings).values({ ownerKind: "repository", ownerId: key, ...setting, folder: normalizeFolder(setting.folder), updatedAt: now })
+      .onConflictDoNothing().run();
+  }
 }
