@@ -268,6 +268,16 @@ them.
    each byte where the number changes part, and the start's test is repeated there. A test build checks the run
    against the mask over the file. Measured (same run, m1max, best of 15): tier 1 15.6 to 16.3 ms against 24.4 ms
    after 31.
+33. **A test at a number's end reads the terms its run ended in**: the run read forward (32) leaves the terms it
+   ended in at the token's last byte (`end_last`). A test there (an escape anchored at a run's last byte, at `l` or
+   `l + k`) takes what the run tells: its mask holds at `l`, neither it nor its terms at `l + 1`, its terms at `l` are
+   those bits. The run's terms and the test's masks are compared in one form, each name in place down to the classes
+   and a union's term that holds at no byte of the other side of an `&` left out. An `&`'s side that reads no fill is
+   tested first. So `a word touching a real number` is `!(end_last >> 0 & 1 == 1) && w(l + 1)`, and `a number that
+   ends in _` tests `src[l] == b'_'` first, as the lean lexer, whose `digits` ends on a digit, reads no fill at a
+   number's end. The other numbers' masks (a hex fill in a decimal number's test, `nb` in a hex number's) stay, read
+   after the bytes' tests. The token loop's reads of a fill back: 111, against 223 after 32. Measured (same run,
+   m1max, best of 15): tier 1 15.7 to 15.9 ms against 16.3 ms.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`

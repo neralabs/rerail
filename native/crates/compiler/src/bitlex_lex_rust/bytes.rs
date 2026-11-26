@@ -35,6 +35,12 @@ pub(super) struct Bytes<'a> {
     in_region: bool,
     /// Whether a read with no form of the bytes stays as it is (`partial_windows`), its mask in `failed`.
     partial: bool,
+    /// The run the last token's `run_last` read forward (`forward_run`): its mask and its terms. A test at its last
+    /// byte `l` takes them there: the mask holds at `l`, at `l + 1` it and its terms do not, and its terms at `l` are
+    /// those the run ended in (`end_last`).
+    fwd: Option<(Expr, Vec<Expr>)>,
+    /// Whether a run was read forward: the loop's blocks then hold `end_last`.
+    fwd_used: bool,
     pub(super) failed: std::collections::HashSet<String>,
     /// The fills' and escapes' windows and tests written (`wf_*`, `af_*`).
     wmemo: HashMap<Expr, String>,
@@ -94,7 +100,7 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false, tag: "" }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false, tag: "", fwd: None, fwd_used: false }
     }
 
     /// `code` with each read of the masks it has (`locals`) in the windows' form, no block's words (decision 0703): a
@@ -295,6 +301,8 @@ impl<'a> Bytes<'a> {
             Expr::Empty => "false".to_owned(),
             // A term of a run read forward (`forward_run`): whether it held at the byte before.
             Expr::Name(n) if let Some(k) = n.strip_prefix("\u{0}last") => format!("(last >> {k} & 1 == 1)"),
+            // A term of the run read forward that ended at the token's last byte: whether the run ended in it.
+            Expr::Name(n) if let Some(k) = n.strip_prefix("\u{0}end") => format!("(end_last >> {k} & 1 == 1)"),
             Expr::Name(n) => {
                 // Asked of the records (`code_at`), where tier 2 asks it.
                 if self.code_fn && n == "code" {
@@ -961,8 +969,9 @@ impl<'a> Bytes<'a> {
                 }
             }
         }
-        let _ = m;
-        Some(format!("{{\n        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).\n        let mut q = {s0};\n        let mut last = 0u32;\n        while q < n {{\n            let mut now = 0u32;\n{tests}            if now == 0 && q > {s0} {{\n                break;\n            }}\n{jumps}            last = now;\n            q += 1;\n        }}\n        q.saturating_sub(1)\n    }}"))
+        self.fwd = Some((self.norm(&e, 0), full.iter().map(|t| self.norm(t, 0)).collect()));
+        self.fwd_used = true;
+        Some(format!("{{\n        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).\n        let mut q = {s0};\n        let mut last = 0u32;\n        while q < n {{\n            let mut now = 0u32;\n{tests}            if now == 0 && q > {s0} {{\n                break;\n            }}\n{jumps}            last = now;\n            q += 1;\n        }}\n        end_last = last;\n        q.saturating_sub(1)\n    }}"))
     }
 
     /// The window function of the local `m` for a test of bytes `..=b` from the window's first (`l_m`), written once:
@@ -992,6 +1001,10 @@ impl<'a> Bytes<'a> {
             return Ok(Some(format!("wput({}, {}, {}, {f})", args[0].trim(), args[2].trim(), args[3].trim())));
         }
         let Some(m) = mask(&args[0]) else { return Ok(None) };
+        // A token's run, read another way than forward: the tests at its end take nothing of the last one's.
+        if name.contains("run_") && !line.contains("assert") {
+            self.fwd = None;
+        }
         // The test build's checks read the walk's masks, which stay the walk's.
         if !self.locals.contains_key(&m) {
             return if line.contains("assert") || self.partial { Ok(None) } else { Err(format!("`{m}` is no mask of the bytes")) };
@@ -1060,6 +1073,7 @@ impl<'a> Bytes<'a> {
         Ok(Some(match (name, args.len()) {
             ("bit", 2) => {
                 let e = self.expr(&m)?;
+                let e = self.at_run_end(&e, args[1].trim()).unwrap_or(e);
                 format!("({})", self.at(&e, args[1].trim(), 0)?)
             }
             ("last_in", 3) if self.partial => format!("wlast_in({}, {}, {})", args[1].trim(), args[2].trim(), self.window_fn(&m)?.0),
@@ -1235,7 +1249,130 @@ impl<'a> Bytes<'a> {
 
     /// The block words the loop reads (`block_word`), each made of its window at the block's first byte.
     pub(super) fn block_decls(&self) -> String {
-        self.block.iter().map(|m| format!("        let k_{m} = unsafe {{ w_{m}::<S>(src, n, base as isize, &mut 0) }};\n")).collect()
+        let mut out: String = self.block.iter().map(|m| format!("        let k_{m} = unsafe {{ w_{m}::<S>(src, n, base as isize, &mut 0) }};\n")).collect();
+        if self.fwd_used {
+            out.push_str("        // The terms a run read forward ended in (`forward_run`), at its token's last byte.\n        #[allow(unused_assignments)]\n        let mut end_last = 0u32;\n");
+        }
+        out
+    }
+
+    /// `e` at `at`, a byte from the last of the run the token read forward (`l`, `l + k`), with what the run tells of
+    /// its bytes in place: the run's mask holds at `l`, at `l + 1` neither it nor its terms hold, and its terms at `l`
+    /// are those it ended in. `None` where no run was read forward, or `at` is no byte from its last.
+    fn at_run_end(&self, e: &Expr, at: &str) -> Option<Expr> {
+        let (run, terms) = self.fwd.as_ref()?;
+        let off: i64 = match at {
+            "l" => 0,
+            a => match a.strip_prefix("l + ").or_else(|| a.strip_prefix("l - ").map(|_| "")) {
+                Some("") => return None,
+                Some(k) => k.parse().ok()?,
+                None => return None,
+            },
+        };
+        let mut full = terms.clone();
+        full.push(run.clone());
+        let all = Expr::Not(Box::new(Expr::Empty));
+        fn go(me: &Bytes, e: &Expr, off: i64, run: &Expr, terms: &[Expr], full: &[Expr], all: &Expr, depth: usize) -> Expr {
+            if depth > 48 {
+                return e.clone();
+            }
+            if e == run {
+                return match off {
+                    0 => all.clone(),
+                    1 => Expr::Empty,
+                    _ => e.clone(),
+                };
+            }
+            if let Some(k) = terms.iter().position(|t| t == e) {
+                return match off {
+                    0 => Expr::Name(format!("\u{0}end{k}")),
+                    1 => Expr::Empty,
+                    _ => e.clone(),
+                };
+            }
+            let r = |x: &Expr, o: i64| Box::new(go(me, x, o, run, terms, full, all, depth + 1));
+            match e {
+                Expr::Name(n) if !me.classes.contains_key(n.as_str()) => match me.locals.get(n).or_else(|| me.defs.get(n)) {
+                    Some(d) if reads_terms(me, d, full, 0) => go(me, d, off, run, terms, full, all, depth + 1),
+                    _ => e.clone(),
+                },
+                Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => match Bytes::shift(f, args) {
+                    Some((x, k)) if reads_terms(me, &x, full, 0) => {
+                        let inner = go(me, &x, off + k, run, terms, full, all, depth + 1);
+                        if inner == Expr::Empty || inner == *all || !reads_terms(me, &x, full, 0) {
+                            inner
+                        } else {
+                            Expr::Call(f.clone(), vec![Arg::E(inner), Arg::N(k.unsigned_abs())])
+                        }
+                    }
+                    _ => e.clone(),
+                },
+                Expr::Not(a) => Expr::Not(r(a, off)),
+                Expr::And(a, b) => Expr::And(r(a, off), r(b, off)),
+                Expr::Or(a, b) => Expr::Or(r(a, off), r(b, off)),
+                Expr::Xor(a, b) => Expr::Xor(r(a, off), r(b, off)),
+                _ => e.clone(),
+            }
+        }
+        Some(fold(go(self, &self.norm(e, 0), off, run, terms, &full, &all, 0)))
+    }
+
+    /// `e` with every name of a mask in place, down to the classes: one form of a mask however the loop's locals or the
+    /// grammar name it.
+    fn norm(&self, e: &Expr, depth: usize) -> Expr {
+        if depth > 64 {
+            return e.clone();
+        }
+        let r = |x: &Expr| Box::new(self.norm(x, depth + 1));
+        match e {
+            Expr::Name(n) if self.classes.contains_key(n.as_str()) || n.starts_with('\u{0}') => e.clone(),
+            Expr::Name(n) => {
+                let k = n.strip_prefix("s1.").unwrap_or(n);
+                match self.locals.get(k).or_else(|| self.defs.get(k)).or_else(|| self.locals.get(&format!("m_{k}"))) {
+                    Some(d) => self.norm(d, depth + 1),
+                    None => e.clone(),
+                }
+            }
+            Expr::Not(a) => Expr::Not(r(a)),
+            // A union's term that holds at no byte the other side can (`(word | high) & digit`): left out.
+            Expr::And(a, b) => {
+                let (a, b) = (self.norm(a, depth + 1), self.norm(b, depth + 1));
+                let narrow = |u: Expr, by: &Expr| -> Expr {
+                    let Some(set) = self.byte_set(by, 0) else { return u };
+                    let mut ts = Vec::new();
+                    fn ors(e: Expr, out: &mut Vec<Expr>) {
+                        match e {
+                            Expr::Or(a, b) => {
+                                ors(*a, out);
+                                ors(*b, out);
+                            }
+                            e => out.push(e),
+                        }
+                    }
+                    if !matches!(u, Expr::Or(..)) {
+                        return u;
+                    }
+                    ors(u, &mut ts);
+                    let kept: Vec<Expr> = ts.into_iter().filter(|t| self.byte_set(t, 0).is_none_or(|x| (0..256).any(|c| x[c] && set[c]))).collect();
+                    kept.into_iter().reduce(|x, y| Expr::Or(Box::new(x), Box::new(y))).unwrap_or(Expr::Empty)
+                };
+                let a2 = narrow(a.clone(), &b);
+                let b2 = narrow(b, &a);
+                Expr::And(Box::new(a2), Box::new(b2))
+            }
+            Expr::Or(a, b) => Expr::Or(r(a), r(b)),
+            Expr::Xor(a, b) => Expr::Xor(r(a), r(b)),
+            Expr::Call(f, args) => Expr::Call(
+                f.clone(),
+                args.iter()
+                    .map(|a| match a {
+                        Arg::E(x) => Arg::E(self.norm(x, depth + 1)),
+                        a => a.clone(),
+                    })
+                    .collect(),
+            ),
+            _ => e.clone(),
+        }
     }
 
     /// The block's word of mask `m` (`k_m`), made once a block.
@@ -2462,4 +2599,40 @@ fn reads_terms(me: &Bytes, e: &Expr, full: &[Expr], depth: usize) -> bool {
         Expr::Call(_, args) => args.iter().any(|a| matches!(a, Arg::E(x) if reads_terms(me, x, full, depth + 1))),
         _ => false,
     }
+}
+
+/// Whether `e` reads a fill (a scan back from its byte).
+fn reads_fill(e: &Expr) -> bool {
+    match e {
+        Expr::Call(f, _) if f == "fill" || f == "escaped" => true,
+        Expr::Call(_, args) => args.iter().any(|a| matches!(a, Arg::E(x) if reads_fill(x))),
+        Expr::Not(a) => reads_fill(a),
+        Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => reads_fill(a) || reads_fill(b),
+        _ => false,
+    }
+}
+
+/// `e` with its constants folded (`simplify`) at every node, a call's arguments too; of an `&`, the side that reads no
+/// fill first, so a fill is read where the bytes' tests hold, as the lean lexer tests a byte before it reads on.
+fn fold(e: Expr) -> Expr {
+    let f = |a: Box<Expr>| Box::new(fold(*a));
+    super::simplify(match e {
+        Expr::Not(a) => Expr::Not(f(a)),
+        Expr::And(a, b) => {
+            let (a, b) = (f(a), f(b));
+            if reads_fill(&a) && !reads_fill(&b) { Expr::And(b, a) } else { Expr::And(a, b) }
+        }
+        Expr::Or(a, b) => Expr::Or(f(a), f(b)),
+        Expr::Xor(a, b) => Expr::Xor(f(a), f(b)),
+        Expr::Call(g, args) => Expr::Call(
+            g,
+            args.into_iter()
+                .map(|a| match a {
+                    Arg::E(x) => Arg::E(fold(x)),
+                    a => a,
+                })
+                .collect(),
+        ),
+        e => e,
+    })
 }
