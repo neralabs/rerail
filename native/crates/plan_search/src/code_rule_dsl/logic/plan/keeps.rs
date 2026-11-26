@@ -48,7 +48,7 @@ use rerail_blocks::vector::Vector;
 use super::Model;
 use super::body::{Body, Placed};
 use super::fields::Fields;
-use super::super::program_image::{RuleId, Version};
+use super::super::program_image::{CmpOp, Lit, RuleId, TermRef, Version};
 use std::cell::RefCell;
 use std::sync::Arc;
 use std::collections::{BTreeMap, BTreeSet};
@@ -347,6 +347,8 @@ pub fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<String>, P
 enum Priced {
     Small(f64, f64),
     Unplanned,
+    /// A reader joins on a column the copies only test a call's value against (`key_lost`).
+    KeyLost(String),
     Weighed(Verdict),
 }
 
@@ -403,6 +405,13 @@ fn price_all(
             out.insert(rel.to_owned(), Priced::Unplanned);
             continue;
         };
+        if let Some(x) = reads.iter().zip(&made).find_map(|(&(ri, i), made)| {
+            let copies: Vec<Body<'_>> = made.iter().map(|&id| Body::of(&cv, cv.rule(id).expect("a copy"))).collect();
+            key_lost(&read.bodies[ri], i, &copies)
+        }) {
+            out.insert(rel.to_owned(), Priced::KeyLost(x));
+            continue;
+        }
         for (&(ri, i), made) in reads.iter().zip(&made) {
             let reader = &read.bodies[ri];
             let copies: Vec<Body<'_>> = made.iter().map(|&id| Body::of(&cv, cv.rule(id).expect("a copy"))).collect();
@@ -476,11 +485,36 @@ fn shown(rel: &str, v: &Verdict) -> String {
 /// stored side did. An alternative that never ran is never taken on estimates the estimates alone would not take:
 /// with two chunks it never runs before the last chunk, and a wrong guess then costs the whole chunk (0099, "The
 /// regression").
+/// A column of the read (literal `i` of `reader`) that another of the reader's atoms joins on, and that a copy binds
+/// only by a call (`$x = @rr_node_text_any($i)`, from `text(i, x)`): stored, the join reads the relation's rows by
+/// that column; inlined, no index reads it, so every order of the copy expands the other side's rows before the
+/// test. `rf_annot_head` inlined into `rf_forward` joined each module's bindings with every node of its document,
+/// 15.2 M rows of work where stored took 0.2 M, on estimates that priced it at 178 (the test's share is a property of
+/// the rows, which no statistic of the store holds before the copy runs).
+pub fn key_lost(reader: &Body<'_>, i: usize, copies: &[Body<'_>]) -> Option<String> {
+    let read: Vec<&str> = reader.args(i).iter().filter_map(|t| t.var()).map(|v| reader.var(v)).collect();
+    let joined = |x: &str| (0..reader.len()).any(|j| j != i && reader.is_join(j) && reader.plain_atom(j).is_some_and(|a| !a.neg()) && reader.args(j).iter().any(|t| t.var().is_some_and(|v| reader.var(v) == x)));
+    copies.iter().find_map(|c| {
+        (0..c.len()).find_map(|l| {
+            let Lit::Cmp { l: a, op: CmpOp::Eq, r: b } = c.view(l) else { return None };
+            let v = match (a, b) {
+                (TermRef::Call(..), TermRef::Var(v)) | (TermRef::Var(v), TermRef::Call(..)) => v,
+                _ => return None,
+            };
+            let x = c.var(v);
+            // Bound in the copy by no atom but the reader's own.
+            let by_atom = (0..c.len()).any(|j| c.plain_atom(j).is_some_and(|at| !at.neg()) && c.args(j).iter().any(|t| t.var() == Some(v)) && !(0..reader.len()).any(|k| k != i && reader.show(k) == c.show(j)));
+            (read.contains(&x) && joined(x) && !by_atom).then(|| x.to_owned())
+        })
+    })
+}
+
 fn settle(rel: &str, estimated: Option<&Priced>, observed: Option<&Priced>) -> (bool, Option<String>) {
     let est_inline = matches!(estimated, Some(Priced::Weighed(v)) if v.inline);
     let est_line = match estimated {
         Some(Priced::Weighed(v)) => Some(shown(rel, v)),
         Some(Priced::Unplanned) => Some(format!("{rel}: stored, a reader copy does not plan")),
+        Some(Priced::KeyLost(x)) => Some(format!("{rel}: stored, a reader joins on its `{x}`, which a copy only tests against a call's value")),
         _ => None,
     };
     match observed {

@@ -121,7 +121,7 @@ pub fn count(v: &Version, reader: RuleRef<'_>, at: usize, defs: &[RuleRef<'_>]) 
 /// The copies `unfold` makes of each read in `reads` (a reader and the read's place) of a relation whose rules are
 /// `defs`, named as a first pass names them: an overlay of `base` that adds them (a candidate the pricing plans, kept
 /// by no one), and each read's copies by their ids in it.
-pub(super) fn copies(base: &Arc<Version>, reads: &[(RuleId, usize)], defs: &[RuleId]) -> Result<(Arc<Version>, Vec<Vec<RuleId>>), String> {
+pub fn copies(base: &Arc<Version>, reads: &[(RuleId, usize)], defs: &[RuleId]) -> Result<(Arc<Version>, Vec<Vec<RuleId>>), String> {
     let ds: Vec<RuleRef<'_>> = defs.iter().map(|&d| base.rule(d).expect("a def")).collect();
     let mut b = Builder::on(base);
     let mut out = Vec::new();
