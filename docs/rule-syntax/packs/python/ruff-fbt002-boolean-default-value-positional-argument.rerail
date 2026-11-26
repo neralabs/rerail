@@ -1,4 +1,4 @@
-.policy "ruff-fbt002-boolean-default-value-positional-argument" revision 2
+.policy "ruff-fbt002-boolean-default-value-positional-argument" revision 3
 .description "Make Python function parameters that default to True or False keyword-only; a positional boolean flag makes calls hard to read."
 .language python
 .mode steer
@@ -11,8 +11,9 @@
 //   def f(flag: int = True): ...          ← FBT002
 //   def f(*, flag=True): ...              not reported
 #include "python/misc-boolean-trap.rerail"
+#include "python/python-31.rerail"
 
 .violation FBT002(at: node) code "FBT002"
     "Make `$NAME` keyword-only by moving it after `*` and update positional callers; keep it positional only when a parent signature or callback protocol requires it."
     suppress ruff "FBT002"
-FBT002(nm) :- trap_param(_, nm, _, v), unparen(v, m), (kind(m, "true") ; kind(m, "false")).
+FBT002(nm) :- trap_param(f, nm, _, v), !python31_setter(f), unparen(v, m), (kind(m, "true") ; kind(m, "false")).

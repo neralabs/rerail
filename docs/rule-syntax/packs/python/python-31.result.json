@@ -1,0 +1,26 @@
+[
+  {
+    "id": "ruff-fbt001-boolean-type-hint-positional-argument",
+    "status": "same"
+  },
+  {
+    "id": "ruff-fbt002-boolean-default-value-positional-argument",
+    "status": "same"
+  },
+  {
+    "id": "ruff-fbt003-boolean-positional-value-in-call",
+    "status": "same"
+  },
+  {
+    "id": "ruff-log004-log-exception-outside-except-handler",
+    "status": "same"
+  },
+  {
+    "id": "ruff-log007-exception-without-exc-info",
+    "status": "same"
+  },
+  {
+    "id": "ruff-log014-exc-info-outside-except-handler",
+    "status": "same"
+  }
+]
