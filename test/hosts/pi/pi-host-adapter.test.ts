@@ -33,6 +33,8 @@ function lifecycleHarness(changeOwnerBeforeFailure: boolean) {
     close: async () => undefined,
     shutdown: async () => undefined,
     sessionFor: async () => session,
+    attachGaps: { reportDropped() {}, failed() {}, recorder: () => undefined },
+    markGapFinal() {},
     ingest: async (_event: AdapterEvent) => { ingested += 1; },
     yieldDeliveries: async () => undefined,
     conversationRulesTool: {},

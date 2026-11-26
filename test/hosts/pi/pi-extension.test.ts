@@ -119,6 +119,11 @@ function createHarness(branch: unknown[] = []): PiHarness {
   return { handlers, commands, messages, entries, renderers, pi, context, repositoryKey };
 }
 
+/** The session-events-dropped markers Pi's session holds, oldest first. */
+function droppedMarkers(harness: PiHarness): unknown[] {
+  return harness.entries.filter(entry => entry.customType === EVENTS_DROPPED_ENTRY_TYPE).map(entry => entry.data);
+}
+
 function receiptCount(harness: PiHarness, sessionId = "pi-test-session"): number {
   const database = new Database(defaultRerailDatabasePath(), { readonly: true });
   try {
@@ -574,6 +579,121 @@ describe("Pi conversation-rules extension", () => {
     await expect(calling).resolves.toBeUndefined();
     await expect(resulting).resolves.toBeUndefined();
     expect(stderr.mock.calls.filter(([line]) => String(line).includes("hook failed"))).toHaveLength(2);
+    // Both waited on the attach that failed, and are counted as dropped while it is tried again.
+    expect(droppedMarkers(harness)).toEqual([expect.objectContaining({ count: 1, kinds: { call: 1 }, recovered: false })]);
+  });
+
+  describe("after the daemon failed to start (#1131)", () => {
+    const daemon = (cwd: string) => ({
+      started: true,
+      daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: cwd } },
+    });
+    /** `rerail daemon start` beside another program's write lock on the database. */
+    const failedStart = () => new Error("Rerail daemon exited with code 1 before it was ready:");
+    /** A daemon that answers every request, each one kept. */
+    const answering = () => {
+      const requests: Array<{ operation: string; sessionId: string; event?: { json: Record<string, unknown> }; input?: unknown }> = [];
+      vi.stubGlobal("fetch", async (_url: URL, init: { body?: string }) => {
+        if (init.body !== undefined) requests.push(JSON.parse(init.body) as (typeof requests)[number]);
+        return Response.json({ result: null, deliveries: [], entries: [] });
+      });
+      return requests;
+    };
+    const prompt = (harness: PiHarness, text: string, context = harness.context) =>
+      Promise.resolve(harness.handlers.get("input")!({ type: "input", text }, context));
+
+    it("takes the prompts meanwhile, counts them as dropped in the footer, and attaches again with no new session start", async () => {
+      const harness = createHarness();
+      daemonRoute.main = true;
+      daemonRoute.startDaemonForPackage.mockRejectedValueOnce(failedStart()).mockResolvedValue(daemon(harness.context.cwd));
+      const requests = answering();
+      const footer: Array<string[] | undefined> = [];
+      Object.assign(harness.context, { hasUI: true, ui: { setWidget: (_key: string, lines: string[] | undefined) => { footer.push(lines); } } });
+      vi.useFakeTimers();
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      await expect(Promise.resolve(install(harness))).rejects.toThrow("before it was ready");
+
+      await expect(prompt(harness, "Prompt 1.")).resolves.toBeUndefined();
+      await expect(Promise.resolve(harness.handlers.get("before_agent_start")!({ type: "before_agent_start", prompt: "Prompt 1." }, harness.context))).resolves.toBeUndefined();
+      await expect(prompt(harness, "Prompt 2.")).resolves.toBeUndefined();
+      expect(droppedMarkers(harness)).toEqual([expect.objectContaining({ count: 1, kinds: { "user-prompt": 1 }, recovered: false })]);
+      expect(footer.at(-1)).toContain("Rerail: 2 session events dropped — daemon not answering");
+
+      // A second after the failed start it tries again, and the daemon starts.
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(requests.filter(request => request.operation === "initialize")).toHaveLength(1));
+      await expect(prompt(harness, "Prompt 3.")).resolves.toBeUndefined();
+      expect(requests.filter(request => request.operation === "ingest").map(request => request.event?.json))
+        .toEqual([expect.objectContaining({ kind: "user-prompt", sessionId: "pi-test-session", text: "Prompt 3." })]);
+      await vi.waitFor(() => expect(requests.filter(request => request.operation === "record-gap").map(request => request.input))
+        .toEqual([expect.objectContaining({ count: 2, kinds: { "user-prompt": 2 } })]));
+      expect(droppedMarkers(harness).at(-1)).toEqual(expect.objectContaining({ count: 2, recovered: true }));
+      expect(footer.at(-1)?.some(line => line.includes("dropped")) ?? false).toBe(false);
+      expect(daemonRoute.startDaemonForPackage).toHaveBeenCalledTimes(2);
+      vi.useRealTimers();
+    });
+
+    it("counts the events of the session Pi moved to, not handing them to the runtime of the session it left", async () => {
+      const harness = createHarness();
+      daemonRoute.main = true;
+      daemonRoute.startDaemonForPackage.mockResolvedValue(daemon(harness.context.cwd));
+      const requests = answering();
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      await install(harness);
+      const next = { ...harness.context, sessionManager: { getSessionId: () => "pi-next-session", getBranch: () => [] } } as unknown as ExtensionContext;
+      daemonRoute.startDaemonForPackage.mockRejectedValueOnce(failedStart());
+      await expect(Promise.resolve(harness.handlers.get("session_start")!({ type: "session_start", reason: "new" }, next))).rejects.toThrow("before it was ready");
+
+      await expect(prompt(harness, "Prompt in the new session.", next)).resolves.toBeUndefined();
+      expect(requests.filter(request => request.operation === "ingest")).toEqual([]);
+      expect(droppedMarkers(harness)).toEqual([expect.objectContaining({ count: 1, kinds: { "user-prompt": 1 }, recovered: false })]);
+    });
+
+    it("hands a prompt that waited on a try that failed to the session Pi started meanwhile", async () => {
+      const harness = createHarness();
+      daemonRoute.main = true;
+      const held = Promise.withResolvers<never>();
+      daemonRoute.startDaemonForPackage
+        .mockRejectedValueOnce(failedStart())
+        .mockImplementationOnce(() => held.promise)
+        .mockResolvedValue(daemon(harness.context.cwd));
+      const requests = answering();
+      vi.useFakeTimers();
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      await expect(Promise.resolve(install(harness))).rejects.toThrow("before it was ready");
+      const next = { ...harness.context, sessionManager: { getSessionId: () => "pi-next-session", getBranch: () => [] } } as unknown as ExtensionContext;
+
+      // The try a second later is held open; a prompt waits on it, and Pi starts another session behind it.
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(daemonRoute.startDaemonForPackage).toHaveBeenCalledTimes(2));
+      const prompting = prompt(harness, "Prompt.", next);
+      const switching = Promise.resolve(harness.handlers.get("session_start")!({ type: "session_start", reason: "new" }, next));
+      held.reject(failedStart());
+      await expect(switching).resolves.toBeUndefined();
+      await expect(prompting).resolves.toBeUndefined();
+      expect(requests.filter(request => request.operation === "ingest").map(request => request.event?.json))
+        .toEqual([expect.objectContaining({ kind: "user-prompt", sessionId: "pi-next-session", text: "Prompt." })]);
+      vi.useRealTimers();
+    });
+
+    it("gives the marker its final count before Pi leaves the session, and tries no more once Pi shuts down", async () => {
+      const harness = createHarness();
+      daemonRoute.main = true;
+      daemonRoute.startDaemonForPackage.mockRejectedValue(failedStart());
+      answering();
+      vi.useFakeTimers();
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      await expect(Promise.resolve(install(harness))).rejects.toThrow("before it was ready");
+      await prompt(harness, "Prompt 1.");
+      await prompt(harness, "Prompt 2.");
+
+      await harness.handlers.get("session_before_switch")!({ type: "session_before_switch", reason: "new" }, harness.context);
+      expect(droppedMarkers(harness).at(-1)).toEqual(expect.objectContaining({ count: 2, recovered: false }));
+      await harness.handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, harness.context);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(daemonRoute.startDaemonForPackage).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
+    });
   });
 
   it("releases a tool call that a wedged daemon never answers before Pi's own deadline blocks it", async () => {

@@ -234,6 +234,31 @@ it("counts events that arrive while attach is failing and records them once atta
   }
 }, 30_000);
 
+it("counts Pi's events while its in-process start is failing, and records them once a retry starts it (#1131)", async () => {
+  const extension = await harness("pi");
+  const failure = new Error("Session store unavailable");
+  vi.spyOn(RerailRuntime.prototype, "openSession").mockRejectedValueOnce(failure);
+  const reader = new SqliteSessionReader(defaultRerailDatabasePath());
+  try {
+    await expect(extension.emit("session_start", {})).rejects.toThrow(failure.message);
+    // Until the retry a second later starts the session, Pi's events resolve without reaching Rerail and are counted.
+    await extension.emit("input", { type: "input", text: "Add a test." });
+    await extension.emit("message_update", delta("Guest checkout remains available. Next"));
+    expect(extension.messages).toEqual([]);
+    await vi.waitFor(() => {
+      expect(reader.events("original").filter(event => event.kind === "events-dropped").map(event => event.payload))
+        .toEqual([expect.objectContaining({ count: 2, kinds: { "user-prompt": 1, "assistant-delta": 1 } })]);
+    }, { timeout: 15_000, interval: 100 });
+    await extension.emit("message_update", delta("Guest checkout remains available. Next", "after-attach"));
+    expect(extension.messages).toEqual([
+      expect.objectContaining({ content: checkoutSteer("pi"), details: expect.objectContaining({ sessionId: "original" }) }),
+    ]);
+  } finally {
+    reader.close();
+    await extension.emit("session_shutdown", {});
+  }
+}, 30_000);
+
 it("counts an event that waited on the attach that failed, and records it once a retry attaches", async () => {
   const extension = await harness("omp");
   const entered = Promise.withResolvers<void>();
