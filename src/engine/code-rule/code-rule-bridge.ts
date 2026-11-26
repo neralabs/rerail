@@ -3567,14 +3567,14 @@ export class CodeRuleBridge {
 
   /**
    * The other worktrees a session walk takes (`#syncWorktrees`). The first list of many worktrees records each one, with
-   * turns between, so other sessions are answered meanwhile; undefined when the session closed or the auditor was
-   * interrupted while it took them: a list cut short names part of the worktrees, and taken it would forget the rest.
+   * turns between, so other sessions are answered meanwhile; undefined when the auditor was interrupted while it took
+   * them: a list cut short names part of the worktrees, and taken it would forget the rest.
    */
   async #listWorktrees(discovery: SourceDiscovery, registry: WorktreeRegistry | undefined): Promise<readonly string[] | undefined> {
     const inTurns = this.#auditor.worktreeRootsInTurns?.(registry);
     if (inTurns === undefined) return this.#syncWorktrees(discovery, registry);
     const listed = await inTurns;
-    return listed === undefined || this.#abandoned(discovery) ? undefined : this.#syncWorktrees(discovery, registry, listed);
+    return listed === undefined ? undefined : this.#syncWorktrees(discovery, registry, listed);
   }
 
   #abandoned(discovery: SourceDiscovery): boolean {

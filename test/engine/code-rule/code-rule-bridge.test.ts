@@ -888,35 +888,6 @@ describe("CodeRuleBridge", () => {
     }
   });
 
-  it("stops a walk at its list of the other worktrees when the session closed while the list took its turns", async () => {
-    const root = await twoBranches();
-    const { roots, extra } = await withWorktree(root, join(await workspace(), "w"));
-    let held: PromiseWithResolvers<readonly string[] | undefined> | undefined;
-    const asked = Promise.withResolvers<void>();
-    const worktreeRootsInTurns = vi.fn(async (): Promise<readonly string[] | undefined> => {
-      if (held === undefined) return roots;
-      asked.resolve();
-      return await held.promise;
-    });
-    const acceptsPath = vi.fn(() => true);
-    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
-    const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), ...extra, acceptsPath, worktreeRootsInTurns }, { worktreeWalkGapMs: 60_000 });
-    await bridge.openWorkspace("session-1");
-    await bridge.checkpoint("turn");
-    await bridge.settleWorktreeWalk();
-    held = Promise.withResolvers();
-    const turn = bridge.checkpoint("turn").catch(() => undefined);
-    await asked.promise;
-    const closed = bridge.close();
-    const looked = acceptsPath.mock.calls.length;
-    // A list naming none: taken, the walk would forget the worktree and go on to read the session folder.
-    held.resolve([]);
-    await closed;
-    await turn;
-    await bridge.settleWalk();
-
-    expect(acceptsPath.mock.calls.length).toBe(looked);
-  });
   it("keeps first-sight text only within its budget, and measures a shell edit past it as before", async () => {
     const root = await workspace();
     const [first, second] = [join(root, "src", "a.py"), join(root, "src", "b.py")];
