@@ -1,24 +1,56 @@
-.policy "ruff-n806-non-lowercase-variable-in-function" revision 2
+.policy "ruff-n806-non-lowercase-variable-in-function" revision 3
 .description "Name local variables inside functions in lowercase snake_case, as PEP 8 recommends, so they read differently from classes and constants."
 .language python
 .mode steer
 .scope include "**/*"
 
-// Ruff N806 (pep8-naming): a name stored in a function's own scope (assignment, loop, `with`, walrus or match
-// capture target) that has an uppercase letter. Exempt: a name the function declares `global`; assignments that
-// make a type (namedtuple, NamedTuple, TypedDict, TypeVar, NewType, `X: TypeAlias = …`, `type X = …`); Django's
-// `X = apps.get_model(…, "X")` and `X = import_string("….X")`; names matching `pep8-naming.ignore-names`.
+// Ruff N806 (pep8-naming): a name stored while Ruff is in a function's own scope (assignment, loop, `with`,
+// walrus or match capture target) that, NFKC-normalised, has a letter that is not lowercase. Ruff's scope is where
+// the expression runs: a def's or lambda's defaults, and a comprehension's first iterable, run in the scope around
+// them; the rest of a comprehension is its own scope. A def's parameter and return annotations are never in a
+// function's scope for Ruff (a walrus there is not reported). Exempt: a name the function declares `global`;
+// assignments that make a type (namedtuple, NamedTuple, TypedDict, TypeVar, NewType, `X: TypeAlias = …`,
+// `type X = …`); Django's `X = apps.get_model(…, "X")` and `X = import_string("….X")`; names matching
+// `pep8-naming.ignore-names`.
 //   def f():
 //       Camel = 0                     ← N806
 //       T = TypeVar("T")              not reported
 //       Stream = apps.get_model("app", "Stream")    not reported
-#include "python/naming.rerail"
+//       a = [x for x in (Y := g())]   ← N806: the first iterable runs in f
+//       match v:
+//           case Point(x=Px): ...     ← N806
+#include "python/python-19.rerail"
 
 .violation N806(at: node, x: symbol) code "N806"
     "Rename `{x}` to lowercase snake_case and update its uses; keep the name if it holds a class."
     suppress ruff "N806"
-N806(n, x) :- store_name(n, x, f), kind(f, "function_definition"), !lower_name(x), !global_name(f, x),
-    !type_store(n), !model_import(n, x), !naming_ignored(x).
+N806(n, x) :- n806_store(n, t), n806_scope(n, f), kind(f, "function_definition"), pep8_name(n, x), !pep8_lower(x),
+    !n806_def_ann(n), !global_name(f, t), !type_store(n), !model_import(n, t), !pep8_ignored(x).
+// n806_store(n, t): identifier n stores t: store_name's sites, and match captures, which ast keeps as strings.
+.decl n806_store(n: node, t: symbol)
+n806_store(n, t) :- store_name(n, t, _).
+n806_store(n, t) :- py_capture(n), text(n, t).
+// n806_scope(n, s): the scope Ruff is in when it visits n: n's nearest scope or comprehension, or, when n is in
+// the part of it that runs outside (n806_head), that one's own.
+.decl n806_scope(n: node, s: node)
+n806_scope(n, s) :- n806_ask(n), nearest(n, s, lscope), !n806_head(n, s).
+n806_scope(n, v) :- n806_ask(n), nearest(n, s, lscope), n806_head(n, s), n806_scope(s, v).
+.decl n806_ask(n: node)
+n806_ask(n) :- n806_store(n, _).
+n806_ask(s) :- n806_ask(n), nearest(n, s, lscope), n806_head(n, s).
+// n806_head(n, s): n is in a def's or lambda's parameters, or a comprehension's first iterable.
+.decl n806_head(n: node, s: node)
+n806_head(n, s) :- n806_ask(n), nearest(n, s, lscope), field(s, "parameters", r), within(n, r).
+n806_head(n, s) :- n806_ask(n), nearest(n, s, lscope), kind(s, k), comp_scope(k), child(s, c, i), kind(c, "for_in_clause"),
+    count : { child(s, d, j), kind(d, "for_in_clause"), j < i } = 0, field(c, "right", r), within(n, r).
+// n806_def_ann(n): n is in a def's parameter or return annotation.
+//   def f():
+//       def g(p: (Aa := int)) -> (Bb := int): ...     not reported
+.decl n806_def_ann(n: node)
+n806_def_ann(n) :- n806_store(n, _), nearest(n, g, lscope), kind(g, "function_definition"), field(g, "return_type", r),
+    within(n, r).
+n806_def_ann(n) :- n806_store(n, _), nearest(n, g, lscope), kind(g, "function_definition"), field(g, "parameters", ps),
+    child(ps, p, _), field(p, "type", t), within(n, t).
 .decl global_name(f: node, x: symbol)  // `global x` in f (not `nonlocal x`)
 global_name(f, x) :- decl(f, x, m), kind(m, "module").
 .decl type_store(n: node)
