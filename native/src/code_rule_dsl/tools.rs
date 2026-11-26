@@ -272,14 +272,16 @@ pub fn run_rr(
 /// The findings of the run whose outputs are in `dir`, as the CLI reports them: every finding relation's rows
 /// (`rr::lower::findings`), each as its JSON object.
 pub fn diagnostics(dir: &std::path::Path) -> Result<Vec<serde_json::Value>, String> {
+    reported(dir, std::path::Path::new(""), &super::rr_host::suppressions::Suppressions::default())
+}
+
+/// [`diagnostics`] less those the linters' comments their `suppress` lines name drop (the findings layer's stage,
+/// `rr_host::suppressions`), over the files under `root`.
+fn reported(dir: &std::path::Path, root: &std::path::Path, suppressions: &super::rr_host::suppressions::Suppressions) -> Result<Vec<serde_json::Value>, String> {
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(dir).map_err(|e| e.to_string())?;
-    let mut all = Vec::new();
-    for rel in outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
-        for row in outputs.rows(rel) {
-            all.push(diagnostic(&row)?);
-        }
-    }
-    Ok(all)
+    let rows: Vec<_> = outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)).flat_map(|rel| outputs.rows(rel)).collect();
+    let dropped = suppressions.suppressed(root, &rows);
+    rows.iter().zip(dropped).filter(|(_, dropped)| !dropped).map(|(row, _)| diagnostic(row)).collect()
 }
 
 /// A finding's row as its JSON object: `policy`, `clause`, `code`, `path`, `line`, `at`, `tag` (`null` for none),
@@ -329,6 +331,8 @@ pub fn run_program(
         typing::file_local::Binding,
     };
     let metadata = rr::metadata(&program).map_err(|e| e.to_string())?;
+    let mut suppressions = super::rr_host::suppressions::Suppressions::default();
+    suppressions.add(program.settings.iter().map(|(key, text)| (key.as_str(), text.as_str())))?;
     // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
     // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
     // of one dialect, or none with files, runs as written. Each run holds the program read, its language the
@@ -349,7 +353,7 @@ pub fn run_program(
             options["dialect"] = serde_json::json!(dialect);
         }
         let report = corpus::run_read(&program, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
-        rows.extend(diagnostics(dir)?);
+        rows.extend(reported(dir, root, &suppressions)?);
         files_read += report.files;
         nodes += report.nodes;
         phases.extend(report.phases);
@@ -513,6 +517,15 @@ fn run_pack(
     crate::code_rule_dsl::logic::profile::decision("a batch's policies as one pack (decision 0168)", || {
         format!("{} policies: {}", texts.len(), group.ids.join(", "))
     });
+    // The members' `suppress` lines, from their settings as their records hold them (`rr::metadata`). A line that
+    // does not read is its policy's error, which it meets running alone.
+    let mut suppressions = super::rr_host::suppressions::Suppressions::default();
+    for metadata in &group.metadata {
+        let settings: Vec<(&str, &str)> = metadata["settings"].as_array().into_iter().flatten().filter_map(|pair| Some((pair[0].as_str()?, pair[1].as_str()?))).collect();
+        if suppressions.add(settings.iter().copied()).is_err() {
+            return Ok(None);
+        }
+    }
     // Each dialect's run and its directory, its language the dialect's (the `dialect` option, as `run_program` runs
     // a policy alone): one run as written where the language has one dialect.
     let runs: Vec<(Option<&str>, std::path::PathBuf)> = if group.dialects.is_empty() {
@@ -534,16 +547,20 @@ fn run_pack(
         outputs.push(output::Outputs::open(dir).map_err(|e| e.to_string())?);
     }
     let mut each: Vec<Vec<serde_json::Value>> = group.members.iter().map(|_| Vec::new()).collect();
-    // Each member's rows of each finding relation, by the policy each row names (its first column), every dialect's.
+    // Each member's rows of each finding relation, by the policy each row names (its first column), every dialect's,
+    // less those the linters' comments drop.
     type Rows<'a> = Vec<output::Row<'a>>;
     let mut rows: Vec<std::collections::BTreeMap<String, Rows<'_>>> = group.members.iter().map(|_| std::collections::BTreeMap::new()).collect();
     for run in &outputs {
-        for rel in run.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
-            for row in run.rows(rel) {
-                let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
-                each[at].push(diagnostic(&row)?);
-                rows[at].entry(rel.to_owned()).or_default().push(row);
+        let found: Vec<(&str, output::Row<'_>)> = run.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)).flat_map(|rel| run.rows(rel).into_iter().map(move |row| (rel, row))).collect();
+        let dropped = suppressions.suppressed(root, &found.iter().map(|(_, row)| *row).collect::<Vec<_>>());
+        for ((rel, row), dropped) in found.into_iter().zip(dropped) {
+            let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
+            if dropped {
+                continue;
             }
+            each[at].push(diagnostic(&row)?);
+            rows[at].entry(rel.to_owned()).or_default().push(row);
         }
     }
     let flags = outputs[0].images().last().map_or(0, output::Image::flags);

@@ -171,6 +171,31 @@ pub struct ViolationSpec {
     pub project: Vec<Projection>,
 }
 
+impl ViolationSpec {
+    /// A violation of code `code` that honours `suppress` and asks nothing else: what a `.rerail` finding's
+    /// `suppress` lines ask of the linters' comments (`violations::suppression::finding_suppressed`).
+    pub fn suppressed_by(code: &str, suppress: super::suppress::Suppress) -> Self {
+        Self {
+            input_only: false,
+            code: code.to_owned(),
+            message: String::new(),
+            anchor: Anchor::Span,
+            message_template: None,
+            fix: None,
+            fix_template: None,
+            node_regexes: Vec::new(),
+            gap_tests: Vec::new(),
+            each: None,
+            fix_range: None,
+            suppress: Some(suppress),
+            ignored_by: None,
+            ignore_marks: false,
+            group_transform: None,
+            project: Vec::new(),
+        }
+    }
+}
+
 /// Where a violation's `span` points. The violation id always derives from the witness span.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Anchor {
