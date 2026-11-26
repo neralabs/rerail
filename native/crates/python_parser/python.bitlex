@@ -86,16 +86,36 @@ scan depth      = count(code & opens, code & closes) max 31
 mask in_br      = depth.frame(code & opens)
 # A line break of code outside brackets, and the file's end: a statement's end.
 mark newline    = lf & code & ~in_br, end, ends
+# The next line deeper than the level's indent: a block's start, after its header's `:`. Less
+# deep: the end of each block it is less than (decision 0698), as tree-sitter's scanner gives
+# INDENT and DEDENT.
+mark indent     = lf & code & ~in_br, deeper
+mark dedent     = lf & code & ~in_br, end, shallower, ends
 
 tree python {
   node module whole padded = statement*
-  choice statement nested = simple_statement (';' [simple_statement])* newline
+  choice statement      = simple_statements | compound_statement
+  choice simple_statements nested = simple_statement (';' [simple_statement])* newline
+  choice compound_statement = if_statement | while_statement
+  node if_statement     = 'if' condition: expression ':' indent consequence: block (alternative: elif_clause)* [alternative: else_clause]
+  node elif_clause      = 'elif' condition: expression ':' indent consequence: block
+  node else_clause      = 'else' ':' indent body: block
+  node while_statement  = 'while' condition: expression ':' indent body: block [alternative: else_clause]
+  # A block: the lines past its header's indent (the header's `indent`, asked with the header's
+  # indent), to the first line less deep than its own: its first token's column.
+  node block nested     = statement+
+  indented block
   choice simple_statement = expression_statement | pass_statement
   node expression_statement = expression
   node pass_statement = 'pass'
   choice expression supertype expression = primary_expression
   choice primary_expression supertype primary_expression = identifier | integer
-  hidden newline
+  hidden newline indent dedent
+  # The tokens tree-sitter's grammar implies: no leaf on the tape.
   implied pass_statement 'pass'
+  implied if_statement 'if' ':'
+  implied elif_clause 'elif' ':'
+  implied else_clause 'else' ':'
+  implied while_statement 'while' ':'
   extra comment
 }

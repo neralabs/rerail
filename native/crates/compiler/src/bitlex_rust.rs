@@ -4322,5 +4322,9 @@ impl<'a, L: Layout> P<'a, L> {
 
 /// Tier 2's Rust, written from the tree rules.
 pub fn tier2(x: &Input<'_>) -> Result<String, String> {
+    // A level's indent and a mark's column (decision 0698): the JIT's and the interpreter's only, yet.
+    if x.tree.iter().any(|s| matches!(s, Stmt::Indented(_))) {
+        return Err("an `indented` level: not yet in Rust (decision 0698)".into());
+    }
     G::new(x).source()
 }

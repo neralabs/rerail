@@ -13,7 +13,7 @@ pub use crate::stream_ir::{ByteSwitch, DEAD, ERROR_LEAF, GONE, KEEP, REFUSE, REM
 
 /// Whether a word is one of tier 2's.
 pub fn is_stream(opcode: u8) -> bool {
-    (TOKEN..=STATEMENT).contains(&opcode)
+    (TOKEN..=INDENT).contains(&opcode)
 }
 
 /// The operand rules of tier 2's words, and of the words a tier-2 program may hold besides
@@ -71,6 +71,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         REMEMBER if operand == WORD_KIND => mode == 0 && !program.word_kinds.is_empty() && records.is_some_and(|r| r.words == program.strings),
         REMEMBER => mode == 0 && operand != 0 && operand != REMEMBERED,
         FLAG => mode <= 2 && operand < 16,
+        INDENT => mode == 0 && operand == 0,
         COUNT => mode <= 1 && usize::from(operand) < program.counts.len(),
         CHECK => mode == 0 && usize::from(operand) < program.local_checks.len(),
         // `m=2`, `m=3+f`: a mark's `loses`, the second where flag `f` is set.
@@ -393,6 +394,13 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
     run_seen(program, bytes, tier1, &mut |_| {})
 }
 
+/// A token's column (decision 0698): the bytes from the start of its line, the byte after the last
+/// line break before it, to its start.
+pub fn column(bytes: &[u8], start: u32) -> u32 {
+    let s = (start as usize).min(bytes.len());
+    s as u32 - bytes[..s].iter().rposition(|&b| b == b'\n').map_or(0, |i| i as u32 + 1)
+}
+
 /// `run`, with `seen` told the place of each word it runs, in order: the words' profile (which
 /// states follow which, how often), for laying out the generated code.
 pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, seen: &mut dyn FnMut(usize)) -> Result<Vec<Node>, Refused> {
@@ -464,8 +472,10 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     // A reading dropped a node (`GONE`): its record stays, of kind `DEAD`, left out at `ACCEPT`.
     let mut dead = false;
     // Each call's return, with its caller's word (`REMEMBER`), given back where it returns.
-    let mut returns: Vec<(u16, u16, u16)> = Vec::new();
+    let mut returns: Vec<(u16, u16, u16, u32)> = Vec::new();
     let mut word: u16 = 0;
+    // The level's indent (`INDENT`, decision 0698): the caller's comes back where a call returns.
+    let mut indent: u32 = 0;
     // The level's flags (`FLAG`), a bit each: the caller's come back where a call returns.
     let mut flags: u16 = 0;
     // The counts of tokens (`COUNT`).
@@ -498,6 +508,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
         dead: bool,
         word: u16,
         flags: u16,
+        indent: u32,
         counts: Vec<u32>,
         strings: usize,
     }
@@ -678,6 +689,15 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 // Its entries together (`patterns_hold`): `unless before`s and `before`s.
                 let extra_bit = program.extras.first().map(|e| u32::from(e.0));
                 let here = here && (at_end || program.token_marks.iter().position(|m| u32::from(m.order) == k).is_none_or(|i| crate::program::patterns_hold(&program.token_marks, i, &mut |m| token_mark_holds(m, &tier1.codes, next, extra_bit))));
+                // Its column's question, against this level's indent (decision 0698); the file's
+                // end at column 0.
+                let col = if at_end { 0 } else { column(bytes, start) };
+                let here = here
+                    && match program.column(k as u8) {
+                        1 => col > indent,
+                        2 => col < indent,
+                        _ => true,
+                    };
                 if live >> k & 1 == 1 && here {
                     // Taken: it and the marks before it are done at this token. Kept: its arm
                     // calls the level that takes it.
@@ -954,7 +974,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 if returns.len() >= DEPTH as usize {
                     return limit!(pc - 1, "calls nested past the depth");
                 }
-                returns.push((operand, word, flags));
+                returns.push((operand, word, flags, indent));
                 match push_flag_of(mode) {
                     Some((k, true)) => flags |= 1 << k,
                     Some((k, false)) => flags &= !(1 << k),
@@ -969,6 +989,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             REMEMBER => word = operand,
+            INDENT => indent = column(bytes, start),
             COUNT if mode == 0 => {
                 counts[usize::from(operand)] += 1;
                 if counts[usize::from(operand)] > u32::from(program.counts[usize::from(operand)]) {
@@ -1013,8 +1034,8 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             RETURN => {
-                let Some((p, w, fl)) = returns.pop() else { refuse!('step, pc - 1, "a return with no call") };
-                (word, flags) = (w, fl);
+                let Some((p, w, fl, ind)) = returns.pop() else { refuse!('step, pc - 1, "a return with no call") };
+                (word, flags, indent) = (w, fl, ind);
                 pc = usize::from(p) + usize::from(mode);
             }
             ACCEPT => {
@@ -1087,6 +1108,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     dead,
                     word,
                     flags,
+                    indent,
                     counts: counts.clone(),
                     strings,
                 });
@@ -1143,7 +1165,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             nodes[at].size = (nodes.len() - pending - base) as u32;
         }
         held = false;
-        (moved, dead, word, flags, counts, strings, lost) = (m.moved, m.dead, m.word, m.flags, m.counts, m.strings, None);
+        (moved, dead, word, flags, indent, counts, strings, lost) = (m.moved, m.dead, m.word, m.flags, m.indent, m.counts, m.strings, None);
         // The resume point: the first record after the statement's first token where a pattern holds, `at` it or
         // `past` it; the extras skipped.
         let count = starts.len().min(lasts.len());

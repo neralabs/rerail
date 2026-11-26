@@ -4581,7 +4581,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     // its own words, or in a cluster it goes on to (a tail call); its own calls give them back.
     // A call keeps the caller's only where its callee's may change (`Op::Push`).
     let mut changes_context: Vec<bool> = vec![false; cut.count as usize];
-    for pc in (0..n_words).filter(|&pc| matches!(words[pc].operation, Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. })) {
+    for pc in (0..n_words).filter(|&pc| matches!(words[pc].operation, Op::Remember { .. } | Op::Indent | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. })) {
         changes_context[cut.of[pc] as usize] = true;
     }
     // With a function a grammar rule and `ctx` pinned (every exit through the function's one
@@ -4591,6 +4591,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     // another rule a function goes into keeps its own.
     let own_changes = changes_context.clone();
     let callee_keeps = pinned_ctx && has_context(words);
+    let indented = has_indent(words);
     loop {
         let mut more = false;
         for pc in (0..n_words).filter(|&pc| !shared_all.skipped[pc]) {
@@ -4823,7 +4824,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
         // registers restored).
         let exit = f.create_block();
         // The word and flags this function gives back where it leaves (`callee_keeps`).
-        let mut entry_kept: Option<(Value, Value)> = None;
+        let mut entry_kept: Option<(Value, Value, Option<Value>)> = None;
         for _ in 0..1 + if clustered { cut.pass.len() } else { 0 } {
             f.append_block_param(exit, types::I64);
         }
@@ -4847,7 +4848,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
             // The word and flags the function was entered with, where its own words change them
             // (`callee_keeps`).
             if callee_keeps && own_changes[c as usize] {
-                entry_kept = Some((mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags)));
+                entry_kept = Some((mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags), indented.then(|| mget(&mut f, Mem::Indent))));
             }
             // The calls open on the machine's stack (`on_stack`): its depth checked once, where
             // the function is entered, as a stack check in a prologue (one load, one compare).
@@ -5900,7 +5901,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                         f.ins().jump(fall, &[]);
                     }
                 }
-                Op::Mark { mask, order, end, keep, word: mark_word, pattern } => {
+                Op::Mark { mask, order, end, keep, word: mark_word, pattern, column } => {
                     // The mark's bit at the token's start, if the mark is live: one load. At the
                     // stream's end, the mark is there when the end has it.
                     let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
@@ -6007,6 +6008,12 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                             f.ins().brif(r, follows, &[], skip, &[]);
                             f.switch_to_block(follows);
                         }
+                        // Its column's question (decision 0698).
+                        if column != 0 {
+                            let next = mget(&mut f, Mem::Next);
+                            let at_end = ended_now(&mut f, next);
+                            column_holds(&mut f, &env, column, at_end, skip, &mut heads);
+                        }
                         // Kept: the callee its arm calls takes it.
                         if !keep {
                             let rest = f.ins().band_imm(live, !(native.taken[usize::from(order)] as i64));
@@ -6052,6 +6059,10 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                     let bit = f.ins().band_imm(bit, 1);
                     f.ins().brif(bit, taken, &[], skip, &[]);
                     f.switch_to_block(taken);
+                    // Its column's question (decision 0698).
+                    if column != 0 {
+                        column_holds(&mut f, &env, column, at_end, skip, &mut heads);
+                    }
                     // It and the marks before it are done at this token; kept, the callee its arm
                     // calls takes it.
                     if !keep {
@@ -6366,6 +6377,15 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                 Op::Remember { kind } => {
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     mset(&mut f, Mem::Word, k);
+                    f.ins().jump(fall, &[]);
+                }
+                // The level's indent: the token's column, kept in 16 bits beside a call's return
+                // (refused past them).
+                Op::Indent => {
+                    let col = token_column(&mut f, &env, &mut heads);
+                    let wide = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, col, 0xffff);
+                    guard(&mut f, wide, pc);
+                    mset(&mut f, Mem::Indent, col);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Check { check } => {
@@ -6718,7 +6738,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                         let ret = f.ins().iadd_imm(ret, 1);
                         mset(&mut f, Mem::Ret, ret);
                     }
-                    let kept = (two_slots && !callee_keeps && changes_context[cut.of[callee(native, pc)] as usize]).then(|| (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags)));
+                    let kept = (two_slots && !callee_keeps && changes_context[cut.of[callee(native, pc)] as usize]).then(|| (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags), indented.then(|| mget(&mut f, Mem::Indent))));
                     // The flag the call runs with, as a parameter: the caller's flags given back
                     // after it (`let f = self.flags; ..; self.call(); self.flags = f`).
                     let flag_back = flag.map(|(k, set)| {
@@ -6759,9 +6779,12 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                             f.def_var(var, x);
                         }
                     }
-                    if let Some((w, fl)) = kept {
+                    if let Some((w, fl, ind)) = kept {
                         mset(&mut f, Mem::Word, w);
                         mset(&mut f, Mem::Flags, fl);
+                        if let Some(ind) = ind {
+                            mset(&mut f, Mem::Indent, ind);
+                        }
                     }
                     if let Some(fl) = flag_back {
                         mset(&mut f, Mem::Flags, fl);
@@ -6847,6 +6870,14 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                     // caller's word and flags (`context`).
                     if two_slots {
                         let at = f.ins().ishl_imm(ret, 1);
+                        // The caller's indent in the return's high 16 bits (decision 0698).
+                        let t = if indented {
+                            let ind = mget(&mut f, Mem::Indent);
+                            let ind = f.ins().ishl_imm(ind, 16);
+                            f.ins().bor(t, ind)
+                        } else {
+                            t
+                        };
                         put(&mut f, ret_c, at, t);
                         let (w, fl) = (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags));
                         let fl = f.ins().ishl_imm(fl, 16);
@@ -6884,7 +6915,14 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                         let fl = f.ins().ushr_imm(wf, 16);
                         mset(&mut f, Mem::Word, w);
                         mset(&mut f, Mem::Flags, fl);
-                        f.ins().uload32(flags, a, 0)
+                        let p = f.ins().uload32(flags, a, 0);
+                        if indented {
+                            let ind = f.ins().ushr_imm(p, 16);
+                            mset(&mut f, Mem::Indent, ind);
+                            f.ins().band_imm(p, 0xffff)
+                        } else {
+                            p
+                        }
                     } else {
                         let a = slot(&mut f, ret_c, ret);
                         f.ins().uload32(flags, a, 0)
@@ -6997,7 +7035,6 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                 // A statement's start (decision 0650): its mark (`Ctx::mark`), where the stream goes on and the levels open are at most
                 // `MARK_LEVELS`; then a token a refusing mark held (`MARK_HELD`) refuses it.
                 Op::Statement if recovers => {
-                    let p = pinned(&mut f);
                     let (save, unmark, marked) = (f.create_block(), f.create_block(), f.create_block());
                     let next = mget(&mut f, Mem::Next);
                     let ended = ended_now(&mut f, next);
@@ -7203,9 +7240,12 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
         leave(&mut f, &r);
         f.switch_to_block(exit);
         let r = f.block_params(exit).to_vec();
-        if let Some((w, fl)) = entry_kept {
+        if let Some((w, fl, ind)) = entry_kept {
             mset(&mut f, Mem::Word, w);
             mset(&mut f, Mem::Flags, fl);
+            if let Some(ind) = ind {
+                mset(&mut f, Mem::Indent, ind);
+            }
         }
         if let Some(host) = host {
             f.ins().set_pinned_reg(host);
@@ -8088,7 +8128,95 @@ fn cold_op(op: &Op) -> bool {
 /// Whether the program has context beside each call's return (a level's word, its flags): two
 /// return slots a call.
 fn has_context(words: &[crate::native_ir::StructuralBlock]) -> bool {
-    words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Flag { .. } | Op::Push { flag: Some(_), .. }))
+    words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Indent | Op::Flag { .. } | Op::Push { flag: Some(_), .. }))
+}
+
+/// Whether the program keeps a level's indent (`INDENT`, decision 0698): kept beside each call's
+/// return with its word and flags, as the return's high 16 bits.
+fn has_indent(words: &[crate::native_ir::StructuralBlock]) -> bool {
+    words.iter().any(|b| matches!(b.operation, Op::Indent))
+}
+
+/// The bytes of `w` that are a line break, as the high bit of each (exact: no borrow from one
+/// byte into the next, as the bit trick of a zero byte has).
+fn line_breaks(f: &mut FunctionBuilder<'_>, w: Value) -> Value {
+    let x = f.ins().bxor_imm(w, 0x0a0a_0a0a_0a0a_0a0a);
+    let low = f.ins().band_imm(x, 0x7f7f_7f7f_7f7f_7f7f);
+    let t = f.ins().iadd_imm(low, 0x7f7f_7f7f_7f7f_7f7f);
+    let t = f.ins().bor(t, x);
+    let t = f.ins().bnot(t);
+    f.ins().band_imm(t, 0x8080_8080_8080_8080u64 as i64)
+}
+
+/// The token's column (decision 0698; the interpreter's `stream::column`): its start less the byte
+/// after the last line break before it, found 8 bytes at a time back from the start. Before the
+/// file's 8th byte, the word at its start with the bytes from the token on cleared (the file is
+/// readable 64 bytes past its end).
+fn token_column(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, heads: &mut Vec<(Block, Step)>) -> Value {
+    let s = (e.get)(f, Mem::Start);
+    let bytes = (e.ctx)(f, BYTES);
+    let (back, full, short, step, found, done) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(back, types::I64);
+    f.append_block_param(found, types::I64);
+    f.append_block_param(found, types::I64);
+    f.append_block_param(done, types::I64);
+    f.ins().jump(back, &[BlockArg::from(s)]);
+    f.switch_to_block(back);
+    heads.push((back, Step::Block));
+    let p = f.block_params(back)[0];
+    let ge8 = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, p, 8);
+    f.ins().brif(ge8, full, &[], short, &[]);
+    f.switch_to_block(full);
+    let from = f.ins().iadd_imm(p, -8);
+    let a = f.ins().iadd(bytes, from);
+    let w = f.ins().load(types::I64, MemFlags::trusted(), a, 0);
+    let m = line_breaks(f, w);
+    f.ins().brif(m, found, &[BlockArg::from(from), BlockArg::from(m)], step, &[]);
+    f.switch_to_block(step);
+    f.ins().jump(back, &[BlockArg::from(from)]);
+    f.switch_to_block(short);
+    let w = f.ins().load(types::I64, MemFlags::trusted(), bytes, 0);
+    let m = line_breaks(f, w);
+    // The bytes before `p` (`p` < 8): `(1 << 8p) - 1`.
+    let sh = f.ins().ishl_imm(p, 3);
+    let one = f.ins().iconst(types::I64, 1);
+    let below = f.ins().ishl(one, sh);
+    let below = f.ins().iadd_imm(below, -1);
+    let m = f.ins().band(m, below);
+    let zero = f.ins().iconst(types::I64, 0);
+    f.ins().brif(m, found, &[BlockArg::from(zero), BlockArg::from(m)], done, &[BlockArg::from(s)]);
+    f.switch_to_block(found);
+    let (from, m) = (f.block_params(found)[0], f.block_params(found)[1]);
+    // The last line break: the highest byte with its bit.
+    let lz = f.ins().clz(m);
+    let hi = f.ins().irsub_imm(lz, 63);
+    let byte = f.ins().ushr_imm(hi, 3);
+    let at = f.ins().iadd(from, byte);
+    let line = f.ins().iadd_imm(at, 1);
+    let col = f.ins().isub(s, line);
+    f.ins().jump(done, &[BlockArg::from(col)]);
+    f.switch_to_block(done);
+    f.block_params(done)[0]
+}
+
+/// Mark `column`'s question of the token's column against the level's indent (decision 0698):
+/// 1, past it; 2, less than it; at the stream's end the column is 0. Goes on in a block of its
+/// own where it holds, else to `skip`.
+fn column_holds(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, column: u8, at_end: Value, skip: Block, heads: &mut Vec<(Block, Step)>) {
+    let (ask, test, holds) = (f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(test, types::I64);
+    let zero = f.ins().iconst(types::I64, 0);
+    f.ins().brif(at_end, test, &[BlockArg::from(zero)], ask, &[]);
+    f.switch_to_block(ask);
+    let col = token_column(f, e, heads);
+    f.ins().jump(test, &[BlockArg::from(col)]);
+    f.switch_to_block(test);
+    let col = f.block_params(test)[0];
+    let indent = (e.get)(f, Mem::Indent);
+    let cc = if column == 1 { IntCC::UnsignedGreaterThan } else { IntCC::UnsignedLessThan };
+    let ok = f.ins().icmp(cc, col, indent);
+    f.ins().brif(ok, holds, &[], skip, &[]);
+    f.switch_to_block(holds);
 }
 
 /// Whether the program keeps a frame per open node: it wraps, or it relabels the node made last

@@ -33,14 +33,19 @@ statements and blocks end.
 4. **A statement ends at `newline`**, a mark at each line break of code outside brackets and not after a line
    continuation, and at the file's end. Blank and comment lines between two tokens are one mark.
 5. **A level's indent.** Each level holds a width, its indent. A nested level starts with its caller's indent and
-   gives it back when it ends, as a remembered word is (`remember`). A level marked `indented`
-   (`node block indented = …`) sets its indent, at its first token, to that token's column.
+   gives it back when it ends, as a remembered word is (`remember`). A level named by `indented` (`indented block`,
+   a statement of the tree, as `remember` is) sets its indent, at its first token, to that token's column: the word
+   `INDENT`, after the `PUSH` of each call into it. The interpreter keeps it beside each return; the JIT keeps it in
+   the return's high 16 bits (`Mem::Indent`), and refuses a column past them.
 6. **Two questions compare a column with the indent.** `, deeper` holds where the column of the token the mark is
    before is past the asking level's indent. `, shallower` holds where it is less. Each level asks with its own
    indent. So a level that ends at a `shallower` mark (`ends`) leaves it to its caller, which asks again with its own
    indent:
-   - `mark indent = …, deeper`: a block's start after its header's `:`.
+   - `mark indent = …, deeper`: a block's start, after its header's `:`. The header takes it (`':' indent
+     consequence: block`), so it is asked with the header's indent; the block then sets its own. A block that took
+     it itself would ask it with the indent it had just set.
    - `mark dedent = …, shallower, ends`: the end of every block wider than the line, one level after another.
+   Each mark's question is a table of the program (`markcolumn K C`, `Words::mark_columns`).
    A block's statements then go on while the next line's column is at least the block's indent, which is
    tree-sitter's rule. A line indented past the block but not after a header is a statement of the block, as
    tree-sitter's scanner gives NEWLINE there and no INDENT. A dedent to a width between two blocks' widths ends the
@@ -50,3 +55,5 @@ statements and blocks end.
    in that gap, a word at a time, as `first_on_line` finds a terminator. A line whose indentation holds a tab or a
    form feed is refused for now, since those count as tree-sitter's scanner counts them (to the next multiple of
    8; back to 0).
+8. **The Rust tier 2 refuses an `indented` grammar for now** (`bitlex_rust::tier2`). The JIT and the interpreter read
+   it; Metal runs the JIT's tier 2 on its records, so it needs nothing of its own.

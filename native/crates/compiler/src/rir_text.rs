@@ -56,6 +56,13 @@ pub fn mark_word_rows(out: &mut String, mark_words: &[(u8, u16)]) {
     }
 }
 
+/// The marks that ask their token's column: `markcolumn K C` (`Words::mark_columns`).
+pub fn mark_column_rows(out: &mut String, mark_columns: &[(u8, u8)]) {
+    for &(k, c) in mark_columns {
+        let _ = writeln!(out, "  markcolumn {k} {c}");
+    }
+}
+
 /// The marks each mark passes: `markpasses K MASK` (`Words::mark_passes`).
 pub fn mark_pass_rows(out: &mut String, mark_passes: &[(u8, u64)]) {
     use std::fmt::Write as _;

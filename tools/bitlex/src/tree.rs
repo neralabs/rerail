@@ -939,6 +939,9 @@ fn reread(out: &mut Vec<Node>, root: usize, r: &crate::syntax::Reading, remember
 /// The nodes of `decl` over `tokens` (a file of `n` bytes), or the reason the file goes to
 /// tree-sitter.
 pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, String> {
+    if !decl.indented.is_empty() {
+        return Err("an `indented` level: this reference does not ask a mark's column yet (decision 0698)".into());
+    }
     let root = decl.rules.first().ok_or("the tree section has no rule")?.0.clone();
     // The extras, each with the number of other tokens before it.
     // The extras, each with the number of other tokens before it (marks left out: they make no

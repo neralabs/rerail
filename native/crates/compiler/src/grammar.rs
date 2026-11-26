@@ -106,6 +106,9 @@ pub enum Act {
     /// The arm is there only where flag `flag` is clear (`unless F A`): where it is set, the
     /// state goes on as if it had no arm on the token (its end, or a refusal).
     Unless { flag: u16 },
+    /// The call `call` of the arm's (its index among them, outermost first) enters an `indented`
+    /// level: after its `PUSH`, the level's indent is the column of the token (decision 0698).
+    Indent { call: u8 },
 }
 
 /// An `Act::Flag` not yet given its call.
@@ -193,6 +196,9 @@ pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                 }
                 Act::Unless { flag } => {
                     let _ = write!(acts, " unless {flag}");
+                }
+                Act::Indent { call } => {
+                    let _ = write!(acts, " indent call {call}");
                 }
             }
         }
@@ -357,6 +363,8 @@ struct Level {
     split: Vec<u16>,
     /// Its endings (`StateRow::endings`).
     endings: Vec<(u16, u16, u16)>,
+    /// It holds an indent of its own (`indented`, decision 0698): set by each call into it.
+    indented: bool,
 }
 
 struct Builder<'a> {
@@ -1319,7 +1327,11 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                 });
             }
         }
-        levels.push(Level { kind: id, own: b.rules[r].own, supertype, edges, refuses, follows, split, endings });
+        let indented = stmts.iter().any(|s| matches!(s, Stmt::Indented(n) if n.contains(&b.rules[r].kind)));
+        if indented && l == 0 {
+            return Err(format!("indented {}: the root's indent is 0, no level of its own", b.rules[r].kind));
+        }
+        levels.push(Level { kind: id, own: b.rules[r].own, supertype, edges, refuses, follows, split, endings, indented });
     }
     // Each level a `refuse` names: a nested one.
     for s in stmts {
@@ -1332,6 +1344,11 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
             && !level_rules.iter().any(|&r| &b.rules[r].kind == rule)
         {
             return Err(format!("ending {rule}: no nested level of that name"));
+        }
+        if let Stmt::Indented(names) = s
+            && let Some(n) = names.iter().find(|n| !level_rules.iter().any(|&r| &b.rules[r].kind == *n))
+        {
+            return Err(format!("indented {n}: no nested level of that name"));
         }
     }
     let level_of_rule: HashMap<usize, usize> = level_rules.iter().enumerate().map(|(l, &r)| (r, l)).collect();
@@ -1412,6 +1429,10 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                     // the outer one first, so the inner one returns first.
                     let mut calls = push.clone();
                     calls.push(q);
+                    // An indented level's indent: its first token's column, after its `PUSH`.
+                    if levels[child].indented {
+                        acts.push(Act::Indent { call: push.len() as u8 });
+                    }
                     // A function a rule: a call takes no token. It opens the callee's node and
                     // goes to the callee's start, which switches on the token itself, an arm on
                     // each token the callee may begin with: a mark too (the caller's state keeps

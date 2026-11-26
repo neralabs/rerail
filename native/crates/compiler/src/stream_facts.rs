@@ -101,7 +101,7 @@ pub fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, si
     let part_kinds: Vec<usize> = records.map_or(Vec::new(), |r| r.retags.iter().filter(|t| t.part).map(|t| usize::from(t.kind)).collect());
     let words = &native.structural;
     let framed = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made | On::MadeUnset | On::Inner, .. }));
-    let context = words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Flag { .. } | Op::Push { flag: Some(_), .. }));
+    let context = words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Indent | Op::Flag { .. } | Op::Push { flag: Some(_), .. }));
     let mut entries: BTreeSet<usize> = BTreeSet::from([0]);
     for (pc, b) in words.iter().enumerate() {
         if let Op::Push { .. } = b.operation {

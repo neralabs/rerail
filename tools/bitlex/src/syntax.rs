@@ -855,7 +855,11 @@ pub enum Stmt {
     /// `, passes M`: taken, it passes mark `M` too, though `M` comes after it: a mark tested
     /// before `M` where both hold (an annotation's line break before `semi`), which leaves no
     /// `M` at the token, as a line break that is no semicolon leaves none.
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)>, drops: Vec<GapPattern>, loses: Vec<GapPattern>, refuses: Vec<GapPattern>, refuses_taken: Vec<GapPattern>, passes: Vec<String> },
+    ///
+    /// `, deeper` and `, shallower` (decision 0698): the column of the token the mark is before
+    /// past the asking level's indent, or less than it (`Column`). Each level that asks for the
+    /// mark asks with its own indent (`indented`).
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)>, drops: Vec<GapPattern>, loses: Vec<GapPattern>, refuses: Vec<GapPattern>, refuses_taken: Vec<GapPattern>, passes: Vec<String>, column: Option<Column> },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
@@ -879,6 +883,10 @@ pub enum Stmt {
     /// level; `as CHOICE` (and a reading's `K as CHOICE`) then names that token's kind. A nested
     /// level starts with its caller's and gives it back when it ends.
     Remember(Vec<String>),
+    /// `indented RULE …` (in a tree, decision 0698): nested levels that hold an indent of their
+    /// own, the column of their first token. Every other level holds its caller's (the root's
+    /// is 0), as a remembered word is held: a mark's `deeper` and `shallower` compare with it.
+    Indented(Vec<String>),
     /// `flag F …` (in a tree): flags a level runs with (`with F A`, `unless F A`), clear in the
     /// root's.
     Flags(Vec<String>),
@@ -898,6 +906,16 @@ pub enum Stmt {
     /// parser's question after a call: `literal`'s `retag_atom` where its `term` was a call alone, a negation's
     /// failure where its operand was a comparison (decision 0668).
     Ending { rule: String, kind: String, ending: Ending },
+}
+
+/// A mark's question of the column of the token it is before, against the asking level's indent
+/// (`Stmt::Indented`, decision 0698).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Column {
+    /// `, deeper`: past the indent.
+    Deeper,
+    /// `, shallower`: less than the indent.
+    Shallower,
 }
 
 /// What `ending` does with the node made last where its level ends.
@@ -2314,6 +2332,16 @@ impl P {
                 }
                 Stmt::Flags(names)
             }
+            "indented" => {
+                let mut names = vec![];
+                while matches!(self.peek(), Some(Tok::Ident(_))) {
+                    names.push(self.ident()?);
+                }
+                if names.is_empty() {
+                    return self.err("indented RULE …");
+                }
+                Stmt::Indented(names)
+            }
             "remember" => {
                 let mut names = vec![];
                 while matches!(self.peek(), Some(Tok::Ident(_))) {
@@ -2402,8 +2430,17 @@ impl P {
                 let (mut end, mut unplaced, mut checks, mut settles, mut ends, mut drops, mut loses, mut refuses, mut refuses_taken) = (false, None, vec![], false, false, vec![], vec![], vec![], vec![]);
                 let mut next: Vec<(bool, Vec<Vec<TokenElem>>)> = Vec::new();
                 let mut passes = Vec::new();
+                let mut column = None;
                 while self.eat_p(",") {
                     self.nls();
+                    if self.eat_kw("deeper") {
+                        column = Some(Column::Deeper);
+                        continue;
+                    }
+                    if self.eat_kw("shallower") {
+                        column = Some(Column::Shallower);
+                        continue;
+                    }
                     let not = self.eat_kw("unless");
                     if not || self.is_kw("before") {
                         self.want_kw("before")?;
@@ -2449,7 +2486,7 @@ impl P {
                 if !drops.is_empty() && !settles {
                     return self.err("`drops` on a mark that settles");
                 }
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken, passes }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken, passes, column }
             }
             "token" => {
                 let kind = self.kind()?;

@@ -45,6 +45,15 @@ fn simple_statements_are_the_lean_parsers() {
 }
 
 #[test]
+fn blocks_are_the_lean_parsers() {
+    same(&["if a:\n    b\n", "if a:\n    b\n    c\nd\n", "if a:\n  b\nelif c:\n  d\nelse:\n  e\n", "while a:\n  b\nelse:\n  c\n"]);
+    // Nested, and a dedent past two blocks at once, or to between them.
+    same(&["if a:\n  if b:\n    c\nd\n", "if a:\n  if b:\n    c\n  d\ne\n", "if a:\n    b\n  c\n", "if a:\n  b\n      c\n"]);
+    // The file ends in a block.
+    same(&["if a:\n  b", "if a:\n  if b:\n    c"]);
+}
+
+#[test]
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&["'a'\n", "x.5\n", "0x1f\n", "x\\\n", "\tx\n"]);
 }
