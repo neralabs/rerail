@@ -1,0 +1,458 @@
+.policy "no-duplicate-blocks-ast" revision 1
+.description "No piece of code of 30 or more lines appears twice in the repository, compared by its syntax tree."
+.language typescript
+.mode steer
+.scope include "src/**", "test/**", "packs/**"
+.scope exclude "**/node_modules/**", "**/*.d.ts", "**/*.min.js", "packs/*/rules/**", "packs/*/candidates/**", "**/fixtures/**", "**/__snapshots__/**", "**/*.generated.*", "**/generated/**"
+// no-duplicate-blocks.rerail compares lines of text. This one compares the parsed tree, with the tape's own
+// structural digest (core's tree_digest): a node's kind, its children's fields and digests in order, a leaf's text, a
+// literal's value. Comments, punctuation, layout and parentheses are left out, so `'x'` and `"x"`, `0x10` and `16`,
+// a trailing comma or a reflowed call are the same code. Identifiers are compared by their text, so a copy with its
+// variables renamed is not found. Where the grammar's tree differs, the code differs: `x => x` and `(x) => x` are
+// two trees in tree-sitter's TypeScript (an identifier against formal_parameters).
+//
+// Two shapes of copy, both at least 30 lines from first to last line:
+//   1. One node: a function, a class, a method, an object or array literal, a statement. Reported only where no
+//      node around it is reported too.
+//   2. A run of siblings: consecutive children of one node (statements of a block, members of a class, an object's
+//      properties, an array's elements, a call's arguments), comments left out. Windows of 4 siblings are keyed as
+//      the line rule keys its lines, and consecutive duplicated windows merge into one run.
+// What crosses: a key (a number) and nothing else, as in the line rule; places are named as text.
+
+// ---- per file ------------------------------------------------------------------------------------------------
+// sib(d, pv, i, v, h, a, b): child i of the node numbered pv is the node numbered v, with key h, from line a to line
+// b. Comments are no siblings. A node's number is its start line, column and depth (`at`): visit_index has no rows
+// for TypeScript, and the depth tells a node from its first child, which starts where it does.
+.decl at(n: node, v: number)
+at(n, v) :- line(n, a), col(n, c), ast_depth(n, k), v = (a * 65536 + c) * 256 + k.
+.decl sib(d: number, pv: number, i: number, v: number, h: number, a: number, b: number)
+sib(d, pv, i, v, h, a, b) :- child(p, n, i), !kind(n, "comment"), docof(n, d), at(p, pv), at(n, v),
+    h = @hash64(@tree_digest(n)), line(n, a), end_line(n, b).
+.decl gap(d: number, pv: number, i: number)
+gap(d, pv, i) :- child(p, n, i), kind(n, "comment"), docof(n, d), at(p, pv).
+// after(d, pv, i, w): w is the first sibling after child i (comments skipped).
+.decl after(d: number, pv: number, i: number, w: number)
+after(d, pv, i, w) :- sib(d, pv, j, w, _, _, _), i = j - 1, i >= 0.
+after(d, pv, i, w) :- gap(d, pv, j), i = j - 1, i >= 0, after(d, pv, j, w).
+// j1(d, v, w): sibling w follows sibling v; j2 two siblings on.
+.decl j1(d: number, v: number, w: number)
+j1(d, v, w) :- sib(d, pv, i, v, _, _, _), after(d, pv, i, w).
+.decl j2(d: number, v: number, w: number)
+j2(d, v, w) :- j1(d, v, x), j1(d, x, w).
+.decl h2(d: number, v: number, h: number)
+h2(d, v, h) :- sib(d, _, _, v, a, _, _), j1(d, v, w), sib(d, _, _, w, b, _, _), h = @hash64_pair(a, b).
+// win(d, v, k, a, b): the 4 siblings from v have key k, and run from line a to line b. The lines are made here, in
+// the file, so that the runs below join nothing of the file's but these rows.
+.decl win(d: number, v: number, k: number, a: number, b: number)
+win(d, v, k, a, b) :- h2(d, v, x), j2(d, v, w), h2(d, w, y), k = @hash64_pair(x, y), sib(d, _, _, v, _, a, _),
+    j1(d, w, z), sib(d, _, _, z, _, _, b).
+// big(d, v, h, a, b): node v is 30 lines or more (a comment is none).
+.decl big(d: number, v: number, h: number, a: number, b: number)
+big(d, v, h, a, b) :- sib(d, _, _, v, h, a, b), b - a >= 29.
+// A file hands on its keys and how many of each it has: no node, no line.
+.decl key_n(d: number, k: number, n: number)
+key_n(d, k, n) :- win(d, _, k, _, _), n = count : { win(d, _, k, _, _) }.
+key_n(d, h, n) :- big(d, _, h, _, _), n = count : { big(d, _, h, _, _) }.
+
+// ---- across files -------------------------------------------------------------------------------------------
+.decl dup_key(k: number) cross_file
+dup_key(k) :- key_n(_, k, n), n > 1.
+dup_key(k) :- key_n(d, k, _), key_n(e, k, _), d != e.
+
+// ---- the copies ----------------------------------------------------------------------------------------------
+// 1. Runs of duplicated windows, from s; the run's lines are its first sibling's first to its last window's last.
+.decl dup_win(d: number, v: number, k: number, a: number, b: number)
+dup_win(d, v, k, a, b) :- win(d, v, k, a, b), dup_key(k).
+.decl win_after_win(d: number, v: number)
+win_after_win(d, v) :- dup_win(d, v, _, _, _), j1(d, u, v), dup_win(d, u, _, _, _).
+.decl run(d: number, s: number, v: number)
+run(d, s, s) :- dup_win(d, s, _, _, _), !win_after_win(d, s).
+run(d, s, w) :- run(d, s, v), j1(d, v, w), dup_win(d, w, _, _, _).
+// copy(d, s, k, a, b): a copy starts at node s, keyed k (its first window's or its node's), lines a to b.
+.decl copy(d: number, s: number, k: number, a: number, b: number)
+copy(d, s, k, a, b) :- dup_win(d, s, k, a, _), !win_after_win(d, s), e = max v : { run(d, s, v) },
+    dup_win(d, e, _, _, b), b - a >= 29.
+// 2. One node.
+copy(d, v, h, a, b) :- big(d, v, h, a, b), dup_key(h).
+// A copy inside another copy of its file is part of it.
+.decl inner(d: number, v: number)
+inner(d, v) :- copy(d, v, _, a, b), copy(d, u, _, a2, b2), u != v, a2 <= a, b <= b2, (a2 < a ; b < b2 ; u < v).
+.decl shown(d: number, v: number, k: number, a: number, b: number)
+shown(d, v, k, a, b) :- copy(d, v, k, a, b), !inner(d, v).
+
+// ---- the other places ----------------------------------------------------------------------------------------
+.decl place_of(k: number, w: symbol) cross_file
+place_of(k, w) :- shown(_, _, k, _, _), copy(e, _, k, a, _), doc(e, p, _), w = cat(p, ":", to_string(a)).
+
+.violation DUPLICATE_CODE(at: loc, a: number, b: number, others: symbol)
+    "Lines {a}-{b} are the same code as {others}: extract the shared code"
+DUPLICATE_CODE(@place(p, a), a, b, ws) :- shown(d, _, k, a, b), doc(d, p, _), own = cat(p, ":", to_string(a)),
+    ws = join w by w sep ", " : { place_of(k, w), w != own }, ws != "".
+
+// ---- tests (decision 0130): rerail-engine test-rr <this file> --------------------------------------------------
+.test a_reformatted_copy_is_found exactly
+    .fixture "src/a.ts" ```
+        export function total(items: Item[], rate: number) {
+          const part0 = items.filter(item => item.kind === 'k0').map(item => item.price * rate);
+          const part1 = items.filter(item => item.kind === 'k1').map(item => item.price * rate);
+          const part2 = items.filter(item => item.kind === 'k2').map(item => item.price * rate);
+          const part3 = items.filter(item => item.kind === 'k3').map(item => item.price * rate);
+          const part4 = items.filter(item => item.kind === 'k4').map(item => item.price * rate);
+          const part5 = items.filter(item => item.kind === 'k5').map(item => item.price * rate);
+          const part6 = items.filter(item => item.kind === 'k6').map(item => item.price * rate);
+          const part7 = items.filter(item => item.kind === 'k7').map(item => item.price * rate);
+          const part8 = items.filter(item => item.kind === 'k8').map(item => item.price * rate);
+          const part9 = items.filter(item => item.kind === 'k9').map(item => item.price * rate);
+          const part10 = items.filter(item => item.kind === 'k10').map(item => item.price * rate);
+          const part11 = items.filter(item => item.kind === 'k11').map(item => item.price * rate);
+          const part12 = items.filter(item => item.kind === 'k12').map(item => item.price * rate);
+          const part13 = items.filter(item => item.kind === 'k13').map(item => item.price * rate);
+          const part14 = items.filter(item => item.kind === 'k14').map(item => item.price * rate);
+          const part15 = items.filter(item => item.kind === 'k15').map(item => item.price * rate);
+          const part16 = items.filter(item => item.kind === 'k16').map(item => item.price * rate);
+          const part17 = items.filter(item => item.kind === 'k17').map(item => item.price * rate);
+          const part18 = items.filter(item => item.kind === 'k18').map(item => item.price * rate);
+          const part19 = items.filter(item => item.kind === 'k19').map(item => item.price * rate);
+          const part20 = items.filter(item => item.kind === 'k20').map(item => item.price * rate);
+          const part21 = items.filter(item => item.kind === 'k21').map(item => item.price * rate);
+          const part22 = items.filter(item => item.kind === 'k22').map(item => item.price * rate);
+          const part23 = items.filter(item => item.kind === 'k23').map(item => item.price * rate);
+          const part24 = items.filter(item => item.kind === 'k24').map(item => item.price * rate);
+          const part25 = items.filter(item => item.kind === 'k25').map(item => item.price * rate);
+          const part26 = items.filter(item => item.kind === 'k26').map(item => item.price * rate);
+          const part27 = items.filter(item => item.kind === 'k27').map(item => item.price * rate);
+          const part28 = items.filter(item => item.kind === 'k28').map(item => item.price * rate);
+          const part29 = items.filter(item => item.kind === 'k29').map(item => item.price * rate);
+          const part30 = items.filter(item => item.kind === 'k30').map(item => item.price * rate);
+          const part31 = items.filter(item => item.kind === 'k31').map(item => item.price * rate);
+          return [part0, part1, part2, part3];
+        }
+        ```
+    .fixture "src/b.ts" ```
+        import { Item } from './item';
+
+        // The same function, as another formatter left it.
+        export function total(
+          items: Item[],
+          rate: number,
+        ) {
+          const part0 = items
+            .filter(item => item.kind === "k0")
+            .map(item => item.price * rate);
+          const part1 = items
+            .filter(item => item.kind === "k1")
+            .map(item => item.price * rate);
+          const part2 = items
+            .filter(item => item.kind === "k2")
+            .map(item => item.price * rate);
+          const part3 = items
+            .filter(item => item.kind === "k3")
+            .map(item => item.price * rate);
+          const part4 = items
+            .filter(item => item.kind === "k4")
+            .map(item => item.price * rate);
+          const part5 = items
+            .filter(item => item.kind === "k5")
+            .map(item => item.price * rate);
+          const part6 = items
+            .filter(item => item.kind === "k6")
+            .map(item => item.price * rate);
+          const part7 = items
+            .filter(item => item.kind === "k7")
+            .map(item => item.price * rate);
+          const part8 = items
+            .filter(item => item.kind === "k8")
+            .map(item => item.price * rate);
+          const part9 = items
+            .filter(item => item.kind === "k9")
+            .map(item => item.price * rate);
+          const part10 = items
+            .filter(item => item.kind === "k10")
+            .map(item => item.price * rate);
+          // a note
+          const part11 = items
+            .filter(item => item.kind === "k11")
+            .map(item => item.price * rate);
+          const part12 = items
+            .filter(item => item.kind === "k12")
+            .map(item => item.price * rate);
+          const part13 = items
+            .filter(item => item.kind === "k13")
+            .map(item => item.price * rate);
+          const part14 = items
+            .filter(item => item.kind === "k14")
+            .map(item => item.price * rate);
+          const part15 = items
+            .filter(item => item.kind === "k15")
+            .map(item => item.price * rate);
+          const part16 = items
+            .filter(item => item.kind === "k16")
+            .map(item => item.price * rate);
+          const part17 = items
+            .filter(item => item.kind === "k17")
+            .map(item => item.price * rate);
+          const part18 = items
+            .filter(item => item.kind === "k18")
+            .map(item => item.price * rate);
+          const part19 = items
+            .filter(item => item.kind === "k19")
+            .map(item => item.price * rate);
+          const part20 = items
+            .filter(item => item.kind === "k20")
+            .map(item => item.price * rate);
+          const part21 = items
+            .filter(item => item.kind === "k21")
+            .map(item => item.price * rate);
+          const part22 = items
+            .filter(item => item.kind === "k22")
+            .map(item => item.price * rate);
+          const part23 = items
+            .filter(item => item.kind === "k23")
+            .map(item => item.price * rate);
+          const part24 = items
+            .filter(item => item.kind === "k24")
+            .map(item => item.price * rate);
+          const part25 = items
+            .filter(item => item.kind === "k25")
+            .map(item => item.price * rate);
+          const part26 = items
+            .filter(item => item.kind === "k26")
+            .map(item => item.price * rate);
+          const part27 = items
+            .filter(item => item.kind === "k27")
+            .map(item => item.price * rate);
+          const part28 = items
+            .filter(item => item.kind === "k28")
+            .map(item => item.price * rate);
+          const part29 = items
+            .filter(item => item.kind === "k29")
+            .map(item => item.price * rate);
+          const part30 = items
+            .filter(item => item.kind === "k30")
+            .map(item => item.price * rate);
+          const part31 = items
+            .filter(item => item.kind === "k31")
+            .map(item => item.price * rate);
+          return [part0, part1, part2, part3,];
+        }
+        ```
+    .expect DUPLICATE_CODE at "src/a.ts":1
+    .expect DUPLICATE_CODE at "src/b.ts":4
+.end
+
+.test a_copy_with_renamed_variables_is_not_found
+    .fixture "src/a.ts" ```
+        export function total(items: Item[], rate: number) {
+          const part0 = items.filter(item => item.kind === 'k0').map(item => item.price * rate);
+          const part1 = items.filter(item => item.kind === 'k1').map(item => item.price * rate);
+          const part2 = items.filter(item => item.kind === 'k2').map(item => item.price * rate);
+          const part3 = items.filter(item => item.kind === 'k3').map(item => item.price * rate);
+          const part4 = items.filter(item => item.kind === 'k4').map(item => item.price * rate);
+          const part5 = items.filter(item => item.kind === 'k5').map(item => item.price * rate);
+          const part6 = items.filter(item => item.kind === 'k6').map(item => item.price * rate);
+          const part7 = items.filter(item => item.kind === 'k7').map(item => item.price * rate);
+          const part8 = items.filter(item => item.kind === 'k8').map(item => item.price * rate);
+          const part9 = items.filter(item => item.kind === 'k9').map(item => item.price * rate);
+          const part10 = items.filter(item => item.kind === 'k10').map(item => item.price * rate);
+          const part11 = items.filter(item => item.kind === 'k11').map(item => item.price * rate);
+          const part12 = items.filter(item => item.kind === 'k12').map(item => item.price * rate);
+          const part13 = items.filter(item => item.kind === 'k13').map(item => item.price * rate);
+          const part14 = items.filter(item => item.kind === 'k14').map(item => item.price * rate);
+          const part15 = items.filter(item => item.kind === 'k15').map(item => item.price * rate);
+          const part16 = items.filter(item => item.kind === 'k16').map(item => item.price * rate);
+          const part17 = items.filter(item => item.kind === 'k17').map(item => item.price * rate);
+          const part18 = items.filter(item => item.kind === 'k18').map(item => item.price * rate);
+          const part19 = items.filter(item => item.kind === 'k19').map(item => item.price * rate);
+          const part20 = items.filter(item => item.kind === 'k20').map(item => item.price * rate);
+          const part21 = items.filter(item => item.kind === 'k21').map(item => item.price * rate);
+          const part22 = items.filter(item => item.kind === 'k22').map(item => item.price * rate);
+          const part23 = items.filter(item => item.kind === 'k23').map(item => item.price * rate);
+          const part24 = items.filter(item => item.kind === 'k24').map(item => item.price * rate);
+          const part25 = items.filter(item => item.kind === 'k25').map(item => item.price * rate);
+          const part26 = items.filter(item => item.kind === 'k26').map(item => item.price * rate);
+          const part27 = items.filter(item => item.kind === 'k27').map(item => item.price * rate);
+          const part28 = items.filter(item => item.kind === 'k28').map(item => item.price * rate);
+          const part29 = items.filter(item => item.kind === 'k29').map(item => item.price * rate);
+          const part30 = items.filter(item => item.kind === 'k30').map(item => item.price * rate);
+          const part31 = items.filter(item => item.kind === 'k31').map(item => item.price * rate);
+          return [part0, part1, part2, part3];
+        }
+        ```
+    .fixture "src/b.ts" ```
+        export function total(rows: Item[], rate: number) {
+          const piece0 = rows.filter(row => row.kind === 'k0').map(row => row.price * rate);
+          const piece1 = rows.filter(row => row.kind === 'k1').map(row => row.price * rate);
+          const piece2 = rows.filter(row => row.kind === 'k2').map(row => row.price * rate);
+          const piece3 = rows.filter(row => row.kind === 'k3').map(row => row.price * rate);
+          const piece4 = rows.filter(row => row.kind === 'k4').map(row => row.price * rate);
+          const piece5 = rows.filter(row => row.kind === 'k5').map(row => row.price * rate);
+          const piece6 = rows.filter(row => row.kind === 'k6').map(row => row.price * rate);
+          const piece7 = rows.filter(row => row.kind === 'k7').map(row => row.price * rate);
+          const piece8 = rows.filter(row => row.kind === 'k8').map(row => row.price * rate);
+          const piece9 = rows.filter(row => row.kind === 'k9').map(row => row.price * rate);
+          const piece10 = rows.filter(row => row.kind === 'k10').map(row => row.price * rate);
+          const piece11 = rows.filter(row => row.kind === 'k11').map(row => row.price * rate);
+          const piece12 = rows.filter(row => row.kind === 'k12').map(row => row.price * rate);
+          const piece13 = rows.filter(row => row.kind === 'k13').map(row => row.price * rate);
+          const piece14 = rows.filter(row => row.kind === 'k14').map(row => row.price * rate);
+          const piece15 = rows.filter(row => row.kind === 'k15').map(row => row.price * rate);
+          const piece16 = rows.filter(row => row.kind === 'k16').map(row => row.price * rate);
+          const piece17 = rows.filter(row => row.kind === 'k17').map(row => row.price * rate);
+          const piece18 = rows.filter(row => row.kind === 'k18').map(row => row.price * rate);
+          const piece19 = rows.filter(row => row.kind === 'k19').map(row => row.price * rate);
+          const piece20 = rows.filter(row => row.kind === 'k20').map(row => row.price * rate);
+          const piece21 = rows.filter(row => row.kind === 'k21').map(row => row.price * rate);
+          const piece22 = rows.filter(row => row.kind === 'k22').map(row => row.price * rate);
+          const piece23 = rows.filter(row => row.kind === 'k23').map(row => row.price * rate);
+          const piece24 = rows.filter(row => row.kind === 'k24').map(row => row.price * rate);
+          const piece25 = rows.filter(row => row.kind === 'k25').map(row => row.price * rate);
+          const piece26 = rows.filter(row => row.kind === 'k26').map(row => row.price * rate);
+          const piece27 = rows.filter(row => row.kind === 'k27').map(row => row.price * rate);
+          const piece28 = rows.filter(row => row.kind === 'k28').map(row => row.price * rate);
+          const piece29 = rows.filter(row => row.kind === 'k29').map(row => row.price * rate);
+          const piece30 = rows.filter(row => row.kind === 'k30').map(row => row.price * rate);
+          const piece31 = rows.filter(row => row.kind === 'k31').map(row => row.price * rate);
+          return [piece0, piece1, piece2, piece3];
+        }
+        ```
+    .expect count DUPLICATE_CODE = 0
+.end
+
+.test a_run_of_properties_in_two_objects_is_found exactly
+    .fixture "src/a.ts" ```
+        export const a = schema({
+          id: required(text(0)),
+          field0: optional(text(0)),
+          field1: optional(text(1)),
+          field2: optional(text(2)),
+          field3: optional(text(3)),
+          field4: optional(text(4)),
+          field5: optional(text(5)),
+          field6: optional(text(6)),
+          field7: optional(text(7)),
+          field8: optional(text(8)),
+          field9: optional(text(9)),
+          field10: optional(text(10)),
+          field11: optional(text(11)),
+          field12: optional(text(12)),
+          field13: optional(text(13)),
+          field14: optional(text(14)),
+          field15: optional(text(15)),
+          field16: optional(text(16)),
+          field17: optional(text(17)),
+          field18: optional(text(18)),
+          field19: optional(text(19)),
+          field20: optional(text(20)),
+          field21: optional(text(21)),
+          field22: optional(text(22)),
+          field23: optional(text(23)),
+          field24: optional(text(24)),
+          field25: optional(text(25)),
+          field26: optional(text(26)),
+          field27: optional(text(27)),
+          field28: optional(text(28)),
+          field29: optional(text(29)),
+          field30: optional(text(30)),
+          field31: optional(text(31)),
+          field32: optional(text(32)),
+          field33: optional(text(33)),
+          onlyA: required(flag()),
+        });
+        ```
+    .fixture "src/b.ts" ```
+        export const b = otherSchema(
+          {
+          field0: optional(text(0)),
+          field1: optional(text(1)),
+          field2: optional(text(2)),
+          field3: optional(text(3)),
+          field4: optional(text(4)),
+          field5: optional(text(5)),
+          field6: optional(text(6)),
+          field7: optional(text(7)),
+          field8: optional(text(8)),
+          field9: optional(text(9)),
+          field10: optional(text(10)),
+          field11: optional(text(11)),
+          field12: optional(text(12)),
+          field13: optional(text(13)),
+          field14: optional(text(14)),
+          field15: optional(text(15)),
+          field16: optional(text(16)),
+          field17: optional(text(17)),
+          field18: optional(text(18)),
+          field19: optional(text(19)),
+          field20: optional(text(20)),
+          field21: optional(text(21)),
+          field22: optional(text(22)),
+          field23: optional(text(23)),
+          field24: optional(text(24)),
+          field25: optional(text(25)),
+          field26: optional(text(26)),
+          field27: optional(text(27)),
+          field28: optional(text(28)),
+          field29: optional(text(29)),
+          field30: optional(text(30)),
+          field31: optional(text(31)),
+          field32: optional(text(32)),
+          field33: optional(text(33)),
+            onlyB: number(),
+          },
+        );
+        ```
+    .expect DUPLICATE_CODE at "src/a.ts":3
+    .expect DUPLICATE_CODE at "src/b.ts":3
+.end
+
+.test a_twenty_line_copy_is_not_found
+    .fixture "src/a.ts" ```
+        export function total(items: Item[], rate: number) {
+          const part0 = items.filter(item => item.kind === 'k0').map(item => item.price * rate);
+          const part1 = items.filter(item => item.kind === 'k1').map(item => item.price * rate);
+          const part2 = items.filter(item => item.kind === 'k2').map(item => item.price * rate);
+          const part3 = items.filter(item => item.kind === 'k3').map(item => item.price * rate);
+          const part4 = items.filter(item => item.kind === 'k4').map(item => item.price * rate);
+          const part5 = items.filter(item => item.kind === 'k5').map(item => item.price * rate);
+          const part6 = items.filter(item => item.kind === 'k6').map(item => item.price * rate);
+          const part7 = items.filter(item => item.kind === 'k7').map(item => item.price * rate);
+          const part8 = items.filter(item => item.kind === 'k8').map(item => item.price * rate);
+          const part9 = items.filter(item => item.kind === 'k9').map(item => item.price * rate);
+          const part10 = items.filter(item => item.kind === 'k10').map(item => item.price * rate);
+          const part11 = items.filter(item => item.kind === 'k11').map(item => item.price * rate);
+          const part12 = items.filter(item => item.kind === 'k12').map(item => item.price * rate);
+          const part13 = items.filter(item => item.kind === 'k13').map(item => item.price * rate);
+          const part14 = items.filter(item => item.kind === 'k14').map(item => item.price * rate);
+          const part15 = items.filter(item => item.kind === 'k15').map(item => item.price * rate);
+          const part16 = items.filter(item => item.kind === 'k16').map(item => item.price * rate);
+          const part17 = items.filter(item => item.kind === 'k17').map(item => item.price * rate);
+          const part18 = items.filter(item => item.kind === 'k18').map(item => item.price * rate);
+          return part0;
+        }
+        ```
+    .fixture "src/b.ts" ```
+        export function total(items: Item[], rate: number) {
+          const part0 = items.filter(item => item.kind === 'k0').map(item => item.price * rate);
+          const part1 = items.filter(item => item.kind === 'k1').map(item => item.price * rate);
+          const part2 = items.filter(item => item.kind === 'k2').map(item => item.price * rate);
+          const part3 = items.filter(item => item.kind === 'k3').map(item => item.price * rate);
+          const part4 = items.filter(item => item.kind === 'k4').map(item => item.price * rate);
+          const part5 = items.filter(item => item.kind === 'k5').map(item => item.price * rate);
+          const part6 = items.filter(item => item.kind === 'k6').map(item => item.price * rate);
+          const part7 = items.filter(item => item.kind === 'k7').map(item => item.price * rate);
+          const part8 = items.filter(item => item.kind === 'k8').map(item => item.price * rate);
+          const part9 = items.filter(item => item.kind === 'k9').map(item => item.price * rate);
+          const part10 = items.filter(item => item.kind === 'k10').map(item => item.price * rate);
+          const part11 = items.filter(item => item.kind === 'k11').map(item => item.price * rate);
+          const part12 = items.filter(item => item.kind === 'k12').map(item => item.price * rate);
+          const part13 = items.filter(item => item.kind === 'k13').map(item => item.price * rate);
+          const part14 = items.filter(item => item.kind === 'k14').map(item => item.price * rate);
+          const part15 = items.filter(item => item.kind === 'k15').map(item => item.price * rate);
+          const part16 = items.filter(item => item.kind === 'k16').map(item => item.price * rate);
+          const part17 = items.filter(item => item.kind === 'k17').map(item => item.price * rate);
+          const part18 = items.filter(item => item.kind === 'k18').map(item => item.price * rate);
+          return part0;
+        }
+        ```
+    .expect count DUPLICATE_CODE = 0
+.end
+

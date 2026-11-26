@@ -7,7 +7,7 @@
 93	functor @replace_all/3	not on the device: no computed term	lib 27, python-main 20, python 13, javascript 9, data-layer 6, typescript 5, react 3, next 2, node 2, django 1, engine 1, rust 1, spikes 1, sql 1, vue 1
 37	builtin to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
 37	function @to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
-31	aggregate join	not on the device: no string join	lib 8, data-layer 6, django 4, javascript 3, python 3, node 2, typescript 2, engine 1, next 1, spikes 1
+32	aggregate join	not on the device: no string join	lib 8, data-layer 6, django 4, javascript 3, python 3, node 2, spikes 2, typescript 2, engine 1, next 1
 18	shipped functor @rx_matches/2	not native: sqlite: function @rx (the native engine declined: rule #0000: $v = @rx($a, $b) has no native step)	data-layer (engine) 18
 15	text test iglob: a bound pattern	not on the device: refused: the text test @iglob of a pattern that is not a constant has no device form	sql 4, data-layer 3, lib 3, php 3, django 1, python-main 1
 11	text test icontains: a bound pattern	not on the device: refused: the text test @icontains of a pattern that is not a constant has no device form	data-layer 7, lib 2, django 1, rerail 1
@@ -33,6 +33,8 @@
 3	function @join/2	not on the device: no computed term	lib 2, engine 1
 3	functor @ed25519_ok/3	not on the device: no computed term	data-layer 2, lib 1
 2	function @convert/3	not on the device: no computed term	python-main 1, vue 1
+2	function @hash64/1	not on the device: no computed term	spikes 2
+2	function @hash64_pair/2	not on the device: no computed term	spikes 2
 2	function @json_str/1	not on the device: no computed term	data-layer 1, lib 1
 2	function @nfkc/1	not on the device: no computed term	data-layer 1, lib 1
 2	function @semver_valid/1	not on the device: no computed term	lib 1, node 1
@@ -47,8 +49,6 @@
 2	text test isuffix: a bound pattern	not on the device: refused: the text test @isuffix of a pattern that is not a constant has no device form	python 1, rerail 1
 1	aggregate product	not native: sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	lib 1
 1	function @glob_sub/3	not on the device: no computed term	engine 1
-1	function @hash64/1	not on the device: no computed term	spikes 1
-1	function @hash64_pair/2	not on the device: no computed term	spikes 1
 1	function @package_of/1	not on the device: no computed term	engine 1
 1	function @to_precision/2	not on the device: no computed term	lib 1
 1	shipped functor @char/1	not on the device: no computed term	data-layer (engine) 1
