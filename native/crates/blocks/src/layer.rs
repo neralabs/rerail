@@ -171,13 +171,13 @@ impl Shape {
                 self.encoding
             ));
         }
-        if self.placement != Placement::RunBlock {
-            return Err(format!(
-                "placement {:?}: kept files and pinned slabs come with the kept stores and the device executor, after L1 \
-                 (the rebuild plan); B2's traces are run blocks",
-                self.placement
-            ));
-        }
+        // Where its layers' blocks lie: the run's memory, a kept file (`blocks::kept`'s place: the traces'
+        // directory, mapped where it lies), or a pinned slab (the device's, read in place).
+        let placement = match self.placement {
+            Placement::RunBlock => 0,
+            Placement::KeptFile => 1,
+            Placement::PinnedSlab => 2,
+        };
         let retention = match self.retention {
             Retention::Run => RETAIN_RUN,
             // P§11.3: one state, folded into one layer at each commit, its header naming the state.
@@ -196,7 +196,7 @@ impl Shape {
             partition: self.partition.map_or(NONE, u32::from),
             levels: u32::from(self.levels),
             encoding: 0,
-            placement: 0,
+            placement,
             retention,
             nidx: self.indexes.len() as u32,
             pad: 0,

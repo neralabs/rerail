@@ -24,6 +24,7 @@ use rerail_blocks::gens::{self, BODY_AT, Desc, Table};
 use rerail_blocks::ledger::Fence;
 use rerail_blocks::region::{BlockPin, pin_block};
 use rerail_blocks::{Block, Frozen};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
 /// A block's id: the directory's handle, the same on every device.
@@ -52,12 +53,25 @@ struct Entry {
     weak: Weak<Block>,
     /// Its body's bytes, as made: what a freeze trims to the body's used length.
     body: usize,
+    /// A kept block's file (`Placement::KeptFile`): removed once the block is gone.
+    file: Option<PathBuf>,
 }
 
-/// Every block the executor's operations use, by id.
+/// Where a block's memory is (P§12's `Placement`, as a shape holds it: `ShapeW::placement`).
+pub const PLACE_RUN: u32 = 0;
+pub const PLACE_KEPT: u32 = 1;
+pub const PLACE_SLAB: u32 = 2;
+
+/// A source of pinned slabs (`Placement::PinnedSlab`): memory for a block of so many bytes, the device's to read in
+/// place (the engine's pool, `rerail_accel::gpu::shared::lease_block`; this crate names no device). `None`: none free.
+pub type Slabs = Box<dyn Fn(usize) -> Option<Box<dyn rerail_blocks::block::Backing>> + Send + Sync>;
+
+/// Every block the executor's operations use, by id; where kept blocks' files go, and where pinned slabs come from.
 #[derive(Default)]
 pub struct Directory {
     entries: Vec<Entry>,
+    kept: Option<PathBuf>,
+    slabs: Option<Slabs>,
 }
 
 impl Directory {
@@ -73,6 +87,78 @@ impl Directory {
         // Free-listed: its freeze gives back what lies past the body's used length (an operation's work, past the
         // facts it wrote), whole pages to the OS, when nothing was made past the body.
         let b = Block::anon(kind, BODY_AT + body + room + rerail_blocks::block::PAGE).with_free_list();
+        self.adopt_new(b, body, None)
+    }
+
+    /// The directory with its kept blocks' files in `folder` (`Placement::KeptFile`): one a block, named by its id.
+    pub fn with_kept(self, folder: &Path) -> Directory {
+        Directory { kept: Some(folder.to_path_buf()), ..self }
+    }
+
+    /// The directory with `slabs` its source of pinned slabs (`Placement::PinnedSlab`).
+    pub fn with_slabs(self, slabs: Slabs) -> Directory {
+        Directory { slabs: Some(slabs), ..self }
+    }
+
+    /// `make_room`, its memory where `place` says (P§12's placement): the run's own (anonymous), a kept file in the
+    /// directory's folder, or a pinned slab from its source. Refused when the directory has no folder or no slab.
+    pub fn make_placed(&mut self, place: u32, kind: u32, body: usize, room: usize) -> Result<BlockId, String> {
+        let bytes = BODY_AT + body + room + rerail_blocks::block::PAGE;
+        match place {
+            PLACE_RUN => Ok(self.make_room(kind, body, room)),
+            PLACE_KEPT => {
+                self.sweep();
+                let folder = self.kept.as_ref().ok_or("a kept file's block: the directory has no kept folder (with_kept)")?;
+                let path = rerail_blocks::kept::trace_folder::block_path(folder, self.entries.len() as u32);
+                let b = Block::file(&path, kind, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+                Ok(self.adopt_new(b, body, Some(path)))
+            }
+            PLACE_SLAB => {
+                self.sweep();
+                let slabs = self.slabs.as_ref().ok_or("a pinned slab's block: the directory has no slab source (with_slabs)")?;
+                let backing = slabs(bytes).ok_or_else(|| format!("no pinned slab of {bytes} bytes free"))?;
+                Ok(self.adopt_new(Block::over(kind, backing), body, None))
+            }
+            p => Err(format!("placement {p}")),
+        }
+    }
+
+    /// Opens a trace's kept blocks from `folder` (`Placement::KeptFile`), each file mapped as it lies (a load to the
+    /// exact bytes, not a copy: 0353), at the id its name gives, and each block's references from its own reference
+    /// table. The directory keeps its blocks' files there from now on.
+    pub fn open_kept(folder: &Path, kind: u32) -> Result<Directory, String> {
+        let found = rerail_blocks::kept::trace_folder::blocks(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+        let n = found.iter().map(|&(id, _)| id as usize + 1).max().unwrap_or(0);
+        let mut dir = Directory::default().with_kept(folder);
+        dir.entries = (0..n).map(|_| Entry { own: Own::Released, placed: None, held: Vec::new(), weak: Weak::new(), body: 8, file: None }).collect();
+        for (id, p) in &found {
+            let f = Block::open_file(p, kind)?;
+            let e = &mut dir.entries[*id as usize];
+            e.weak = Arc::downgrade(f.arc());
+            e.own = Own::Frozen(f);
+            e.file = Some(p.clone());
+        }
+        for (id, _) in &found {
+            let Own::Frozen(f) = &dir.entries[*id as usize].own else { unreachable!("opened") };
+            let to: Vec<BlockId> = gens::refs(f.bytes(0, f.used())).iter().map(|r| BlockId(r.id)).collect();
+            for t in to {
+                let Some(Own::Frozen(g)) = dir.entries.get(t.0 as usize).map(|e| &e.own) else {
+                    return Err(format!("{}: block {id} refers to {t}, which is not kept there", folder.display()));
+                };
+                let g = g.clone();
+                dir.entries[*id as usize].held.push((t, g));
+            }
+        }
+        Ok(dir)
+    }
+
+    /// The frozen blocks no other block refers to: a kept trace's head among them.
+    pub fn unreferred(&self) -> Vec<BlockId> {
+        let referred: Vec<BlockId> = self.entries.iter().flat_map(|e| e.held.iter().map(|(r, _)| *r)).collect();
+        (0..self.entries.len() as u32).map(BlockId).filter(|id| matches!(self.entries[id.0 as usize].own, Own::Frozen(_)) && !referred.contains(id)).collect()
+    }
+
+    fn adopt_new(&mut self, b: Block, body: usize, file: Option<PathBuf>) -> BlockId {
         assert_eq!(b.alloc(BODY_AT - gens::REFS_AT, 64), gens::REFS_AT, "a new block's first allocation is its reference table");
         assert_eq!(b.alloc(body.max(8), 64), BODY_AT, "and its body follows");
         let b = Arc::new(b);
@@ -81,7 +167,7 @@ impl Directory {
             gens::init_refs(w.bytes_mut().expect("a write pin"));
         }
         let weak = Arc::downgrade(&b);
-        self.entries.push(Entry { own: Own::Open(b), placed: None, held: Vec::new(), weak, body: body.max(8) });
+        self.entries.push(Entry { own: Own::Open(b), placed: None, held: Vec::new(), weak, body: body.max(8), file });
         BlockId(self.entries.len() as u32 - 1)
     }
 
@@ -191,9 +277,15 @@ impl Directory {
         loop {
             let mut gone = false;
             for e in &mut self.entries {
-                if matches!(e.own, Own::Released) && !e.held.is_empty() && e.weak.strong_count() == 0 {
-                    e.held.clear();
-                    gone = true;
+                if matches!(e.own, Own::Released) && e.weak.strong_count() == 0 {
+                    // A kept block gone: its file too (the trace's folder holds the blocks it reaches, and no others).
+                    if let Some(p) = e.file.take() {
+                        let _ = rerail_blocks::kept::trace_folder::remove_block(&p);
+                    }
+                    if !e.held.is_empty() {
+                        e.held.clear();
+                        gone = true;
+                    }
                 }
             }
             if !gone {

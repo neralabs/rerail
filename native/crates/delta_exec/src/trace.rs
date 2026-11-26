@@ -212,6 +212,21 @@ impl Trace {
         Ok(Trace { shape: shape.encode()?, head: None, roll: RollUp::Geometric, cache: None })
     }
 
+    /// A kept trace (`Placement::KeptFile`) opened from its blocks' folder (`Directory::open_kept`): its head the
+    /// layer no other refers to.
+    pub fn open_kept(shape: &Shape, dir: &Directory) -> Result<Trace, String> {
+        let mut t = Trace::new(shape)?;
+        if t.shape.placement != crate::dir::PLACE_KEPT {
+            return Err("a trace opened from kept files is kept (Placement::KeptFile)".into());
+        }
+        match dir.unreferred()[..] {
+            [] => {}
+            [h] => t.head = Some(h),
+            ref many => return Err(format!("a kept folder of one trace has one head, not {many:?}")),
+        }
+        Ok(t)
+    }
+
     /// The trace with roll-up policy `roll`.
     pub fn with_roll_up(self, roll: RollUp) -> Trace {
         Trace { roll, ..self }
@@ -252,7 +267,7 @@ impl Trace {
             dir.release(runs);
             return Err(format!("the run's δ outgrew its runs block by {needed} pairs: rerun at {}", n + needed));
         }
-        let out = dir.make_room(kind::FACTS, out_bytes(n), layer_room(&self.shape, n));
+        let out = dir.make_placed(self.shape.placement, kind::FACTS, out_bytes(n), layer_room(&self.shape, n))?;
         if let Some(h) = self.head {
             dir.refer(out, h, BODY_AT)?;
         }
@@ -306,7 +321,7 @@ impl Trace {
             }
             (rows, id)
         };
-        let out = dir.make_room(kind::FACTS, out_bytes(rows), layer_room(&self.shape, rows));
+        let out = dir.make_placed(self.shape.placement, kind::FACTS, out_bytes(rows), layer_room(&self.shape, rows))?;
         if let Some(b) = below {
             dir.refer(out, BlockId(b), BODY_AT)?;
         }

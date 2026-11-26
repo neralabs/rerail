@@ -357,7 +357,7 @@ fn consolidate_writes_the_same_layer_at_every_tiling() {
 /// refused.
 #[test]
 fn a_shape_the_plan_puts_elsewhere_is_refused_saying_where() {
-    use rerail_blocks::layer::{Encoding, Placement, Retention};
+    use rerail_blocks::layer::{Encoding, Retention};
     let refused = |f: &dyn Fn(&mut Shape), why: &str| {
         let mut s = shape();
         f(&mut s);
@@ -373,8 +373,6 @@ fn a_shape_the_plan_puts_elsewhere_is_refused_saying_where() {
         "level column",
     );
     refused(&|s| s.encoding = Encoding::Packed, "leaves its run");
-    refused(&|s| s.placement = Placement::KeptFile, "kept stores");
-    refused(&|s| s.placement = Placement::PinnedSlab, "device executor");
     refused(&|s| s.retention = Retention::History, "two states");
     refused(&|s| s.indexes = vec![rerail_blocks::layer::IndexSpec::Perm(vec![2])], "packed's permutation");
     let s = Shape::run(vec![ColType::I32, ColType::I64], vec![1, 0], Some(0));
@@ -861,4 +859,131 @@ fn a_cache_is_one_state_its_header_names() {
     let l = t.read(&dir, &[t.cached(&dir, 0xd3).unwrap()]).unwrap();
     let table = l.table();
     assert_eq!(rows_of(&t.state(&table, t.head()).unwrap()), [vec![4, 5, 6]].into_iter().collect::<Rows>());
+}
+
+/// P§12's placement, a kept file: each layer's block a file in the directory's kept folder, mapped where it lies.
+/// The folder holds the blocks the trace reaches and no others (a rolled-up generation's file goes with it), and a
+/// new directory opened from the folder reads the trace as its set: each block mapped as it lies, its references from
+/// its own table, the head the layer no other refers to. The trace goes on committing there.
+#[test]
+fn a_kept_trace_lies_in_its_files_and_opens_again() {
+    use rerail_blocks::layer::Placement;
+    let folder = std::env::temp_dir().join(format!("rerail-kept-trace-{}", std::process::id()));
+    rerail_blocks::mapped::make_folder(&folder).unwrap();
+    let mut s = shape();
+    s.placement = Placement::KeptFile;
+    let mut reg = Registry::default();
+    let ops = TraceOps::declare(&mut reg).unwrap();
+    let files = || -> Vec<u32> { rerail_blocks::kept::trace_folder::blocks(&folder).unwrap().into_iter().map(|(id, _)| id).collect() };
+    let mut r = rng(17);
+    let mut set = Rows::new();
+    {
+        let mut dir = Directory::default();
+        let mut t = Trace::new(&s).unwrap();
+        let id = runs(&mut dir, &t, &[(vec![1, 2, 3], 1)]);
+        assert!(t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).err().unwrap().contains("kept folder"));
+        let mut dir = Directory::default().with_kept(&folder);
+        for step in 0..12u64 {
+            let (pairs, next) = if step == 0 { big_run(&mut r, 2000) } else { small_run(&mut r, &set, 40) };
+            let id = runs(&mut dir, &t, &pairs);
+            t.commit(&reg, &ops, &mut dir, id, Tiling { tile: 3, seed: step }).unwrap();
+            set = next;
+        }
+        let l = t.read(&dir, &[t.head()]).unwrap();
+        let table = l.table();
+        let st = t.state(&table, t.head()).unwrap();
+        assert_eq!(rows_of(&st), set);
+        let mut reached: Vec<u32> = st.layers().map(|(id, _)| id).collect();
+        reached.sort();
+        drop(l);
+        dir.sweep();
+        assert_eq!(files(), reached, "the folder holds the blocks the trace reaches, and no others");
+    }
+    let mut dir = Directory::open_kept(&folder, rerail_blocks::block::kind::FACTS).unwrap();
+    let mut t = Trace::open_kept(&s, &dir).unwrap();
+    {
+        let l = t.read(&dir, &[t.head()]).unwrap();
+        let table = l.table();
+        assert_eq!(rows_of(&t.state(&table, t.head()).unwrap()), set, "opened again, the trace reads as its set");
+    }
+    let (pairs, next) = small_run(&mut r, &set, 40);
+    let id = runs(&mut dir, &t, &pairs);
+    t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).unwrap();
+    {
+        let l = t.read(&dir, &[t.head()]).unwrap();
+        let table = l.table();
+        assert_eq!(rows_of(&t.state(&table, t.head()).unwrap()), next, "and goes on committing there");
+    }
+    drop(dir);
+    rerail_blocks::kept::trace_folder::remove(&folder).unwrap();
+}
+
+/// Test slabs: page-aligned memory of the test's own, standing for the engine's pool of pinned slabs.
+struct TestSlab {
+    base: *mut u8,
+    layout: std::alloc::Layout,
+    live: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+// SAFETY: the slab's memory is its own, and a block writes it through its pins.
+unsafe impl Send for TestSlab {}
+// SAFETY: as above.
+unsafe impl Sync for TestSlab {}
+
+impl rerail_blocks::block::Backing for TestSlab {
+    fn base(&self) -> *mut u8 {
+        self.base
+    }
+    fn len(&self) -> usize {
+        self.layout.size()
+    }
+}
+
+impl Drop for TestSlab {
+    fn drop(&mut self) {
+        self.live.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        // SAFETY: allocated with this layout in `slab`.
+        unsafe { std::alloc::dealloc(self.base, self.layout) };
+    }
+}
+
+/// P§12's placement, a pinned slab: each layer's block lies in a slab from the directory's source (the device's
+/// memory, read in place), and reads as its set; a rolled-up generation's slab goes back to its source.
+#[test]
+fn a_slab_trace_lies_in_its_slabs() {
+    use rerail_blocks::layer::Placement;
+    let live = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let l2 = live.clone();
+    let slabs: crate::dir::Slabs = Box::new(move |bytes| {
+        let layout = std::alloc::Layout::from_size_align(bytes.next_multiple_of(rerail_blocks::block::PAGE), rerail_blocks::block::PAGE).ok()?;
+        // SAFETY: a non-zero size.
+        let base = unsafe { std::alloc::alloc_zeroed(layout) };
+        l2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Some(Box::new(TestSlab { base, layout, live: l2.clone() }) as Box<dyn rerail_blocks::block::Backing>)
+    });
+    let mut s = shape();
+    s.placement = Placement::PinnedSlab;
+    let mut reg = Registry::default();
+    let ops = TraceOps::declare(&mut reg).unwrap();
+    let mut dir = Directory::default().with_slabs(slabs);
+    let mut t = Trace::new(&s).unwrap();
+    let mut r = rng(23);
+    let mut set = Rows::new();
+    for step in 0..10u64 {
+        let (pairs, next) = if step == 0 { big_run(&mut r, 1500) } else { small_run(&mut r, &set, 40) };
+        let id = runs(&mut dir, &t, &pairs);
+        t.commit(&reg, &ops, &mut dir, id, Tiling { tile: 2, seed: step }).unwrap();
+        set = next;
+        let l = t.read(&dir, &[t.head()]).unwrap();
+        let table = l.table();
+        let st = t.state(&table, t.head()).unwrap();
+        assert_eq!(rows_of(&st), set, "step {step}");
+        let ids: Vec<u32> = st.layers().map(|(id, _)| id).collect();
+        drop(l);
+        for id in &ids {
+            assert!(dir.block(BlockId(*id)).unwrap().in_slab(), "layer {id} lies in a slab");
+        }
+        dir.sweep();
+        assert_eq!(live.load(std::sync::atomic::Ordering::Relaxed), ids.len(), "step {step}: a slab a layer reached, the others given back");
+    }
 }

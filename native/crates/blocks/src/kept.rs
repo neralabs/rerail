@@ -22,6 +22,45 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
+/// A kept trace's folder (P§12: `Placement::KeptFile`, "the traces' directory"): its layers' blocks, a file each,
+/// named by block id. The engine's executor keeps a trace's blocks here, through these alone.
+pub mod trace_folder {
+    use std::io;
+    use std::path::{Path, PathBuf};
+
+    /// Block `id`'s file in `folder`.
+    pub fn block_path(folder: &Path, id: u32) -> PathBuf {
+        folder.join(format!("{id:08}.blk"))
+    }
+
+    /// The blocks kept in `folder`: each one's id and file, ascending by id.
+    pub fn blocks(folder: &Path) -> io::Result<Vec<(u32, PathBuf)>> {
+        crate::mapped::check_folder(folder)?;
+        let mut found = Vec::new();
+        for e in std::fs::read_dir(folder)? {
+            let p = e?.path();
+            if let Some(id) = p.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(".blk")).and_then(|n| n.parse::<u32>().ok()) {
+                found.push((id, p));
+            }
+        }
+        found.sort();
+        Ok(found)
+    }
+
+    /// A kept block's file, once its block is gone.
+    pub fn remove_block(path: &Path) -> io::Result<()> {
+        std::fs::remove_file(path)
+    }
+
+    /// The folder and every block kept in it.
+    pub fn remove(folder: &Path) -> io::Result<()> {
+        for (_, p) in blocks(folder)? {
+            remove_block(&p)?;
+        }
+        std::fs::remove_dir(folder)
+    }
+}
+
 structure! {
     /// A kept file's root.
     pub struct KeptRoot {
