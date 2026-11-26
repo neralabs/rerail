@@ -4842,8 +4842,8 @@ impl Model {
         // probe it pays its whole build. The price is work (rows, at a probe's ns a row), added once to the step.
         // Per join, where it may read such an order: the absent order's price over its relation's rows, and the orders
         // available of that relation, by their columns as a mask, with their prices (found once a search).
-        // Off unless `RERAIL_ORDER_PRICES=on`: on `all` (decision 0706 step 5's record) these prices led to plans that
-        // walked more (instructions +0.8% to +1.7%, the same rows); the walks' cost is the search's whole price.
+        // `RERAIL_ORDER_PRICES=off` (a measurement aid) prices none: on `all` these prices cost instructions +0.8% to
+        // +1.7% for the same rows (decision 0706 step 5's record).
         let priced_orders = super::super::native::setfix::access::order_prices();
         let available = if priced_orders { super::super::native::setfix::access::orders_available() } else { Default::default() };
         let orders: Vec<Option<(f64, Vec<(u64, f64)>)>> = joins

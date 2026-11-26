@@ -119,10 +119,10 @@ pub(super) fn observe(j: &JoinRule, counts: &[(u64, u64)]) {
     }
 }
 
-/// Whether the search prices orders (`RERAIL_ORDER_PRICES=on`, off by default: decision 0706 step 5's record), and
-/// so whether their readers are observed.
+/// Whether the search prices orders (decision 0706 §3; `RERAIL_ORDER_PRICES=off`, a measurement aid, prices none),
+/// and so whether their readers are observed.
 pub fn order_prices() -> bool {
-    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_ORDER_PRICES").is_ok_and(|v| v == "on"))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_ORDER_PRICES").map_or(true, |v| v != "off"))
 }
 
 /// The plans (by their spec's digest) that probed each order over the run, and the rows its input held when last

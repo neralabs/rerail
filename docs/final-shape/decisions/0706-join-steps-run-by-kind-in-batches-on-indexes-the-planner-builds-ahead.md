@@ -248,7 +248,10 @@ instructions (below, with step 5). Profiled, the batch read's own cost is the no
   against 1,355 / 1,368 G), the same rows each time. The builds it prices are a few hundred ms of a run's 120 s, and
   the walks are the price. Pricing only the orders the run observed, at their share (an absent one at nothing, so no
   plan is charged a build the build ahead makes once for all of them), was still worse: 1,342 / 1,341 G off, 1,348 /
-  1,347 G on. It is off unless `RERAIL_ORDER_PRICES=on`, and its readers are observed only then.
+  1,347 G on. It is on, as §3 decides (`RERAIL_ORDER_PRICES=off`, a measurement aid, prices none and observes no
+  reader). Against the same tree with it off (m1max, two runs each, same rows): CPU 119.3 / 123.7 s off, 124.2 /
+  126.8 s on; instructions 1,340 / 1,341 G off, 1,356 / 1,354 G on; W 51.2 s, 477 G. What the walks cost more is
+  the search's prices of the builds against its walks' (an order at 88 ns a row, a probe at `PROBE_NS`).
 - Tests: `keyed_probes_in_sorted_batches_give_each_rows_rows`, `within_pairs_in_batches_give_each_pairs_rows`
   (tests_corpus: the rows with the batches on and off), `an_order_built_ahead_is_the_one_its_probe_reads`
   (setfix: built ahead into the block's directory, the probe after it makes none), `an_order_is_priced_by_what_is_
