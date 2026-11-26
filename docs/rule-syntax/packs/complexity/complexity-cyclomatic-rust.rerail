@@ -1,4 +1,4 @@
-.policy "complexity-cyclomatic-rust" revision 2
+.policy "complexity-cyclomatic-rust" revision 3
 .description "Keep Rust functions at cyclomatic complexity 6 or below, counting each if, for, while, match, match guard, ? and && or ||; branch-heavy functions are hard to follow and test."
 .language rust
 .mode steer
@@ -17,3 +17,8 @@
 // README (Deviations).
 .violation complexity(at: node, msg: symbol) code "CYCLOMATIC_COMPLEXITY" "{msg}"
 complexity(f, msg) :- cc_report(f, msg).
+
+// Each `&&` of a let chain, by its place among the chain's children. The library reads them with op_at, which has
+// no rows for a let_chain in this engine, so `if let Some(a) = x && let Some(b) = y && ok {` counted only its `if`;
+// token gives every `&&`. Where op_at has rows the library's own row counts them, and this one stands aside.
+cc_decision(n, i) :- kind(n, "let_chain"), token(n, i, "&&", _, _), !op_at(n, _, "&&").
