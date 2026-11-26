@@ -5366,8 +5366,8 @@ const WORD_LIST: [&[u8]; 123] = [
     b"<=", b">=", b"+", b"-", b"/", b"%", b"++", b"--", b"!!", b"?.", b"package", b"import",
     b"by", b"file", b"out", b"L", b"u", b"U", b"uL", b"UL", b"sealed", b"annotation", b"data", b"inner",
     b"value", b"override", b"lateinit", b"public", b"private", b"internal", b"protected", b"tailrec", b"operator", b"infix", b"inline", b"external",
-    b"suspend", b"const", b"abstract", b"final", b"open", b"vararg", b"noinline", b"crossinline", b"expect", b"actual", b"reified", b"init",
-    b"dynamic", b"where", b"catch", b"finally", b"field", b"property", b"receiver", b"param", b"setparam", b"delegate", b"get", b"set",
+    b"suspend", b"const", b"abstract", b"final", b"open", b"vararg", b"noinline", b"crossinline", b"expect", b"actual", b"get", b"set",
+    b"field", b"property", b"receiver", b"param", b"setparam", b"delegate", b"reified", b"dynamic", b"where", b"catch", b"finally", b"init",
     b"companion", b"constructor", b"enum",
 ];
 

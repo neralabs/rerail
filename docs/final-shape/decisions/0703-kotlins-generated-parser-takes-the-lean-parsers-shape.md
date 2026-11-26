@@ -185,6 +185,9 @@ them.
    names, as the lean parser's `starts_expression` matches 17 token kinds and two word classes. rr's soft words are
    renumbered too; its code differs only in its numbers and in two tests now one range each
    (`PUNCTUATION[w] != 0 || w == LBRACE`, `TRUE | FALSE | NULL`).
+   The words a declaration starts with are three runs (`TYPEALIAS..=OBJECT | AT | INIT..=CONSTRUCTOR`). One keyword
+   list of seven is left, `as_kwi`'s (`FOR | WHILE | DO | CLASS | INTERFACE | TYPEALIAS | PACKAGE`): the hard keywords
+   stay numbered by their leaf kinds, which their leaves' kinds are of (`word_kind`).
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
