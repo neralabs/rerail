@@ -341,6 +341,7 @@ const AGENT_EVENT_VIEW: ReadonlyMap<string, "whole" | "without output" | "withou
   ["hud-tracking-start", "whole"],
   ["steering-delivered", "whole"],
   ["events-dropped", "whole"],
+  ["events-lost", "whole"],
   ["source-discovery-pending", "whole"],
   ["code-rules-pending", "whole"],
   ["rule-coverage", "whole"],

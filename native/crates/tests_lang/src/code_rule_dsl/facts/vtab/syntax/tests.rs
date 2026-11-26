@@ -825,7 +825,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
 }
 
 /// `core.rerail`'s base relations over a Python file (decision 0046): comments are nodes and children, `text` is every
-/// node's, `op` every token the tape stores (one the grammar implies is in no tape and no relation, RER-131), literals decode, and
+/// node's, `op` every token the tape stores (one the grammar implies is in no tape and no relation, decision 0161), literals decode, and
 /// the source-text, token and place relations agree.
 #[test]
 fn core_rr_relations_hold_what_core_rr_says() {
@@ -3254,6 +3254,10 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
         let program = rerail_gpu::kernels::program("view_probe.uglykl", Box::leak(source.into_boxed_str())).unwrap_or_else(|e| panic!("the view reads compile: {e}"));
         (shared, program.function("view_probe").unwrap())
     });
+    // The codes' directory where it lies in the binary, wrapped in place once and held as long as the device (decision
+    // 0697, `Shared::wrap_static`): a wrap released after a shape's probe left its pages unreadable to the next
+    // shape's reads on Metal.
+    let cb = probe.as_ref().map(|(shared, _)| shared.wrap_static(rerail_tape_format::codes_dir::bytes()).unwrap());
     let cases: &[(&str, &str)] = &[
         ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
         ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
@@ -3422,7 +3426,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         assert_eq!([view_op(e, t, v, ll, cd, i, 0), view_op(e, t, v, ll, cd, i, 1)], [node, name], "{at}: op row {i}, the JIT's");
                     }
                 }
-                if let Some((shared, probe)) = probe {
+                if let (Some((shared, probe)), Some(cb)) = (probe, cb.as_ref()) {
                     let d = block.offset_of(entry.desc()) as u64;
                     // The tape where the device reads it: a test's buffer of its bytes, a word of room past them.
                     let mut bytes = tape.to_vec();
@@ -3432,10 +3436,6 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     // Its lines where the device reads them: a test's buffer of their index.
                     let lb = buffer_of(&words).unwrap();
                     let (tt_at, lb_at) = (tt.device_address().unwrap(), lb.device_address().unwrap());
-                    // The codes' directory where it lies in the binary, wrapped in place (decision 0697).
-                    let codes = rerail_tape_format::codes_dir::bytes();
-                    // SAFETY: the binary's directory, which outlives the buffer; the kernel only loads from it.
-                    let cb = unsafe { rerail_gpu::device::wrap_host_memory(&shared.device, codes.as_ptr().cast_mut(), codes.len()) }.unwrap();
                     let cd_at = cb.device_address().unwrap();
                     // A 16z tape's blocks through a cache every thread shares (0353 step 4b): one of a block a
                     // generation, which turns all the time and may find no room (a failure counted: the device
@@ -5035,4 +5035,103 @@ fn read_text(v: Option<rusqlite::types::Value>) -> Option<String> {
         rusqlite::types::Value::Integer(i) => Some(i.to_string()),
         other => panic!("a node read of neither text nor number: {other:?}"),
     }
+}
+
+/// What one test `kind(n, #k)` of a bound node costs through the node view's read as found (`lookup_read_at`, a
+/// membership step's `tests_keys`), against its parts read directly: the node found by its id (`Batch::node`), and
+/// then its tape node and kind read. The planner fixture's corpus, every node's id, in row order and shuffled. A
+/// measurement (t57 E6).
+#[test]
+#[ignore]
+fn what_a_kind_test_of_a_bound_node_costs() {
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
+    let store = ContentStore::open(&temp("kind-test-cost")).unwrap();
+    let (_, node) = sources(&store, documents()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
+    let batch = node.python_batch().expect("a batch's view");
+    let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
+    let want: Vec<i64> = (0..node.len()).map(|r| node.value(r, 2)).collect();
+    let k = want[want.len() / 2];
+    let mut shuffled: Vec<usize> = (0..ids.len()).collect();
+    let mut r = 7u64;
+    for i in (1..shuffled.len()).rev() {
+        r = r.wrapping_mul(6364136223846793005).wrapping_add(1);
+        shuffled.swap(i, (r >> 33) as usize % (i + 1));
+    }
+    let reps = 20;
+    for (label, order) in [("row order", (0..ids.len()).collect::<Vec<_>>()), ("shuffled", shuffled)] {
+        let mut hits = 0usize;
+        let t = std::time::Instant::now();
+        for _ in 0..reps {
+            let mut cursor = ProbeCursor::default();
+            for &i in &order {
+                let mut found = false;
+                assert!(node.lookup_read_at(1, ids[i], &[2], &mut cursor, &mut |_, got| found |= got[0] == k));
+                hits += usize::from(found);
+            }
+        }
+        let read = t.elapsed().as_secs_f64() / (reps * order.len()) as f64;
+        let t = std::time::Instant::now();
+        let mut sum = 0u64;
+        for _ in 0..reps {
+            let mut memo = 0u32;
+            for &i in &order {
+                sum += batch.node(ids[i], &mut memo).map_or(0, |(_, l)| u64::from(l));
+            }
+        }
+        let find = t.elapsed().as_secs_f64() / (reps * order.len()) as f64;
+        let t = std::time::Instant::now();
+        for _ in 0..reps {
+            let mut memo = 0u32;
+            for &i in &order {
+                if let Some((doc, local)) = batch.node(ids[i], &mut memo) {
+                    let p = &batch.docs[doc];
+                    sum += u64::from(p.f().kind(p.node(local)));
+                }
+            }
+        }
+        let direct = t.elapsed().as_secs_f64() / (reps * order.len()) as f64;
+        eprintln!(
+            "{} nodes, {label}: the view's read {:.1} ns a test ({} of kind {k}); the node found {:.1} ns; found, tape node and kind read {:.1} ns ({sum})",
+            ids.len(),
+            read * 1e9,
+            hits / reps,
+            find * 1e9,
+            direct * 1e9
+        );
+    }
+}
+
+/// t57 E6: the node view's tests of a chunk of nodes by their own ids (`Source::holds_each`, read off the tape)
+/// answer as its probes do (`holds_each_probed`): every node's id in row order and shuffled, ids of no node, each
+/// kind the documents have and none (a node's row alone), across chunks that keep one cursor.
+#[test]
+fn a_node_views_tests_of_a_chunk_are_its_probes() {
+    use crate::code_rule_dsl::facts::vtab::{ProbeCursor, holds_each_probed};
+    let store = ContentStore::open(&temp("holds-each")).unwrap();
+    let (_, node) = sources(&store, documents().into_iter().take(4).collect()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
+    let n = node.len();
+    assert!(n > 50, "the documents have nodes");
+    let mut ids: Vec<i64> = (0..n).map(|r| node.value(r, 1)).collect();
+    // Ids of no node: past a document's nodes, in no document, negative.
+    ids.extend([ids[0] + (1 << 20), 77i64 << 32, -1, ids[n / 2] | 0x3_ffff]);
+    let mut r = 11u64;
+    for i in (1..ids.len()).rev() {
+        r = r.wrapping_mul(6364136223846793005).wrapping_add(1);
+        ids.swap(i, (r >> 33) as usize % (i + 1));
+    }
+    let kinds: BTreeSet<i64> = (0..n).map(|r| node.value(r, 2)).collect();
+    let mut tried = 0;
+    for want in kinds.iter().copied().take(6).map(Some).chain([None, Some(-5)]) {
+        let col = if want.is_some() { 2 } else { 1 };
+        let (mut cursor, mut probes) = (ProbeCursor::default(), ProbeCursor::default());
+        for chunk in ids.chunks(97) {
+            let (mut got, mut expect) = (vec![9i64; chunk.len()], vec![9i64; chunk.len()]);
+            assert!(node.holds_each(1, chunk, col, want, &mut cursor, &mut got), "the node view reads its tests");
+            assert!(holds_each_probed(node.as_ref(), 1, chunk, col, want, &mut probes, &mut expect));
+            assert_eq!(got, expect, "kind {want:?}");
+            tried += got.iter().filter(|&&v| v == 1).count();
+        }
+    }
+    assert!(tried > n, "{tried}");
+    assert!(!node.holds_each(2, &ids[..4], 1, None, &mut ProbeCursor::default(), &mut [0; 4]), "by a column not its own: refused");
 }

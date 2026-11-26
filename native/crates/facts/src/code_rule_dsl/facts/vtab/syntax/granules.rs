@@ -67,6 +67,9 @@ pub(super) const SPAN_SLOTS: u32 = rerail_clif::ids::SPAN_SLOTS;
 pub const POSITIONS: u64 = SPAN_SLOTS as u64 * INDEX as u64;
 /// The first slot of the spans'.
 const SPAN_FIRST: u32 = SLOTS - SPAN_SLOTS;
+/// The tape positions an id can be where ids are tape positions (`NodeIds::Tape`): below the slots of the spans and of
+/// `Extra`'s spans.
+pub const TAPE_POSITIONS: u64 = ((SLOTS - SPAN_SLOTS - EXTRA_SLOTS) as u64) << INDEX_BITS;
 /// Slots of `Extra`'s spans (`ExtraSpan`): one for the lines, one for the comments, `MATCH_SLOTS` for the matches,
 /// below the positions'. Sixteen in all, so the granules' slots (and every node's id) are as they were.
 const MATCH_SLOTS: u32 = 14;

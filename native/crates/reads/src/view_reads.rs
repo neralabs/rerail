@@ -291,11 +291,11 @@ impl<'a> Doc<'a> {
     /// Numbered node `l`'s id: the document's key, then its low bits (`l` itself where ids are local ids).
     #[inline]
     pub fn node_id(&self, l: u32) -> i64 {
-        let low = if self.entry.preorder != 0 {
-            l
-        } else {
+        let low = match self.entry.preorder {
             // SAFETY: as `tape_node`.
-            unsafe { self.low_of(l) }
+            0 => unsafe { self.low_of(l) },
+            crate::views::IDS_TAPE => self.tape_node(l),
+            _ => l,
         };
         (i64::from(self.entry.key) << 32) | i64::from(low)
     }
@@ -556,16 +556,21 @@ impl<'a> Doc<'a> {
     #[inline]
     pub fn loc_id(&self, l: u32) -> i64 {
         let e = self.entry;
-        let low = if e.preorder != 0 {
+        let tape = e.preorder == crate::views::IDS_TAPE;
+        let low = if e.preorder != 0 && !tape {
             l
         } else if l < e.nodes {
-            // SAFETY: as `tape_node`.
-            unsafe { self.low_of(l) }
+            if tape {
+                self.tape_node(l)
+            } else {
+                // SAFETY: as `tape_node`.
+                unsafe { self.low_of(l) }
+            }
         } else {
             let i = l - e.nodes;
             if i < e.tokens {
                 // SAFETY: as `tape_node`.
-                unsafe { self.numbering().low_of(1, i) }
+                unsafe { if tape { self.numbering().select(1, i) } else { self.numbering().low_of(1, i) } }
             } else {
                 let j = i - e.tokens;
                 let hi = (j >> INDEX_BITS).min(SPAN_SLOTS - 1);
@@ -773,7 +778,9 @@ impl<'a> Doc<'a> {
     /// `view_number(low)`: the numbered node whose id's low 32 bits are `low`, or `NO_ROW`.
     #[inline]
     pub fn number(&self, low: u32) -> u32 {
-        let l = if self.entry.preorder != 0 {
+        let l = if self.entry.preorder == crate::views::IDS_TAPE {
+            if self.is(0, low) { self.rank(low) } else { NO_ROW }
+        } else if self.entry.preorder != 0 {
             low
         } else {
             // SAFETY: as `tape_node`.

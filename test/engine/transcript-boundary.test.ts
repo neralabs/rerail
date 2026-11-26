@@ -442,6 +442,7 @@ describe("the transcript boundary for coding agents", () => {
       ["steering-delivered", { ruleIds: ["no-console-log"] }],
       ["code-rules-pending", { boundary: "edit" }],
       ["events-dropped", { id: "d", count: 3 }],
+      ["events-lost", { count: 2, kinds: { "user-prompt": 2 }, firstEventId: "a", lastEventId: "b", firstObservedAt: 1, lastObservedAt: 2 }],
     ] as const) expect(agentTranscriptPayload(kind, payload), kind).toBe(payload);
     expect(agentTranscriptPayload("file-snapshot", { path: "src/a.ts", content: "API_KEY=x" })).toEqual(WITHHELD_PAYLOAD);
     expect(agentTranscriptPayload("constructor", "API_KEY=x")).toEqual(WITHHELD_PAYLOAD);

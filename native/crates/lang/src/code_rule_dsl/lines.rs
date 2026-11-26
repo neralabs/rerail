@@ -19,7 +19,7 @@ pub struct Span {
 }
 
 /// The line terminators of a language's ecosystem, the tape's (`rerail_tape_format::newlines`, decision 0612).
-pub use rerail_tape_format::newlines::Terminators;
+pub use rerail_tape_format::newlines::{Terminators, index_into};
 
 /// The terminators a language's ecosystem ends a line at (`Adapter::TERMINATORS`, decision 0612).
 pub fn terminators(language: GrammarDialect) -> Terminators {

@@ -6720,11 +6720,11 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   (9f68e3703), and 7410a263b's tables 2, 3 and 6, `kinds.tsv` and the lean parser's kinds with #508's tip. The test
   passes on Linux, with format 15's pinned digest (Tim's, 5e9b8dc4…) and the lean parsers' format tests.
 
-### Q246. (PR #508, t47) The end of children meets implied tokens (RER-131)
+### Q246. (PR #508, t47) The end of children meets implied tokens (decision 0161)
 
 - **Seen**: the packed matcher finds no `case $V:` in `case 1: f(); break;`.
 - **Keep**: Tim's 65ff68df5 and the vendored ast-grep-core half (its test needs `tokenless_matched`, ported with
-  it); the rer-131 worktree's work on tapes of named nodes.
+  it); the named-only tapes work (decision 0161).
 - **Done when**: `ast_pattern_end_of_children_meets_implied_tokens` passes, unignored, and the vendored test is in.
 - **Done** (2026-11-18, branch `pr508-fixes-as-tests`): 83b741861 (the end-of-children goal carries the implied
   word; an ellipsis before it leaves the candidate's trailing tokens) and 65ff68df5 (`Doc::implied_after`,
@@ -6755,7 +6755,7 @@ Done (2026-11-19):
   location, with Tim's test (2c9ab87b9).
 - Tim's TypeScript CLI tests (9036be38c, 9cc6eb22f, ed1872a09): ported with their fixes, `--delete-data` written for
   the v6 store (5b19487fb).
-- Found on the way, fixed: the rule schema refused RER-131's `stored` note, skipping the JavaScript, Python and
+- Found on the way, fixed: the rule schema refused decision 0161's `stored` note, skipping the JavaScript, Python and
   TypeScript packs whole (f2cf3dc2a); five shipped rules' caught examples found nothing, gap tests not answering a
   condition on an implied comma or a count of them (a3db5929d); vitest ran git with the person's config, so a
   machine signing commits failed about 120 tests (4c5e85057). audit-cli's four failures are a debug addon's speed
@@ -6857,7 +6857,7 @@ Open:
   - The three memos had come in with the merge (clean hunks outside the check's directories):
     `check_no_new_caches.py` now reads all of `code_rule_dsl/`.
   - Hub-side answers kept: `lowered` is `gap_test` alone (Tim's also counts `gap_split` and the token's own
-    `follows`/`precedes`, RER-131 work the hub has not taken).
+    `follows`/`precedes`, decision 0161 work the hub has not taken).
   - Tests (Linux): the token, census, automata, pattern, compile, prefilter and anchors filter, 520 of 528, the same 8
     failing at c2365d280 without the port (Q254).
 
@@ -6925,7 +6925,7 @@ Open:
 - **Done when**: each passes.
 - **Done** (2026-11-19), six of eight; the two `compile_matcher_tests` read ruff's fixtures, which no checkout here
   holds at their lock (`npm run fixtures:pull`).
-  - The four RER-131 tests and the two pack rules (`ruff-fast001`'s lone trailing comma, `ruff-sim118`'s `in`) needed
+  - The four decision 0161 tests and the two pack rules (`ruff-fast001`'s lone trailing comma, `ruff-sim118`'s `in`) needed
     t47's pending 48bf01694/241c19955 and c00a1d9f0, which stage 2 left out with the hub's token files. Ported onto
     the hub's gap index, not Tim's per-call item sequence: `gap_split` with a `Stored` token condition; a gap test's
     token conditions on a node's own tokens (`has`); a neighbour walk's `stored` test (no implied token between it and
@@ -11526,3 +11526,90 @@ asks for the new check), c-directives eval::tests 50.
 
 - 0679 (a program cut from another runs once that one is whole): a clean merge; device-metal checks with 0 errors under Relax.
 - Its test (a_program_cut_from_one_that_parks_reads_its_rows) is Metal-only: not run here (no Metal on this Mac); it goes with the farm Metal checks.
+
+### Q555. Roll-up 127 (Native-and-GPU-strata ee7e841be7 onto Pulling-it-all-together): what the merge chose
+
+- Native-and-GPU-strata, pinned at ee7e841be7 (143 commits), by the user's direction: up to before the uglykl SIMD work entered it. The 11 commits from f760cdbcba on (t58 A's column bounds, the radix-sort, sorted-runs and narrowest-integer spikes, the sorted heads) are copies of uglykl-CPU-SIMD-parallelization's, which the user holds out; the commits above them (865a576421, 71f8fdffb1, 102d71d1b1) are past the pin too.
+- What it brings: final-rerail-shape at 2d42bd82ec (t57 E4, E6/E10, E7 as 0694, §9; t60 step 5's allocations from django-bugs; 0687's operation frame and 0342's long room from Typing-support; 0684; RERAIL_GPU=none), and its own 0665, 0676, 0680, 0689, 0670 (a project configuration read once), 0287 §2 and 0353 row 7 (text read where its source lies, on the CPU and the device), a run without the memo evaluating its chunks at once (0254 §6), and the cross-file rank's memo on again.
+- The merge applied without conflicts. Two places held one job twice:
+  - closure::recognize's lattice guard: the hub's (cd8c2ce6f2) and django-bugs' (27ec1d5fde). One kept.
+  - 0652's crossing check: django-bugs' d7ec54c12f exempted every `magic_…` relation, beside the hub's `magic::same_documents` (the user's choice A at the green pass, where this exemption was option B and not taken). The exemption is removed; a demand set is checked as any relation, and keeps its document by A.
+- 0342 and 0628 already carry Typing-support's long room (the owners' rooms gone). Option C's measurement is now of the stack with the long room.
+- Checked with Relax, RERAIL_GPU=cpu: check over boot, device-metal, tests-corpus, tests-logic, tests-lang, tests-tape, tests-rr, tests-sql, tests-cpu, tests-admission, adapters and json-rules: 0 errors.
+
+### Q556. Roll-up 128 (build-and-test-loop-time a1be6a7657 onto Pulling-it-all-together): what the merge chose
+
+- build-and-test-loop-time (1 commit, a1be6a7657): farm 61, the hot path keeps clippy-driver's rustc argument first. Tooling only; a clean merge.
+
+### Q557. Roll-up 129 (main 8d62b17476 onto Pulling-it-all-together): what the merge chose
+
+- main (54 commits, 8d62b17476): the engine in six npm packages (#1009, the loader names the package: `source_tree::name_package`),
+  Windows reads a file edited with its size and time kept (#921: `worktree_stat`, the module graph's folder listing),
+  a linked worktree's Git access (#1048), the daemon's waits on facts (#964, #974, #997, #1104), Git reads without blocking
+  (worktree lists, submodules), the identifier scrub (#1014), regex-syntax 0.8.12 and roaring 0.12.
+- main is still the single `native/src` layout; its edits came across by rename to the crates. Its new files placed where
+  their modules are: `observe/src/git_workspace/worktree_stat.rs`, `lang_ecma/src/code_rule_dsl/module_graph/listing.rs`.
+  The hub's deletions of the old `native/src` copies stand.
+- Both sides kept: the module graph's disk walk (main's stamps and listing) beside the hub's snapshot graph and its
+  run-shared cache; the workspace restore's candidates and proof (main's split) with the hub's snapshot checked
+  sources; the source root's named package inside the hub's once-a-run setting; Git's worktree list read with `-z`
+  (the hub's, byte-exact paths) by the sync and the non-blocking reads alike (main's); the content store's owner check
+  (main's `ownedContentStorePath`) where the hub's analysis store is given.
+- main's new git-workspace tests that publish nothing live in rerail-observe's `git_workspace::tests` beside the stat's
+  own hooks; the store's keep the rest. CI's Windows engine job names the crates the tests now live in.
+- The scrub finished over the hub's own tree: `tempo_` JIT names in the stream compiler and the packed transducer, and
+  every ticket ID (`check-internal-refs` clean). `wave.rir` reblessed: its programs follow regex-syntax 0.8.12 (#1090).
+- After the merge: two of main's new TS tests built `CheckoutOwners` from a version reader; the hub's takes the database. main's
+  placement test set `GIT_DIR` and `GIT_OBJECT_DIRECTORY`, which never reach the hub's Git (hook variables), so it moves the
+  lookup by the variable that still does. registered-worktrees counts and stubs the `-z` byte reader too (its legacy-Git
+  case stubbed only the text reader, so it never reached the fallback).
+- roaring 0.12 in every crate (main bumped only its own; one version in the lock).
+- Relax: observe 13, store 22 (git_workspace), module_graph 22, rir 8, the wave golden, context_tests 75; check 0 errors
+  over the changed crates. tsc clean; the catalog suites green but for a stale engine addon and an unbuilt dist.
+  Red under Relax only: store-base's `the_image_is_the_one_the_loader_names` (no image holds JIT code).
+
+### Q558. Roll-up 130 (Typing-support-final-shape dfb7957259 onto Pulling-it-all-together): what the merge chose
+
+- Typing-support (3 commits, dfb7957259): t57 E6 for kind, a view keyed by its node answers a fused row program's
+  chunk of tests (`Source::holds_each`, `reads_tests_by`; `RERAIL_VIEW_TESTS=off`); the wave's settle reads its slots
+  through pointers resolved once a span (SlotRuns, its counts under the existing RERAIL_SPIKE_PRESORTED); the step
+  clock takes its switches off each step; and a third copy of the closure form's lattice guard.
+- Kept beside each other: the hub's `Source::test_at` (b234bc9d87, a membership step's test of one bound node) and
+  E6's `holds_each` (a fused row program's chunk of them). Each source has both; they answer different steps. E6's
+  read takes the hub's slot hint (`node_hint`'s fourth argument); its parts lookup is by `&str` (the map's `Arc<str>`).
+- The lattice guard once: the hub's.
+- `Part::read_range` (hub) and `Part::run` (SlotRuns) both kept.
+- Relax: check 0 errors (blocks, facts-base, facts, setfix, tests-lang); blocks 114, facts-base 86, setfix 141; the two
+  kind-test tests; typed_corpus_reads_declarations_and_dependency_summaries; tests-corpus base_tests 43.
+
+### Q559. Roll-up 131 (final-rerail-shape a843cf3de5 onto Pulling-it-all-together): what the merge chose
+
+- final-rerail-shape (7 commits, a843cf3de5): layer c, a matcher's node set tested by bits and a one-key membership as
+  the source's test; node ids as tape positions (`RERAIL_NODE_IDS=tape`, opt-in) with a view's scans in row order;
+  inline-or-store pricing; demand priced per rule; reference rules keyed by class and name; W's join counts
+  (`RERAIL_W_JOINS`). A clean merge.
+- Relax: check 0 errors (facts, plan-search, logic, adapters, ukl, run); tests-lang facts::vtab 103, tests-rr
+  json_rules 9, prof 32, tests-logic all (two 64-test chunks passed the 12 GB cap at 4 threads; at 2 they pass).
+
+### Q560. Roll-up 132 (final-rerail-shape-phased-facts 621ed2cb27 onto Pulling-it-all-together): what the merge chose
+
+- final-rerail-shape-phased-facts (9 commits, 621ed2cb27): 0697 a language's codes' atoms constants in the binary
+  (`codes_dir`, read by `codes_kind`/`codes_field`; a view read's fifth pointer is the codes' directory); 0700 the
+  node view's rows by kind made per kind at first lookup; 0703 the parse writes its tape's auxiliary index from the
+  nodes its writer recorded and takes the reader's digest; files statted by their directories' listings; a matcher
+  wave's roots found a (clause, tape) pair at a time; the codes' directory wrapped once as long as the device.
+- With the hub's view reads: the entry keeps its codes' name atoms (`op`) and drops its kind and field cells (0697);
+  the directory's homes are three a row (tape, lines, source), then the 16z cache's and the codes' (`3n + 1`); the
+  hub's `view_text_span`, `view_line_span`, `view_line_terminated` and `view_op` take the codes' pointer like every
+  view read (the Metal join stages, ukl_rust's `walk64`, the tests); the reads' headers written again from the reads.
+- The writer: one reuse, the hub's thread writer (`Writer::reused_in`, t60 step 5), which also places its tapes in
+  the run's rooms (0353 row 17); phased-facts' machine pool of writers (`Writers`) is not taken, a second mechanism
+  for the same job. `Writer::reused_for` is the thread's writer for rooms, begun by its caller with the reader's digest.
+  `Finished` carries the recorded nodes and digest from both of the writer's paths (a room's and its own vector's),
+  and the index maker (`AuxMaker`, `AuxFor`) lays the index from those nodes where the tape is written in a room:
+  never read back (0703).
+- Relax: check 0 errors (tape-format, clif, lang, facts, lang-json, rr-syntax, c-pp, ukl-rust, tests-lang, lean-tapes,
+  json-aot, tests-tape, tests-sql, device-metal, store, compiler, workspace, lang-php, lang-python, corpus-memo,
+  observe, boot, tests-conformance); clif 19 (the reads' headers), tape-format 53, tests-tape 115, tests-lang
+  facts::vtab 104, ukl-rust 5, tests-rr json_rules 9, store content_store::tests 69 (one, multiple processes, passed
+  on its second run: its children aborted under Relax the first). Not run here: the Metal device tests (slabs).

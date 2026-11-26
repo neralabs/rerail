@@ -323,6 +323,68 @@ pub struct Sixteen {
     pub number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
     /// Where the tape goes: rooms every reader reads it in (decision 0353 step 4a), or `None`, a vector of its own.
     pub rooms: Option<std::sync::Arc<dyn home::Rooms>>,
+    /// The source's SHA-256 where its reader took it, and the bytes it was taken of (`f16::SourceDigest::taken`): a
+    /// writer given those very bytes takes none of its own (`f16::Document::sha256`). A parser that writes from
+    /// another text (a template's masked view) still hashes its own.
+    pub sha256: Option<f16::SourceDigest>,
+}
+
+/// Each language's keys' numbers in its table, by the names a lean crate gives them (`f16::Lang::number_named`): the
+/// machine's value (decision 0442), a table a tag and naming, so a key is numbered by its names once, not once a
+/// document.
+#[derive(Default)]
+pub struct KeyNumbers(std::sync::Mutex<Vec<(u8, usize, std::sync::Arc<KeyTable>)>>);
+
+impl KeyNumbers {
+    /// The table of tag `tag`'s keys as `names` names them.
+    pub fn of(&self, tag: u8, names: fn(u32) -> Option<KeyNames>) -> std::sync::Arc<KeyTable> {
+        let mut tables = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let at = names as usize;
+        if let Some((.., t)) = tables.iter().find(|(g, n, _)| *g == tag && *n == at) {
+            return std::sync::Arc::clone(t);
+        }
+        let t = std::sync::Arc::new(KeyTable::default());
+        tables.push((tag, at, std::sync::Arc::clone(&t)));
+        t
+    }
+}
+
+/// A language's keys' numbers (`KeyNumbers`), each found at its first sight: pages of `KEY_PAGE` keys, a page made at
+/// its first key. A key past the pages is found each time.
+pub struct KeyTable {
+    pages: Box<[std::sync::OnceLock<Box<[std::sync::atomic::AtomicU32]>>]>,
+}
+
+/// The keys a page of a `KeyTable` holds, and its pages: keys below 2^20, every lean crate's.
+const KEY_PAGE: usize = 1 << 10;
+const KEY_PAGES: usize = 1 << 10;
+/// A key not yet numbered, and one its table lacks.
+const KEY_UNSEEN: u32 = u32::MAX;
+const KEY_LACKED: u32 = u32::MAX - 1;
+
+impl Default for KeyTable {
+    fn default() -> Self {
+        KeyTable { pages: (0..KEY_PAGES).map(|_| std::sync::OnceLock::new()).collect() }
+    }
+}
+
+impl KeyTable {
+    /// `key`'s number: the table's, else `find`'s, kept.
+    pub fn number(&self, key: u32, find: impl FnOnce() -> Option<u32>) -> Option<u32> {
+        use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+        let Some(page) = self.pages.get(key as usize / KEY_PAGE) else { return find() };
+        let slot = &page.get_or_init(|| (0..KEY_PAGE).map(|_| AtomicU32::new(KEY_UNSEEN)).collect())[key as usize % KEY_PAGE];
+        match slot.load(Relaxed) {
+            KEY_UNSEEN => {
+                let n = find();
+                debug_assert!(n.is_none_or(|n| n < KEY_LACKED), "a number past a table's");
+                slot.store(n.unwrap_or(KEY_LACKED), Relaxed);
+                n
+            }
+            KEY_LACKED => None,
+            n => Some(n),
+        }
+    }
 }
 
 /// A node's key named as its grammar names it: what a parser without the grammar (a lean parser's own tests and
@@ -354,6 +416,7 @@ impl Named {
             blocks: true,
             number: std::sync::Arc::new(move |key| lang.number_named(&name(key)?)),
             rooms: None,
+            sha256: None,
         });
         Named { target }
     }
@@ -629,9 +692,12 @@ impl<L: Layout> Writer<L> {
                 return self;
             }
         };
-        // The thread's writer, used again (t60 step 5), its tape written in the target's rooms (0353 row 17).
-        let w = std::mem::ManuallyDrop::new(f16::Writer::reused_in(t.rooms.clone(), &f16::Document { lang: t.lang, source: src, tag: t.tag, z: t.z, blocks: t.blocks, nodes: self.cap }, t.terminators));
-        self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default() }));
+        // The thread's writer, used again (t60 step 5), its tape written in the target's rooms (0353 row 17), and the
+        // source's digest its reader took (0703).
+        let doc = f16::Document { lang: t.lang, source: src, tag: t.tag, z: t.z, blocks: t.blocks, nodes: self.cap, sha256: t.sha256.and_then(|d| d.of_source(src)) };
+        let mut w = f16::Writer::reused_for(t.rooms.clone());
+        w.begin_with(&doc, |out| newlines::index_into(out, src, t.terminators));
+        self.sixteen = Ok(Box::new(Passing { w: std::mem::ManuallyDrop::new(w), number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default() }));
         // The columns hold the window: the nodes since the last commit (more grow it).
         if self.cap > WINDOW {
             let (cap, widths) = (WINDOW, self.layout.widths());
@@ -1561,7 +1627,7 @@ mod tests {
             let (kind, field) = (k & 0x3ff, k >> KIND_BITS & 0x3f);
             (k >> 16 == 0 && kind < 16 && field < 8).then_some(kind + 16 * field)
         };
-        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number), rooms: None })
+        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number), rooms: None, sha256: None })
     }
 
     /// The rows of the tape `w` finishes.
@@ -1665,7 +1731,7 @@ mod tests {
             f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).unwrap()
         });
         let number = |k: u32| (k >> 16 == 0 && k & 0x3ff < 16 && k >> 10 < 8).then(|| (k & 0x3ff) + 16 * (k >> 10));
-        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number), rooms: None });
+        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number), rooms: None, sha256: None });
         let src = vec![b' '; 200_000];
         // 0: the calls joined; 1: the joined calls; 2: the plain ones (no chain, no node passed on).
         let build = |way: u8| {

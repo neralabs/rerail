@@ -634,7 +634,7 @@ impl<'a> Sink16<'a> {
     /// index made by `aux`.
     pub fn placing(z: bool, blocks: bool, rooms: Option<std::sync::Arc<dyn rerail_tape_format::home::Rooms>>, aux: Option<rerail_tape_format::f16::AuxMaker<'a>>) -> Self {
         let number = std::sync::Arc::new(crate::tape::number);
-        Sink16 { target: rerail_tape_format::Sixteen { lang: crate::tape::lang(), terminators: crate::syntax::TERMINATORS, tag: rerail_tape_format::RR_TAG, z, blocks, number, rooms }, aux }
+        Sink16 { target: rerail_tape_format::Sixteen { lang: crate::tape::lang(), terminators: crate::syntax::TERMINATORS, tag: rerail_tape_format::RR_TAG, z, blocks, number, rooms, sha256: None }, aux }
     }
 }
 

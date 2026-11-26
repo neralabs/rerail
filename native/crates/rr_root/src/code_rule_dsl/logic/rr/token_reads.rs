@@ -1,4 +1,4 @@
-//! The token reads a `.rerail` program may not make (t31, RER-131). A named-only tape stores no token its grammar
+//! The token reads a `.rerail` program may not make (t31, decision 0161). A named-only tape stores no token its grammar
 //! implies (the `(` of a call, the `return` of a return statement), and no relation holds one: `op`, `op_at`,
 //! `prev_token` and `token` give a node's stored children, `first_token`, `last_token`, `token_before` and
 //! `token_after` its stored leaves. A clause that asks one of them for a token the grammar may leave out, by its

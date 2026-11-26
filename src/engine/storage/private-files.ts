@@ -20,6 +20,7 @@ import {
   RERAIL_DATABASE_FILE,
   STATUS_LINES_FOLDER,
 } from "./rerail-home.js";
+import { UNTAKEN_EVENTS_DIR } from "./untaken-events.js";
 import { insideProfile, WINDOWS_ACL, type WindowsAcl } from "./windows-acl.js";
 
 /** The system a path is kept private on: its platform, Windows' access control and the profile folder; tests pass their own. */
@@ -318,11 +319,12 @@ export function keepFilesPrivate(folder: string, prefixes: readonly string[]): v
 /**
  * What the Rerail home holds that is the person's alone: the database and its WAL, journal and pre-update copies
  * (`rerail.sqlite*`), the coding-agent recovery database (`harness.sqlite*`), the daemon's state, capability and log,
- * the Claude Code status lines it keeps (`status/`), and the remote sink's configuration, tokens, outbox and machine id
- * (`remote.json`, `remote-tokens/`, `remote-outbox.sqlite*`, `machine-id`).
+ * the Claude Code status lines it keeps (`status/`), the events hooks left while the daemon did not read
+ * (`untaken-events/`), and the remote sink's configuration, tokens, outbox and machine id (`remote.json`,
+ * `remote-tokens/`, `remote-outbox.sqlite*`, `machine-id`).
  */
 const PRIVATE_HOME_FILES: readonly string[] = [RERAIL_DATABASE_FILE, CLAUDE_STATUS_DATABASE_FILE, DAEMON_STATE_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE,
-  STATUS_LINES_FOLDER, REMOTE_CONFIG_FILE, REMOTE_TOKENS_FOLDER, REMOTE_OUTBOX_FILE, MACHINE_ID_FILE];
+  STATUS_LINES_FOLDER, UNTAKEN_EVENTS_DIR, REMOTE_CONFIG_FILE, REMOTE_TOKENS_FOLDER, REMOTE_OUTBOX_FILE, MACHINE_ID_FILE];
 
 /**
  * Creates the Rerail home (`0700`) when absent, and keeps it and the private files in it private

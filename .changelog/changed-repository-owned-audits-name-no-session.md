@@ -1,1 +1,0 @@
-An audit or violation that a change in another worktree, made by no session, produced has `sessionId: null` in `GET /api/audits`, `GET /api/violations`, `audits_list`, `violations_list` and the remote sink; audits name the repository in `repositoryId`. Going back to an older Rerail, its dashboard can fail to show History by rule while no repository is chosen.

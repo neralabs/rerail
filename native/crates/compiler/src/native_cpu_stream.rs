@@ -1,5 +1,5 @@
 //! Tier 2 on the CPU JIT: Cranelift emits a program's words (`native_ir::StructuralOperation`'s
-//! tier-2 words) as one function `tempo_stream(ctx)`. Each word is one block of code made from
+//! tier-2 words) as one function `rerail_stream(ctx)`. Each word is one block of code made from
 //! the word and its operand alone, and its tables (a switch's targets, a string's bytes). Nothing in it is fixed for a language or a tape format.
 //!
 //! The machine's state (`stream::run`, the reference) is in SSA variables where every token
@@ -3662,7 +3662,7 @@ fn token_fn<'a>(module: &mut JITModule, fns: &'a mut std::collections::HashMap<W
         return Err(Error::UnsupportedFeature("records made in tier 2, with `TOKEN` a function of its own"));
     }
     if !fns.contains_key(&key) {
-        let name = format!("tempo_word_{}", fns.len());
+        let name = format!("rerail_word_{}", fns.len());
         let made = outline(module, &name, if shape.on_stack { 1 } else { 2 }, 1, pinned, &table.fns.names(), |g, q, heads| take_token(g, q, any_mark, shape, table, refusals, lazy, heads))?;
         fns.insert(key, made);
     }
@@ -3714,8 +3714,8 @@ impl TableFns {
         let inner = words.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. } | Op::Reread { .. }));
         let wraps = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. }));
         let drops = words.iter().any(|b| matches!(b.operation, Op::Reread { .. } | Op::Retag { kind: DEAD, on: On::Made }));
-        let shift = if wraps { Some(outline(module, "tempo_stream_shift", 7, 0, false, &[], |f, p, heads| shift_rows(f, p, inner, w, heads))?) } else { None };
-        let drop = if drops { Some(outline(module, "tempo_stream_drop", 13, 3, false, &[], |f, p, heads| drop_rows(f, p, inner, w, heads))?) } else { None };
+        let shift = if wraps { Some(outline(module, "rerail_stream_shift", 7, 0, false, &[], |f, p, heads| shift_rows(f, p, inner, w, heads))?) } else { None };
+        let drop = if drops { Some(outline(module, "rerail_stream_drop", 13, 3, false, &[], |f, p, heads| drop_rows(f, p, inner, w, heads))?) } else { None };
         let ids = rerail_clif::writer::define_ops(module, cranelift_module::Linkage::Local, near).map_err(|e| {
             if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
                 eprintln!("the writer's ops: {e}");
@@ -3724,8 +3724,8 @@ impl TableFns {
         })?;
         let ops = crate::native_cpu_tape::Ops::of(&ids);
         let names = ops.names();
-        let pass = outline(module, "tempo_tape_pass", 10, 0, false, &names, |f, p, heads| crate::native_cpu_tape::pass(f, p, x.classes, w.size, &ops, heads))?;
-        let retag = outline(module, "tempo_tape_retag", 7, 0, false, &names, |f, p, heads| crate::native_cpu_tape::retag(f, p, x.classes, &ops, heads))?;
+        let pass = outline(module, "rerail_tape_pass", 10, 0, false, &names, |f, p, heads| crate::native_cpu_tape::pass(f, p, x.classes, w.size, &ops, heads))?;
+        let retag = outline(module, "rerail_tape_retag", 7, 0, false, &names, |f, p, heads| crate::native_cpu_tape::retag(f, p, x.classes, &ops, heads))?;
         Ok(TableFns { shift, drop, sixteen: Sixteen { ops, pass, retag } })
     }
 
@@ -3974,12 +3974,12 @@ struct Lowered {
 }
 
 /// Tier 2 lowered in the clusters of `cut` (`native_cpu_clusters`): one function a cluster.
-/// One cluster is the one function `tempo_stream(ctx)`, its state in its stack frame. With
-/// more, `tempo_stream` holds the state and calls the cluster of the first word; a cluster's
+/// One cluster is the one function `rerail_stream(ctx)`, its state in its stack frame. With
+/// more, `rerail_stream` holds the state and calls the cluster of the first word; a cluster's
 /// function takes `ctx` (and the state in it) and the index of the place it enters at, and a jump
 /// to a word of another cluster is a tail call of that cluster (`return_call`, the `tail`
 /// calling convention): no stack grows, and every function returns the run's result to
-/// `tempo_stream`.
+/// `rerail_stream`.
 ///
 /// The run writes format 16 by the writer's ops (decision 0434 §6, R17): at each commit point it passes the nodes
 /// before the last one to the ops (`native_cpu_tape::pass`), at `ACCEPT` the rest. Its run takes the writer
@@ -4054,7 +4054,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         flags.push(("opt_level", "speed"));
     }
     // With a function a grammar rule, `ctx` is in a register of its own through the run
-    // (Cranelift's pinned register, x21): `tempo_stream` sets it (and gives the host's back),
+    // (Cranelift's pinned register, x21): `rerail_stream` sets it (and gives the host's back),
     // each function reads it once where it is entered, into one value with no use fixed to an
     // argument's register (a call passes no `ctx`), which the allocator keeps in one
     // callee-saved register through the function, as rustc keeps the lean parser's `self`.
@@ -4092,7 +4092,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let mut signature = module.make_signature();
     signature.params.push(AbiParam::new(pointer));
     signature.returns.push(AbiParam::new(types::I64));
-    let id = module.declare_function("tempo_stream", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
+    let id = module.declare_function("rerail_stream", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
     // The calls open (`Mem::Ret`) are a field of the state in `ctx`, read and written where a
     // call is made and returns, and read by `TOKEN`'s room check, as the lean parser's
     // `self` fields are: no value of them lives across a call. Passed as an argument, one value
@@ -4118,7 +4118,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         signature.clone()
     };
     let cids: Vec<cranelift_module::FuncId> = if clustered {
-        (0..cut.count).map(|c| module.declare_function(&format!("tempo_stream_c{c}"), Linkage::Local, &csig).map_err(|_| Error::BackendFailure)).collect::<Result<_, _>>()?
+        (0..cut.count).map(|c| module.declare_function(&format!("rerail_stream_c{c}"), Linkage::Local, &csig).map_err(|_| Error::BackendFailure)).collect::<Result<_, _>>()?
     } else {
         vec![id]
     };
@@ -4466,7 +4466,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         let zero = f.ins().iconst(types::I64, 0);
         // The state few words touch, in memory (`Mem`): not carried through every block where
         // paths meet, as an SSA variable is.
-        // In clusters, the state is `tempo_stream`'s, in `ctx`.
+        // In clusters, the state is `rerail_stream`'s, in `ctx`.
         let slot = (!clustered).then(|| f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * Mem::COUNT, 3)));
         // The state's address: `ctx`, every cluster's first argument, as the lean parser's
         // `&mut self` (one register the allocator keeps, no move a block).
@@ -4865,7 +4865,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let key = $key;
                         let args: &[Value] = $args;
                         if !word_fns.contains_key(&key) {
-                            let name = format!("tempo_word_{}", word_fns.len());
+                            let name = format!("rerail_word_{}", word_fns.len());
                             let made = outline(&mut module, &name, 1 + args.len(), usize::from($refuses), pinned_ctx, &table.fns.names(), |g, q, _| own_word(g, q, $refuses, &body))?;
                             word_fns.insert(key, made);
                         }
@@ -5690,7 +5690,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                                 f.ins().brif(r, holds, &[], skip, &[]);
                             } else {
                                 if !word_fns.contains_key(&key) {
-                                    let name = format!("tempo_word_{}", word_fns.len());
+                                    let name = format!("rerail_word_{}", word_fns.len());
                                     let made = outline(&mut module, &name, 1, 1, pinned_ctx, &[], |g, q, hs| {
                                         let ctx = q[0];
                                         let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
@@ -5730,7 +5730,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             let r = if outlined {
                                 let key = WordFn::TokenMark { index: i };
                                 if !word_fns.contains_key(&key) {
-                                    let name = format!("tempo_word_{}", word_fns.len());
+                                    let name = format!("rerail_word_{}", word_fns.len());
                                     let made = outline(&mut module, &name, 1, 1, pinned_ctx, &[], |g, q, hs| {
                                         let ctx = q[0];
                                         let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
@@ -6182,7 +6182,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let r = {
                         let key = WordFn::Check { index: check };
                         if !word_fns.contains_key(&key) {
-                            let name = format!("tempo_word_{}", word_fns.len());
+                            let name = format!("rerail_word_{}", word_fns.len());
                             let made = outline(&mut module, &name, 4, 1, pinned_ctx, &[], |g, q, hs| {
                                 let ctx = q[0];
                                 let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
@@ -6930,7 +6930,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         eprintln!("tier 2: lowered {:.2?}", phase.elapsed());
     }
     let cluster_names: Vec<_> = cids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
-    // `tempo_stream` itself, in clusters: the state, then the first word's cluster.
+    // `rerail_stream` itself, in clusters: the state, then the first word's cluster.
     let driver = if clustered {
         let mut heads_d: Vec<(Block, Step)> = Vec::new();
         let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), signature.clone());
@@ -7121,7 +7121,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         Error::BackendFailure
     })?;
     let code = module.get_finalized_function(id);
-    // SAFETY: `tempo_stream` was declared and defined with this signature.
+    // SAFETY: `rerail_stream` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
     let own_calls = calls;
     let table_passes = crate::clif_text::callees(&clif).iter().filter(|n| passes.contains(n)).count();
@@ -8005,7 +8005,7 @@ impl CompiledStream {
             let nodes = tape.room_nodes();
             // With each block's presence, as every other producer's writer (decision 0434 §4, step 6).
             let Doc16 { source, lang, numbers, z, lines } = *doc;
-            w.begin_with(&rerail_tape_format::f16::Document { lang, source, tag: self.tag, z, blocks: true, nodes }, lines);
+            w.begin_with(&rerail_tape_format::f16::Document { lang, source, tag: self.tag, z, blocks: true, nodes, sha256: None }, lines);
             // The stack: the program's bound of open nodes where it has one (`open_bound`, which the Rust's run checks
             // once), else a guess, then the nodes' room.
             w.reserve_run(nodes, self.open_bound.map_or(depth.min(nodes), |b| b as usize));

@@ -43,9 +43,10 @@ The daemon sends every 10 seconds; `add` and `remove` need no restart.
   what the database already holds, then everything new.
 - **`--no-content`** sends events without payloads (prompts, tool input and output), marked `"content":"omitted"`.
   Everything else is sent.
-- **`remove`** deletes the remote's token and what the outbox knew of it. A remote added later under the same name
-  starts from nothing and receives everything again. Each `add` gives the remote a new id, which the outbox keeps its
-  progress under. A send under way at removal records nothing and stops.
+- **`remove`** deletes the remote's token and what the outbox knew of it, but for the highest event number a batch
+  carried to it, which stays taken. A remote added later under the same name starts from nothing and receives
+  everything again. Each `add` gives the remote a new id, which the outbox keeps its progress under. A send under way
+  at removal stops and records nothing more but the last event number of the batch it sends, which stays taken too.
 - **`status`** shows when the remote last took a batch, what is waiting, and the last error. `rerail status` shows a
   line per remote. It exits 1 while a remote is failing.
 - **`push`** sends everything waiting now, in this process, without the daemon and without waiting for a retry. It is
@@ -93,7 +94,7 @@ again.
 | --- | --- |
 | `remote.json` | Remotes (name, id, URL, whether content is sent, label) and exclusions. |
 | `remote-tokens/<name>` | That remote's token, alone. Never printed; never in the database, which support bundles and `rerail scrub` read. |
-| `remote-outbox.sqlite` | Acknowledgements (an event cursor, a hash per sent record), retry state, queued scans. Deleting it resends everything. |
+| `remote-outbox.sqlite` | Acknowledgements (an event cursor, a hash per sent record), the last event number each batch carried, retry state, queued scans. Deleting it resends everything. |
 | `machine-id` | A random UUID made once, naming this machine to every remote. |
 
 All four are yours only (files `0600`, the token folder `0700`), like the rest of the home. The token is a plain
@@ -144,6 +145,10 @@ one is the batch header; each further line is a record:
   Node's binary form sends `"content":"unrepresentable"` and a null payload.
 - **Rule documents** are sent for rules that audits and scans ran, if the exact content is still findable: an
   installed or bundled pack, a rule you created, a worktree's `.rerail/rules/`. A rule changed since is not sent.
+- **Damaged audits.** An audit whose stored paths, failures, violations, rule revisions or rule provenance Rerail
+  cannot read (a damaged file or a hand edit) is sent with that list empty and a failure naming it, and sent again
+  whole once the list is mended. An audit a remote already holds whole is not sent again for damage to its paths,
+  failures, rule revisions or rule provenance; violations damaged to another length send it again, with none.
 
 </details>
 
@@ -170,6 +175,15 @@ A `gap` record reports data Rerail could not send, instead of leaving a hole:
 - events deleted before sending (`rerail reset`);
 - a record larger than a batch (`reason: "too-large"`);
 - rejected batches.
+
+A power cut or an operating system crash can take about the last 5 s of events (the daemon syncs them to the disk
+about every 5 s, later while the disk is too busy to finish a sync). A remote receives the session's
+`events-lost` record, which its next open writes: how many events of which kinds went, and when. A remote receives a
+`gap` for them only where their numbers had gone out in a batch before the cut, to it or to another remote; later
+events then take numbers past those, so a remote never receives another event under a number it holds. Where no batch
+had carried them, later events take their numbers, and the `events-lost` record is the only word of the loss. The
+outbox writes the last event number of each batch to `remote-outbox.sqlite` before sending it, the one commit of the
+outbox that waits for the disk; the daemon's timer or `rerail remote push` makes it, never a hook.
 
 Data changed **after** sending, for example by `rerail scrub`, is not resent. Scrub before adding a remote, or ask the
 service's owner to delete it.

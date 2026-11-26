@@ -72,12 +72,12 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     let (mut digests, mut tapes) = (Vec::new(), Vec::new());
     for (source, lang) in SOURCES {
         // The device reads full images in place; a tree-sitter tape is stored named-only
-        // (RER-131), so the store holds the document's restored image here.
+        // (decision 0161), so the store holds the document's restored image here.
         let (tape, _stored) = document(source, lang);
         let bytes = tape.resident_parts(None).unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
-        store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(crate::code_rule_dsl::tape::formats::stored_version()), &bytes).unwrap();
-        digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
+        store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()), &bytes).unwrap();
+        digests.push(tape.tape_digest().unwrap());
         tapes.push(tape);
     }
     let grammar = |id: i64| Grammar::new(u8::try_from(id).ok().and_then(language::from_tape_tag).ok_or("unknown grammar")?);

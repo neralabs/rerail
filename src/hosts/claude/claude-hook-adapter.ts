@@ -1,5 +1,7 @@
 import { rm } from "node:fs/promises";
-import { hookText, type AdapterDelivery, type RerailEventLoop } from "../../engine/adapter-contract.js";
+import {
+  answeredFacts, hookText, type AdapterDelivery, type AdapterSession, type EventAnswerFacts, type RerailEventLoop,
+} from "../../engine/adapter-contract.js";
 import { claudeHookEvents, claudeWorkspace } from "./claude-event-adapter.js";
 import {
   deliveryConflicts,
@@ -14,8 +16,8 @@ import {
   type HookOutput,
   type SteerLines,
 } from "../../harness/hook-adapter.js";
-import { conflictLine, headlineText, sessionStartNote, steerHeadlines, type HeadlineLinkStyle } from "../../engine/code-rule/rerail-steer.js";
-import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
+import { conflictLine, headlineText, steerHeadlines, type HeadlineLinkStyle } from "../../engine/code-rule/rerail-steer.js";
+import { linkDeliveries, linkedByAnswer, presentedSessionStartNote } from "../../presentation/session-presentation.js";
 import { terminalDrawsHyperlinks } from "../../presentation/terminal-hyperlinks.js";
 import { colourDepth, rerailMark } from "../../presentation/rerail-mark.js";
 
@@ -86,6 +88,15 @@ export function claudeHookOutput(hook: string, deliveries: readonly HeldDelivery
   return steerHookOutput(hook, deliveries, CONTEXT_EVENTS, steerLines(links, mark), note);
 }
 
+/**
+ * At a session's start, the note only the model sees, with its dashboard link and rules from the daemon's answer
+ * (`answered`); an older daemon's are read after its answer. Nothing at any other hook.
+ */
+async function sessionNote(hook: string, session: AdapterSession, answered: EventAnswerFacts): Promise<string | undefined> {
+  if (hook !== "SessionStart") return undefined;
+  return await presentedSessionStartNote(session, answered);
+}
+
 export async function handleClaudeEvent(
   input: HookInput,
   eventLoop: RerailEventLoop,
@@ -96,23 +107,45 @@ export async function handleClaudeEvent(
   const sessionId = requiredText(input, "session_id");
   const deliveries: AdapterDelivery[] = [];
   for (const event of claudeHookEvents(input)) deliveries.push(...await eventLoop.ingest(event));
-  const path = pendingPath(storageRoot, "claude-code", sessionId);
+  // No later hook of the session reads its held steers, whether the daemon took its end or it was left untaken.
   if (hook === "SessionEnd") {
-    await rm(path, { force: true });
+    await rm(pendingPath(storageRoot, "claude-code", sessionId), { force: true });
     return {};
   }
+  // Left for a daemon that is not reading: the session's held steers wait in their file for the next hook it answers.
+  if (eventLoop.untaken === true) return {};
+  // The daemon's answer carries the note's link and rules and the steers' links; an older daemon's is read after it.
+  return await answerClaudeHook(input, { hook, sessionId, storageRoot, env, answered: answeredFacts(eventLoop) }, deliveries);
+}
+
+/** What a hook's answer is made for: its event, its session, where its steers wait, and what the daemon's answers told. */
+interface ClaudeAnswerAt {
+  hook: string;
+  sessionId: string;
+  storageRoot: string;
+  env: NodeJS.ProcessEnv;
+  answered: EventAnswerFacts;
+}
+
+/** The answer of a hook the daemon answered with `deliveries`: the session's held steers routed through its file. */
+async function answerClaudeHook(
+  input: HookInput, { hook, sessionId, storageRoot, env, answered }: ClaudeAnswerAt, deliveries: readonly AdapterDelivery[],
+): Promise<HookOutput> {
+  const path = pendingPath(storageRoot, "claude-code", sessionId);
+  // A steer held for a later event keeps this answer's links, so that event's answer need carry none.
+  const found = linkedByAnswer(deliveries, answered);
   // Rerail keeps a turn going at most once: a Stop that follows a Stop hook's continuation (`stop_hook_active`) holds
   // its steers, line and all, for the next context event, so writes the turn-end walk keeps finding cannot loop it.
   if (hook === "Stop" && input.stop_hook_active === true) {
-    await holdStopSteers(path, deliveries);
+    await holdStopSteers(path, found);
     return {};
   }
   // The runtime records no links; the rules point at this checkout's dashboard only here.
   const cwd = claudeWorkspace(input.cwd);
   const links = terminalDrawsHyperlinks(env) ? "hyperlink" : "plain";
   const mark = rerailMark(colourDepth(env));
-  const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "claude-code", sessionId, await presentedSessionNoteRules({ host: "claude-code", sessionId, cwd })) : undefined;
-  const routed = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
+  const note = await sessionNote(hook, { host: "claude-code", sessionId, cwd }, answered);
+  const routed = await routeDeliveries(path, hook, found, CONTEXT_EVENTS);
   // `linkDeliveries` copies each delivery, so a steer the 0.1.2 hook held at `Stop` keeps its `late` mark.
-  return claudeHookOutput(hook, await linkDeliveries(routed, cwd), { note, links, mark });
+  return claudeHookOutput(hook, await linkDeliveries(routed, cwd, answered), { note, links, mark });
 }

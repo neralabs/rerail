@@ -185,7 +185,6 @@ native/crates/lang_ecma/src/code_rule_dsl/npm_ignore/mod.rs::WILDCARDS	stays	a r
 native/crates/lang_ecma/src/code_rule_dsl/package_manifest.rs::DEFAULT_NODE_RANGE	stays	computed once from the engine's constants
 native/crates/lang_ecma/src/code_rule_dsl/scope/ecma.rs::SCRIPTS	stays	computed once from the engine's own files
 native/crates/lang_ecma/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers what boot does)
-native/crates/lang_json/src/code_rule_dsl/transducer/packed/json_parser.rs::PARSER	stays	computed once from the engine's own files
 native/crates/lang_json/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::DOM	stays	code registered at load
 native/crates/lang_json/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::KINDS	stays	computed once from the engine's own files
 native/crates/lang_php/src/code_rule_dsl/scope/php_names.rs::BUILTINS	stays	computed once from the engine's own files
@@ -219,6 +218,7 @@ native/crates/observe/src/git_snapshot.rs::NEXT	stays	a process-unique number na
 native/crates/observe/src/git_snapshot.rs::READ_INVENTORY	stays	code registered at load: the inventory reader a crate above installs (a function pointer)
 native/crates/observe/src/git_snapshot_message_pattern.rs::SYNTAX	stays	a value computed once from constants: Git's message-search regex syntax
 native/crates/observe/src/git_workspace.rs::NAMES	stays	the host's ignored directories, data parsed once: a constant
+native/crates/observe/src/git_workspace.rs::NEXT_FIXTURE	stays	an id counter: a test's fixture directories, append-only (the hub's, 7ef1f33849)
 native/crates/observe/src/git_workspace.rs::SOURCE_ALIAS_HASHES	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/crates/observe/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers the store its tests keep the observer's answers in)
 native/crates/overlay/src/code_rule_dsl/facts/overlay/recovery.rs::NEXT	stays	an id counter: append-only (a test's directory names)
@@ -345,6 +345,7 @@ native/crates/store_base/src/content_store/journal.rs::COUNTER	stays	an id count
 native/crates/store_base/src/content_store/observer_store/base.rs::STORE	stays	code a crate above registers at load (the content store, as the observer and git reach it)
 native/crates/store_base/src/content_store/segments.rs::WRITES	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid
 native/crates/store_base/src/source_tree.rs::IMAGE	stays	computed once from the engine's own files
+native/crates/store_base/src/source_tree.rs::NAMED_PACKAGE	stays	the installed package the Node loader names once as it loads the addon (the hub's, 221152067f): code registered at load
 native/crates/swift_lean/src/lex.rs::BIN	stays	a byte class of a literal
 native/crates/swift_lean/src/lex.rs::DEC	stays	a byte class of a literal
 native/crates/swift_lean/src/lex.rs::HEX	stays	a byte class of a literal
@@ -422,6 +423,7 @@ native/crates/workspace/src/code_rule_dsl/workspace/storage.rs::NEXT	stays	an id
 native/src/lib.rs::GLOBAL	stays	the allocator (code registered at load)
 native/src/lib.rs::ONCE	stays	a hook registered once
 native/src/lib.rs::SQLITE_ALLOCATOR	stays	code registered at load
+native/src/main_instance.rs::HANDLED	stays	a test's signal handler's flag: a handler reaches no state but a static (the hub's, 221152067f)
 native/src/model.rs::SHARED_MODELS	shared	the loaded embedding models: shared by design
 native/src/os_warning.rs::ONCE	stays	the macOS allocator warning written once a process (a message, no data)
 native/src/process.rs::LAUNCHED	stays	this process's children's handles (Windows): an OS object of the process

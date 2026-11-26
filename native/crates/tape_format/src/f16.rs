@@ -848,12 +848,41 @@ impl<'a> StoredPresence<'a> {
 /// What a writer's `finish` gives: the tape, its presence laid in its home after it (decision 0434 §4, step 6).
 pub struct Finished {
     pub tape: Written,
+    /// Its nodes as its writer's ops were given them (`aux_index::Nodes`), what its auxiliary index is laid from;
+    /// `None` where they were not all given through them.
+    pub nodes: Option<crate::aux_index::Nodes>,
+    /// Its source's SHA-256, where its writer took it.
+    pub digest: Option<SourceDigest>,
 }
 
-/// The maker of a finished tape's auxiliary index (decision 0656 step 3), from the tape as it lies: given to a
+/// The SHA-256 of the bytes a writer read (`Finished::digest`), and where they lay.
+#[derive(Clone, Copy, Debug)]
+pub struct SourceDigest {
+    pub sha256: [u8; 32],
+    at: (usize, usize),
+}
+
+impl SourceDigest {
+    /// The digest of `bytes`, read where they lie.
+    pub fn of(bytes: &[u8]) -> SourceDigest {
+        SourceDigest { sha256: sha2::Digest::finalize(sha2::Digest::chain_update(sha2::Sha256::default(), bytes)).into(), at: (bytes.as_ptr() as usize, bytes.len()) }
+    }
+    /// `sha256`, the digest its reader took of `bytes`, where they lie.
+    pub fn taken(sha256: [u8; 32], bytes: &[u8]) -> SourceDigest {
+        SourceDigest { sha256, at: (bytes.as_ptr() as usize, bytes.len()) }
+    }
+    /// The digest, where it was taken of `source` itself (the same bytes where they lie): a parser given another text
+    /// of the same length (a template's view) was given other bytes.
+    pub fn of_source(&self, source: &[u8]) -> Option<[u8; 32]> {
+        (self.at == (source.as_ptr() as usize, source.len())).then_some(self.sha256)
+    }
+}
+
+/// The maker of a finished tape's auxiliary index (decision 0656 step 3), from the tape as it lies and its nodes as its
+/// writer recorded them where it has them all (decision 0703: then the tape is not read back for it): given to a
 /// writer's `finish_with`, which lays the index after the presence where the writer wrote the tape, in its room
 /// before giving it out (0353 row 17), as `Written::lay_aux` lays it in a tape's own vector.
-pub type AuxMaker<'a> = &'a dyn Fn(&Written) -> Result<Vec<u8>, String>;
+pub type AuxMaker<'a> = &'a dyn Fn(&Written, Option<&crate::aux_index::Nodes>) -> Result<Vec<u8>, String>;
 
 impl Written {
     /// The nodes.
@@ -3587,12 +3616,22 @@ mod tests {
             while let Some((_, end)) = ends.pop() {
                 w.close(end);
             }
-            match w.finish().unwrap().tape {
-                Written::F16(t) => assert_eq!(t.as_bytes(), want.as_bytes(), "16 retagged"),
+            let f = w.finish().unwrap();
+            // The writer's nodes, its edits in them, lay the index the tape's read does; its digest is the source's.
+            let codes = crate::aux_index::CodeSets { named: crate::aux_index::named_codes(600, |c| c % 2 == 0), comments: crate::aux_index::named_codes(600, |c| c % 5 == 0) };
+            let all = crate::aux_index::Sections::ALL;
+            let laid = crate::aux_index::build_from(f.nodes.as_ref().expect("every node given through the ops"), &source, 7, &codes, all).unwrap();
+            assert_eq!(f.digest.and_then(|d| d.of_source(&source)), Some(sha2::Digest::finalize(sha2::Digest::chain_update(sha2::Sha256::default(), &source)).into()), "the source's digest");
+            match f.tape {
+                Written::F16(t) => {
+                    assert_eq!(t.as_bytes(), want.as_bytes(), "16 retagged");
+                    assert_eq!(laid, crate::aux_index::build(&t.reader(&lang).unwrap(), &source, 7, &codes, all).unwrap(), "16: the writer's index");
+                }
                 Written::F16Z(t) => {
                     let mut d = vec![0u8; t.decoded_len()];
                     t.decode_into(&mut d).unwrap();
                     assert_eq!(d, want.as_bytes(), "16z retagged");
+                    assert_eq!(laid, crate::aux_index::build(&t.reader(&lang, Some(&ZCache::of([&t]))).unwrap(), &source, 7, &codes, all).unwrap(), "16z: the writer's index");
                 }
             }
         }
@@ -3777,7 +3816,7 @@ mod tests {
             let w = match home.borrow_mut().take() {
                 Some(mut w) => {
                     used.set(used.get() + 1);
-                    w.begin(&Document { lang, source, tag: 3, z, blocks, nodes: nodes / 3 }, crate::newlines::Terminators::Lf);
+                    w.begin(&Document { lang, source, tag: 3, z, blocks, nodes: nodes / 3, sha256: None }, crate::newlines::Terminators::Lf);
                     w
                 }
                 None => Writer::new(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3),
@@ -3802,7 +3841,7 @@ mod tests {
         let want = first.extent().to_vec();
         let at = first.extent().as_ptr();
         w.recycle(first);
-        w.begin(&Document { lang: &lang, source: &source, tag: 0, z: false, blocks: true, nodes: nodes.len() }, crate::newlines::Terminators::Lf);
+        w.begin(&Document { lang: &lang, source: &source, tag: 0, z: false, blocks: true, nodes: nodes.len(), sha256: None }, crate::newlines::Terminators::Lf);
         by_ops(&mut w, &nodes, 1);
         let again = Writer::finish(&mut w).expect("the second tape").tape;
         assert_eq!(again.extent(), &want[..], "the tape written in the room given back");
@@ -3862,7 +3901,7 @@ mod tests {
         for refuse in [0, 2, 3] {
             writes_the_references_tape(|lang, source, z, blocks, nodes| {
                 let mut w = Writer::placing(test_rooms(refuse));
-                w.begin(&Document { lang, source, tag: 3, z, blocks, nodes: nodes / 3 }, crate::newlines::Terminators::Lf);
+                w.begin(&Document { lang, source, tag: 3, z, blocks, nodes: nodes / 3, sha256: None }, crate::newlines::Terminators::Lf);
                 w
             });
         }
@@ -3885,7 +3924,7 @@ mod tests {
             let mut w = Writer::placing(test_rooms(0));
             let mut tapes = Vec::new();
             for _ in 0..2 {
-                w.begin(&Document { lang: &lang, source: &source, tag: 0, z, blocks: true, nodes: nodes.len() }, crate::newlines::Terminators::Lf);
+                w.begin(&Document { lang: &lang, source: &source, tag: 0, z, blocks: true, nodes: nodes.len(), sha256: None }, crate::newlines::Terminators::Lf);
                 by_ops(&mut w, &nodes, 1);
                 tapes.push(Writer::finish(&mut w).expect("the tape").tape);
             }
@@ -4332,8 +4371,10 @@ mod tests {
                     c.reserve_run(2 * ops.len(), 41);
                     c.final_as_written();
                     {
-                        // SAFETY: `c`'s state, its room reserved for every node and level, written by the cursor alone.
-                        let mut cur = unsafe { Cursor::<X>::begin(c.state_address()) };
+                        // SAFETY: `c`'s state and record, its room reserved for every node and level, written by the cursor
+                        // alone.
+                        let (state, record) = c.cursor_parts();
+                        let mut cur = unsafe { Cursor::<X>::recording(state, record, &[]) };
                         for &op in &ops {
                             // SAFETY: as `begin`'s; each close is an open's.
                             unsafe {
@@ -4350,6 +4391,8 @@ mod tests {
                     let (a, b, c) = (a.finish().unwrap(), b.finish().unwrap(), c.finish().unwrap());
                     assert!(a.tape.extent() == b.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the constant widths' bytes");
                     assert!(a.tape.extent() == c.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the cursor's bytes");
+                    // The cursor's record is the ops': its tape's auxiliary index is laid from it, not read back.
+                    assert!(c.nodes.is_some() && a.nodes == c.nodes, "widths {widths:?}, seed {seed}, 16z {z}: the cursor's record");
                 }
             }
             edges

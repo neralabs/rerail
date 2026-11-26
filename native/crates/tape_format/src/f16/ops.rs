@@ -69,7 +69,8 @@ const ZBLOCK_MAX: usize = 4 * PIECE_MAX + w::lz4_bound(PIECE_MAX as u64) as usiz
 const FRESH: u8 = if cfg!(test) { 0xa5 } else { 0 };
 
 /// What a writer writes a tape of (`Writer::begin_with`): a document of `source` in `lang`, of about `nodes` nodes,
-/// the producer's `tag`, in 16z where `z`, with each block's presence where `blocks`.
+/// the producer's `tag`, in 16z where `z`, with each block's presence where `blocks`. `sha256`: the source's digest
+/// where its reader took it already (the observer's, as it read the file), so the writer takes none of its own.
 pub struct Document<'a> {
     pub lang: &'a Lang,
     pub source: &'a [u8],
@@ -77,6 +78,7 @@ pub struct Document<'a> {
     pub z: bool,
     pub blocks: bool,
     pub nodes: usize,
+    pub sha256: Option<[u8; 32]>,
 }
 
 /// Format 16 or 16z written in one pass as a parser goes (decision 0434 §2), by the writer's ops in CLIF (§6)
@@ -97,6 +99,14 @@ pub struct Writer {
     /// given, it is `parts[OUT]`, a vector of the writer's own.
     rooms: Option<std::sync::Arc<dyn crate::home::Rooms>>,
     region: Option<Box<dyn crate::home::Region>>,
+    /// Each node as the ops were given it, its edits included (`retag`, `set_start`): what its auxiliary index is laid
+    /// from (`Finished::nodes`), so the tape is not read back for it. A producer that writes its nodes through the
+    /// state itself (`state_address`) leaves it short, and its index is read off its tape.
+    nodes: crate::aux_index::Nodes,
+    /// The nodes opened and not yet closed, innermost last.
+    opened: Vec<u32>,
+    /// The source's SHA-256, taken at `begin`, where the newline index reads the source.
+    digest: Option<super::SourceDigest>,
     /// A part held at its capacity (a test's: the device's region, which the host does not grow).
     #[cfg(test)]
     fixed: Option<(u32, u64)>,
@@ -117,7 +127,7 @@ impl Writer {
     pub fn new(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
         // (`reused` takes the thread's writer between documents instead.)
         let mut w = Writer::empty();
-        w.begin(&Document { lang, source, tag, z, blocks, nodes }, terminators);
+        w.begin(&Document { lang, source, tag, z, blocks, nodes, sha256: None }, terminators);
         w
     }
 
@@ -126,13 +136,21 @@ impl Writer {
     /// buffers): a writer made a document made them each again (1.14 M arrays on cold PostHog).
     pub fn reused(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
         let mut w = SPARE.try_with(|s| s.take()).ok().flatten().unwrap_or_else(Writer::empty);
-        w.begin(&Document { lang, source, tag, z, blocks, nodes }, terminators);
+        w.begin(&Document { lang, source, tag, z, blocks, nodes, sha256: None }, terminators);
         w
     }
 
     /// `reused`, its tapes going to `rooms` (decision 0353 step 4a, row 17; `placing`): the thread's writer keeps its
     /// parts' buffers, and takes this document's rooms. A region left from other rooms is not this document's.
     pub fn reused_in(rooms: Option<std::sync::Arc<dyn crate::home::Rooms>>, doc: &Document<'_>, terminators: crate::newlines::Terminators) -> Self {
+        let mut w = Writer::reused_for(rooms);
+        w.begin(doc, terminators);
+        w
+    }
+
+    /// This thread's writer between documents (as `reused_in`), its tapes going to `rooms`, not yet begun: its caller
+    /// begins it (`begin_with`, with the source's digest its reader took).
+    pub fn reused_for(rooms: Option<std::sync::Arc<dyn crate::home::Rooms>>) -> Self {
         let mut w = SPARE.try_with(|s| s.take()).ok().flatten().unwrap_or_else(Writer::empty);
         let same = match (&w.rooms, &rooms) {
             (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
@@ -143,7 +161,6 @@ impl Writer {
             w.region = None;
         }
         w.rooms = rooms;
-        w.begin(doc, terminators);
         w
     }
 
@@ -158,7 +175,7 @@ impl Writer {
 
     /// A writer of no document yet, its parts empty: `begin` starts each.
     pub fn empty() -> Self {
-        Writer { state: Box::default(), parts: Default::default(), presence_words: (0, 0), keep_blocks: false, z: false, given: (0, 0), rooms: None, region: None, #[cfg(test)] fixed: None, #[cfg(test)] jit: None }
+        Writer { state: Box::default(), parts: Default::default(), presence_words: (0, 0), keep_blocks: false, z: false, given: (0, 0), rooms: None, region: None, nodes: Default::default(), opened: Vec::new(), digest: None, #[cfg(test)] fixed: None, #[cfg(test)] jit: None }
     }
 
     /// A writer of no document yet whose tapes go to `rooms` where it is given them (decision 0353 step 4a): each
@@ -179,13 +196,22 @@ impl Writer {
     /// `begin`, the newline index written into its part by `lines` (`newlines::index_of`), in the part's own buffer: a
     /// producer that has the source's newlines (tier 1's bits) makes it with no scan of the source.
     pub fn begin_with(&mut self, doc: &Document<'_>, lines: impl FnOnce(&mut crate::Vector<u8>)) {
-        let &Document { lang, source, tag, z, blocks, nodes } = doc;
+        let &Document { lang, source, tag, z, blocks, nodes, sha256 } = doc;
         let source_len = source.len() as u64;
         let wd = lang.widths;
         let cw = bytes_for(source_len);
         let mut index = std::mem::take(&mut self.parts[part::LINES as usize]);
         lines(&mut index);
         let lines = index;
+        // The source's digest: its reader's, else read with it as the newline index was: the document's one hash of
+        // its source.
+        self.digest = Some(match sha256 {
+            Some(sha256) => super::SourceDigest::taken(sha256, source),
+            None => super::SourceDigest::of(source),
+        });
+        self.nodes.clear();
+        self.nodes.reserve(nodes);
+        self.opened.clear();
         let newlines = crate::newlines::count(&lines).unwrap_or(0);
         let (kind_words, field_words) = lang.presence_words();
         let w3 = [wd[0] as u32, wd[1] as u32, wd[2] as u32];
@@ -507,6 +533,12 @@ impl Writer {
         std::ptr::from_mut::<State>(&mut self.state).cast::<u8>()
     }
 
+    /// The state's address and the record of the nodes, for a walk that writes both itself
+    /// (`writer16::Cursor::recording`): its tape's auxiliary index is then laid from the record (`Finished::nodes`).
+    pub fn cursor_parts(&mut self) -> (*mut u8, *mut crate::aux_index::Nodes) {
+        (std::ptr::from_mut::<State>(&mut self.state).cast::<u8>(), &raw mut self.nodes)
+    }
+
     /// The nodes so far.
     pub fn len(&self) -> usize {
         self.state.n as usize
@@ -525,6 +557,8 @@ impl Writer {
         let desc = self.desc();
         // SAFETY: the state's parts lie in their buffers, each with the room the op can need, reserved above.
         call!(self, w_open(desc, number, start));
+        self.nodes.push(number, u32::MAX, start as u32, 0);
+        self.opened.push(i as u32);
         i
     }
 
@@ -570,6 +604,11 @@ impl Writer {
         let desc = self.desc();
         // SAFETY: as `open`'s.
         call!(self, w_close(desc, end));
+        if let Some(i) = self.opened.pop() {
+            let n = self.nodes.len() as u32;
+            self.nodes.end[i as usize] = n;
+            self.nodes.stop[i as usize] = end as u32;
+        }
     }
 
     /// A closed node with no children.
@@ -579,6 +618,7 @@ impl Writer {
         let desc = self.desc();
         // SAFETY: as `open`'s.
         call!(self, w_leaf(desc, number, start, end));
+        self.nodes.push(number, i as u32 + 1, start as u32, end as u32);
         i
     }
 
@@ -596,6 +636,9 @@ impl Writer {
         let desc = self.desc();
         // SAFETY: as `open`'s; a code's entry takes no room past its list's.
         call!(self, w_retag(desc, i as u32, number));
+        if let Some(c) = self.nodes.code.get_mut(i) {
+            *c = number;
+        }
     }
 
     /// Node `i`'s start made `start` (`w_set_start`): an edit of a node not yet final.
@@ -603,6 +646,9 @@ impl Writer {
         let desc = self.desc();
         // SAFETY: as `open`'s.
         call!(self, w_set_start(desc, i as u32, start));
+        if let Some(s) = self.nodes.start.get_mut(i) {
+            *s = start as u32;
+        }
     }
 
     /// The failure the ops kept, as a code and its node.
@@ -620,6 +666,10 @@ impl Writer {
     /// region before the region gives it out (a given room is never written again), else in its own vector.
     pub fn finish_with(&mut self, aux: Option<AuxMaker<'_>>) -> Result<Finished, String> {
         self.finish_ops()?;
+        // The nodes as the ops had them, where every node was given through them: what its index is laid from (0703).
+        let whole = self.nodes.len() == self.state.n as usize && self.opened.is_empty();
+        let nodes = whole.then(|| std::mem::take(&mut self.nodes));
+        let digest = self.digest.take();
         let count = (self.state.n as usize).div_ceil(Z);
         let end = self.len_of(part::OUT);
         let faults = self.len_of(part::ERRORS);
@@ -640,7 +690,7 @@ impl Writer {
                 let bytes = {
                     let home = crate::home::Home::Placed(lent.clone());
                     let tape = if self.z { Written::F16Z(Tape16Z::from_bytes(home)?) } else { Written::F16(Tape16::from_bytes(home)?) };
-                    make(&tape)?
+                    make(&tape, nodes.as_ref())?
                 };
                 if std::sync::Arc::strong_count(&lent) != 1 {
                     return Err("a tape lent to its index's maker was kept".into());
@@ -665,7 +715,7 @@ impl Writer {
             let home = crate::home::Home::Placed(region.give(len));
             let tape = if self.z { Written::F16Z(Tape16Z::from_bytes(home)?) } else { Written::F16(Tape16::from_bytes(home)?) };
             self.given = (0, 0);
-            return Ok(Finished { tape });
+            return Ok(Finished { tape, nodes, digest });
         }
         let mut out = std::mem::take(&mut self.parts[part::OUT as usize]);
         self.given = (out.as_ptr() as usize, out.len());
@@ -676,6 +726,7 @@ impl Writer {
         if let Some((_, bytes)) = made {
             f.tape.lay_aux(&bytes)?;
         }
+        (f.nodes, f.digest) = (nodes, digest);
         Ok(f)
     }
 
@@ -771,7 +822,7 @@ fn finished(mut out: crate::Vector<u8>, presence: &[u8], faults: &mut [u8], word
     in_preorder(faults);
     super::presence::lay_words(&mut out, words, count, &mut (0..(words.0 + words.1) * count).map(word), faults);
     let tape = if z { Written::F16Z(Tape16Z::from_bytes(out)?) } else { Written::F16(Tape16::from_bytes(out)?) };
-    Ok(Finished { tape })
+    Ok(Finished { tape, nodes: None, digest: None })
 }
 
 

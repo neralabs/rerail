@@ -686,6 +686,7 @@ fn dirty_source_reads_reject_symlink_escapes() {
             kind: OverlayKind::Untracked,
         }],
         nested_roots: Vec::new(),
+        volume_answers: Default::default(),
     };
     assert!(workspace.read_source("escape/source.py", u64::MAX).is_err());
     std::fs::remove_dir_all(root).unwrap();
@@ -713,6 +714,7 @@ fn dirty_source_reads_reject_fifos_without_blocking() {
             kind: OverlayKind::Untracked,
         }],
         nested_roots: Vec::new(),
+        volume_answers: Default::default(),
     };
     let (sender, receiver) = std::sync::mpsc::channel();
     let reader = std::thread::spawn(move || {
@@ -811,6 +813,7 @@ fn clean_trees_comparisons_are_linear_for_many_trees_and_overlays() {
             })
             .collect(),
         nested_roots: Vec::new(),
+        volume_answers: Default::default(),
     };
     let clean = workspace
         .clean_trees()
@@ -850,6 +853,7 @@ fn a_tree_whose_prefix_an_overlay_names_is_not_clean() {
             kind: OverlayKind::Untracked,
         }],
         nested_roots: Vec::new(),
+        volume_answers: Default::default(),
     };
     let clean = workspace
         .clean_trees()
@@ -901,6 +905,7 @@ fn tree_workspace(trees: Vec<GitTree>) -> GitWorkspace {
         base_files: Vec::new(),
         overlays: Vec::new(),
         nested_roots: Vec::new(),
+        volume_answers: Default::default(),
     }
 }
 

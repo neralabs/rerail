@@ -1319,6 +1319,17 @@ impl WaveRoom {
         (r as u8, reg.at + (g - reg.first))
     }
 
+    /// Where row `row` of region `r`'s value in column `c` lies, and the rows from it on that lie each 8 bytes past
+    /// the one before (`Part::run`): a reader of many of the room's slots resolves their stretches once.
+    ///
+    /// # Safety
+    /// The row is claimed (`claim`).
+    #[inline]
+    pub unsafe fn run(&self, r: u8, row: u32, c: usize) -> Option<(*mut i64, u32)> {
+        // SAFETY: the caller's: claimed, so reserved.
+        unsafe { self.region(r).part.run(row, c) }
+    }
+
     /// Row `row` of region `r`'s value in column `c`, where a writer wrote it.
     #[inline(always)]
     pub fn get(&self, r: u8, row: u32, c: usize) -> i64 {
@@ -1792,6 +1803,16 @@ impl Part {
     /// (`rerail_blocks::rows::Rows::read_range`).
     pub fn read_range(&self, c: usize, i: u32, out: &mut [i64]) {
         self.rel().rows.read_range(c, self.skip + i, out);
+    }
+    /// Where its row `i`'s value in column `c` lies, and the rows from it on that lie each 8 bytes past the one
+    /// before (`ColRead::run`): `None` where the column's values are not each 8 bytes.
+    ///
+    /// # Safety
+    /// Row `i` is reserved.
+    #[inline]
+    pub unsafe fn run(&self, i: u32, c: usize) -> Option<(*mut i64, u32)> {
+        // SAFETY: the caller's.
+        unsafe { self.cols[c].run(self.skip + i) }
     }
 
     /// An empty relation of `k` columns in a run's block, with room for `rows` rows that a writer other than the
@@ -3332,25 +3353,28 @@ mod tests {
     /// gives its chunk back to the block's free list when dropped.
     #[test]
     fn an_index_array_lies_in_its_relations_block() {
-        let mut rows = Rows::new(1);
-        // copy: not block data: a test's rows
-        rows.extend_from_slice(&[1, 2, 3]);
-        let home = rows.home().expect("a relation with rows has a home");
-        let mut v = collect_in(Some(&home), 0..100u32);
-        assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "in the relation's block");
-        let cap = v.capacity();
-        v.extend(100..cap as u32 + 50);
-        assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "grown in the same block");
-        assert!(v.iter().copied().eq(0..cap as u32 + 50));
-        let c = v.clone();
-        assert!(Arc::ptr_eq(c.facts().expect("a chunk"), &home.facts) && *c == *v);
-        let free = home.facts.block.free_bytes();
-        drop((v, c));
-        assert!(home.facts.block.free_bytes() > free, "its chunks back on the free list");
-        // Without a home: a run's open block.
-        let lone = collect_in(None, [7i64, 8]);
-        assert_eq!(*lone, [7, 8]);
-        assert!(Vector::<u8>::new().facts().is_none(), "empty holds no chunk");
+        // In a chunk of its own: the run's open block is shared with the tests beside it, which take a chunk given back.
+        in_chunk(|| {
+            let mut rows = Rows::new(1);
+            // copy: not block data: a test's rows
+            rows.extend_from_slice(&[1, 2, 3]);
+            let home = rows.home().expect("a relation with rows has a home");
+            let mut v = collect_in(Some(&home), 0..100u32);
+            assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "in the relation's block");
+            let cap = v.capacity();
+            v.extend(100..cap as u32 + 50);
+            assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "grown in the same block");
+            assert!(v.iter().copied().eq(0..cap as u32 + 50));
+            let c = v.clone();
+            assert!(Arc::ptr_eq(c.facts().expect("a chunk"), &home.facts) && *c == *v);
+            let free = home.facts.block.free_bytes();
+            drop((v, c));
+            assert!(home.facts.block.free_bytes() > free, "its chunks back on the free list");
+            // Without a home: the open block of the chunk it is made in.
+            let lone = collect_in(None, [7i64, 8]);
+            assert_eq!(*lone, [7, 8]);
+            assert!(Vector::<u8>::new().facts().is_none(), "empty holds no chunk");
+        });
     }
 
     /// Decision 0487 R4 at a relation's arrays: with a GPU read of a relation array's items queued, a CPU write of them

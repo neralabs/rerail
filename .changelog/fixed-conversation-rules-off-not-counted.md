@@ -1,0 +1,1 @@
+While conversation rules are off, a conversation rule switched on shows as Not running in the dashboard. Overview, Settings, pack pages, the status line and set-up's summary no longer count it as on, and adding a pack that starts one on says it doesn't run. The API marks it `inactive` with code `experimental-off`.

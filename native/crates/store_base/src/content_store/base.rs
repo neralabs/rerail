@@ -127,21 +127,20 @@ impl HashKey {
         Self::from_sha256_digest(digest)
     }
 
-    /// The identity of a tape of the source `source`: its bytes and its source's hash. A
-    /// named-only tape holds no source text, so two sources of one shape and one set of token
-    /// lengths store the same bytes; each is its own tape, as it carries its own source.
-    pub fn tape_identity(source: Self, tape: &[u8]) -> Self {
-        #[cfg(any(test, feature = "test-hooks"))]
-        if WRITE_LOCK_HELD.with(std::cell::Cell::get) {
-            HASHES_UNDER_WRITE_LOCK.with(|hashes| hashes.set(hashes.get() + 1));
-        }
+    /// The identity of a tape of the source `source`: what makes it from that source, its grammar (`grammar_id`, the
+    /// dialect's tape tag, and `grammar_version`) and the format it is stored in (`tape_format_version`, which tells 16
+    /// from 16z). A parse is a function of these, so the tape's bytes are not read: a store's reads trust the bytes it
+    /// wrote, as a run trusts a tape it wrote (decision 0703), and a tape read in is still checked node by node.
+    pub fn tape_identity(source: Self, grammar_id: i64, grammar_version: i64, tape_format_version: i64) -> Self {
         let mut hash = Sha256::new();
-        hash.update(b"rerail.tape-of/v1\0");
+        hash.update(b"rerail.tape-of/v2\0");
         hash.update(source.algorithm.to_le_bytes());
         for lane in source.lanes {
             hash.update(lane.to_le_bytes());
         }
-        hash.update(tape);
+        for part in [grammar_id, grammar_version, tape_format_version] {
+            hash.update(part.to_le_bytes());
+        }
         Self::from_sha256_digest(hash.finalize().into())
     }
 

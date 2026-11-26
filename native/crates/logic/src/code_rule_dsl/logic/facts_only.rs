@@ -32,7 +32,7 @@ const FACT_STORE: &[&str] = &[
     "file_documents",
     "object_pins",
     "store_state",
-    // The store's identity (RER-131): its atoms and connections belong to this store only.
+    // The store's identity: its atoms and connections belong to this store only.
     "store_identity",
     // The segment files objects (sources, tapes) are in, by number (decision 0295), and each guest's key, an identity
     // interned to its number as `strings` and `hashes` are (decision 0391; frames retired, 0439).
@@ -174,7 +174,7 @@ const STATE: &[(&str, &str)] = &[
     // Profiling: the placements a recording run made, and the writer's jobs by kind.
     ("code_rule_dsl/logic/plan/placement.rs", "Recording"),
     // The coverage check's census of the shipped rule files, read once by a test process.
-    // A rule's pattern compiled on this thread (RER-131's group patterns, where `GROUPS` was): the in-memory form of
+    // A rule's pattern compiled on this thread (decision 0161's group patterns, where `GROUPS` was): the in-memory form of
     // the rule's own text, made again from it; compiling a regex is cheap, so nothing is written (t33 step 7).
     ("code_rule_dsl/logic/strings/functions.rs", "CACHE"),
     // A production's profiling counter's name, made once per name: a counter, not a result (t33 step 7).
@@ -211,11 +211,11 @@ const STATE: &[(&str, &str)] = &[
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus/base.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
-    // core.rerail's declarations (RER-131), read once from the engine's own library text: not a result kept.
+    // core.rerail's declarations (decision 0161), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
-    // This thread's zstd decompression context (RER-131): an open thing, not a result.
+    // This thread's zstd decompression context (decision 0161): an open thing, not a result.
     ("content_store/compression.rs", "DECODER"),
-    // The store handles open in this process, by path (RER-131): a registry of open things.
+    // The store handles open in this process, by path (decision 0161): a registry of open things.
     ("code_rule_dsl/logic/plan/choices.rs", "DurableSide"),
     ("code_rule_dsl/logic/plan/corpus/base.rs", "TEST_TAPE_CACHE"),
     // A test's own store, the template's path and the threads said to ask off a test's (`test_store`): which files

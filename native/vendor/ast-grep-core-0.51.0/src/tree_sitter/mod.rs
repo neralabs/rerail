@@ -127,7 +127,7 @@ impl<'tree> Iterator for NodeWalker<'tree> {
     self.count -= 1;
     ret
   }
-  // Rerail (RER-131): exact, as `ExactSizeIterator` requires: an adapter over the walker (`Node::children`'s `map`)
+  // Rerail (decision 0161): exact, as `ExactSizeIterator` requires: an adapter over the walker (`Node::children`'s `map`)
   // may answer `len` from it.
   fn size_hint(&self) -> (usize, Option<usize>) {
     (self.count, Some(self.count))

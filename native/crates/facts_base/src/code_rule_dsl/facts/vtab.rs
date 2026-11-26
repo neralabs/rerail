@@ -208,6 +208,20 @@ pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 /// (decision 0353 step 3).
 pub const NODE_READS: [&str; 12] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_name", "rr_node_comment", "rr_node_strprefix", "rr_node_op_at", "rr_node_intval", "rr_node_op_t", "rr_node_t_text", "rr_node_order"];
 
+/// `Source::holds_each` answered a value at a time, by the source's probe (`lookup_read_at`, else `lookup`): a
+/// wrapper's answer where its parts hold rows, and the tests' reference. `false` where the source has neither.
+pub fn holds_each_probed<S: Source + ?Sized>(src: &S, by: usize, ids: &[i64], col: usize, want: Option<i64>, cursor: &mut ProbeCursor, out: &mut [i64]) -> bool {
+    for (o, &v) in out.iter_mut().zip(ids) {
+        let mut found = false;
+        if !src.lookup_read_at(by, v, &[col], cursor, &mut |_, got| found |= want.is_none_or(|w| got[0] == w)) {
+            let Some(rows) = src.lookup(by, &[v]) else { return false };
+            found = rows.iter().any(|&r| want.is_none_or(|w| src.value(r, col) == w));
+        }
+        *o = i64::from(found);
+    }
+    true
+}
+
 /// A row a producer hands a relation (`Relation::from_rows`, `staged`): its values on the stack, as the relation
 /// copies them into its block (decision 0687); a row past 8 columns goes on the heap.
 pub type Row = rerail_blocks::frame::InlineVec<i64, 8>;
@@ -368,6 +382,20 @@ pub trait Source: Send + Sync {
     fn test_at(&self, _column: usize, _value: i64, _columns: &[usize], _want: &[i64], _cursor: &mut ProbeCursor) -> Option<bool> {
         None
     }
+    /// Whether the source answers `holds_each` by column `by` (`reads_tests_by`): a fused row program tests a node
+    /// by it only then (t57 E6). None by default: a source no probe of its own answers is probed through the join's
+    /// index on it, which a chunk's tests do not reach.
+    fn reads_tests_by(&self, _by: usize) -> bool {
+        false
+    }
+    /// A chunk of tests at once (t57 E6): for each value `ids[i]` of column `by`, whether some row with it has `want`
+    /// in column `col` (any value: `None`), into `out[i]` (1 or 0). A fused row program's test of a node it bound,
+    /// `kind(n, #k)` after the atom that binds `n`, reads its chunk's nodes so, in place (a view of the tape: each
+    /// node's tape node and kind, no row found or list made). `false` (`out` unset) where the source has no such read
+    /// (`reads_tests_by`).
+    fn holds_each(&self, _by: usize, _ids: &[i64], _col: usize, _want: Option<i64>, _cursor: &mut ProbeCursor, _out: &mut [i64]) -> bool {
+        false
+    }
     /// `for_rows` over rows `range` alone, until `each` returns false: a join step's scan of a view reads its rows
     /// so (decision 0353 step 2), a view of a batch's documents walking the documents the range holds once, each row's
     /// node, id and parent coming from the walk, not a point read a row.
@@ -483,8 +511,16 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose columns hold every `(column, value)` of `eqs`, ascending: a scan, which a source may do faster
     /// than a `value` call per row.
+    /// Read in row order (`for_rows`): a view of the tape walks each document once, not a point read a row.
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vector<u32> {
-        (0..self.len()).filter(|&r| eqs.iter().all(|&(c, v)| self.value(r, c) == v)).map(|r| r as u32).collect()
+        let columns: Vec<usize> = eqs.iter().map(|&(c, _)| c).collect();
+        let mut out = Vector::new();
+        self.for_rows(&columns, &mut |r, vals| {
+            if eqs.iter().zip(vals).all(|(&(_, v), &x)| x == v) {
+                out.push(r as u32);
+            }
+        });
+        out
     }
     /// A `has` axis the device reads off the tape (decision 0353 step 5): a stage probes it by one column, each
     /// binding's rows walked there (`metal_join::Batch::by_has`). `None` for any other source.

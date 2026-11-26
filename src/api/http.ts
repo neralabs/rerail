@@ -25,6 +25,7 @@ import { ApiError, invokeOperation, type Operation, type RerailApiStores } from 
 import { eventRecordSchema, auditRecordSchema, presentationPreferenceSchema } from "./operations.js";
 import { deciderSchema, effectiveRuleSchema, libraryRuleRecordSchema, repositorySummarySchema } from "./repository-contracts.js";
 import { checkoutAt, checkoutRuleCatalog } from "./repository-operations.js";
+import { mountChangeStream } from "./change-stream.js";
 import { sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
 
 // Named components give the generated client stable type names, and break the recursive
@@ -129,7 +130,7 @@ function matchesEtag(header: string | undefined, etag: string): boolean {
  * typed) can. The port is deliberately not part of this: behind a container port mapping or a
  * reverse proxy the page is addressed to a port the daemon never bound.
  */
-const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "[::1]"]);
+export const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 /** Hostnames besides loopback that a deployment answers to; empty unless `--public-host` names some. */
 export type PublicHosts = ReadonlySet<string>;
@@ -280,6 +281,8 @@ export function createRerailApi(
     await next();
   });
 
+  mountChangeStream(app, stores, instanceSalt);
+
   for (const operation of operations) {
     const route = createRoute({
       operationId: operation.id,
@@ -302,7 +305,8 @@ export function createRerailApi(
         403: jsonContent(errorSchema, "Not permitted, e.g. a coding agent changing a set-up repository's rules"),
         404: jsonContent(errorSchema, "Not found"),
         409: jsonContent(errorSchema, "Conflict"),
-        503: jsonContent(errorSchema, "A dependency the operation needs, such as the native kernel, is unavailable"),
+        503: jsonContent(errorSchema, "A dependency the operation needs, such as the native kernel, is unavailable; "
+          + "or not-on-disk: the write was made but could not be confirmed on the disk"),
       },
     });
     app.openapi(route, async (context: Context) => {

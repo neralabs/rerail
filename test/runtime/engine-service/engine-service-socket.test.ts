@@ -1,7 +1,7 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { ClientRequest, createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { connect, createServer, type Server, type Socket } from "node:net";
@@ -10,7 +10,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { ENGINE_ANSWER_WAIT_MS, engineEndpointAt } from "../../../src/runtime/daemon-control.js";
 import { engineHoldsCapability, engineProof } from "../../../src/runtime/daemon/engine-proof.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer } from "../../../src/runtime/daemon/engine-pipe.js";
-import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../../src/runtime/engine-service.js";
+import {
+  chooseEngineSocketPath, ingestEngineEvent, ingestEngineEventAnswer, listenBesideHeldPipe, preparePrivateDirectory, startEngineService,
+} from "../../../src/runtime/engine-service.js";
+import type { HeldSession } from "../../../src/engine/index.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { fakeMachine } from "../../support/platform/daemon-machine.js";
@@ -478,6 +481,51 @@ describe.runIf(process.platform === "win32")("starting the engine beside a pipe 
   });
 });
 
+describe("the answer to a hook's event", () => {
+  it("carries the event's deliveries when the facts beside them cannot be told, and what its runtime holds to a hook that asks once they can", async () => {
+    const root = await realpath(await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-event-answer-")));
+    const databasePath = join(root, "rerail.sqlite");
+    const repositoryKey = startTestRepository(root, databasePath);
+    const socketPath = process.platform === "win32"
+      ? String.raw`\\.\pipe\rerail-event-answer-${process.pid}-${Date.now().toString(16)}`
+      : join(root, "engine.sock");
+    let readable = false;
+    const held: (HeldSession | undefined)[] = [];
+    const service = await startEngineService({
+      socketPath,
+      storageRoot: join(root, "state"),
+      databasePath,
+      embedder: testEmbedder,
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => true,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+      answerFacts: (_event, _deliveries, readHeld) => {
+        const session = readHeld();
+        held.push(session);
+        if (!readable) throw new Error("the daemon could not tell its dashboard");
+        return { dashboard: null, ...(session?.sessionNote === undefined ? {} : { sessionNote: session.sessionNote }) };
+      },
+    });
+    const start = (sessionId: string) => ({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: root } } as const);
+    try {
+      // The hook reads what the answer lacks after it, as from a daemon older than these facts.
+      await expect(ingestEngineEventAnswer({ socketPath }, start("unread"))).resolves.toEqual({ eventId: "unread:start", deliveries: [] });
+      readable = true;
+      await expect(ingestEngineEventAnswer({ socketPath }, start("read")))
+        .resolves.toEqual({ eventId: "read:start", deliveries: [], dashboard: null, sessionNote: { setUp: false } });
+      // What the runtime that took each start holds of its session: its checkout, and a note for a repository not set up.
+      const session = { checkout: { repositoryKey, checkoutPath: root }, sessionNote: { setUp: false } };
+      expect(held).toEqual([session, session]);
+    } finally {
+      await service.close();
+      await removeFolder(root);
+    }
+  });
+});
+
 /** A listener on a fresh engine socket (a pipe on Windows) in this process, which takes each connection and answers nothing. */
 async function silentListener(): Promise<{ socketPath: string; close(): Promise<void> }> {
   const root = process.platform === "win32" ? undefined : await mkdtemp(join(SOCKET_ROOT, "rerail-silent-"));
@@ -564,15 +612,17 @@ describe("the holder of a Windows named pipe", () => {
     await new Promise<void>(resolve => server.listen(pipe, resolve));
     try {
       const holder = await pipeServer(pipe, 1_000);
-      expect(holder?.pid).toBe(process.pid);
+      expect(holder).toMatchObject({ pid: process.pid });
+      if (typeof holder === "string") throw new Error(`no holder: ${holder}`);
+      const { startedAt } = holder;
       // Node starts a moment after Windows creates its process.
       const nodeStarted = Date.now() - process.uptime() * 1_000;
-      expect(holder?.startedAt).toBeLessThanOrEqual(nodeStarted + 1_000);
-      expect(holder?.startedAt).toBeGreaterThan(nodeStarted - 10_000);
+      expect(startedAt).toBeLessThanOrEqual(nodeStarted + 1_000);
+      expect(startedAt).toBeGreaterThan(nodeStarted - 10_000);
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()));
     }
-    expect(await pipeServer(pipe, 0)).toBeUndefined();
+    expect(await pipeServer(pipe, 0)).toBe("no-pipe");
   });
 
   it.runIf(process.platform === "win32")("is not named while another client keeps the pipe's one instance open for the whole wait, says so with no pid, and leaves this process's timers running meanwhile", async () => {
@@ -587,7 +637,7 @@ describe("the holder of a Windows named pipe", () => {
       const answers = [await pipeServer(pipe, 0), await pipeServer(pipe, 1_000)];
       const answeredAt = Date.now();
       // An answer with no pid, which tells a pipe kept busy from one no one holds.
-      expect(answers.map(answer => answer !== undefined && typeof answer.pid !== "number")).toEqual([true, true]);
+      expect(answers.map(answer => typeof answer === "object" && typeof answer.pid !== "number")).toEqual([true, true]);
       // The timer fired while the lookup waited for a free instance, before its answer.
       expect(fired).toHaveLength(1);
       expect(fired[0]).toBeLessThan(answeredAt);
@@ -597,8 +647,128 @@ describe("the holder of a Windows named pipe", () => {
     }
   });
 
+  it.runIf(process.platform === "win32")("is named where the pipe's access list refuses this user the read right, and a hook sends it nothing, not even a connection for the proof", async () => {
+    const pipe = String.raw`\\.\pipe\rerail-holder-unreadable-${process.pid}-${Date.now()}`;
+    // Every right but reading, which Node's client still opens to write.
+    const holder = await accessListHolder(pipe, "FullControl", "ReadData");
+    const home = await mkdtemp(join(tmpdir(), "rerail-unreadable-pipe-"));
+    vi.stubEnv("RERAIL_HOME", home);
+    try {
+      await writeFile(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "test",
+        databasePath: join(home, "rerail.sqlite"), kernelSocketPath: pipe, ui: "bundled", startedAt: Date.now(), packageRoot: home, accessToken: "capability" }));
+      expect(await pipeServer(pipe, 1_000)).toMatchObject({ pid: holder.pid });
+      await expect(engineEndpointAt(pipe)).rejects.toThrow(`Windows names process ${holder.pid} as its holder`);
+      // One connection for each lookup, which wrote nothing, and none for the proof.
+      expect(await holder.connectionsBefore()).toEqual(["connection", "connection"]);
+    } finally {
+      vi.unstubAllEnvs();
+      holder.end();
+      await removeFolder(home);
+    }
+  });
+
+  it.runIf(process.platform === "win32")("is not named where the pipe's access list refuses this user even the right to read its attributes, and gives the error Windows gave", async () => {
+    const pipe = String.raw`\\.\pipe\rerail-holder-write-only-${process.pid}-${Date.now()}`;
+    const holder = await accessListHolder(pipe, "WriteData");
+    try {
+      expect(await pipeServer(pipe, 1_000)).toMatchObject({ windowsError: 5 });
+    } finally {
+      holder.end();
+    }
+  });
+
   it.runIf(process.platform !== "win32")("is no one off Windows, which has no named pipes", async () => {
-    expect(await pipeServer(String.raw`\\.\pipe\rerail-holder-${process.pid}`, 0)).toBeUndefined();
+    expect(await pipeServer(String.raw`\\.\pipe\rerail-holder-${process.pid}`, 0)).toBe("no-pipe");
+  });
+
+  it("is not asked of Windows where the engine's binding predates the question, which is no failure to report, and is no pipe where the binding finds none", async () => {
+    const pipe = String.raw`\\.\pipe\rerail-holder-${process.pid}`;
+    const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(await pipeServer(pipe, 0, () => ({}))).toBe("not-asked");
+      expect(await pipeServer(pipe, 0, () => ({ namedPipeServer: async () => null }))).toBe("no-pipe");
+      expect(written).not.toHaveBeenCalled();
+    } finally {
+      written.mockRestore();
+    }
   });
 });
 
+/** What {@link accessListHolder} gives: the pipe's server process, the connections it took, and its end. */
+interface AccessListHolder {
+  pid: number;
+  /** One line for each connection the pipe took before this call, `connection` and what its client wrote. */
+  connectionsBefore(): Promise<string[]>;
+  end(): void;
+}
+
+/**
+ * A process that serves the Windows pipe `path`, one instance at a time, with an access list that allows everyone the
+ * rights `allow` names and denies everyone those `deny` names (.NET's `PipeAccessRights`): Node cannot set a pipe's
+ * access list, so PowerShell makes it, through .NET calls alone, as `oneInstancePipeLines` says why. It writes a line
+ * for each connection once its client closes, with what the client wrote. It waits for a connection before it says it
+ * holds the pipe and again after each one, and until it waits Windows tells a client the pipe is busy: a client that
+ * opens and closes the pipe before the holder waits ends its wait with an error. `connectionsBefore` has cmd.exe write
+ * `sentinel` to the pipe and gives the lines before the sentinel's: the holder takes one connection at a time, so each
+ * earlier connection has its line by then.
+ */
+async function accessListHolder(path: string, allow: string, deny?: string): Promise<AccessListHolder> {
+  const rule = (rights: string, type: string): string => `$security.AddAccessRule([System.IO.Pipes.PipeAccessRule]::new($everyone, [System.IO.Pipes.PipeAccessRights]'${rights}', [System.Security.AccessControl.AccessControlType]::${type}))`;
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$everyone = [System.Security.Principal.SecurityIdentifier]::new([System.Security.Principal.WellKnownSidType]::WorldSid, $null)",
+    "$security = [System.IO.Pipes.PipeSecurity]::new()",
+    ...(deny === undefined ? [] : [rule(deny, "Deny")]),
+    rule(allow, "Allow"),
+    `$pipe = [System.IO.Pipes.NamedPipeServerStream]::new('${pipeNameOf(path)}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous, 4096, 4096, $security)`,
+    "$waiting = $pipe.BeginWaitForConnection($null, $null)",
+    "[Console]::Out.WriteLine('holding'); [Console]::Out.Flush()",
+    "$buffer = [byte[]]::new(64)",
+    "while ($true) {",
+    "  $pipe.EndWaitForConnection($waiting)",
+    "  $text = ''",
+    "  try { while (($read = $pipe.Read($buffer, 0, $buffer.Length)) -gt 0) { $text += [System.Text.Encoding]::ASCII.GetString($buffer, 0, $read) } } catch { }",
+    "  [Console]::Out.WriteLine('connection ' + $text.Trim()); [Console]::Out.Flush()",
+    "  $pipe.Disconnect()",
+    "  $waiting = $pipe.BeginWaitForConnection($null, $null)",
+    "}",
+  ].join("\n");
+  const holder = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    stdio: ["ignore", "pipe", "inherit"],
+    windowsHide: true,
+  });
+  let said = "";
+  holder.stdout.on("data", (chunk: Buffer) => {
+    said += chunk.toString();
+  });
+  const closed = once(holder, "close");
+  /** Waits until the holder has written `text`; throws once it ends without it. */
+  const until = async (text: string): Promise<void> => {
+    while (!said.includes(text)) {
+      const ended = await Promise.race([once(holder.stdout, "data").then(() => false), closed.then(() => true)]);
+      if (ended) throw new Error(`the pipe holder ended before it wrote ${text}: ${said}`);
+    }
+  };
+  await until("holding").catch((error: unknown) => {
+    holder.kill();
+    throw error;
+  });
+  return {
+    pid: holder.pid!,
+    connectionsBefore: async () => {
+      writeSentinel(path);
+      await until("connection sentinel");
+      const lines = said.split(/\r?\n/u).map(line => line.trim());
+      return lines.slice(lines.indexOf("holding") + 1, lines.indexOf("connection sentinel"));
+    },
+    end: () => holder.kill(),
+  };
+}
+
+/** Writes `sentinel` to the pipe `path` through cmd.exe, again while its holder takes its one instance back from the last client. */
+function writeSentinel(path: string): void {
+  for (let tries = 1; tries <= 50; tries++) {
+    if (spawnSync("cmd.exe", ["/d", "/s", "/c", `"echo sentinel>${path}"`], { windowsHide: true, windowsVerbatimArguments: true }).status === 0) return;
+  }
+  throw new Error(`cmd.exe could not write to ${path} in 50 tries`);
+}

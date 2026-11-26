@@ -1,6 +1,6 @@
 //! What a `.rerail` tape's anonymous tokens are, in each gap between named children, over every
 //! `.rerail` file of the repository: the evidence for which of them a named-only tape may leave out
-//! (a token the grammar implies, RER-131). Ignored; run by hand:
+//! (a token the grammar implies, decision 0161). Ignored; run by hand:
 //!
 //! `cargo test -p rerail-rr-syntax --test token_census -- --ignored --nocapture`
 

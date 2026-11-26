@@ -18,7 +18,7 @@
 
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::{Grammar as Literal, PNode};
-use crate::code_rule_dsl::tape::{FileImage, Grammar, OwnTable, TapeImage, TemplateError, TreeParser, Visit, checked};
+use crate::code_rule_dsl::tape::{FileImage, Grammar, OwnTable, TapeImage, TemplateError, TreeParser, Visit, checked, Source};
 use crate::code_rule_dsl::value::Value;
 use std::sync::OnceLock;
 
@@ -67,7 +67,7 @@ fn preorder(root: &PNode) -> Vec<(&PNode, Option<u32>)> {
 }
 
 impl TreeParser for FormatStrings {
-    fn parse(&self, tape: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+    fn parse(&self, tape: &Grammar, source: &Source<'_>, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         let literal = grammar(tape.lang)?;
         let encode = || -> Result<TapeImage, String> {
             checked(&budget)?;

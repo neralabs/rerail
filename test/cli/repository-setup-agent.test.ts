@@ -204,6 +204,15 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expect(later.text()).toContain("Rerail is on in acme-api");
   });
 
+  it("tells the person when cmd.exe ran no command, so Claude Code's hooks start with node, and how to try again", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment({ found: ["claude-code"], nodeHookFallback: true });
+    const io = agentIo();
+    expect(await runSetup(io, request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }))).toMatchObject({ status: "started" });
+    expect(io.text()).toContain("cmd.exe could not run a test command, so Rerail’s hooks start");
+    expect(io.text()).toContain("Run rerail install --refresh to try cmd.exe again.");
+  });
+
   it("names an agent found since whose hook fails only as not connected, and tries it again on the next run", async () => {
     const setup = await fixture();
     const first = fakeSetupEnvironment({ found: ["cursor"] });
@@ -333,7 +342,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
 
     const asked = agentIo();
     expect(await runSetup(asked, request(setup, environment, { cwd: plain }))).toEqual({ status: "waiting" });
-    expect(asked.text()).toContain("No repo found here.");
+    expect(asked.text()).toContain("No Git repository here.");
     expect(asked.text()).toContain("rerail setup --answer skip");
 
     const skipped = agentIo();

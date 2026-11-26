@@ -1465,7 +1465,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("native code-rule DSL workspac
         });
         // Siblings only: a statement's neighbor is the adjacent statement itself, never a call
         // nested in it. A call is the only child of its statement. Inside an argument list the
-        // tape keeps no `(`, `,` or `)` (the grammar implies them, RER-131), so a call's neighbor
+        // tape keeps no `(`, `,` or `)` (the grammar implies them, decision 0161), so a call's neighbor
         // is the argument beside it: only `pair(prepare(), execute())` matches the call rules.
         for (const [clauseId, expected] of [
           ["statement-precedes", [{ line: 1, text: "prepare()" }]],

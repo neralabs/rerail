@@ -584,9 +584,11 @@ pub fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
     hash.update(b"rerail.corpus-local/v5\0");
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
-    // A memoised row's node ids are those of the scheme it was made under: preorder, or per definition.
-    if crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
-        hash.update(b"node-ids:definition\0");
+    // A memoised row's node ids are those of the scheme it was made under: preorder, per definition, or tape positions.
+    match crate::code_rule_dsl::facts::vtab::syntax::node_ids() {
+        crate::code_rule_dsl::facts::vtab::syntax::NodeIds::Definition => hash.update(b"node-ids:definition\0"),
+        crate::code_rule_dsl::facts::vtab::syntax::NodeIds::Tape => hash.update(b"node-ids:tape\0"),
+        crate::code_rule_dsl::facts::vtab::syntax::NodeIds::Preorder => {}
     }
     hash.update(program);
     hash.finalize().into()

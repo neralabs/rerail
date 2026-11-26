@@ -15,7 +15,9 @@ import { keepClaudeStatusFiles } from "../presentation/claude-status-files.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { startUpdateChecks, updateCheckApplies } from "../setup/update-check.js";
+import { publishedPackReader } from "../setup/published-packs.js";
 import { checkNodeVersion } from "../setup/node-version.js";
+import { recordLateCheck } from "../harness/hook-failures.js";
 import { stampLines } from "./daemon-log.js";
 
 // The daemon's stdout and stderr are `daemon.log`: what Rerail logs there is scrubbed of secrets, then each line starts
@@ -42,10 +44,15 @@ startGitWithoutCopying(loadNativeBinding);
 try {
   await runHomeDaemon(process.argv.slice(2), {
     codingAgents: () => codingAgentStates(registrationRoot(defaultRerailHome(), PACKAGE_ROOT), codingAgentHome()),
+    // The hook failure log, where `rerail status` says which events the daemon checked late.
+    lateChecked: pass => recordLateCheck(pass),
     // A managed install asks npm once a day whether a newer Rerail is out; a checkout's build never does.
     ...(isMainRerailBuild() && updateCheckApplies(defaultRerailHome()) ? {
       updateChecks: () => startUpdateChecks({ home: defaultRerailHome() }),
     } : {}),
+    // A managed install's Add rule packs lists the packs published on npm, read when a person opens it; a checkout's
+    // build, which the dashboard's browser tests run, never reads npm.
+    ...(isMainRerailBuild() ? { publishedRulePacks: publishedPackReader({ home: defaultRerailHome() }) } : {}),
     ...(process.platform === "win32" ? {} : {
       statusLines: (stores: RerailApiStores) => keepClaudeStatusFiles({ stores, folder: join(defaultRerailHome(), STATUS_LINES_FOLDER) }),
     }),

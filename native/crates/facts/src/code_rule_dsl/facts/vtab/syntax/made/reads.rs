@@ -124,11 +124,11 @@ impl Docs {
         self.layer
             .codes
             .get_or_init(|| {
-                let device = placed::device()?;
-                let bytes = rerail_tape_format::codes_dir::bytes();
-                // SAFETY: the binary's directory, which outlives every buffer; no reader writes it (the kernels' reads
-                // of it are loads).
-                let buffer = unsafe { rerail_device::device::wrap_host_memory(device, bytes.as_ptr().cast_mut(), bytes.len()) }
+                placed::device()?;
+                // The binary's directory, wrapped once and held as long as the device (`Shared::wrap_static`): a wrap
+                // released with this layer left the directory's pages unreadable on Metal.
+                let buffer = rerail_device::shared::get()?
+                    .wrap_static(rerail_tape_format::codes_dir::bytes())
                     .unwrap_or_else(|e| panic!("the device's wrap of the codes' directory: {e}"));
                 let gpu = buffer.device_address()?;
                 let dir = self.dir().cast_mut();

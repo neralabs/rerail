@@ -13,7 +13,8 @@ pub struct ViewDoc {
     pub key: u32,
     /// Its dialect's tape tag.
     pub tag: u32,
-    /// 1 when ids are local ids (`RERAIL_NODE_IDS=preorder`: no granule table).
+    /// How ids are numbered: 0 by definition (the granule table), 1 local ids (`RERAIL_NODE_IDS=preorder`), `IDS_TAPE`
+    /// tape positions (`RERAIL_NODE_IDS=tape`: a node's or token's id is its tape node, a span's in the top slots).
     pub preorder: u32,
     /// The projection's numbered nodes.
     pub nodes: u32,
@@ -93,6 +94,8 @@ pub unsafe fn code_atoms<'a>(dir: *const u8, tag: u8, k: usize) -> &'a [u32] {
     }
 }
 
+/// `ViewDoc::preorder` where ids are tape positions.
+pub const IDS_TAPE: u32 = 2;
 /// `ViewDoc::place`'s kinds.
 pub const PLACE_NAMED: u32 = 1;
 pub const PLACE_PAST_COMMENTS: u32 = 2;

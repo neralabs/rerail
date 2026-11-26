@@ -1680,6 +1680,8 @@ pub struct Projected {
     pub extra: Option<Box<Locs>>,
     /// Node ids numbered per definition (`DefIds`), when the run asks for them; else a node's id is its preorder.
     defs: Option<DefIds>,
+    /// Node and token ids are their tape positions (`NodeIds::Tape`): no granule table, and spans in their top slots.
+    tape: bool,
     /// Its positions with `text` (`View::Text`); its nodes with text are `Item::Text`'s.
     text_spans: TextSpans,
     /// Each term of its tape's index (`DocIndex::term`): its text's atom, interned at the first read of a leaf of it
@@ -1705,7 +1707,29 @@ pub use ranks::Item;
 /// Whether this process numbers nodes per definition: the default; `RERAIL_NODE_IDS=preorder` numbers them in
 /// preorder, to compare.
 pub fn definition_ids() -> bool {
-    rerail_prof::code_rule_dsl::logic::profile::setting(|| !crate::code_rule_dsl::logic::profile::var("RERAIL_NODE_IDS").is_ok_and(|v| v == "preorder"))
+    node_ids() == NodeIds::Definition
+}
+
+/// How a node id's low 32 bits are numbered (`RERAIL_NODE_IDS`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NodeIds {
+    /// Per definition (`granules`): the default.
+    Definition,
+    /// The node's preorder index among the projection's nodes (`preorder`), to compare.
+    Preorder,
+    /// The node's position on its document's tape (`tape`): a view reads the node there with no select of a rank, and
+    /// an id is a rank's test away from its row. Tokens are their tape positions too; spans keep their top slots
+    /// (`granules::span_low`).
+    Tape,
+}
+
+/// This process's `NodeIds`.
+pub fn node_ids() -> NodeIds {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| match crate::code_rule_dsl::logic::profile::var("RERAIL_NODE_IDS").as_deref() {
+        Ok("preorder") => NodeIds::Preorder,
+        Ok("tape") => NodeIds::Tape,
+        _ => NodeIds::Definition,
+    })
 }
 
 /// How an output shows a node id's low 32 bits: its preorder index, or by definition `slot.index` (`DefIds`). A
@@ -2033,6 +2057,7 @@ impl Projected {
             anchored: ranges.len() > 1,
             extra: None,
             defs: None,
+            tape: node_ids() == NodeIds::Tape,
             facts: Arc::clone(&facts),
             cache: cache.clone(),
             text_spans: if shape == Shape::Core { text.map(|(_, spans)| spans).unwrap_or_default() } else { TextSpans::default() },
@@ -2473,6 +2498,16 @@ impl Projected {
     /// the table's read), else its local id.
     pub fn global(&self, local: u32) -> i64 {
         let low = match &self.defs {
+            None if self.tape => {
+                let (nodes, tokens) = (self.len(), self.ranks.count(Item::Token));
+                if local < nodes {
+                    self.node(local)
+                } else if local < nodes + tokens {
+                    self.ranks.select(Item::Token, local - nodes).expect("a numbered token")
+                } else {
+                    granules::span_low(local - nodes - tokens)
+                }
+            }
             None => local,
             Some(d) => {
                 let (nodes, tokens) = (self.len(), self.ranks.count(Item::Token));
@@ -2492,18 +2527,19 @@ impl Projected {
     pub fn global_near(&self, local: u32, hint: &mut u32) -> i64 {
         match &self.defs {
             Some(d) if local < self.len() => i64::from(self.key()) << 32 | i64::from(d.table.low_of_near(&self.ranks, Item::Node, local, hint).expect("a numbered node")),
+            None if self.tape && local < self.len() => i64::from(self.key()) << 32 | i64::from(self.node_near(local, hint)),
             _ => self.global(local),
         }
     }
     /// Every node in order with its id: `(local id, tape node, id)`. One walk (`granules::ids`), no point read.
     pub fn node_ids(&self) -> impl Iterator<Item = (u32, u32, i64)> + '_ {
-        let key = i64::from(self.key()) << 32;
-        granules::ids(self.table(), &self.ranks, Item::Node, self.len()).map(move |(l, x, low)| (l, x, key | i64::from(low)))
+        let (key, tape) = (i64::from(self.key()) << 32, self.tape);
+        granules::ids(self.table(), &self.ranks, Item::Node, self.len()).map(move |(l, x, low)| (l, x, key | i64::from(if tape { x } else { low })))
     }
     /// Every token in order with its id: `(local id, tape node, id)`, the local ids from `len()`.
     pub fn token_ids(&self) -> impl Iterator<Item = (u32, u32, i64)> + '_ {
-        let (key, n) = (i64::from(self.key()) << 32, self.len());
-        granules::ids(self.table(), &self.ranks, Item::Token, n).map(move |(k, x, low)| (n + k, x, key | i64::from(low)))
+        let (key, n, tape) = (i64::from(self.key()) << 32, self.len(), self.tape);
+        granules::ids(self.table(), &self.ranks, Item::Token, n).map(move |(k, x, low)| (n + k, x, key | i64::from(if tape { x } else { low })))
     }
     /// Every node, token and span in local order with its id: `(local id, id)` (`node_ids`, `token_ids`, then the
     /// spans', which are their positions).
@@ -2514,12 +2550,17 @@ impl Projected {
     /// Node `local`'s order key: `node_order`'s low 32 bits (`granules::Table::order_of`, from its number; its
     /// preorder index without `DefIds`).
     pub fn order(&self, local: u32) -> u32 {
-        self.defs.as_ref().map_or(local, |d| d.table.order_of(&self.ranks, local).expect("a node's order key"))
+        match &self.defs {
+            Some(d) => d.table.order_of(&self.ranks, local).expect("a node's order key"),
+            None if self.tape => self.node(local),
+            None => local,
+        }
     }
     /// The node whose order key (`node_order`'s low 32 bits) is `key`.
     pub fn local_of_order(&self, key: u32) -> Option<u32> {
         match &self.defs {
             Some(d) => d.table.number_of_order(&self.ranks, key),
+            None if self.tape => self.ranks.local(Item::Node, key),
             None => (key < self.len()).then_some(key),
         }
     }
@@ -2532,8 +2573,25 @@ impl Projected {
         match &self.defs {
             Some(_) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| self.len() + self.ranks.count(Item::Token) + i),
             Some(d) => d.table.number_of_near(&self.ranks, low, hint).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
+            None if self.tape => self.tape_local(low),
             None => Some(low),
         }
+    }
+    /// The node, token or span whose id's low bits are `low`, where ids are tape positions: a rank, no select.
+    #[inline]
+    fn tape_local(&self, low: u32) -> Option<u32> {
+        if let Some(i) = granules::span_of(low) {
+            return Some(self.len() + self.ranks.count(Item::Token) + i);
+        }
+        if let Some(k) = self.ranks.local(Item::Node, low) {
+            return Some(k);
+        }
+        self.ranks.local(Item::Token, low).map(|k| self.len() + k)
+    }
+    /// Whether ids are tape positions (`NodeIds::Tape`): an id's low bits are then its node's tape node.
+    #[inline]
+    pub fn tape_ids(&self) -> bool {
+        self.tape
     }
     /// The included children of `local`, in order.
     pub fn children(&self, local: u32) -> impl Iterator<Item = u32> + '_ {
@@ -4717,15 +4775,21 @@ impl Batch {
             return Some((m.doc as usize, m.local, m.x));
         }
         let (doc, local) = self.node_nearer(n, hint, slot)?;
-        let at = std::ptr::from_ref(&self.docs[doc]) as usize;
-        memo.set(super::NodeMemo { docs, id: n, doc: doc as u32, local, x: NONE, at });
-        Some((doc, local, NONE))
+        let p = &self.docs[doc];
+        let at = std::ptr::from_ref(p) as usize;
+        // Ids that are tape positions carry their tape node.
+        let x = if p.tape_ids() { (n & 0xffff_ffff) as u32 } else { NONE };
+        memo.set(super::NodeMemo { docs, id: n, doc: doc as u32, local, x, at });
+        Some((doc, local, x))
     }
     /// Node `local` of document `doc`'s tape node, id `n`: selected, and kept in `memo` where it holds that node
     /// (`node_hint`).
     #[inline]
     fn tape_node(&self, doc: usize, local: u32, n: i64, memo: &std::cell::Cell<super::NodeMemo>) -> u32 {
         let p = &self.docs[doc];
+        if p.tape_ids() {
+            return (n & 0xffff_ffff) as u32;
+        }
         let x = p.node(local);
         let m = memo.get();
         if m.docs == self.docs.addr() && m.id == n && m.doc as usize == doc && m.local == local && m.at == std::ptr::from_ref(p) as usize {
@@ -4849,8 +4913,9 @@ impl Batch {
                 break;
             }
             let p = &self.docs[doc];
-            // Ids by definition are not in local order: the locals whose ids fall in the range.
-            if p.defs.is_some() {
+            // Ids by definition are not in local order, and tape positions are not local ids: the locals whose ids fall
+            // in the range.
+            if p.defs.is_some() || p.tape_ids() {
                 let ids: Box<dyn Iterator<Item = (u32, i64)>> = if matches!(view, View::Loc(_) | View::Text) { Box::new(p.loc_ids()) } else { Box::new(p.node_ids().map(|(l, _, n)| (l, n))) };
                 let mut locals: Vector<u32> = ids.filter(|&(_, n)| (lo..=hi).contains(&n)).map(|(l, _)| l).collect();
                 locals.sort_unstable();
@@ -5140,9 +5205,74 @@ impl Source for Viewed {
         // Each hint is checked against this document's tables: another document's gives the same answer.
         let Some((doc, local)) = b.node_nearer(value, &mut cursor.hint[0], &mut cursor.near[0]) else { return Some(false) };
         let p = &b.docs[doc];
-        let x = if plan.needs & NEED_X != 0 { p.node_near(local, &mut cursor.near[1]) } else { NONE };
+        // Ids that are tape positions carry their tape node: no select of the local id.
+        let x = if plan.needs & NEED_X == 0 {
+            NONE
+        } else if p.tape_ids() {
+            (value & 0xffff_ffff) as u32
+        } else {
+            p.node_near(local, &mut cursor.near[1])
+        };
         let up = if plan.needs & NEED_UP != 0 { Self::parent_id_of(p, local, x) } else { 0 };
         Some(plan.ops[..usize::from(plan.len)].iter().zip(want).all(|(&op, &w)| Self::op_value(b, p, local, x, value, up, Known::default(), op) == w))
+    }
+    /// The node view's tests of a chunk of nodes by their own ids (`Source::holds_each`, t57 E6): each node found
+    /// through the read's memo (`node_hint`), and its column read as a probe's match reads it, through its document's
+    /// directory row (decision 0353 step 3; the document's read kept while the chunk's nodes stay in it), else off the
+    /// projection (`op_value`). No row is found and no match given. Other views, keys and columns: refused.
+    fn reads_tests_by(&self, by: usize) -> bool {
+        matches!(self.view, View::Node) && by == self.own()
+    }
+    fn holds_each(&self, by: usize, ids: &[i64], col: usize, want: Option<i64>, cursor: &mut super::ProbeCursor, out: &mut [i64]) -> bool {
+        use read_op::*;
+        let (op, needs) = Self::read_op(self.view, col);
+        // With no value, the node's row alone is the test: no column read.
+        if !matches!(self.view, View::Node) || by != self.own() || (want.is_some() && needs & !NEED_X != 0) || ids.len() != out.len() {
+            return false;
+        }
+        let b = &*self.batch;
+        let own_node = std::cell::Cell::new(super::NodeMemo::default());
+        let node: &std::cell::Cell<super::NodeMemo> = cursor.node.as_deref().unwrap_or(&own_node);
+        let kernel = self.kernel_view();
+        let mut read: Option<(usize, rerail_tape_format::view_reads::Doc<'_>)> = None;
+        for (o, &n) in out.iter_mut().zip(ids) {
+            let Some((doc, local, x)) = b.node_hint(n, &mut cursor.hint[0], &mut cursor.near[0], node) else {
+                *o = 0;
+                continue;
+            };
+            let Some(want) = want else {
+                *o = 1;
+                continue;
+            };
+            if kernel && read.as_ref().is_none_or(|(at, _)| *at != doc) {
+                read = b.docs.read(doc, false).map(|d| (doc, d));
+            }
+            let v = match &read {
+                Some((at, d)) if *at == doc => {
+                    // A node view's row in its document is the node's local id.
+                    let d = if x == NONE { d.clone() } else { d.clone().knowing(local, x, u32::MAX) };
+                    let v = self.read_value(&d, local as usize, col);
+                    // The tape node the read selected, kept in the memo, as a probe's match keeps it.
+                    if x == NONE
+                        && let s = d.selected()
+                        && s.l == local
+                    {
+                        let m = node.get();
+                        if m.id == n && m.doc as usize == doc && m.local == local {
+                            node.set(super::NodeMemo { x: s.x, ..m });
+                        }
+                    }
+                    v
+                }
+                _ => {
+                    let p = &b.docs[doc];
+                    let x = if x != NONE || needs & NEED_X == 0 { x } else { b.tape_node(doc, local, n, node) };
+                    Self::op_value(b, p, local, x, n, 0, Known::default(), op)
+                }
+            };
+            *o = i64::from(v == want);
+        }
+        true
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.lookup_docs(column, values, None)

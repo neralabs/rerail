@@ -9,7 +9,47 @@ use std::path::Path;
 
 /// What a listing gives of one entry: its kind and stat, or `None` where the entry is to be `stat`ed on its own (a
 /// symbolic link, whose answer is of what it names; an entry whose attributes the file system did not give).
-pub(super) type Listed = Option<(Kind, Stat)>;
+pub type Listed = Option<(Kind, Stat)>;
+
+/// The path lookups (an `open` by path) run at once, at most. On macOS a lookup holds a lock of the file system's that
+/// the others spin on: the 29,885 files of a corpus open in 0.34 s on one thread and in 0.70 s on 16, at 8.7 s of
+/// CPU (an M3 Max), and the corpus's read and hash took 11 s of threads' time in `open`; two at once keep the one
+/// thread's wall time, the reads and hashes still on every core. Linux's lookups do not contend so.
+#[cfg(target_os = "macos")]
+const LOOKUPS_AT_ONCE: usize = 2;
+#[cfg(not(target_os = "macos"))]
+const LOOKUPS_AT_ONCE: usize = usize::MAX;
+
+/// The machine's path lookups in flight (`lookup`).
+#[derive(Default)]
+pub struct Lookups {
+    running: std::sync::Mutex<usize>,
+    freed: std::sync::Condvar,
+}
+
+/// `f`, a path lookup, run when fewer than `LOOKUPS_AT_ONCE` are: every `open` of a path the observer and its reads make.
+pub fn lookup<T>(f: impl FnOnce() -> T) -> T {
+    if LOOKUPS_AT_ONCE == usize::MAX {
+        return f();
+    }
+    let gate = rerail_prof::code_rule_dsl::logic::profile::machine::<Lookups>();
+    {
+        let mut running = gate.running.lock().unwrap_or_else(|e| e.into_inner());
+        while *running >= LOOKUPS_AT_ONCE {
+            running = gate.freed.wait(running).unwrap_or_else(|e| e.into_inner());
+        }
+        *running += 1;
+    }
+    struct Done<'a>(&'a Lookups);
+    impl Drop for Done<'_> {
+        fn drop(&mut self) {
+            *self.0.running.lock().unwrap_or_else(|e| e.into_inner()) -= 1;
+            self.0.freed.notify_one();
+        }
+    }
+    let _done = Done(&gate);
+    f()
+}
 
 /// The entries of `dir`, by name (`.` and `..` left out). An error where `dir` cannot be opened as a directory.
 #[cfg(target_os = "macos")]
@@ -17,7 +57,7 @@ pub fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
     use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
     let path = std::ffi::CString::new(dir.as_os_str().as_bytes())?;
     // SAFETY: a NUL-terminated path; the descriptor is closed by `Fd`.
-    let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
+    let fd = lookup(|| unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) });
     if fd < 0 {
         return Err(std::io::Error::last_os_error());
     }

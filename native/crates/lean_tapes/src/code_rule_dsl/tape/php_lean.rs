@@ -11,11 +11,13 @@
 //! goes to tree-sitter-php.
 
 use rerail_blocks::vector::Vector;
-use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser};
+use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser, Source};
 
 /// `source`'s tape from the lean parser: `Err` where it refuses the file; `Ok(Err)` where the tape
 /// cannot be made.
-pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
+pub fn encode<'s>(grammar: &Grammar, source: impl Into<Source<'s>>, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
+    let source: Source<'s> = source.into();
+    let source = &source;
     let view = crate::code_rule_dsl::language::parse_input(crate::code_rule_dsl::language::GrammarDialect::Php, source);
     debug_assert_eq!(view.len(), source.len());
     encode_input(grammar, view.as_bytes(), source, Vector::new(), budget)
@@ -25,11 +27,11 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
 /// tree-sitter-php reads with no `<?php` tag (`blade::view`).
 /// Its placeholders `omit` (`SegmentMap::omissions`) are left out as it is written (`Writer::omitting`).
 pub fn encode_program(grammar: &Grammar, text: &str, omit: Vector<[u32; 2]>, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
-    encode_input(grammar, text.as_bytes(), text, omit, budget)
+    encode_input(grammar, text.as_bytes(), &Source::text(text), omit, budget)
 }
 
 /// The tape of `input`, which has `source`'s length and offsets, reading `source`.
-fn encode_input(grammar: &Grammar, input: &[u8], source: &str, omit: Vector<[u32; 2]>, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
+fn encode_input(grammar: &Grammar, input: &[u8], source: &Source<'_>, omit: Vector<[u32; 2]>, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
     rerail_php_lean::tape_into(input, &mut super::formats::lean_named(grammar, source, budget, rerail_php_lean::names).omitting(omit))
 }
 
@@ -43,7 +45,7 @@ impl TreeParser for Lean {
         encode_program(grammar, text, omit, budget).ok()
     }
 
-    fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+    fn parse(&self, grammar: &Grammar, source: &Source<'_>, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         let span = crate::code_rule_dsl::logic::profile::span(|| "lean PHP parse and tape".into());
         match encode(grammar, source, &budget) {
             Ok(image) => {
