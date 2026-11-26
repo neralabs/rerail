@@ -703,10 +703,14 @@ export class SqliteSessionStore {
 
   /**
    * The first `limit` places the record holds that the session's walks could not check (`recordDiscoveryGap`), in the order
-   * met, with the record that says they met more where it falls: the bridge reads it as its bound.
+   * met, with the record that says they met more where it falls: the bridge reads it as its bound, at each open of a
+   * session's evaluator. Read as the database holds them now: it makes none of this process's waiting record writes
+   * first, which would hold this thread, and so every session's hooks, for another process's write lock up to 5 s. A
+   * place whose write still waits reads as not held, and the bridge tells it once more at most, since a told place
+   * counts as held from then on; its event id is its key's digest, so its record is not doubled.
    */
   discoveryGaps(sessionId: string, limit: number): readonly DiscoveryGapRecord[] {
-    return listDiscoveryGaps(this.#recorded(), sessionId, limit, true);
+    return listDiscoveryGaps(this.#database, sessionId, limit, true);
   }
 
   close(): void {

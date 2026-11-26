@@ -514,6 +514,27 @@ describe("record writes while another process holds the write lock", () => {
     holder.exec("COMMIT");
   }, 30_000);
 
+  // A session's evaluator reads at its open the places its record holds that its walks could not check, to tell each
+  // once. Before, that read made the session's waiting writes on this thread first, up to 5 s while every hook waited.
+  it("leave a session's evaluator reading the places its record holds at once while one waits, and keep one record of a place told again", async () => {
+    const { path, sessions } = await stores();
+    sessions.openSession(session, 1_000);
+    const gap = { boundary: "turn" as const, path: "src/locked", reason: "EACCES: permission denied, opendir 'src/locked'", key: "src/locked:EACCES" };
+    const holder = holderHere(path);
+    sessions.recordDiscoveryGaps(session, [gap]);
+
+    let held: readonly unknown[] = ["unread"];
+    expect(msOf(() => { held = sessions.discoveryGaps(session.sessionId, 10); })).toBeLessThan(1_000);
+    expect(held).toEqual([]);
+    // Read as not held, the place is told again by the evaluator that read it, which holds it from then on.
+    sessions.recordDiscoveryGaps(session, [gap]);
+
+    holder.exec("COMMIT");
+    await settled(path);
+    expect(sessions.discoveryGaps(session.sessionId, 10)).toMatchObject([{ path: "src/locked", reason: gap.reason }]);
+    expect(rows(path, "SELECT count(*) FROM events WHERE kind = 'source-discovery-gap'")).toEqual([[1]]);
+  }, 30_000);
+
   // A claim kept for the lock is made later, where a refusal reaches no caller: the open is refused at once instead, as
   // the database holds the session's owner now.
   it("refuse at once a claim on a session a live runtime holds, while the lock is held", async () => {

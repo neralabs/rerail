@@ -47,6 +47,7 @@ import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-r
 import { defaultRerailDatabasePath, failWhileWriteLocked } from "../engine/storage/database.js";
 import { makeLedgerFolder, openLedgerFile, readLedgerFile, readLedgerLines, writeLedgerFile } from "../engine/storage/ledger-paths.js";
 import { keepFolderPrivate } from "../engine/storage/private-files.js";
+import { openRecordWriter, type RecordWriter } from "../engine/storage/record-writes.js";
 import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
 import { mergeAssistEnabled, recordCheckout } from "../engine/catalog/repository-registry.js";
@@ -1408,6 +1409,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #evaluatorOpens = new Set<Promise<CodeRuleBridge | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
+  /** The database's record writer, for the seen time of the checkout a session starts in (`#startingCheckout`). */
+  readonly #checkoutRecords: RecordWriter;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
   /**
    * The Git reads that place a session's checkout, then the other worktrees Git lists for it (`placeCheckout`,
@@ -1495,18 +1498,22 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     let audits: SqliteAuditStore | undefined;
     let controls: SqliteAuditControlStore | undefined;
     let startWatch: RepositoryStartWatch | undefined;
+    let checkoutRecords: RecordWriter | undefined;
     try {
       catalogs = new CheckoutCatalogs(databasePath);
       startWatch = options.startGate === true ? new RepositoryStartWatch(databasePath, workspaceRoot) : undefined;
       sessionStore = new SqliteSessionStore(databasePath, { onRowPutBack: sessionId => this.#claimAgain(sessionId) });
+      checkoutRecords = openRecordWriter(databasePath);
       audits = new SqliteAuditStore(databasePath);
       controls = new SqliteAuditControlStore(databasePath);
       this.#catalogs = catalogs;
+      this.#checkoutRecords = checkoutRecords;
       this.#sessionStore = sessionStore;
       this.#audits = audits;
       this.#controls = controls;
       this.#startWatch = startWatch;
     } catch (error) {
+      checkoutRecords?.close();
       sessionStore?.close();
       audits?.close();
       controls?.close();
@@ -2519,6 +2526,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (this.#ownsMergeAssist) await this.#mergeAssist?.stop();
     this.#controls.close();
     this.#audits.close();
+    this.#checkoutRecords.close();
     this.#sessionStore.close();
     this.#sessionStoreClosed = true;
     this.#catalogs.close();
@@ -3751,7 +3759,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #startingCheckout(session: AdapterSession): StartingCheckout {
     // A folder that does not exist fails here (ENOENT), before anything is recorded or created for it.
     const cwd = checkoutRealpath(session.cwd);
-    const known = recordCheckout(this.#catalogs.database, cwd);
+    // A checkout recorded already is only seen again, a record write that never waits here for another process's lock.
+    const known = recordCheckout(this.#catalogs.database, cwd, Date.now(), this.#checkoutRecords);
     if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);
     // The session's rule coverage reads the checkout's catalog before its evaluator opens. Other sessions' lanes in the
