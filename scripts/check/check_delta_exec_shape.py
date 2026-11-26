@@ -354,6 +354,34 @@ def cache(failures: list) -> None:
         failures.append("native/crates/delta_exec/src/trace.rs: a trace holds a cache (P§11.3: a cache is not a trace)")
 
 
+def contract(failures: list) -> None:
+    """B3: one operator contract (P§2, P§12 item 7). `DeltaOp` has P§'s ports: a bistate per input, the demand on its
+    outputs, its cache, a writer per output and its asks of its inputs, returning its work; and its plain function.
+    The reference is written once (run both sides, diff). The harness checks L1 to L5, and its tests hold a good toy
+    and four that each break one law. An operator's cache is the operator cache's blocks, never a trace."""
+    p = CRATE / "src/contract.rs"
+    if not p.exists():
+        failures.append("native/crates/delta_exec/src/contract.rs is missing (B3)")
+        return
+    text = strip_rust(p.read_text())
+    if not re.search(r"fn delta\(&self, cx: &mut Cx<'_>, ins: &In<'_>, want: Option<&Bistate<View<'_>>>, cache: &mut CacheW, out: &mut Out, asks: &mut Out\) -> Result<Work, String>", text):
+        failures.append("contract.rs: DeltaOp::delta is not P§12's (ins, want, cache, out, asks) -> Work")
+    if not re.search(r"fn run\(&self, cx: &mut Cx<'_>, ins: &At<'_>, out: &mut Out\)", text):
+        failures.append("contract.rs: DeltaOp::run, the plain function, is not P§12's (ins at a state, out)")
+    if not re.search(r"pub fn reference<O: DeltaOp>", text):
+        failures.append("contract.rs: the generic reference is not written once")
+    raw = p.read_text()
+    for law in ("L1", "L2", "L3", "L4", "L5"):
+        if f'fail("{law}"' not in raw:
+            failures.append(f"contract.rs: the harness does not check {law}")
+    if "Retention::Cache" in text or not re.search(r"pub struct Instance \{\s*pub outs: Vec<Trace>,\s*pub cache: OpCache,\s*\}", text):
+        failures.append("contract.rs: an operator's cache is not the operator cache's block (OpCache)")
+    tests = (CRATE / "src/contract_tests.rs").read_text()
+    for flaw, law in (("Kills", "L1"), ("Cold", "L2"), ("Busy", "L4"), ("Cache", "L5")):
+        if f'fails_on(Flaw::{flaw}, "{law}")' not in tests:
+            failures.append(f"contract_tests.rs: no toy built to break {law} ({flaw})")
+
+
 def reach(failures: list) -> None:
     """The twins' rules reach the blocks code the twins call to write a layer (decision 0686): relation::layer_write,
     where the twins' clippy lints are denied (blocks' clippy.toml lists the twins' paths, and the two lists agree),
@@ -447,14 +475,14 @@ def e1(failures: list) -> None:
 
 def main() -> int:
     failures: list = []
-    for check in (m0, b1, b2, axes, bounds, cache, reach, e1):
+    for check in (m0, b1, b2, axes, bounds, cache, contract, reach, e1):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, reach, E1)")
+    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, reach, E1)")
     return 0
 
 

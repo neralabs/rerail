@@ -297,6 +297,21 @@ impl Trace {
         Ok(out)
     }
 
+    /// The digest of the state at `head`: the sum of its layers' digests (each its added rows' digests less its
+    /// kills'), so a set has one digest whatever its layers. `None`, the empty state: 0.
+    pub fn digest(&self, dir: &Directory, head: Option<BlockId>) -> Result<u64, String> {
+        let Some(h) = head else { return Ok(0) };
+        let l = dir.read("digest", &[h])?;
+        let table = l.table();
+        let (mut d, mut id) = (0u64, Some(h.0));
+        while let Some(i) = id {
+            let layer = Layer::new(table.block(i).ok_or("a layer below, reached by reference")?)?;
+            d = d.wrapping_add(layer.head.digest);
+            id = layer.below().map(|(b, _)| b);
+        }
+        Ok(d)
+    }
+
     /// A launch reading the trace's layers from `heads` down: each pinned to read, with the descriptor table of them.
     pub fn read(&self, dir: &Directory, heads: &[Option<BlockId>]) -> Result<Launch, String> {
         dir.read("read", &heads.iter().flatten().copied().collect::<Vec<_>>())

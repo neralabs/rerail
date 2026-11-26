@@ -944,3 +944,31 @@ six bounds were declared and never read, and the operator cache was a trace of f
 Checks (Relax, local): `rerail-delta-exec --lib` 45 of 45 (new: each bound inside and past it, bounds against axes,
 the ledger, the kill search's 64 layers, five of the cache); `rerail-blocks --lib` 123 of 123; `rerail-delta-device
 --lib` 3 of 3; the shape script's new `bounds` and `cache` sections; clippy over the four crates, clean.
+
+**B3: the operator contract** (2026-11-25; `delta_exec::contract`).
+
+- `DeltaOp` is P§12 item 7's, port for port: `delta(ins, want, cache, out, asks) -> Work` (a bistate per input port,
+  read where its layers lie; the demand on its outputs; its cache; a δ runs block a port for its outputs and for its
+  asks) and `run(ins, out)`, the plain function, on one state a port. Where its form differs: `type Ports` is
+  `fn ports()`, since a port's shape is a value; `type Cache` is the operator cache's block (`CacheW` over an
+  `OpCache`), whose layout is the operator's operations'; each takes `Cx`, the registry and directory its operations
+  run in, and returns a `Result`.
+- `Work` is P1's counters (rows read, probes, rows written, each excess named).
+- The cache: `CacheW::read` is ∅ (`None`) when the header is open or names another state than the run's before (the
+  digest of its inputs' states, by content: `Trace::digest`, the sum of its layers'); its first `write` runs
+  `cache_open`; the driver (`Instance::step`) runs `cache_commit` with the after state when the run wrote it, so an
+  identity run leaves it untouched. A run whose outputs outgrew their runs blocks runs again at the size they needed,
+  its half-written cache read as ∅ (its header is open).
+- The generic reference (`reference`): `run` on the before side and on the after side, diffed, written once.
+- One harness (`harness`), over a random edit chain (`random_chain`): each step run by a threaded instance, by one
+  whose cache is dropped at a given step, and cold; L2 (the cold run is ∅ → op(X)), L1 (the threaded change is the
+  reference's), L4 (every input the identity: the output too, the work none, the cache's facts unchanged), L5 (the
+  dropped-cache run's output is the threaded one's) and L3 (the threaded output is the cold run's). It returns the
+  first law broken, with its step.
+
+Checks (Relax, local, `rerail-delta-exec --lib` 53 of 53): a toy (`out(b, a) :- in(a, b), a % 3 != 0`, its added
+rows read through the orders its cache keeps of its input's layers) passes over 6 chains × 4 drop points; four toys
+fail, each on its own law and no other: one drops its kills (L1), one writes a row of its own on a cold run (L2), one
+reads its input when nothing changed (L4), one drops its kills when its cache reads as ∅ (L5). A cache left open or
+naming another state reads as ∅; the reference on a hand-made pair of states; an identity run's work, output and
+cache. The shape script's `contract` section; clippy over the crate, clean.

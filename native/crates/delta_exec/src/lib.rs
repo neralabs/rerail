@@ -26,6 +26,7 @@
 //! tape through the file layer (B4), symbols (B5) and L1 itself (B6).
 
 pub mod cache;
+pub mod contract;
 pub mod dir;
 pub mod k0;
 pub mod kform;
