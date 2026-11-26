@@ -1,0 +1,67 @@
+// python/python-02: expressions inside the strings Ruff parses as types, for Ruff's expression rules (RUF017, RUF020,
+// RUF021, RUF026).
+//
+// Interface
+//   tstr_node(e, s)      e is in the tree Ruff parses from type string s: s's own tree, not the trees of strings
+//                        nested in it (those are strings of their own)
+//   tstr_in(e, h)        e is in the tree of a type string nested at any depth in h, a type string of a file
+//   tstr_simple(s)       s is a simple string annotation: one literal and no escapes (Ruff's AnnotationKind::Simple)
+//   tstr_qual(e, q)      the name or `a.b` attribute e in a type string resolves to q ("builtins.sum",
+//                        "collections.defaultdict"), looked up from where the outermost string stands
+//   tstr_item(c, a, j)   a is the j-th item of call c's argument list (comments aside); c in a type string
+//   tstr_arg(c, i, a)    a is call c's i-th positional argument (none after a `*args`)
+//   tstr_kwarg(c, x, v)  call c passes keyword x with value v
+//   tstr_nargs(c, n)     call c has n positional arguments
+//
+// Python and Ruff background
+//   - Ruff parses a string as a type wherever it reads a type (python/typing's type_ctx): an annotation,
+//     `cast("…", x)`'s first argument, a TypeVar's bound, `List["…"]`, the value of `X: TypeAlias = "…"`; and a
+//     string inside such a tree too. Ruff's expression rules then run on that tree as on any code; its names are
+//     resolved where the string stands.
+//   - names' parsed_in resolves the names of annotations only; tstr_qual covers every type string.
+//   - The arguments are read through child rather than through python/ruff's call_item: in a parsed string's
+//     tree, a kind test on a node reached through field finds nothing (packs/python/NOTES-python-02.md).
+//
+//   from typing import cast
+//   from collections import defaultdict
+//   x = cast("defaultdict(default_factory=int)", y)
+//       tstr_qual(<defaultdict>, "collections.defaultdict"), tstr_kwarg(<call>, "default_factory", <int>),
+//       tstr_nargs(<call>, 0)
+//   a: "list[sum(x, [])]" = 1        tstr_qual(<sum>, "builtins.sum"), tstr_arg(<sum(…)>, 1, <[]>)
+#include "python/typing.rerail"
+
+.decl tstr_in(e: node, h: node)
+tstr_in(e, h) :- type_ctx(h), str_node(h), docof(h, d), doc_role(d, "primary"), parsed(h, "annotation", r),
+    (e = r ; within(e, r)).
+tstr_in(e, h) :- tstr_in(s, h), type_ctx(s), str_node(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+.decl tstr_node(e: node, s: node)
+tstr_node(e, s) :- type_ctx(s), str_node(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+.decl tstr_simple(s: node)
+tstr_simple(s) :- type_ctx(s), kind(s, "string"), !has(s, _, "escape_sequence").
+
+// tstr_walk(e, x, s): the lookup of name x, read at e, visits scope s: from the scope around the outermost string
+// outwards, class bodies skipped past the first, as names' walk.
+.decl tstr_name(e: node, x: symbol)
+tstr_name(e, x) :- tstr_in(e, _), nameref(e, x).
+.decl tstr_walk(e: node, x: symbol, s: node)
+tstr_walk(e, x, s) :- tstr_name(e, x), tstr_in(e, h), nearest(h, s, lscope).
+tstr_walk(e, x, p) :- tstr_walk(e, x, s), !bound_in(s, x), nearest(s, p, lfscope).
+.decl tstr_qual(e: node, q: symbol)
+tstr_qual(e, q) :- tstr_walk(e, x, s), ibind(s, x, q).
+tstr_qual(e, @dot("builtins", x)) :- tstr_walk(e, x, m), kind(m, "module"), !bound_in(m, x), builtin(x).
+tstr_qual(e, @dot(q, a)) :- tstr_in(e, _), kind(e, "attribute"), child(e, o, 0), child(e, n, 1), text(n, a), tstr_qual(o, q).
+tstr_qual(e, q) :- tstr_in(e, _), kind(e, "parenthesized_expression"), child(e, m, 0), tstr_qual(m, q).
+
+.decl tstr_item(c: node, a: node, j: number)
+tstr_item(c, a, j) :- tstr_in(c, _), kind(c, "call"), child(c, al, 1), kind(al, "argument_list"), child(al, a, j),
+    !kind(a, "comment").
+.decl tstr_pos(a: node)
+tstr_pos(a) :- tstr_item(_, a, _), !kind(a, "keyword_argument"), !kind(a, "dictionary_splat").
+.decl tstr_arg(c: node, i: number, a: node)
+tstr_arg(c, i, a) :- tstr_item(c, a, j), tstr_pos(a), !kind(a, "list_splat"),
+    count : { tstr_item(c, s, j2), j2 < j, kind(s, "list_splat") } = 0,
+    i = count : { tstr_item(c, b, j3), j3 < j, tstr_pos(b) }.
+.decl tstr_kwarg(c: node, x: symbol, v: node)
+tstr_kwarg(c, x, v) :- tstr_item(c, a, _), kind(a, "keyword_argument"), child(a, n, 0), text(n, x), child(a, v, 1).
+.decl tstr_nargs(c: node, n: number)
+tstr_nargs(c, n) :- tstr_in(c, _), kind(c, "call"), n = count : { tstr_item(c, a, _), tstr_pos(a) }.

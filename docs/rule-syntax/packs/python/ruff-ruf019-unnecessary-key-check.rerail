@@ -1,4 +1,4 @@
-.policy "ruff-ruf019-unnecessary-key-check" revision 2
+.policy "ruff-ruf019-unnecessary-key-check" revision 3
 .description "Use dict.get() instead of testing a key with in and then indexing the dictionary in the same condition; get() returns None for a missing key."
 .language python
 .mode steer
@@ -7,8 +7,10 @@
 // Ruff RUF019: `k in d and d[k]` read as a condition, which `d.get(k)` says in one lookup. Exactly two
 // operands, the same key and dict on both sides (Ruff's ComparableExpr: `d['a']` matches `"a" in d`), and no
 // side effect in either (a call, a subscript, an operator on non-literals, …), since the two evaluations could
-// then differ.
+// then differ. `d[x, y]` and `d[*x]` index with a tuple, so they match `(x, y) in d` and `(*x,) in d`; the
+// empty builtin initializers (`list()`, `(dict)()`, `set(  # c\n)`) are no side effect and compare as `list()`.
 //   if k in d and d[k]: ...           ← RUF019  `if d.get(k):`
+//   if (x, y) in d and d[x, y]: ...   ← RUF019
 //   v = k in d and d[k]               not reported: the value, not a condition
 //   if f() in d and d[f()]: ...       not reported: a call
 //   if a + b in d and d[a + b]: ...   not reported: `+` may run `__add__`
@@ -18,12 +20,52 @@
 .violation RUF019(at: node, dt: symbol, kt: symbol) code "RUF019"
     "If `{dt}` is a dict, use `{dt}.get({kt})` instead of testing `{kt} in {dt}` before reading `{dt}[{kt}]`; leave it if `{dt}` is not a mapping."
     suppress ruff "RUF019"
-RUF019(t, dt, kt) :- key_check(t, k1, d1, k2, d2), cmp_same(d1, d2), cmp_same(k1, k2), !side_effect(d1),
-    !side_effect(k1), text(d2, dt), text(k2, kt).
-// key_check(t, k1, d1, k2, d2): the test `k1 in d1 and d2[k2]`, two operands.
-.decl key_check(t: node, k1: node, d1: node, k2: node, d2: node)
-key_check(t, k1, d1, k2, d2) :- bool_top(t, "and"), bool_test(t), count : { bool_operand(t, _, v), !kind(v, "comment") } = 2,
+RUF019(t, dt, kt) :- key_check(t, k1, d1, s, d2), cmp_same(d1, d2), same_key(k1, s), !key_effect(d1),
+    !key_effect(k1), text(d2, dt), text(k1, kt).
+// key_check(t, k1, d1, s, d2): the test `k1 in d1 and d2[…]`, two operands; s is the subscript.
+.decl key_check(t: node, k1: node, d1: node, s: node, d2: node)
+key_check(t, k1, d1, s, d2) :- bool_top(t, "and"), bool_test(t), count : { bool_operand(t, _, v), !kind(v, "comment") } = 2,
     field(t, "left", l), field(t, "right", r), unparen(l, c), cmp(c, "in", k1, d1), unparen(r, s), kind(s, "subscript"),
-    field(s, "value", d2), field(s, "subscript", k2), count : { field(s, "subscript", _) } = 1.
+    field(s, "value", d2).
 cmp_same_ask(d1, d2) :- key_check(_, _, d1, _, d2).
-cmp_same_ask(k1, k2) :- key_check(_, k1, _, k2, _).
+// sub_key(s, i, k): the i-th key of subscript s; tuple_key(s): Ruff reads s's keys as one tuple (`d[x, y]`,
+// `d[*x]`, `d[x,]`; the tape keeps no commas of a subscript, so a trailing one is read from its text).
+.decl sub_key(s: node, i: number, k: node)
+sub_key(s, i, k) :- key_check(_, _, _, s, _), child(s, k, j), j > 0, !kind(k, "comment"),
+    i = count : { child(s, c, j0), j0 > 0, j0 < j, !kind(c, "comment") }.
+.decl tuple_key(s: node)
+tuple_key(s) :- sub_key(s, 1, _).
+tuple_key(s) :- sub_key(s, _, k), kind(k, "list_splat").
+tuple_key(s) :- sub_key(s, _, _), text(s, t), match("(?s).*,\\s*(#[^\\n]*\\s*)*\\]", t).
+.decl tup_item(u: node, i: number, e: node)
+tup_item(u, i, e) :- key_check(_, k1, _, s, _), tuple_key(s), unparen(k1, u), kind(u, "tuple"), child(u, e, j),
+    !kind(e, "comment"), i = count : { child(u, c, j0), j0 < j, !kind(c, "comment") }.
+cmp_same_ask(k1, k2) :- key_check(_, k1, _, s, _), !tuple_key(s), sub_key(s, 0, k2).
+cmp_same_ask(e, k) :- key_check(_, k1, _, s, _), tuple_key(s), unparen(k1, u), tup_item(u, i, e), sub_key(s, i, k).
+// same_key(k1, s): k1 is the key subscript s reads.
+.decl same_key(k1: node, s: node)
+same_key(k1, s) :- key_check(_, k1, _, s, _), !tuple_key(s), sub_key(s, 0, k2), cmp_same(k1, k2).
+same_key(k1, s) :- key_check(_, k1, _, s, _), !tuple_key(s), sub_key(s, 0, k2), empty_init(k1, f1), empty_init(k2, f2),
+    cmp_same(f1, f2).
+same_key(k1, s) :- key_check(_, k1, _, s, _), tuple_key(s), unparen(k1, u), kind(u, "tuple"), key_n(s, n),
+    tup_n(u, n), same_n(u, s, n).
+.decl key_n(s: node, n: number)
+key_n(s, n) :- tuple_key(s), n = count : { sub_key(s, _, _) }.
+.decl tup_n(u: node, n: number)
+tup_n(u, n) :- tup_item(u, _, _), n = count : { tup_item(u, _, _) }.
+.decl same_n(u: node, s: node, n: number)
+same_n(u, s, n) :- key_check(_, k1, _, s, _), tuple_key(s), unparen(k1, u), tup_item(u, _, _),
+    n = count : { tup_item(u, i, e), sub_key(s, i, k), cmp_same(e, k) }.
+// empty_init(e, f): e is a call of f with nothing but comments between its parentheses; compare's leaves count
+// the comment as a child, so `list(  # c\n)` and `list()` are compared here.
+.decl empty_init(e: node, f: node)
+empty_init(e, f) :- unparen(e, c), kind(c, "call"), call_nargs(c, 0), call_nkwargs(c, 0), field(c, "function", f).
+cmp_same_ask(f1, f2) :- key_check(_, k1, _, s, _), !tuple_key(s), sub_key(s, 0, k2), empty_init(k1, f1), empty_init(k2, f2).
+// key_effect(e): python/ruff's side_effect, but a call of a parenthesised builtin initializer, `(list)()`, is
+// none either: Ruff's tree has no parentheses.
+.decl key_effect(e: node)
+key_effect(e) :- key_check(_, k1, d1, _, _), (e = k1 ; e = d1), ruff_effect_node(x), (x = e ; within(x, e)), !paren_init(x).
+.decl paren_init(x: node)
+paren_init(x) :- kind(x, "call"), call_nargs(x, 0), call_nkwargs(x, 0), field(x, "function", f0),
+    kind(f0, "parenthesized_expression"), unparen(f0, f), kind(f, "identifier"), resolves_builtin(f, n),
+    (n = "list" ; n = "tuple" ; n = "set" ; n = "dict" ; n = "frozenset").
