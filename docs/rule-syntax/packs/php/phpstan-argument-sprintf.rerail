@@ -5,9 +5,10 @@
 .scope include "**/*.php"
 .scope exclude "**/*.blade.php"
 
-#include "php/format.rerail"
-//   printf_needs(s, k), printf_invalid(s)    what format string s needs, as PHP 8 parses it
-//   (php/names) php_call, php_arg, php_arg_count, php_spread_call; (php/values) php_value
+#include "php/php-01.rerail"
+//   php_fmt_string(f, s)                     format argument f holds s (literals, heredocs, `.`, a variable's last write)
+//   (php/format) printf_seq, printf_numbered, printf_invalid   what format string s needs, as PHP 8 parses it
+//   (php/names) php_call, php_arg, php_arg_count, php_spread_call
 
 // PHPStan's PrintfParametersRule and PrintfArrayParametersRule's sprintf half (argument.sprintf, level 0): a
 // sprintf() whose format is a known string and whose value count differs from what the format needs.
@@ -15,17 +16,24 @@
 //   sprintf('foo %s', 'a', 'b');      fewer placeholders than values (the extra one is ignored)
 //   sprintf('%2$s %1$s', 'a');        2 needed: numbered placeholders count up to their largest number
 //   sprintf('%0$s', $s);              an invalid format (throws ValueError)
-//   $f = '%s %s'; sprintf($f, 'a');   the format followed through a variable with one write
+//   $f = '%s'; $f = '%s %s'; sprintf($f, 'a');       the format followed to the variable's last write
 //   sprintf($msg, 'a');  sprintf('%s %s', ...$xs);     not reported: format or count unknown
 .violation argument_sprintf(at: node, msg: symbol) code "argument.sprintf" "{msg}"
     suppress phpstan "argument.sprintf"
 argument_sprintf(c, cat("Call to sprintf contains more placeholders (", to_string(k), ") than values given (",
-    to_string(n), ").")) :- sprintf_format(c, s, n), printf_needs(s, k), k > n.
+    to_string(n), ").")) :- sprintf_format(c, s, n), sprintf_needs(s, k), k > n.
 argument_sprintf(c, cat("Call to sprintf contains fewer placeholders (", to_string(k), ") than values given (",
-    to_string(n), ").")) :- sprintf_format(c, s, n), printf_needs(s, k), k < n.
+    to_string(n), ").")) :- sprintf_format(c, s, n), sprintf_needs(s, k), k < n.
 argument_sprintf(c, "Fix the invalid placeholder in this sprintf() format, or write a literal percent sign as %%.") :-
-    php_call(c, "sprintf"), php_arg(c, 0, f), php_value(f, "string", s), printf_invalid(s).
+    php_call(c, "sprintf"), php_arg(c, 0, f), php_fmt_string(f, s), printf_invalid(s).
 // sprintf_format(c, s, n): sprintf call c has format s and n values.
 .decl sprintf_format(c: node, s: symbol, n: number)
-sprintf_format(c, s, k - 1) :- php_call(c, "sprintf"), php_arg(c, 0, f), php_value(f, "string", s),
+sprintf_format(c, s, k - 1) :- php_call(c, "sprintf"), php_arg(c, 0, f), php_fmt_string(f, s),
     php_arg_count(c, k), !php_spread_call(c).
+// sprintf_needs(s, k): php/format's printf_needs, max(in-order count, largest argnum), without its `max n : {…}`
+// aggregate, which this engine evaluates to 2^62 (NOTES-php-01).
+.decl sprintf_needs(s: symbol, k: number)
+sprintf_needs(s, max(q, n)) :- printf_seq(s, q), printf_numbered(s, n), !numbered_above(s, n).
+sprintf_needs(s, q) :- printf_seq(s, q), !printf_numbered(s, _).
+.decl numbered_above(s: symbol, n: number)  // s has an argnum above n
+numbered_above(s, n) :- printf_numbered(s, n), printf_numbered(s, m), m > n.

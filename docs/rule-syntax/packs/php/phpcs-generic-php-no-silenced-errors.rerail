@@ -27,8 +27,8 @@ deprecation(s) :- child(s, c, _), php_call_written(c, x), (x = "trigger_error" ;
     (php_arg(c, 1, l) ; php_named_arg(c, "error_level", l)), match("\\\\?E_USER_DEPRECATED", l).
 // fs_call(s, v): s is @mkdir(v, …), @rmdir(v, …) or @unlink(v, …).
 .decl fs_call(s: node, v: node)
-fs_call(s, v) :- child(s, c, _), php_call_written(c, x), (x = "mkdir" ; x = "rmdir" ; x = "unlink"),
-    php_first_arg(c, v).
+fs_call(s, v) :- kind(s, "error_suppression_expression"), child(s, c, _), php_call_written(c, x),
+    (x = "mkdir" ; x = "rmdir" ; x = "unlink"), php_first_arg(c, v).
 // rechecked(s): s sits in the left operand of a logical b, through parentheses, `!`, a comparison with false
 // (`false === @mkdir($d)`) and other logicals only, and
 // b's right operand is is_dir(v), is_file(v) or file_exists(v), negated or not, on the same path text.
