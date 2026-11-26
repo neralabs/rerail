@@ -34,7 +34,8 @@ pub struct Plans {
     pub cross: Vec<String>,
     /// The joins left as written because the split holds them constants (decision 0665): of facts and settings alone,
     /// the same for every file and made once. Read by a file's rule, the requests would be the files', and the
-    /// constant would read every file's rows. A constant only constants read is driven as any join is.
+    /// constant would read every file's rows. A constant only constants read is driven as any join is. And the joins
+    /// of a file's nodes one of whose two parts is a constant: a lookup in it, made in each file, not a product.
     pub constants: Vec<String>,
     pub cached: bool,
     pub author: Vec<Join>,
@@ -152,6 +153,41 @@ fn void_request(v: &Version, rel: &str, cols: &[usize], proof: &upstream::Proof)
         }
     }
     keyed
+}
+
+/// Whether a reader's request (`proof`, of a read at the key columns `cols`) reaches the key only through its document
+/// and its order: every atom of it naming a key's variable is `node(d, k, _, _, _)` or `docof(k, d)`, the key's
+/// document and nothing else of it, or `visit_index(k, o)`, its place in the order (`earlier(i, c)` as the lowering
+/// writes it). It asks for
+/// every node of a document before or after some point, which restricts nothing the producer does not, and costs a
+/// join of the document's nodes with the other side: versioned-merged-identity's `rr_deferred_pairs_vmi_alias(i)`,
+/// every node before a call, nodes × calls in each file (decision 0692). A join left as written is always right.
+fn order_only(v: &Version, cols: &[usize], proof: &upstream::Proof) -> bool {
+    use super::Part;
+    let Some(reader) = v.rule(proof.rule) else { return false };
+    let Some(read) = reader.body().nth(proof.read).and_then(|l| l.atom()) else { return false };
+    let key: Vec<_> = cols.iter().filter_map(|&c| read.args().nth(c).and_then(|t| t.var())).collect();
+    let is_key = |t: &TermRef<'_>| t.var().is_some_and(|s| key.contains(&s));
+    let mut naming = false;
+    for part in &proof.parts {
+        let Part::Lit(j) = *part else { continue };
+        let Some(a) = reader.body().nth(j).and_then(|l| l.atom()) else { continue };
+        let args: Vec<TermRef<'_>> = a.args().collect();
+        if !args.iter().any(is_key) {
+            continue;
+        }
+        let placed_only = !a.neg()
+            && match (v.rel_name(a.rel()), args.as_slice()) {
+                ("node", [d, n, rest @ ..]) => !is_key(d) && is_key(n) && rest.iter().all(|t| matches!(t, TermRef::Wild)),
+                ("visit_index", [n, o]) | ("docof", [n, o]) => is_key(n) && !is_key(o),
+                _ => false,
+            };
+        if !placed_only {
+            return false;
+        }
+        naming = true;
+    }
+    naming
 }
 
 /// Whether a reader's request (`proof`) of `rel`, a context's instance (decision 0597), reads a relation no rule derives:
@@ -294,6 +330,25 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
                     plans.constants.push(rel.clone());
                     return false;
                 }
+                // A join of a file's nodes with a constant (`async_sleep_call(c, x) :- async_call(c, _, q),
+                // async_sleep_arg(q, _, x)`): a lookup in the constant, made in the file. Driven by its readers'
+                // requests, its keys were a table of every file's values, and its factors and pair cache held the
+                // file's nodes, all in the cross-file part (decision 0677). A join with no node (`deps_on(dir, r)`, by
+                // a package's directory) is driven as before: its requests carry no node.
+                let nodes = p.columns(rel).unwrap_or_default().iter().any(|(_, t)| matches!(t.as_str(), "node" | "loc" | "span"));
+                let lookup = nodes && rules.iter().find(|r| p.head_rel(**r) == rel).and_then(|r| self::split(v, *r).map(|(_, parts)| (*r, parts))).is_some_and(|(r, parts)| {
+                    let lits: Vec<_> = r.body().collect();
+                    // A constant: of facts and settings alone (the split's), or facts and no rule.
+                    let constant = |rel: &str| {
+                        split.constants.contains(rel)
+                            || (crate::code_rule_dsl::logic::program_image::fields::ProgramFields::states_facts(v, rel) && !rules.iter().any(|d| p.head_rel(*d) == rel))
+                    };
+                    parts.iter().any(|part| part.iter().all(|&i| lits[i].atom().is_none_or(|a| constant(v.rel_name(a.rel())))))
+                });
+                if lookup {
+                    plans.constants.push(rel.clone());
+                    return false;
+                }
                 let cross = split.local.contains(rel) && readers[rel.as_str()].iter().any(|&(i, _)| !split.local.contains(p.head_rel(rules[i])));
                 if cross {
                     plans.cross.push(rel.clone());
@@ -305,7 +360,7 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
     };
     // The requests installed, once every read is classified: in rounds, each one derivation of the program.
     let requests: Vec<(String, &[usize])> = pairs.iter().map(|(rel, cols, _)| (rel.clone(), *cols)).collect();
-    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &same_doc, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r) || blind_in_a_context(v, rel, r)))?;
+    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &same_doc, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r) || order_only(v, cols, r) || blind_in_a_context(v, rel, r)))?;
     let mut no_inline = Vec::new();
     for ((rel, cols, positive), installed) in pairs.into_iter().zip(installed) {
         if !installed {

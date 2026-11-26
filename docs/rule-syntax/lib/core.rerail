@@ -113,6 +113,8 @@
 // the type of n's own value. value_type cannot say it: its key is the value's text, which "12" and 12 share, and a
 // container or bytes has no text in `value`.
 .decl value_type_of(n: node, t: symbol)                  // the type of n's value, containers and bytes included
+// static_value_type_of(n, t): the type of static_value's value of n, as value_type_of names it.
+.decl static_value_type_of(n: node, t: symbol)
 // fstring_piece(n, i, kind, v): the pieces of f-string n (a Python string, concatenated_string or format_specifier
 // whose value is a JoinedStr), in order from 0: in f'a{x!r:>10}b{y=}', (0, "literal", "a"), (1, "interpolation",
 // "x"), (1, "format_spec", ">10"), (2, "literal", "by="), (3, "interpolation", "y"), (3, "debug", "y="). A literal
@@ -662,6 +664,11 @@
 .decl str_part_word(lit: node, i: number, w: symbol, at: node, spec: number)
 .decl str_part_start(lit: node, i: number, l: number, c: number)
 .input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, package_for, package_field
+// How a file's results read the project's settings (decision 0665), and so how they key its memo entry (0705): the
+// package and tsconfig over a file by its path, naming their folder in column 1; each folder's rows by the folder; a
+// package's exports and the run's environment whole.
+.keyed package_for by_path 1, tsconfig_for by_path 1, package by_key, package_field by_key, tsconfig by_key,
+    tsconfig_path by_key, package_export, env
 .input string_annotation, option, option_item
 .input signed_list, git_rev, str_part, str_part_word, str_part_start, literal_json
 .input dump_sha256, body_sha256, signature_sha256

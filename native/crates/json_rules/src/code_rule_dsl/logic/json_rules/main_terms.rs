@@ -239,23 +239,38 @@ pub fn arguments(prog: &mut Program, spec: &Obj, v: &str, vs: &mut Vars) -> Resu
 
 pub const VALUE_OPS: [&str; 9] = ["truthy", "bitsAny", "constant", "type", "startsWith", "gt", "ge", "lt", "le"];
 
-fn numeric(x: &str) -> String {
-    format!("(value_type({x}, \"int\") ; value_type({x}, \"float\"))")
+/// A test that a value is of type `t`: the type of node `node`'s own value (`value_type_of(n, t)`) where the value is
+/// its own (`value`), else the type of the value's text (`value_type(x, t)`), for a value followed through a binding
+/// (`static_value`), which no node of the rule holds. `value_type`'s key is the text, which `"12"` and `12` share,
+/// so it answers for every node of the batch with that text: joined from a node's value, it held the rule's rows in
+/// the cross-file part, every file's types together (decision 0677). `value_type_of` is the node's own, per file.
+fn typed(node: Option<&str>, x: &str, t: &str) -> String {
+    match node {
+        Some(n) => format!("value_type_of({n}, {t})"),
+        None => format!("value_type({x}, {t})"),
+    }
+}
+
+fn numeric(node: Option<&str>, x: &str) -> String {
+    format!("({} ; {})", typed(node, x, "\"int\""), typed(node, x, "\"float\""))
 }
 
 fn truthy_rel(prog: &mut Program) -> String {
     let zero = "(x = \"0\" ; x = \"0.0\" ; x = \"-0.0\")";
     let nonzero = "x != \"0\", x != \"0.0\", x != \"-0.0\"";
-    let num = numeric("x");
-    let text = "(value_type(x, \"str\") ; value_type(x, \"bytes\"))";
+    let num = numeric(Some("n"), "x");
+    let none = typed(Some("n"), "x", "\"NoneType\"");
+    let boolean = typed(Some("n"), "x", "\"boolean\"");
+    let text = format!("({} ; {})", typed(Some("n"), "x", "\"str\""), typed(Some("n"), "x", "\"bytes\""));
+    let text = text.as_str();
     lib(
         prog,
         "truthy_value",
         "(n: node, b: symbol)",
         &["b is \"true\" when n's value is truthy (Python's bool(v)), \"false\" when it is falsy"],
         vec![
-            r("truthy_value(n, \"false\")", &["value(n, x)", "value_type(x, \"NoneType\")"]),
-            r("truthy_value(n, b)", &["value(n, x)", "value_type(x, \"boolean\")", "b = x"]),
+            r("truthy_value(n, \"false\")", &["value(n, x)", &none]),
+            r("truthy_value(n, b)", &["value(n, x)", &boolean, "b = x"]),
             r("truthy_value(n, \"false\")", &["value(n, x)", &num, zero]),
             r("truthy_value(n, \"true\")", &["value(n, x)", &num, nonzero]),
             r("truthy_value(n, \"false\")", &["value(n, x)", text, "x = \"\""]),
@@ -291,6 +306,8 @@ pub fn value(px: &Patterns, prog: &mut Program, val: &Obj, v: &str, vs: &mut Var
         return Ok(vec![format!("!{reader}({v}, _)")]);
     }
     let x = vs.fresh("v");
+    // The node whose own value it is, for its type (`typed`); none for a value followed through a binding.
+    let node = (reader == "value").then_some(v);
     let mut lits = vec![format!("{reader}({v}, {x})")];
     for (op, arg) in ops.iter() {
         match op {
@@ -308,13 +325,13 @@ pub fn value(px: &Patterns, prog: &mut Program, val: &Obj, v: &str, vs: &mut Var
                     .iter()
                     .map(|t| {
                         let t2 = if prog.lang == "python" && t.as_str() == Some("bool") { Value::Str("boolean".into()) } else { t.clone() };
-                        format!("value_type({x}, {})", super::value::q_val(&t2))
+                        typed(node, &x, &super::value::q_val(&t2))
                     })
                     .collect();
                 lits.push(if alts.len() == 1 { alts[0].clone() } else { format!("({})", alts.join(" ; ")) });
             }
             "gt" | "ge" | "lt" | "le" if matches!(arg, Value::Int(_) | Value::Float(_)) => {
-                lits.push(numeric(&x));
+                lits.push(numeric(node, &x));
                 lits.push(format!("to_number({x}) {} {}", cmp_sym(op), py_str(arg)));
             }
             "gt" | "ge" | "lt" | "le" => {
@@ -327,7 +344,7 @@ pub fn value(px: &Patterns, prog: &mut Program, val: &Obj, v: &str, vs: &mut Var
                 lits.push(if alts.len() == 1 { alts[0].clone() } else { format!("({})", alts.join(" ; ")) });
             }
             "bitsAny" if arg.is_int() => {
-                lits.push(format!("value_type({x}, \"int\")"));
+                lits.push(typed(node, &x, "\"int\""));
                 lits.push(bits(&x, arg.int().expect("an int")));
             }
             "truthy" if matches!(arg, Value::Bool(_)) => {

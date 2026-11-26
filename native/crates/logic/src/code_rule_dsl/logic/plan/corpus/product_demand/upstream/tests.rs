@@ -97,3 +97,38 @@
         assert!(!restrict(&mut p, "all", &BTreeSet::new(), true, false).unwrap());
         assert!(p.columns("rr_reader_demand_all").is_none());
     }
+
+    /// A relation of a file's nodes asked for by a symbol a file's rows give (`vmi_callee(f, x), vmi_alias(i, x)`) is
+    /// not restricted by it: the demand would hold every file's names, and the relation's rules, reading it at their
+    /// nodes, would go to the cross part (decision 0677). Asked for by constants alone (a string, a facts table), the
+    /// demand is the same in every file, and is installed.
+    #[test]
+    fn a_symbol_demand_on_a_files_nodes_is_of_constants_alone() {
+        let program = |alias_reader: bool| {
+            let reader = if alias_reader { "out(f) :- alias(_, x), callee(f, x).\n" } else { "" };
+            parse(&format!(
+                "
+                .decl leaf(f: node, x: symbol)
+                .decl alias(i: node, x: symbol)
+                .input leaf, alias
+                .decl builder(x: symbol)
+                builder(\"catalog\").
+                .decl callee(f: node, x: symbol)
+                callee(f, x) :- leaf(f, x).
+                .decl out(f: node)
+                .output out
+                out(f) :- callee(f, \"Cte\").
+                out(f) :- builder(x), callee(f, x).
+                {reader}"
+            ))
+            .unwrap()
+        };
+        let v = program(true);
+        let mut p = Program::of(&v);
+        assert!(!restrict(&mut p, "callee", &BTreeSet::new(), false, false).unwrap());
+        assert!(p.columns("rr_reader_demand_callee").is_none());
+        let v = program(false);
+        let mut p = Program::of(&v);
+        assert!(restrict(&mut p, "callee", &BTreeSet::new(), false, false).unwrap());
+        assert!(p.columns("rr_reader_demand_callee").is_some());
+    }

@@ -692,10 +692,10 @@ fn core_rows_for(projection: &Projection) -> core_rr::CoreRows {
     c.skip = core_rr::Skip {
         comment: !projection.wants("comment"),
         name: !projection.wants("name"),
-        literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "rr_value_lit"]),
+        literal: !wants_any(&["str", "strprefix", "value", "static_value", "static_value_type_of", "value_type", "rr_value_lit"]),
         str: !projection.wants("str"),
-        literal_value: !wants_any(&["value", "static_value", "value_type", "rr_value_lit"]),
-        literal_rows: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "rr_value_lit"]),
+        literal_value: !wants_any(&["value", "static_value", "static_value_type_of", "value_type", "rr_value_lit"]),
+        literal_rows: !wants_any(&["str", "strprefix", "value", "static_value", "static_value_type_of", "value_type", "rr_value_lit"]),
     };
 
     c
@@ -1195,7 +1195,7 @@ impl Input {
 
 /// W's values (`Extra`) and the AST patterns' matches (`ast_match`, matched over the tape), which a batch reads off
 /// its documents' tapes.
-const VALUES_TAPED: [&str; 6] = ["value", "static_value", "value_type_of", "value_type", "ast_match", VALUE_REQ];
+const VALUES_TAPED: [&str; 7] = ["value", "static_value", "static_value_type_of", "value_type_of", "value_type", "ast_match", VALUE_REQ];
 
 /// Whether `rel` is read off a document's tape, for which a batch's documents keep their tapes (`Document::tape`):
 /// W's values (`Extra`), the AST patterns' matches, and a registered producer's (`Producer::taped`: Python's f-string trees and string
@@ -3046,7 +3046,8 @@ pub enum Place {
 /// per-file context; Python's `str(v)` of a str, int, float, bool, None or Ellipsis), read off the document's tape
 /// (`Document::tape`), no row where W does not know it or it is no scalar; `static_value(n, v)` the same with names
 /// followed through their file-local bindings (W's `value.follow`). `value_type_of(n, t)` names the type of W's value
-/// of `n` as W's `value.type` does (containers and bytes included, a JavaScript RegExp also `object`), and
+/// of `n` as W's `value.type` does (containers and bytes included, a JavaScript RegExp also `object`),
+/// `static_value_type_of(n, t)` the type of the followed value (`static_value`'s), and
 /// `value_type(v, t)` pairs `value`'s strings with those types: one row per string and type some node of the batch has
 /// (the str `"12"` and the int `12` both give `12`). `comment(c, s)` is each comment's text without its marker
 /// (`comment_body`); a comment no node is (`COMMENT`) has rows in `text` and `node_text` (its text, marker included),
@@ -3091,6 +3092,7 @@ struct Extra {
     /// (decision 0174): kept eager, as they are few.
     value_lit: bool,
     static_value: bool,
+    static_value_type_of: bool,
     value_type_of: bool,
     value_type: bool,
     comment: bool,
@@ -3107,6 +3109,7 @@ struct Extra {
     values: Vector<[i64; 2]>,
     value_lits: Vector<[i64; 2]>,
     static_values: Vector<[i64; 2]>,
+    static_value_types_of: Vector<[i64; 2]>,
     value_types_of: Vector<[i64; 2]>,
     value_types: BTreeSet<[i64; 2]>,
     comments: Vector<[i64; 2]>,
@@ -3166,6 +3169,7 @@ impl Extra {
             value: read("value"),
             value_lit: read("rr_value_lit"),
             static_value: read("static_value"),
+            static_value_type_of: read("static_value_type_of"),
             value_type_of: read("value_type_of"),
             value_type: read("value_type"),
             comment: shape == Shape::T && read("comment"),
@@ -3269,7 +3273,8 @@ impl Extra {
     }
 
     /// `core_rr`'s literal values (n, v, v's type), of documents W reads no values of (`Dialect::values`), in the
-    /// value relations made here: `value` and `static_value` (no names to follow), and `value_type`.
+    /// value relations made here: `value` and `static_value` (no names to follow), `static_value_type_of` and
+    /// `value_type`.
     fn literal_values(&mut self, rows: impl Iterator<Item = [i64; 3]>) {
         for [n, v, t] in rows {
             if self.value {
@@ -3280,6 +3285,9 @@ impl Extra {
             }
             if self.static_value {
                 self.static_values.push([n, v]);
+            }
+            if self.static_value_type_of {
+                self.static_value_types_of.push([n, t]);
             }
             if self.value_type {
                 self.value_types.insert([v, t]);
@@ -3294,7 +3302,8 @@ impl Extra {
         let plain = self.value || self.value_type_of || self.value_type;
         // A text-only document has no node, so no value; a document of a family W reads no values of has none of W's
         // (`literal_values`).
-        if (plain || self.static_value) && dialect.is_some_and(|d| d.values) {
+        let follow = self.static_value || self.static_value_type_of;
+        if (plain || follow) && dialect.is_some_and(|d| d.values) {
             let Some((tape, file)) = &d.tape else {
                 return Err(StoreError::Invalid(format!("{}: W's values need the document's tape", d.path)));
             };
@@ -3302,20 +3311,25 @@ impl Extra {
                 return Err(StoreError::Invalid(format!("{}: the tape is not the one the facts were read off", d.path)));
             }
             let (value, value_type_of, value_type) = (self.value, self.value_type_of, self.value_type);
+            let (static_value, static_value_type_of) = (self.static_value, self.static_value_type_of);
             let (values, static_values, types_of, types) = (&mut self.values, &mut self.static_values, &mut self.value_types_of, &mut self.value_types);
+            let static_types_of = &mut self.static_value_types_of;
             let Some(reader) = crate::code_rule_dsl::facts::core::value_reader() else {
                 return Err(StoreError::Invalid(format!("{}: no reader of W's values is registered", d.path)));
             };
-            reader.values(tape, file.as_ref(), plain, self.static_value, &mut |followed, ordinal, v, names| {
+            reader.values(tape, file.as_ref(), plain, follow, &mut |followed, ordinal, v, names| {
                 let local = p.local_of_node(ordinal);
                 if local == NONE {
                     return;
                 }
                 // A value's text is interned only for a relation that holds it.
-                let v = v.filter(|_| followed || value || value_type).map(|v| string(&v) as i64);
+                let v = v.filter(|_| (followed && static_value) || (!followed && (value || value_type))).map(|v| string(&v) as i64);
                 let n = p.global(local);
                 if followed {
                     static_values.extend(v.map(|v| [n, v]));
+                    if static_value_type_of {
+                        static_types_of.extend(names.iter().map(|name| [n, string(name) as i64]));
+                    }
                     return;
                 }
                 if value && let Some(v) = v {
@@ -3575,31 +3589,34 @@ impl Extra {
             out.push(("col", relation(&["n", "c"], &mut self.cols.iter().map(|r| r.iter().copied().collect::<rerail_facts_base::code_rule_dsl::facts::vtab::Row>()))));
         }
         if self.node_text {
-            out.push(("node_text", relation(&["n", "s"], &mut self.node_texts.iter().map(|&[n, s]| rerail_facts_base::row![n, atom(s)]))));
+            out.push(("node_text", relation(&["n", "s"], &mut self.node_texts.iter().map(|&[n, s]| rerail_facts_base::row![n, atom(s)])).with_atoms(&[false, true])));
         }
         if self.docof {
             out.push(("docof", relation(&["n", "d"], &mut self.docofs.iter().map(|r| r.iter().copied().collect::<rerail_facts_base::code_rule_dsl::facts::vtab::Row>()))));
         }
         if self.value {
-            out.push(("value", relation(&["n", "v"], &mut self.values.iter().map(|&[n, v]| rerail_facts_base::row![n, atom(v)]))));
+            out.push(("value", relation(&["n", "v"], &mut self.values.iter().map(|&[n, v]| rerail_facts_base::row![n, atom(v)])).with_atoms(&[false, true])));
         }
         if self.value_lit {
-            out.push(("rr_value_lit", relation(&["n", "v"], &mut self.value_lits.iter().map(|&[n, v]| rerail_facts_base::row![n, atom(v)]))));
+            out.push(("rr_value_lit", relation(&["n", "v"], &mut self.value_lits.iter().map(|&[n, v]| rerail_facts_base::row![n, atom(v)])).with_atoms(&[false, true])));
         }
         if self.static_value {
-            out.push(("static_value", relation(&["n", "v"], &mut self.static_values.iter().map(|&[n, v]| rerail_facts_base::row![n, atom(v)]))));
+            out.push(("static_value", relation(&["n", "v"], &mut self.static_values.iter().map(|&[n, v]| rerail_facts_base::row![n, atom(v)])).with_atoms(&[false, true])));
+        }
+        if self.static_value_type_of {
+            out.push(("static_value_type_of", relation(&["n", "t"], &mut self.static_value_types_of.iter().map(|&[n, t]| rerail_facts_base::row![n, atom(t)])).with_atoms(&[false, true])));
         }
         if self.value_type_of {
-            out.push(("value_type_of", relation(&["n", "t"], &mut self.value_types_of.iter().map(|&[n, t]| rerail_facts_base::row![n, atom(t)]))));
+            out.push(("value_type_of", relation(&["n", "t"], &mut self.value_types_of.iter().map(|&[n, t]| rerail_facts_base::row![n, atom(t)])).with_atoms(&[false, true])));
         }
         if self.value_type {
-            out.push(("value_type", relation(&["v", "t"], &mut self.value_types.iter().map(|&[v, t]| rerail_facts_base::row![atom(v), atom(t)]))));
+            out.push(("value_type", relation(&["v", "t"], &mut self.value_types.iter().map(|&[v, t]| rerail_facts_base::row![atom(v), atom(t)])).with_atoms(&[true, true])));
         }
         if self.comment {
-            out.push(("comment", relation(&["n", "s"], &mut self.comments.iter().map(|&[n, s]| rerail_facts_base::row![n, atom(s)]))));
+            out.push(("comment", relation(&["n", "s"], &mut self.comments.iter().map(|&[n, s]| rerail_facts_base::row![n, atom(s)])).with_atoms(&[false, true])));
         }
         if self.rx_span {
-            out.push(("rx_span", relation(&["p", "c", "j", "g", "m"], &mut self.rx_spans.iter().map(|&[p, c, j, g, m]| rerail_facts_base::row![atom(p), c, j, atom(g), m]))));
+            out.push(("rx_span", relation(&["p", "c", "j", "g", "m"], &mut self.rx_spans.iter().map(|&[p, c, j, g, m]| rerail_facts_base::row![atom(p), c, j, atom(g), m])).with_atoms(&[true, false, false, true, false])));
         }
         let mut matched = Vec::new();
         for found in self.matches {
@@ -3608,7 +3625,7 @@ impl Extra {
             }
             if found.groups {
                 let rows = &mut found.group_rows.iter().map(|&[sp, m, g, gsp]| rerail_facts_base::row![sp, m, atom(g), gsp]);
-                matched.push((format!("{}{}", crate::code_rule_dsl::logic::strings::GROUPS, found.k), relation(&["sp", "m", "g", "gsp"], rows)));
+                matched.push((format!("{}{}", crate::code_rule_dsl::logic::strings::GROUPS, found.k), relation(&["sp", "m", "g", "gsp"], rows).with_atoms(&[false, false, true, false])));
             }
         }
         (out, matched)
@@ -4204,7 +4221,7 @@ impl Batch {
         // Node identity/ancestry and line views do not require scalar rows or text interning. `rr_value_lit` is
         // `value`'s eager half (`lower::ON_REQUEST`): with `name` and `comment` node reads (decision 0353 row 7), a
         // program may read no other relation of the walk's. `text` is a view and `op_at` a node read: no walk for either.
-        let scalar_nodes=!core || ["name","str","strprefix","value","value_type","static_value","rr_value_lit","comment","op_t","intval","str_part","str_part_start","str_part_word"]
+        let scalar_nodes=!core || ["name","str","strprefix","value","value_type","static_value","static_value_type_of","rr_value_lit","comment","op_t","intval","str_part","str_part_start","str_part_word"]
             .into_iter().any(|r|projection.wants(r));
         let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
         let core_nodes = core && scalar_nodes;
@@ -4214,7 +4231,7 @@ impl Batch {
         // other relation reads a literal's value or rows, a document W values makes none, and its walk visits only the
         // nodes whose text a rule reads. Made for every node and dropped, hogql's literals had `node rows` visit all
         // 1.3 M nodes.
-        let value_lit_only = wants_any(&["rr_value_lit"]) && !wants_any(&["str", "strprefix", "value", "static_value", "value_type"]);
+        let value_lit_only = wants_any(&["rr_value_lit"]) && !wants_any(&["str", "strprefix", "value", "static_value", "static_value_type_of", "value_type"]);
         let wants_long_text_nodes = projection.wants("rr_long_text_node");
         let mut long_text_nodes = Vec::new();
         // Asked once for the batch, not per node (a lookup in the program's set of read relations).
@@ -4936,6 +4953,33 @@ impl Viewed {
             View::Loc(Place::Report) => &["n", "line", "column", "end_line", "end_column"],
         }
     }
+    /// What column `column` holds, its documents made or not (`value_of`, `loc_value`): a document's key, a node of
+    /// the batch's (`node_order`'s key is one: `key << 32 | order`), or a `u32` (a kind, a field, a position, a
+    /// line, a column, a depth, a size, a child's place, a tape id; the report's columns, `col + 1`, are too: a
+    /// position is a `u32` offset in a text of at most `u32::MAX` bytes, so a column is at most `u32::MAX - 1`). Not
+    /// known: `tape`'s parent (its root's is `-1`), `end_point`'s span.
+    pub(super) fn col_kind(&self, column: usize) -> Option<made::ColKind> {
+        use made::ColKind;
+        match (self.view, *Self::columns(self.view).get(column)?) {
+            // `end_point`'s point is a span (`-1` where it has none).
+            (View::Tape, "par") | (View::End, "p") => None,
+            (View::Node | View::Core | View::Loc(Place::Docof), "d") => Some(ColKind::Key),
+            // A node's text and an anonymous child's name: atoms, interned where they are read (`text_atom`, the
+            // names' atoms, decision 0353 row 7).
+            (View::Text | View::Op, "s") => Some(ColKind::Atom),
+            (View::Loc(Place::Col), "c") => Some(ColKind::U32),
+            (View::Order, "k") | (_, "n" | "p" | "c" | "a" | "b") => Some(ColKind::Node),
+            (View::Node, "kind" | "start" | "end_")
+            | (View::Child, "idx")
+            | (View::Field, "f")
+            | (View::Tape, "size" | "depth")
+            | (View::Core, "t")
+            | (View::Depth, "k")
+            | (View::Line | View::Loc(Place::Line | Place::EndLine), "l")
+            | (View::Loc(Place::Report), "line" | "column" | "end_line" | "end_column") => Some(ColKind::U32),
+            _ => None,
+        }
+    }
     /// The column holding the row's own node, which ranges and direct lookups address.
     fn own(&self) -> usize {
         match self.view {
@@ -5068,6 +5112,12 @@ impl Source for Viewed {
     }
     fn columns(&self) -> Vec<String> {
         Self::columns(self.view).iter().map(|c| (*c).to_owned()).collect()
+    }
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.col_kind(column).map(|k| self.batch.bounds_of(k))
+    }
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
     }
     fn len(&self) -> usize {
         self.batch.firsts(self.view).total()

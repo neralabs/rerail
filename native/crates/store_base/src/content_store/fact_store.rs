@@ -97,6 +97,8 @@ pub trait FactStore: Send + Sync + std::any::Any {
     fn atoms_handle(&self) -> Arc<dyn AtomTable>;
     fn atom(&self, value: &str) -> StoreResult<Option<Sym>>;
     fn atom_value(&self, atom: Sym) -> StoreResult<Option<String>>;
+    // The kept facts: a space's chain read, and puts queued (`ContentStore::kept_space`, `queue_kept_as`).
+    fn kept(&self) -> &dyn super::observer_store::base::Kept;
 }
 
 impl dyn FactStore {

@@ -55,13 +55,13 @@ ytt201_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
 
 // zero_literal(n): the JSON util `zero-literal`, used where the JSON says `matches: "zero-literal"`
 .decl ytt201_zero_literal(n: node)
-ytt201_zero_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 0.
+ytt201_zero_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 0.
 ytt201_zero_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     ytt201_zero_literal(c2).
 
 // three_literal(n): the JSON util `three-literal`, used where the JSON says `matches: "three-literal"`
 .decl ytt201_three_literal(n: node)
-ytt201_three_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 3.
+ytt201_three_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 3.
 ytt201_three_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     ytt201_three_literal(c2).
 
@@ -104,14 +104,14 @@ ytt201_in_string_sys_version_info0_ne3(n, C) :- (kind(n, "string") ; kind(n, "co
 // zero_literal_sys_version_info0_ne3(n): the JSON util `zero-literal`, used where the JSON says `matches: "zero-literal"`
 .decl ytt201_zero_literal_sys_version_info0_ne3(n: node)
 ytt201_zero_literal_sys_version_info0_ne3(n) :- kind(n, "integer"), value(n, v1),
-    value_type(v1, "int"), v1 = 0.
+    value_type_of(n, "int"), v1 = 0.
 ytt201_zero_literal_sys_version_info0_ne3(n) :- kind(n, "parenthesized_expression"),
     child(n, c2, _), ytt201_zero_literal_sys_version_info0_ne3(c2).
 
 // three_literal_sys_version_info0_ne3(n): the JSON util `three-literal`, used where the JSON says `matches: "three-literal"`
 .decl ytt201_three_literal_sys_version_info0_ne3(n: node)
 ytt201_three_literal_sys_version_info0_ne3(n) :- kind(n, "integer"), value(n, v1),
-    value_type(v1, "int"), v1 = 3.
+    value_type_of(n, "int"), v1 = 3.
 ytt201_three_literal_sys_version_info0_ne3(n) :- kind(n, "parenthesized_expression"),
     child(n, c2, _), ytt201_three_literal_sys_version_info0_ne3(c2).
 

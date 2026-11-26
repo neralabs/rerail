@@ -3883,6 +3883,62 @@ mod tests {
         }
     }
 
+    /// Decision 0656 step 3 with 0353 row 17: a writer given rooms lays its tape's auxiliary index in the room after its
+    /// presence, before the room is given out (a room is never written after): the home a tape's own vector holds once
+    /// its index is laid (tape, presence, index), in one room; a region refused leaves the tape and its index in the
+    /// writer's own bytes.
+    #[test]
+    fn a_writer_with_rooms_lays_its_auxiliary_index_in_the_room() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        let named = crate::aux_index::CodeSets { named: crate::aux_index::named_codes(600, |c| c % 2 == 0), comments: crate::aux_index::named_codes(600, |_| false) };
+        let make = |t: &Written, _: Option<&crate::aux_index::Nodes>| -> Result<Vec<u8>, String> {
+            let all = crate::aux_index::Sections::ALL;
+            match t {
+                Written::F16(t) => crate::aux_index::build(&t.reader(&lang)?, &source, 7, &named, all),
+                Written::F16Z(t) => {
+                    let cache = ZCache::of([t]);
+                    crate::aux_index::build(&t.reader(&lang, Some(&cache))?, &source, 7, &named, all)
+                }
+            }
+        };
+        let home = |t: &Written| -> crate::home::Home {
+            match t {
+                Written::F16(t) => t.home().clone(),
+                Written::F16Z(t) => t.home().clone(),
+            }
+        };
+        for z in [false, true] {
+            let mut own = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
+            by_ops(&mut own, &nodes, 1);
+            // A writer without rooms leaves the index to its reader, which lays it in the tape's own vector
+            // (`TapeImage::written_16`).
+            let mut want = Writer::finish_with(&mut own, Some(&make)).expect("the tape").tape;
+            assert!(want.aux_bytes().is_none(), "z {z}: a writer without rooms lays no index");
+            let aux = make(&want, None).expect("its index");
+            want.lay_aux(&aux).expect("laid in its own vector");
+            for refuse in [0, 1, 2] {
+                let mut w = Writer::placing(test_rooms(refuse));
+                w.begin(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
+                by_ops(&mut w, &nodes, 1);
+                let mut got = Writer::finish_with(&mut w, Some(&make)).expect("the tape").tape;
+                if refuse == 0 {
+                    assert!(home(&got).placed(), "z {z}: the tape, its presence and its index given out of the region");
+                    assert!(got.aux_bytes().is_some(), "z {z}: the index laid in the room by its writer");
+                } else if got.aux_bytes().is_none() {
+                    // The region refused before the finish: the tape is the writer's own vector, its index its reader's.
+                    let aux = make(&got, None).expect("its index");
+                    got.lay_aux(&aux).expect("laid in its own vector");
+                }
+                assert_eq!(&*home(&got), &*home(&want), "z {z}, refuse {refuse}: the home a writer without rooms lays");
+                assert_eq!(got.aux_bytes(), want.aux_bytes(), "z {z}, refuse {refuse}: the index found where it lies");
+            }
+        }
+    }
+
     /// Decision 0434 §6, R15: the writer's ops compiled by the JIT write the reference writer's tape and presence:
     /// R13's cases.
     #[test]

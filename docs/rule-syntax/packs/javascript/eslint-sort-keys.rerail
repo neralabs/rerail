@@ -17,7 +17,7 @@
     "Expected object keys to be in {what}ending order. '{x}' should be before '{y}'."
     suppress eslint "sort-keys"
     suppress oxlint "sort-keys"
-sort_keys(at, x, y, w) :- prev_name(p, q), pname(p, x, at), pname(q, y, _), sort_key(x, kx), sort_key(y, ky),
+sort_keys(at, x, y, w) :- prev_name(p, q), pname(p, x, at), pname(q, y, _), sort_key(p, kx), sort_key(q, ky),
     order(o), (o = "asc", kx < ky ; o = "desc", ky < kx), !grouped(p), large(p), wording(o, w).
 
 // entry(o, p, i): the properties of object literal o, in order (i the child index). Methods and accessors are
@@ -67,15 +67,14 @@ entry_step(q, n) :- entry_step(q, m), !entry(_, m, _), next_sibling(m, n).
 .decl order(o: symbol)
 order(o) :- option("option", o).
 order("asc") :- !option("option", _).
-.decl sort_key(x: symbol, k: symbol)
-sort_key(x, k) :- named(x), !option("natural", "true"), cased(x, k).
-sort_key(x, k) :- named(x), option("natural", "true"), cased(x, c), natural_key(c, k).
-nat_ask(c) :- named(x), option("natural", "true"), cased(x, c).
-.decl cased(x: symbol, c: symbol)
-cased(x, x) :- named(x), !option("caseSensitive", "false").
-cased(x, @lower(x)) :- named(x), option("caseSensitive", "false").
-.decl named(x: symbol)
-named(x) :- pname(_, x, _).
+// sort_key(p, k), cased(p, c): keyed by the property, not its name (decision 0677).
+.decl sort_key(p: node, k: symbol)
+sort_key(p, k) :- !option("natural", "true"), cased(p, k).
+sort_key(p, k) :- option("natural", "true"), cased(p, c), natural_key(p, c, k).
+nat_ask(p, c) :- option("natural", "true"), cased(p, c).
+.decl cased(p: node, c: symbol)
+cased(p, x) :- pname(p, x, _), !option("caseSensitive", "false").
+cased(p, @lower(x)) :- pname(p, x, _), option("caseSensitive", "false").
 .decl wording(o: symbol, w: symbol)  // "natural insensitive asc"
 wording(o, cat(n, cat(i, o))) :- order(o), (option("natural", "true"), n = "natural " ; !option("natural", "true"), n = ""),
     (option("caseSensitive", "false"), i = "insensitive " ; !option("caseSensitive", "false"), i = "").

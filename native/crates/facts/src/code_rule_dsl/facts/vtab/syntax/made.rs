@@ -1374,7 +1374,37 @@ impl Rows {
     }
 }
 
+/// What a column of a batch's source holds, known before its rows are made (`Source::col_bounds`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ColKind {
+    /// A document's key.
+    Key,
+    /// A node's or a span's id, `key << 32 | slot`.
+    Node,
+    /// A text: an atom (`content_store::atoms::Sym`, 32 bits), one interned after it is asked too.
+    Atom,
+    /// A value the engine makes as a `u32`: a kind, a field, a position, a line, a depth, a child's place.
+    U32,
+}
+
 impl Batch {
+    /// Bounds of what a column of `kind` of the batch's rows holds, its documents made or not (`Source::col_bounds`).
+    /// A key: the least and greatest of its documents' keys and their files' (a program's document and nodes are its
+    /// file's, decision 0431 §4: `Docs::file`, a key that need not be the batch's). A node: every slot of the
+    /// least's to the greatest's, so one document's are 32 bits. `[MAX, MIN]` with no documents.
+    pub(super) fn bounds_of(&self, kind: ColKind) -> [i64; 2] {
+        let keys = (0..self.docs.len()).fold([i64::MAX, i64::MIN], |[lo, hi], i| {
+            let (key, file) = (self.docs.key(i), self.docs.file(i));
+            [lo.min(i64::from(key.min(file))), hi.max(i64::from(key.max(file)))]
+        });
+        match kind {
+            ColKind::Key => keys,
+            ColKind::Node if keys[0] > keys[1] => keys,
+            ColKind::Node => [keys[0] << 32, (keys[1] << 32) | i64::from(u32::MAX)],
+            ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
+        }
+    }
+
     /// The rows of `want`'s documents made: those not made yet, as one group (decision 0494), which each relation goes
     /// on with in its block relation. A group is made unlocked (its prefilter and matchers run on the pool, where a
     /// waiting thread runs other jobs, one of which may read this batch), and goes on in the relations only if no other
@@ -1856,6 +1886,22 @@ impl MadeRows {
     fn done(&self) -> Option<&dyn Source> {
         self.batch.rows.complete.get().map(|c| &*c[self.rel] as &dyn Source)
     }
+    /// What column `column` holds, as the batch routes the relation's rows: a document's key (`by`), a node of the
+    /// row's own document (`by`, `also`), its path's or its module's atom; else not known.
+    pub(super) fn col_kind(&self, column: usize) -> Option<ColKind> {
+        let rows = &self.batch.rows;
+        match rows.by[self.rel] {
+            ByDocument::Key(c) if c == column => return Some(ColKind::Key),
+            ByDocument::Id(c) if c == column => return Some(ColKind::Node),
+            _ => {}
+        }
+        if rows.also[self.rel].contains(&column) {
+            return Some(ColKind::Node);
+        }
+        // Its builder's atom columns (`Relation::with_atoms`), as the batch's empty group made it (`template`).
+        let atoms = rows.template[self.rel].atom_column(column);
+        (atoms || rows.path_column[self.rel] == Some(column) || rows.module_column[self.rel] == Some(column)).then_some(ColKind::Atom)
+    }
     /// Whether every document's rows are made: a whole read reads them, and makes none.
     pub(super) fn is_done(&self) -> bool {
         self.done().is_some()
@@ -2144,6 +2190,13 @@ impl Source for MadeRows {
         match self.done() {
             Some(t) => t.columns(),
             None => self.template().columns(),
+        }
+    }
+    /// Made, its relation's. Before, by what the column holds (`col_kind`).
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        match self.done() {
+            Some(t) => t.col_bounds(column),
+            None => self.col_kind(column).map(|k| self.batch.bounds_of(k)),
         }
     }
     fn len(&self) -> usize {

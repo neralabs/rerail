@@ -1,0 +1,4 @@
+# The relations of the cross-file part that still hold a node id (decision 0677), by pack: `<pack> <relation>`.
+# Read by `tools::pack_split_tests`. This list only shrinks: a fixed relation leaves it in the same commit.
+# Generated from the pack tests' failures (each prints `<pack> <relation>  under <crossing>`); the crossing each is under
+# is in decision 0677's table. `<pack>:alone` is the data layer's policies split one by one.

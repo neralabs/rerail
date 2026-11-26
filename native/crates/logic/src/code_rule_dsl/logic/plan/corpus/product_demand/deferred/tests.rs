@@ -249,6 +249,62 @@ other_jsx(d) :- doc(d, p, _), package_for(p, dir), deps_on(dir, "other").
         let _ = driven;
     }
 
+    /// A reader that reaches the key only through its document and its order (`earlier(i, c)` as the lowering writes
+    /// it: `node(d, i, _, _, _), visit_index(i, a), …, a < b`) asks for every node of the document before some point:
+    /// the request restricts nothing the producer does not, and costs a join of the document's nodes with the other
+    /// side (versioned-merged-identity's alias before its call, nodes × calls in each file). The join is left as
+    /// written. A reader that narrows the key otherwise still drives it.
+    #[test]
+    fn a_reader_reaching_the_key_by_order_alone_leaves_the_join_as_written() {
+        let requested = |narrow: &str| {
+            let v = parse(&format!(r#"
+.decl node(d: number, n: node, k: symbol, s: number, e: number)
+.decl visit_index(n: node, i: number)
+.decl kind(n: node, k: symbol)
+.decl field(n: node, f: symbol, c: node)
+.decl text(n: node, x: symbol)
+.decl marked(n: node)
+.decl docof(n: node, d: number)
+.input node, visit_index, kind, field, text, marked, docof
+.decl alias(i: node, x: symbol)
+alias(i, x) :- kind(i, "import"), field(i, "alias", a), text(a, x).
+.decl ctor(c: node)
+ctor(c) :- kind(c, "call"), field(c, "function", f), node(d, c, _, _, _), visit_index(c, b), node(d, i, _, _, _), visit_index(i, a), a < b{narrow}, alias(i, x), text(f, x).
+.output ctor
+"#));
+            let (made, _) = rewritten(&v);
+            F::columns_of(&*made, &format!("{DEFERRED_PAIRS}alias")).is_some()
+        };
+        assert!(!requested(""), "the reader reaches the alias by order alone");
+        assert!(!requested(", docof(i, e), docof(c, e)"), "and by its document");
+        assert!(requested(", marked(i)"), "marked narrows the aliases");
+    }
+
+    /// A join of a file's nodes with a constant (ASYNC115/116's `async_sleep_call`) is a lookup in the constant, made in
+    /// each file: left as written, it makes no request, factor or pair cache that holds the file's nodes in the
+    /// cross-file part (decision 0677). Driven by its readers, its keys were a table of every file's values there.
+    #[test]
+    fn a_lookup_of_a_files_nodes_in_a_constant_is_left_as_written() {
+        let v = parse(r#"
+.decl kind(n: node, k: symbol)
+.decl text(n: node, x: symbol)
+.input kind, text
+.decl call(c: node, q: symbol)
+call(c, q) :- kind(c, "call"), text(c, q).
+.decl sleep_arg(q: symbol, x: symbol)
+sleep_arg("asyncio.sleep", "delay"). sleep_arg("trio.sleep", "seconds").
+.decl sleep_call(c: node, x: symbol)
+sleep_call(c, x) :- call(c, q), sleep_arg(q, x).
+.decl found(c: node)
+found(c) :- kind(c, "call"), text(c, x), sleep_call(c, x).
+.output found
+"#);
+        let (made, plan) = rewritten(&v);
+        let requests: Vec<String> = F::declared_names(&*made).into_iter().filter(|r| r.starts_with(DEFERRED_PAIRS)).collect();
+        assert!(requests.is_empty(), "{requests:?}");
+        assert_eq!(plan.constants, vec!["sleep_call".to_owned()]);
+    }
+
     /// A reader that asks for every key the producer makes (through an atom of the producer's own rule) makes the
     /// request, a union over the readers, restrict nothing: the join is left as written. Readers that each narrow
     /// the keys still drive it.

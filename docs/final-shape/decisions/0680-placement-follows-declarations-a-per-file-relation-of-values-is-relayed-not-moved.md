@@ -5,6 +5,9 @@ made per-file the default, the user said: "I had tried to make cross-file facts 
 be file-local. Why do we resolve it as cross-file unnecessarily?" Then, on this design: "go that way". It amends 0290
 (`locate`'s moves), 0652 (§3 and "What is a crossing") and 0676 (`keyed`). It follows 0676's "What this does not do".
 
+Amended at the merge of 0708's line (2026-11-26): a covered view of values (0708) is relayed by its twin only where
+the union of the chunks' rows is every file's rows; otherwise the cross part derives its own copy (0708 §5).
+
 ## Intro
 
 0652 made the declaration the rule: a relation is per-document unless declared `cross_file`, and an undeclared

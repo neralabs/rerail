@@ -630,14 +630,14 @@ air301_context_function(n) :- air301_execute_method(n).
 // plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
 .decl air301_plain_string(n: node)
 air301_plain_string(n) :- (kind(n, "string") ; kind(n, "concatenated_string")), value(n, v1),
-    value_type(v1, "str"),
+    value_type_of(n, "str"),
     count : { has(n, c2, "string_start"), glob("**[fFtT]**", c2) } = 0.
 
 // key(n, key): 5 copies of one rule set (`key-conf`, `key-dag_run`, `key-inlet_events` and 2 more), folded into one: row `key` of
 // key_case gives the strings each copy had.
 .decl air301_key(n: node, air301_key: symbol)
 air301_key(n, q1) :- air301_key_case(q1, s1), (kind(n, "string") ; kind(n, "concatenated_string")),
-    value(n, v1), value_type(v1, "str"), glob(s1, v1),
+    value(n, v1), value_type_of(n, "str"), glob(s1, v1),
     count : { has(n, c2, "string_start"), glob("**[fFtT]**", c2) } = 0.
 
 // ctx_key_dag_run(n): the JSON util `ctx-key-dag_run`, used where the JSON says `matches: "ctx-key-dag_run"`
@@ -2317,7 +2317,7 @@ AIR301_context_key_conf(n, "The auth manager constructor takes no parameters in 
     child(n, c1, _), !air301_alt_237(c1), child(p2, n, _), kind(p2, "call"),
     field(p2, "function", c3), air301_authmgr_class(c3).
 AIR301_context_key_conf(n, "`none_failed_or_skipped` was removed in Airflow 3; use `\"none_failed_min_one_success\"` instead") :- (kind(n, "string") ; kind(n, "concatenated_string")),
-    value(n, v1), value_type(v1, "str"), glob("none_failed_or_skipped", v1),
+    value(n, v1), value_type_of(n, "str"), glob("none_failed_or_skipped", v1),
     count : { has(n, c2, "string_start"), glob("**[fFtT]**", c2) } = 0,
     within_stop(n, p3, air301_stop_238), field(p3, "value", f4), (f4 = n ; within(n, f4)),
     kind(p3, "keyword_argument"), air301_tok_has_104(p3), child(p13, p3, _),

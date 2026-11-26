@@ -191,17 +191,31 @@ impl Drop for Facts {
 /// job carried into it) from the allocator's per-thread peak, reset at the scope's entry, so a scope's is its own
 /// allocation, whatever ran on other threads meanwhile. Their sum bounds what they held at once, and a scope's peak
 /// is a function of its work, not of the threads' timing.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+///
+/// `peaks` are those scopes' peaks, the largest first: at most one scope a thread runs at a time, so the largest of
+/// them, one a thread, bound what they held at once more tightly than their sum (`heap_at_once`), and are as much a
+/// function of the work. `kept` is what the scopes allocated and did not free by their end (each one's own, at least
+/// 0): rows handed on in the heap, live past the scope while later ones run.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Written {
     pub bytes: usize,
     pub held: usize,
     pub heap: usize,
+    pub peaks: Vec<usize>,
+    pub kept: usize,
 }
 
 impl Written {
-    /// What sizes the chunks after it (decision 0469): its blocks' bytes and its scopes' heap at their most.
-    pub fn measure(&self) -> usize {
-        self.bytes + self.heap
+    /// What sizes the chunks after it (decision 0469): its blocks' bytes and its scopes' heap at their most, at once
+    /// on `threads` threads.
+    pub fn measure(&self, threads: usize) -> usize {
+        self.bytes + self.heap_at_once(threads)
+    }
+
+    /// Its scopes' heap at their most that `threads` threads hold at once: the largest peaks, one a thread and one
+    /// more, the chunk's own evaluation waiting on its jobs (a scope that carries a job in holds its own meanwhile).
+    pub fn heap_at_once(&self, threads: usize) -> usize {
+        (self.kept + self.peaks.iter().take(threads.saturating_add(1)).sum::<usize>()).min(self.heap)
     }
 }
 
@@ -421,6 +435,10 @@ pub struct Chunk {
     /// Its scopes' heap at their most, summed (`Written::heap`): each scope's own (`enter_chunk`), whatever ran
     /// beside it.
     peaks: std::sync::atomic::AtomicUsize,
+    /// Each of those scopes' peaks (`Written::peaks`).
+    each_peak: Mutex<Vec<usize>>,
+    /// What those scopes allocated and did not free by their end, each one's own at least 0 (`Written::kept`).
+    kept: std::sync::atomic::AtomicUsize,
 }
 
 impl Chunk {
@@ -520,6 +538,10 @@ impl Drop for ChunkScope {
         if let Some(c) = &self.chunk {
             c.heap.fetch_add(own, std::sync::atomic::Ordering::Relaxed);
             c.peaks.fetch_add(most, std::sync::atomic::Ordering::Relaxed);
+            if most > 0 {
+                c.each_peak.lock().unwrap_or_else(|e| e.into_inner()).push(most);
+            }
+            c.kept.fetch_add(own.max(0) as usize, std::sync::atomic::Ordering::Relaxed);
             c.note();
         }
     }
@@ -602,7 +624,9 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
     drop(leave);
     let held = chunk.held.load(std::sync::atomic::Ordering::Relaxed);
     let heap = chunk.peaks.load(std::sync::atomic::Ordering::Relaxed);
-    (r, Written { bytes: chunk.tally.load(std::sync::atomic::Ordering::Relaxed) + chunk.live.load(std::sync::atomic::Ordering::Relaxed), held, heap })
+    let mut peaks = std::mem::take(&mut *chunk.each_peak.lock().unwrap_or_else(|e| e.into_inner()));
+    peaks.sort_unstable_by(|a, b| b.cmp(a));
+    (r, Written { bytes: chunk.tally.load(std::sync::atomic::Ordering::Relaxed) + chunk.live.load(std::sync::atomic::Ordering::Relaxed), held, heap, peaks, kept: chunk.kept.load(std::sync::atomic::Ordering::Relaxed) })
 }
 
 /// A block of at least `bytes` for relations, from the one block policy (decision 0342): a run bound to the device
@@ -1059,7 +1083,12 @@ impl KeyRuns {
 
 /// A relation of `k` values a row, 8 bytes each, read in their order.
 fn spec(k: usize) -> Spec {
-    Spec { widths: vec![8; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG }
+    spec_narrow(k, 0)
+}
+
+/// `spec`, the columns `narrow` names (a bit a column) 4 bytes wide: values that fit 32 bits unsigned (atoms).
+fn spec_narrow(k: usize, narrow: u64) -> Spec {
+    Spec { widths: (0..k).map(|c| if c < 64 && narrow >> c & 1 == 1 { 4 } else { 8 }).collect(), order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG }
 }
 
 /// One relation of a block: a segment or a tail, shared by its holders; its chunks given back to the block's free
@@ -1182,6 +1211,8 @@ impl Drop for Lent {
 /// rows are written into.
 pub struct WaveRoom {
     k: usize,
+    /// Its rows' 4-byte columns (`Rows::narrowed`): a region of its own holds them so too.
+    narrow: u64,
     regions: [std::sync::OnceLock<Region>; WAVE_REGIONS],
     cursor: Mutex<WaveCursor>,
 }
@@ -1218,9 +1249,9 @@ impl WaveRoom {
         let first = if own { None } else { rows.tail_room(WAVE_SPAN as usize).or_else(|| rows.tail_moved(WAVE_SPAN as usize)) };
         let region = match first {
             Some(lent) => Region { part: lent.tail.clone(), at: lent.at, first: 0, lent: Some(lent) },
-            None => Region { part: Part::for_writes(k, WAVE_SPAN as usize), at: 0, first: 0, lent: None },
+            None => Region { part: Part::new_narrow(Life::Run, k, rows.narrow, WAVE_SPAN as usize), at: 0, first: 0, lent: None },
         };
-        let room = WaveRoom { k, regions: std::array::from_fn(|_| std::sync::OnceLock::new()), cursor: Mutex::new(WaveCursor { region: 0, used: 0, ends: vec![0] }) };
+        let room = WaveRoom { k, narrow: rows.narrow, regions: std::array::from_fn(|_| std::sync::OnceLock::new()), cursor: Mutex::new(WaveCursor { region: 0, used: 0, ends: vec![0] }) };
         let _ = room.regions[0].set(region);
         room
     }
@@ -1251,7 +1282,7 @@ impl WaveRoom {
         assert!(r + 1 < WAVE_REGIONS, "a wave's rows past {WAVE_REGIONS} regions");
         let before: u32 = cur.ends.iter().sum();
         let rows = (n as usize).max(before as usize);
-        let part = Part::for_writes_with_room(self.k, rows, 8 * self.k.max(1) * rows).unwrap_or_else(|e| panic!("a wave's rows past their block: {e}"));
+        let part = Part::for_writes_with_room_narrow(self.k, self.narrow, rows, 8 * self.k.max(1) * rows).unwrap_or_else(|e| panic!("a wave's rows past their block: {e}"));
         let _ = self.regions[r + 1].set(Region { part, at: 0, first: before, lent: None });
         cur.region = r + 1;
         cur.used = n;
@@ -1589,6 +1620,14 @@ impl Part {
         Part::try_new_with(life, k, rows, 0, false)
     }
 
+    /// `new`, the columns `narrow` names 4 bytes wide (`spec_narrow`).
+    fn new_narrow(life: Life, k: usize, narrow: u64, rows: usize) -> Part {
+        if narrow == 0 {
+            return Part::new(life, k, rows);
+        }
+        Part::try_new_spec(life, spec_narrow(k, narrow), rows, 0, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+    }
+
     /// A relation of `k` columns alone in a block with room for `rows` rows, past them for its rows to double and for
     /// `indexes` indexes of all of them, which its growth keeps (`ix_room`). The block is address space, memory only
     /// as it is written (decision 0342's `Device::No`).
@@ -1860,8 +1899,13 @@ impl Part {
     /// rounds' indexes, and its relation was copied for each next key (ab127: 478.7 MB of 0353 row 9). Few are live at
     /// once (a fixpoint's heads).
     pub fn for_writes_with_room(k: usize, rows: usize, room: usize) -> Result<Part, String> {
+        Part::for_writes_with_room_narrow(k, 0, rows, room)
+    }
+
+    /// `for_writes_with_room`, the columns `narrow` names 4 bytes wide (`spec_narrow`).
+    pub fn for_writes_with_room_narrow(k: usize, narrow: u64, rows: usize, room: usize) -> Result<Part, String> {
         let room = if RESERVES_ADDRESS_SPACE { room.max(BLOCK_RESERVE - room_for(k, rows).min(BLOCK_RESERVE / 2)) } else { room };
-        Part::try_new_with(Life::Run, k, rows, room.max(1), true)
+        Part::try_new_spec(Life::Run, spec_narrow(k, narrow), rows, room.max(1), true)
     }
 
     /// Room for `rows` rows in all (its rows' chunks in its block), not moved: for a writer other than the host
@@ -2202,6 +2246,8 @@ pub struct Rows {
     /// Segments gathered from other relations (`append_segment`): a tail past them is a relation of its own, never a
     /// continuation of theirs in their blocks (which may have no room, and would move every row).
     gathered: bool,
+    /// The columns (a bit a column) whose values fit 32 bits unsigned, atoms: its tails hold them 4 bytes a row.
+    narrow: u64,
 }
 
 /// A frozen relation's writer taken (`Rows::shared`), and the rows its relation held then: given back free at them
@@ -2363,7 +2409,7 @@ impl Clone for Rows {
             segs.push((from, t.prefix()));
             from += t.len();
         }
-        Rows { segs, from, tail: None, k: self.k, hint: self.hint, life: self.life, gathered: self.gathered, ..Rows::default() }
+        Rows { segs, from, tail: None, k: self.k, hint: self.hint, life: self.life, gathered: self.gathered, narrow: self.narrow, ..Rows::default() }
     }
 }
 
@@ -2371,6 +2417,13 @@ impl Rows {
     /// No rows, of `k` values each.
     pub fn new(k: usize) -> Rows {
         Rows { k, ..Rows::default() }
+    }
+
+    /// These rows, the columns `narrow` names (a bit a column) held 4 bytes a row: their values atoms, which fit 32
+    /// bits unsigned (`ColKind::Atom`'s bounds).
+    pub fn narrowed(mut self, narrow: u64) -> Rows {
+        self.narrow = narrow;
+        self
     }
 
     /// No rows, of `k` values each, living `life` long.
@@ -2441,7 +2494,7 @@ impl Rows {
     /// relation of its own holding every row (a growth move, `Part::moved_all`), which `absorbed` makes the only part.
     fn opened(&self, rows: usize) -> Part {
         if self.segs.is_empty() || self.gathered {
-            return Part::new(self.life, self.k, rows);
+            return Part::new_narrow(self.life, self.k, self.narrow, rows);
         }
         let Some(end) = self.chain() else {
             crate::code_rule_dsl::logic::profile::decision("tails opened past rows of many relations (linked when bound)", || format!("{} segments", self.segs.len()));
@@ -2888,6 +2941,13 @@ impl Rows {
         }
     }
 
+    /// Rows `lo..hi`' values of column `c`, in id order: each part found once, each chunk of it read where it lies
+    /// (`ColRead::each`), not each row's (`get`).
+    #[inline]
+    pub fn each_value(&self, lo: u32, hi: u32, c: usize, mut f: impl FnMut(i64)) {
+        self.each_run(lo, hi, |p, from, to, _| p.cols[c].each(from, to, &mut f));
+    }
+
     /// Values a row.
     pub fn width(&self) -> usize {
         self.k
@@ -3177,8 +3237,38 @@ mod tests {
         let (w, again) = (run(), run());
         assert_eq!(w.heap, 120 << 20, "{} MB", w.heap >> 20);
         assert_eq!(w, again, "the same work measures the same");
-        assert_eq!(w.measure(), w.bytes + w.heap);
+        assert_eq!(w.measure(usize::MAX), w.bytes + w.heap);
         assert_eq!(other.peaks.load(std::sync::atomic::Ordering::Relaxed), 2 * (50 << 20), "the job's peak is its own chunk's");
+    }
+
+    /// A chunk's heap at once (`Written::heap_at_once`): at most one scope a thread runs at a time, so on `t` threads
+    /// its `t + 1` largest scopes' peaks (the evaluation waits on its jobs), with what each kept past its end, bound
+    /// it; on threads enough for every scope, their sum. A function of the work, as their sum is.
+    #[test]
+    fn a_chunks_heap_at_once_is_its_largest_peaks_one_a_thread_and_what_they_kept() {
+        install_heap_net(net);
+        install_heap_peak(peak, reset);
+        let run = || {
+            in_chunk_measured(|| {
+                alloc(100 << 20);
+                for (most, kept) in [(30i64, 10i64), (20, 0), (10, 0)] {
+                    // A job of this chunk: its own scope, `kept` MB of it handed on past its end.
+                    let _job = enter_chunk(current_chunk());
+                    alloc(most << 20);
+                    alloc((kept - most) << 20);
+                }
+                alloc(-110 << 20);
+            })
+            .1
+        };
+        let (w, again) = (run(), run());
+        assert_eq!(w, again, "the same work measures the same");
+        assert_eq!(w.peaks, [100 << 20, 30 << 20, 20 << 20, 10 << 20], "each scope's own, the largest first");
+        assert_eq!(w.kept, 10 << 20, "the job that handed 10 MB on");
+        assert_eq!(w.heap_at_once(0), (100 + 10) << 20, "one thread: the evaluation's, and what was kept");
+        assert_eq!(w.heap_at_once(1), (100 + 30 + 10) << 20);
+        assert_eq!(w.heap_at_once(usize::MAX), w.heap, "every scope at once: their sum");
+        assert_eq!(w.measure(1), w.bytes + w.heap_at_once(1));
     }
 
     /// Q203 item 3: a chunk is sized by what its own work held, not the process's footprint: what its scope

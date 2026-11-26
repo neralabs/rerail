@@ -95,7 +95,8 @@ What it gives the rules, by group (its header is the full interface):
 - Side effects: `dj_side_effect` (a task enqueued or a mail sent), `dj_task_waits_for_commit` (a task class that
   defers to on_commit), `dj_dispatch_in_failing_handler`, `dj_dispatch_result_used`: what enqueue-on-commit and
   dispatch-in-atomic-request share.
-- Views: `dj_view_lib` (Django and DRF view classes, their `…Mixin` classes excluded), `dj_view_class`.
+- Views: `dj_view_class` and `dj_drf_view_class`, a class with a Django or DRF view class (not a `…Mixin`) among its
+  library ancestors (`dj_lib_view`, through the phase py_names, decision 0677).
 - Files: `dj_migration_doc`; `dj_test_doc` (tests/test/testing/unittests directories, test_*.py, *_tests.py,
   *_test.py, tests.py, test.py, conftest.py); `dj_django_doc` (the file imports django or rest_framework).
 - Settings: `dj_settings` (django.conf.settings).
@@ -117,7 +118,8 @@ Open proposals, each written rule-locally today (checked against the current dja
 - `dj_settings_module_doc(d)`: d is a project settings module. Now settings-module-import's `smi_doc`/`smi_resolves`.
 - `dj_in_async(n)`: n's nearest def, lambda or class is an `async def`. Now async-request-user's `aru_in_async`.
 - `dj_drf_q(q)`: q is a Django REST framework class (or a vendored copy's `ViewSetMixin`), through the run's classes.
-  Two rules hold their own: function-decorator-on-method's `fdm_drf_q`/`fdm_drf` and get-handler-writes' `ghw_drf_q`.
+  function-decorator-on-method's `fdm_drf` reads python/django's `dj_drf_view_class`; get-handler-writes holds its own
+  `ghw_drf_q`.
 - python (not django), `log_call_arg(n)`: n is in the arguments of a `<…log…>.debug/info/warning/…(…)` call. Now
   host-header-without-get-host's `hhg_logged`.
 - `dj_receiver(mq, signal, fname, f, at)`: a pre_save/post_save receiver for model sender mq (`@receiver(sig,

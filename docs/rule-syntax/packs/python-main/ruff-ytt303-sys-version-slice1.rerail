@@ -17,7 +17,7 @@ YTT303(C, n) :- ytt303_in_string(n, C).
 
 // one_literal(n): the JSON util `one-literal`, used where the JSON says `matches: "one-literal"`
 .decl ytt303_one_literal(n: node)
-ytt303_one_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 1.
+ytt303_one_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 1.
 ytt303_one_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     ytt303_one_literal(c2).
 

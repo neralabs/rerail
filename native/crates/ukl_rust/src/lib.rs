@@ -12,6 +12,8 @@ pub mod label_leaves_w8;
 pub mod join_program;
 pub mod lanes;
 mod sources;
+#[cfg(test)]
+mod sort_merge_spike;
 
 pub use sources::*;
 
@@ -20,7 +22,7 @@ pub use sources::*;
 /// `join_chain`, written by hand (`join_program`), which read the views' format as the compiled reads do, so one Rust
 /// for each. Not `sources.rs`, which rerail-ukl-vec's tests write: device-metal's test (`join_rust`) holds these to
 /// the source.
-pub const JOIN_PROGRAM: [u64; 3] = [0xce053c62f7c3a851, 0x2d5db8126a410fa7, 0xd7e5b740a3938242];
+pub const JOIN_PROGRAM: [u64; 3] = [0xbe68a8edb5370a00, 0xc3cb4a5e7795a8f2, 0xe7ad88091fbf30df];
 
 /// A group's launch, as a kernel's Rust reads it: its group's position, its threads' (each dimension's), and the
 /// groups'; and the reads written once in CLIF as the CPU compiled them, each by its place in `rerail_clif::reads::READS`

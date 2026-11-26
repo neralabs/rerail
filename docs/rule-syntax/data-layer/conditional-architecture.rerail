@@ -133,14 +133,14 @@ CONDA001(c) :- mf_call_name(c, "compile"), ca_owned(c, "compile").
 CONDA001(c) :- mf_call_name(c, x), prefix("Sql", x), ca_owned(c, "compile").
 CONDA001(c) :- mf_call_name(c, "CompiledStep"), call_arg(c, _, "grammar", _), ca_owned(c, "compile").
 // The last ConditionalStep class of the file, when no def named compile has a ConditionalStep as innermost class.
-CONDA001(k) :- ca_last_step_class(k), !ca_has_compile().
+CONDA001(k) :- ca_last_step_class(k), docof(k, d), !ca_has_compile(d).
 .decl ca_last_step_class(k: node)
 ca_last_step_class(k) :- def_name(k, "ConditionalStep"), kind(k, "class_definition"), ca_in_step(k), docof(k, d),
     visit_index(k, v), v = max w : { def_name(k2, "ConditionalStep"), kind(k2, "class_definition"), docof(k2, d),
     visit_index(k2, w) }.
-.decl ca_has_compile()
-ca_has_compile() :- def_name(f, "compile"), kind(f, "function_definition"), mf_class(f, k), def_name(k, "ConditionalStep"),
-    ca_in_step(f).
+.decl ca_has_compile(d: number)
+ca_has_compile(d) :- def_name(f, "compile"), kind(f, "function_definition"), mf_class(f, k), def_name(k, "ConditionalStep"),
+    ca_in_step(f), docof(f, d).
 
 .violation CONDA002(at: node) code "CONDA-002" "l2070_batching.conditional_step must not import impl SQL compiler modules or SQL grammar classes"
 CONDA002(i) :- ca_bad_import(i), !ca_owned(i, "compile"), kind(i, "import_from_statement").
@@ -264,22 +264,30 @@ ca_owner("executor", "impl.common.l2070_server_plan.sql_backend_executor.SqlBack
 ca_owner_at(r, k) :- ca_owner(r, q, _, "class", _), ca_row(k, q).
 ca_owner_at(r, f) :- ca_owner(r, q, _, "function", _), ca_function(f, q).
 // ca_present(): some class or function has one of the four names, whichever kind; then the contracts are checked.
+// ca_role_found(d, r): file d has a class or function of role r's name, found in that file (decision 0677).
 .decl ca_present()
-ca_present() :- ca_owner(_, q, _, _, _), ca_row(_, q).
-ca_present() :- ca_owner(_, q, _, _, _), ca_function(_, q).
-// ca_valid(role): the owner keeps its typed contract.
+ca_present() :- ca_role_found(_, _).
+.decl ca_role_found(d: number, r: symbol)
+ca_role_found(d, r) :- ca_owner(r, q, _, _, _), ca_row(k, q), docof(k, d).
+ca_role_found(d, r) :- ca_owner(r, q, _, _, _), ca_function(f, q), docof(f, d).
+// ca_valid(role): the owner keeps its typed contract. Each owner's tests are found in its file (ca_kept); the
+// physical class's are keyed by its name, joined with the bases of every file (ca_conditional) by name (0677).
 .decl ca_valid(role: symbol)
+ca_valid(r) :- ca_kept(r).
+ca_valid("physical") :- ca_physical_ok(q), ca_conditional(q).
+.decl ca_kept(role: symbol)
 // The semantic class's require_sql_physical_conditional raises TypeError on every path.
-ca_valid("semantic") :- ca_owner_at("semantic", k), ca_method(k, "require_sql_physical_conditional", f), ca_always_raises(f).
+ca_kept("semantic") :- ca_owner_at("semantic", k), ca_method(k, "require_sql_physical_conditional", f), ca_always_raises(f).
 // The physical class is conditional, and its override neither raises on every path nor selects a backend.
-ca_valid("physical") :- ca_owner_at("physical", k), ca_row(k, q), ca_conditional(q),
+.decl ca_physical_ok(q: symbol)
+ca_physical_ok(q) :- ca_owner_at("physical", k), ca_row(k, q),
     ca_method(k, "require_sql_physical_conditional", f), !ca_always_raises(f), !ca_backend_selection(f).
 // The compiler takes `step: SqlConditionalStep`, validates it before the first strategy call, selects no backend.
-ca_valid("compiler") :- ca_owner_at("compiler", f), ca_owner("physical", q, _, _, _), ca_param(f, "step", a), child(a, e, 0),
+ca_kept("compiler") :- ca_owner_at("compiler", f), ca_owner("physical", q, _, _, _), ca_param(f, "step", a), child(a, e, 0),
     ca_resolved(e, f, q), !ca_backend_selection(f), ca_first_check(f, v),
     !ca_strategy_first(f, v).
 // The executor's _lower_conditional_step calls ….SqlConditionalStep.from_semantic.
-ca_valid("executor") :- ca_owner_at("executor", k), ca_method(k, "_lower_conditional_step", f), ca_belongs(c, f),
+ca_kept("executor") :- ca_owner_at("executor", k), ca_method(k, "_lower_conditional_step", f), ca_belongs(c, f),
     kind(c, "call"), field(c, "function", fn), ca_fw(fn, s), suffix("SqlConditionalStep.from_semantic", s).
 // ca_first_check(f, l): the first line where f calls step.require_sql_physical_conditional; ca_strategy_first: a
 // *_conditional_strategy call on that line or before it.

@@ -26,13 +26,13 @@ up018_nested_fstring(n) :- up018_demand_nested_fstring(n), inside(n, p1, "string
 
 // literal_str(n): the JSON util `literal-str`, used where the JSON says `matches: "literal-str"`
 .decl up018_literal_str(n: node)
-up018_literal_str(n) :- up018_plain_string(n), value(n, v1), value_type(v1, "str").
+up018_literal_str(n) :- up018_plain_string(n), value(n, v1), value_type_of(n, "str").
 up018_literal_str(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     up018_literal_str(c2).
 
 // literal_bytes(n): the JSON util `literal-bytes`, used where the JSON says `matches: "literal-bytes"`
 .decl up018_literal_bytes(n: node)
-up018_literal_bytes(n) :- up018_plain_string(n), value(n, v1), value_type(v1, "bytes").
+up018_literal_bytes(n) :- up018_plain_string(n), value(n, v1), value_type_of(n, "bytes").
 up018_literal_bytes(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     up018_literal_bytes(c2).
 
@@ -54,7 +54,7 @@ up018_literal_bool(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 // literal_of_case gives the strings each copy had.
 .decl up018_literal_of(n: node, key: symbol)
 up018_literal_of(n, q1) :- up018_literal_of_case(q1), (kind(n, "integer") ; kind(n, "float")),
-    value(n, v1), value_type(v1, q1).
+    value(n, v1), value_type_of(n, q1).
 up018_literal_of(n, q1) :- up018_literal_of_case(q1), kind(n, "parenthesized_expression"),
     child(n, c2, _), up018_literal_of(c2, q1).
 

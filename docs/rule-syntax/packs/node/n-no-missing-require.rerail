@@ -17,4 +17,4 @@
 .violation missing_require(at: node) code "n/no-missing-require"
     "This module cannot be resolved: no installed package or file in the repository provides it."
     suppress eslint "n/no-missing-require"
-missing_require(n) :- node_target(n, x, "require"), !builtin_spec(x), spec_failed(n), !spec_allowed(x).
+missing_require(n) :- node_target(n, x, "require"), !builtin_spec(x), spec_failed(n), !spec_allowed(n).

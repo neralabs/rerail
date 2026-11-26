@@ -1403,14 +1403,13 @@ impl CudaComputeFunctionLibrary {
         if let Some(set) = a.cu_func_set_attribute {
             ck(unsafe { set(func, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, dynamic_limit as i32) }, "cuFuncSetAttribute")?;
         }
-        Ok(CudaComputeFunction { func, device: self.device, name: function_name.to_string(), arguments, param_sizes, dynamic_limit })
+        Ok(CudaComputeFunction { func, name: function_name.to_string(), arguments, param_sizes, dynamic_limit })
     }
 }
 
 /// A kernel of a library, with its arguments (`MetalComputeFunction`).
 pub struct CudaComputeFunction {
     func: Ptr,
-    device: CudaDevice,
     pub name: String,
     arguments: Vec<GridComputeFunctionArgument>,
     /// Each launch parameter's size, in the kernel's order.

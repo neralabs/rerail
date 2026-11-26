@@ -225,3 +225,25 @@ by any caller in the process, so two callers of different trust could not be kep
     - the leaked names of the engine's own counters and fallback reasons;
     - the typing settings' interner. It holds immutable values and a `Reading` compares them by value, so no id of
       it can differ between callers.
+- **The last four `shared` statics** (2026-11-23, the hygiene campaign). `global-state.txt` has no `shared` entry left:
+  - **Compiled regexes** (`regexes::TABLE`): a table a shared object (`regexes::Tables`, a value of `Shared`). A handle
+    keeps the table it came from, so wherever it drops, its regex leaves that table, not the table of whichever run
+    is on the thread. Two callers never hold one regex (`each_shared_object_holds_its_own_regexes_and_a_handle_returns_to_its_own`).
+  - **A store's slot** (`owner.rs::SLOTS`): the slot is the shared object's while the object lives (`owner::Slots`).
+    Two objects at once own two slots, as two processes do, and one made after the first drops takes its slot again
+    (`two_shared_objects_own_a_slot_each_and_a_later_one_takes_the_first_again`). The lock files stay the process's
+    (`CLAIMS`, which also lists the slots an object holds). Before, the process held one slot for every object.
+  - **Embedding models** (`model.rs::SHARED_MODELS`): a value of the caller's object (`model::Models`).
+  - **The Node environment's own object.** The runtime's entries whose caller is the environment, not a workspace,
+    had no object: `CodeRuleDslRuntime::compile`, `compile_async` and `test_rr`, `CodeRuleSlice`'s constructor and
+    `ConversationEngine::load`. The environment now keeps one shared object on its machine beside the machine
+    (`api::Environment`, its instance data), and they run under it (`in_environment`). So the runtime's rules share
+    their regexes there, its conversation engines one copy of a model, and testing mode keeps its store's slot while
+    it runs. `compile_async`'s task carries the object to its pool thread. The JavaScript signatures are unchanged
+    (napi passes the environment).
+  - **Stays: the Git opens of a root** (`git_access/pool.rs::ROOTS`). It holds no caller's data: it counts this
+    process's threads stuck opening a root, which cannot be ended, so a later open of that root fails at once rather
+    than strand another. A thread blocked in the OS is the process's whoever asked, as its lock files and children
+    are. Its Node callers (`GitIgnoreMatcher::open`, the host's walk) hold no object either.
+  - Checked: the calls, workspace and corpus tests; and a product build's strict run (`RERAIL_STRICT_RUN=1`,
+    `test-rr` on `rerail-command-sigil.rerail`, Linux), which logged no read outside a run.

@@ -337,9 +337,10 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
 /// A stratum a changed read reaches, none of whose rules sees a row the read's delta gained or lost, is passed on as
 /// kept (decision 0563 B): an edit adds an assignment to a file. `wh` reads `kind` only for `while` statements, which
 /// the edit's nodes are none of (the delta's own rows); `pair` joins `node`'s new rows to `wh`, which holds none of
-/// their nodes (a derived witness, read through its index), and so does `rr_unplaced` (decision 0431 R9), which joins
-/// `node` to the findings `W` (`rr_found_node`). A second edit adds a `while` loop, which both see; a third moves a.py's
-/// loop a line down, which `rr_unplaced` does not read (`Net`). Each run's findings are a full run's.
+/// their nodes (a derived witness, read through its index). `rr_unplaced` (decision 0431 R9) joins the findings `W` to
+/// the nodes no file places, each file's own (`rr_unplaced_node`, decision 0677), which no edit of a placed file
+/// changes: no edit reaches it. A second edit adds a `while` loop, which `pair` sees; a third moves a.py's loop a line
+/// down (`Net`). Each run's findings are a full run's.
 #[test]
 fn a_session_passes_on_a_stratum_its_changed_kinds_do_not_reach() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-unseen");
@@ -383,26 +384,34 @@ W(n) :- pair(n, _).
     let report = run();
     let got = findings();
     assert_eq!(got, full(), "the session's findings are a full run's");
-    assert!(report.cross_unseen.iter().any(|k| k == crate::code_rule_dsl::logic::rr::lower::findings::UNPLACED), "`W` holds none of the edit's nodes: {:?} unseen", report.cross_unseen);
+    unplaced_not_reached(&report);
     std::fs::write(src.join("c.py"), "x = 1\nwhile x:\n    x = 0\n").unwrap();
     run();
     let got = findings();
     assert_eq!(got, full(), "the session's findings are a full run's");
     assert_eq!(got.len(), 3, "c.py's loop pairs too: {got:?}");
     // A line put at a.py's top moves its loop down and keeps its id (`granules`): `node`'s rows past it change only
-    // in their places. `rr_unplaced(c) :- rr_found_node(c, n), node(d, n, _, _, _), !doc(d, _, _)` reads none of
-    // them, so it sees no change, though
-    // `W` holds the loop; `violation` reads its line, which moved, so it is reached. The finding moves with the loop.
+    // in their places. The nodes no file places are none of them, so `rr_unplaced` is not reached, though `W` holds
+    // the loop; `violation` reads its line, which moved, so it is reached. The finding moves with the loop.
     let was = findings();
     std::fs::write(src.join("a.py"), "import os\nwhile a:\n    pass\n").unwrap();
     let report = run();
     let got = findings();
     assert_eq!(got, full(), "the session's findings are a full run's");
     assert_ne!(got, was, "a.py's finding is a line lower");
-    assert!(report.cross_unseen.iter().any(|k| k == crate::code_rule_dsl::logic::rr::lower::findings::UNPLACED), "`rr_unplaced` reads no place of a.py's moved nodes: {:?} unseen", report.cross_unseen);
+    unplaced_not_reached(&report);
     assert!(!report.cross_unseen.iter().any(|k| k == "violation"), "`violation` reads the moved loop's line: {:?} unseen", report.cross_unseen);
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// An edit of a placed file changes none of the nodes no file places (`rr_unplaced_node`, made in the file's part,
+/// decision 0677), so the cross-file part's `rr_unplaced` is not reached by it: not an input that changed, nor a
+/// stratum reached that saw no row.
+fn unplaced_not_reached(report: &super::super::Report) {
+    use crate::code_rule_dsl::logic::rr::lower::findings::{UNPLACED, UNPLACED_NODE};
+    assert!(!report.cross_changed.iter().any(|k| k == UNPLACED_NODE), "no node of a placed file is unplaced: {:?} changed", report.cross_changed);
+    assert!(!report.cross_unseen.iter().any(|k| k == UNPLACED), "`rr_unplaced` is not reached: {:?} unseen", report.cross_unseen);
 }
 
 /// A run admits no guest where none of its documents embeds a program (decision 0563 A) and its file-local part
@@ -524,6 +533,8 @@ BACK(i) :- impmod(i, m), docof(i, a), doc(b, _, m), back(a, b).
 /// An insert into a recursive stratum stops at the rows that survived (decision 0090): an edge that adds no
 /// reachability (`a` imports `c`, which it reached through `b`) inserts the new edge and nothing of `reach`.
 /// Without the stop, the inserts walked the closure from the new edge again (9,000,000 rows on `session_costs`).
+/// The rows inserted were counted by the delete-and-rederive forms, gone with 0364 stage 6c; the maintain mode adds
+/// a row once, so the session's findings are checked against a full run's, with the stratum maintained.
 #[test]
 fn a_session_inserts_only_rows_new_against_the_survivors() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-ins");
@@ -553,17 +564,21 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
     }
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let findings = || {
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
+        rows.sort();
+        rows
+    };
     let session = start(&base.join("session")).unwrap();
     run();
     std::fs::write(src.join("a.py"), "from b import x\nfrom c import q\n").unwrap();
-    let switched = super::super::switches::set(&[("RERAIL_CROSS_DELTA_COUNTS", "1")]);
     let report = run();
-    drop(switched);
+    let got = findings();
+    full(run);
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
-    let [_, inserted, _, _, _, new] = report.cross_delta_counts;
     assert!(report.cross_maintained.1 > 0, "the recursive stratum is maintained: {:?}", report.cross_maintained);
-    assert_eq!(inserted, new, "the insert rules carry only rows truly new (the edge a -> c), not reach's rows again");
+    assert_eq!(got, findings(), "the session's findings after the edge a -> c are a full run's");
 }
 
 /// A cross-file stratum with aggregates is maintained by its changed groups (decision 0077 §3): a module's
@@ -1036,8 +1051,8 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
 /// 0597 rung 2.11: a pass runs only on what changed in its inputs (rule 7, 0563 B). In a session, an edit that changes
 /// no root and no relation the context reads `.from` (b.py's own line) changes no input of the context, so none of its
 /// cross strata runs. Renaming the class the annotation names (a.py's `Foo`, the annotation's text unchanged) changes
-/// what the context reads `.from` its host (`defined`, a cross-file relation, so the context's `resolved` is the cross
-/// part's), and the row goes. Each run's rows are a full run's.
+/// what the context reads `.from` its host (`defined`, a relation of every file's names, staged before the program,
+/// decision 0709: its export changes), and the row goes. Each run's rows are a full run's.
 #[test]
 fn a_contexts_strata_run_only_on_changes_to_its_roots_and_reads() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-context");
@@ -1085,12 +1100,13 @@ quoted_resolved(x) :- res(x).
     std::fs::write(src.join("b.py"), "y = 2\n").unwrap();
     let report = run();
     assert_eq!(rows(), full(), "the session's rows are a full run's");
-    assert!(!report.cross_changed.iter().any(|c| c.contains("rr_pass_quoted") || c == "defined_at"), "no input of the context changed: {:?}", report.cross_changed);
+    let defined = |c: &str| c == "defined_at" || c.ends_with("__defined");
+    assert!(!report.cross_changed.iter().any(|c| c.contains("rr_pass_quoted") || defined(c)), "no input of the context changed: {:?}", report.cross_changed);
     std::fs::write(src.join("a.py"), "class Bar: ...\nx: \"Foo\" = 1\n").unwrap();
     let report = run();
     assert_eq!(rows(), full(), "the session's rows are a full run's");
     assert!(rows().is_empty(), "Foo names no class now: {:?}", rows());
-    assert!(report.cross_changed.iter().any(|c| c == "defined_at"), "what the context reads .from changed: {:?}", report.cross_changed);
+    assert!(report.cross_changed.iter().any(|c| defined(c)), "what the context reads .from changed: {:?}", report.cross_changed);
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }

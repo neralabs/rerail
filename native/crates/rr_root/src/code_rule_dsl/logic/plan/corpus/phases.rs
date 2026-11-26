@@ -109,18 +109,105 @@ impl Running {
     }
 }
 
-/// What a program says of itself as a phase: its name and its exports.
+/// What a program says of itself as a phase: its name and its exports; and, for an asked phase (decision 0705), the
+/// export its rounds hand back to it (`.rounds ask_in`) and how its exports are keyed (`.export asked_at by_path 1,
+/// resolved by_key`), as written: `keyed` checks them.
 pub struct Declared {
     pub(crate) name: String,
+    /// The exports' names, as their readers read them (`<phase>__<export>`).
     pub exports: Vec<String>,
+    /// Each export's relation in the program, where it is not the export's name (`asked_exports as exports`).
+    pub relations: BTreeMap<String, String>,
+    pub rounds: Option<String>,
+    /// Each export written with a key after it (`asked_at by_path 1`), and its key's words.
+    pub keyed: Vec<(String, Vec<String>)>,
 }
 
-/// The phase `prog` declares (`.phase NAME`, `.export a, b`), if any.
+impl Declared {
+    /// The relation the program makes export `export` of.
+    pub fn relation<'a>(&'a self, export: &'a str) -> &'a str {
+        self.relations.get(export).map_or(export, String::as_str)
+    }
+}
+
+/// The phase `prog` declares (`.phase NAME`, `.export a, b by_key`), if any.
 pub fn declared(prog: &(impl ProgramFields + ?Sized)) -> Option<Declared> {
     let setting = |key: &str| prog.setting_values(key);
     let name = setting("phase").into_iter().next()?;
-    let list = |key: &str| setting(key).iter().flat_map(|v| v.split(',').map(|e| e.trim().trim_end_matches('.').to_owned()).collect::<Vec<_>>()).filter(|e| !e.is_empty()).collect::<Vec<_>>();
-    Some(Declared { name, exports: list("export") })
+    let items = crate::code_rule_dsl::logic::plan::phased::export_items(&setting("export"));
+    let exports = items.iter().map(|(_, e, _)| e.clone()).collect();
+    let relations = items.iter().filter(|(r, e, _)| r != e).map(|(r, e, _)| (e.clone(), r.clone())).collect();
+    let keyed = items.into_iter().filter(|(_, _, w)| !w.is_empty()).map(|(_, e, w)| (e, w)).collect();
+    let rounds = setting("rounds").into_iter().next().map(|r| r.trim().trim_end_matches('.').to_owned());
+    Some(Declared { name, exports, relations, rounds, keyed })
+}
+
+pub use crate::code_rule_dsl::logic::plan::phased::{ASKED_PHASES, asked_phases_on};
+
+/// The most rounds an asked phase runs (decision 0705): a chain of re-exports this deep is an ask that makes a new key
+/// from itself, and a run stopped short would hand on a partial answer, so it fails.
+pub const MAX_ROUNDS: usize = 16;
+
+/// How `program`'s exports are keyed (`.export R by_path [C]`, `.export R by_key`, `phased::key_of`): `R` a symbol in
+/// column 0, `C` another symbol column of it. Read off the program as lowered; `phased::declared_key` reads the same
+/// line off the engine's phase programs' files, for a check outside a run.
+fn keyed(name: &str, program: &(impl ProgramFields + ?Sized), declared: &Declared) -> Result<Vec<(String, crate::code_rule_dsl::logic::plan::phased::Keyed)>> {
+    use crate::code_rule_dsl::logic::plan::phased::{Keyed, key_of};
+    declared
+        .keyed
+        .iter()
+        .map(|(rel, words)| {
+            let line = format!("{rel} {}", words.join(" "));
+            let keyed = key_of(words).map_err(|e| Error::Plan(format!("{name}.rerail: `.export {line}`: {e}")))?;
+            let cols = program.columns_of(declared.relation(rel)).unwrap_or_default();
+            if let Keyed::ByPath(Some(c)) = keyed
+                && (c == 0 || cols.get(c).is_none_or(|(_, t)| t != "symbol" && t != "sym"))
+            {
+                return Err(Error::Plan(format!("{name}.rerail: `.export {line}`: {rel}'s column {c} is not a symbol, which a key is")));
+            }
+            Ok((rel.clone(), keyed))
+        })
+        .collect()
+}
+
+/// The asks an asked phase's last run over `root` ended with (decision 0705), where its next run starts: an edit that
+/// changes no ask then takes one round. Kept by the phase, its program's text and the root.
+fn kept_asks_key(name: &str, src: &str, root: &Path) -> String {
+    use sha2::Digest as _;
+    let digest: [u8; 32] = sha2::Sha256::digest(src.as_bytes()).into();
+    format!("asked-phase/v1:{name}:{}:{}", digest.iter().map(|b| format!("{b:02x}")).collect::<String>(), root.display())
+}
+
+fn encode_rows(rows: &[Vec<Value>]) -> Vec<u8> {
+    let cell = |v: &Value| match v {
+        Value::Int(i) => format!("i{i}"),
+        Value::Str(s) => format!("s{s}"),
+        other => format!("s{other:?}"),
+    };
+    rows.iter().map(|r| r.iter().map(cell).collect::<Vec<_>>().join("\u{1f}")).collect::<Vec<_>>().join("\u{1e}").into_bytes()
+}
+
+fn decode_rows(bytes: &[u8]) -> Option<Vec<Vec<Value>>> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    if text.is_empty() {
+        return Some(Vec::new());
+    }
+    text.split('\u{1e}')
+        .map(|r| {
+            r.split('\u{1f}')
+                .map(|c| match c.split_at_checked(1)? {
+                    ("i", n) => n.parse().ok().map(Value::Int),
+                    ("s", t) => Some(Value::Str(t.to_owned().into())),
+                    _ => None,
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// A set of rows, to compare one round's asks with the last's.
+fn row_set(rows: &[Vec<Value>]) -> BTreeSet<String> {
+    rows.iter().map(|r| format!("{r:?}")).collect()
 }
 
 /// The phase program `name`, with its `#include`s read in: `<phase_dir>/<name>.rerail` when the run's options name a
@@ -190,7 +277,7 @@ fn lowered_entry(src: &str) -> Result<(std::sync::Arc<Version>, Option<super::co
 /// The engine's own phase programs' directory: where a phase is found when no `phase_dir` is given (`locate`), and
 /// where phase 0 finds the phases a program names (`phase0::phase_lib`).
 pub(super) fn builtin_dir() -> PathBuf {
-    rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs")
+    crate::code_rule_dsl::logic::plan::phased::builtin_phase_dir()
 }
 
 /// The file of phase program `name` (`source`).
@@ -198,10 +285,40 @@ fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
     candidates(name, dir).into_iter().find(|p| p.exists())
 }
 
-/// Where a phase program `name` is looked for, in order: `dir`, then the engine's own programs.
+/// The keys `v`'s reads of the phases' exports are declared with (decision 0705), by the reader's relation
+/// (`<phase>__<export>`), each read off the phase's file where the run will find it (`locate`). Known before the phases
+/// run, so the stage cut before them (decision 0709) keys an export as the memo will: by its declaration, not by
+/// probes.
+pub fn reader_keys(v: &Version, options: &serde_json::Value) -> Vec<(String, crate::code_rule_dsl::logic::plan::phased::Keyed)> {
+    use crate::code_rule_dsl::logic::plan::phased::{SEP, STAGE, declared_exports_in};
+    let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(PathBuf::from);
+    let mut out: Vec<(String, crate::code_rule_dsl::logic::plan::phased::Keyed)> = Vec::new();
+    let reads: BTreeSet<&str> = v.rules().flat_map(|r| r.reads().map(|a| v.rel_name(a.rel())).collect::<Vec<_>>()).collect();
+    for rel in reads {
+        let Some((phase, export)) = rel.split_once(SEP) else { continue };
+        if phase.is_empty() || export.is_empty() || phase.starts_with("rr_") || phase.starts_with(STAGE) || phase == "observer" || phase == "sources" {
+            continue;
+        }
+        let Some(path) = locate(phase, dir.as_deref()) else { continue };
+        if let Some((_, k)) = declared_exports_in(&path).iter().find(|(e, _)| e == export) {
+            out.push((rel.to_owned(), k.clone()));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Where a phase program `name` is looked for, in order: `dir`, then the engine's own programs: while asked phases
+/// run, its asked program first (`<name>.asked.rerail`, decision 0705), then its eager one.
 fn candidates(name: &str, dir: Option<&Path>) -> Vec<PathBuf> {
     let builtin = builtin_dir();
-    dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rerail"))).collect()
+    let mut out: Vec<PathBuf> = dir.into_iter().map(|d| d.join(format!("{name}.rerail"))).collect();
+    if asked_phases_on() {
+        out.push(builtin.join(format!("{name}.asked.rerail")));
+    }
+    out.push(builtin.join(format!("{name}.rerail")));
+    out
 }
 
 /// The files of every phase program `programs` may read, and of the phases those may read: each phase's `.rerail` and
@@ -249,10 +366,12 @@ pub(super) fn phase_files(read: &[crate::code_rule_dsl::logic::rr::TextNames], d
 /// `<phase>__<x>` that no rule of `prog` makes (by its rules' `shape`), where `<phase>` is a phase program.
 pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, dir: Option<&Path>) -> Result<BTreeMap<String, Vec<(String, String)>>> {
     let declared_here = declared(prog);
-    // Only the reads an output (or, in a phase, an export) reaches: a library a program includes for one rule may hold
-    // rules that read a phase no output needs (python/calls.rerail's points-to, for a policy that takes `call_arg`),
-    // and that phase would run at every run and every edit for nothing. A program that names no output reads all.
-    let roots: Vec<String> = prog.output_names().into_iter().chain(declared_here.iter().flat_map(|d| d.exports.iter().cloned())).collect();
+    // Only the reads an output reaches: a library a program includes for one rule may hold rules that read a phase no
+    // output needs (python/calls.rerail's points-to, for a policy that takes `call_arg`), and that phase would run at
+    // every run and every edit for nothing. A phase's run names as outputs the exports its reader reads (`facts`); a
+    // phase program read as it is, with none, reaches from all its exports. A program that names neither reads all.
+    let outputs = prog.output_names();
+    let roots: Vec<String> = if outputs.is_empty() { declared_here.iter().flat_map(|d| d.exports.iter().map(|e| d.relation(e).to_owned())).collect() } else { outputs.into_iter().collect() };
     let reached: Option<BTreeSet<&str>> = (!roots.is_empty()).then(|| {
         let mut seen: BTreeSet<&str> = BTreeSet::new();
         let mut todo: Vec<&str> = roots.iter().map(String::as_str).collect();
@@ -272,7 +391,7 @@ pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::sha
         if phase.is_empty() || export.is_empty() || own.as_deref() == Some(phase) || phase.starts_with("rr_") {
             continue;
         }
-        if source(phase, dir)?.is_some() {
+        if staged(phase).is_some() || source(phase, dir)?.is_some() {
             out.entry(phase.to_owned()).or_default().push((rel.to_owned(), export.to_owned()));
         }
     }
@@ -408,12 +527,433 @@ pub fn batch_plans(root: &str, plan: [u8; 32], also: &[[u8; 32]]) -> Option<Vect
     Some(earlier)
 }
 
+/// The stages of the run under way (decision 0709), by name: each a phase cut from its program (`stage`), held while
+/// the run is, and run as a phase is when the program reads its exports.
+#[derive(Clone, Default)]
+struct Stages(std::sync::Arc<Vec<HeldStage>>);
+
+/// A stage held for a run: its name, its program, its probes and the exports read whole (`Staged`).
+struct HeldStage {
+    name: String,
+    /// None where the run stages nothing, and probes the phases' exports alone.
+    program: Option<std::sync::Arc<Version>>,
+    probes: Vec<(String, String, Vec<usize>)>,
+    whole: BTreeSet<String>,
+}
+
+/// The stage `name` of the run under way, if it is one.
+fn staged(name: &str) -> Option<std::sync::Arc<Version>> {
+    crate::code_rule_dsl::logic::profile::with_bound(|s: &Stages| s.0.iter().find(|h| h.name == name).and_then(|h| h.program.clone()))
+}
+
+/// The probes of the stages of the runs under way (`Staged::probes`), and the exports read whole (`Staged::whole`).
+pub fn stage_probes() -> (Vec<(String, String, Vec<usize>)>, BTreeSet<String>) {
+    crate::code_rule_dsl::logic::profile::with_bound(|s: &Stages| {
+        (s.0.iter().flat_map(|h| h.probes.iter().cloned()).collect(), s.0.iter().flat_map(|h| h.whole.iter().cloned()).collect())
+    })
+}
+
+/// A stage held for a run (`stage`): bound while it lives.
+pub struct Staged {
+    _bound: crate::code_rule_dsl::logic::profile::Bound,
+    /// The stage's name and the relations it exports.
+    pub name: String,
+    pub exports: Vec<String>,
+    /// Each probe (decision 0709 §3): a file-local output of the values a file-local rule reads an export at, by
+    /// name, with the export as the program reads it (`<stage>__<relation>`) and the export's columns its own columns
+    /// after the first (a node of the reader's document) hold.
+    pub probes: Vec<(String, String, Vec<usize>)>,
+    /// The exports a file-local rule reads at no probe (inside an aggregate, at no value it fixes, or with no node to
+    /// place it): every row of each keys the readers' entries.
+    pub whole: BTreeSet<String>,
+}
+
+/// Whether `rel` is a stage's probe (`Staged::probes`): an output kept in a file's memo entry, not written out.
+pub fn is_probe(rel: &str) -> bool {
+    rel.starts_with(PROBE)
+}
+
+/// The prefix of a probe's name (`Staged::probes`).
+pub use crate::code_rule_dsl::logic::plan::phased::PROBE;
+
+/// `v`'s stage (decision 0709), if it has one: the program it leaves, which reads the staged relations as the stage's
+/// exports (`<stage>__<relation>`, placeless inputs), and the stage held for the run. The stage is `v`'s rules for
+/// the staged relations and every relation below them, a phase exporting the staged ones. A phase's or the constants'
+/// own run, and a stage's, stage nothing; nor does `RERAIL_STAGE=off`.
+pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result<Option<(std::sync::Arc<Version>, Staged)>> {
+    use crate::code_rule_dsl::logic::program_image::fields::FieldsMut;
+    use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, Rewrite};
+    use crate::code_rule_dsl::logic::plan::phased::STAGE;
+    if options.get(super::constants::OWN).is_some() || declared(&**v).is_some() || std::env::var("RERAIL_STAGE").is_ok_and(|s| s == "off") {
+        return Ok(None);
+    }
+    // An earlier phase's export the program reads (decision 0709 §3): probed as a stage's is.
+    let phase_read = v.rules().any(|r| r.reads().any(|a| crate::code_rule_dsl::logic::plan::phased::is_probed(v.rel_name(a.rel())) && !v.rules().any(|q| q.head().rel() == a.rel())));
+    let requests: BTreeSet<String> = {
+        let d = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::plan::fields::FieldsData>(v).map_err(Error::Plan)?;
+        let f = crate::code_rule_dsl::logic::plan::fields::Fields::over(v, &d);
+        super::world::answers(&f).into_iter().flat_map(|(q, made)| std::iter::once(q).chain(made)).collect()
+    };
+    // A read that leaves every location column open asks whether any document has such a row: a relation of the
+    // columns it fixes, which a stage may take (§1).
+    let projected = existence_reads(v)?;
+    let v = projected.as_ref().unwrap_or(v);
+    let staging = crate::code_rule_dsl::typing::file_local::FileLocal::staging(v, &requests).map_err(Error::Plan)?;
+    // Why each relation of names is not staged, also when none is: the report's cause for a chain it flags.
+    for (rel, cause) in &staging.refused {
+        crate::code_rule_dsl::logic::profile::decision("staging", || format!("{rel}: {cause}"));
+    }
+    if staging.staged.is_empty() && !phase_read {
+        return Ok(None);
+    }
+    // The staged relations and every derived relation below them.
+    let mut below: BTreeSet<String> = staging.staged.clone();
+    let mut todo: Vec<String> = below.iter().cloned().collect();
+    while let Some(rel) = todo.pop() {
+        for r in v.rules().filter(|r| v.rel_name(r.head().rel()) == rel) {
+            for a in r.reads() {
+                let x = v.rel_name(a.rel());
+                if v.rules().any(|q| v.rel_name(q.head().rel()) == x) && below.insert(x.to_owned()) {
+                    todo.push(x.to_owned());
+                }
+            }
+        }
+    }
+    // Its name: a digest of its rules.
+    let name = {
+        use sha2::Digest as _;
+        let mut h = sha2::Sha256::new();
+        for r in v.rules().filter(|r| below.contains(v.rel_name(r.head().rel()))) {
+            h.update(r.hash().to_le_bytes());
+        }
+        for e in &staging.staged {
+            h.update(e.as_bytes());
+            h.update([0]);
+        }
+        let d: [u8; 32] = h.finalize().into();
+        format!("{STAGE}{}", d[..6].iter().map(|b| format!("{b:02x}")).collect::<String>())
+    };
+    let exports: Vec<String> = staging.staged.iter().cloned().collect();
+    let stage = (!exports.is_empty()).then(|| {
+        let mut b = Builder::on(v);
+        b.retain(|r| below.contains(v.rel_name(r.head().rel())));
+        // A derived relation's qualifiers stay with its rules: a form asked of one the program keeps (`reach`) would
+        // find in the stage a relation no rule reads.
+        let derived = |rel: &str| v.rules().any(|q| v.rel_name(q.head().rel()) == rel);
+        let words: Vec<(String, String)> = v.qualifier_map().map_err(Error::Plan)?.into_iter()
+            .filter(|(rel, _)| below.contains(rel) || !derived(rel))
+            .flat_map(|(rel, ws)| ws.into_iter().map(move |w| (rel.clone(), w)))
+            .collect();
+        b.fields().set_qualifiers(&words);
+        b.fields().retain_outputs(|_| false);
+        for e in &exports {
+            b.fields().add_output(e);
+        }
+        b.fields().add_setting("phase", &name);
+        b.fields().add_setting("export", &exports.join(", "));
+        b.finish().map(|(v, _)| v).map_err(Error::Plan)
+    }).transpose()?;
+    // The program it leaves: no rule makes a staged relation, and each read of one reads the stage's export.
+    struct Renamed<'a> {
+        v: &'a Version,
+        staged: &'a BTreeSet<String>,
+        name: &'a str,
+    }
+    impl Rewrite for Renamed<'_> {
+        fn atom_as(&mut self, a: AtomRef<'_>) -> Option<(String, bool, bool)> {
+            let rel = self.v.rel_name(a.rel());
+            self.staged.contains(rel).then(|| (format!("{}{}{rel}", self.name, crate::code_rule_dsl::logic::plan::phased::SEP), a.neg(), a.gated()))
+        }
+    }
+    let reads_staged = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| r.reads().any(|a| staging.staged.contains(v.rel_name(a.rel())));
+    // A read the probes key: of a staged relation, or of an earlier phase's export the program does not derive.
+    let probed = |rel: &str| staging.staged.contains(rel) || (crate::code_rule_dsl::logic::plan::phased::is_probed(rel) && !v.rules().any(|q| v.rel_name(q.head().rel()) == rel));
+    let (mut probes, mut whole): (Vec<(String, String, Vec<usize>)>, BTreeSet<String>) = Default::default();
+    let left = {
+        let mut b = Builder::on(v);
+        b.retain(|r| !staging.staged.contains(v.rel_name(r.head().rel())) && !reads_staged(r));
+        for e in &exports {
+            let cols = v.columns_of(e).ok_or_else(|| Error::Plan(format!("stage {name}: {e} is not declared")))?;
+            let cols: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+            let read = format!("{name}{}{e}", crate::code_rule_dsl::logic::plan::phased::SEP);
+            b.fields().declare(&read, &cols);
+            b.fields().add_input(&read);
+        }
+        let mut rw = Renamed { v, staged: &staging.staged, name: &name };
+        for r in v.rules().filter(|r| !staging.staged.contains(v.rel_name(r.head().rel())) && reads_staged(*r)) {
+            b.rewrite(v, r, &mut rw).finish().map_err(Error::Plan)?;
+        }
+        // The probes: for each rule's read of an export, the rule's body without it (its positive atoms,
+        // and the comparisons over what they bind), projected on a node of the rule's document and the values the
+        // read is fixed at. A read fixed at none, or inside an aggregate, or by a rule binding no node, keys its
+        // readers' entries by every row.
+        let read_name = |e: &str| if staging.staged.contains(e) { format!("{name}{}{e}", crate::code_rule_dsl::logic::plan::phased::SEP) } else { e.to_owned() };
+        // Every reader, file-local here or not: the prepared program's split decides which are (a probe it places nowhere,
+        // or finds cross-file, keys nothing, and its export is read whole, `memo::StageDigests`; its crossing is the
+        // engine's, not the author's: `file_local::crossings_checked`).
+        // Only a rule the outputs read, through rules, is probed: a probe is an output, and one of a rule no output reads
+        // keys no entry and keeps alive all it reads (python/names' resolution, under a program of two of its
+        // relations, where the outputs read none of it and the demand leaves it out).
+        let demanded: BTreeSet<&str> = {
+            let d = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::plan::fields::FieldsData>(v).map_err(Error::Plan)?;
+            let f = crate::code_rule_dsl::logic::plan::fields::Fields::over(v, &d);
+            let mut set: BTreeSet<&str> = f.outputs().filter_map(|o| v.rel(o).map(|r| v.rel_name(r))).collect();
+            loop {
+                let before = set.len();
+                for r in v.rules().filter(|r| set.contains(v.rel_name(r.head().rel()))).collect::<Vec<_>>() {
+                    set.extend(r.reads().map(|a| v.rel_name(a.rel())));
+                }
+                if set.len() == before {
+                    break set;
+                }
+            }
+        };
+        for r in v.rules().filter(|r| demanded.contains(v.rel_name(r.head().rel())) && r.reads().any(|a| probed(v.rel_name(a.rel())))) {
+            use crate::code_rule_dsl::logic::program_image::{Lit, TermRef, build::t_of};
+            fn vars_of(t: TermRef<'_>, out: &mut Vec<crate::code_rule_dsl::logic::program_image::Slot>) {
+                match t {
+                    TermRef::Var(s) => out.push(s),
+                    TermRef::Call(_, xs) => xs.for_each(|x| vars_of(x, out)),
+                    _ => {}
+                }
+            }
+            // The rule's positive atoms, each other export's read among them: a value bound by one (`reads_at(p, m)`'s
+            // module, at the file's own path) fixes another's read (`defined(m, …)`), whose probe then holds the modules
+            // the file reaches, not every row (0677's `py_names`). Each probe's body leaves out its own read.
+            let kept: Vec<_> = r.body().filter(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && !probed(v.rel_name(a.rel())))).collect();
+            let bound_by = |lits: &mut dyn Iterator<Item = &crate::code_rule_dsl::logic::program_image::LitRef<'_>>| {
+                let mut bound = Vec::new();
+                for l in lits {
+                    if let Lit::Atom(a) = l.view() {
+                        a.args().for_each(|t| vars_of(t, &mut bound));
+                    }
+                }
+                bound
+            };
+            let tests_over = |bound: &[crate::code_rule_dsl::logic::program_image::Slot]| -> Vec<_> {
+                r.body()
+                    .filter(|l| match l.view() {
+                        Lit::Cmp { l: x, r: y, .. } => {
+                            let mut vs = Vec::new();
+                            vars_of(x, &mut vs);
+                            vars_of(y, &mut vs);
+                            vs.iter().all(|s| bound.contains(s))
+                        }
+                        _ => false,
+                    })
+                    .collect()
+            };
+            // A location of the rule's document: a node, a document key, or a derived relation's location column.
+            let node = kept.iter().find_map(|l| match l.view() {
+                Lit::Atom(a) => {
+                    let rel = v.rel_name(a.rel());
+                    let types = v.columns_of(rel).unwrap_or_default();
+                    let at = |c: usize| a.args().nth(c).and_then(|t| t.var()).map(|s| (s, types.get(c).map_or("node".to_owned(), |(_, t)| t.clone())));
+                    // A file-local rule's every read is of its document: its own located columns first, else a node.
+                    staging.split.locations.get(rel).into_iter().flatten().find_map(|&c| at(c))
+                        .or_else(|| a.args().zip(&types).find_map(|(t, (_, ty))| t.var().filter(|_| ty == "node").map(|s| (s, ty.clone()))))
+                        .or_else(|| crate::code_rule_dsl::logic::front::document_column(rel).and_then(at))
+                }
+                _ => None,
+            });
+            for (at, l) in r.body().enumerate() {
+                let (a, in_agg) = match l.view() {
+                    Lit::Atom(a) => (a, false),
+                    Lit::Agg { atom, .. } => (atom, true),
+                    _ => continue,
+                };
+                let e = v.rel_name(a.rel());
+                if !probed(e) {
+                    continue;
+                }
+                // The body without this read: the file-local atoms, and the other exports' reads.
+                let others: Vec<(usize, _)> = r.body().enumerate().filter(|(i, l)| *i != at && matches!(l.view(), Lit::Atom(a) if !a.neg())).collect();
+                let bound = bound_by(&mut others.iter().map(|(_, l)| l));
+                let tests = tests_over(&bound);
+                let other_names: Vec<String> = others.iter().map(|(_, l)| match l.view() {
+                    Lit::Atom(o) => read_name(v.rel_name(o.rel())),
+                    _ => String::new(),
+                }).collect();
+                let fixed: Vec<(usize, TermRef<'_>)> = a
+                    .args()
+                    .enumerate()
+                    .filter(|(_, t)| match t {
+                        TermRef::Var(s) => bound.contains(s),
+                        TermRef::Int(_) | TermRef::Str(_) | TermRef::Branded(_) => true,
+                        _ => false,
+                    })
+                    .collect();
+                let (Some((n, n_type)), false, false) = (node.clone(), in_agg, fixed.is_empty()) else {
+                    whole.insert(read_name(e));
+                    continue;
+                };
+                let cols: Vec<usize> = fixed.iter().map(|(c, _)| *c).collect();
+                let probe = {
+                    use sha2::Digest as _;
+                    let d: [u8; 32] = sha2::Sha256::new().chain_update(e.as_bytes()).finalize().into();
+                    format!("{PROBE}{}_{}", d[..4].iter().map(|b| format!("{b:02x}")).collect::<String>(), cols.iter().map(usize::to_string).collect::<Vec<_>>().join("_"))
+                };
+                if !probes.iter().any(|(p, _, _)| *p == probe) {
+                    let types = v.columns_of(e).unwrap_or_default();
+                    let mut decl: Vec<(String, String)> = vec![("n".to_owned(), n_type.clone())];
+                    decl.extend(cols.iter().map(|&c| (format!("c{c}"), types[c].1.clone())));
+                    let decl: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+                    b.fields().declare(&probe, &decl);
+                    b.fields().add_output(&probe);
+                    probes.push((probe.clone(), read_name(e), cols.clone()));
+                }
+                let mut head = vec![t_of(r, TermRef::Var(n))];
+                head.extend(fixed.iter().map(|(_, t)| t_of(r, *t)));
+                let mut rb = b.rule().head(probe.as_str(), &head);
+                for ((_, l), named) in others.iter().zip(&other_names) {
+                    rb = match l.view() {
+                        // Another export's read, under the name the program reads it by (a staged one, its stage's).
+                        Lit::Atom(o) if probed(v.rel_name(o.rel())) => {
+                            let terms: Vec<_> = o.args().map(|t| t_of(r, t)).collect();
+                            rb.atom_with(named.as_str(), &terms, false, o.gated())
+                        }
+                        _ => rb.lit(v, r, *l),
+                    };
+                }
+                for l in &tests {
+                    rb = rb.lit(v, r, *l);
+                }
+                rb.finish().map_err(Error::Plan)?;
+            }
+        }
+        b.finish().map_err(Error::Plan)?.0
+    };
+    crate::code_rule_dsl::logic::profile::decision("staging", || format!("{name}: {} staged, {} relations below them; {} probes, {} exports read whole", exports.len(), below.len() - exports.len(), probes.len(), whole.len()));
+    let mut held: Vec<HeldStage> = crate::code_rule_dsl::logic::profile::with_bound(|s: &Stages| {
+        s.0.iter().map(|h| HeldStage { name: h.name.clone(), program: h.program.clone(), probes: h.probes.clone(), whole: h.whole.clone() }).collect()
+    });
+    held.push(HeldStage { name: name.clone(), program: stage, probes: probes.clone(), whole: whole.clone() });
+    let bound = crate::code_rule_dsl::logic::profile::bind(Stages(std::sync::Arc::new(held)));
+    Ok(Some((left, Staged { _bound: bound, name, exports, probes, whole })))
+}
+
+/// `v` with each flag over every file that only gates per-file work applied last (decision 0686,
+/// `FileLocal::flags_applied_last`), if one is. Not in a phase's or the constants' own run, nor with `RERAIL_FLAGS_LAST=off`.
+pub fn flags_last(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result<Option<std::sync::Arc<Version>>> {
+    if options.get(super::constants::OWN).is_some() || declared(&**v).is_some() || std::env::var("RERAIL_FLAGS_LAST").is_ok_and(|s| s == "off") {
+        return Ok(None);
+    }
+    let (gated, last) = crate::code_rule_dsl::typing::file_local::FileLocal::flags_applied_last(v).map_err(Error::Plan)?;
+    for (flag, cone) in &last.flags {
+        crate::code_rule_dsl::logic::profile::decision("flags applied last", || format!("{flag}: {} relations derived under each value ({})", cone.len(), cone.iter().take(6).cloned().collect::<Vec<_>>().join(", ")));
+    }
+    for (flag, why) in &last.refused {
+        crate::code_rule_dsl::logic::profile::decision("flags applied last", || format!("{flag}: {why}"));
+    }
+    Ok(gated)
+}
+
+/// The prefix of an existence read's relation (`existence_reads`).
+pub const ANY: &str = "rr_any_";
+
+/// `v` with each read of a located relation that leaves every placing column open (`class_def(_, c)`: is `c` a class
+/// in any file) read from a relation of the columns it fixes, `rr_any_<relation>_<columns>(c) :- class_def(_, c)`
+/// (decision 0709 §1): a relation of names, where none of those columns is a node. Its rows are the read's: a rule's
+/// meaning is unchanged. `None` where no read is such.
+fn existence_reads(v: &std::sync::Arc<Version>) -> Result<Option<std::sync::Arc<Version>>> {
+    use crate::code_rule_dsl::logic::program_image::fields::FieldsMut;
+    use crate::code_rule_dsl::logic::program_image::{Builder, Lit, TermRef, build::{T, t_of}};
+    let whole = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(v).map_err(Error::Plan)?;
+    // The read's relation and the columns it keeps, where it is one.
+    let open = |a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>| -> Option<(String, Vec<usize>)> {
+        let rel = v.rel_name(a.rel());
+        let placing = whole.placing(rel);
+        // A finding's place (`rr_place_…`, also under a combined run's prefix, `p31_rr_place_…`: a path and a line,
+        // decision 0290) is read to place its finding, not asked of every file: through a relation of its path and
+        // line, its reader was no output, and the split refused the move that places it.
+        let place = rel.starts_with("rr_place_") || rel.split_once('_').is_some_and(|(p, r)| p.len() > 1 && p.starts_with('p') && p[1..].bytes().all(|b| b.is_ascii_digit()) && r.starts_with("rr_place_"));
+        if placing.is_empty() || place || !v.rules().any(|q| q.head().rel() == a.rel()) {
+            return None;
+        }
+        let types = v.columns_of(rel)?;
+        let args: Vec<TermRef<'_>> = a.args().collect();
+        if !placing.iter().all(|&c| matches!(args.get(c), Some(TermRef::Wild))) {
+            return None;
+        }
+        let kept: Vec<usize> = (0..args.len()).filter(|&c| !matches!(args[c], TermRef::Wild)).collect();
+        (!kept.is_empty() && kept.iter().all(|&c| types.get(c).is_some_and(|(_, t)| t != "node"))).then(|| (rel.to_owned(), kept))
+    };
+    let name = |rel: &str, cols: &[usize]| format!("{ANY}{rel}_{}", cols.iter().map(usize::to_string).collect::<Vec<_>>().join("_"));
+    // A native's rule is its spec's read of its input, kept as written: the native reads the input itself (a
+    // `match_all` over a context that also holds the node placing each text, decision 0677, reads its texts, column 0,
+    // in each file). Read through a relation of the text alone, the native moved into the cross-file part, where the
+    // context it scans is no table.
+    let natives = {
+        let d = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::plan::fields::FieldsData>(v).map_err(Error::Plan)?;
+        let f = crate::code_rule_dsl::logic::plan::fields::Fields::over(v, &d);
+        v.rules().map(|r| r.head().rel()).filter(|&h| f.native(v.rel_name(h)).is_some()).collect::<BTreeSet<_>>()
+    };
+    let reading: Vec<_> =
+        v.rules().filter(|r| !natives.contains(&r.head().rel()) && r.body().any(|l| matches!(l.view(), Lit::Atom(a) if open(a).is_some()))).collect();
+    if reading.is_empty() {
+        return Ok(None);
+    }
+    let mut b = Builder::on(v);
+    let ids: BTreeSet<_> = reading.iter().map(|r| r.id()).collect();
+    b.retain(|r| !ids.contains(&r.id()));
+    let mut made: BTreeSet<String> = BTreeSet::new();
+    for r in &reading {
+        for l in r.body() {
+            if let Lit::Atom(a) = l.view()
+                && let Some((rel, kept)) = open(a)
+                && made.insert(name(&rel, &kept))
+            {
+                let types = v.columns_of(&rel).unwrap_or_default();
+                let cols: Vec<(String, String)> = kept.iter().map(|&c| (format!("c{c}"), types[c].1.clone())).collect();
+                let cols: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+                let any = name(&rel, &kept);
+                b.fields().declare(&any, &cols);
+                let vars: Vec<String> = (0..types.len()).map(|c| format!("c{c}")).collect();
+                let head: Vec<T<'_>> = kept.iter().map(|&c| T::Var(vars[c].as_str())).collect();
+                let body: Vec<T<'_>> = (0..types.len()).map(|c| if kept.contains(&c) { T::Var(vars[c].as_str()) } else { T::Wild }).collect();
+                b.rule().head(any.as_str(), &head).atom(rel.as_str(), &body).finish().map_err(Error::Plan)?;
+            }
+        }
+    }
+    for r in &reading {
+        let mut rb = b.rule().head_from(v, *r, r.head());
+        for l in r.body() {
+            rb = match l.view() {
+                Lit::Atom(a) if let Some((rel, kept)) = open(a) => {
+                    let args: Vec<TermRef<'_>> = a.args().collect();
+                    let terms: Vec<T<'_>> = kept.iter().map(|&c| t_of(*r, args[c])).collect();
+                    let any = made.get(&name(&rel, &kept)).expect("made above");
+                    rb.atom_with(any.as_str(), &terms, a.neg(), a.gated())
+                }
+                _ => rb.lit(v, *r, l),
+            };
+        }
+        rb.finish().map_err(Error::Plan)?;
+    }
+    Ok(Some(b.finish().map_err(Error::Plan)?.0))
+}
+
+/// One round of an asked phase (decision 0705): the rows of its asks it ended with, and its per-file memo.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Round {
+    /// The rows of the rounds' export it ended with.
+    pub asks: usize,
+    /// The run's files, and its per-file memo: files read from it, and chunks whose rows it could not keep
+    /// (`Report::files`, `Report::memo`).
+    pub files: usize,
+    pub memo: (usize, usize),
+}
+
 /// One phase's run, as the reader's run reports it.
 pub struct PhaseRun {
     pub name: String,
     pub report: Report,
-    /// Each export's rows.
+    /// The rows of each export its reader read (the run made no other).
     pub exports: Vec<(String, usize)>,
+    /// An asked phase's rounds (decision 0705), in order: none for a phase run once.
+    pub rounds: Vec<Round>,
+    /// How the exports its reader read are keyed in the reader's memo, by the reader's relation (decision 0705).
+    pub keys: Vec<(String, crate::code_rule_dsl::logic::plan::phased::Keyed)>,
     /// The phase's frame (`frame`): its key, and its facts where this run made them (the reader's run keeps them, and
     /// names the frame either way, so collection keeps it while it keeps the run).
     pub frame: Option<([u8; 32], Option<super::frame::Frame>)>,
@@ -439,6 +979,8 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
     }
     let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(PathBuf::from);
     for (name, reads) in wanted_in(prog, shape, dir.as_deref())? {
+        // A stage (decision 0709): a phase cut from the program it runs before, held for the run, not a file.
+        let staged = staged(&name);
         // Phase 1 ran before any phase, for the run (`PhaseOne`): its exports are handed on as it left them. A run
         // that did not run it (given its files, or with `RERAIL_SOURCES_PHASE=off`) reads none.
         if name == SOURCES {
@@ -450,10 +992,19 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
         }
         // An earlier phase that reads a phase of its own runs that one first, inside its run (struct, then types).
         let _running = Running::enter(&name)?;
-        let src = source(&name, dir.as_deref())?.expect("a phase program");
-        let (program, entry) = lowered_entry(&src)?;
-        // A later phase sees the libraries only through what earlier ones hand on (0083 §1: P3 loads nothing).
-        if shape.made.contains("load") && loads_documents(&program, dir.as_deref(), &mut BTreeSet::new())? {
+        // A stage's program is held for the run, lowered there; a phase file's is lowered with its store entry.
+        // A stage's program has no source; a phase file's text keys its asked rounds' kept asks (decision 0705).
+        let src = match &staged {
+            Some(_) => String::new(),
+            None => source(&name, dir.as_deref())?.expect("a phase program"),
+        };
+        let (program, entry) = match &staged {
+            Some(p) => (std::sync::Arc::clone(p), None),
+            None => lowered_entry(&src)?,
+        };
+        // A later phase sees the libraries only through what earlier ones hand on (0083 §1: P3 loads nothing). A stage
+        // is the program's own rules: it loads what the program does.
+        if staged.is_none() && shape.made.contains("load") && loads_documents(&program, dir.as_deref(), &mut BTreeSet::new())? {
             return Err(Error::Plan(format!("a program reading phase {name}, whose fixed point loaded documents, loads documents itself: it reads the libraries through {name}'s exports")));
         }
         let declared = declared(&*program).ok_or_else(|| Error::Plan(format!("{name}.rerail: no `.phase {name}`")))?;
@@ -461,11 +1012,11 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
             return Err(Error::Plan(format!("{name}.rerail says `.phase {}`", declared.name)));
         }
         for export in &declared.exports {
-            let cols = program.columns_of(export).ok_or_else(|| Error::Plan(format!("{name}.rerail exports {export}, which it does not declare")))?;
+            let cols = program.columns_of(declared.relation(export)).ok_or_else(|| Error::Plan(format!("{name}.rerail exports {export}, which it does not declare")))?;
             if let Some((c, _)) = cols.iter().find(|(_, t)| t == "node") {
                 return Err(Error::Plan(format!("{name}.rerail exports {export}, whose column {c} is a node: an export names symbols, which an edit does not renumber")));
             }
-            if cols.first().is_none_or(|(_, t)| t != "symbol" && t != "sym") {
+            if staged.is_none() && cols.first().is_none_or(|(_, t)| t != "symbol" && t != "sym") {
                 return Err(Error::Plan(format!("{name}.rerail exports {export}: its first column, the row's granule, must be a symbol")));
             }
         }
@@ -473,15 +1024,39 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
             if !declared.exports.contains(export) {
                 return Err(Error::Plan(format!("{rel}: phase {name} does not export {export} (a phase's other relations are its own)")));
             }
-            let (want, have) = (program.columns_of(export).unwrap_or_default(), prog.columns_of(rel).unwrap_or_default());
+            let (want, have) = (program.columns_of(declared.relation(export)).unwrap_or_default(), prog.columns_of(rel).unwrap_or_default());
             let ty = |t: &str| if t == "sym" { "symbol".to_owned() } else if t == "int" { "number".to_owned() } else { t.to_owned() };
             if want.len() != have.len() || want.iter().zip(&have).any(|((_, a), (_, b))| ty(a) != ty(b)) {
                 return Err(Error::Plan(format!("{rel}: {} columns, where phase {name}'s {export} has {}", have.len(), want.len())));
             }
         }
-        // The phase's run: its own program, its own scratch, its exports written as its outputs. The earlier phases it
-        // reads run first (struct, then types), and are listed with the reader's, in the order they ran, each once.
-        let mut image = Vec::new();
+        // The phase's run: its own program, its own scratch, the exports its reader reads written as its outputs. An
+        // export no rule of the reader reads is no output, so preparation drops it and every rule only it reached
+        // ("relations no output reads"): `bandit-b113` reads none of `py_names`' Django facts, which made 700,000 rows
+        // over 224 files. The earlier phases it reads run first (struct, then types), and are listed with the
+        // reader's, in the order they ran, each once.
+        let wanted: Vec<String> = reads.iter().map(|(_, e)| e.clone()).collect::<BTreeSet<String>>().into_iter().collect();
+        // An asked phase (decision 0705): it runs in rounds, each handed the export `.rounds` names as the last round
+        // left it, under its own name (`py_names__ask_in`), until a round leaves it as it was handed. Its exports are
+        // keyed in its readers' memo as it declares (`.export asked_at by_path 1`). Behind `RERAIL_ASKED_PHASES`.
+        let keys = keyed(&name, &*program, &declared)?;
+        let rounds_of = declared.rounds.clone();
+        if rounds_of.is_some() && !asked_phases_on() {
+            return Err(Error::Plan(format!("{name}.rerail is an asked phase (`.rounds`): set {ASKED_PHASES}=1 to run it (decision 0705)")));
+        }
+        let own_read = rounds_of.as_ref().map(|r| format!("{name}{SEP}{r}"));
+        if let (Some(r), Some(own)) = (&rounds_of, &own_read) {
+            if !declared.exports.contains(r) {
+                return Err(Error::Plan(format!("{name}.rerail: `.rounds {r}`: {r} is not an export")));
+            }
+            if program.columns_of(own).map(|c| c.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>()) != program.columns_of(declared.relation(r)).map(|c| c.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>()) {
+                return Err(Error::Plan(format!("{name}.rerail: `.rounds {r}`: it reads the last round's as {own}, declared as {r} is")));
+            }
+            if !keys.iter().any(|(e, k)| e == r && matches!(k, crate::code_rule_dsl::logic::plan::phased::Keyed::ByPath(_))) {
+                return Err(Error::Plan(format!("{name}.rerail: `.rounds {r}`: {r} is read at a file's own path, so it is declared `{r} by_path`")));
+            }
+        }
+        let made: Vec<String> = wanted.iter().cloned().chain(rounds_of.clone()).collect::<BTreeSet<String>>().into_iter().collect();
         // Its exports are its outputs: the program read, given them (decision 0249), not its text with an `.output`
         // after it read again. A phase naming no language runs in its reader's (as phase 1 does): a library read by
         // programs of several languages (tsx/names.rerail, by TypeScript's and Vue's) resolves over the reader's
@@ -496,27 +1071,68 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
                 settings.push(language);
                 b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
             }
-            for e in &declared.exports {
-                b.fields().add_output(e);
+            for e in &made {
+                b.fields().add_output(declared.relation(e));
             }
             b.finish().map_err(Error::Plan)?.0
         };
-        let (upstream, upstream_runs) = self::facts(&*program, &crate::code_rule_dsl::logic::program_image::manager::analysis::<super::shape::Shape>(&program).unwrap_or_else(|_| std::sync::Arc::new(super::shape::Shape::of(&program))), root, modes, binding, chunk_nodes, typing, options)?;
+        // The phases it reads, as far as its wanted exports reach.
+        let (upstream, upstream_runs) = self::facts(&*handed, &crate::code_rule_dsl::logic::program_image::manager::analysis::<super::shape::Shape>(&handed).unwrap_or_else(|_| std::sync::Arc::new(super::shape::Shape::of(&handed))), root, modes, binding, chunk_nodes, typing, options)?;
         for r in upstream_runs {
             if !runs.iter().any(|x: &PhaseRun| x.name == r.name) {
                 runs.push(r);
             }
         }
-        let _down = HandingDown::enter(&name, upstream);
-        let report = {
-            // The phase's own run, its jobs' spans under it (`profile::span_at`).
-            let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: run"));
-            super::run_read_handing(&handed, None, root, Path::new(""), modes, binding, chunk_nodes, typing, options, Some(&mut image), super::FactPhase::of(entry.as_ref()))?
+        // Its own read of the rounds' export, keyed by a file's own path in its own run, as a reader's is.
+        let own_keys: Vec<(String, crate::code_rule_dsl::logic::plan::phased::Keyed)> =
+            own_read.iter().filter_map(|own| keys.iter().find(|(e, _)| Some(e) == rounds_of.as_ref()).map(|(_, k)| (own.clone(), k.clone()))).collect();
+        let kept_key = rounds_of.as_ref().map(|_| kept_asks_key(&name, &src, root));
+        // Round 1 starts from the asks the last run over this root ended with: an edit that changes no ask takes one
+        // round. A stale ask is made again from nothing (the rounds' export is derived afresh each round), so where
+        // it starts changes no answer.
+        let mut asks: Vec<Vec<Value>> = kept_key.as_ref().and_then(|k| super::observe(|o| o.run_record(k))).and_then(|(_, rows)| decode_rows(&rows)).unwrap_or_default();
+        let mut rounds: Vec<Round> = Vec::new();
+        let (report, rows) = loop {
+            let mut down = upstream.clone();
+            if let Some(own) = &own_read {
+                down.insert(own.clone(), asks.clone());
+            }
+            let _keys = (!own_keys.is_empty()).then(|| crate::code_rule_dsl::logic::plan::phased::bind_keys(own_keys.clone()));
+            let _down = HandingDown::enter(&name, down);
+            let mut image = Vec::new();
+            let report = {
+                // The phase's own run, its jobs' spans under it (`profile::span_at`).
+                let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: run"));
+                super::run_read_handing(&handed, None, root, Path::new(""), modes, binding, chunk_nodes, typing, options, Some(&mut image), super::FactPhase::of(entry.as_ref()))?
+            };
+            let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &*program, &declared, &made, &image)? };
+            let Some(r) = &rounds_of else { break (report, rows) };
+            let got = rows.get(r).cloned().unwrap_or_default();
+            rounds.push(Round { asks: got.len(), files: report.files, memo: report.memo });
+            let (was, now) = (row_set(&asks), row_set(&got));
+            if was == now {
+                break (report, rows);
+            }
+            if rounds.len() >= MAX_ROUNDS {
+                let added: Vec<&String> = now.difference(&was).take(8).collect();
+                return Err(Error::Plan(format!("phase {name}: its asks still grow after {MAX_ROUNDS} rounds (decision 0705): the last round added {} asks of {r}, {added:?}; a rule that makes a new ask from an answer of its own never ends", now.difference(&was).count())));
+            }
+            asks = got;
         };
-        let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &*program, &declared, &image)? };
+        if let Some(k) = &kept_key {
+            super::observe(|o| o.put_run_record(k, &super::reuse::encode_lists::<&str>(&[]), &encode_rows(&asks)));
+        }
         { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&reads, &rows, &mut facts); }
-        let exports = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, |v| v.len()))).collect();
-        runs.push(PhaseRun { name, report, exports, frame: None });
+        let exports: Vec<(String, usize)> = wanted.iter().map(|e| (e.clone(), rows.get(e).map_or(0, |v| v.len()))).collect();
+        crate::code_rule_dsl::logic::profile::decision(&format!("phase {name}: handed on"), || {
+            let all: usize = exports.iter().map(|(_, n)| n).sum();
+            let each = exports.iter().map(|(e, n)| format!("{e} {n}")).collect::<Vec<_>>().join(", ");
+            let rounds = rounds.iter().map(|r| format!("{} asks, {} of {} files built", r.asks, r.files - r.memo.0, r.files)).collect::<Vec<_>>().join("; ");
+            format!("{all} rows: {each}{}", if rounds.is_empty() { String::new() } else { format!("; rounds: {rounds}") })
+        });
+        // How the reader's relations are keyed in its memo: as the phase declares its exports.
+        let reader_keys = reads.iter().filter_map(|(rel, e)| keys.iter().find(|(k, _)| k == e).map(|(_, k)| (rel.clone(), k.clone()))).collect();
+        runs.push(PhaseRun { name, report, exports, frame: None, rounds, keys: reader_keys });
     }
     Ok((facts, runs))
 }
@@ -621,7 +1237,7 @@ pub fn sources(
     if let Some(found) = key.and_then(|k| Batch::get(&k)) {
         crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || "the batch's run of the same files, taken again".into());
         let (one, exports) = found;
-        return Ok((one, PhaseRun { name: NAME.to_owned(), report: Report::default(), exports, frame: None }));
+        return Ok((one, PhaseRun { name: NAME.to_owned(), report: Report::default(), exports, frame: None, rounds: Vec::new(), keys: Vec::new() }));
     }
     // The phase's identity across processes (`frame`): the batch's key's parts and the engine.
     let identity: [u8; 32] = {
@@ -652,7 +1268,7 @@ pub fn sources(
         settings.push(("language".to_owned(), label.to_owned()));
         b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
         for e in &declared.exports {
-            b.fields().add_output(e);
+            b.fields().add_output(declared.relation(e));
         }
         b.finish().map_err(Error::Plan)?.0
     };
@@ -681,10 +1297,10 @@ pub fn sources(
             Some(changed) if changed.is_empty() => {
                 crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || format!("kept: every one of its run's {} reads as it was, its exports taken, not run (t33 K4)", kept.reads.len()));
                 // Its exports, read off the image its run wrote, as that run read them.
-                let rows = read_exports(NAME, &*program, &declared, &kept.image)?;
+                let rows = read_exports(NAME, &*program, &declared, &declared.exports, &kept.image)?;
                 let (one, exports) = one_of_rows(root, label, files, &declared, rows);
                 let report = Report { consulted: kept.reads, plans: kept.plans, ..Report::default() };
-                return Ok((one, PhaseRun { name: NAME.to_owned(), report, exports, frame: Some((identity, None)) }));
+                return Ok((one, PhaseRun { name: NAME.to_owned(), report, exports, frame: Some((identity, None)), rounds: Vec::new(), keys: Vec::new() }));
             }
             Some(changed) => crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || format!("its frame not taken: {} documents it read changed", changed.len())),
             None => crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || "its frame not taken: a read of its run changed".to_owned()),
@@ -713,7 +1329,7 @@ pub fn sources(
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: run"));
         super::run_read_handing(&handed, Some(texts), root, Path::new(""), modes, binding, chunk_nodes, typing, &options, Some(&mut image), super::FactPhase::of(entry.as_ref()))?
     };
-    let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &*program, &declared, &image)? };
+    let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &*program, &declared, &declared.exports, &image)? };
     // Its frame, for a later process: where the run consulted what it read (a run that read nothing it can name is
     // not comparable, `changes_of`) and a store keeps it.
     let frame = (store.is_some() && !report.consulted.is_empty())
@@ -724,7 +1340,7 @@ pub fn sources(
     if let Some(k) = key {
         Batch::put(k, (one.clone(), exports.clone()));
     }
-    Ok((one, PhaseRun { name: NAME.to_owned(), report, exports, frame }))
+    Ok((one, PhaseRun { name: NAME.to_owned(), report, exports, frame, rounds: Vec::new(), keys: Vec::new() }))
 }
 
 /// Phase 1's answer from its exports' rows: the files that became documents, in the order given, and the library
@@ -773,13 +1389,16 @@ fn loads_documents(program: &Version, dir: Option<&Path>, seen: &mut BTreeSet<St
 
 /// A phase's exports, as its run wrote them in `out` (which goes): each row's values as the export's columns are
 /// declared, read from the outputs' image (`output::Outputs`), nothing parsed.
-fn read_exports(name: &str, program: &(impl ProgramFields + ?Sized), declared: &Declared, bytes: &[u8]) -> Result<BTreeMap<String, Vec<Vec<Value>>>> {
+/// The rows of `exports`, the outputs of phase `name`'s run.
+fn read_exports(name: &str, program: &(impl ProgramFields + ?Sized), declared: &Declared, exports: &[String], bytes: &[u8]) -> Result<BTreeMap<String, Vec<Vec<Value>>>> {
     use crate::code_rule_dsl::logic::plan::output;
     let outputs = output::Outputs::of(bytes).map_err(|e| Error::Plan(format!("phase {name}: {e}")))?;
     let mut rows: BTreeMap<String, Vec<Vec<Value>>> = BTreeMap::new();
-    for export in &declared.exports {
-        let rel = outputs.get(export).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not in its outputs ({:?})", outputs.names())))?;
-        let declared_types = program.columns_of(export).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not declared")))?;
+    for export in exports {
+        // Its relation's rows (`asked_exports as exports`), under the export's name.
+        let relation = declared.relation(export);
+        let rel = outputs.get(relation).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: {relation} is not in its outputs ({:?})", outputs.names())))?;
+        let declared_types = program.columns_of(relation).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: {relation} is not declared")))?;
         let types: Vec<&str> = declared_types.iter().map(|(_, t)| t.as_str()).collect();
         if rel.width() != types.len() {
             return Err(Error::Plan(format!("phase {name}: {export}: {} columns, not {}", rel.width(), types.len())));

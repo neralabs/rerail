@@ -92,17 +92,18 @@ log014_tok_follows_2(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4
 
 // truthy_value: b is "true" when n's value is truthy (Python's bool(v)), "false" when it is falsy
 .decl log014_truthy_value(n: node, b: symbol)
-log014_truthy_value(n, "false") :- value(n, x), value_type(x, "NoneType").
-log014_truthy_value(n, b) :- value(n, x), value_type(x, "boolean"), b = x.
+log014_truthy_value(n, "false") :- value(n, x), value_type_of(n, "NoneType").
+log014_truthy_value(n, b) :- value(n, x), value_type_of(n, "boolean"), b = x.
 log014_truthy_value(n, "false") :- value(n, x),
-    (value_type(x, "int") ; value_type(x, "float")),
+    (value_type_of(n, "int") ; value_type_of(n, "float")),
     (x = "0" ; x = "0.0" ; x = "-0.0").
 log014_truthy_value(n, "true") :- value(n, x),
-    (value_type(x, "int") ; value_type(x, "float")), x != "0", x != "0.0", x != "-0.0".
+    (value_type_of(n, "int") ; value_type_of(n, "float")),
+    x != "0", x != "0.0", x != "-0.0".
 log014_truthy_value(n, "false") :- value(n, x),
-    (value_type(x, "str") ; value_type(x, "bytes")), x = "".
+    (value_type_of(n, "str") ; value_type_of(n, "bytes")), x = "".
 log014_truthy_value(n, "true") :- value(n, x),
-    (value_type(x, "str") ; value_type(x, "bytes")), x != "".
+    (value_type_of(n, "str") ; value_type_of(n, "bytes")), x != "".
 
 // set_2: symbols from the JSON `resolves.import`
 .decl log014_set_2(v: symbol)

@@ -426,7 +426,7 @@ fn r4_a_changed_read_s_delta_leads_its_line() {
 
 /// R4 with readers: a stratum derived again past θ hands its readers its delta against its kept rows, and a reader
 /// maintained over that delta has versions of its own for the strata above it. On the O125 replay, `cls_q` derived
-/// again past θ, and so did `type_of`. Its reader `type_first`, a `min` over it (a `min` over a node here: one over a symbol is refused), was maintained and stopped:
+/// again past θ, and so did `type_of`. Its reader `type_first`, a `min` over it (a `min` over a number here: one over a symbol is refused, and one over a node compares positions, refused in the cross-file part since decision 0695), was maintained and stopped:
 /// "type_of has no version".
 const AGAIN_THEN_MAINTAINED: &str = r#"
 .decl def(n: node, q: symbol)
@@ -442,8 +442,8 @@ a(n, q) :- def(n, q), edge(_, b), q = @dot(b, "f0").
 b(q, m) :- a(_, q), edge(m, _).
 .decl c(m: symbol)
 c(m) :- b(_, m).
-.decl first(n: node) cross_file
-first(n) :- a(_, _), n = min n2 : { a(n2, _) }.
+.decl first(l: number) cross_file
+first(l) :- a(_, _), l = min x : { a(_, q), x = @strlen(q) }.
 .output c
 .output first
 "#;
@@ -628,4 +628,65 @@ named(x, d) :- kind(n, "call"), field(n, "function", f), text(f, x), def(m, x), 
     s.write("b.py", "f()\n");
     s.run();
     views(&s, "session/session.sqlite", "a session's edit");
+}
+
+/// Decision 0094 §8, the incremental layout-invariance gate: a move costs about the moved definitions. t22's move,
+/// in small: a definition many files call goes to a module of its own (`_moved_0.py`), its old module re-exporting it
+/// where it was, so no importer changes. Answers are a fresh run's (R10, `fresh_tier`). Its cost is the joins' work
+/// (`shape::join_work`, counted, not timed), set against an edit of the same definition in place, a statement added to
+/// its body, which touches one file where the move touches two and changes no import: the move may cost a few times
+/// the edit, and at most half a cold run (it touches 2 files of 27). Strata derived again are not the measure: one that is cheap to derive is derived (0090 §4's priced
+/// clause), and the reach indexes over the import graph are made again whenever it changes (decision 0119 §3), their
+/// readers maintained from their delta.
+///
+/// It fails today (2026-11-24), at its first bar only: joins' work cold 60,595, the edit in place 6,821, the move
+/// 21,737 (3.2 times the edit, 0.36 of a cold run). The cross part's maintain mode does 4.4 rows of work for each
+/// delta row it reads in the move and 5.5 in the edit: the move reads 4,062 delta rows against the edit's 720 (the
+/// moved definition's 35 nodes against the edit's 6, the 12 callers' references to its new id, the import's 15 pairs
+/// and what each derives). 24,658 before a mode line's `docof` was read as a range of the
+/// atom after it (`setfix::Ranged::doc`) and the source languages' suffixes were looked up, not each tested. It was 93,291 before the maintain mode priced its lines under
+/// the floor (`Model::under_floor_line`) and sized a stratum's relations as kept (`kept_card`). The move derives
+/// nothing again but the two reach indexes, and maintains 145 strata; its heaviest lines are led by `rr_cx_reach`'s
+/// 15 changed rows and read the documents those pairs join (`pv`, `tsub`, `bv`: 500 to 560 rows each), which the
+/// edit in place, changing no import, does not pay.
+#[test]
+#[ignore = "0094 §8: the move costs 3.2 times the edit in place (21,737 against 6,821 rows of joins' work), past 3 (edit-cost, 0364 R4 at scale)"]
+fn a_moved_definition_costs_about_itself() {
+    let program = std::fs::read_to_string(crate::source_tree::native().join("src/code_rule_dsl/typing/programs/calls_cx.rerail")).unwrap();
+    let helpers = "class Reader:\n    def read(self, s):\n        return s.strip()\n\n\ndef parse(s):\n    n = int(s)\n    return n\n\n\ndef keep(x):\n    return x\n";
+    let mut files: Vec<(String, String)> = vec![("pkg/__init__.py".into(), String::new()), ("pkg/helpers.py".into(), helpers.into())];
+    // Callers of `parse`, and modules of their own that call one another, so the move is a small part of the corpus.
+    for i in 0..12 {
+        files.push((format!("pkg/use{i}.py"), format!("from pkg.helpers import parse, Reader\n\n\ndef run{i}(s):\n    r = Reader()\n    return parse(r.read(s))\n")));
+    }
+    for i in 0..12 {
+        files.push((format!("pkg/own{i}.py"), format!("from pkg.own{} import step{}\n\n\nclass Box{i}:\n    def get(self):\n        return step{}(1)\n\n\ndef step{i}(x):\n    return Box{i}().get() if x else x\n", (i + 1) % 12, (i + 1) % 12, (i + 1) % 12)));
+    }
+    let refs: Vec<(&str, &str)> = files.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
+    let mut s = Session::new("move", &program, &["call_target", "call_open", "type_of"], &refs);
+    // Each run's start, for a trace of its lines (`RERAIL_MODE_TRACE`) to be read run by run.
+    let start = |what: &str| eprintln!("0094 §8 run: {what}");
+    start("cold");
+    let cold = s.run();
+    s.write("pkg/helpers.py", &helpers.replace("    n = int(s)\n", "    n = int(s)\n    n = n + 0\n"));
+    start("edit");
+    let edit = s.edit("a statement added to parse");
+    start("edit back");
+    s.write("pkg/helpers.py", helpers);
+    s.edit("the statement taken out again");
+    let moved_def = "def parse(s):\n    n = int(s)\n    return n\n";
+    s.write("pkg/_moved_0.py", moved_def);
+    s.write("pkg/helpers.py", &helpers.replace(moved_def, "from pkg._moved_0 import parse\n"));
+    start("move");
+    let moved = s.edit("parse moved to a module of its own");
+    start("end");
+    let again = |r: &Ran| r.report.cross_again.iter().map(|(w, n)| (*w, *n)).collect::<BTreeMap<&str, usize>>();
+    let report = format!(
+        "joins' work: cold {}, edit in place {}, move {}; edit: again {:?}, maintained {:?}; move: again {:?}, maintained {:?}",
+        cold.shape.join_work, edit.shape.join_work, moved.shape.join_work, again(&edit), edit.report.cross_maintained, again(&moved), moved.report.cross_maintained
+    );
+    eprintln!("0094 §8: {report}");
+    assert!(edit.shape.join_work > 0, "the edit in place ran joins: {report}");
+    assert!(moved.shape.join_work <= 3 * edit.shape.join_work, "0094 §8: the move costs past 3 times the edit in place: {report}");
+    assert!(2 * moved.shape.join_work <= cold.shape.join_work, "0094 §8: the move costs past half a cold run: {report}");
 }

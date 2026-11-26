@@ -11669,3 +11669,23 @@ Go-C-and-C-support's commits (t51's preprocessor kernel, 0662–0663, 0669's shi
 Checked with Relax (no device tests on this Mac): every touched crate checks clean, except `rerail-parser-tests` without `test-hooks`: its `json.rs` imports `ladder`, a test-hooks module. That is the hub's own (both files are unchanged here).
 
 Tests: kotlin-parser 89/89; Kotlin's kt200 corpus 1,252 the same, 0 refused, 0 differ (the parser as Rust the same, tier 1's records differing in 0). python-parser 27/27; its corpus 1,642 the same, 2 refused, 0 differ, 0 whose rounds differ from the walk. bitlex 26/26, compiler 46/46, cpu-stream 74/74, rr-parser 58/58, parser-tests' json and rr 18/18, json-aot 2/2, c-directives' answers 3/3.
+
+### Q565. Roll-up 137 (Native-and-GPU-strata 2fbe3f4297 onto Pulling-it-all-together): what the merge chose
+
+Native-and-GPU-strata's 73 commits: t58 A (sorted dedups, a recursive head's rounds sorted), 32-bit join columns, 0680 and 0708 §5 (a covered view's twin), and its merges of investigate-bend-vs-datalog (0708, 0709, 0686, 0692, 0693, 0695: views of values per file, staged names) and sync-integration-hub-tape (0677: no node id crosses into the cross-file part; 0702, 0705).
+
+- **The tape's auxiliary index is the hub's 0703 form.** The writer lays it from the nodes it recorded (`f16::AuxMaker`, `formats::AuxFor`, `finish_with`), and no tape is read back for it. sync-integration-hub-tape's `LayAux`/`finish_laid` is the same job's older form (0353 row 17, from the tape read back), so it is not taken. tape_format, lang's `tape.rs`/`formats.rs`, rr_syntax's `lean.rs` and lang_json's `simdjson.rs` are the hub's. Its test of the index laid in the room (`a_writer_with_rooms_lays_its_auxiliary_index_in_the_room`) is ported to `finish_with`: a writer that ends without a region leaves the index to its reader (`TapeImage::written_16`), as the hub's design has it.
+- **0677's FAST003 comes from the translator.** sync rewrote the pack's FAST003 by hand to pass the path parameter's text. The hub's rule is that `packs/python-main` is the translator's output (`json_rules_pack_is_current`). A new pass, `engine_dialect::host_reads_by_text`, writes 0677's form: a guest capture that a helper takes is passed as its text (`text(K, KT)` beside its binding), the helpers take a symbol, and their `node(_, K, …)` and `cross_file` go. Test: `a_guest_capture_a_helper_takes_is_passed_as_its_text`. The pack declares no crossing; `node_crossings.txt` stays empty.
+- `names.rerail` is Native's (Python's names moved to `scopes.rerail` and the py_names phase), with the hub's `cls_read` (class reads keyed by class and name) applied in `scopes.rerail`.
+- `file_local.rs`: Native's `meant` (0709's probes and the engine's demand sets, a superset of the hub's).
+- `rows.rs`: both readers (`run`, `each`). tests_lang: both new tests. rr tests: the hub's helper canonicalisation (`rr_h_`/`rr_m_`). json_rules tests: the hub's `RERAIL_BLESS`. README: both rows.
+
+Checked with Relax (no device tests): every crate the merge touches checks clean, in three groups. boot was not checked, but its split tests ran.
+
+Tests:
+- tape-format 54/54, blocks 115/115, lang 80/80, rr-syntax 12/12, typing 13/13, json-rules 1/1.
+- tests-lang: the two new tests pass. tests-logic `file_local` 1/1.
+- tests-rr: `json_rules_pack_is_current`; `dropping_unreached_clauses_prunes_to_the_same_program` on every pack (7/7); `rule_syntax_files_pass_check_rr`; `rule_files_pass_their_own_tests`; program_image 49/49.
+- boot: `the_python_main_pack_is_split_with_its_crossings_declared` shards 4, 6 and 8 (fast003, ruf016 and the rest).
+
+tests-rr's full suite was not run: at 8 threads it passes the 12 GB cap, and at 4 it takes more than 580 s.
