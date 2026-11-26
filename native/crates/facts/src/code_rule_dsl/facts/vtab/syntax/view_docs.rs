@@ -34,7 +34,8 @@ pub struct Filled {
 impl ViewEntry {
     /// `p`'s entry, in `block` (its projection's, which its numbering is in), and its codes' names (as `dialect` names
     /// them) interned in `names` where the batch reads `op`: written whole on the first ask, the same entry after.
-    pub fn new(block: &Arc<Block>, p: &Projected, dialect: &Dialect, names: Option<&dyn crate::content_store::AtomTable>) -> Self {
+    /// `dialect` `None`: a document with no grammar (a text read as text only), which has no nodes, so no name.
+    pub fn new(block: &Arc<Block>, p: &Projected, dialect: Option<&Dialect>, names: Option<&dyn crate::content_store::AtomTable>) -> Self {
         assert!(Arc::ptr_eq(p.block(), block), "an entry is in its projection's block");
         let (desc, filled) = p.entry();
         filled.get_or_init(|| Self::fill(block, p, dialect, desc, names));
@@ -43,12 +44,12 @@ impl ViewEntry {
 
     /// Writes the rest of `p`'s entry `desc` (its key, file and tag are there from the start), and returns what it
     /// made itself.
-    fn fill(block: &Arc<Block>, p: &Projected, dialect: &Dialect, desc: &Desc<ViewDoc>, names: Option<&dyn crate::content_store::AtomTable>) -> Filled {
+    fn fill(block: &Arc<Block>, p: &Projected, dialect: Option<&Dialect>, desc: &Desc<ViewDoc>, names: Option<&dyn crate::content_store::AtomTable>) -> Filled {
         let f = p.f();
         let n = f.code_count();
         // Each code's name atom: an interned text, the `op` view's `s` of an anonymous child of that code (decision
         // 0353 row 7), which the host and the kernels read here alone.
-        let names = names.map(|atoms| {
+        let names = names.zip(dialect).map(|(atoms, dialect)| {
             let named: Vec<&str> = (0..n).map(|c| dialect.atom_name(f.code_entry(c as u32).0)).collect();
             let interned = atoms.intern_all(&named).expect("the store's atoms intern the kinds' names");
             Cells::build(block, n.max(1), |out| {

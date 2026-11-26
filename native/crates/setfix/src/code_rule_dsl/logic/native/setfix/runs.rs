@@ -1444,6 +1444,17 @@ impl Index {
             return;
         }
         let _t = presorted::Timed::start(self.printed > 0);
+        // Every row in a known sorted range (a device fixpoint's rounds, each its own run): each range a run as it
+        // lies, none merged here (a probe reads each; `settle` and `tier` merge them where probes pay for it).
+        let mut ranges: Vec<(u32, u32)> = known.iter().map(|&(a, b)| (a.max(lo), b.min(hi))).filter(|(a, b)| a < b).collect();
+        ranges.sort_unstable();
+        let covered = ranges.first().is_some_and(|r| r.0 == lo) && ranges.last().is_some_and(|r| r.1 == hi) && ranges.windows(2).all(|w| w[0].1 == w[1].0);
+        if covered && ranges.len() > 1 {
+            for (a, b) in ranges {
+                self.runs.push((Arc::new(self.run_in_place(data, k, a, b)), wave));
+            }
+            return;
+        }
         let run = self.run_over(data, k, lo, hi, known);
         self.runs.push((Arc::new(run), wave));
     }

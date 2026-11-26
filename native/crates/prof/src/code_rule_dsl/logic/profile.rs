@@ -3288,12 +3288,16 @@ pub struct Report {
     pub stages: u32,
     pub submissions: u32,
     pub dispatches: u32,
-    /// Of the launches, programs launched again (decision 0648): a stack's next, where a program's walk went on past
-    /// its stack, and an arena's, where a size script parked and the arena's pages were mapped for it.
+    /// Of the launches, programs launched again (decisions 0603 point 5, 0674): a budget's, where a launch's chain
+    /// ran its dispatches with phases left, and an arena's, where a size script parked and the arena's pages were
+    /// mapped for it; the programs' items taken over all their launches; and a launch's budget of dispatches, the
+    /// least of theirs.
     pub relaunches: u32,
     pub remaps: u32,
     /// Of the remaps, a gate's rooms' (a recursive component's rows mapped as its rounds reach them).
     pub room_remaps: u32,
+    pub taken: u64,
+    pub launch_items: u64,
     /// Of those, the ones that grew a lattice head's key map.
     pub maps_grown: u32,
     /// Its programs: one a stratum (a wave's first stratum's report, its wave's).

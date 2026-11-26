@@ -746,17 +746,22 @@ impl Layered {
         let mut dv = self.base.device_view();
         let dv_ref = dv.as_mut()?;
         let v = &mut dv_ref.in_place;
+        // A placed base (`places::Places`: the view's rows, then its spans') is no view of one directory: its rows
+        // and the values' are in no order one directory holds. Its `PlacedDir` is not the values' directory, which a
+        // read of its kind would take for one.
+        if v.kind & super::places::VIEW_PLACED != 0 {
+            return None;
+        }
         let dir = self.values.dir(&batch)?;
         let views = &dir.views;
         let loc = (super::device_chunk::VIEW_LOC_LINE..=super::device_chunk::VIEW_LOC_DOCOF).contains(&dv_ref.view);
-        if (dv_ref.view == super::device_chunk::VIEW_LINE && !views.lines) || (loc && !views.locs) {
+        let (lines, locs) = views.holds();
+        if (dv_ref.view == super::device_chunk::VIEW_LINE && !lines) || (loc && !locs) {
             return None;
         }
-        v.dir = views.dir?;
-        v.buffers = views.buffers.clone();
-        v.caches = views.caches.clone();
-        v.keep = Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>;
-        v.failed = v.cache_failed();
+        // The base's kind, the directory of every document as the join programs here read it (the host's, where
+        // they run on the host).
+        *v = crate::code_rule_dsl::facts::vtab::ViewInPlace { kind: v.kind, ..views.read_of(dv_ref.view, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>)? };
         dv_ref.rows = self.len();
         dv
     }
@@ -818,6 +823,27 @@ impl Source for Layered {
     }
     fn text_column(&self, column: usize) -> bool {
         self.base.text_column(column)
+    }
+    /// Its base's, joined with all a tape value admitted later can hold in a column of its kind: any document's key
+    /// (`1..2^31`: a value is a guest, its key past `GUEST_KEYS`, but a code guest's document and nodes are its
+    /// file's, decision 0431 §4, a file this chunk need not hold). Not known where its base's column has no kind
+    /// (`ColKind`): a value admitted later may hold anything there.
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        use super::made::ColKind;
+        let base = self.base.as_any();
+        let kind = base
+            .and_then(|b| b.downcast_ref::<super::Viewed>())
+            .and_then(|v| v.col_kind(column))
+            .or_else(|| base.and_then(|b| b.downcast_ref::<super::made::MadeRows>()).and_then(|m| m.col_kind(column)))
+            .or_else(|| base.and_then(|b| b.downcast_ref::<super::within::Within>()).and_then(|w| w.col_kind(column)))?;
+        let [lo, hi] = self.base.col_bounds(column)?;
+        let keys = [1, (1i64 << 31) - 1];
+        let [alo, ahi] = match kind {
+            ColKind::Key => keys,
+            ColKind::Node => [keys[0] << 32, (keys[1] << 32) | i64::from(u32::MAX)],
+            ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
+        };
+        Some([lo.min(alo), hi.max(ahi)])
     }
     fn len(&self) -> usize {
         // Made on lookup, the base's rows grow as it is read; a scan's are every one of them, then the values' made

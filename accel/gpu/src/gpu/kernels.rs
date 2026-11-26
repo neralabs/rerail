@@ -242,6 +242,9 @@ struct Made {
     fixed: std::collections::HashSet<[u8; 32]>,
     /// The kernels on a device other than Metal (`elsewhere`), by pipeline key and constant.
     elsewhere: HashMap<([u8; 32], Option<u32>), Arc<Function>>,
+    /// Sources (by library and constant) a thread of their own is building kernels of on a device other than Metal
+    /// (`elsewhere_behind`): one at a time, as the device layer builds one program a source.
+    building: std::collections::HashSet<([u8; 32], Option<u32>)>,
 }
 
 /// The machine's compiled kernels (decision 0442: the device's pipelines are the machine's).
@@ -318,6 +321,15 @@ pub fn function(source: &str, name: &str, constant: Option<u32>) -> Arc<Function
         return on_metal(source, name, constant);
     }
     elsewhere(source, &[name], constant).map(|mut f| f.remove(0)).unwrap_or_else(|e| panic!("the kernel {name}: {e}"))
+}
+
+/// The kernel `name` of `source` (UKL) on the host as a device (`shared::host_layer`): its Rust where it has it, else
+/// the vector path's interpreter's (`rerail_gpu::kernels::host_program_with`). Made once a process, by the program's
+/// cache.
+pub fn host_function(source: &str, name: &str) -> Result<Arc<Function>, String> {
+    let library: [u8; 32] = Sha256::digest(source.as_bytes()).into();
+    let program = rerail_gpu::kernels::host_program_with(&format!("{}.ukl", &hex(&library)[..16]), source, &[])?;
+    Ok(Arc::new(program.library().get_function(&rerail_gpu::shared::host().device, name)?))
 }
 
 /// [`function`] through Metal's tier: this process's pipeline, else an archive's, else the compile.
@@ -445,7 +457,7 @@ pub fn ready_function(source: &str, name: &str, constant: Option<u32>) -> Option
 }
 
 /// [`ready_function`] that never waits: in `Wait`, the compile runs behind the caller as in `Background` (decision
-/// 0012's callers, which swap to the kernel at a later batch). Elsewhere than Metal, compiled on the caller's thread.
+/// 0012's callers, which swap to the kernel at a later batch). Elsewhere than Metal too (`elsewhere_behind`).
 pub fn ready_behind_function(source: &str, name: &str, constant: Option<u32>) -> Option<Arc<Function>> {
     #[cfg(target_os = "macos")]
     if super::shared::get().is_some() {
@@ -455,7 +467,40 @@ pub fn ready_behind_function(source: &str, name: &str, constant: Option<u32>) ->
         };
         return ready_in(mode, source, name, constant);
     }
-    Some(function(source, name, constant))
+    elsewhere_behind(source, name, constant)
+}
+
+/// [`ready_behind_function`] on a device other than Metal: the kernel this process holds, else `None` at once, its
+/// build (the device layer's compile, or its load from the layer's store) on a thread of its own, so that no launch
+/// waits on it (decision 0012). A kernel that does not build is fatal there, as [`function`]'s is.
+fn elsewhere_behind(source: &str, name: &str, constant: Option<u32>) -> Option<Arc<Function>> {
+    let key = Key::of(source, name, constant);
+    let held = made();
+    let first = {
+        let mut m = held.0.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(f) = m.elsewhere.get(&(key.pipeline, constant)) {
+            let f = Arc::clone(f);
+            drop(m);
+            count(|c| c.from_memory += 1);
+            return Some(f);
+        }
+        m.building.insert((key.library, constant))
+    };
+    rerail_accel::forms::interpreted("gpu-kernel", &hex(&key.pipeline), name, 1);
+    if first {
+        let (source, name) = (source.to_owned(), name.to_owned());
+        let spawned = rerail_accel::exec::service("rerail-gpu-compile", None, move || {
+            rerail_accel::upkeep::lower_this_thread();
+            let started = std::time::Instant::now();
+            let _ = function(&source, &name, constant);
+            rerail_accel::forms::compiled("gpu-kernel", &hex(&key.pipeline), &name, started.elapsed().as_secs_f64(), true);
+            made().0.lock().unwrap_or_else(|p| p.into_inner()).building.remove(&(key.library, constant));
+        });
+        if spawned.is_err() {
+            made().0.lock().unwrap_or_else(|p| p.into_inner()).building.remove(&(key.library, constant));
+        }
+    }
+    None
 }
 
 #[cfg(target_os = "macos")]

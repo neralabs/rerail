@@ -2885,6 +2885,13 @@ impl Rows {
         }
     }
 
+    /// Rows `lo..hi`' values of column `c`, in id order: each part found once, each chunk of it read where it lies
+    /// (`ColRead::each`), not each row's (`get`).
+    #[inline]
+    pub fn each_value(&self, lo: u32, hi: u32, c: usize, mut f: impl FnMut(i64)) {
+        self.each_run(lo, hi, |p, from, to, _| p.cols[c].each(from, to, &mut f));
+    }
+
     /// Values a row.
     pub fn width(&self) -> usize {
         self.k

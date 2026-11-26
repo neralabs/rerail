@@ -286,7 +286,8 @@ static __device__ __forceinline__ uint32_t ukl_simdgroup_broadcast_first(uint32_
 #define PASS_INNER_ARG_LITERAL(Type, Name) Name
 #define PASS_INNER_ARG_RWLOCAL(Type, Name) reinterpret_cast<Type *>(__ukl_shared + Name)
 #define PASS_INNER_ARG_TUNEABLE(Type, Name) Name
-#define PASS_INNER_ARG_GID0(Type, Name) (blockIdx.x * blockDim.x + threadIdx.x)
+// A group's place along x is its virtual group's (`__ukl_bx`, the re-dispatcher's below: decision 0674).
+#define PASS_INNER_ARG_GID0(Type, Name) (__ukl_bx * blockDim.x + threadIdx.x)
 #define PASS_INNER_ARG_GID1(Type, Name) (blockIdx.y * blockDim.y + threadIdx.y)
 #define PASS_INNER_ARG_GID2(Type, Name) (blockIdx.z * blockDim.z + threadIdx.z)
 // The grid's size: the launch's, or under an indirect launch the groups its counts give (`__ukl_groups`).
@@ -302,7 +303,7 @@ static __device__ __forceinline__ uint32_t ukl_simdgroup_broadcast_first(uint32_
 
 #define PASS_INNER_ARG_ARGS(Type, Name) Name
 #define PASS_INNER_ARG_CONSTBUFFER(Type, Name) Name
-#define PASS_INNER_ARG_TGID0(Type, Name) (blockIdx.x)
+#define PASS_INNER_ARG_TGID0(Type, Name) (__ukl_bx)
 #define PASS_INNER_ARG_TGID1(Type, Name) (blockIdx.y)
 #define PASS_INNER_ARG_TGID2(Type, Name) (blockIdx.z)
 #define PASS_INNER_ARG_LANE(Type, Name) __UKL_CUDA_LANE
@@ -342,8 +343,10 @@ static __device__ __forceinline__ uint32_t ukl_simdgroup_broadcast_first(uint32_
 #define GEN_OUTER_PARAMETER_SHARED(Type, Name)
 #define GEN_SHARED_DECL_SHARED(Type, Name, Bounds) __shared__ Type Name[Bounds];
 // An indirect launch's group counts (0 for a direct launch), a parameter after the rows' that no row names
-// (decision 0440 step B). CUDA has no indirect launch: the host launches the caller's bound of groups, and the
-// groups past the counts return before the kernel runs, so a kernel sees the grid Metal's indirect dispatch gives.
+// (decision 0440 step B). CUDA has no indirect launch: the re-dispatcher (decision 0674). The host launches a fixed
+// number of groups, and each runs the virtual groups `blockIdx.x`, `blockIdx.x + gridDim.x`, … below the counts'
+// (none for a count of 0, all of a count past the groups launched), its barrier between two, so a kernel sees the
+// grid Metal's indirect dispatch gives.
 #define GEN_OUTER_PARAMETER_GROUPS(Type, Name) const Type * __restrict__ Name
 
 #define GEN_OUTER_PARAMETER2(Access, Type, Name, Bounds) CALL2_A(GEN_OUTER_PARAMETER_, Access, Type, Name)
@@ -392,10 +395,14 @@ template<> struct ukl_type_code<long long> { static constexpr unsigned long long
     __device__ __forceinline__ void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) ); \
     extern "C" __global__ void Name ( __UKL_FOREACH_QUAD(GEN_OUTER_PARAMETER2, __VA_ARGS__, GROUPS, uint32_t, __ukl_groups, ) ) \
     { \
-        if (__ukl_groups && (blockIdx.x >= __ukl_groups[0] || blockIdx.y >= __ukl_groups[1] || blockIdx.z >= __ukl_groups[2])) \
+        if (__ukl_groups && (blockIdx.y >= __ukl_groups[1] || blockIdx.z >= __ukl_groups[2])) \
             return; \
         extern __shared__ __align__(16) unsigned char __ukl_shared[]; \
         __UKL_FOREACH_QUAD_NOSEP(GEN_SHARED_DECL2, __VA_ARGS__) \
+        const unsigned __ukl_nx = __ukl_groups ? __ukl_groups[0] : gridDim.x; \
+        for (unsigned __ukl_bx = blockIdx.x; __ukl_bx < __ukl_nx; __ukl_bx += gridDim.x) { \
+            if (__ukl_bx != blockIdx.x) __syncthreads(); \
             Name ## _inner ( __UKL_FOREACH_QUAD(PASS_INNER_ARG2, __VA_ARGS__)); \
+        } \
     } \
     __device__ __forceinline__ void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) )

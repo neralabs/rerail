@@ -860,7 +860,7 @@ impl CoreRows {
     /// The relations, the strings' indexes made atoms by `atom`.
     pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
         fn make<const N: usize>(columns: &[&str], rows: &[[i64; N]], sym: [bool; N], atom: &dyn Fn(i64) -> i64) -> Relation {
-            let mut r = Relation::new(columns);
+            let mut r = Relation::new(columns).with_atoms(&sym);
             let mut row = [0i64; N];
             for v in rows {
                 for i in 0..N {

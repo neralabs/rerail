@@ -433,8 +433,8 @@ impl Block {
     /// The wrap `device_buffer` keeps as it is now, and its length (none made yet, or a slab's block): what a program
     /// bound before the block grew, for a remap to find again (decision 0603).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    pub fn kept_device_buffer(&self) -> Option<(rerail_device::device::Buffer, usize)> {
-        if self.backing.as_ref().is_some_and(|b| b.buffer().is_some()) {
+    pub fn kept_device_buffer(&self, device: &rerail_device::device::Device) -> Option<(rerail_device::device::Buffer, usize)> {
+        if device.is_cpu() || self.backing.as_ref().is_some_and(|b| b.buffer().is_some()) {
             return None;
         }
         self.gpu.lock().unwrap().clone()
@@ -445,6 +445,15 @@ impl Block {
     /// only when the block has outgrown it).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn device_buffer(&self, device: &rerail_device::device::Device) -> Result<rerail_device::device::Buffer, String> {
+        // The host's (a CPU device, `rerail_accel::gpu::shared::host_layer`): its whole reservation by its address,
+        // which it never outgrows, its used pages committed
+        // (decision 0353: the block's own bytes, read in place).
+        if device.is_cpu() && !self.backing.as_ref().and_then(|b| b.buffer()).is_some_and(|b| matches!(b, rerail_device::device::Buffer::Cpu(_))) {
+            let used = (self.used().div_ceil(1 << 20) << 20).min(self.reserved);
+            crate::mem::commit(self.base, used).map_err(|e| format!("committing a block's {used} bytes for the host: {e}"))?;
+            // SAFETY: the reservation outlives the wrap: a kernel's bind is held by the block's ledger (decision 0487).
+            return unsafe { rerail_device::device::wrap_host_memory(device, self.base, self.reserved) };
+        }
         if let Some(b) = self.backing.as_ref().and_then(|b| b.buffer()) {
             return Ok(b);
         }

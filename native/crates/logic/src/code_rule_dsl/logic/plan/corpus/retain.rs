@@ -1218,6 +1218,12 @@ pub(in crate::code_rule_dsl) struct NewInputs<'a> {
 /// rows of the documents that are the last run's, read in place in the run's own source, then the other documents'
 /// old rows, read where they lie in their granules' kept entries (decision 0401 F3). Decoded whole, every input a stratum reached was copied into columns and hashed
 /// row by row against its documents' digests (O125 step 05: 105 inputs, 1.6 s).
+/// Two sources' bounds of a column joined: what a source whose rows are some of each holds there (`[MAX, MIN]`, no
+/// rows, joins as nothing).
+fn joined(a: [i64; 2], b: [i64; 2]) -> Option<[i64; 2]> {
+    Some([a[0].min(b[0]), a[1].max(b[1])])
+}
+
 pub(in crate::code_rule_dsl) struct OldInput {
     names: Vec<String>,
     new: Arc<dyn Source>,
@@ -1248,6 +1254,10 @@ impl OldInput {
 impl Source for OldInput {
     fn columns(&self) -> Vec<String> {
         self.names.clone()
+    }
+    /// Its rows are some of `new`'s and some of `changed`'s: within both's bounds.
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        joined(self.new.col_bounds(column)?, self.changed.col_bounds(column)?)
     }
     fn len(&self) -> usize {
         self.kept + self.pick.len()
@@ -1287,6 +1297,9 @@ impl Source for OldInput {
 impl Source for Renamed {
     fn columns(&self) -> Vec<String> {
         self.1.clone()
+    }
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.0.col_bounds(column)
     }
     /// Its source's test: renamed, its columns are the same columns in the same order.
     fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
@@ -1545,6 +1558,10 @@ impl Source for Layered {
     fn columns(&self) -> Vec<String> {
         self.names.clone()
     }
+    /// Its rows are `kept`'s live ones and `added`'s: within both's bounds.
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        joined(self.kept.col_bounds(column)?, self.added.col_bounds(column)?)
+    }
     fn len(&self) -> usize {
         self.live_kept() + self.added.len()
     }
@@ -1614,7 +1631,7 @@ pub mod tests {
     }
 
     /// A kept input with its delta reads as its rows now: the changed owners' kept rows gone, their new rows after
-    /// the rest, and a lookup finds a row through the kept rows' index at its place now.
+    /// the rest, and a lookup finds a row through the kept rows' index at its place now. Its column bounds hold them.
     #[test]
     fn a_layered_input_reads_its_kept_rows_less_the_changed_owners_with_their_new_rows() {
         let node = |d: i64, i: i64| d << 32 | i;
@@ -1633,6 +1650,10 @@ pub mod tests {
         assert_eq!(l.owner_rows(2), vec![node(2, 0), 22]);
         assert_eq!(l.owner_rows(1), vec![node(1, 0), 10, node(1, 1), 11]);
         assert!(l.owner_rows(3).is_empty());
+        // Its bounds are its kept rows' and its new rows' joined, asked of neither's rows: they hold every row read.
+        assert_eq!(l.col_bounds(0), Some([node(1, 0), node(5, 0)]));
+        assert_eq!(l.col_bounds(1), Some([10, 50]));
+        assert_eq!(Renamed(Arc::new(l), vec!["a".into(), "b".into()]).col_bounds(1), Some([10, 50]));
     }
 
     /// Only the documents whose rows differ are compared, and their rows new and gone are exactly the diff: with
@@ -2603,6 +2624,9 @@ impl Drop for Traced {
 impl Source for Traced {
     fn columns(&self) -> Vec<String> {
         self.inner.columns()
+    }
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.inner.col_bounds(column)
     }
     fn len(&self) -> usize {
         self.inner.len()

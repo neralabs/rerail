@@ -868,6 +868,11 @@ impl Within {
         })
     }
 
+    /// What column `column` holds: both the batch's nodes, in every mode.
+    pub(super) fn col_kind(&self, column: usize) -> Option<super::made::ColKind> {
+        (column < 2).then_some(super::made::ColKind::Node)
+    }
+
     fn names(&self) -> [&'static str; 2] {
         match self.mode {
             Mode::Tree | Mode::Axis(_) => ["n", "a"],
@@ -1036,6 +1041,9 @@ impl Source for Within {
     fn columns(&self) -> Vec<String> {
         self.names().iter().map(|&c| c.to_owned()).collect()
     }
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.col_kind(column).map(|k| self.batch.bounds_of(k))
+    }
     /// Every pair once: a scan makes each node's containers, ids `0..len`. A solvable axis's are its solve's pairs,
     /// counted exactly from the tree (`shape`) until something reads them: a guest round digests each input by its
     /// length, and the solve made for that count alone held 780 MB of a PostHog run's 2.5 GB peak.
@@ -1083,13 +1091,13 @@ impl Source for Within {
     /// `node` view, which a stage's walk reads a node's kind, ancestors and subtree through, and the set's atoms.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
-        use super::device_chunk::{VIEW_NODE, read_kind, views_in_place};
+        use super::device_chunk::{VIEW_NODE, views_in_place};
         if self.mode != Mode::Axis(Axis::Has) {
             return None;
         }
         let v = views_in_place(&self.batch)?;
-        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), caches: v.caches.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
-        view.failed = view.cache_failed();
+        // The node view as the join programs here read it: at the host's addresses where they run on the host.
+        let view = v.read_of(VIEW_NODE, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)?;
         Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes: self.batch.nodes().total(), view, kinds: Arc::clone(&self.kinds) })
     }
     /// A kind-set axis or containment read whole (the device's keyed read, decision 0277): the batch's solve

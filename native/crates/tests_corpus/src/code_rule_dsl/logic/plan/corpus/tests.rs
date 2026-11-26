@@ -2800,6 +2800,31 @@ fn a_files_programs_are_kept_with_its_tape() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A place relation read where a chunk's tape values are admitted, on the CPU (the host's join programs): `line` is
+/// the `Loc` view's rows then `Extra`'s spans' (a match's, `places::Places`), and a string annotation's tree is a value
+/// whose rows the chunk layers over it (`values::Layered`). The layered view kept the placed view's kind with the
+/// values' directory, which the program read as a `PlacedDir`: its directory pointer was the directory's offset in its
+/// block, and the run faulted (the 57 data-layer rules over 50 files, every cold run). The lines of the annotation's
+/// tree's nodes, the host file's names and the match are each read.
+#[test]
+fn a_place_relation_with_spans_and_tape_values_is_read_on_the_cpu() {
+    let program = "#include \"core.rerail\"\n.language python\n\
+        .decl ann_name(x: symbol, l: number)\nann_name(x, l) :- kind(s, \"string\"), parsed(s, \"annotation\", r), within(n, r), text(n, x), line(n, l).\n\
+        .decl host_name(x: symbol, l: number)\nhost_name(x, l) :- kind(n, \"identifier\"), text(n, x), line(n, l).\n\
+        .decl todo(l: number)\ntodo(l) :- source(_, sp), match_all(\"TODO\", sp, m), line(m, l).\n\
+        .decl lines(k: symbol, x: symbol, l: number)\nlines(\"ann\", x, l) :- ann_name(x, l).\nlines(\"host\", x, l) :- host_name(x, l).\nlines(\"todo\", \"TODO\", l) :- todo(l).\n.output lines\n";
+    let file = "x: \"List[Node]\" = 1\n# TODO\ny = 2\n";
+    let (_, rows) = batch_run_on("places-values-cpu", &[("a.py", file)], program, "lines", crate::code_rule_dsl::typing::file_local::Binding::Cpu);
+    let mut rows = rows;
+    rows.sort();
+    let (ann, rest): (Vec<_>, Vec<_>) = rows.into_iter().partition(|r| r[0] == "ann");
+    // The annotation's tree's nodes, each on the host's line 1 (`List`, `Node`, and the trees holding them).
+    assert!(["List", "Node"].iter().all(|x| ann.iter().any(|r| r[1] == *x && r[2] == "1")), "the annotation's names: {ann:?}");
+    assert!(ann.iter().all(|r| r[2] == "1"), "every annotation node on line 1: {ann:?}");
+    let want: Vec<Vec<String>> = [["host", "x", "1"], ["host", "y", "3"], ["todo", "TODO", "2"]].map(|r| r.map(str::to_owned).to_vec()).to_vec();
+    assert_eq!(rest, want);
+}
+
 /// Decision 0431 R5's run: `program` (`.rerail`, with its includes) over `files` in a store of its own, giving the report
 /// and the rows of `output`, as shown.
 fn batch_run(name: &str, files: &[(&str, &str)], program: &str, output: &str) -> (super::Report, Vec<Vec<String>>) {

@@ -108,7 +108,7 @@ impl Docs {
                 // which no reader reads before a 16z row (written after this) names it.
                 unsafe {
                     ViewDir::homes_mut(dir).add(n).write(ViewHome { host, gpu });
-                    (&raw mut (*dir).cache).write(n as u64 + 1);
+                    (&raw mut (*dir).cache).write(n as u32 + 1);
                 }
                 Some(cache)
             })
@@ -210,7 +210,13 @@ impl Docs {
                 (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32);
             }
         }
-        let entry = ViewEntry::new(b, p, &self.context.dialects[p.tag()], self.names());
+        // A text read as text only has no dialect, and no nodes (`ViewEntry::new` reads no kind of it); a document
+        // with nodes and none is refused.
+        let dialect = self.context.dialects.get(p.tag());
+        if dialect.is_none() && nodes {
+            return Err("views.refused.no_dialect");
+        }
+        let entry = ViewEntry::new(b, p, dialect, self.names());
         let dir = self.dir().cast_mut();
         // SAFETY: row `i` and its homes `3i` to `3i + 2`, in the batch's block: the reads layer's fields, which only
         // this write writes (once, in the row's `OnceLock`), and the search layer's readers do not read.

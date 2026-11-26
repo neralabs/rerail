@@ -1653,6 +1653,10 @@ impl CudaComputeQueue {
         self.ops.borrow_mut().push(Op::WaitValue { at: event.word.device_address(), value });
     }
 
+    /// A barrier between two launches' memory (decision 0674's chain): none needed, the queue runs its launches in
+    /// order (one stream), each done before the next.
+    pub fn memory_barrier(&self) {}
+
     /// The work so far, issued onto the root's stream between two events, as an event to await. A launch the driver
     /// refuses fails the event (`await_`); the operations after it are not issued.
     pub fn flush(&mut self) -> CudaComputeEvent {

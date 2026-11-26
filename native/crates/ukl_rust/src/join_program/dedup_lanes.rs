@@ -7,7 +7,6 @@
 
 use super::*;
 use crate::lanes as ln;
-use rerail_simd::prelude::*;
 use rerail_simd::{LaneCount, SupportedLaneCount};
 
 type I<const N: usize> = Simd<i64, N>;

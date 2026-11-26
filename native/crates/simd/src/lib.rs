@@ -229,6 +229,26 @@ where
         assert!(slice.len() >= N, "slice length must be at least the number of elements");
         Simd(by_lane(|i| slice[i]))
     }
+    /// `std::simd`'s `rotate_elements_right`: lane `i` is lane `(i - OFFSET) mod N`.
+    #[inline(always)]
+    pub fn rotate_elements_right<const OFFSET: usize>(self) -> Self {
+        Simd(by_lane(|i| self.0[(i + N - OFFSET % N) % N]))
+    }
+    /// `std::simd`'s `rotate_elements_left`: lane `i` is lane `(i + OFFSET) mod N`.
+    #[inline(always)]
+    pub fn rotate_elements_left<const OFFSET: usize>(self) -> Self {
+        Simd(by_lane(|i| self.0[(i + OFFSET) % N]))
+    }
+    /// `std::simd`'s `shift_elements_right`: lane `i` is lane `i - OFFSET`, `padding` below `OFFSET`.
+    #[inline(always)]
+    pub fn shift_elements_right<const OFFSET: usize>(self, padding: T) -> Self {
+        Simd(by_lane(|i| if i < OFFSET { padding } else { self.0[i - OFFSET] }))
+    }
+    /// `std::simd`'s `shift_elements_left`: lane `i` is lane `i + OFFSET`, `padding` past the end.
+    #[inline(always)]
+    pub fn shift_elements_left<const OFFSET: usize>(self, padding: T) -> Self {
+        Simd(by_lane(|i| if i + OFFSET < N { self.0[i + OFFSET] } else { padding }))
+    }
     /// Writes the lanes to the first `N` elements of `slice`; panics if it is shorter.
     #[inline(always)]
     pub fn copy_to_slice(self, slice: &mut [T]) {
@@ -325,7 +345,7 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     /// `std::simd`'s `swizzle_dyn`: lane `i` is lane `idxs[i]` of `self`, or 0 where `idxs[i]` is past the lanes. On
-    /// AArch64, for 16 to 64 lanes, a table lookup (`tbl`) of each 16 indices.
+    /// AArch64, for 16 to 64 lanes, a table lookup (`tbl`) of each 16 indices; on x86-64 with SSSE3, `pshufb`s.
     #[inline(always)]
     pub fn swizzle_dyn(self, idxs: Self) -> Self {
         #[cfg(target_arch = "aarch64")]
@@ -347,6 +367,13 @@ where
                     vst1q_u8(o.as_mut_ptr().add(16 * j), r);
                 }
             }
+            return Simd(o);
+        }
+        #[cfg(all(target_arch = "x86_64", target_feature = "ssse3"))]
+        if N.is_multiple_of(16) && (16..=64).contains(&N) {
+            let mut o = [0u8; N];
+            // SAFETY: `N` bytes each.
+            unsafe { chunks::x86::swizzle_dyn::<N>(self.0.as_ptr(), idxs.0.as_ptr(), o.as_mut_ptr()) };
             return Simd(o);
         }
         Simd(by_lane(|i| if (idxs.0[i] as usize) < N { self.0[idxs.0[i] as usize] } else { 0 }))
@@ -535,6 +562,15 @@ where
     #[inline(always)]
     pub fn to_bitmask(self) -> u64 {
         let mut b = 0u64;
+        if T::L > 1 && N.is_multiple_of(T::L) {
+            let mut i = 0;
+            while i < N {
+                // SAFETY: a chunk of `self`.
+                b |= unsafe { T::bitmask(self.0.as_ptr().add(i)) } << i;
+                i += T::L;
+            }
+            return b;
+        }
         for i in 0..N {
             b |= (self.0[i].__test() as u64) << i;
         }
@@ -1071,7 +1107,7 @@ pub mod prelude {
     pub use super::ptr::{SimdConstPtr, SimdMutPtr};
     pub use super::{Mask, Simd};
     pub use super::{
-        i8x16, i16x8, i32x4, i32x8, i32x16, i64x2, i64x4, i64x8, mask8x16, mask32x4, mask32x8, mask32x16, mask64x2, mask64x4, mask64x8, u8x16, u8x32, u16x8, u32x4, u32x8, u32x16,
+        i8x16, i16x8, i32x4, i32x8, i32x16, i64x2, i64x4, i64x8, mask8x16, mask32x4, mask32x8, mask32x16, mask64x2, mask64x4, mask64x8, u8x16, u8x32, u8x64, u16x8, u32x4, u32x8, u32x16,
         u64x2, u64x4, u64x8, usizex4, usizex8,
     };
 }
@@ -1082,7 +1118,7 @@ macro_rules! aliases {
     )*};
 }
 aliases! {
-    u8x16 = u8, 16; u8x32 = u8, 32; u16x8 = u16, 8; u32x4 = u32, 4; u32x8 = u32, 8; u32x16 = u32, 16;
+    u8x16 = u8, 16; u8x32 = u8, 32; u8x64 = u8, 64; u16x8 = u16, 8; u32x4 = u32, 4; u32x8 = u32, 8; u32x16 = u32, 16;
     u64x2 = u64, 2; u64x4 = u64, 4; u64x8 = u64, 8; usizex4 = usize, 4; usizex8 = usize, 8;
     i8x16 = i8, 16; i16x8 = i16, 8; i32x4 = i32, 4; i32x8 = i32, 8; i32x16 = i32, 16;
     i64x2 = i64, 2; i64x4 = i64, 4; i64x8 = i64, 8;

@@ -1420,6 +1420,10 @@ impl ClComputeQueue {
     }
 
     /// The work so far, handed to the root, which enqueues it behind its backlog; its event.
+    /// A barrier between two launches' memory (decision 0674's chain): none needed, the queue runs its launches in
+    /// order, each done before the next.
+    pub fn memory_barrier(&self) {}
+
     pub fn flush(&mut self) -> ClComputeEvent {
         let done = Arc::new(Done::default());
         done.state.lock().unwrap().keep = std::mem::take(&mut *self.keep.borrow_mut());

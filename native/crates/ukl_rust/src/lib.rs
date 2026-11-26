@@ -8,19 +8,19 @@
 pub mod label_parents_w8;
 #[cfg(target_arch = "aarch64")]
 pub mod label_leaves_w8;
-#[cfg(target_arch = "aarch64")]
 pub mod join_program;
 pub mod lanes;
 mod sources;
+#[cfg(test)]
+mod sort_merge_spike;
 
 pub use sources::*;
 
-/// The digests of `join_stages.uglykl` as the join program (`JOIN_PROGRAM`, decisions 0603, 0648) for views of format
-/// 0 (several), 16 and 16z, on a device other than Metal (`metal_join::program_pipes`): `join_grid`, `join_phase` and
-/// `join_chain`, written by hand (`join_program`), which read the views' format as the compiled reads do, so one Rust
-/// for each. Not `sources.rs`, which rerail-ukl-vec's tests write: device-metal's test (`join_rust`) holds these to
+/// The digests of `join_stages.uglykl` as the join program (`JOIN_PROGRAM`, decisions 0603, 0674) for views of format
+/// 0 (several), 16 and 16z, on a device other than Metal (`metal_join::program_pipe`): `join_run`, written by hand
+/// (`join_program`), which reads the views' format as the compiled reads do, so one Rust for each. Not `sources.rs`, which rerail-ukl-vec's tests write: device-metal's test (`join_rust`) holds these to
 /// the source.
-pub const JOIN_PROGRAM: [u64; 3] = [0xce053c62f7c3a851, 0x2d5db8126a410fa7, 0xd7e5b740a3938242];
+pub const JOIN_PROGRAM: [u64; 3] = [0x897de11648ef4073, 0x40f087d51ca2c525, 0x348973d1f180b42e];
 
 /// A group's launch, as a kernel's Rust reads it: its group's position, its threads' (each dimension's), and the
 /// groups'; and the reads written once in CLIF as the CPU compiled them, each by its place in `rerail_clif::reads::READS`
@@ -64,7 +64,7 @@ impl Reads {
 
 /// The kernels here that call the compiled reads (and so need `Launch::reads`): the join program's (none of the label
 /// passes').
-const CALLING_READS: [&str; 2] = ["join_phase", "join_chain"];
+const CALLING_READS: [&str; 1] = ["join_run"];
 
 /// Whether any of `host`'s kernels calls the compiled reads (and so needs `Launch::reads`).
 pub fn calls_reads(host: &[(&'static str, Kernel)]) -> bool {
@@ -112,11 +112,8 @@ pub fn kernels(text: &str, defines: &[(&str, &str)]) -> Vec<(&'static str, Kerne
     if d == LABEL_PASSES_16 {
         out.push(("label_parents", label_parents_w8::label_parents_w8));
     }
-    #[cfg(target_arch = "aarch64")]
     if JOIN_PROGRAM.contains(&d) {
-        out.push(("join_grid", join_program::join_grid));
-        out.push(("join_phase", join_program::join_phase));
-        out.push(("join_chain", join_program::join_chain));
+        out.push(("join_run", join_program::join_run));
     }
     out
 }

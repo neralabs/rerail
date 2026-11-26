@@ -1,6 +1,5 @@
-//! The join program's kernels (`join_stages.uglykl` with `JOIN_PROGRAM`, decisions 0603, 0648): `join_grid`, a
-//! phase's grid; `join_phase`, a phase's dispatch, a group an item; `join_chain`, a run of small phases in one group
-//! (decision 0647). Written by hand in Rust: the oracle the Rust that rerail-ukl-vec writes from the same source is held to (decision 0567), in results and in
+//! `join_run`, the join program (`join_stages.uglykl` with `JOIN_PROGRAM`, decisions 0603, 0674): a chain of its
+//! dispatches, a phase's groups a dispatch, a group an item. Written by hand in Rust: the oracle the Rust that rerail-ukl-vec writes from the same source is held to (decision 0567), in results and in
 //! the shape of its code.
 //!
 //! Its shape is the source's, read as a CPU runs it. A group is `JOIN_TG` (256) threads, and an item's work is a
@@ -17,10 +16,15 @@
 #![allow(unsafe_op_in_unsafe_fn, clippy::too_many_arguments, clippy::missing_safety_doc)]
 
 use crate::Launch;
-use core::arch::aarch64::*;
-use core::sync::atomic::{AtomicU32, Ordering::SeqCst};
+use rerail_simd::prelude::*;
+use rerail_simd::{LaneCount, SimdElement, SupportedLaneCount};
+use core::sync::atomic::{AtomicU32, Ordering, Ordering::SeqCst};
 
 const NONE: u32 = u32::MAX;
+/// A finisher's phases run itself at most, a dispatch (`JOIN_INLINE`, decision 0674), of at most
+/// `JOIN_INLINE_GROUPS` groups each.
+const JOIN_INLINE: u32 = 256;
+const JOIN_INLINE_GROUPS: u32 = 4;
 /// A group's threads (`JOIN_TG`).
 const TG: u32 = 256;
 /// A text row's SIMD group (`SGW`): its rows and their counts are laid out by it.
@@ -42,6 +46,7 @@ const PK_RADIX_SCATTER: u32 = 4;
 const PK_IX_PLACE: u32 = 5;
 const PK_IX_OFFS: u32 = 30;
 const PK_IX_MARK: u32 = 31;
+const PK_DEDUP_KEY: u32 = 32;
 const PK_DEDUP_CLEAR: u32 = 6;
 const PK_DEDUP_CLAIM: u32 = 7;
 const PK_MAP: u32 = 8;
@@ -151,8 +156,9 @@ struct ViewDir {
     nhomes: u32,
     rows: u64,
     homes: u64,
-    cache: u64,
-    by_key: u64,
+    cache: u32,
+    nbatch: u32,
+    keys: u64,
     ends: [u32; 27],
     counted: u32,
     codes: u32,
@@ -202,7 +208,8 @@ struct Dedup {
     /// Its rows less those a relation holds, through its map (`dedup_held`), its rows out placed in it (decision 0567).
     seen: u32,
     hmask: u32,
-    pad: u32,
+    /// Its rows made distinct in the head's first order (t58 increment A, `dedup_key_one`): no places.
+    sorted: u32,
     r_at: u64,
     r_rows_at: u64,
     h_at: u64,
@@ -346,17 +353,17 @@ struct SortPass {
     hist: *const u32,
     out_keys: *mut u32,
     out_values: *mut u32,
-    // Its words (`SortWords`): n, shift, tiles, pad.
+    // Its words (`SortWords`): n, shift, tiles, wide (its keys 64 bits: a sorted dedup's).
     w: [u32; 4],
     pad2: u64,
 }
 #[repr(C)]
 #[derive(Clone, core::marker::Copy)]
-struct PhaseP {
-    q: u32,
-    list: u32,
-    at: u32,
-    slot: u32,
+struct ProgP {
+    phases: u32,
+    dispatches: u32,
+    end: u32,
+    pad: u32,
 }
 #[repr(C)]
 struct SizeOp {
@@ -442,7 +449,8 @@ impl Reads {
     unsafe fn view(self, i: usize, d: *const ViewDir, e: *const ViewRow, r: u32, col: u32) -> u64 {
         let f: unsafe extern "C" fn(u64, u64, u64, u64, u64, u32, u32) -> u64 = core::mem::transmute(*self.0.add(i));
         let (b, t, l, c) = view_parts(d, e);
-        f((b as u64).wrapping_add((*e).entry), t as u64, (*e).view.as_ptr() as u64, l as u64, c as u64, r, col)
+        let mut own = [0u32; 34];
+        f((b as u64).wrapping_add((*e).entry), t as u64, host_view(d, e, t, &mut own) as u64, l as u64, c as u64, r, col)
     }
 
     /// A view's walk read `i` (`child_first`, `child_next`, `number`, `up`, `end`, `line_terminated`) of node `x`.
@@ -450,7 +458,8 @@ impl Reads {
     unsafe fn walk(self, i: usize, d: *const ViewDir, e: *const ViewRow, x: u32) -> u32 {
         let f: unsafe extern "C" fn(u64, u64, u64, u64, u64, u32) -> u32 = core::mem::transmute(*self.0.add(i));
         let (b, t, l, c) = view_parts(d, e);
-        f((b as u64).wrapping_add((*e).entry), t as u64, (*e).view.as_ptr() as u64, l as u64, c as u64, x)
+        let mut own = [0u32; 34];
+        f((b as u64).wrapping_add((*e).entry), t as u64, host_view(d, e, t, &mut own) as u64, l as u64, c as u64, x)
     }
 
     /// `walk`'s of a read whose answer is a span (`text_span`, `line_span`): its two ends, the first in the high half.
@@ -458,7 +467,8 @@ impl Reads {
     unsafe fn walk64(self, i: usize, d: *const ViewDir, e: *const ViewRow, x: u32) -> u64 {
         let f: unsafe extern "C" fn(u64, u64, u64, u64, u64, u32) -> u64 = core::mem::transmute(*self.0.add(i));
         let (b, t, l, c) = view_parts(d, e);
-        f((b as u64).wrapping_add((*e).entry), t as u64, (*e).view.as_ptr() as u64, l as u64, c as u64, x)
+        let mut own = [0u32; 34];
+        f((b as u64).wrapping_add((*e).entry), t as u64, host_view(d, e, t, &mut own) as u64, l as u64, c as u64, x)
     }
 
     /// The compiled `col_sealed` (`READS`' place 24), which the N-lane reads read a sealed chunk through.
@@ -494,10 +504,34 @@ unsafe fn view_block(d: *const ViewDir) -> *const u8 {
 unsafe fn view_rows(d: *const ViewDir) -> *const ViewRow {
     view_block(d).add((*d).rows as usize) as *const ViewRow
 }
+/// Home `h`'s bytes at `at`, by its host address: this executor is the host's, whatever device the directory is
+/// also made for (`ViewHome::gpu` is that device's).
 unsafe fn view_home(d: *const ViewDir, h: u32, at: u64) -> *const u8 {
     let homes = view_block(d).add((*d).homes as usize) as *const ViewHome;
-    (*homes.add(h as usize)).gpu.wrapping_add(at as usize)
+    ((*homes.add(h as usize)).host as *const u8).wrapping_add(at as usize)
 }
+/// Where `TapeView`'s format and its 16z cache's offset (`side`) are among its words, and 16z's format
+/// (`rerail_clif::view`'s, a test holds them to it).
+const VIEW_FORMAT: usize = 3;
+const VIEW_SIDE: usize = 11;
+const F16Z_FORMAT: u32 = 1016;
+
+/// Document `e`'s view as this executor reads it, its tape at `t`: the row's own, but for a 16z view of a directory
+/// made for a device too, whose cache offset (`side`) the row holds as that device's addresses. Then `own`, the row's
+/// view with the host's: the cache's host address (its home, `ViewDir::cache`) less the tape's, as the host's
+/// `Reader` sets it (`rerail_clif::view::Reader::new`).
+unsafe fn host_view(d: *const ViewDir, e: *const ViewRow, t: *const u8, own: &mut [u32; 34]) -> *const u32 {
+    let view = &(*e).view;
+    if (*d).cache == 0 || view[VIEW_FORMAT] != F16Z_FORMAT {
+        return view.as_ptr();
+    }
+    *own = *view;
+    let homes = view_block(d).add((*d).homes as usize) as *const ViewHome;
+    let rel = ((*homes.add((*d).cache as usize - 1)).host as i64).wrapping_sub(t as i64);
+    (own[VIEW_SIDE], own[VIEW_SIDE + 1]) = (rel as u32, (rel >> 32) as u32);
+    own.as_ptr()
+}
+
 /// The directory's block, document `e`'s tape and its lines, and the codes' directory (decision 0697).
 unsafe fn view_parts(d: *const ViewDir, e: *const ViewRow) -> (*const u8, *const u8, *const u8, *const u8) {
     (view_block(d), view_home(d, (*e).homes[0], (*e).tape), view_home(d, (*e).homes[1], (*e).lines), view_home(d, (*d).codes, 0))
@@ -919,22 +953,34 @@ fn lane_of(v: i64, w: u32) -> i64 {
     }
 }
 
-// ---- Texts: their bytes 16 a step (NEON). ----
+// ---- Texts: their bytes 16 a step. ----
 
-/// A compare's lanes as bits, four a byte: NEON's movemask (`shrn` narrows each byte's 16 bits to a nibble).
+/// `N` lanes at `p`.
 #[inline(always)]
-unsafe fn nibbles(m: uint8x16_t) -> u64 {
-    vget_lane_u64::<0>(vreinterpret_u64_u8(vshrn_n_u16::<4>(vreinterpretq_u16_u8(m))))
+unsafe fn ld<T: SimdElement, const N: usize>(p: *const T) -> Simd<T, N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    Simd::from_slice(core::slice::from_raw_parts(p, N))
+}
+
+/// `v`'s `N` lanes to `p`.
+#[inline(always)]
+unsafe fn st<T: SimdElement, const N: usize>(p: *mut T, v: Simd<T, N>)
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    v.copy_to_slice(core::slice::from_raw_parts_mut(p, N))
 }
 
 /// The first of `n` bytes at `p` that is `c`.
 unsafe fn find_byte(p: *const u8, n: u32, c: u8) -> Option<u32> {
-    let needle = vdupq_n_u8(c);
+    let needle = u8x16::splat(c);
     let mut i = 0;
     while i + 16 <= n {
-        let m = nibbles(vceqq_u8(vld1q_u8(p.add(i as usize)), needle));
+        let m = ld::<u8, 16>(p.add(i as usize)).simd_eq(needle).to_bitmask();
         if m != 0 {
-            return Some(i + m.trailing_zeros() / 4);
+            return Some(i + m.trailing_zeros());
         }
         i += 16;
     }
@@ -943,12 +989,12 @@ unsafe fn find_byte(p: *const u8, n: u32, c: u8) -> Option<u32> {
 
 /// The last of `n` bytes at `p` that is `c`.
 unsafe fn rfind_byte(p: *const u8, n: u32, c: u8) -> Option<u32> {
-    let needle = vdupq_n_u8(c);
+    let needle = u8x16::splat(c);
     let mut end = n;
     while end >= 16 {
-        let m = nibbles(vceqq_u8(vld1q_u8(p.add(end as usize - 16)), needle));
+        let m = ld::<u8, 16>(p.add(end as usize - 16)).simd_eq(needle).to_bitmask();
         if m != 0 {
-            return Some(end - 1 - m.leading_zeros() / 4);
+            return Some(end - 16 + 63 - m.leading_zeros());
         }
         end -= 16;
     }
@@ -957,11 +1003,10 @@ unsafe fn rfind_byte(p: *const u8, n: u32, c: u8) -> Option<u32> {
 
 /// How many of `n` bytes at `p` begin a character: no UTF-8 continuation byte (0x80-0xbf, below -64 as an i8).
 unsafe fn count_chars(p: *const u8, n: u32) -> u32 {
-    let floor = vdupq_n_s8(-64);
+    let floor = i8x16::splat(-64);
     let (mut c, mut i) = (0u32, 0u32);
     while i + 16 <= n {
-        let starts = vcgeq_s8(vld1q_s8(p.add(i as usize) as *const i8), floor);
-        c += vaddvq_u8(vshrq_n_u8::<7>(starts)) as u32;
+        c += ld::<i8, 16>(p.add(i as usize).cast()).simd_ge(floor).to_bitmask().count_ones();
         i += 16;
     }
     c + (i..n).filter(|&k| *p.add(k as usize) & 0xc0 != 0x80).count() as u32
@@ -971,7 +1016,7 @@ unsafe fn count_chars(p: *const u8, n: u32) -> u32 {
 unsafe fn any_high(p: *const u8, n: u32) -> bool {
     let mut i = 0;
     while i + 16 <= n {
-        if vmaxvq_u8(vld1q_u8(p.add(i as usize))) >= 0x80 {
+        if ld::<u8, 16>(p.add(i as usize)).simd_ge(u8x16::splat(0x80)).any() {
             return true;
         }
         i += 16;
@@ -983,9 +1028,9 @@ unsafe fn any_high(p: *const u8, n: u32) -> bool {
 unsafe fn first_diff(p: *const u8, q: *const u8, n: u32) -> Option<u32> {
     let mut i = 0;
     while i + 16 <= n {
-        let m = nibbles(vmvnq_u8(vceqq_u8(vld1q_u8(p.add(i as usize)), vld1q_u8(q.add(i as usize)))));
+        let m = ld::<u8, 16>(p.add(i as usize)).simd_ne(ld(q.add(i as usize))).to_bitmask();
         if m != 0 {
-            return Some(i + m.trailing_zeros() / 4);
+            return Some(i + m.trailing_zeros());
         }
         i += 16;
     }
@@ -994,13 +1039,13 @@ unsafe fn first_diff(p: *const u8, q: *const u8, n: u32) -> Option<u32> {
 
 /// `n` bytes from `p` to `o`, their ASCII letters lowered, or raised (`upper`): a letter's case is its bit 0x20.
 unsafe fn case_bytes(p: *const u8, n: u32, o: *mut u8, upper: bool) {
-    let first = vdupq_n_u8(if upper { b'a' } else { b'A' });
-    let (span, bit) = (vdupq_n_u8(26), vdupq_n_u8(0x20));
+    let first = u8x16::splat(if upper { b'a' } else { b'A' });
+    let (span, bit) = (u8x16::splat(26), u8x16::splat(0x20));
     let mut i = 0;
     while i + 16 <= n {
-        let v = vld1q_u8(p.add(i as usize));
-        let letter = vcltq_u8(vsubq_u8(v, first), span);
-        vst1q_u8(o.add(i as usize), veorq_u8(v, vandq_u8(letter, bit)));
+        let v = ld::<u8, 16>(p.add(i as usize));
+        let letter = (v - first).simd_lt(span);
+        st(o.add(i as usize), letter.select(v ^ bit, v));
         i += 16;
     }
     for k in i as usize..n as usize {
@@ -1254,10 +1299,10 @@ unsafe fn strcmp_value(st: &St, t: u32, d: *const u8, a: *const u32, unheld: &mu
 }
 
 /// An automaton's table (`text::table::Table`): its 256 byte classes, then its transitions, `s` states of `c` classes,
-/// then its states after the end and their verdicts. Its classes of 16 bytes are four `tbl` lookups of 64 bytes each.
+/// then its states after the end and their verdicts. Its classes of 64 bytes are four lookups of 64 bytes each.
 struct Automaton {
     tab: *const u8,
-    classes: [uint8x16x4_t; 4],
+    classes: [u8x64; 4],
     s: u32,
     c: u32,
     start: u32,
@@ -1265,19 +1310,19 @@ struct Automaton {
 
 impl Automaton {
     unsafe fn new(tab: *const u8, s: u32, c: u32, start: u32) -> Self {
-        let classes = core::array::from_fn(|k| vld1q_u8_x4(tab.add(64 * k)));
+        let classes = core::array::from_fn(|k| ld(tab.add(64 * k)));
         Automaton { tab, classes, s, c, start }
     }
 
     /// Bytes `v`'s classes: an index past a table's 64 gives 0 there, so the four lookups' or is the class.
     #[inline(always)]
-    unsafe fn classes_of(&self, v: uint8x16_t) -> uint8x16_t {
-        let sixty_four = vdupq_n_u8(64);
-        let mut r = vqtbl4q_u8(self.classes[0], v);
+    fn classes_of(&self, v: u8x64) -> u8x64 {
+        let sixty_four = u8x64::splat(64);
+        let mut r = self.classes[0].swizzle_dyn(v);
         let mut i = v;
         for k in 1..4 {
-            i = vsubq_u8(i, sixty_four);
-            r = vorrq_u8(r, vqtbl4q_u8(self.classes[k], i));
+            i -= sixty_four;
+            r |= self.classes[k].swizzle_dyn(i);
         }
         r
     }
@@ -1287,16 +1332,14 @@ impl Automaton {
         *self.tab.add(256 + (q * self.c + class as u32) as usize) as u32
     }
 
-    /// The state after `n` bytes at `p` from `q`: 16 bytes' classes at once, then the walk through them.
+    /// The state after `n` bytes at `p` from `q`: 64 bytes' classes at once, then the walk through them.
     unsafe fn walk(&self, mut q: u32, p: *const u8, n: u32) -> u32 {
-        let mut classes = [0u8; 16];
         let mut i = 0;
-        while i + 16 <= n {
-            vst1q_u8(classes.as_mut_ptr(), self.classes_of(vld1q_u8(p.add(i as usize))));
-            for &k in &classes {
+        while i + 64 <= n {
+            for k in self.classes_of(ld(p.add(i as usize))).to_array() {
                 q = self.step(q, k);
             }
-            i += 16;
+            i += 64;
         }
         for k in i..n {
             q = self.step(q, *self.tab.add(*p.add(k as usize) as usize));
@@ -2068,7 +2111,17 @@ unsafe fn lat_rows(p: &LatP, cnt: *const u32) -> u32 {
 }
 
 /// Code 4 (a set's map, `Dedup::seen`): row `s` of the relation's first `n` placed instead, each row a key of its own.
+/// Code 6 (a set's held bitmap, t58 increment A): row `s`'s bit set, at its index under the key past `p` (`held_index`).
 unsafe fn lat_rehash_one(rd: Reads, r: *const u8, ob: *const u8, hb: *mut u8, p: &LatP, s: u32) {
+    if p.code == 6 {
+        if s >= p.n {
+            return;
+        }
+        let k = &*((p as *const LatP).add(1) as *const HeadKeyP);
+        let x = held_index(k, |c| lat_r(rd, r, p, s, c) as u64);
+        at((hb.add(p.h_at as usize) as *mut u32).add((x >> 5) as usize)).fetch_or(1 << (x & 31), Ordering::Relaxed);
+        return;
+    }
     if p.code == 4 {
         if s >= p.n {
             return;
@@ -2303,14 +2356,14 @@ unsafe fn lat_merge_one(rd: Reads, u: *const i64, pl: *const u32, best: *const u
     col_put(d, p.nkeys, p.n, k, v);
 }
 
-// ---- A group's threads as a range [t0, t1): what each thread does alike, a vector of them at a time (NEON). ----
+// ---- A group's threads as a range [t0, t1): what each thread does alike, a vector of them at a time. ----
 
 /// Words [from, to) of `p` set to `v`, 16 a store.
 unsafe fn fill_u32(p: *mut u32, from: u32, to: u32, v: u32) {
     let (mut i, to) = (from as usize, to as usize);
-    let x = vdupq_n_u32(v);
+    let x = u32x16::splat(v);
     while i + 16 <= to {
-        vst1q_u32_x4(p.add(i), uint32x4x4_t(x, x, x, x));
+        st(p.add(i), x);
         i += 16;
     }
     while i < to {
@@ -2319,31 +2372,31 @@ unsafe fn fill_u32(p: *mut u32, from: u32, to: u32, v: u32) {
     }
 }
 
-/// `n` values set to `v`, 2 a store.
+/// `n` values set to `v`, 4 a store.
 unsafe fn fill_i64(dst: *mut i64, n: u32, v: i64) {
-    let x = vdupq_n_s64(v);
+    let x = i64x4::splat(v);
     let mut i = 0;
-    while i + 2 <= n as usize {
-        vst1q_s64(dst.add(i), x);
-        i += 2;
+    while i + 4 <= n as usize {
+        st(dst.add(i), x);
+        i += 4;
     }
-    if i < n as usize {
+    for i in i..n as usize {
         *dst.add(i) = v;
     }
 }
 
-/// `n` values from `src` to `dst`: one copy, or each shifted to its document (`doc`: its high word), 2 a step.
+/// `n` values from `src` to `dst`: one copy, or each shifted to its document (`doc`: its high word), 4 a step.
 unsafe fn copy_col(src: *const i64, dst: *mut i64, n: u32, doc: bool) {
     if !doc {
         core::ptr::copy(src, dst, n as usize);
         return;
     }
     let mut i = 0;
-    while i + 2 <= n as usize {
-        vst1q_s64(dst.add(i), vshrq_n_s64::<32>(vld1q_s64(src.add(i))));
-        i += 2;
+    while i + 4 <= n as usize {
+        st(dst.add(i), ld::<i64, 4>(src.add(i)) >> i64x4::splat(32));
+        i += 4;
     }
-    if i < n as usize {
+    for i in i..n as usize {
         *dst.add(i) = *src.add(i) >> 32;
     }
 }
@@ -2367,9 +2420,9 @@ unsafe fn kept_runs(offsets: *const u32, o0: u32, t0: u32, t1: u32, mut f: impl 
     let mut t = t0;
     while t < t1 {
         if t + 4 <= t1 {
-            let lo = vld1q_u32(offsets.add(t as usize));
-            let d = vsubq_u32(vld1q_u32(offsets.add(t as usize + 1)), lo);
-            let (mx, mn) = (vmaxvq_u32(d), vminvq_u32(d));
+            let lo = ld::<u32, 4>(offsets.add(t as usize));
+            let d = ld::<u32, 4>(offsets.add(t as usize + 1)) - lo;
+            let (mx, mn) = (d.reduce_max(), d.reduce_min());
             if mx == 0 {
                 if len > 0 {
                     f(start, first, len);
@@ -2379,7 +2432,7 @@ unsafe fn kept_runs(offsets: *const u32, o0: u32, t0: u32, t1: u32, mut f: impl 
                 continue;
             }
             if mx == 1 && mn == 1 {
-                let a = vgetq_lane_u32::<0>(lo).wrapping_sub(o0);
+                let a = lo[0].wrapping_sub(o0);
                 if len == 0 || a != first.wrapping_add(len) {
                     if len > 0 {
                         f(start, first, len);
@@ -2547,6 +2600,150 @@ unsafe fn scan_scatter_range(st: &St, j: &Job, b: &Bufs, r0: u32, r1: u32) {
     });
 }
 
+/// A sorted dedup's key (`HeadKeyP`, t58 increment A): the head's first order packed to its columns' bounds.
+#[repr(C)]
+struct HeadKeyP {
+    tagged: u32,
+    nparts: u32,
+    rank_shift: u32,
+    rank: u32,
+    /// Column (of the dedup's `cols`), bits, least's low and high words.
+    part: [[u32; 4]; 16],
+    /// The level's wide sort's keys (its size script's), and whether its passes are odd: its sorted keys are then in
+    /// the region's second pair (`WideAt`).
+    total: u32,
+    odd: u32,
+    pad: [u32; 2],
+}
+const _: () = assert!(size_of::<HeadKeyP>() == 288);
+
+/// The level's wide sort's region in the arena (t58 increment A), from its first word (`h_at`, `SortWords::wide`, its
+/// size script's claim) and its keys: keys A and B (64 bits each), then its tiles' histograms. A key holds its whole
+/// row (`head_key`), so the sort moves keys alone, and the kept rows are decoded from them (`head_row`).
+#[derive(Clone, Copy)]
+struct WideAt {
+    keys: [*mut u64; 2],
+    hist: *mut u32,
+}
+
+/// # Safety
+/// `base` is the region's first word, and it holds `n` keys twice, and the histograms past them.
+unsafe fn wide_at(base: *mut u32, n: u32) -> WideAt {
+    let n = n as usize;
+    let k = base as *mut u64;
+    WideAt { keys: [k, k.add(n)], hist: base.add(4 * n) }
+}
+
+/// Row `x`'s key (`head_key`).
+#[inline(always)]
+unsafe fn head_key(t: *const i64, d: &Dedup, p: &HeadKeyP, x: u32) -> u64 {
+    let val = |c: u32| *colp(t, d.cols[c as usize], d.cap, x) as u64;
+    let mut k = 0u64;
+    if p.tagged != 0 {
+        k = val(p.part[0][0]).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 48;
+    }
+    for part in &p.part[..p.nparts.min(16) as usize] {
+        let w = part[1];
+        if w == 0 {
+            continue;
+        }
+        let v = val(part[0]).wrapping_sub(u64::from(part[2]) | u64::from(part[3]) << 32);
+        k = if w >= 64 { v } else { k << w | v };
+    }
+    if p.rank_shift >= 64 { k } else { k | u64::from(p.rank) << p.rank_shift }
+}
+
+/// A row's index among every row its key's bounds allow (a held bitmap's, `HeldBits`): its parts less their least,
+/// end to end, no tag; `val(c)` its value in column `c` of the key's.
+#[inline(always)]
+unsafe fn held_index(p: &HeadKeyP, val: impl Fn(u32) -> u64) -> u64 {
+    let mut x = 0u64;
+    for part in &p.part[..p.nparts.min(16) as usize] {
+        let w = part[1];
+        if w == 0 || w >= 64 {
+            continue;
+        }
+        x = x << w | val(part[0]).wrapping_sub(u64::from(part[2]) | u64::from(part[3]) << 32);
+    }
+    x
+}
+
+/// A sorted dedup's held bitmap (`Dedup::seen`, its index bits in `hmask`, its first word at `h_at` of `vc`), and its
+/// keys' index mask: a key's low bits are its index (its tag and rank above them, `head_key`).
+#[inline(always)]
+unsafe fn held_bits(d: &Dedup, vc: *mut u8) -> Option<(*mut u32, u64)> {
+    (d.seen != 0).then(|| (vc.add(d.h_at as usize) as *mut u32, (1u64 << d.hmask) - 1))
+}
+
+/// Key `k`'s row (`head_key`'s, read back): each part from the key's low bits up, its least added, into its column of
+/// `o`'s row `at`. Every column of the dedup's is a part (`HeadKey`: the order is on every column).
+#[inline(always)]
+unsafe fn head_row(mut k: u64, p: &HeadKeyP, o: *mut i64, ocap: u32, at: u32) {
+    for part in p.part[..p.nparts.min(16) as usize].iter().rev() {
+        let w = part[1];
+        let v = if w >= 64 { k } else { k & ((1u64 << w) - 1) };
+        k = if w >= 64 { 0 } else { k >> w };
+        *colp_mut(o, part[0], ocap, at) = v.wrapping_add(u64::from(part[2]) | u64::from(part[3]) << 32) as i64;
+    }
+}
+
+/// Rows `x0..x1`' keys at `eb` of the level's wide sort (`dedup_key_one`).
+unsafe fn dedup_key_range(t: *const i64, totals: *const u32, keys: *mut u64, d: &Dedup, p: &HeadKeyP, eb: u32, x0: u32, x1: u32) {
+    let n = (*totals.add(d.in_slot as usize)).min(d.cap);
+    for x in x0..x1.min(n) {
+        *keys.add((eb + x) as usize) = head_key(t, d, p, x);
+    }
+}
+
+/// Sorted keys `t0..t1`: each kept where it is not the one before it, and its held bit (where it has a bitmap) is
+/// clear (`dedup_mark_sorted_one`).
+unsafe fn dedup_mark_sorted_range(totals: *const u32, keys: *const u64, counts: *mut u32, d: &Dedup, vc: *mut u8, eb: u32, t0: u32, t1: u32) {
+    let t1 = t1.min(d.cap.saturating_add(1));
+    let n = (*totals.add(d.in_slot as usize)).min(d.cap);
+    fill_u32(counts, t0.max(n), t1, 0);
+    let k = keys.add(eb as usize);
+    match held_bits(d, vc) {
+        None => {
+            for s in t0..t1.min(n) {
+                *counts.add(s as usize) = u32::from(s == 0 || *k.add(s as usize) != *k.add(s as usize - 1));
+            }
+        }
+        Some((bits, mask)) => {
+            for s in t0..t1.min(n) {
+                let key = *k.add(s as usize);
+                let x = key & mask;
+                let held = (*bits.add((x >> 5) as usize) >> (x & 31)) & 1;
+                *counts.add(s as usize) = u32::from((s == 0 || key != *k.add(s as usize - 1)) && held == 0);
+            }
+        }
+    }
+}
+
+/// Sorted keys `t0..t1`' rows where they were kept, decoded from them, in their order, and each one's held bit set
+/// (`dedup_scatter_sorted_one`).
+#[allow(clippy::too_many_arguments)]
+unsafe fn dedup_scatter_sorted_range(totals: *mut u32, offsets: *const u32, o: *mut i64, d: &Dedup, vc: *mut u8, p: &HeadKeyP, keys: *const u64, eb: u32, t0: u32, t1: u32) {
+    let bits = held_bits(d, vc);
+    let o0 = *offsets;
+    let n = (*totals.add(d.in_slot as usize)).min(d.cap);
+    if t0 == 0 && t1 > 0 {
+        *totals.add(d.out_slot as usize) = (*offsets.add(n as usize)).wrapping_sub(o0);
+    }
+    let k = keys.add(eb as usize);
+    for s in t0..t1.min(n) {
+        let at = (*offsets.add(s as usize)).wrapping_sub(o0);
+        if (*offsets.add(s as usize + 1)).wrapping_sub(o0) == at || at >= d.ocap {
+            continue;
+        }
+        let key = *k.add(s as usize);
+        head_row(key, p, o, d.ocap, at);
+        if let Some((bits, mask)) = bits {
+            let x = key & mask;
+            (*(bits.add((x >> 5) as usize) as *const AtomicU32)).fetch_or(1 << (x & 31), Ordering::Relaxed);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 unsafe fn dedup_scatter_range(rd: Reads, t: *const i64, totals: *mut u32, offsets: *const u32, o: *mut i64, r: *const u8, hb: *mut u8, d: &Dedup, x0: u32, x1: u32) {
     let o0 = *offsets;
@@ -2623,11 +2820,11 @@ unsafe fn ix_key_range(rd: Reads, bb: *const u8, rf: *const u8, out: *mut u32, p
         return;
     }
     // Each row its own place: eb + t, 4 a store.
-    let mut v = vaddq_u32(vdupq_n_u32(eb.wrapping_add(t0)), vld1q_u32([0u32, 1, 2, 3].as_ptr()));
+    let mut v = u32x4::splat(eb.wrapping_add(t0)) + u32x4::from_array([0, 1, 2, 3]);
     let mut t = t0;
     while t + 4 <= t1 {
-        vst1q_u32(places.add((eb + t) as usize), v);
-        v = vaddq_u32(v, vdupq_n_u32(4));
+        st(places.add((eb + t) as usize), v);
+        v += u32x4::splat(4);
         t += 4;
     }
     for t in t..t1 {
@@ -2652,10 +2849,10 @@ unsafe fn ix_place_range(rd: Reads, bb: *const u8, places: *const u32, rows: *mu
         return;
     }
     // A row's relation row: its place, from `from`, 4 a step.
-    let d = vdupq_n_u32(p.from.wrapping_sub(eb));
+    let d = u32x4::splat(p.from.wrapping_sub(eb));
     let mut t = t0;
     while t + 4 <= t1 {
-        vst1q_u32(rows.add(t as usize), vaddq_u32(vld1q_u32(places.add((eb + t) as usize)), d));
+        st(rows.add(t as usize), ld::<u32, 4>(places.add((eb + t) as usize)) + d);
         t += 4;
     }
     for t in t..t1 {
@@ -2681,7 +2878,8 @@ unsafe fn lat_clear_range(pl: *mut u32, best: *mut u32, flags: *mut u32, p: &Lat
     fill_u32(flags, i0, i1, 0);
 }
 
-/// A lattice's key table cleared: each entry (row, changes, level) none, 0, 0, four entries a `st3`.
+/// A lattice's key table cleared: each entry (row, changes, level) none, 0, 0, four entries three stores. Code 6: a
+/// held bitmap's words, 0.
 unsafe fn lat_hclear_range(hb: *mut u8, p: &LatP, i0: u32, i1: u32) {
     // A program's tail's growth of a map that did not grow (`omask` all ones, `Batch::lattice_tail`): nothing.
     if p.omask == NONE {
@@ -2689,10 +2887,17 @@ unsafe fn lat_hclear_range(hb: *mut u8, p: &LatP, i0: u32, i1: u32) {
     }
     let i1 = i1.min(p.hmask.saturating_add(1));
     let h = hb.add(p.h_at as usize) as *mut u32;
-    let entry = uint32x4x3_t(vdupq_n_u32(NONE), vdupq_n_u32(0), vdupq_n_u32(0));
+    if p.code == 6 {
+        fill_u32(h, i0, i1, 0);
+        return;
+    }
+    let entry = [u32x4::from_array([NONE, 0, 0, NONE]), u32x4::from_array([0, 0, NONE, 0]), u32x4::from_array([0, NONE, 0, 0])];
     let mut i = i0;
     while i + 4 <= i1 {
-        vst3q_u32(h.add(3 * i as usize), entry);
+        let e = h.add(3 * i as usize);
+        st(e, entry[0]);
+        st(e.add(4), entry[1]);
+        st(e.add(8), entry[2]);
         i += 4;
     }
     for i in i..i1 {
@@ -2745,14 +2950,19 @@ unsafe fn round_one(p: *const RoundP, ctl: *mut u32) {
     }
     *(*p).round = cur.wrapping_add(1);
     // No new rows: the program ends; past its rounds: it stops; less work than `narrow`: the CPU goes on from its
-    // rows (decision 0657). The phases encoded after it run no groups (`join_grid`).
-    let ctl6 = at(ctl.add(6));
+    // rows (decision 0657). Each ends the walk (the jump's end); else the round after, from `next` (`ctl[7]`).
+    let (ctl6, ctl7) = (at(ctl.add(6)), at(ctl.add(7)));
     if !any {
         ctl6.fetch_or(16, SeqCst);
+        ctl7.store(NONE, SeqCst);
     } else if cur.wrapping_add(1) > (*p).max {
         ctl6.fetch_or(4, SeqCst);
+        ctl7.store(NONE, SeqCst);
     } else if work < (*p).narrow as u64 {
         ctl6.fetch_or(8, SeqCst);
+        ctl7.store(NONE, SeqCst);
+    } else {
+        ctl7.store((*p).next + 1, SeqCst);
     }
 }
 
@@ -2815,36 +3025,34 @@ unsafe fn size_one(ops: *const SizeOp, n: u32) -> bool {
     !full
 }
 
-// ---- Scans and sorts: a tile at a time, its values 4 a register (NEON). ----
+// ---- Scans and sorts: a tile at a time, its values 4 a register. ----
 
-/// The sum of `n` words at `p`, 16 a step into four registers.
+/// The sum of `n` words at `p`, 16 a step.
 unsafe fn sum_u32(p: *const u32, n: u32) -> u32 {
-    let mut acc = [vdupq_n_u32(0); 4];
+    let mut acc = u32x16::splat(0);
     let mut i = 0;
     while i + 16 <= n {
-        let v = vld1q_u32_x4(p.add(i as usize));
-        acc = [vaddq_u32(acc[0], v.0), vaddq_u32(acc[1], v.1), vaddq_u32(acc[2], v.2), vaddq_u32(acc[3], v.3)];
+        acc += ld(p.add(i as usize));
         i += 16;
     }
-    let total = vaddvq_u32(vaddq_u32(vaddq_u32(acc[0], acc[1]), vaddq_u32(acc[2], acc[3])));
+    let total = acc.reduce_sum();
     (i..n).fold(total, |s, k| s.wrapping_add(*p.add(k as usize)))
 }
 
 /// `n` words at `p` replaced by their running sum before each, from `base`; the sum after them. A register's four
 /// sums by two shifted adds, its last carried into the next register.
 unsafe fn scan_u32(p: *mut u32, n: u32, base: u32) -> u32 {
-    let zero = vdupq_n_u32(0);
-    let mut carry = vdupq_n_u32(base);
+    let mut carry = u32x4::splat(base);
     let mut i = 0;
     while i + 4 <= n {
-        let v = vld1q_u32(p.add(i as usize));
-        let one = vaddq_u32(v, vextq_u32::<3>(zero, v));
-        let all = vaddq_u32(one, vextq_u32::<2>(zero, one));
-        vst1q_u32(p.add(i as usize), vaddq_u32(carry, vsubq_u32(all, v)));
-        carry = vdupq_laneq_u32::<3>(vaddq_u32(carry, all));
+        let v = ld::<u32, 4>(p.add(i as usize));
+        let one = v + v.shift_elements_right::<1>(0);
+        let all = one + one.shift_elements_right::<2>(0);
+        st(p.add(i as usize), carry + (all - v));
+        carry = u32x4::splat((carry + all)[3]);
         i += 4;
     }
-    let mut run = vgetq_lane_u32::<0>(carry);
+    let mut run = carry[0];
     for k in i..n {
         let v = *p.add(k as usize);
         *p.add(k as usize) = run;
@@ -2877,11 +3085,10 @@ fn scan_tile_range(n: u32, tile: u32) -> (u32, u32) {
 
 /// A tile's rows [first, end) and each one's digit, four keys a shift and a mask.
 unsafe fn digits(keys: *const u32, first: u32, end: u32, shift: u32, mut f: impl FnMut(u32, usize)) {
-    let (sh, mask) = (vdupq_n_s32(-(shift as i32)), vdupq_n_u32(255));
-    let mut d = [0u32; 4];
+    let (sh, mask) = (u32x4::splat(shift), u32x4::splat(255));
     let mut r = first;
     while r + 4 <= end {
-        vst1q_u32(d.as_mut_ptr(), vandq_u32(vshlq_u32(vld1q_u32(keys.add(r as usize)), sh), mask));
+        let d = ((ld::<u32, 4>(keys.add(r as usize)) >> sh) & mask).to_array();
         for (k, &x) in d.iter().enumerate() {
             f(r + k as u32, x as usize);
         }
@@ -2898,13 +3105,54 @@ unsafe fn radix_hist_tile(keys: *const u32, hist: *mut u32, n: u32, shift: u32, 
     let mut h = [[0u32; RADIX_DIGITS]; 4];
     let first = tile.saturating_mul(RADIX_TILE);
     digits(keys, first, first.saturating_add(RADIX_TILE).min(n), shift, |r, d| h[(r & 3) as usize][d] += 1);
-    let mut sum = [0u32; 4];
     for d in (0..RADIX_DIGITS).step_by(4) {
-        let s = vaddq_u32(vaddq_u32(vld1q_u32(h[0][d..].as_ptr()), vld1q_u32(h[1][d..].as_ptr())), vaddq_u32(vld1q_u32(h[2][d..].as_ptr()), vld1q_u32(h[3][d..].as_ptr())));
-        vst1q_u32(sum.as_mut_ptr(), s);
+        let at = |k: usize| u32x4::from_slice(&h[k][d..d + 4]);
+        let sum = ((at(0) + at(1)) + (at(2) + at(3))).to_array();
         for (k, &c) in sum.iter().enumerate() {
             *hist.add((d + k) * tiles as usize + tile as usize) = c;
         }
+    }
+}
+
+/// The wide sort's (64-bit keys, `SortWords::wide`) tile histogram, as `radix_hist_tile`'s.
+unsafe fn radix_hist_tile64(keys: *const u64, hist: *mut u32, n: u32, shift: u32, tiles: u32, tile: u32) {
+    // Four tables, a key each in turn: consecutive keys of one digit do not wait on one counter.
+    let mut h = [[0u32; RADIX_DIGITS]; 4];
+    let first = tile.saturating_mul(RADIX_TILE);
+    let end = first.saturating_add(RADIX_TILE).min(n);
+    let dg = |r: u32| ((*keys.add(r as usize) >> shift) & 255) as usize;
+    let mut r = first;
+    while r + 4 <= end {
+        h[0][dg(r)] += 1;
+        h[1][dg(r + 1)] += 1;
+        h[2][dg(r + 2)] += 1;
+        h[3][dg(r + 3)] += 1;
+        r += 4;
+    }
+    while r < end {
+        h[0][dg(r)] += 1;
+        r += 1;
+    }
+    let [h0, h1, h2, h3] = &h;
+    for (d, (((a, b), c), e)) in h0.iter().zip(h1).zip(h2).zip(h3).enumerate() {
+        *hist.add(d * tiles as usize + tile as usize) = a + b + c + e;
+    }
+}
+
+/// The wide sort's tile's rows at their places, as `radix_scatter_tile`'s.
+unsafe fn radix_scatter_tile64(wa: WideAt, from: usize, n: u32, shift: u32, tiles: u32, tile: u32) {
+    let (keys, out_keys) = (wa.keys[from] as *const u64, wa.keys[1 - from]);
+    let mut next = [0u32; RADIX_DIGITS];
+    for (d, x) in next.iter_mut().enumerate() {
+        *x = *wa.hist.add(d * tiles as usize + tile as usize);
+    }
+    let first = tile.saturating_mul(RADIX_TILE);
+    for r in first..first.saturating_add(RADIX_TILE).min(n) {
+        let k = *keys.add(r as usize);
+        let d = ((k >> shift) & 255) as usize;
+        let a = next[d] as usize;
+        next[d] += 1;
+        *out_keys.add(a) = k;
     }
 }
 
@@ -2934,13 +3182,9 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
     let (canon, table) = (pw(6) != 0, b.h);
     let n = (*j.totals.add(s.in_slot as usize)).min(s.cap_in);
     let groups = pw(0);
-    // The counts past its rows, its share of them a SIMD group's lanes'.
-    for lane in 0..SGW {
-        let mut r = n.wrapping_add(sg * SGW + lane);
-        while r <= s.cap_in {
-            *counts.add(r as usize) = 0;
-            r = r.wrapping_add(groups * SGW);
-        }
+    // The count past its rows (the scan's last, its total's): its counts are its rows' and one (`level_sizes`).
+    if sg == 0 {
+        *counts.add(n as usize) = 0;
     }
     if sg >= groups {
         return;
@@ -3355,20 +3599,13 @@ unsafe fn made(ctl: *mut u32, vv: *mut i64, counts: *mut u32, r: u32, value: i64
     *counts.add(r as usize) = (full || value != -1) as u32;
 }
 
-// ---- The program (decisions 0603, 0648): its phases, a dispatch each, a group an item. ----
+// ---- The program: a chain of dispatches, a phase a dispatch, a group an item (decision 0674). ----
 
-/// A phase's groups at most (`PHASE_GROUPS`): its indirect dispatch's bound; a segment's share of it in a phase of
-/// several (`seg_cap`), past which a group strides its job's rows.
+/// A phase's groups at most (`PHASE_GROUPS`, decision 0637): a segment's share of them in a phase of several
+/// (`seg_cap`), past which a group strides its job's rows.
 const PHASE_GROUPS: u32 = 1 << 12;
 /// A segment whose count of none starts no group (decision 0647): its `per`'s top bit.
 const SEG_EMPTY: u32 = 1 << 31;
-/// A phase's groups at most that a chain (`join_chain`, decision 0647) runs, one after another in its one group.
-const CHAIN_GROUPS: u32 = 4;
-/// The program's flags that stop it (`ctl[6]`): a gate (2), past its rounds (4), handed back to the CPU (8), no new
-/// rows (16), parked (32).
-const STOPS: u32 = 2 | 4 | 8 | 16 | 32;
-/// And those that park it at a phase's end: texts that found the text arena full (64), a gate's room mapped past (128).
-const PARKS: u32 = 64 | 128;
 
 fn seg_cap(ns: u32) -> u32 {
     PHASE_GROUPS / ns.max(1)
@@ -3386,57 +3623,6 @@ unsafe fn seg_groups(g: *const Seg, cap: u32) -> u32 {
     need.min(cap as u64) as u32
 }
 
-/// `join_grid`'s checks at a phase's start, by whichever starts it: where `flags` stop the program, nothing; where they
-/// park it (a gate's room, 128; texts, 64), the park (`ctl[9]`: its top bits and the phase begun last) and the
-/// program parked; else phase `q` begun (`ctl[11]`, the phase and one). Whether the phase runs.
-unsafe fn phase_start(ctl: *mut u32, flags: u32, q: u32) -> bool {
-    let c = |i: usize| at(ctl.add(i));
-    let before = c(11).load(SeqCst).wrapping_sub(1);
-    if flags & STOPS != 0 {
-        return false;
-    }
-    if flags & 128 != 0 {
-        c(6).fetch_and(!128, SeqCst);
-        c(9).store(0xC000_0000 | before, SeqCst);
-        c(6).fetch_or(32, SeqCst);
-        return false;
-    }
-    if flags & 64 != 0 {
-        c(6).fetch_and(!64, SeqCst);
-        c(9).store(0x8000_0000 | before, SeqCst);
-        c(6).fetch_or(32, SeqCst);
-        return false;
-    }
-    c(11).store(q + 1, SeqCst);
-    true
-}
-
-/// Whether a phase of no segments, its dispatch `seq` of the program's, runs (decision 0647, `phase_begins`): the
-/// first of its groups to begin swaps its sequence and the program's flags into `ctl[12]` (the sequence above the
-/// flags' byte) and makes `join_grid`'s checks; every other group reads the flags there, so a flag one of its groups
-/// raises stops none of the rest of it.
-unsafe fn phase_begins(ctl: *mut u32, q: u32, seq: u32) -> bool {
-    let w12 = at(ctl.add(12));
-    let mut w = w12.load(SeqCst);
-    let mut flags = 0;
-    for _ in 0..8 {
-        if w >> 8 == seq {
-            flags = w & 0xff;
-            break;
-        }
-        let f = at(ctl.add(6)).load(SeqCst) & 0xff;
-        match w12.compare_exchange(w, (seq << 8) | f, SeqCst, SeqCst) {
-            Ok(_) => {
-                phase_start(ctl, f, q);
-                flags = f;
-                break;
-            }
-            Err(x) => w = x,
-        }
-    }
-    flags & (STOPS | PARKS) == 0
-}
-
 struct Prog {
     jobs: *mut Job,
     items: *const Item,
@@ -3446,34 +3632,12 @@ struct Prog {
     sorts: *const SortPass,
     script: *const SizeOp,
     ctl: *mut u32,
-    slots: *mut u32,
     counts: *mut u32,
+    a: ProgP,
     rd: Reads,
 }
 
 impl Prog {
-    /// The program's buffers as `join_phase` and `join_chain` take them: jobs, items, phases, segs, scans, sorts,
-    /// script, ctl, slots, counts (then the grids, and the phase's `PhaseP`).
-    unsafe fn of(argv: *const *const u8, l: &Launch) -> Prog {
-        let threads = l.block[0] * l.block[1] * l.block[2];
-        assert!(threads == TG, "the join program: a group of {TG} threads, not {threads}");
-        assert!(!l.reads.is_null(), "the join program: the compiled reads (Launch::reads)");
-        let buf = |i: usize| (*argv.add(i) as *const *mut u8).read_unaligned();
-        Prog {
-            jobs: buf(0) as *mut Job,
-            items: buf(1) as *const Item,
-            phases: buf(2) as *const u32,
-            segs: buf(3) as *const Seg,
-            scans: buf(4) as *mut ScanLevel,
-            sorts: buf(5) as *const SortPass,
-            script: buf(6) as *const SizeOp,
-            ctl: buf(7) as *mut u32,
-            slots: buf(8) as *mut u32,
-            counts: buf(9) as *mut u32,
-            rd: Reads(l.reads),
-        }
-    }
-
     unsafe fn ctl(&self, i: usize) -> &AtomicU32 {
         at(self.ctl.add(i))
     }
@@ -3482,45 +3646,156 @@ impl Prog {
         core::array::from_fn(|k| *self.phases.add(4 * q as usize + k))
     }
 
-    /// Phase `q`'s groups (decision 0648): its segments' as their counts need them (at least one in all, unless every
-    /// one's `per` has `SEG_EMPTY`), or all its items where it has none.
-    unsafe fn phase_groups(&self, q: u32) -> u32 {
-        phase_groups(self.phases, self.segs, q)
-    }
-
-    /// Phase `q`'s `k`th group (decisions 0637, 0648): its item, and the group it runs as. A phase of no segments, its
-    /// `k`th item; else its segments' groups in order, a segment's `k`th item (past its `items`, its first, as group
-    /// `k`); a phase whose counts need none, its first segment's first item, which goes on with no rows.
-    unsafe fn phase_group(&self, q: u32, k: u32) -> (u32, u32) {
-        let [first, _, s0, ns] = self.phase(q);
-        if ns == 0 {
-            return (first + k, (*self.items.add((first + k) as usize)).group);
-        }
+    /// Phase `q` about to run (`phase_reset`): its count emptied, its groups as its segments' counts need them, at
+    /// least one unless every segment's `per` has `SEG_EMPTY`. Whether none needs any where one still runs (1).
+    unsafe fn phase_reset(&self, q: u32) -> u32 {
+        let [_, _, s0, ns] = self.phase(q);
         let cap = seg_cap(ns);
-        let mut k = k;
-        for g in 0..ns {
-            let sg = self.segs.add((s0 + g) as usize);
-            let n = seg_groups(sg, cap);
-            if k < n {
-                let group = if (*sg).per == 0 { (*self.items.add(((*sg).first + k) as usize)).group } else { k };
-                return ((*sg).first + if k < (*sg).items { k } else { 0 }, group);
-            }
-            k -= n;
-        }
-        let first = (*self.segs.add(s0 as usize)).first;
-        (first, (*self.items.add(first as usize)).group)
+        let m = (0..ns).fold(0u32, |m, g| m.wrapping_add(seg_groups(self.segs.add((s0 + g) as usize), cap)));
+        let empty = ns != 0 && (0..ns).all(|g| (*self.segs.add((s0 + g) as usize)).per & SEG_EMPTY != 0);
+        let target = if ns == 0 {
+            0
+        } else if empty {
+            m
+        } else {
+            m.max(1)
+        };
+        self.ctl(10 + (self.a.phases + q) as usize).store(target, SeqCst);
+        self.ctl(10 + q as usize).store(0, SeqCst);
+        (ns != 0 && m == 0 && !empty) as u32
     }
 
-    /// Item `item`, run as group `group` (none: its own): a parked one listed (`slots[ctl[3]]`) and the program parked.
-    unsafe fn run(&self, item: u32, group: Option<u32>) {
-        let mut it = *self.items.add(item as usize);
-        if let Some(g) = group {
-            it.group = g;
+    /// Whether phase `q`'s groups each run at most one stride of their rows (`phase_light`): no segment's groups past
+    /// its cap.
+    unsafe fn phase_light(&self, q: u32) -> bool {
+        let [_, _, s0, ns] = self.phase(q);
+        let cap = seg_cap(ns);
+        (0..ns).all(|s| {
+            let g = &*self.segs.add((s0 + s) as usize);
+            let per = g.per & !SEG_EMPTY;
+            per == 0 || (*g.count as u64 + g.plus as u64).div_ceil(per as u64) <= cap as u64
+        })
+    }
+
+    /// Phase `q`'s groups, a group an item, once reset: its items, or its segments' (its `target`).
+    unsafe fn phase_groups(&self, q: u32) -> u32 {
+        let [_, count, _, ns] = self.phase(q);
+        if ns == 0 { count } else { self.ctl(10 + (self.a.phases + q) as usize).load(SeqCst) }
+    }
+
+    /// A segment's items that run a text's rows again (`seg_text_items`): those its groups reach, at most its items.
+    unsafe fn seg_text_items(&self, seg: *const Seg, cap: u32) -> u32 {
+        seg_groups(seg, cap).min((*seg).items)
+    }
+
+    /// The item group `g` of phase `p` runs, and the group it runs as (`phase_item`, decision 0637): a phase of no
+    /// segments, its `g`-th item; else its segments' groups in order, a segment's `g`-th item (past its `items`, its
+    /// first, as group `g`); the first segment's first alone where `none`; with `texts`, its `g`-th text item, as
+    /// itself. `NONE` past them.
+    unsafe fn phase_item(&self, p: u32, mut g: u32, none: u32, texts: bool) -> (u32, u32) {
+        let [first, count, s0, ns] = self.phase(p);
+        let cap = seg_cap(ns);
+        let own = |i: u32| (i, (*self.items.add(i as usize)).group);
+        if !texts && ns == 0 {
+            return if g < count { own(first + g) } else { (NONE, 0) };
         }
-        if !self.item(it) {
-            *self.slots.add(self.ctl(3).fetch_add(1, SeqCst) as usize) = item;
-            self.ctl(6).fetch_or(32, SeqCst);
+        if !texts && none != 0 {
+            return if g == 0 { own((*self.segs.add(s0 as usize)).first) } else { (NONE, 0) };
         }
+        for s in 0..ns.max(1) {
+            let at_ = if ns == 0 { first } else { (*self.segs.add((s0 + s) as usize)).first };
+            if !texts {
+                let sg = self.segs.add((s0 + s) as usize);
+                let n = seg_groups(sg, cap);
+                if g < n {
+                    let group = if (*sg).per == 0 { (*self.items.add((at_ + g) as usize)).group } else { g };
+                    return (at_ + if g < (*sg).items { g } else { 0 }, group);
+                }
+                g -= n;
+                continue;
+            }
+            let n = if ns == 0 { count } else { self.seg_text_items(self.segs.add((s0 + s) as usize), cap) };
+            for i in 0..n {
+                if (*self.items.add((at_ + i) as usize)).what >> 24 != PK_ROW_TEXT {
+                    continue;
+                }
+                if g == 0 {
+                    return own(at_ + i);
+                }
+                g -= 1;
+            }
+        }
+        (NONE, 0)
+    }
+
+    /// Phase `p`'s text items to run again (`phase_texts`): its count emptied, its items to count them; their number.
+    unsafe fn phase_texts(&self, p: u32) -> u32 {
+        let [first, count, s0, ns] = self.phase(p);
+        let cap = seg_cap(ns);
+        let mut m = 0u32;
+        for g in 0..ns.max(1) {
+            let (a, n) = if ns == 0 {
+                (first, count)
+            } else {
+                let seg = self.segs.add((s0 + g) as usize);
+                ((*seg).first, self.seg_text_items(seg, cap))
+            };
+            for i in 0..n {
+                m += u32::from((*self.items.add((a + i) as usize)).what >> 24 == PK_ROW_TEXT);
+            }
+        }
+        self.ctl(10 + (self.a.phases + p) as usize).store(m.max(1), SeqCst);
+        self.ctl(10 + p as usize).store(0, SeqCst);
+        m
+    }
+
+    /// The phase after phase `p` (`phase_after`, the phase and one, 0 none): a round's end's jump, else the next below
+    /// the walk's end (`ProgP::end`; inside the program's tail, below its phases); none where a gate stopped the program.
+    unsafe fn phase_after(&self, p: u32) -> u32 {
+        let jump = self.ctl(7).load(SeqCst);
+        if jump != 0 {
+            self.ctl(7).store(0, SeqCst);
+        }
+        let stop = if p < self.a.end { self.a.end } else { self.a.phases };
+        if jump != 0 {
+            if jump == NONE { 0 } else { jump }
+        } else if p + 1 < stop && self.ctl(6).load(SeqCst) & 2 == 0 {
+            p + 2
+        } else {
+            0
+        }
+    }
+
+    /// Phase `next - 1` reset and made the one running (`phase_enter`); its groups. A phase whose segments' counts
+    /// start no group is passed over as run, to the one after it.
+    unsafe fn phase_enter(&self, mut next: u32) -> u32 {
+        for _ in 0..=self.a.phases {
+            if next == 0 {
+                break;
+            }
+            let q = next - 1;
+            let none = self.phase_reset(q);
+            self.ctl(0).store(q, SeqCst);
+            self.ctl(3).store(none, SeqCst);
+            let n = self.phase_groups(q);
+            if n != 0 {
+                return n;
+            }
+            // Passed over as run: its count its items', as a phase run whole has it.
+            self.ctl(10 + q as usize).store(self.phase(q)[1], SeqCst);
+            next = self.phase_after(q);
+        }
+        0
+    }
+
+    /// The next dispatch's groups, `n` (`ukl_chain_set`), the finisher's of dispatch `d`.
+    unsafe fn chain_set(&self, d: u32, n: u32) {
+        self.ctl(4).store(n, SeqCst);
+        let slot = 10 + 2 * self.a.phases as usize + 4 * d as usize;
+        self.ctl(slot).store(n, SeqCst);
+        self.ctl(slot + 1).store(1, SeqCst);
+        self.ctl(slot + 2).store(1, SeqCst);
+        self.ctl(1).store(d, SeqCst);
     }
 
     /// Item `it`'s work, every thread of the group's: whether it is whole (a size script that parked is not).
@@ -3571,14 +3846,20 @@ impl Prog {
             let sp = &*self.sorts.add(x as usize);
             let w = |k: usize| core::ptr::addr_of!(sp.w).cast::<u32>().add(k).read_volatile();
             let (n, shift, tiles) = (w(0), sp.w[1], w(2));
-            // Its tiles: this item's, then each `step` on (its segment's groups) while below its tiles', as a scan's.
+            // The wide sort's (t58 increment A): its region the arena's, from its size script's word; its tiles as many
+            // as its keys claimed. Else its keys' 32 bits. Its tiles, either way: this item's, then each `step` on (its
+            // segment's groups) while below its tiles', as a scan's.
+            let wide = (w(3) != 0).then(|| wide_at(self.counts.add(w(3) as usize - 1), n));
+            let from = ((shift / 8) % 2) as usize;
             let tstep = step / TG;
             let mut tile = g;
             loop {
-                if kind == PK_RADIX_HIST {
-                    radix_hist_tile(sp.keys, sp.hist as *mut u32, n, shift, tiles, tile);
-                } else {
-                    radix_scatter_tile(sp, n, shift, tiles, tile);
+                match wide {
+                    Some(_) if tile >= tiles => break,
+                    Some(wa) if kind == PK_RADIX_HIST => radix_hist_tile64(wa.keys[from], wa.hist, n, shift, tiles, tile),
+                    Some(wa) => radix_scatter_tile64(wa, from, n, shift, tiles, tile),
+                    None if kind == PK_RADIX_HIST => radix_hist_tile(sp.keys, sp.hist as *mut u32, n, shift, tiles, tile),
+                    None => radix_scatter_tile(sp, n, shift, tiles, tile),
                 }
                 if tstep == 0 || tile + tstep >= tiles {
                     break;
@@ -3635,6 +3916,7 @@ impl Prog {
         true
     }
 
+
     /// Threads [t0, t1) of job `j`, of kind `kind`: a range's vector work, or each thread's own.
     unsafe fn range(&self, kind: u32, j: &Job, b: &Bufs, t0: u32, t1: u32) {
         let rd = self.rd;
@@ -3661,10 +3943,24 @@ impl Prog {
             PK_STAGE_COUNT => stage_count_range(&stage(j.s), j, b, t0, t1),
             PK_SCAN_COUNT => scan_count_range(&stage(j.s), j, b, t0, t1),
             PK_WITNESS_COUNT => witness_count_range(&stage(j.s), j, b, t0, t1),
+            // A sorted dedup's (t58 increment A): `h` its keys in, `w[0]` its places in; `w[1]`, `w[2]` its keys and
+            // places sorted.
+            PK_DEDUP_KEY => {
+                let p = &*(j.p as *const HeadKeyP);
+                dedup_key_range(b.l, j.totals, wide_at(b.h, p.total).keys[0], &*j.dd, p, b.eb, t0, t1)
+            }
+            PK_DEDUP_MARK if (*j.dd).sorted != 0 => {
+                let p = &*(j.p as *const HeadKeyP);
+                dedup_mark_sorted_range(j.totals, wide_at(b.h, p.total).keys[p.odd as usize], b.c, &*j.dd, j.vc, b.eb, t0, t1)
+            }
             PK_DEDUP_MARK => dedup_mark_range(rd, b.l, j.totals, b.h, b.c, j.s_, j.vc, &*j.dd, t0, t1),
             PK_STAGE_SCATTER => stage_scatter_range(&stage(j.ws), j, b, t0, t1),
             PK_SCAN_SCATTER => scan_scatter_range(&stage(j.s), j, b, t0, t1),
             PK_ROW_SCATTER => row_scatter_range(&stage(j.s), j, b, t0, t1),
+            PK_DEDUP_SCATTER if (*j.dd).sorted != 0 => {
+                let p = &*(j.p as *const HeadKeyP);
+                dedup_scatter_sorted_range(j.totals, b.c, b.o, &*j.dd, j.vc, p, wide_at(b.h, p.total).keys[p.odd as usize], b.eb, t0, t1)
+            }
             PK_DEDUP_SCATTER => dedup_scatter_range(rd, b.l, j.totals, b.c, b.o, j.s_, j.vc, &*j.dd, t0, t1),
             PK_LAT_HCLEAR => lat_hclear_range(j.vc, lat(), t0, t1),
             PK_LAT_CLEAR => lat_clear_range(b.la, b.lt, b.h, lat(), t0, t1),
@@ -3694,112 +3990,136 @@ impl Prog {
         }
     }
 
-}
-
-/// Phase `q`'s groups (decision 0648, `phase_groups`): its segments' as their counts need them (`seg_groups`, at least
-/// one in all unless every segment's `per` has `SEG_EMPTY`), or all its items where it has none.
-unsafe fn phase_groups(phases: *const u32, segs: *const Seg, q: u32) -> u32 {
-    let w = |k: u32| *phases.add((4 * q + k) as usize);
-    let (count, s0, ns) = (w(1), w(2), w(3));
-    let cap = seg_cap(ns);
-    let (mut m, mut empty) = (0u32, true);
-    for g in 0..ns {
-        let sg = segs.add((s0 + g) as usize);
-        m = m.wrapping_add(seg_groups(sg, cap));
-        empty &= (*sg).per & SEG_EMPTY != 0;
-    }
-    if ns == 0 {
-        count
-    } else if empty {
-        m
-    } else {
-        m.max(1)
-    }
-}
-
-/// A phase's grid (`join_grid`, decision 0648), one thread before the phase's dispatch: none where its chain ran it
-/// (`ctl[13]`) or the program's flags stop or park it (`phase_start`), else its groups (`phase_groups`), into
-/// `grids[slot..slot + 3]`.
-///
-/// # Safety
-///
-/// `argv` holds the kernel's arguments (phases, segs, ctl, grids, the `PhaseP`'s bytes), its buffers as the host made
-/// them.
-pub unsafe fn join_grid(argv: *const *const u8, l: &Launch) {
-    if l.group != [0, 0, 0] {
-        return;
-    }
-    let buf = |i: usize| (*argv.add(i) as *const *mut u8).read_unaligned();
-    let (phases, segs, ctl, grids) = (buf(0) as *const u32, buf(1) as *const Seg, buf(2) as *mut u32, buf(3) as *mut u32);
-    let a = (*argv.add(4) as *const PhaseP).read_unaligned();
-    let mut n = 0;
-    // Run by its chain (`join_chain`): nothing left.
-    if a.q >= at(ctl.add(13)).load(SeqCst) && phase_start(ctl, at(ctl.add(6)).load(SeqCst), a.q) {
-        n = phase_groups(phases, segs, a.q);
-    }
-    *grids.add(a.slot as usize) = n;
-    *grids.add(a.slot as usize + 1) = 1;
-    *grids.add(a.slot as usize + 2) = 1;
-}
-
-/// A phase's dispatch (`join_phase`, decision 0648): its group `l.group[0]`'s item, its `JOIN_TG` threads run as one.
-/// A phase of no segments (`a.slot` NONE, decision 0647) checks the program's flags itself (`phase_begins`); one
-/// launched at its grid's bound, past its grid's groups, returns; a listed one (`a.list`) runs `slots[a.at + group]`.
-///
-/// # Safety
-///
-/// `argv` holds the kernel's arguments (jobs, items, phases, segs, scans, sorts, script, ctl, slots, counts, grids,
-/// the `PhaseP`'s bytes), its buffers as the host made them; `l.reads` the compiled reads.
-pub unsafe fn join_phase(argv: *const *const u8, l: &Launch) {
-    let p = Prog::of(argv, l);
-    let grids = (*argv.add(10) as *const *const u32).read_unaligned();
-    let a = (*argv.add(11) as *const PhaseP).read_unaligned();
-    let gid = l.group[0];
-    if a.list == 0 && a.slot == NONE {
-        if !(a.q >= p.ctl(13).load(SeqCst) && phase_begins(p.ctl, a.q, a.at)) {
+    /// Group `g` of the chain's dispatch now (`join_run`): the start (dispatch 0), else its phase's item, and the
+    /// next dispatch's groups where it finishes the phase.
+    unsafe fn group(&self, g: u32) {
+        let (d, p, mode, back) = (self.ctl(1).load(SeqCst), self.ctl(0).load(SeqCst), self.ctl(3).load(SeqCst), self.ctl(2).load(SeqCst));
+        if d == 0 {
+            let pp = self.ctl(9).load(SeqCst);
+            let n = if self.ctl(5).load(SeqCst) == 0 {
+                self.ctl(5).store(1, SeqCst);
+                self.phase_enter(1)
+            } else if pp >> 30 == 1 {
+                self.ctl(9).store(0, SeqCst);
+                let q = pp & 0x3fff_ffff;
+                let n = self.phase_texts(q);
+                self.ctl(0).store(q, SeqCst);
+                self.ctl(3).store(2, SeqCst);
+                n
+            } else if pp >> 29 == 1 {
+                self.ctl(9).store(0, SeqCst);
+                self.phase_enter(self.phase_after(pp & 0x1fff_ffff))
+            } else if back != 0 {
+                1
+            } else {
+                self.ctl(4).load(SeqCst)
+            };
+            self.chain_set(1, n);
             return;
         }
-    } else if a.list == 0 && gid >= *grids.add(a.slot as usize) {
-        return;
+        let (mut p, mut back) = (p, back);
+        let (mut item, mut group) = if back != 0 {
+            (back - 1, (*self.items.add(back as usize - 1)).group)
+        } else {
+            self.phase_item(p, g, mode & 1, mode & 2 != 0)
+        };
+        // Its item, then whether it finishes its phase; a finisher whose next phase is few and light runs it itself,
+        // each of its groups in turn (`gi` of its `gn`; 0: the dispatch's own item), all of them once begun.
+        let (mut gi, mut gn, mut ph) = (0u32, 0u32, 0u32);
+        for _ in 0..JOIN_INLINE * JOIN_INLINE_GROUPS {
+            let whole = item == NONE || {
+                let mut it = *self.items.add(item as usize);
+                it.group = group;
+                self.item(it)
+            };
+            let q = self.finish(p, item, whole, back, d, ph + 1 < JOIN_INLINE);
+            let (next, groups) = if q != 0 {
+                (0, self.phase_groups(q - 1))
+            } else if whole && gi + 1 < gn {
+                (gi + 1, gn)
+            } else {
+                return;
+            };
+            if next == 0 {
+                ph += 1;
+                p = q - 1;
+            }
+            (back, gi, gn) = (0, next, groups);
+            (item, group) = self.phase_item(p, gi, self.ctl(3).load(SeqCst) & 1, false);
+        }
     }
-    if a.list != 0 {
-        p.run(*p.slots.add((a.at + gid) as usize), None);
-    } else {
-        let (item, group) = p.phase_group(a.q, gid);
-        p.run(item, Some(group));
+
+    /// The group's item `item` of phase `p` counted (`prog_finish`): where it finishes its phase, the next reset and
+    /// its groups, the next dispatch's, or the phase and one where they are few and light and `inline_ok` (this group
+    /// runs each of its groups); 0 where the group is done with the phase.
+    unsafe fn finish(&self, p: u32, item: u32, whole: bool, back: u32, d: u32, inline_ok: bool) -> u32 {
+        if back != 0 {
+            self.ctl(2).store(0, SeqCst);
+        }
+        if !whole {
+            self.ctl(9).store(item + 1, SeqCst);
+            self.ctl(6).fetch_or(32, SeqCst);
+            return 0;
+        }
+        let want = self.ctl(10 + (self.a.phases + p) as usize).load(SeqCst);
+        let want = if want != 0 { want } else { self.phase(p)[1] };
+        if self.ctl(10 + p as usize).fetch_add(1, SeqCst) + 1 != want {
+            return 0;
+        }
+        self.ctl(8).fetch_add(1, SeqCst);
+        let flags = self.ctl(6).load(SeqCst);
+        if flags & 128 != 0 {
+            self.ctl(6).fetch_and(!128, SeqCst);
+        }
+        let n = if flags & 128 != 0 && flags & 2 == 0 {
+            // A gate's room mapped past: the program parks after the gate's phase.
+            self.ctl(9).store(0xC000_0000 | p, SeqCst);
+            self.ctl(6).fetch_or(32, SeqCst);
+            0
+        } else if flags & 64 != 0 {
+            // Its texts found the arena full: the phase parks, and runs its texts again once the host maps more.
+            self.ctl(6).fetch_and(!64, SeqCst);
+            self.ctl(9).store(0x8000_0000 | p, SeqCst);
+            self.ctl(6).fetch_or(32, SeqCst);
+            0
+        } else {
+            self.phase_enter(self.phase_after(p))
+        };
+        if inline_ok && (n == 1 || (n != 0 && n <= JOIN_INLINE_GROUPS && self.phase_light(self.ctl(0).load(SeqCst)))) {
+            return self.ctl(0).load(SeqCst) + 1;
+        }
+        self.chain_set(d + 1, n);
+        0
     }
 }
 
-/// A run of a round's phases in one group (`join_chain`, decision 0647): from phase `a.q`, its next `a.at`, each as
-/// `join_grid` and its dispatch would run it while its groups are `CHAIN_GROUPS` at most, one after another. The first
-/// phase of more groups, or the first the program's flags stop, it hands back: `ctl[13]`, the first it did not run.
+/// The join program's group (`join_run`): its `JOIN_TG` threads, run as one.
 ///
 /// # Safety
 ///
-/// As `join_phase`'s.
-pub unsafe fn join_chain(argv: *const *const u8, l: &Launch) {
-    if l.group != [0, 0, 0] {
-        return;
-    }
-    let p = Prog::of(argv, l);
-    let a = (*argv.add(11) as *const PhaseP).read_unaligned();
-    let mut q = a.q;
-    while q < a.q + a.at {
-        if p.ctl(6).load(SeqCst) & (STOPS | PARKS) != 0 {
-            break;
-        }
-        let n = p.phase_groups(q);
-        if n > CHAIN_GROUPS {
-            break;
-        }
-        p.ctl(11).store(q + 1, SeqCst);
-        for k in 0..n {
-            let (item, group) = p.phase_group(q, k);
-            p.run(item, Some(group));
-        }
-        q += 1;
-    }
-    p.ctl(13).store(q, SeqCst);
+/// `argv` holds the kernel's arguments (each the address of its bytes: a buffer's address, the `ProgP`'s bytes), its
+/// buffers as the host made them; `l.reads` the compiled reads (`rerail_clif::jit::Reads::table`).
+pub unsafe fn join_run(argv: *const *const u8, l: &Launch) {
+    let threads = l.block[0] * l.block[1] * l.block[2];
+    assert!(threads == TG, "join_run: a group of {TG} threads, not {threads}");
+    assert!(!l.reads.is_null(), "join_run: the compiled reads (Launch::reads)");
+    let buf = |i: usize| (*argv.add(i) as *const *mut u8).read_unaligned();
+    let a = (*argv.add(9) as *const ProgP).read_unaligned();
+    let prog = Prog {
+        jobs: buf(0) as *mut Job,
+        items: buf(1) as *const Item,
+        phases: buf(2) as *const u32,
+        segs: buf(3) as *const Seg,
+        scans: buf(4) as *mut ScanLevel,
+        sorts: buf(5) as *const SortPass,
+        script: buf(6) as *const SizeOp,
+        ctl: buf(7) as *mut u32,
+        counts: buf(8) as *mut u32,
+        a,
+        rd: Reads(l.reads),
+    };
+    // Its groups run one after another on one thread (the CPU device's), each as the kernel's group.
+    prog.group(l.group[0]);
 }
 
 #[cfg(test)]
@@ -3856,5 +4176,16 @@ mod tests {
         for (name, at) in places {
             assert_eq!(rerail_clif::reads::READS[at].name, name, "READS[{at}]");
         }
+    }
+
+    /// The words of a tape's view the host's 16z reads set (`host_view`) are `TapeView`'s, which a row holds whole.
+    #[test]
+    fn a_views_format_and_cache_offset_are_where_the_reads_put_them() {
+        use rerail_clif::view::{F16Z_FORMAT, TapeView};
+        assert_eq!(core::mem::offset_of!(TapeView, format), 4 * super::VIEW_FORMAT);
+        assert_eq!(core::mem::offset_of!(TapeView, side), 4 * super::VIEW_SIDE);
+        assert_eq!(F16Z_FORMAT, super::F16Z_FORMAT);
+        // Whole in a row's view (`ViewRow::view`, the words `host_view` copies).
+        assert!(size_of::<TapeView>() <= size_of::<[u32; 34]>());
     }
 }

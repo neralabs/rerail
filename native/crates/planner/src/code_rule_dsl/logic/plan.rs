@@ -4130,7 +4130,7 @@ impl<'a> Run<'a, '_> {
                     *l = SpecLine::Join { head: h, delta: d, join, whole: None, est: Default::default() };
                 }
             }
-            spec.lines.insert(0, SpecLine::Device);
+            spec.lines.insert(0, SpecLine::Device { host: placed.host });
             None
         };
         // The spec, encoded once now that its lines are final (decision 0628 §4): what the engine opens, the lab

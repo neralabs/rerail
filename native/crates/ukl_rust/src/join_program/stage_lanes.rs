@@ -17,10 +17,9 @@ use super::*;
 use crate::lanes as ln;
 use core::cell::{Cell, UnsafeCell};
 use core::mem::MaybeUninit;
-use rerail_simd::prelude::*;
 use rerail_simd::{LaneCount, SupportedLaneCount};
 
-/// The lanes a step: 8 (four NEON registers of 64-bit lanes).
+/// The lanes a step: 8 (four 128-bit registers of 64-bit lanes: NEON, SSE).
 pub(super) const LANES: usize = 8;
 
 /// Bindings a tile, candidates a chunk; `SLACK`: room past each for a last step's whole vector (`N` at most 64).

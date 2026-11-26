@@ -32,6 +32,9 @@ pub struct Places {
     /// Where the device reads it, made on the first ask (`device_view`); `None` where it cannot.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     device: std::sync::OnceLock<Option<OnDevice>>,
+    /// Where the host's join programs read it (`rerail_accel::gpu::shared::on_host`), made on the first ask there.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    host: std::sync::OnceLock<Option<OnHost>>,
 }
 
 /// Whether id `id` is one of `Extra`'s spans (`granules::ExtraSpan`), not a node, token or position.
@@ -68,6 +71,15 @@ struct OnDevice {
     home: crate::code_rule_dsl::facts::rows::Part,
 }
 
+/// A placed relation as the host reads it: its `PlacedDir` at host addresses (the view's directory's, the spans'
+/// block's), the spans' relation held while it is read, and its relation of no columns, as `OnDevice`'s.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+struct OnHost {
+    dir: Box<PlacedDir>,
+    _spans: crate::code_rule_dsl::facts::rows::InBlock,
+    home: crate::code_rule_dsl::facts::rows::Part,
+}
+
 impl Places {
     pub fn new(view: Arc<dyn Source>, spans: Arc<dyn Source>) -> Self {
         debug_assert_eq!(view.columns().len(), spans.columns().len());
@@ -76,6 +88,8 @@ impl Places {
             spans,
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             device: std::sync::OnceLock::new(),
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+            host: std::sync::OnceLock::new(),
         }
     }
 
@@ -124,6 +138,17 @@ impl Places {
         let home = crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()?;
         Some(OnDevice { dir, tail, _spans: spans, home })
     }
+
+    /// `on_device`'s `PlacedDir` at the host's addresses (`view_dir`: the view's directory's host address), for the
+    /// host's join programs: the spans' block where it lies here, no device buffer.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn on_host(&self, view_dir: u64) -> Option<OnHost> {
+        let spans = self.spans.in_block()?;
+        let tail = spans.facts.block.base_ptr() as u64;
+        let dir = Box::new(PlacedDir { dir: view_dir, tail, at: spans.at as u64, rows: self.first() as u32, pad: 0 });
+        let home = crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()?;
+        Some(OnHost { dir, _spans: spans, home })
+    }
 }
 
 impl Source for Places {
@@ -139,6 +164,16 @@ impl Source for Places {
             return Some(d);
         }
         let v = &mut d.in_place;
+        // Where the join programs run on the host, the view's directory is at its host address (`device_view` of
+        // the syntax source), and so is this one.
+        if super::device_chunk::ViewsInPlace::read_on_host() {
+            let on = self.host.get_or_init(|| self.on_host(v.dir)).as_ref()?;
+            v.dir = std::ptr::from_ref::<PlacedDir>(&on.dir) as u64;
+            v.kind |= VIEW_PLACED;
+            d.rows = self.len();
+            d.home = on.home.clone();
+            return Some(d);
+        }
         let on = self.device.get_or_init(|| self.on_device(v.dir)).as_ref()?;
         v.dir = on.dir.device_address()?;
         v.kind |= VIEW_PLACED;

@@ -489,6 +489,63 @@ fn a_node_columns_counts_are_its_rows_counts() {
     assert!(node_column_counts(&batch, 3).is_none());
 }
 
+/// Every bound a syntax source gives a column (`col_bounds`), asked before its rows are made, holds each value its
+/// rows hold: a stratum's head key packs a value less its least in the bits its bounds need, so a value past them
+/// packs wrong. The columns the strata's keys read are bounded within what their kind needs: a node 32 bits and the
+/// span of the documents' keys, a document's key that span, a text (an atom, a made relation's too: `text.s`), a
+/// kind, a field, a position, a line, a column and a child's place 32 bits. In T's shape and in core.rerail's, the
+/// core-shaped batch's keys far apart (5 and 1000: 42 bits a node, not 64).
+#[test]
+fn a_syntax_sources_column_bounds_hold_its_rows() {
+    let check = |sources: &[(&'static str, Arc<dyn Source>)], keys: [i64; 2], want: &[&str]| {
+        let bits = |span: i64| 64 - (span as u64).leading_zeros();
+        let key_bits = bits(keys[1] - keys[0]);
+        // Asked first, of every source: none of their rows made yet.
+        let bounds: Vec<Vec<Option<[i64; 2]>>> = sources.iter().map(|(_, s)| (0..s.columns().len()).map(|c| s.col_bounds(c)).collect()).collect();
+        let mut bounded = BTreeSet::new();
+        for ((name, s), bounds) in sources.iter().zip(&bounds) {
+            let columns = s.columns();
+            for (c, b) in bounds.iter().enumerate() {
+                let Some([lo, hi]) = *b else { continue };
+                let at = format!("{name}.{}", columns[c]);
+                assert!(lo <= hi, "{at}: no rows bounded [{lo}, {hi}]");
+                assert!(bits(hi - lo) <= 32 + key_bits, "{at}: [{lo}, {hi}] wider than a node's {} bits", 32 + key_bits);
+                bounded.insert(at);
+            }
+            let all: Vec<usize> = (0..columns.len()).collect();
+            s.for_rows(&all, &mut |_, row| {
+                for (c, b) in bounds.iter().enumerate() {
+                    if let Some([lo, hi]) = *b {
+                        assert!((lo..=hi).contains(&row[c]), "{name}.{}: {} past its bounds [{lo}, {hi}]", columns[c], row[c]);
+                    }
+                }
+            });
+        }
+        for w in want {
+            assert!(bounded.contains(*w), "{w} has no bounds: {bounded:?}");
+        }
+    };
+    let store = ContentStore::open(&temp("bounds")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let keys = [docs.iter().map(|d| i64::from(d.key)).min().unwrap(), docs.iter().map(|d| i64::from(d.key)).max().unwrap()];
+    let t = sources(&store, docs).unwrap();
+    check(&t, keys, &["node.d", "node.n", "node.kind", "node.start", "node.end_", "child.p", "child.c", "child.idx", "field.p", "field.f", "field.c", "core_node.d", "core_node.n", "doc.d", "doc.path", "doc.module", "text.n"]);
+    let src = "import os\ndef f(a, b):\n    x = a not in b\n    return g(x, [a, b])\n";
+    let docs = vec![document(5, "m.py", "python", src), document(1000, "n.py", "python", "class C:\n    def m(self):\n        return self.v\n")];
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "str", "child", "line", "col", "name", "rr_report_location"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let core = shaped(&store, docs, &projection).unwrap();
+    check(&core, [5, 1000], &["node.d", "node.n", "node.kind", "node.start", "node.end_", "child.p", "child.c", "child.idx", "text.n", "text.s", "str.n", "str.s", "line.n", "line.l", "col.n", "col.c", "name.n", "name.s", "rr_report_location.n", "rr_report_location.line", "rr_report_location.column", "rr_report_location.end_line", "rr_report_location.end_column"]);
+    // A file's own tree alone (`Made::File`, decision 0512), under a hidden key: its document column is its file's
+    // (decision 0431 §4), a key the batch does not hold.
+    let mut tree = document(HIDDEN_KEYS + 5, "t.py", "python", src);
+    let whole = Placement::Copied { delta: 0, within: [0, src.len() as u32] };
+    tree.guest = Some(Arc::new(Guest { host: 7, file: 7, at: 7 << 32, grammar: "python".to_owned(), role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File }));
+    let alone = shaped(&store, vec![tree], &projection).unwrap();
+    let node = &alone.iter().find(|(n, _)| *n == "node").unwrap().1;
+    assert!((0..node.len()).any(|r| node.value(r, 0) == 7), "the tree's nodes are its file's");
+    check(&alone, [7, i64::from(HIDDEN_KEYS) + 5], &["node.d", "node.n", "child.p", "child.c"]);
+}
+
 /// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
 /// lookup by parent finds and a filter on the field keeps, in the same order: for every parent and each of its
 /// fields, and for a field it lacks.
@@ -2940,7 +2997,7 @@ fn host_id_reads(h: &rerail_clif::ids::Numbering, x: u32) -> [u32; 12] {
 
 /// Decision 0536: the numbering's reads written directly in Rust (`Numbering::is`, …) answer what its reads in CLIF
 /// answer, by the JIT: for every tape node, the kernels' probes (`the_kernels_id_reads_are_the_hosts`) and every
-/// item's bit, rank and select, and lows and order keys that are no item's. In both formats (16 and 16z), whole and narrowed.
+/// item's bit, rank and select, and lows and order keys that are no item's. In every format, whole and narrowed.
 #[test]
 fn the_jits_id_reads_are_the_hosts() {
     if !definition_ids() {
@@ -2987,7 +3044,7 @@ fn the_jits_id_reads_are_the_hosts() {
 /// Decision 0353 step 2: the numbering's reads as UKL (`<ukl/reads/ids.h>`, written once in CLIF), run on the device
 /// over a projection's descriptor where it lies in its block, answer what the host's reads (written directly) answer: for
 /// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
-/// and back. In both formats (16 and 16z), whole and narrowed, a document of more nodes than a granule's slot holds. The
+/// and back. In every format, whole and narrowed, a document of more nodes than a granule's slot holds. The
 /// kernel is UKL, on the process's device (decision 0440 step C).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
@@ -3093,7 +3150,7 @@ fn the_rust_reads_place_an_embedders_spans_as_its_segments_do() {
 /// the host and as MSL on the device, over the document's entry, its numbering where it lies in its block and its
 /// tape where it is read in place, are the host's rows (`Viewed::value_of`): every numbered node's document, id, kind,
 /// start and end; each child's parent, id and place; each fielded node's parent, field and id; each node's tape node;
-/// each node's line, by its lines where they lie (step 4d). In both formats (16 and 16z), whole and narrowed.
+/// each node's line, by its lines where they lie (step 4d). In every format, whole and narrowed.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_view_reads_are_the_hosts_rows() {
@@ -3192,7 +3249,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                 let p = if narrowed { Projected::anchored(7, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(7, Arc::clone(&facts), Some(&dialect), shape, false, None) };
                 let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
                 let block = p.ranks().block();
-                let entry = view_docs::ViewEntry::new(block, &p, &dialect, Some(&*atoms));
+                let entry = view_docs::ViewEntry::new(block, &p, Some(&dialect), Some(&*atoms));
                 let n = p.len();
                 let nf = p.ranks().count(Item::Field);
                 let parent = |l: u32| match p.parent(l as usize) {
