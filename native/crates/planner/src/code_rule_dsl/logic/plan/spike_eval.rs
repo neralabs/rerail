@@ -923,7 +923,7 @@ pub trait Calls {
     /// Whether symbol `sym`'s text matches `m`, read where it lies; `None` for a symbol with no text.
     fn is_match(&self, sym: i64, m: &crate::code_rule_dsl::logic::strings::Matcher) -> Option<bool>;
     fn cat(&self, a: i64, b: i64) -> i64;
-    fn node_read(&self, name: &str, n: i64) -> Option<String>;
+    fn node_read(&self, name: &str, n: i64) -> Option<rusqlite::types::Value>;
 }
 
 /// The evaluation of a stratum over a chunk: its relations (the stratum's owned, the others held by the chunk).
@@ -1329,7 +1329,11 @@ impl<'a> Eval<'a> {
             },
             Fun::Cat => calls.cat(arg(0)?, arg(1)?),
             Fun::Doc => arg(0)? >> 32,
-            Fun::NodeRead(name) => symbol(&calls.node_read(name, arg(0)?)?)?,
+            Fun::NodeRead(name) => match calls.node_read(name, arg(0)?)? {
+                rusqlite::types::Value::Text(t) => symbol(&t)?,
+                rusqlite::types::Value::Integer(i) => i,
+                _ => return None,
+            },
             Fun::In(set) => i64::from(set.contains(&arg(0)?)),
             Fun::Set(_) => return None,
             Fun::Test(op, held) if matches!(&args[1], Expr::Call(Fun::Set(_), _) | Expr::A(Arg::Const(_))) => {

@@ -17,13 +17,14 @@ pub const PRODUCT_DEMAND: &str = "rr_product_demand_";
 /// The prefix of the pair relations a deferred join's reader reads (decision 0488).
 pub const DEFERRED_PAIRS: &str = "rr_deferred_pairs_";
 
-/// A set of a rule's variables, by slot.
+/// A set of a rule's variables, by slot: its words on the stack (decision 0687), four of them (256 slots) before it
+/// goes to the heap.
 #[derive(Clone, Default, PartialEq, Eq, Hash, Debug)]
-pub struct VarSet(Vector<u64>);
+pub struct VarSet(rerail_blocks::frame::InlineVec<u64, 4>);
 
 impl VarSet {
     pub fn new() -> VarSet {
-        VarSet(rerail_blocks::vector::Vector::new())
+        VarSet(rerail_blocks::frame::InlineVec::new())
     }
     pub fn of(slots: impl IntoIterator<Item = Slot>) -> VarSet {
         let mut s = VarSet::new();

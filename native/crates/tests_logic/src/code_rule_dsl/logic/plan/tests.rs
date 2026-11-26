@@ -1489,7 +1489,7 @@ fn a_documents_key_compared_with_a_bound_runs_natively() {
     let program = r#"
 .decl ids(n: node)
 ids(n) :- kind(n, "identifier").
-.decl total(c: number)
+.decl total(c: number) cross_file
 total(c) :- c = count : { ids(_) }.
 .decl named(n: node, c: number)
 named(n, c) :- total(c), ids(n), d = @doc(n), d < 1342177280.
@@ -2603,6 +2603,55 @@ fn join_keys_from_functions_derive_the_rules_rows() {
     assert_eq!(rows(&keyed, Some("program")), want);
 }
 
+/// A computed view whose columns a comparison defines over its domain (`ca_split(r, h, t) :- ca_dotted(_, r),
+/// match(…, r)`), read with a column left `_`, is inlined into readers that read its domain already, so they stay on
+/// their own rows (decision 0649); with one reader that does not, it stays a relation. Both derive the same rows.
+#[test]
+fn a_view_computed_by_comparisons_is_inlined_where_its_domain_is_read() {
+    let program = |extra: &str| {
+        format!(
+            r#"
+        .decl dotted(e: number, r: symbol)
+        dotted(1, "a.b.c"). dotted(2, "x"). dotted(3, "a.q"). dotted(4, "y.z").
+        .decl split(r: symbol, h: symbol, t: symbol)
+        split(r, h, t) :- dotted(_, r), match("(?<h>[^.]*)(?<t>.*)", r).
+        .decl alias(h: symbol, q: symbol)
+        alias("a", "pkg.a").
+        .decl resolved(e: number, s: symbol)
+        resolved(e, s) :- dotted(e, r), split(r, h, t), alias(h, q), s = cat(q, t).
+        resolved(e, r) :- dotted(e, r), split(r, h, _), !alias(h, _).
+        .output resolved
+        {extra}
+    "#
+        )
+    };
+    let rows = |p: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, outputs: &[&str]| -> Vec<String> {
+        let path = crate::code_rule_dsl::fixtures::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lowered(std::sync::Arc::clone(p), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), "").unwrap();
+        let text = got.shown();
+        let mut out: Vec<String> = outputs.iter().flat_map(|o| text[*o].iter().map(move |r| format!("{o} {r:?}"))).collect();
+        out.sort();
+        out
+    };
+    for (extra, outputs, inlined) in [("", &["resolved"][..], true), (".decl heads(h: symbol)\n heads(h) :- split(_, h, _).\n .output heads", &["resolved", "heads"][..], false)] {
+        let plain = parse_version(&program(extra)).unwrap();
+        let mut pipeline = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("test", std::sync::Arc::clone(&plain));
+        let report = super::corpus::preparation::simplify::passes(&mut pipeline).unwrap();
+        let simplified = pipeline.finish().unwrap().0;
+        let shown = |v: &crate::code_rule_dsl::logic::program_image::Version| v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>().join("\n");
+        assert_eq!(report.inlined.iter().any(|r| r == "split"), inlined, "{extra}: {report:?}\n{}\n--\n{}", shown(&plain), shown(&simplified));
+        let want = rows(&plain, outputs);
+        assert_eq!(want.iter().filter(|r| r.starts_with("resolved")).count(), 4, "{want:?}");
+        assert_eq!(rows(&simplified, outputs), want, "{extra}");
+    }
+}
+
 /// A gate (`answers::gate`'s `done_N_ad(t)` before `!N(t)`) holds only keys the rule's own literals give: after the
 /// delta it is joined once its key is bound, not crossed in because an earlier wave's stats priced it at one row
 /// (`py_try`'s "stubs": 404 rows crossed to 4 M, then rejected to 151).
@@ -2812,6 +2861,44 @@ fn a_recheck_is_priced_with_its_head_bound_and_kept_apart() {
     assert_eq!(lead(&again).as_deref(), Some("a"));
     let ((alone_again, _, _), _) = model.plan_rule_reused(fields, &own, None).unwrap();
     assert_eq!(lead(&alone_again).as_deref(), Some("c"), "the rule's own order is its own");
+}
+
+/// Decision 0689: a relation made per value looked up (`Source::made_on_lookup`, the cross part's `text` read by node
+/// alone) or a view of the corpus batch is read by the columns it is looked up by (`Stats::probed_by`); a step that
+/// binds none of them reads every row, which makes every document, and is priced so. A recheck of
+/// `named(x, l) :- used(c), text(c, x), line(c, l)` has `x` and `l` bound: by its statistics `text` by its string
+/// gives a row or two, and led, which on a warm run read every file's tape (`a_warm_edit_of_a_host_file_reads_as_a_cold_run`).
+/// With `text` and `line` probed by their node, `used` leads and each is read by `c`.
+#[test]
+fn a_step_that_binds_no_column_a_made_relation_is_looked_up_by_is_priced_as_reading_every_row() {
+    let p = parse(".decl used(c: node)\n.decl named(x: symbol, l: number)\nnamed(x, l) :- used(c), text(c, x), line(c, l).\n.output named\n").unwrap();
+    let lead_of = |probed: bool| -> (Option<String>, f64) {
+        let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+        let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+        let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
+        for (rel, rows, ndv) in [("used", 1_000.0, vec![1_000.0]), ("text", 1_000_000.0, vec![1_000_000.0, 300_000.0]), ("line", 1_000_000.0, vec![1_000_000.0, 2_000.0])] {
+            model.stats.card.insert(rel, rows);
+            for (c, n) in ndv.into_iter().enumerate() {
+                model.ndv.insert((rel, c), n);
+                model.stats.fan.insert((rel, c), (rows / n).max(1.0));
+            }
+        }
+        model.stats.nodes = 1_000_000.0;
+        if probed {
+            model.stats.probed_by = model.stats.probed_by.with([("text".to_owned(), (vec!["n".to_owned()], 64.0)), ("line".to_owned(), (vec!["n".to_owned()], 1.0))]);
+        }
+        let r = p.rule(crate::code_rule_dsl::logic::program_image::RuleId(0)).unwrap();
+        let lits: Vec<_> = r.body().collect();
+        let _plans = KeepPlans::start();
+        let placed = body::Placed::whole(p.clone());
+        let bound = body::nth(&p, 0).with_head_bound();
+        let ((order, work, _), _) = model.plan_rule_reused(placed.fields().unwrap(), &bound, None).unwrap();
+        (lits[order[0].at].atom().map(|a| p.rel_name(a.rel()).to_string()), work)
+    };
+    let (unprobed, _) = lead_of(false);
+    assert_ne!(unprobed.as_deref(), Some("used"), "by its statistics alone a read by a bound value leads");
+    let (lead, work) = lead_of(true);
+    assert_eq!(lead.as_deref(), Some("used"), "read by their nodes, the relation that binds them leads: {work}");
 }
 
 /// Smoking gun 10's cold case (t34, 2026-11-13): with no kept plan, `frag_str` is planned before the guest round

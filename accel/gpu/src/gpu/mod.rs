@@ -37,8 +37,8 @@ pub mod kernels;
 pub mod space;
 pub mod tile;
 
-/// The lane's own kernels (UKL, decision 0440 step C); the scans, the histogram and the zero fill are the UKL
-/// library's (`rerail_gpu::library`, a queue's fill).
+/// The lane's own kernels (UKL, decision 0440 step C); the scans and the histogram are the UKL library's
+/// (`rerail_gpu::library`).
 const SOURCE: &str = include_str!("relational.uglykl");
 
 /// Threads per threadgroup of every kernel (the bit product's as 16 × 16).
@@ -54,12 +54,10 @@ enum Pipe {
     BpScatter,
     CtCount,
     CtScatter,
-    ClInit,
-    ClDag,
-    ClGather,
+    ClWalk,
 }
 
-const PIPES: [&str; 7] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl_init", "cl_dag", "cl_gather"];
+const PIPES: [&str; 5] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl_walk"];
 
 /// `f`, a compile that is fatal where it fails (decision 0382), as a result: what compiling ahead reports (its use
 /// still stops the run, naming the kernel).
@@ -260,7 +258,12 @@ impl Backend for GpuBackend {
     /// submission meanwhile). Any other batch runs as it begins.
     fn start<'a>(&'a self, ks: &[&Kernel]) -> Result<Box<dyn rerail_accel::exec::Pending + 'a>, String> {
         if !ks.is_empty() && ks.iter().all(|k| matches!(k, Kernel::Join { .. })) {
-            let started = released(|| space::start(&self.space, ks))?;
+            // An evaluation of the launch budget (`launch`), or the caller's when it is in one, as `run` has: the
+            // lane's worker may begin it on the lanes' pool, a thread with none of its own (decision 0601).
+            let started = released(|| {
+                let _evaluation = launch::LaunchScope::enter();
+                space::start(&self.space, ks)
+            })?;
             return Ok(Box::new(started));
         }
         // A batch of programs: each submits its own command buffers and waits for them, so it runs on the lanes'
@@ -312,8 +315,13 @@ impl Backend for GpuBackend {
 }
 
 impl rerail_accel::exec::Pending for space::Started {
+    /// Its second half, which may launch again (the tiles' scatters, the spilled probes): an evaluation of its own,
+    /// or the caller's, as `start`'s.
     fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
-        released(|| space::Started::finish(*self))
+        released(|| {
+            let _evaluation = launch::LaunchScope::enter();
+            space::Started::finish(*self)
+        })
     }
 }
 
@@ -376,7 +384,7 @@ impl GpuBackend {
         let _evaluation = launch::LaunchScope::enter();
         let mut plan = Planner { gpu: &self.gpu, inputs: HashMap::new(), leases: Default::default() };
         let t = std::time::Instant::now();
-        let jobs: Vec<Job> = rerail_accel::score::phase("upload", || ks.iter().map(|k| plan.job(k)).collect::<Result<_, _>>())?;
+        let jobs: Vec<Job> = rerail_accel::score::phase("upload", || plan.jobs(ks))?;
         let mut stats = Stats { encode: t.elapsed().as_secs_f64(), ..Stats::default() };
         self.execute(jobs.iter().map(|j| j.stages.as_slice()), &mut stats)?;
         // Pairs that outgrew their first buffer: their scatter again, into the exact size.
@@ -422,7 +430,7 @@ impl GpuBackend {
                 Read::Ready(o) => o,
                 Read::Counts { rows, cols, buf } => Output::Counts { rows, cols, data: read::<u32>(&buf, rows * cols) },
                 Read::PerRow { n, buf } => Output::PerRow(read::<u32>(&buf, n)),
-                Read::Bits { rows, words, buf } => Output::Bits(Bits::new(rows, words, read::<u64>(&buf, rows * words))),
+                Read::Bits { rows, words, buf, at } => Output::Bits(Bits::new(rows, words, read_from::<u64>(&buf, at, rows * words))),
                 Read::Pairs { total, buf, .. } => {
                     let t = total.read() as usize;
                     let buf = exact.remove(&i).map_or(buf, |(b, _)| b);
@@ -481,13 +489,18 @@ const _: () = assert!(size_of::<(u32, u32)>() == 8 && std::mem::offset_of!((u32,
 
 /// `n` values from the start of a buffer the host shares.
 fn read<T: rerail_blocks::Pod + Copy>(buf: &Buffer, n: usize) -> rerail_blocks::vector::Vector<T> {
+    read_from(buf, 0, n)
+}
+
+/// `n` values of `buf` from value `at`.
+fn read_from<T: rerail_blocks::Pod + Copy>(buf: &Buffer, at: usize, n: usize) -> rerail_blocks::vector::Vector<T> {
     if n == 0 {
         return rerail_blocks::vector::Vector::new();
     }
-    assert!(buf.length() as usize >= n * size_of::<T>(), "gpu lane: reading past a buffer");
+    assert!(buf.length() as usize >= (at + n) * size_of::<T>(), "gpu lane: reading past a buffer");
     // copy: not block data (a kernel's output, handed to the caller as its own)
-    // SAFETY: a buffer the device finished writing (the submission completed); `n` values fit it.
-    unsafe { std::slice::from_raw_parts(buf.contents() as *const T, n) }.iter().copied().collect()
+    // SAFETY: a buffer the device finished writing (the submission completed); values `at..at + n` fit it.
+    unsafe { std::slice::from_raw_parts((buf.contents() as *const T).add(at), n) }.iter().copied().collect()
 }
 
 /// A `#[repr(C)]` value's bytes, as a kernel's `ARGS` row takes them.
@@ -514,16 +527,14 @@ struct ScatterArgs {
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct ClosureArgs {
-    n: u32,
-    words: u32,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct DagArgs {
-    words: u32,
+struct WalkArgs {
+    comps: u32,
+    seeds: u32,
     capacity: u32,
 }
+
+/// Threads a group of the closure's walk, a group an item.
+const WALK_TG: u64 = 64;
 
 #[derive(Clone)]
 enum Bind {
@@ -564,8 +575,6 @@ enum Step {
     Scan { input: Buffer, output: Buffer, n: u32, pop: bool },
     /// `H[p * width + c]`: partition `p`'s codes equal to `c`; `bad` set by a code at or above `width`.
     Histogram { codes: Buffer, offsets: Buffer, parts: u32, width: u32, h: Buffer, bad: Buffer },
-    /// `words` zero u32s from the buffer's start.
-    Zero { buf: Buffer, words: usize },
 }
 
 impl Step {
@@ -606,11 +615,6 @@ impl Step {
                 rerail_gpu::library::histogram::<u16>(q, codes, offsets, *parts, *width, h, bad)?;
                 Ok(1)
             }
-            Step::Zero { buf, words } => {
-                // A fill, not a compute launch (as a `lane::Command`'s fill).
-                q.enqueue_fill_array(buf, &0u32, 0, Some(*words));
-                Ok(0)
-            }
         }
     }
 }
@@ -650,7 +654,8 @@ enum Read {
     Ready(Output),
     Counts { rows: usize, cols: usize, buf: Buffer },
     PerRow { n: usize, buf: Buffer },
-    Bits { rows: usize, words: usize, buf: Buffer },
+    /// `rows` rows of `words` u64 words, from word `at` of `buf`.
+    Bits { rows: usize, words: usize, buf: Buffer, at: usize },
     /// `total` holds the pairs' count; `buf` the first `cap` of them.
     Pairs { total: Word, buf: Buffer, cap: u64, rescatter: Rescatter },
 }
@@ -739,12 +744,20 @@ impl Planner<'_> {
         if ok { Ok(()) } else { Err(format!("{what}: offsets are not ascending from 0 to the column's length")) }
     }
 
+    /// A submission's jobs, in order: its closures planned together (one launch).
+    fn jobs(&mut self, ks: &[&Kernel]) -> Result<Vec<Job>, String> {
+        let graphs: Vec<(u32, &[u32], &[u32])> =
+            ks.iter().filter_map(|k| if let Kernel::Closure { n, off, dst } = k { Some((*n, &off[..], &dst[..])) } else { None }).collect();
+        let mut closures = self.closures(&graphs)?.into_iter();
+        ks.iter().map(|k| if let Kernel::Closure { .. } = k { Ok(closures.next().expect("a job a closure")) } else { self.job(k) }).collect()
+    }
+
     fn job(&mut self, k: &Kernel) -> Result<Job, String> {
         match k {
             Kernel::BitProduct { a, b, min } => self.bit_product(a, b, min.as_deref().map(|m| &m[..])),
             Kernel::CountTable { loff, left, roff, right, emit } => self.count_table(loff, left, roff, right, *emit),
             Kernel::Histogram { off, codes, width } => self.histogram(off, codes, *width),
-            Kernel::Closure { n, off, dst } => self.closure(*n, off, dst),
+            Kernel::Closure { n, off, dst } => Ok(self.closures(&[(*n, &off[..], &dst[..])])?.remove(0)),
             Kernel::Join { .. } => Err("a join runs in the space's own command buffers".into()),
             Kernel::Program(_) => Err("a program submits its own command buffers".into()),
         }
@@ -832,102 +845,136 @@ impl Planner<'_> {
         Ok(Job { stages: vec![Stage::one(step)], read: Read::Counts { rows: nparts, cols: width as usize, buf: h }, bad: Some(bad), queue: None })
     }
 
-    fn closure(&mut self, n: u32, off: &[u32], dst: &[u32]) -> Result<Job, String> {
-        let nu = n as usize;
-        let words = nu.div_ceil(64).max(1);
-        Self::offsets(off, dst.len(), "closure")?;
-        if off.len() != nu + 1 || dst.iter().any(|&w| w >= n) {
-            return Err(format!("closure: not a CSR of {n} nodes"));
-        }
-        if nu == 0 {
-            return Ok(Job::ready(Output::Bits(Bits::new(0, words, rerail_blocks::vector::Vector::<u64>::new()))));
-        }
-        // The condensed DAG on the host: components, their successor components (deduplicated), cycles.
-        let (comp, ncomp) = rerail_accel::cpu::components(nu, off, dst);
-        let mut start = vec![0u32; ncomp + 1];
-        for &c in &comp {
-            start[c as usize + 1] += 1;
-        }
-        for c in 0..ncomp {
-            start[c + 1] += start[c];
-        }
-        let mut members = vec![0u32; nu];
-        let mut fill = start.clone();
-        for (v, &c) in comp.iter().enumerate() {
-            members[fill[c as usize] as usize] = v as u32;
-            fill[c as usize] += 1;
-        }
-        let (mut soff, mut sdst) = (Vec::with_capacity(ncomp + 1), Vec::new());
-        let mut cyclic = vec![0u32; ncomp];
-        let mut seen = vec![u32::MAX; ncomp];
-        for c in 0..ncomp {
-            soff.push(sdst.len() as u32);
-            let ms = &members[start[c] as usize..start[c + 1] as usize];
-            cyclic[c] = (ms.len() > 1) as u32;
-            for &v in ms {
-                for &w in &dst[off[v as usize] as usize..off[v as usize + 1] as usize] {
-                    let d = comp[w as usize];
-                    if w == v {
-                        cyclic[c] = 1;
+    /// Every closure of a submission in one launch (`cl_walk`, a work queue over their components together): a job
+    /// each, in order, the first holding the launch and each reading its rows from the one output.
+    fn closures(&mut self, ks: &[(u32, &[u32], &[u32])]) -> Result<Vec<Job>, String> {
+        let big = || "closure: the submission's rows pass 2^32 words".to_string();
+        let mut jobs: Vec<Option<Job>> = Vec::with_capacity(ks.len());
+        // Each component's row (its first word in R, its words), its successor components (numbered over every
+        // graph), its own bits (`tdst`) and its members' rows in the output (their first words).
+        let (mut rows, mut soff, mut sdst) = (Vec::new(), vec![0u32], Vec::new());
+        let (mut toff, mut tdst, mut moff, mut mout) = (vec![0u32], Vec::new(), vec![0u32], Vec::new());
+        let (mut rwords, mut owords) = (0u64, 0u64);
+        // A graph's job, its rows, their words and its first output word (u64).
+        let mut reads = Vec::new();
+        for &(n, off, dst) in ks {
+            let nu = n as usize;
+            let words = nu.div_ceil(64).max(1);
+            Self::offsets(off, dst.len(), "closure")?;
+            if off.len() != nu + 1 || dst.iter().any(|&w| w >= n) {
+                return Err(format!("closure: not a CSR of {n} nodes"));
+            }
+            if nu == 0 {
+                jobs.push(Some(Job::ready(Output::Bits(Bits::new(0, words, rerail_blocks::vector::Vector::<u64>::new())))));
+                continue;
+            }
+            // The condensed DAG on the host: components (Tarjan's), their successor components (deduplicated).
+            let (comp, ncomp) = rerail_accel::cpu::components(nu, off, dst);
+            let mut start = vec![0u32; ncomp + 1];
+            for &c in &comp {
+                start[c as usize + 1] += 1;
+            }
+            for c in 0..ncomp {
+                start[c + 1] += start[c];
+            }
+            let mut members = vec![0u32; nu];
+            let mut fill = start.clone();
+            for (v, &c) in comp.iter().enumerate() {
+                members[fill[c as usize] as usize] = v as u32;
+                fill[c as usize] += 1;
+            }
+            let base = (rows.len() / 2) as u64;
+            let w32 = 2 * words as u64;
+            let mut seen = vec![u32::MAX; ncomp];
+            for c in 0..ncomp {
+                rows.push(u32::try_from(rwords + c as u64 * w32).map_err(|_| big())?);
+                rows.push(w32 as u32);
+                let ms = &members[start[c] as usize..start[c + 1] as usize];
+                let edges = |v: u32| &dst[off[v as usize] as usize..off[v as usize + 1] as usize];
+                let cyclic = ms.len() > 1 || edges(ms[0]).contains(&ms[0]);
+                for &v in ms {
+                    if cyclic {
+                        tdst.push(v);
                     }
-                    if d as usize != c && seen[d as usize] != c as u32 {
-                        seen[d as usize] = c as u32;
-                        sdst.push(d);
+                    for &w in edges(v) {
+                        let d = comp[w as usize];
+                        if d as usize != c {
+                            tdst.push(w);
+                            if seen[d as usize] != c as u32 {
+                                seen[d as usize] = c as u32;
+                                sdst.push(u32::try_from(base + d as u64).map_err(|_| big())?);
+                            }
+                        }
                     }
+                    mout.push(u32::try_from(owords + v as u64 * w32).map_err(|_| big())?);
+                }
+                soff.push(sdst.len() as u32);
+                toff.push(u32::try_from(tdst.len()).map_err(|_| big())?);
+                moff.push(mout.len() as u32);
+            }
+            reads.push((jobs.len(), nu, words, (owords / 2) as usize));
+            jobs.push(None);
+            rwords += ncomp as u64 * w32;
+            owords += nu as u64 * w32;
+            u32::try_from(rwords.max(owords)).map_err(|_| big())?;
+        }
+        let comps = rows.len() / 2;
+        if comps > 0 {
+            // Each component's predecessors (the successors' lists turned round) and its successors left.
+            let mut poff = vec![0u32; comps + 1];
+            for &s in &sdst {
+                poff[s as usize + 1] += 1;
+            }
+            for g in 0..comps {
+                poff[g + 1] += poff[g];
+            }
+            let mut pdst = vec![0u32; sdst.len()];
+            let mut pfill = poff.clone();
+            for g in 0..comps {
+                for &s in &sdst[soff[g] as usize..soff[g + 1] as usize] {
+                    pdst[pfill[s as usize] as usize] = g as u32;
+                    pfill[s as usize] += 1;
                 }
             }
-        }
-        soff.push(sdst.len() as u32);
-        // Each component's successors' count, and its predecessors (the successor CSR's transpose): a finished
-        // component counts its predecessors' down, and the last count pushes one (`cl_dag`).
-        let pending: Vec<u32> = (0..ncomp).map(|c| soff[c + 1] - soff[c]).collect();
-        let mut poff = vec![0u32; ncomp + 1];
-        for &d in &sdst {
-            poff[d as usize + 1] += 1;
-        }
-        for c in 0..ncomp {
-            poff[c + 1] += poff[c];
-        }
-        let mut pdst = vec![0u32; sdst.len()];
-        let mut pfill = poff.clone();
-        for c in 0..ncomp {
-            for &d in &sdst[soff[c] as usize..soff[c + 1] as usize] {
-                pdst[pfill[d as usize] as usize] = c as u32;
-                pfill[d as usize] += 1;
+            let pending: Vec<u32> = soff.windows(2).map(|w| w[1] - w[0]).collect();
+            let seeds: Vec<u32> = (0..comps as u32).filter(|&g| pending[g as usize] == 0).collect();
+            // A group a component; the continuations are the components past the seeds, and a group's take may
+            // give up a slot.
+            let groups = comps as u64;
+            let capacity = u32::try_from((comps - seeds.len()) as u64 + groups).map_err(|_| big())?;
+            let (r, out) = (self.alloc(rwords * 4), self.alloc(owords * 4));
+            let queue = self.alloc((5 + capacity as u64) * 4);
+            let args = WalkArgs { comps: comps as u32, seeds: seeds.len() as u32, capacity };
+            let buf = |b: &Buffer| Bind::Buf(b.clone());
+            // copy: derived (the condensed DAG's arrays, made above from the graphs' edges; no block's)
+            let [rows, soff, sdst, toff, tdst, poff, pdst, moff, mout, seeds, pending] = [&rows, &soff, &sdst, &toff, &tdst, &poff, &pdst, &moff, &mout, &seeds, &pending].map(|v| self.upload(&v[..]));
+            let binds = vec![
+                ("R", buf(&r)),
+                ("out", buf(&out)),
+                ("rows", buf(&rows)),
+                ("soff", buf(&soff)),
+                ("sdst", buf(&sdst)),
+                ("toff", buf(&toff)),
+                ("tdst", buf(&tdst)),
+                ("poff", buf(&poff)),
+                ("pdst", buf(&pdst)),
+                ("moff", buf(&moff)),
+                ("mout", buf(&mout)),
+                ("seeds", buf(&seeds)),
+                ("pending", buf(&pending)),
+                ("queue", buf(&queue)),
+                ("args", Bind::Bytes(bytes_of(&args))),
+            ];
+            let walk = Step::Kernel(Dispatch { pipe: Pipe::ClWalk, binds, groups: [groups, 1, 1], threads: [WALK_TG, 1, 1] });
+            let mut stages = vec![Stage::one(walk)];
+            // A queue that ran out, or an item pushed and never done, is a failure, never rows short of their bits.
+            let mut queue = Some(queue);
+            for (j, rows, words, at) in reads {
+                let read = Read::Bits { rows, words, buf: out.clone(), at };
+                jobs[j] = Some(Job { stages: std::mem::take(&mut stages), read, bad: None, queue: queue.take() });
             }
         }
-        // The queue starts with the components of no successors (their rows final after the init). Its room: every
-        // other component is pushed once, and a push takes another slot where a taker gave one up (ukl/workqueue.h),
-        // at most a SIMD group's worth a take, a few for each worker.
-        let sinks: Vec<u32> = (0..ncomp as u32).filter(|&c| pending[c as usize] == 0).collect();
-        let groups = (ncomp as u64).div_ceil(TG);
-        let capacity = 2 * ncomp + 4 * 32 * (groups * TG / 32) as usize;
-        let mut slots = vec![0u32; capacity];
-        for (i, &c) in sinks.iter().enumerate() {
-            slots[i] = c + 1;
-        }
-        let control = self.upload(&[0, sinks.len() as u32, sinks.len() as u32, 0u32]);
-        let (boff, bdst) = (self.input(off), self.input(dst));
-        let (bcomp, bcyc) = (self.upload(&comp), self.upload(&cyclic));
-        let (bsoff, bsdst, bpoff, bpdst, bpend, bslots) = (self.upload(&soff), self.upload(&sdst), self.upload(&poff), self.upload(&pdst), self.upload(&pending), self.upload(&slots));
-        let row32 = (ncomp * words * 2) as u64;
-        let r = self.alloc(row32 * 4);
-        let out = self.alloc((nu * words * 8) as u64);
-        let args = Bind::Bytes(bytes_of(&ClosureArgs { n, words: words as u32 }));
-        let dag = Bind::Bytes(bytes_of(&DagArgs { words: words as u32, capacity: capacity as u32 }));
-        let total = (nu * words) as u64;
-        let st = vec![
-            Stage::one(Step::Zero { buf: r.clone(), words: row32 as usize }),
-            Stage::one(Step::Kernel(Dispatch::per(Pipe::ClInit, vec![("off", Bind::Buf(boff)), ("dst", Bind::Buf(bdst)), ("comp", Bind::Buf(bcomp.clone())), ("cyclic", Bind::Buf(bcyc)), ("R", Bind::Buf(r.clone())), ("args", args.clone())], n as u64))),
-            // One launch however deep the DAG: its levels are the queue's continuations, not launches.
-            Stage::one(Step::Kernel(Dispatch::new(
-                Pipe::ClDag,
-                vec![("R", Bind::Buf(r.clone())), ("soff", Bind::Buf(bsoff)), ("sdst", Bind::Buf(bsdst)), ("poff", Bind::Buf(bpoff)), ("pdst", Bind::Buf(bpdst)), ("pending", Bind::Buf(bpend)), ("slots", Bind::Buf(bslots)), ("control", Bind::Buf(control.clone())), ("args", dag)],
-                groups,
-            ))),
-            Stage::one(Step::Kernel(Dispatch::per(Pipe::ClGather, vec![("R", Bind::Buf(r)), ("comp", Bind::Buf(bcomp)), ("out", Bind::Buf(out.clone())), ("args", args)], total))),
-        ];
-        Ok(Job { stages: st, read: Read::Bits { rows: nu, words, buf: out }, bad: None, queue: Some(control) })
+        Ok(jobs.into_iter().map(|j| j.expect("every closure's job is made")).collect())
     }
 }
 

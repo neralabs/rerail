@@ -236,7 +236,7 @@
 // is not all known.
 .decl reference_open(n: node)
 // Both are rules, not inputs (decision 0483): a program that reads them includes python/references.rerail, the one
-// file that derives them.
+// file that derives them, and the one file that may add to them (`rr::DERIVED_BY`, decision 0263's exception).
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog
@@ -352,7 +352,7 @@
 // A definition unit's own code, hashed without positions (decision 0083 §0): the document's root, and each class and
 // function, with each nested unit standing for its kind and name. An edit to a method's body changes only the method's.
 .decl def_digest(n: node, s: symbol)
-.decl visit_index(n: node, i: number)                    // the same order as a number, from 0 per document
+.decl visit_index(n: node, i: number)                    // the same order as a key per document: compared, never stepped
 .layout visit_index key(n) local values(i, within document)
 .decl ast_depth(n: node, k: number)                      // depth in the language's AST, for breadth-first "first"
 // def_unit(n, u): u is the definition unit holding n: the innermost function or class (any definition: a method, an

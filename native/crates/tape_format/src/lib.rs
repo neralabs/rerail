@@ -113,9 +113,87 @@ impl Layout for Widths {
 /// this bound no file is parsed twice; at 160,000, six were.
 pub const SIZE_GUESS_BYTES: usize = 320_000;
 
-const NO_CODE: u16 = u16::MAX;
-/// The id table's slots: a key is below this (`kf` 16 bits, flags 3).
+/// A key is below this (`kf` 16 bits, flags 3).
 const ID_SLOTS: usize = 1 << 19;
+/// An empty slot of the writer's id table (`Ids`).
+const NO_ID: u64 = u64::MAX;
+/// The id table's first size, in slots (a power of two): a document uses a few hundred codes at most.
+const IDS_FIRST: u32 = 9;
+
+/// The writer's codes' ids by key, open-addressed (linear probing, at most half full): each slot a key and its id
+/// (`key << 16 | id`), or `NO_ID`. Indexed by the key itself it was the whole key space, a 1 MB table filled at
+/// each writer, which was most of a small document's parse (a rule file's, written five times a run).
+struct Ids {
+    slots: Vector<u64>,
+    bits: u32,
+}
+
+impl Ids {
+    fn new() -> Self {
+        Ids { slots: filled(1 << IDS_FIRST, NO_ID), bits: IDS_FIRST }
+    }
+
+    #[inline(always)]
+    fn home(&self, key: u32) -> usize {
+        (u64::from(key).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - self.bits)) as usize
+    }
+
+    /// `key`'s id, or where it goes (`Err`: its empty slot).
+    #[inline(always)]
+    fn find(&self, key: u32) -> Result<u16, usize> {
+        let mask = self.slots.len() - 1;
+        let mut at = self.home(key);
+        loop {
+            let e = self.slots[at];
+            if e == NO_ID {
+                return Err(at);
+            }
+            if (e >> 16) as u32 == key {
+                return Ok(e as u16);
+            }
+            at = (at + 1) & mask;
+        }
+    }
+
+    /// `key`'s id, given it as `next` where it has none (`codes` the ids' keys, in order, which a full table is
+    /// made again from).
+    #[inline(always)]
+    fn id_of(&mut self, key: u32, next: usize, codes: &[[u32; 2]]) -> (u16, bool) {
+        match self.find(key) {
+            Ok(id) => (id, false),
+            Err(at) => {
+                let at = if 2 * (next + 1) > self.slots.len() { self.grow(key, codes) } else { at };
+                self.slots[at] = u64::from(key) << 16 | next as u64;
+                (next as u16, true)
+            }
+        }
+    }
+
+    /// Twice the slots, each code put again in its order (as if inserted so: `forget` stays exact); `key`'s slot.
+    #[cold]
+    #[inline(never)]
+    fn grow(&mut self, key: u32, codes: &[[u32; 2]]) -> usize {
+        self.bits += 1;
+        self.slots = filled(1 << self.bits, NO_ID);
+        for (id, &[k, _]) in codes.iter().enumerate() {
+            let Err(at) = self.find(k) else { unreachable!("a code twice") };
+            self.slots[at] = u64::from(k) << 16 | id as u64;
+        }
+        self.find(key).expect_err("a new code")
+    }
+
+    /// `key`, the code given last, taken back: its slot emptied. Exact because codes are taken back last first
+    /// (`uncode_from`): no code given before it was placed past its slot.
+    fn forget(&mut self, key: u32) {
+        let mask = self.slots.len() - 1;
+        let mut at = self.home(key);
+        while (self.slots[at] >> 16) as u32 != key {
+            debug_assert_ne!(self.slots[at], NO_ID, "a code forgotten that was never given");
+            at = (at + 1) & mask;
+        }
+        self.slots[at] = NO_ID;
+    }
+}
 
 /// `v[from..to]` moved up by `by` cells (an insert's room). A span that fits a fixed window of
 /// `W` cells, with room for the window past it, moves as one fixed-size copy: a vector load and
@@ -156,7 +234,7 @@ pub struct Writer<L: Layout = Widths> {
     codes: Vector<[u32; 2]>,
     /// The nodes before this have their codes written; the rest only their keys.
     coded: usize,
-    id_of: Vector<u16>,
+    ids: Ids,
     layout: L,
     /// An offset or tail from which a push or close takes the long way: 0x10000, or 0 once a
     /// node is marked (then every node does, and its marks are kept exact).
@@ -205,6 +283,8 @@ pub struct Sixteen {
     pub z: bool,
     pub blocks: bool,
     pub number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
+    /// Where the tape goes: rooms every reader reads it in (decision 0353 step 4a), or `None`, a vector of its own.
+    pub rooms: Option<std::sync::Arc<dyn home::Rooms>>,
 }
 
 /// A node's key named as its grammar names it: what a parser without the grammar (a lean parser's own tests and
@@ -235,6 +315,7 @@ impl Named {
             z: false,
             blocks: true,
             number: std::sync::Arc::new(move |key| lang.number_named(&name(key)?)),
+            rooms: None,
         });
         Named { target }
     }
@@ -314,7 +395,8 @@ impl<T> Sink<()> for Kept<'_, T> {
 
 /// The format 16 writer the nodes are passed to as they are committed (`Writer::pass`).
 struct Passing {
-    w: f16::Writer,
+    /// The thread's format 16 writer (`f16::Writer::reused`), given back when the parse is done.
+    w: std::mem::ManuallyDrop<f16::Writer>,
     number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
     /// Each code id's number, as far as resolved.
     numbers: Vector<u32>,
@@ -341,6 +423,13 @@ struct Passed {
 
 // SAFETY: `repr(C)`, two words and four `u32`s: no padding, no address.
 unsafe impl Pod for Passed {}
+
+impl Drop for Passing {
+    fn drop(&mut self) {
+        // SAFETY: taken once, here, and not used after.
+        unsafe { std::mem::ManuallyDrop::take(&mut self.w) }.give_back();
+    }
+}
 
 impl Passing {
     fn fail(&mut self, why: impl FnOnce() -> String) {
@@ -443,7 +532,7 @@ impl<L: Layout> Writer<L> {
             cap,
             codes: Vector::new(),
             coded: 0,
-            id_of: filled(ID_SLOTS, NO_CODE),
+            ids: Ids::new(),
             layout,
             wide_from: 0x10000,
             marks: Vector::new(),
@@ -502,7 +591,8 @@ impl<L: Layout> Writer<L> {
                 return self;
             }
         };
-        let w = f16::Writer::new(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap);
+        // The thread's writer, used again (t60 step 5), its tape written in the target's rooms (0353 row 17).
+        let w = std::mem::ManuallyDrop::new(f16::Writer::reused_in(t.rooms.clone(), t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap));
         self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default() }));
         // The columns hold the window: the nodes since the last commit (more grow it).
         if self.cap > WINDOW {
@@ -780,7 +870,7 @@ impl<L: Layout> Writer<L> {
             if (first as usize) < node {
                 break;
             }
-            self.id_of[key as usize] = NO_CODE;
+            self.ids.forget(key);
             self.codes.pop();
         }
         self.coded = node;
@@ -797,15 +887,13 @@ impl<L: Layout> Writer<L> {
         // The columns as locals: a store to one is not a store to the writer's fields.
         let keys = &self.keys[a..b];
         let code = &mut self.code[a..b];
-        let (id_of, codes, mask) = (&mut self.id_of[..], &mut self.codes, ID_SLOTS - 1);
+        let (ids, codes) = (&mut self.ids, &mut self.codes);
         for (k, (&key, cell)) in keys.iter().zip(code).enumerate() {
-            // A key is below `ID_SLOTS` (`push`'s assertion): the mask is no change, and no check.
-            let slot = &mut id_of[(key as usize) & mask];
-            if *slot == NO_CODE {
-                *slot = codes.len() as u16;
+            let (id, new) = ids.id_of(key, codes.len(), codes);
+            if new {
                 codes.push([key, (from + k) as u32]);
             }
-            *cell = *slot;
+            *cell = id;
         }
         self.coded = to;
         if self.sixteen.is_ok() {
@@ -1377,6 +1465,11 @@ impl<L: Layout> Writer<L> {
     /// size and end exactly; `Ok(Err)` where the writer writes no tape, or the nodes are not a format 16 tape (a code
     /// the language's table lacks, an edit before a commit, a node past format 16's bounds).
     pub fn finish_16(&mut self) -> Result<Result<f16::Finished, String>, Redo> {
+        self.finish_16_with(None)
+    }
+
+    /// `finish_16`, the tape's auxiliary index made by `aux` and laid where the tape lies (`f16::Writer::finish_with`).
+    pub fn finish_16_with(&mut self, aux: Option<f16::AuxMaker<'_>>) -> Result<Result<f16::Finished, String>, Redo> {
         debug_assert!(self.chains.is_empty(), "a chain not ended");
         self.commit();
         let w = self.layout.widths();
@@ -1402,7 +1495,7 @@ impl<L: Layout> Writer<L> {
             return Ok(Err(format!("node {node} read after its commit")));
         }
         s.close_to(self.n);
-        Ok(s.w.finish())
+        Ok(s.w.finish_with(aux))
     }
 }
 
@@ -1430,7 +1523,7 @@ mod tests {
             let (kind, field) = (k & 0x3ff, k >> KIND_BITS & 0x3f);
             (k >> 16 == 0 && kind < 16 && field < 8).then_some(kind + 16 * field)
         };
-        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number) })
+        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number), rooms: None })
     }
 
     /// The rows of the tape `w` finishes.
@@ -1534,7 +1627,7 @@ mod tests {
             f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).unwrap()
         });
         let number = |k: u32| (k >> 16 == 0 && k & 0x3ff < 16 && k >> 10 < 8).then(|| (k & 0x3ff) + 16 * (k >> 10));
-        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number) });
+        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number), rooms: None });
         let src = vec![b' '; 200_000];
         // 0: the calls joined; 1: the joined calls; 2: the plain ones (no chain, no node passed on).
         let build = |way: u8| {

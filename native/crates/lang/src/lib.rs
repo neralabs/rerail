@@ -43,6 +43,7 @@ pub mod code_rule_dsl {
         pub use rerail_prof::code_rule_dsl::logic::profile;
     }
     pub mod module_path;
+    pub mod node_path;
     pub use rerail_prof::code_rule_dsl::phase_clock;
     pub use rerail_prof::code_rule_dsl::prof;
     pub mod semver;
@@ -56,6 +57,7 @@ pub mod code_rule_dsl {
     }
     pub mod tape;
     pub mod tree;
+    pub mod tsconfig;
     #[path = "value"]
     pub mod value {
         pub mod text_regex;

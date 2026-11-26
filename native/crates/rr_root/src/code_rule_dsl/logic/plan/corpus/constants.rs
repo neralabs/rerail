@@ -35,7 +35,7 @@ use super::super::Result;
 use super::{Report, Typing};
 use crate::code_rule_dsl::logic::front::Value;
 use crate::code_rule_dsl::logic::program_image::Version;
-use crate::code_rule_dsl::typing::file_local::option_input;
+use crate::code_rule_dsl::typing::file_local::{option_input, run_stated};
 
 /// The option that marks a run as the constants' own (it folds nothing).
 pub const OWN: &str = "constants_run";
@@ -110,7 +110,9 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>) -> Result<BTreeSet<String
         }
         fold.into_iter().map(str::to_owned).collect()
     };
-    let fact = |rel: &str| !heads.contains_key(rel) && v.find(rel).is_some_and(|a| v.facts(a).is_some()) && !inputs.contains(rel);
+    // A relation the run states whole (`run_stated`: its settings, its options once stated) is given, none or some:
+    // `py_version_text` of a run with no `env` row is the default's (decision 0665).
+    let fact = |rel: &str| !heads.contains_key(rel) && (v.find(rel).is_some_and(|a| v.facts(a).is_some()) || run_stated(rel)) && !inputs.contains(rel);
     let mut fold = fixpoint(&|rel| !heads.contains_key(rel) && (option_input(rel) || world(rel) || fact(rel)), true);
     // Only those that read the world: the split's constants (`file_local::FileLocal::constants`: facts, the run's
     // options and phases' exports, no request) are derived in both parts already.
@@ -120,6 +122,136 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>) -> Result<BTreeSet<String
     let read_outside: BTreeSet<&str> =
         shape.reads_of.iter().filter(|(h, _)| !fold.contains(h.as_str())).flat_map(|(_, reads)| reads.iter().map(String::as_str)).chain(outputs.iter().map(String::as_str)).collect();
     Ok(fold.into_iter().filter(|r| read_outside.contains(r.as_str())).collect())
+}
+
+/// The option names the program's reads of `rel` (`option` or `option_item`) can match (decision 0665), or `None`
+/// where a read can match any. A name position is `rel`'s first column, and a head column a name at a position is
+/// carried into: `method_dec_named(e, o) :- …, option_item(o, _, q), …` makes `method_dec_named`'s second column one,
+/// and its readers name the options (`method_dec_named(e, "pep8-naming.classmethod-decorators")`). At a position, a
+/// string is a name, and so is each value of the facts that bind a variable there (`gi_option(o), option_item(o, …)`).
+/// Any other term (a wildcard, a computed name, a variable an output's column or a derived relation binds) matches any
+/// name; and so does a rule that derives `rel`: the rule, shown, is the error.
+fn option_names(v: &Version, rel: &str) -> std::result::Result<BTreeSet<String>, String> {
+    use crate::code_rule_dsl::logic::program_image::{AtomRef, Cell, Lit, TermRef};
+    let derived: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
+    if let Some(r) = v.rules().find(|r| v.rel_name(r.head().rel()) == rel) {
+        return Err(format!("derived: {}", v.show_rule(r)));
+    }
+    let outputs = v.output_names();
+    // The strings in column `c` of `r`'s facts, or `None` if one is not a string.
+    let fact_column = |r: &str, c: usize| -> Option<Vec<String>> {
+        let facts = v.facts(v.find(r)?)?;
+        facts.rows().map(|mut row| match row.nth(c) { Some(Cell::Str(s)) => Some(v.text(s).to_owned()), _ => None }).collect()
+    };
+    let mut positions: BTreeSet<(String, usize)> = BTreeSet::from([(rel.to_owned(), 0)]);
+    let mut names = BTreeSet::new();
+    loop {
+        let before = positions.len();
+        for r in v.rules() {
+            let head = v.rel_name(r.head().rel());
+            let head_args: Vec<TermRef<'_>> = r.head().args().collect();
+            let atoms: Vec<AtomRef<'_>> = r
+                .body()
+                .filter_map(|l| match l.view() {
+                    Lit::Atom(a) => Some(a),
+                    Lit::Agg { atom, .. } => Some(atom),
+                    _ => None,
+                })
+                .collect();
+            for a in &atoms {
+                let at = v.rel_name(a.rel());
+                for (c, t) in a.args().enumerate() {
+                    if !positions.contains(&(at.to_owned(), c)) {
+                        continue;
+                    }
+                    match t {
+                        TermRef::Str(s) => {
+                            names.insert(v.text(s).to_owned());
+                        }
+                        TermRef::Var(x) => {
+                            let from_facts = atoms.iter().filter(|b| !b.neg() && !derived.contains(v.rel_name(b.rel()))).find_map(|b| {
+                                let br = v.rel_name(b.rel());
+                                b.args().enumerate().find(|(k, u)| u.var() == Some(x) && !positions.contains(&(br.to_owned(), *k))).and_then(|(k, _)| fact_column(br, k))
+                            });
+                            if let Some(found) = from_facts {
+                                names.extend(found);
+                                continue;
+                            }
+                            let any = || format!("{at} column {c}: {}", v.show_rule(r));
+                            let h = head_args.iter().position(|u| u.var() == Some(x)).ok_or_else(any)?;
+                            if outputs.iter().any(|o| o == head) {
+                                return Err(any());
+                            }
+                            if v.find(head).and_then(|a| v.facts(a)).is_some() {
+                                names.extend(fact_column(head, h).ok_or_else(any)?);
+                            }
+                            positions.insert((head.to_owned(), h));
+                        }
+                        _ => return Err(format!("{at} column {c}: {}", v.show_rule(r))),
+                    }
+                }
+            }
+        }
+        if positions.len() == before {
+            return Ok(names);
+        }
+    }
+}
+
+/// The run's options stated as facts (decision 0665): for each of `option` and `option_item` that the program reads
+/// as an input and whose reads name the options they can match (`option_names`:
+/// `option_item("pydocstyle.ignore-decorators", _, q)`), the rows of those options (`option`, `items`: the run's options with the program's declared defaults,
+/// `facts::repository::options`), and it is an input no more. A test of it is then decided before the run
+/// (`DecidedFactTests`): a rule that reads an option the run does not set goes, and with it what it alone made
+/// cross-file. Only the options the program names are stated, so the program is the same for another batch of files
+/// (`inputFiles`) or other options it does not read. A relation the program names an option of by a computed name
+/// (`option(cat(c, "-require-match-for"), p)`), or derives, stays an input; the other is stated still. The relations
+/// stated.
+pub fn state_options(v: &mut std::sync::Arc<Version>, option: &[(String, String)], items: &[(String, i64, String)]) -> Result<Vec<&'static str>> {
+    const OPTIONS: [&str; 2] = ["option", "option_item"];
+    let inputs = v.input_names();
+    // Per relation the program reads as an input: the names its reads can match, or `None`.
+    let found: BTreeMap<&str, std::result::Result<BTreeSet<String>, String>> =
+        OPTIONS.iter().filter(|r| inputs.iter().any(|i| i == *r)).map(|r| (*r, option_names(v, r))).collect();
+    if !found.is_empty() {
+        crate::code_rule_dsl::logic::profile::decision("the run's options (decision 0665)", || {
+            found.iter().map(|(rel, f)| match f {
+                Ok(names) => format!("{rel}: stated, {} options named", names.len()),
+                Err(why) => format!("{rel}: an input, a read matches any option ({why})"),
+            }).collect::<Vec<_>>().join("; ")
+        });
+    }
+    let named: BTreeMap<&str, Option<BTreeSet<String>>> = found.into_iter().map(|(r, f)| (r, f.ok())).collect();
+    let stated: Vec<&'static str> = OPTIONS.into_iter().filter(|r| named.get(r).is_some_and(Option::is_some)).collect();
+    if stated.is_empty() {
+        return Ok(stated);
+    }
+    let names = |rel: &str| named[rel].clone().unwrap_or_default();
+    let str = |s: &str| Value::Str(s.to_owned().into());
+    let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(v);
+    // Stated even with no row (`set_facts`, as an empty constant is): a relation of facts is no base relation to bind
+    // (`simplify::BaseInputs`), and a test of it is decided (`DecidedFactTests`).
+    let state = |b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, rel: &str, rows: Vec<crate::code_rule_dsl::logic::front::List<Value>>| {
+        use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+        let mut all = b.fields().fact_rows(rel);
+        all.extend(rows);
+        b.fields().set_facts(rel, &all);
+    };
+    if stated.contains(&"option") {
+        let names = names("option");
+        let rows: Vec<crate::code_rule_dsl::logic::front::List<Value>> =
+            option.iter().filter(|(n, _)| names.contains(n)).map(|(n, x)| vec![str(n), str(x)].into()).collect();
+        state(&mut b, "option", rows);
+    }
+    if stated.contains(&"option_item") {
+        let names = names("option_item");
+        let rows: Vec<crate::code_rule_dsl::logic::front::List<Value>> =
+            items.iter().filter(|(n, _, _)| names.contains(n)).map(|(n, i, x)| vec![str(n), Value::Int(*i), str(x)].into()).collect();
+        state(&mut b, "option_item", rows);
+    }
+    b.fields().retain_inputs(|name| !stated.contains(&name));
+    *v = b.finish().map(|(v, _)| v).map_err(super::super::Error::Plan)?;
+    Ok(stated)
 }
 
 /// The constants' run's program: its outputs are a copy of each wanted relation, made by a rule of its own. The copy
@@ -304,7 +436,7 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
         h.update(crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
     }
     h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&h.finalize()[..])
 }
 
 /// The frame the constants of `key` are kept as.

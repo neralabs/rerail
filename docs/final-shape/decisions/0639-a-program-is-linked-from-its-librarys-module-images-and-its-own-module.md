@@ -164,6 +164,21 @@ and key (`rr::planned_module`). A library file or a phase program as a seed is a
 so its graph holds its own module and the template plans and lowers every one; a program file of the run's own is
 no module.
 
+**Held images, read before the first wave (2026-11-23).** The answer reads no store (decision 0104), so a new
+process lowered every module again, even those its store held; T4 passed only because an earlier run in the same
+process had lowered them (it ran because the graphs kept as facts lacked their plan, t33 step 2, now kept:
+`p0g_module`, `p0g_lowered`). Before its run, `phase0::derive` reads the kept graphs of its seeds (`planning`: each
+file seed, and the library files a text seed includes by name) and holds their planned modules' images in the process
+(`rr::hold_planned_modules`, one read of the store). A module whose key changed, or that no store holds, is lowered
+in the waves as before. A wrong guess costs a read, never an answer.
+
+**The packs' tables are modules too (2026-11-23).** A file seed is a module only under the library or the phase
+programs: elsewhere it is a program's own text. The run's library (`rr::planned_library`) seeded every library file
+as a file, so the packs' tables beside the library (`#include "../packs/python/….stdlib.rerail"`) were in no module,
+and a program that includes one, lowered in its scope with any other program, met its relations undeclared.
+`Dirs::module_seed` seeds such a file as a text that includes it by its name from the library, as its program names
+it. Test: `every_library_file_a_pack_includes_is_a_planned_module`.
+
 **Precedent for rounds over answers.** `bootstrap.rerail` already derives requests through negation over an answer:
 `load` ← `p0_resolved` ← `!p0_before` ← `p0_exists` ← `dir_entry`, the answer to `rr_dir_req`. The count over
 `p0_module_lowered` is the same pattern.
@@ -479,10 +494,10 @@ E15 and E16's times, per program on one thread (ms; the module steps here over t
    component crosses modules).
 4. **The downward steps as rules (T10).** `KindSets` becomes E10's three rules over the union's reads, evaluated
    and kept by delta as the program's own module changes (0225 §5). Their input is a relational view of a
-   program image (decision 0679), the first analysis written that way. `SourcesOnRequest` keeps its `again` until
-   decision 0679's view carries what it reads.
+   program image (decision 0701), the first analysis written that way. `SourcesOnRequest` keeps its `again` until
+   decision 0701's view carries what it reads.
 5. **The steps' places declared.** Each tail step says whether it is local, upward, downward or across
-   (decision 0679), so the module/program split above reads the declarations. It does not keep a list of its own:
+   (decision 0701), so the module/program split above reads the declarations. It does not keep a list of its own:
    `DOWNWARD` becomes the steps that declare `Downward`. T11 and T13 hold the declarations to what the steps do.
 
 **Tests, before the code.**
@@ -633,8 +648,8 @@ silently. Each place a digest stands for content, what can collide, and what is 
 6. §6: the local and upward tail steps at module time; kind sets, then sources on request, as rules per program.
    T10. **Spiked** (§6a, E12–E16) and specified: the module steps at module time under a tail key
    (`p0_module_tailed`), the program's downward steps over the union and the steps after them on their edit, kind
-   sets as rules over decision 0679's view, the steps' places declared. T10–T14.
-   **Built (2026-11-24), T10–T14 and 0679's T15–T16 passing:**
+   sets as rules over decision 0701's view, the steps' places declared. T10–T14.
+   **Built (2026-11-24), T10–T14 and 0701's T15–T16 passing:**
    - Each module's tail at module time, under `p0_tail_key` / `p0_tail_req -> p0_module_tailed`; a program links the
      tails and runs `program_steps` (T11, T12, T14).
    - Module-time decisions that a reader decides moved to program time (`Place::Across`), each at its `TAIL`
@@ -647,9 +662,9 @@ silently. Each place a digest stands for content, what can collide, and what is 
    - Tests that plan on pool threads bind the test's store on the test thread first: two phase-0 runs at once in one
      process store wait on its atoms lease and corrupted kept facts.
    - `DOWNWARD` is `downward_steps()`, the steps that declare `Place::Downward`.
-   - T10: the kind set take-out as rules (`rr/kind-sets.rerail` over `rr/view.rerail`, decision 0679's view, names
+   - T10: the kind set take-out as rules (`rr/kind-sets.rerail` over `rr/view.rerail`, decision 0701's view, names
      `img_`) takes out the same sets, undeclarations and facts as `KindSets` in every pack; it is now the pass, and T10 is
-     0679's T16.
+     0701's T16.
    - The program's checks are of its own components (`cycles::check_within`), the relations each step changed read
      off the version it made: an overlay's or view's edit (`rr::changed_since`), or a derivation's rules by their
      sources (`rr::derived_changes`: a rule whose hash is not its source's, one with no source, a source no rule came
@@ -670,7 +685,7 @@ silently. Each place a digest stands for content, what can collide, and what is 
      that each local step ran over the edit (`Ran::Delta`). The program's steps over the link, whole against onto
      it with its checks narrowed (E15, spark2, one thread, ms a program over 6): django 40.6 against 23.3, python
      15.2 against 9.8, react 21.8 against 18.0, phases 10.1 against 7.6.
-   - `KindSets` takes sets out by rules (decision 0679 §5.1): `rr/kind-sets.rerail`, lowered once a process, run by
+   - `KindSets` takes sets out by rules (decision 0701 §5.1): `rr/kind-sets.rerail`, lowered once a process, run by
      the native engine (`run_atoms_native_over`, the corpus run's evaluator without its documents) over the image's
      view, whose relations are sources read off the `Version` in place (`program_image::view`, each rule where it lies,
      `Version::rule_places`). Its Rust fixed point is gone. The membership of each set and the axes over derived sets
@@ -693,3 +708,19 @@ silently. Each place a digest stands for content, what can collide, and what is 
 
 7. §5 checked by T4 on the template, and the template's fill time measured.
 8. The cold run measured by span before and after (`tmp/cold2.sh`, spark2), and recorded here.
+
+## Amended (2026-11-24, user): every composition's modules derived in one run
+
+A build's first run finds no image (each build keeps its own image store, 0264), and composed its 300 rule files'
+graphs one seed at a time: each composition asked `graphs` for its own modules, and each seed whose modules no run had
+derived yet ran `bootstrap.rerail` for those alone. That was 36 runs one after another, against 3 for the pre-merge
+engine, and most of the first run's wall.
+
+Now `graphs` makes every wanted seed's composition first (`composition`: its modules, phase programs and absent
+candidates, no graph read), asks for the union of their modules in one call (one run where no image holds them), and
+then assembles each seed's graph from its parts (`Composition::assemble`). A build's first run over 15 files of corpus0
+makes 4 runs. Its instructions are 0.62 times the pre-merge engine's, its CPU 0.76 and its wall 0.9 (M3, fresh image
+store). A new binary's first launch takes longer in wall: macOS scans the executable first, outside the engine's CPU.
+
+Test: `composed_seeds_take_their_modules_from_one_run` (two file seeds of different library modules, no images, as a
+first run: one run, and each graph the one its own run derives). With the union's call removed it finds 2 runs.

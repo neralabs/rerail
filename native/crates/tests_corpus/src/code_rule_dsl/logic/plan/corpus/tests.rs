@@ -87,7 +87,7 @@ fn a_runs_chunks_normalize_the_program_once() {
     std::fs::write(&rule, r#"
 .decl def(n: node, x: symbol)
 def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
-.decl calls(n: node, x: symbol)
+.decl calls(n: node, x: symbol) cross_file
 calls(n, x) :- kind(n, "call"), field(n, "function", c), text(c, x), def(_, x).
 .output calls
 "#).unwrap();
@@ -141,7 +141,7 @@ fn a_program_reading_the_import_closure_has_its_rules() {
     let text = program(
         r#"
 #include "core.rerail"
-.decl seen(p: symbol, q: symbol)
+.decl seen(p: symbol, q: symbol) cross_file
 seen(p, q) :- rr_cx_reach(d, e), d != e, doc(d, p, _), doc(e, q, _).
 .output seen
 "#,
@@ -149,7 +149,7 @@ seen(p, q) :- rr_cx_reach(d, e), d != e, doc(d, p, _), doc(e, q, _).
     .unwrap();
     run(&text).unwrap();
     assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "seen").unwrap(), [["b.py", "a.py"]]);
-    let err = program(".pragma \"cross-memo\" \"seen\"\n.decl seen(p: symbol)\nseen(p) :- doc(_, p, _).\n.output seen\n").err().map(|e| format!("{e:?}")).unwrap_or_default();
+    let err = program(".pragma \"cross-memo\" \"seen\"\n.decl seen(p: symbol) cross_file\nseen(p) :- doc(_, p, _).\n.output seen\n").err().map(|e| format!("{e:?}")).unwrap_or_default();
     assert!(err.contains("cross-memo") && err.contains("removed"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -334,7 +334,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     std::fs::write(
         &rule,
         ".policy \"test-import-cycle\" revision 1\n.description \"An import that closes a cycle of imports.\"\n.language python\n.mode steer\n\
-         .scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number)\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n\
+         .scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n\
          .decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n\
          .violation CYC(at: node) code \"CYC\" \"This import closes a cycle of imports.\"\nCYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).\n",
     )
@@ -359,7 +359,7 @@ pub(super) const REACH_RULE: &str = r#".policy "test-reach-index" revision 1
 .mode steer
 .scope include "**/*.py"
 #include "python/names.rerail"
-.decl dep(a: number, b: number)
+.decl dep(a: number, b: number) cross_file
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl own(a: number)
 own(a) :- doc(a, _, _).
@@ -504,7 +504,7 @@ fn cross_file_strata_are_kept_across_runs_in_the_tape_cache() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -556,7 +556,7 @@ fn a_finding_of_three_columns_held_cross_file_is_read_where_it_is() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl used(f: node)
+.decl used(f: node) cross_file
 used(f) :- imp(_, q), def(f, q).
 .decl finding(category: symbol, q: symbol, n: node)
 finding("unused", q, f) :- def(f, q), !used(f).
@@ -891,7 +891,7 @@ fn a_new_process_maintains_the_cross_file_part_from_the_kept_rows() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -944,7 +944,7 @@ fn a_maintained_run_decodes_and_copies_no_tree() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -990,7 +990,7 @@ fn a_maintained_strata_pieces_run_as_one_component() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -1065,7 +1065,7 @@ fn a_cycle_closed_by_an_empty_relation_still_keeps_levels() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl never(n: node)
 never(n) :- kind(n, "no_such_kind").
@@ -1118,7 +1118,7 @@ fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl fanout(f: node, n: number)
 fanout(f, n) :- def(f, _), n = count : { uses(_, f) }.
@@ -1180,7 +1180,7 @@ fn a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_r
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .output uses
 "#;
@@ -1305,7 +1305,7 @@ fn mf_def_is_the_climb_through_classes() {
         gap(\"old\", k, l, lf) :- odef(n, f), !mf_def(n, f), kind(n, k), line(n, l), line(f, lf).\n\
         gap(\"new up\", k, l, lf) :- mf_up(n, f), !oup(n, f), kind(n, k), line(n, l), line(f, lf).\n\
         gap(\"old up\", k, l, lf) :- oup(n, f), !mf_up(n, f), kind(n, k), line(n, l), line(f, lf).\n.output gap\n\
-        .decl rows(k: number)\nrows(k) :- k = count : { mf_def(_, _) }.\n.output rows\n\
+        .decl rows(k: number) cross_file\nrows(k) :- k = count : { mf_def(_, _) }.\n.output rows\n\
         .decl decorated(l: number, lf: number)\n\
         decorated(l, lf) :- mf_def(n, f), kind(n, \"identifier\"), text(n, x), (x = \"w\" ; x = \"v\" ; x = \"arg\" ; x = \"q\" ; x = \"p\" ; x = \"c\"), line(n, l), line(f, lf).\n.output decorated\n";
     let py = "@top(lambda q: q)\ndef f(a=lambda: 1):\n    class B:\n        x = 1\n        @staticmethod\n        def m(self):\n            def g():\n                return h(1)\n            return g\n        @deco(arg(2))\n        class Inner:\n            y = 2\n    return B\n@cls_deco(z)\nclass C:\n    def n(self):\n        @wrap(w)\n        class D:\n            @d2(v)\n            class E:\n                pass\n        return D\nu = 3\ndef outer():\n    @wrap2(p)\n    def inner():\n        return p2\n    if p:\n        @a\n        @b(c)\n        def k(): pass\n    return inner\n";
@@ -1409,7 +1409,7 @@ fn an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack()
     let same = ".language python\n#include \"python/compare.rerail\"\n.decl same(l: number)\nsame(l) :- branches(e, a, b), cmp_same(a, b), line(e, l).\n\
                 .decl branches(e: node, a: node, b: node)\nbranches(e, a, b) :- kind(e, \"conditional_expression\"), child(e, a, 0), child(e, b, 2).\n\
                 cmp_same_ask(a, b) :- branches(_, a, b).\n.output same\n";
-    let across = ".language python\n.decl twin(v: symbol)\n\
+    let across = ".language python\n.decl twin(v: symbol) cross_file\n\
                   twin(v) :- kind(n, \"integer\"), kind(m, \"integer\"), docof(n, d), docof(m, e), d != e, value(n, v), value(m, v).\n.output twin\n";
     let py = "x = 1 if f else 1\ny = 1 if f else 0\nz = 0x10 if f else 16\nw = (2) if f else 2.0\n";
     let (alone, together) = alone_and_together("demand-across-files", ("a.py", py), same, across, "same");
@@ -1872,11 +1872,58 @@ y = x{i} + 2
         }
         let output = super::switches::started(|| child.output()).unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(200).collect();
-        assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join(" "));
+        let mut fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(200).collect();
+        if fault.is_empty() {
+            // Another failure: its last lines.
+            let lines: Vec<&str> = stderr.lines().collect();
+            fault = lines[lines.len().saturating_sub(30)..].to_vec();
+        }
+        assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join("\n"));
     };
     run(&before, false);
     run(&edited, true);
+}
+
+/// A string test compared with `!=` runs natively (decision 0680): the plan search's inlining (decision 0173 §7)
+/// unfolds `!bb_mangled(v)`, bugbear's `identifier(v), prefix("__", v), !suffix("__", v)`, into one copy per literal,
+/// each negated: `@prefix(v, "__") != 1`. A test's value is 0 or 1, so the native engine runs it as `= 0`. Before, it
+/// declined the stratum, and the 300-file bench's strict run stopped on SQL inside the waves. Here `inline` asks for
+/// the unfolding, in a strict run of a process of its own, as a corpus run keeps plans.
+#[test]
+fn a_string_tests_inequality_runs_natively() {
+    let _switches = super::switches::reading();
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path();
+    let src = base.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("a.py"), "a = '__x'\nb = '__y__'\nc = 'z'\n").unwrap();
+    let program = base.join("t.rerail");
+    std::fs::write(
+        &program,
+        ".decl strv(n: node, s: symbol)\nstrv(n, s) :- kind(n, \"string\"), value(n, s).\n\
+         .decl seen(s: symbol)\nseen(s) :- strv(_, s).\n\
+         .decl mangled(s: symbol) inline\nmangled(s) :- seen(s), prefix(\"__\", s), !suffix(\"__\", s).\n\
+         .decl plain(n: node)\nplain(n) :- strv(n, s), seen(s), !mangled(s).\n.output plain\n",
+    )
+    .unwrap();
+    let store = base.join("store.sqlite");
+    super::test_store::begun(&store);
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::one_corpus_run_for_a_parent", "--ignored", "--test-threads", "1", "--nocapture"])
+        .env("RERAIL_TAPE_CACHE", &store)
+        .env("RERAIL_CHILD_RUN", &src)
+        .env("RERAIL_CHILD_OUT", base.join("out"))
+        .env("RERAIL_CHILD_PROGRAM", &program)
+        .env("RERAIL_COSTS", base.join("costs.sqlite"))
+        .env("RERAIL_IMAGE_STORE", base.join("images"))
+        .env("RERAIL_SQL_STRICT", "1");
+    let output = super::switches::started(|| child.output()).unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(4).collect();
+    assert!(output.status.success(), "the run's process: {}; {}", output.status, if fault.is_empty() { stderr.lines().rev().take(20).collect::<Vec<_>>().join("\n") } else { fault.join("\n") });
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&base.join("out"), "plain").unwrap();
+    assert_eq!(rows.len(), 2, "`__y__` and `z`, not the mangled `__x`: {rows:?}");
 }
 
 /// One corpus run in a process of its own, for `the_run_after_a_cold_one_writes_nothing`.
@@ -2032,7 +2079,7 @@ fn a_cross_file_text_test_is_maintained_as_a_filter() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl passes(f: node)
 passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
@@ -2070,6 +2117,39 @@ passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A text a `join` makes, read by `cat(w, ":", j)`, gives its row in a store where neither text is an atom yet. The cat
+/// checks `j` against the text it recovers from `m`: a test of a bound slot, whose `j` the walk made and deferred
+/// (`Deferred`). Looked up as a probe's text, a deferred text was no atom, and the row was dropped: phase 0 planned no
+/// module of two files (`core:a+b`), and every program reading one failed ("in no module of phase 0's plan").
+#[test]
+fn a_cat_of_a_text_its_join_made_keeps_its_row() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cat-of-join");
+    std::fs::create_dir_all(dir.join("corpus")).unwrap();
+    // Texts no store holds: the joined texts and the names are made in this run.
+    let nonce = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let program = format!(r#"
+.decl g(p: symbol)
+.decl member(p: symbol, q: symbol)
+.decl name(p: symbol, m: symbol)
+g("a"). g("b"). g("c").
+member("a", "x1{nonce}"). member("a", "x2{nonce}"). member("b", "y{nonce}"). member("c", "z1{nonce}"). member("c", "z2{nonce}"). member("c", "z3{nonce}").
+name(p, m) :- g(p), j = join q by q sep "+" : {{ member(p, q) }}, m = cat("core", ":", j).
+.output name
+"#);
+    let out = dir.join("out");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&program, &dir.join("corpus"), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "name").unwrap();
+    rows.sort();
+    let _ = std::fs::remove_dir_all(&dir);
+    let want: Vec<Vec<String>> = vec![
+        vec!["a".into(), format!("core:x1{nonce}+x2{nonce}")],
+        vec!["b".into(), format!("core:y{nonce}")],
+        vec!["c".into(), format!("core:z1{nonce}+z2{nonce}+z3{nonce}")],
+    ];
+    assert_eq!(rows, want, "each group's name, its members joined");
+}
+
 /// A cross-file reader of a node's text (`passes` reads `uses`, which joins two files) finds it (O-cross-file-answers):
 /// its request is narrowed to the node's own document (`file_local::requests_file_local`, the hub's work-queue
 /// question 2, option a), `uses` unfolded to `def(f, _)`, so the text is answered in the chunk that holds it. Asked in
@@ -2086,7 +2166,7 @@ fn a_cross_file_reader_finds_the_text_of_another_files_node() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl passes(f: node)
 passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
@@ -2369,7 +2449,7 @@ const CROSS_FILE_VALUES: &str = r#"
 ann_node(m, x) :- string_annotation(n), parsed(n, "annotation", _), guest_of(m, n), kind(m, "identifier"), text(m, x).
 .decl cls(c: node, x: symbol)
 cls(c, x) :- kind(c, "class_definition"), field(c, "name", i), text(i, x).
-.decl refers(m: node, c: node)
+.decl refers(m: node, c: node) cross_file
 refers(m, c) :- ann_node(m, x), cls(c, x).
 .decl shown(x: symbol, p: symbol, l: number)
 shown(x, p, l) :- refers(m, c), text(m, x), guest_place(m, _, l, _), docof(c, d), doc(d, p, _).
@@ -2416,6 +2496,267 @@ fn a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule() {
     assert_eq!(rows, want, "a.py's tape value, read from the memo, is a fresh run's");
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&fresh);
+}
+
+/// A program whose per-file rule reads the project's settings (decision 0665): a function of a file under a package
+/// of `"type": "module"`.
+const SETTINGS_READ: &str = r#"
+.decl typed(n: node)
+typed(n) :- kind(n, "function_definition"), docof(n, d), doc(d, p, _), package_for(p, dir), package_field(dir, "type", "module").
+.output typed
+.decl shown(p: symbol, x: symbol)
+shown(p, x) :- typed(n), field(n, "name", i), text(i, x), docof(n, d), doc(d, p, _).
+.output shown
+"#;
+
+/// A run of `SETTINGS_READ` over `ws` in the store and output of `dir`: its report and `shown`'s rows.
+fn settings_read_run(dir: &std::path::Path) -> (super::Report, Vec<Vec<String>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, SETTINGS_READ).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("shown").map(|r| r.shown()).unwrap_or_default();
+    rows.sort();
+    (report, rows)
+}
+
+/// Decision 0665: a file's memo entry is kept under its own package's settings. Two packages, `a` (a module, two
+/// files) and `b` (one file). A source file's edit leaves the settings as they were, and the other files are read
+/// from the memo; an edit of `b/package.json` misses `b`'s files alone; and after each edit the rows are a fresh
+/// run's.
+#[test]
+fn a_files_entry_is_kept_under_its_own_packages_settings() {
+    let files = [
+        ("a/package.json", "{\"name\": \"a\", \"type\": \"module\"}\n"),
+        ("a/x.py", "def f():\n    pass\n"),
+        ("a/y.py", "def g():\n    pass\n"),
+        ("b/package.json", "{\"name\": \"b\"}\n"),
+        ("b/z.py", "def h():\n    pass\n"),
+    ];
+    let make = |name: &str, edits: &[(&str, &str)]| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in files.iter().chain(edits) {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let fresh = |name: &str, edits: &[(&str, &str)]| {
+        let dir = make(name, edits);
+        let (_, rows) = settings_read_run(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        rows
+    };
+    let row = |p: &str, x: &str| vec![p.to_owned(), x.to_owned()];
+    let dir = make("settings-memo", &[]);
+    let (first, rows) = settings_read_run(&dir);
+    assert_eq!(rows, [row("a/x.py", "f"), row("a/y.py", "g")], "a full run's rows");
+    assert!(first.settings.is_some(), "the file-local part reads the settings");
+    // The documents under `b`: `z.py`, and `package.json` where the run reads JSON as documents.
+    let under_b = first.files - 2;
+    // A source file's edit: the settings are as they were, and every other file is read from the memo.
+    let source_edit = [("b/z.py", "# an edit\ndef h():\n    pass\n")];
+    std::fs::write(dir.join("ws/b/z.py"), source_edit[0].1).unwrap();
+    let (edited, rows) = settings_read_run(&dir);
+    assert_eq!(edited.settings, first.settings, "a source file's edit changes no setting");
+    assert_eq!(edited.memo.0, edited.files - 1, "every other file is read from the memo: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(rows, fresh("settings-memo-fresh-1", &source_edit), "the rows are a fresh run's");
+    // `b` becomes a module: its files miss, `a`'s are read from the memo.
+    let package_edit = [("b/package.json", "{\"name\": \"b\", \"type\": \"module\"}\n")];
+    std::fs::write(dir.join("ws/b/package.json"), package_edit[0].1).unwrap();
+    let (edited, rows) = settings_read_run(&dir);
+    assert_ne!(edited.settings, first.settings, "an edit of a package.json changes the settings");
+    assert_eq!(edited.memo.0, edited.files - under_b, "the files under b alone miss: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(rows, [row("a/x.py", "f"), row("a/y.py", "g"), row("b/z.py", "h")]);
+    assert_eq!(rows, fresh("settings-memo-fresh-2", &[source_edit[0], package_edit[0]]), "the rows are a fresh run's");
+    // `a` is no module: `a`'s files miss, `b`'s are read from the memo.
+    std::fs::write(dir.join("ws/a/package.json"), "{\"name\": \"a\"}\n").unwrap();
+    let (edited, rows) = settings_read_run(&dir);
+    assert_eq!(edited.memo.0, under_b, "the files under a alone miss: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(rows, [row("b/z.py", "h")]);
+    assert_eq!(rows, fresh("settings-memo-fresh-3", &[source_edit[0], package_edit[0], ("a/package.json", "{\"name\": \"a\"}\n")]), "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0665: module resolution handed on by the phase `tsx_names` keys a file's memo entry by its own rows. `a.ts`
+/// imports `g` from `./b`, `c.ts` imports `h` from `./d`. Adding `g` to `b.ts`'s exports misses `b.ts` (edited) and
+/// `a.ts` (its target's exports changed) alone: `c.ts` and `d.ts` are read from the memo, and the rows are a fresh
+/// run's. Under the whole export's digest (0083 §2.3) every file missed.
+#[test]
+fn a_files_entry_is_kept_under_its_own_imports_resolution() {
+    const PROGRAM: &str = ".language typescript\n#include \"tsx/names.rerail\"\n.decl used(n: node, p: symbol, q: symbol)\nused(n, p, q) :- sym_of(n, q), docof(n, d), doc(d, p, _).\n.output used\n";
+    let files = [
+        ("a.ts", "import { g } from \"./b\";\ng();\n"),
+        ("b.ts", "export function f() {}\n"),
+        ("c.ts", "import { h } from \"./d\";\nh();\n"),
+        ("d.ts", "export function h() {}\n"),
+    ];
+    let edit = ("b.ts", "export function f() {}\nexport function g() {}\n");
+    let make = |name: &str, edits: &[(&str, &str)]| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in files.iter().chain(edits) {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let run = |dir: &std::path::Path| -> (super::Report, Vec<Vec<String>>) {
+        crate::install_store_functions();
+        let rule = dir.join("program.rerail");
+        std::fs::write(&rule, PROGRAM).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        // Each row's file and symbol (the node is the row's location, kept so a file's rows are memoised).
+        let mut rows: Vec<Vec<String>> = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("used").map(|r| r.shown()).unwrap_or_default().into_iter().map(|r| r[1..].to_vec()).collect();
+        rows.sort();
+        (report, rows)
+    };
+    let dir = make("tsx-names-memo", &[]);
+    let (_, rows) = run(&dir);
+    let row = |p: &str, q: &str| vec![p.to_owned(), q.to_owned()];
+    assert_eq!(rows, [row("c.ts", "d#h")], "only h resolves, through the phase's exports, to d's own module: {rows:?}");
+    std::fs::write(dir.join("ws").join(edit.0), edit.1).unwrap();
+    let (edited, rows) = run(&dir);
+    assert_eq!(rows, [row("a.ts", "b#g"), row("c.ts", "d#h")], "g resolves now: {rows:?}");
+    assert_eq!(edited.memo.0, edited.files - 2, "b.ts and its importer a.ts alone miss: {:?} of {}", edited.memo, edited.files);
+    let fresh = make("tsx-names-memo-fresh", &[edit]);
+    assert_eq!(rows, run(&fresh).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0665: a rule over another file's rows, read through an option (`doc_ignored`: a decorator the
+/// `pydocstyle.ignore-decorators` option lists, resolved across files), and a constant of the run's settings
+/// (`py_version`: `env`, else a file read, else a default). The option's name reaches `option_item` from its
+/// reader, as `naming.rerail`'s `method_dec_named(e, o)` from `method_dec_named(e, "pep8-naming.…")`. And an option
+/// named by a computed name, as pytest's
+/// `option(cat(c, "-require-match-for"), p)`: `option` stays an input, `option_item` is stated still.
+const OPTION_READ: &str = r#"
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
+.decl dec_named(n: node, o: symbol) cross_file
+dec_named(n, o) :- def(n, _), option_item(o, _, q), def(_, q).
+.decl ignored(n: node) cross_file
+ignored(n) :- dec_named(n, "ignore").
+.decl ver(v: symbol)
+ver(v) :- env("demo.version", v).
+ver(v) :- !env("demo.version", _), env("demo.venv", e), f = cat(e, "/demo.cfg"), file_line(f, _, v).
+ver("3.13") :- !env("demo.version", _), !env("demo.venv", _).
+.decl shown(p: symbol, x: symbol)
+shown(p, x) :- def(n, x), !ignored(n), ver("3.13"), docof(n, d), doc(d, p, _).
+.output shown
+.decl flagged(n: node)
+flagged(n) :- def(n, x), option(cat(x, "-on"), _).
+.output flagged
+"#;
+
+/// A run of `OPTION_READ` with `options` over `ws` in the store and output of `dir`: its report and `shown`'s rows.
+fn option_read_run(dir: &std::path::Path, options: &serde_json::Value) -> (super::Report, Vec<Vec<String>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, OPTION_READ).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run_with_options(&[&program], &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), options).unwrap();
+    let mut rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("shown").map(|r| r.shown()).unwrap_or_default();
+    rows.sort();
+    (report, rows)
+}
+
+/// Decision 0665: the run's options and settings are decided before the run. With no `ignore` option, the rule that
+/// reads every file's definitions through it cannot hold and goes, and with no `env` the version is the default,
+/// folded first: `shown` is per-file, and an edit of one file reads the others from the memo. With the option set,
+/// the rule holds and reads across files. Each run's rows are a fresh run's.
+#[test]
+fn an_option_the_run_does_not_set_is_decided_before_the_run() {
+    let make = |name: &str| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in [("x.py", "def f():\n    pass\n"), ("y.py", "def g():\n    pass\n"), ("z.py", "def h():\n    pass\n")] {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let row = |p: &str, x: &str| vec![p.to_owned(), x.to_owned()];
+    let none = serde_json::Value::Null;
+    let dir = make("option-decided");
+    let (first, rows) = option_read_run(&dir, &none);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")], "no option: nothing ignored, the default version");
+    std::fs::write(dir.join("ws/z.py"), "# an edit\ndef h():\n    pass\n").unwrap();
+    let (edited, rows) = option_read_run(&dir, &none);
+    assert_eq!(edited.memo.0, edited.files - 1, "shown is per-file: every other file is read from the memo: {:?} of {} (first {:?})", edited.memo, edited.files, first.memo);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")]);
+    let _ = std::fs::remove_dir_all(&dir);
+    // The option set: any file defining `h` ignores every definition.
+    let set = serde_json::json!({"ignore": ["h"]});
+    let dir = make("option-set");
+    let (_, rows) = option_read_run(&dir, &set);
+    assert_eq!(rows, Vec::<Vec<String>>::new(), "the option set: every definition ignored");
+    let _ = std::fs::remove_dir_all(&dir);
+    let set = serde_json::json!({"ignore": ["k"]});
+    let dir = make("option-set-unmatched");
+    let (_, rows) = option_read_run(&dir, &set);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")], "an option naming no definition ignores none");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0665: which settings a memoised relation's rows can read. A read keyed by the file's own path, or by a
+/// folder or target its own path's row names (directly, through a relation keyed by it, or carried by a relation
+/// derived from its own rows), is the file's own; one through another key (a constant folder, any file's row) is
+/// every file's.
+#[test]
+fn a_relation_reads_its_own_files_settings_only_through_its_own_path() {
+    use crate::code_rule_dsl::logic::plan::corpus::memo::{SettingsScope, settings_scopes};
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("settings-scopes");
+    std::fs::create_dir_all(&dir).unwrap();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, r#"
+.decl dep(dir: symbol, m: symbol)
+dep(dir, m) :- package_field(dir, "dependencies/react", m).
+.decl own(n: node)
+own(n) :- kind(n, "function_definition"), docof(n, d), doc(d, p, _), package_for(p, dir), dep(dir, _).
+.output own
+.decl any(n: node)
+any(n) :- kind(n, "function_definition"), package_for(_, dir), dep(dir, _).
+.output any
+.decl root(n: node)
+root(n) :- kind(n, "function_definition"), package_field(".", "type", "module").
+.output root
+.decl none(n: node)
+none(n) :- kind(n, "function_definition").
+.output none
+.decl tsx_names__target_at(p: symbol, s: symbol, t: symbol)
+.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)
+.decl tgt(d: number, s: symbol, t: symbol)
+tgt(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
+.decl resolved(n: node, q: symbol)
+resolved(n, q) :- kind(n, "identifier"), text(n, x), docof(n, d), tgt(d, s, t), tsx_names__exports(t, x, q).
+.output resolved
+.decl other(n: node, q: symbol)
+other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
+.output other
+"#).unwrap();
+    let v = crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap();
+    let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(v);
+    let rels = ["own", "any", "root", "none", "resolved", "other"].map(str::to_owned).into_iter().collect();
+    let scopes = settings_scopes(&placed, &rels);
+    assert_eq!(scopes.get("own"), Some(&SettingsScope::OwnFile), "{scopes:?}");
+    assert_eq!(scopes.get("any"), Some(&SettingsScope::All), "{scopes:?}");
+    assert_eq!(scopes.get("root"), Some(&SettingsScope::All), "{scopes:?}");
+    assert_eq!(scopes.get("none"), None, "{scopes:?}");
+    // A target its own path's row names, carried by a derived relation (`tgt`), keys its exports' read as its own.
+    assert_eq!(scopes.get("resolved"), Some(&SettingsScope::OwnFile), "{scopes:?}");
+    assert_eq!(scopes.get("other"), Some(&SettingsScope::All), "{scopes:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Decision 0431 R11 (step 6): a file's programs are made once, at its parse, and kept with its tape. A fresh run
@@ -2606,6 +2947,11 @@ calls(x, d, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p),
     assert!(bytes <= base + q266(2), "a file's programs are read where they lie ({bytes} bytes uploaded, {base} with none)");
     assert_eq!(on_cpu.len(), 2, "both scripts' calls: {on_cpu:?}");
     assert_eq!(on_cpu[0][1], on_cpu[1][1], "both scripts are the file's: {on_cpu:?}");
+    // Each call's line is its host's: `f(1)` on line 3, `g(2)` on line 5 (an embedded program's places read through its
+    // segments, decision 0665).
+    let mut lines: Vec<&str> = on_cpu.iter().map(|r| r[2].as_str()).collect();
+    lines.sort_unstable();
+    assert_eq!(lines, ["3", "5"], "the calls' host lines: {on_cpu:?}");
     assert_eq!(on_metal, on_cpu, "a file's programs: the device's rows are the CPU's");
 }
 
@@ -3011,6 +3357,41 @@ holes(x, k, l) :- sql_template_hole(_, i, k), text(i, x), line(i, l).
     holes.sort();
     assert_eq!(together, holes);
     assert_eq!(holes, [row(&["{col}", "name", "3"]), row(&["{table}", "table", "3"]), row(&["{uid}", "value", "2"]), row(&["{uid}", "value", "3"])]);
+}
+
+/// Decision 0597 rule 8: a pass's kept rows are an input of every chunk, bound empty where the chunk admits no tape
+/// value. PYI050 as it was written before d6fec0755c (its `parsed` in a branch of its own body), beside ASYNC100,
+/// makes the annotation context's pass read `def_outside`, whose kept rows (`…_rr_kept`) the program declares; over a
+/// file with no string to parse, the chunk answers no request in its fixpoint, and they were left unbound: its plan
+/// failed ("no statistics for rr_pass_annotation_def_outside_rr_kept.c0") where the engine before the hub's merge ran.
+#[test]
+fn a_pass_kept_rows_are_bound_in_a_chunk_that_admits_no_value() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("pass-kept-empty");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let pack = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../docs/rule-syntax/packs/python");
+    let async100 = std::fs::read_to_string(pack.join("ruff-async100-cancel-scope-no-checkpoint.rerail")).unwrap();
+    let pyi050 = "\
+.policy \"t:pyi050-before\" revision 1
+.language python
+#include \"python/typing.rerail\"
+#include \"python/version.rerail\"
+.violation PYI050(at: node) code \"PYI050\" \"NoReturn as a parameter's annotation\"
+PYI050(t) :- kind(f, \"function_definition\"), applies(f), sig_param(f, _, _, _, _, a, _), !unset(a), type_bare(a, t),
+    (typing_sym(t, \"NoReturn\") ; parsed(t, \"annotation\", r), type_bare(r, n), typing_sym(n, \"NoReturn\")).
+.decl applies(f: node)
+applies(f) :- in_stub(f).
+applies(f) :- kind(f, \"function_definition\"), targets(11).
+";
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    // As the `logic` command runs a folder of rule files: one run of them all, the memo on.
+    let options = serde_json::json!({ "reuse": true });
+    let ran = super::run_with_parsed(&[async100.as_str(), pyi050], &[None, None], &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options);
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let found = crate::code_rule_dsl::logic::plan::output::shown(&dir.join("out"), "violation").unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap_or_else(|e| panic!("the run fails: {e}"));
+    assert!(found.is_empty(), "no finding over a file of no def or with: {found:?}");
 }
 
 /// 0597 rung 2.8: a finding at a context's node stands at its string's line in the file (0431 §3, R9's

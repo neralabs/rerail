@@ -21,6 +21,15 @@ pub fn read_program_file(path: &std::path::Path) -> Result<String, String> {
 /// `program_texts` of `paths`, each one's file text given where its reader read it already (`read_program_file`):
 /// a directory's files are read to find the libraries others include, and each was read a second time here.
 pub fn program_texts_read(paths: &[&std::path::Path], given: Vec<Option<String>>) -> Result<Vec<String>, String> {
+    Ok(program_texts_parsed(paths, given)?.0)
+}
+
+/// A text's parse, made where its text was read (`rr::text_seed_read`): the run's read of it takes it.
+pub type Parsed = Option<std::sync::Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFile>>;
+
+/// `program_texts_read`, and each text's parse where its read made one (a text that includes something), for the run
+/// (`corpus::run_with_parsed`): the run's read, its masking and its templates each parsed every text again.
+pub fn program_texts_parsed(paths: &[&std::path::Path], given: Vec<Option<String>>) -> Result<(Vec<String>, Vec<Parsed>), String> {
     use crate::code_rule_dsl::logic::plan::corpus::phase0;
     let read = read_program_file;
     // A JSON policy (decision 0175) is its translation: a text whose `#include`s are library files, read as a text's.
@@ -64,9 +73,11 @@ pub fn program_texts_read(paths: &[&std::path::Path], given: Vec<Option<String>>
     // (`source_tree::root`, 1.9 M instructions), 0.6 G of a 317-file pack's texts when asked per text.
     let dirs = phase0::Dirs::here();
     let mut out = Vec::with_capacity(texts.len());
+    let mut parsed: Vec<Parsed> = Vec::with_capacity(texts.len());
     for ((_, text), j) in paths.iter().zip(texts).zip(json) {
         if j || !includes(&text) {
             out.push(if policy(&text) && !includes(&text) { format!("#include \"core.rerail\"\n{text}") } else { text });
+            parsed.push(None);
             continue;
         }
         let graph = graphs.next().expect("a graph per seed");
@@ -78,12 +89,14 @@ pub fn program_texts_read(paths: &[&std::path::Path], given: Vec<Option<String>>
         let own = module_text(&canonical, &text, &graph, library)?;
         let own = if policy(&text) && !includes(&own) { format!("#include \"core.rerail\"\n{own}") } else { own };
         // The text's own graph is the file's, cut to what the text includes: kept, so no second run derives it.
-        if let (Ok(Some(seed)), Some(dirs)) = (crate::code_rule_dsl::logic::rr::text_seed(&own), &dirs) {
+        let (seed, file) = crate::code_rule_dsl::logic::rr::text_seed_read(&own).unwrap_or((None, None));
+        if let (Some(seed), Some(dirs)) = (seed, &dirs) {
             phase0::keep_text(&seed, &graph, dirs);
         }
         out.push(own);
+        parsed.push(file);
     }
-    Ok(out)
+    Ok((out, parsed))
 }
 
 /// The run's settings (t21 E4): `key=value` lines of `<root>/rerail.env` (blank lines and `#` comments
@@ -147,10 +160,11 @@ fn module_text(path: &std::path::Path, text: &str, graph: &crate::code_rule_dsl:
     let from = path.to_string_lossy().into_owned();
     let mut out = String::with_capacity(text.len());
     for line in text.lines() {
-        let name = line.trim_start().strip_prefix("#include").and_then(|rest| rest.split('"').nth(1));
+        // As phase 0's graph names it (`rr::include_switched`: the reference graph's file under RERAIL_REFERENCES).
+        let name = line.trim_start().strip_prefix("#include").and_then(|rest| rest.split('"').nth(1)).map(super::rr::include_switched);
         match name {
             Some(name) => {
-                let found = graph.includes.get(&from).into_iter().flatten().find(|(_, n, _)| n == name).map(|(_, _, p)| p.clone());
+                let found = graph.includes.get(&from).into_iter().flatten().find(|(_, n, _)| *n == name).map(|(_, _, p)| p.clone());
                 let Some(found) = found else {
                     return Err(format!("{}: #include {name:?}: no such file", path.display()));
                 };

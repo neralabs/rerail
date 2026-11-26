@@ -714,23 +714,33 @@ fn declare_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
 /// Rules that order nodes, under node ids per definition (decision 0094 §2). An id follows preorder only inside its
 /// granule, so a comparison of two nodes (`b < n`: a binding before a use) and a `min`/`max` over nodes read the
 /// nodes' preorder keys instead (`node_order`): the order preorder ids gave, so the rule means what it did.
-/// - `x < y`, both nodes: `node_order(x, kx), node_order(y, ky), kx < ky` (`<=`, `>`, `>=` likewise);
-/// - `v = max x : { r(…x…) }`, `x` a node: `kv = max k : { r_ord(…x…, k) }, node_order(v, kv)`, where
-///   `r_ord(…x…, k) :- r(…x…), node_order(x, k)`: a helper `rr_ordered_<digest>`, named by its content (its atom's
+/// - `x < y`, both nodes: `kx = @rr_node_order(x), ky = @rr_node_order(y), kx < ky` (`<=`, `>`, `>=` likewise):
+///   each node's key read off the tape where its batch holds it, as `node_order`'s `k` is, not two joins with
+///   `node_order` (t57 §8, E2);
+/// - `v = max x : { r(…x…) }`, `x` a node: `kv = max k : { r_ord(…, _, k) }, r_ord(…, v, kv)`, where
+///   `r_ord(…, x, k) :- r(…x…), node_order(x, k)`: a helper `rr_ordered_<digest>`, named by its content (its atom's
 ///   relation and arguments, the node aggregated marked) and written after the program's rules, so a module's tail
 ///   and the whole program's give one helper one name (decision 0639 §6a).
+///   `v` is the aggregated row's own node, read back from the helper at the key, not `node_order(v, kv)`: the key
+///   names one node (decision 0121's keys hold the document), but the split cannot see a document in a number, and
+///   took that rule for a join of two documents (decision 0652). The helper's row holds the group and its node
+///   together, as the aggregated atom did. Its columns bound only inside the aggregate are `_` there.
 ///
 /// A variable is a node when a column it fills is declared `node`: in the head or any atom of the body. Fresh
 /// variables are numbered in each rule, so a rule is written alike wherever it is tailed.
 pub struct OrderNodes;
 
+/// The node read of a node's preorder key (`vtab::NODE_READS`).
+const NODE_ORDER_READ: &str = "rr_node_order";
+
 /// What a literal of a rule becomes.
 enum Ordered {
     Keep(u32),
-    /// `x op y` over nodes: `node_order(x, kx), node_order(y, ky), kx op ky`.
+    /// `x op y` over nodes: `kx = @rr_node_order(x), ky = @rr_node_order(y), kx op ky`.
     Cmp { x: Slot, y: Slot, op: crate::code_rule_dsl::logic::program_image::CmpOp, k: usize },
-    /// `var = op o : { atom }` over a node `o`: `kv = op k : { helper(args, k) }, node_order(var, kv)`.
-    Agg { lit: u32, var: Slot, o: Slot, op: crate::code_rule_dsl::logic::front::AggOp, k: usize, helper: usize, args: Vec<Slot> },
+    /// `var = op o : { atom }` over a node `o`: `kv = op k : { helper(args, _, k) }, helper(args', var, kv)`, `args'`
+    /// the arguments bound outside the aggregate (`outer`), the others `_`.
+    Agg { lit: u32, var: Slot, o: Slot, op: crate::code_rule_dsl::logic::front::AggOp, k: usize, helper: usize, args: Vec<Slot>, outer: Vec<bool> },
 }
 
 impl ProgramPass for OrderNodes {
@@ -815,7 +825,16 @@ impl ProgramPass for OrderNodes {
                                 args.push(s);
                             }
                         }
-                        plan.push(Ordered::Agg { lit: l.node(), var, o, op: op_of(op).expect("min or max"), k: fresh, helper: helpers, args });
+                        // The arguments the rule binds outside the aggregate: its head's and its other literals'.
+                        let mut outside = crate::code_rule_dsl::logic::plan::body::VarSet::new();
+                        for t in r.head().args() {
+                            crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut outside);
+                        }
+                        for other in r.body().filter(|x| x.node() != l.node()) {
+                            outside.extend(&lit_vars(other));
+                        }
+                        let outer = args.iter().map(|&s| outside.contains(s)).collect();
+                        plan.push(Ordered::Agg { lit: l.node(), var, o, op: op_of(op).expect("min or max"), k: fresh, helper: helpers, args, outer });
                         fresh += 2;
                         helpers += 1;
                         changed = true;
@@ -887,6 +906,7 @@ impl ProgramPass for OrderNodes {
                     decl.push((format!("c{i}"), cols.get(i).map_or_else(|| "int".to_owned(), |(_, ty)| ty.to_string())));
                 }
             }
+            decl.push(("n".to_owned(), "node".to_owned()));
             decl.push(("k".to_owned(), "int".to_owned()));
             declared.push((names[i].clone(), decl));
         }
@@ -895,6 +915,9 @@ impl ProgramPass for OrderNodes {
             let pairs: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
             b.fields().declare(rel, &pairs);
         }
+        // Declared as T's front end declares it (`front::tests::t_programs_match_t_front_end`): an ordered aggregate's
+        // helper reads it; a comparison reads the key in place (`@rr_node_order`), and an input no rule reads is
+        // never made.
         b.fields().declare_absent(node_order, &[("n", "node"), ("k", "int")]);
         b.fields().add_input(node_order);
         use crate::code_rule_dsl::logic::program_image::build::t_of;
@@ -907,15 +930,24 @@ impl ProgramPass for OrderNodes {
             for o in plan {
                 rb = match o {
                     Ordered::Keep(n) => rb.lit(&input, r, lit_at(&input, r.id(), *n)),
+                    // Each node's key read where the node lies (`@rr_node_order`), then compared: no join. A key read
+                    // into a variable is a node read the split moves to the per-file part with its node (`push`), as
+                    // it moved `node_order`'s row: a position stays there (decision 0649).
                     Ordered::Cmp { x, y, op, k } => {
                         let (kx, ky) = (ord(*k), ord(k + 1));
-                        rb.atom(node_order, &[T::VarAtom(r.var(*x)), T::Var(&kx)]).atom(node_order, &[T::VarAtom(r.var(*y)), T::Var(&ky)]).cmp(T::Var(&kx), *op, T::Var(&ky))
+                        rb.cmp(T::Var(&kx), CmpOp::Eq, T::Call(NODE_ORDER_READ, vec![T::VarAtom(r.var(*x))]))
+                            .cmp(T::Var(&ky), CmpOp::Eq, T::Call(NODE_ORDER_READ, vec![T::VarAtom(r.var(*y))]))
+                            .cmp(T::Var(&kx), *op, T::Var(&ky))
                     }
-                    Ordered::Agg { var, op, k, helper, args, .. } => {
+                    Ordered::Agg { var, op, k, helper, args, outer, .. } => {
                         let (kk, kv) = (ord(*k), ord(k + 1));
                         let mut agg_args: Vec<T<'_>> = args.iter().map(|s| T::VarAtom(r.var(*s))).collect();
+                        agg_args.push(T::Wild);
                         agg_args.push(T::Var(&kk));
-                        rb.agg(T::Var(&kv), op, Some(T::Var(&kk)), names[*helper].as_str(), &agg_args).atom(node_order, &[T::VarAtom(r.var(*var)), T::Var(&kv)])
+                        let mut at_args: Vec<T<'_>> = args.iter().zip(outer).map(|(s, &o)| if o { T::VarAtom(r.var(*s)) } else { T::Wild }).collect();
+                        at_args.push(T::VarAtom(r.var(*var)));
+                        at_args.push(T::Var(&kv));
+                        rb.agg(T::Var(&kv), op, Some(T::Var(&kk)), names[*helper].as_str(), &agg_args).atom(names[*helper].as_str(), &at_args)
                     }
                 };
             }
@@ -931,6 +963,7 @@ impl ProgramPass for OrderNodes {
             let L::Agg { atom, over: Some(o), .. } = lit_at(&input, *id, *lit).view() else { return Err("an ordered aggregate".into()) };
             let kk = ord(*k);
             let mut head_args: Vec<T<'_>> = args.iter().map(|s| T::VarAtom(r.var(*s))).collect();
+            head_args.push(T::VarAtom(r.var(o)));
             head_args.push(T::Var(&kk));
             let atom_args: Vec<T<'_>> = atom.args().map(|t| t_of(r, t)).collect();
             b.rule()
@@ -939,6 +972,247 @@ impl ProgramPass for OrderNodes {
                 .atom_with(input.rel_name(atom.rel()), &atom_args, false, atom.gated())
                 .atom(node_order, &[T::VarAtom(r.var(o)), T::Var(&kk)])
                 .finish()?;
+        }
+        Ok(())
+    }
+}
+
+/// A `nearest` read from its near end (t57 §8, E1). In a recursive rule whose recursive atom binds a `nearest`'s far
+/// end (its ancestor) and not its near end, the plan starts from the recursion's new rows (the delta) and reads the
+/// `nearest` backwards: every node whose nearest ancestor of the set is the bound one, its whole body. `rf_qn(f, q) :-
+/// rf_def(f, x), nearest(f, s, rf_dc), kind(s, …), rf_qn(s, p), …` listed 4,528 nodes under 96 scopes to keep their
+/// definitions. The part that reads the near end, the `nearest` with the positive atoms that bind its near end and
+/// read nothing the recursion binds, is made once as a helper before the recursion, where its plan binds the near end
+/// first (`rr_near<k>(s, f, x) :- rf_def(f, x), rr_nearest_rf_dc(f, s)`), and the recursion reads the helper by the
+/// far end. Its columns are the part's variables the rest of the rule reads; it holds a row a row of the atoms that
+/// bind the near end (a node has one nearest ancestor of a set). The conjunction is the same, so no row changes.
+pub struct NearEnds;
+
+impl ProgramPass for NearEnds {
+    const NAME: &'static str = "nearest from its near end";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::front::{NEAREST, is_transduced};
+        use crate::code_rule_dsl::logic::plan::body::term_vars;
+        let v = cx.v();
+        // Which relations each relation's rules read: a recursive atom's relation reaches its rule's head.
+        let mut reads: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for r in v.rules() {
+            let e = reads.entry(v.rel_name(r.head().rel())).or_default();
+            for l in r.body() {
+                match l.view() {
+                    L::Atom(a) => {
+                        e.insert(v.rel_name(a.rel()));
+                    }
+                    L::Agg { atom, .. } => {
+                        e.insert(v.rel_name(atom.rel()));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let reaches = |from: &str, to: &str| -> bool {
+            let mut seen: BTreeSet<&str> = BTreeSet::new();
+            let mut stack = vec![from];
+            while let Some(x) = stack.pop() {
+                if x == to {
+                    return true;
+                }
+                if seen.insert(x) {
+                    stack.extend(reads.get(x).into_iter().flatten().copied());
+                }
+            }
+            false
+        };
+        // By rule: the literals the helper takes (by node), its columns, and its number.
+        let mut parts: BTreeMap<RuleId, Vec<(Vec<u32>, Vec<Slot>, usize)>> = BTreeMap::new();
+        let mut made = 0usize;
+        // A part by what it reads, its variables numbered as they first appear, and its columns: rules with the same
+        // part (`rf_qn`'s rule for a class's definitions and for a function's) read one helper.
+        let mut by_key: BTreeMap<String, usize> = BTreeMap::new();
+        // The helpers made, each the rule and part that writes it.
+        let mut writers: Vec<(RuleId, usize)> = Vec::new();
+        for r in v.rules() {
+            let head = v.rel_name(r.head().rel());
+            let lits: Vec<_> = r.body().collect();
+            fn positive_atom<'a>(l: &crate::code_rule_dsl::logic::program_image::LitRef<'a>) -> Option<crate::code_rule_dsl::logic::program_image::AtomRef<'a>> {
+                match l.view() {
+                    L::Atom(a) if !a.neg() => Some(a),
+                    _ => None,
+                }
+            }
+            // A `nearest` literal's near end and far end, written as the literal or as its relation's atom.
+            let ends = |l: &crate::code_rule_dsl::logic::program_image::LitRef<'_>| -> Option<(Slot, Slot)> {
+                match l.view() {
+                    L::Nearest { n, a, .. } => Some((n, a)),
+                    L::Atom(a) if !a.neg() && v.rel_name(a.rel()).starts_with(NEAREST) => match a.args().collect::<Vec<_>>()[..] {
+                        [TermRef::Var(n), TermRef::Var(far)] => Some((n, far)),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            };
+            if !lits.iter().any(|l| ends(l).is_some()) {
+                continue;
+            }
+            let recursive: Vec<u32> = lits
+                .iter()
+                .filter(|l| positive_atom(l).is_some_and(|a| !is_transduced(v.rel_name(a.rel())) && reaches(v.rel_name(a.rel()), head)))
+                .map(|l| l.node())
+                .collect();
+            if recursive.is_empty() {
+                continue;
+            }
+            let mut rec_vars = VarSet::new();
+            for l in lits.iter().filter(|l| recursive.contains(&l.node())) {
+                rec_vars.extend(&lit_vars(*l));
+            }
+            let mut taken: BTreeSet<u32> = BTreeSet::new();
+            let mut rule_parts = Vec::new();
+            for l in &lits {
+                let Some((n, far)) = ends(l) else { continue };
+                if !rec_vars.contains(far) || rec_vars.contains(n) || taken.contains(&l.node()) {
+                    continue;
+                }
+                // The atoms that bind the near end and read nothing the recursion binds.
+                let binders: Vec<u32> = lits
+                    .iter()
+                    .filter(|o| o.node() != l.node() && !taken.contains(&o.node()) && !recursive.contains(&o.node()))
+                    .filter(|o| positive_atom(o).is_some_and(|b| !is_transduced(v.rel_name(b.rel()))))
+                    .filter(|o| {
+                        let vs = lit_vars(**o);
+                        vs.contains(n) && vs.is_disjoint(&rec_vars)
+                    })
+                    .map(|o| o.node())
+                    .collect();
+                if binders.is_empty() {
+                    continue;
+                }
+                let mut part: Vec<u32> = binders;
+                part.push(l.node());
+                // Its columns: its variables the head or the rule's other literals read, in the order the part names them.
+                let mut outside = VarSet::new();
+                for t in r.head().args() {
+                    term_vars(t, &mut outside);
+                }
+                for o in lits.iter().filter(|o| !part.contains(&o.node())) {
+                    outside.extend(&lit_vars(*o));
+                }
+                let mut cols: Vec<Slot> = Vec::new();
+                for o in lits.iter().filter(|o| part.contains(&o.node())) {
+                    for s in lit_vars(*o).iter() {
+                        if outside.contains(s) && !cols.contains(&s) {
+                            cols.push(s);
+                        }
+                    }
+                }
+                taken.extend(part.iter().copied());
+                let key = {
+                    let mut seen: Vec<Slot> = Vec::new();
+                    let mut num = |s: Slot| match seen.iter().position(|&x| x == s) {
+                        Some(i) => i,
+                        None => {
+                            seen.push(s);
+                            seen.len() - 1
+                        }
+                    };
+                    let mut key = String::new();
+                    for o in lits.iter().filter(|o| part.contains(&o.node())) {
+                        match o.view() {
+                            L::Nearest { n, a, kindset } => key += &format!("nearest({}, {}, {kindset:?}) ", num(n), num(a)),
+                            L::Atom(a) => {
+                                key += v.rel_name(a.rel());
+                                for t in a.args() {
+                                    key += &match t {
+                                        TermRef::Var(s) => format!(" v{}", num(s)),
+                                        t => format!(" {}", v.show_term(r, t)),
+                                    };
+                                }
+                                key += "; ";
+                            }
+                            _ => {}
+                        }
+                    }
+                    let cols: Vec<usize> = cols.iter().map(|&s| num(s)).collect();
+                    format!("{key}-> {cols:?}")
+                };
+                let k = *by_key.entry(key).or_insert_with(|| {
+                    writers.push((r.id(), rule_parts.len()));
+                    made += 1;
+                    made - 1
+                });
+                rule_parts.push((part, cols, k));
+            }
+            if !rule_parts.is_empty() {
+                parts.insert(r.id(), rule_parts);
+            }
+        }
+        if parts.is_empty() {
+            return Ok(());
+        }
+        let name = |k: usize| format!("rr_near{k}");
+        let input = std::sync::Arc::clone(w.input());
+        // Each helper's columns, typed by the first column of a part's atom each variable fills.
+        let mut declared: Vec<(String, Vec<(String, String)>)> = Vec::new();
+        for &(id, i) in &writers {
+            let r = input.rule(id).expect("a rule of the input");
+            {
+                let (part, cols, k) = &parts[&id][i];
+                let decl = cols
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &s)| {
+                        let ty = part.iter().find_map(|&n| {
+                            let a = match lit_at(&input, r.id(), n).view() {
+                                L::Atom(a) => a,
+                                L::Nearest { n, a, .. } => return (s == n || s == a).then(|| "node".to_owned()),
+                                _ => return None,
+                            };
+                            let at = a.args().position(|t| matches!(t, TermRef::Var(x) if x == s))?;
+                            input.columns_of(input.rel_name(a.rel())).and_then(|c| c.get(at).map(|(_, ty)| ty.to_string()))
+                        });
+                        (format!("c{i}"), ty.unwrap_or_else(|| "int".to_owned()))
+                    })
+                    .collect();
+                declared.push((name(*k), decl));
+            }
+        }
+        let names: Vec<String> = (0..made).map(name).collect();
+        let b = w.derive()?;
+        for (rel, decl) in &declared {
+            let pairs: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+            b.fields().declare(rel, &pairs);
+        }
+        for r in input.rules() {
+            let Some(rule_parts) = parts.get(&r.id()) else {
+                b.keep(&input, r);
+                continue;
+            };
+            let mut rb = b.rule().source(r.id()).head_from(&input, r, r.head());
+            for l in r.body() {
+                match rule_parts.iter().find(|(part, _, _)| part.contains(&l.node())) {
+                    // The helper's atom where the part's `nearest` was.
+                    Some((part, cols, k)) if part.last() == Some(&l.node()) => {
+                        let args: Vec<T<'_>> = cols.iter().map(|&s| T::VarAtom(r.var(s))).collect();
+                        rb = rb.atom(names[*k].as_str(), &args);
+                    }
+                    Some(_) => {}
+                    None => rb = rb.lit(&input, r, l),
+                }
+            }
+            rb.finish()?;
+        }
+        // The helpers, after the program's rules: `rr_near<k>(cols) :- binders, nearest`.
+        for &(id, i) in &writers {
+            let r = input.rule(id).expect("a rule of the input");
+            {
+                let (part, cols, k) = &parts[&id][i];
+                let args: Vec<T<'_>> = cols.iter().map(|&s| T::VarAtom(r.var(s))).collect();
+                let mut rb = b.rule().source(id).head(names[*k].as_str(), &args);
+                for &n in part {
+                    rb = rb.lit(&input, r, lit_at(&input, r.id(), n));
+                }
+                rb.finish()?;
+            }
         }
         Ok(())
     }
@@ -1075,7 +1349,7 @@ pub struct KindSets {
     /// The linked library of a module lowered in its scope (`rr::Library::version`): a set it reads has the library's
     /// kinds first (`kinds_of`).
     pub library: Option<std::sync::Arc<Version>>,
-    /// The rules that take out the sets no rule reads (`rr/kind-sets.rerail`, decision 0679 §5.1).
+    /// The rules that take out the sets no rule reads (`rr/kind-sets.rerail`, decision 0701 §5.1).
     pub rules: fn() -> &'static super::rules_pass::RulesProgram,
 }
 
@@ -1167,12 +1441,12 @@ impl ProgramPass for KindSets {
             // `members`.
             match kinds_of(v, &b.fields(), library, &gone, &set, &mut BTreeSet::new()) {
                 Some(kinds) => drop(kindsets.insert(set, kinds)),
-                None if matches!(b.fields().columns_of(&set).as_deref(), Some([(_, t)]) if t == "sym") => drop(derived.insert(set)),
+                None if matches!(b.fields().columns_of(&set).as_deref(), Some([(_, t)]) if matches!(t.as_str(), "sym" | "symbol")) => drop(derived.insert(set)),
                 None => return Err(Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")).to_string()),
             }
         }
         // A set no rule reads but its own and those of sets taken out is no relation of the program: the rules of
-        // `rr/kind-sets.rerail` over the image's view (decision 0679 §5.1). A program that holds no kind set as a
+        // `rr/kind-sets.rerail` over the image's view (decision 0701 §5.1). A program that holds no kind set as a
         // relation has none to take out and runs no rules, as the rules' own program does when it is lowered.
         let heads_of = |gone: &BTreeSet<String>, set: &str| v.rel(set).is_some_and(|rel| v.heads(rel).next().is_some()) && !gone.contains(set);
         if kindsets.keys().any(|set| b.fields().declares(set) || b.fields().states_facts(set) || heads_of(&gone, set)) {

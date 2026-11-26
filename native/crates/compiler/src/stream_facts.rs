@@ -127,9 +127,6 @@ pub fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8) ->
         }
         facts.coded = coded(&facts);
     }
-    if facts.coded && !native.readings.provisional.is_empty() {
-        return Err("format 16 ahead of time: provisional fields, which `ACCEPT` reads from the rows".into());
-    }
     if let Some(fx) = &facts.fetch {
         for (pc, word) in words.iter().enumerate() {
             if matches!(word.operation, Op::Token { .. }) && fx.seen[pc] == [true, true] {
@@ -428,7 +425,7 @@ impl Fetched {
 pub fn direct_keys(native: &Structure, widths: rerail_tape_format::Widths, tag: u8) -> Option<Vec<(u32, u32)>> {
     let x = facts(native, widths, tag).ok()?;
     // A program whose statements recover takes a statement's nodes back (decision 0650): not one written at its words.
-    let plain = native.extras.is_empty() && native.readings.provisional.is_empty() && native.recover.is_empty() && !native.structural.iter().any(|w| matches!(w.operation, Op::Leaf { deferred: true, .. } | Op::Leaf { extra: true, .. }));
+    let plain = native.extras.is_empty() && native.recover.is_empty() && !native.structural.iter().any(|w| matches!(w.operation, Op::Leaf { deferred: true, .. } | Op::Leaf { extra: true, .. }));
     (x.coded && plain).then(|| (0..native.structural.len()).map(|pc| key_after(&x, pc)).collect())
 }
 

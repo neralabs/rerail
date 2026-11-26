@@ -16,7 +16,7 @@ const PROGRAM: &str = r#"
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl shape(f: node, k: symbol, l: number, c: number)
 shape(f, k, l, c) :- uses(_, f), child(f, b, _), kind(b, k), line(b, l), col(b, c).
@@ -273,7 +273,7 @@ const AT_HELD: &str = r#"
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl at_line(f: node, l: number)
 at_line(f, l) :- uses(_, f), line(f, l).
@@ -420,7 +420,7 @@ const GUESTS: &str = r#"
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl shape(f: node, k: symbol)
 shape(f, k) :- uses(_, f), child(f, b, _), kind(b, k).
@@ -572,18 +572,19 @@ fn a_text_test_the_cross_part_reads_is_unioned_by_the_chunks() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
-.decl used_in(d: number, x: symbol)
+.decl used_in(d: number, x: symbol) cross_file
 used_in(d, x) :- uses(n, f), def(f, x), docof(n, d).
+// The relations that span files are declared so (decision 0652).
 // A document's path, read across files whole (`packages`): an input of the cross part. `home` joins it and a test of
 // it to a cross-file relation by a document's number alone, so no node keys a file-local helper of them and the cross
 // part reads the test: `export_names`' second rule's shape.
-.decl dpath(d: number, p: symbol)
+.decl dpath(d: number, p: symbol) cross_file
 dpath(d, p) :- doc(d, p, _).
-.decl packages(p: symbol)
+.decl packages(p: symbol) cross_file
 packages(p) :- dpath(_, p), @rx_matches(p, "[.]py$") = 1.
-.decl home(d: number, p: symbol, x: symbol)
+.decl home(d: number, p: symbol, x: symbol) cross_file
 home(d, p, x) :- used_in(d, x), dpath(d, p), @rx_matches(p, "^[bc][.]py$") = 1.
 .output home
 .output packages
@@ -682,4 +683,50 @@ fn an_ast_atoms_captures_give_the_product_of_their_nodes() {
     let (_, rows) = c.run();
     let want: BTreeSet<Vec<String>> = [["b", "c"], ["b", "d"], ["g", "h"]].iter().map(|r| r.iter().map(|s| s.to_string()).collect()).collect();
     assert_eq!(rows[4], want, "the product of A's node and each of R's, at each call matched");
+}
+
+/// Decision 0689: `text` read by node alone in the cross part, of a node only a cross-file relation binds (`said`:
+/// the text of each node inside a definition another file uses, `reach` recursive across files, as `same_some` is),
+/// is read in its versions. An edit that changes a node's text and keeps its id (`return x` to `return y`, one
+/// granule: the `return`, its value and the definition each) reaches `said` as `text`'s change alone; one that
+/// retracts the binding (no file imports `f`) reads the text the node had. The outputs are a cold run's after each.
+#[test]
+fn a_text_read_by_node_alone_follows_an_edit_of_its_node_kept() {
+    const SAID: &str = r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node) cross_file
+uses(n, f) :- imp(n, q), def(f, q).
+.decl reach(n: node) cross_file
+reach(f) :- uses(_, f).
+reach(c) :- reach(p), child(p, c, _).
+.decl said(r: node, t: symbol) cross_file
+said(r, t) :- reach(r), text(r, t).
+.output said
+"#;
+    let mut c = Corpus::with("said", SAID, &["said"]);
+    let (_, rows) = c.run();
+    let said = |rows: &[BTreeSet<Vec<String>>]| -> BTreeSet<String> { rows[0].iter().map(|r| r[1].clone()).collect() };
+    let first = said(&rows);
+    assert!(first.contains("return x") && first.contains("f(y)"), "the texts inside f and g: {first:?}");
+    // What `said` holds after each edit, and what it does not.
+    let edits: &[(&str, &str, &[&str], &[&str])] = &[
+        // The text of `return`'s value changes; its node is kept, and the `return`'s and the definition's.
+        ("a.py", "def f(x):\n    return y\n\ndef k():\n    pass\n", &["return y", "y", "f(y)"], &["return x"]),
+        // c.py still imports f, and g.
+        ("b.py", "def g(y, z):\n    return f(y)\n", &["return y", "f(y)"], &[]),
+        // No file imports f or g: `said` retracts what each of their nodes was read as.
+        ("c.py", "def h():\n    pass\n", &[], &["return y", "f(y)"]),
+        ("a.py", "def f(x):\n    return w\n\ndef k():\n    pass\n", &[], &["return w"]),
+        ("b.py", "from a import f\n\ndef g(y, z):\n    return f(y)\n", &["return w", "w"], &["return y"]),
+    ];
+    for (file, body, has, lacks) in edits {
+        c.write(file, body);
+        let (_, rows) = c.run();
+        let now = said(&rows);
+        assert!(has.iter().all(|t| now.contains(*t)) && lacks.iter().all(|t| !now.contains(*t)), "after {file}'s edit: {now:?}");
+        assert_eq!(rows, c.fresh(), "after {file}'s edit, the outputs are a cold run's");
+    }
 }

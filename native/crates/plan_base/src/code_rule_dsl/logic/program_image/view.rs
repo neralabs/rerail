@@ -1,4 +1,4 @@
-//! The view of a program image as the engine's inputs (decision 0679 §1, §5.1): each `img_` relation of
+//! The view of a program image as the engine's inputs (decision 0701 §1, §5.1): each `img_` relation of
 //! `rr/view.rerail` a source over the image's view (`ImageView`), an analysis of the version: made by one walk of the
 //! image, held with it, and read in place by every run over it. Each indexed column's rows are held in its values'
 //! order, so a probe takes a slice of them (`Source::sorted_rows`), and each relation states its statistics, so a run
@@ -26,7 +26,7 @@ const NAMES: [&[usize]; 4] = [&[1], &[3], &[0], &[0]];
 /// the pass's own constant (`"agg"` or `"atom"`).
 const WHAT: usize = 2;
 
-/// The image's view (decision 0679 §5.1): `img_rule`, `img_lit`, `img_decl` and `img_facts`, each column held whole.
+/// The image's view (decision 0701 §5.1): `img_rule`, `img_lit`, `img_decl` and `img_facts`, each column held whole.
 #[derive(Debug, PartialEq)]
 pub struct ImageView {
     tables: [Table; 4],
@@ -128,7 +128,7 @@ impl ImageView {
 }
 
 impl Analysis for ImageView {
-    const NAME: &'static str = "the image's view (decision 0679)";
+    const NAME: &'static str = "the image's view (decision 0701)";
     const READS: Reads = Reads::RULES.or(Reads::DECLS).or(Reads::FACTS);
     fn compute(cx: &Cx<'_>) -> Result<ImageView, String> {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the image's view made".into());
@@ -136,7 +136,7 @@ impl Analysis for ImageView {
     }
 }
 
-/// What a run read of a view (decision 0679 §5.1), as a run's frame holds the leaves it read (decision 0659): each
+/// What a run read of a view (decision 0701 §5.1), as a run's frame holds the leaves it read (decision 0659): each
 /// probe, a relation's column and a value, with the digest of the rows it found, and whether the run read a row no
 /// probe found (a scan). A run over another version whose every probe finds the same rows, and that scans nothing,
 /// reads what this run read, so its outputs are this run's: the plan the run took is an evaluation of either.
@@ -321,7 +321,7 @@ impl Source for Given {
     }
 }
 
-/// The view of `v` (decision 0679 §1), by relation name: `img_rule`, `img_lit`, `img_decl`, `img_facts` (its view,
+/// The view of `v` (decision 0701 §1), by relation name: `img_rule`, `img_lit`, `img_decl`, `img_facts` (its view,
 /// `ImageView`, made once for the version), and `img_kindset` of `kindsets` (the pass's kind sets, which are not yet
 /// the image's). `what` is the pass's program's constants `"atom"` and `"agg"`, which `img_lit` states each literal as.
 pub fn sources(v: &Arc<Version>, kindsets: &[AtomId], what: [i64; 2]) -> Result<Vec<(&'static str, Arc<dyn Source>)>, String> {
@@ -349,7 +349,7 @@ fn made_sources(v: &Arc<Version>, kindsets: &[AtomId], what: [i64; 2], frame: Op
     Ok(out)
 }
 
-/// The runs of rules passes over a library's union, kept with it (decision 0679 §5.1): each by its key (the pass's
+/// The runs of rules passes over a library's union, kept with it (decision 0701 §5.1): each by its key (the pass's
 /// program, the kind sets it was given, its outputs), with its frame and its outputs' rows. A program linked on the
 /// union (`Version::extends`) whose version the frame holds over has those outputs, and runs nothing.
 #[derive(Default)]
@@ -403,7 +403,7 @@ impl PartialEq for Kept {
 }
 
 impl Analysis for Kept {
-    const NAME: &'static str = "the rules passes' runs kept with a library (decision 0679)";
+    const NAME: &'static str = "the rules passes' runs kept with a library (decision 0701)";
     const READS: Reads = Reads::RULES.or(Reads::DECLS).or(Reads::FACTS);
     fn compute(_cx: &Cx<'_>) -> Result<Kept, String> {
         Ok(Kept::default())

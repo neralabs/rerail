@@ -1112,7 +1112,7 @@ mod tests {
             fn indexed(&self, _: usize) -> bool {
                 false
             }
-            fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+            fn lookup(&self, _: usize, _: &[i64]) -> Option<Vector<usize>> {
                 None
             }
             fn value(&self, row: usize, column: usize) -> i64 {
@@ -1121,7 +1121,7 @@ mod tests {
         }
         let n = 3 * (1 << 15) + 17;
         let src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Rows(n));
-        let got = heavy_batch(vec![(Some(Arc::clone(&src)), None, [0, 1].into_iter().collect())]).pop().flatten().expect("counted");
+        let got = heavy_batch(vec![(Some(Arc::clone(&src)), None, rerail_blocks::vector![0, 1])]).pop().flatten().expect("counted");
         for (c, h) in got.iter().enumerate() {
             let mut counts: FxHashMap<i64, u64> = FxHashMap::default();
             (0..n).for_each(|r| *counts.entry(src.value(r, c)).or_default() += 1);

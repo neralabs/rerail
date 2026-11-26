@@ -299,7 +299,9 @@ impl<'a> Run<'a, '_> {
         if !self.mode_reads.is_empty() {
             return self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(|s| s.encode());
         }
-        super::super::derived::value("join spec", inputs, || self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(|s| s.encode()))
+        // Its section in the memo's room, which keeps it for the run (decision 0342 amended): the planning's own
+        // structures stay on the thread's stack.
+        super::super::derived::value("join spec", inputs, || self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(|s| super::super::derived::placed(|| s.encode())))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -503,7 +505,7 @@ impl<'a> Run<'a, '_> {
                     let n = t_tok(b, x, &mut slots)?;
                     lines.push(JoinItem::DocOf { out: var_tok(d, &mut slots), n });
                 }
-                Lit::Cmp { l: TermRef::Call(f, args), op: CmpOp::Eq, r: TermRef::Int(want @ (0 | 1)) }
+                Lit::Cmp { l: TermRef::Call(f, args), op: op @ (CmpOp::Eq | CmpOp::Ne), r: TermRef::Int(want @ (0 | 1)) }
                     if let f = b.v.text(f)
                         && (f == "in" || f == "equals" || strings::is_test(f))
                         && let [x, set @ TermRef::Call(_, members)] = args.collect::<Vec<_>>()[..]
@@ -511,6 +513,8 @@ impl<'a> Run<'a, '_> {
                         && members.clone().all(|m| matches!(m, TermRef::Int(_) | TermRef::Branded(_)))
                         && slots.bound(x) =>
                 {
+                    // `!= 1` is `= 0`: a test's value is 0 or 1.
+                    let want = if op == CmpOp::Ne { 1 - want } else { want };
                     let members: Vec<Tok> = members.map(|m| t_tok(b, m, &mut slots)).collect::<Option<_>>()?;
                     let a = t_tok(b, x, &mut slots)?;
                     lines.push(if f == "in" || f == "equals" {
@@ -522,9 +526,11 @@ impl<'a> Run<'a, '_> {
                         JoinItem::TestSet { op: f.to_string(), s: a, want: want == 1, members }
                     });
                 }
-                Lit::Cmp { l: TermRef::Call(f, args), op: CmpOp::Eq, r: TermRef::Int(want @ (0 | 1)) } if strings::is_test(b.v.text(f)) && args.count() == 2 => {
-                    // `@prefix($s, p) = 1` (or `= 0`): a text test of a string no text relation gives (`strings::as_test`
-                    // takes the others to the vocabulary), its string and pattern bound; a set's patterns as one string.
+                Lit::Cmp { l: TermRef::Call(f, args), op: op @ (CmpOp::Eq | CmpOp::Ne), r: TermRef::Int(want @ (0 | 1)) } if strings::is_test(b.v.text(f)) && args.count() == 2 => {
+                    // `@prefix($s, p) = 1` (or `= 0`, `!= 1`): a text test of a string no text relation gives
+                    // (`strings::as_test` takes the others to the vocabulary), its string and pattern bound; a set's
+                    // patterns as one string. A test's value is 0 or 1, so `!=` is the other.
+                    let want = if op == CmpOp::Ne { 1 - want } else { want };
                     let args: Vec<TermRef<'_>> = args.collect();
                     let pattern = match patterns(b, args[1]) {
                         Some(ps) => Val::Str(ps.join(&strings::SET_SEP.to_string())),

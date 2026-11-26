@@ -1,6 +1,10 @@
-# 0679. Passes that read a program are rules over its image; rewrites are edits those rules derive
+# 0701. Passes that read a program are rules over its image; rewrites are edits those rules derive
 
 Status: proposed (2026-11-23). Feeds decision 0639 §6a (the tail's steps by place, kind sets as rules).
+
+Numbered 0662, then 0679, where it was written (More-ergonomic-rule-syntax); renumbered 0701 in the merge of
+Native-and-GPU-strata (2026-11-25), where 0679 is "a program cut from another runs once that one is whole" and
+phased-facts holds 0700.
 
 ## Intro
 

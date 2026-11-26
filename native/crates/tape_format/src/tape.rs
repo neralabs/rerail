@@ -115,8 +115,19 @@ const REC: usize = 6;
 /// they lie (decision 0628 §2). On format 16 every document of a language shares its table (`f16::Lang`).
 #[derive(Clone)]
 pub struct CodeTable {
-    words: Words,
+    /// The words' owner, held so that `at`'s slice lives: never read, `at` and `n` are read instead.
+    _words: Words,
+    /// `words`' slice, taken once when the table is made (`of_words`): a read of an entry reads the words through it,
+    /// not through `words`' dynamic `as_ref` (a call, and a placed region's guard check, about eight to an entry:
+    /// the matcher wave's per-node `TapeDoc::entry` was 0.8 µs a node on the M3 with them, t57 §8).
+    at: *const u32,
+    n: usize,
 }
+
+// SAFETY: `at` and `n` are `words`' slice, which the `Arc` keeps alive and no one writes (`Words` is a shared,
+// read-only `AsRef`); the table is as `Send` and `Sync` as its `Words`.
+unsafe impl Send for CodeTable {}
+unsafe impl Sync for CodeTable {}
 
 impl std::fmt::Debug for CodeTable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -142,7 +153,16 @@ impl CodeTable {
     pub fn new(entries: Vec<Entry>) -> Self {
         let words = Self::encode(&entries);
         // copy: derived: the table encoded once, then placed where the engine keeps tables
-        CodeTable { words: match PLACE.get() { Some(place) => place(&words), None => std::sync::Arc::new(words.into_boxed_slice()) } }
+        CodeTable::of_words(match PLACE.get() { Some(place) => place(&words), None => std::sync::Arc::new(words.into_boxed_slice()) })
+    }
+
+    /// The table read from `words`, its slice taken once (`at`, `n`).
+    fn of_words(words: Words) -> Self {
+        let (at, n) = {
+            let w: &[u32] = (*words).as_ref();
+            (w.as_ptr(), w.len())
+        };
+        CodeTable { _words: words, at, n }
     }
 
     /// The words of the table of `entries` (`over` reads them).
@@ -250,7 +270,7 @@ impl CodeTable {
         if ends.iter().any(|&(at, n)| w[at] as usize + n > w.len()) {
             return Err("a code table's section past its words".into());
         }
-        let t = CodeTable { words };
+        let t = CodeTable::of_words(words);
         std::str::from_utf8(t.str_bytes()).map_err(|_| "a code table's alias is not UTF-8")?;
         if (0..t.len() as u32).any(|i| {
             let r = t.rec(i);
@@ -263,34 +283,30 @@ impl CodeTable {
 
     #[inline(always)]
     fn words(&self) -> &[u32] {
-        (*self.words).as_ref()
+        // SAFETY: `words`' slice, alive and unwritten while `self.words` is (`CodeTable::at`).
+        unsafe { std::slice::from_raw_parts(self.at, self.n) }
     }
     #[inline(always)]
     fn rec(&self, n: u32) -> &[u32] {
         let at = self.words()[H_REC] as usize + n as usize * REC;
         &self.words()[at..at + REC]
     }
+    #[inline]
     fn section(&self, at: usize, n: usize) -> &[u32] {
         let s = self.words()[at] as usize;
         &self.words()[s..s + n]
     }
+    #[inline]
     fn str_bytes(&self) -> &[u8] {
-        Self::str_bytes_in(self.words())
-    }
-    // Of the words read once (`entry`, a node at a time): each `words` is a call through the owner's `AsRef`.
-    #[inline(always)]
-    fn str_bytes_in(w: &[u32]) -> &[u8] {
-        let (s, n) = (w[H_STR] as usize, w[H_STR_N] as usize);
-        let s = &w[s..s + n.div_ceil(4)];
+        let s = self.section(H_STR, (self.words()[H_STR_N] as usize).div_ceil(4));
         // SAFETY: the section's words, read as their bytes, `H_STR_N` of them.
-        unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u8>(), n) }
+        unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u8>(), self.words()[H_STR_N] as usize) }
     }
-    #[inline(always)]
-    fn classes_in(w: &[u32]) -> &[u16] {
-        let (s, n) = (w[H_CLS] as usize, w[H_CLS_N] as usize);
-        let s = &w[s..s + n.div_ceil(2)];
+    #[inline]
+    fn classes_all(&self) -> &[u16] {
+        let s = self.section(H_CLS, (self.words()[H_CLS_N] as usize).div_ceil(2));
         // SAFETY: the section's words, read as their u16s (little-endian, as `encode` packed them), `H_CLS_N` of them.
-        unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u16>(), n) }
+        unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u16>(), self.words()[H_CLS_N] as usize) }
     }
     /// The words it is read from, for an owner that keeps them elsewhere.
     pub fn as_words(&self) -> &[u32] {
@@ -333,18 +349,22 @@ impl CodeTable {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// Code `number`'s kind, field and flags (`entry`'s), read from its record alone: no alias or classes looked up.
+    #[inline]
+    pub fn kind_field(&self, number: u32) -> (u16, u16, u8) {
+        let r = self.rec(number);
+        (r[0] as u16, (r[0] >> 16) as u16, r[1] as u8)
+    }
     /// Code `number`'s entry.
     #[inline(always)]
     pub fn entry(&self, number: u32) -> EntryRef<'_> {
-        let w = self.words();
-        let at = w[H_REC] as usize + number as usize * REC;
-        let r = &w[at..at + REC];
+        let r = self.rec(number);
         let alias = (r[1] >> 8 & 1 != 0).then(|| {
-            let b = &Self::str_bytes_in(w)[r[4] as usize..(r[4] + r[5]) as usize];
+            let b = &self.str_bytes()[r[4] as usize..(r[4] + r[5]) as usize];
             // SAFETY: `over` checked the aliases' bytes are UTF-8, and `encode` wrote each alias whole.
             (unsafe { std::str::from_utf8_unchecked(b) }, r[1] >> 9 & 1 != 0)
         });
-        EntryRef { kind: r[0] as u16, field: (r[0] >> 16) as u16, flags: r[1] as u8, alias, classes: &Self::classes_in(w)[r[2] as usize..(r[2] + r[3]) as usize] }
+        EntryRef { kind: r[0] as u16, field: (r[0] >> 16) as u16, flags: r[1] as u8, alias, classes: &self.classes_all()[r[2] as usize..(r[2] + r[3]) as usize] }
     }
     /// The entries, by number.
     pub fn entries(&self) -> impl ExactSizeIterator<Item = EntryRef<'_>> + '_ {

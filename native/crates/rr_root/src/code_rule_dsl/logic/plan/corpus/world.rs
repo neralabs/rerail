@@ -521,7 +521,7 @@ pub fn store_path(path: &str) -> &str {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(bytes)
 }
 
 fn listing_digest(entries: &[(String, bool)]) -> String {

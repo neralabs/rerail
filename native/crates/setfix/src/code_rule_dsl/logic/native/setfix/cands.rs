@@ -51,12 +51,13 @@ impl<'a> Rows<'a> {
                 }
             } else {
                 last.spare = list;
-                let ids = s.view.find_keyed(s.cols, &s.key[..s.len], s.lead);
+                let mut ids = last.ids();
+                s.view.find_keyed_into(s.cols, &s.key[..s.len], s.lead, Arc::get_mut(&mut ids).expect("the step's own list"));
                 hit = ids.iter().any(|&id| f(id, self.row_need(id, need)));
-                if let Some((_, q)) = &mut last.memo { *q = Probed::Ids(ids); }
+                if let Some((_, q)) = &mut last.memo { Probed::put(q, Probed::Ids(ids), &mut last.spare_ids); }
                 return hit;
             };
-            if let Some((_, q)) = &mut last.memo { *q = Probed::Read(answer, need); }
+            if let Some((_, q)) = &mut last.memo { Probed::put(q, Probed::Read(answer, need), &mut last.spare_ids); }
             return hit;
         }
         if let (Rows::In(r), &Cands::Range(lo, hi)) = (self, &cands)
@@ -108,7 +109,7 @@ fn stream_probe<'a>(v: &'a View, cols: &'a [usize], lead: usize, key: &[i64], la
             mk.clear();
             // copy: not block data (a probe key's values, kept to compare the next probe with)
             mk.extend_from_slice(key);
-            *q = Probed::Pending;
+            Probed::put(q, Probed::Pending, &mut last.spare_ids);
         }
         None => last.memo = Some((key.iter().copied().collect(), Probed::Pending)),
     }
@@ -141,6 +142,21 @@ pub(super) fn exact_cols(j: &JoinRule, src: &Src, membership: bool) -> u64 {
     } else {
         0
     }
+}
+
+/// A test of a derived input by one bound column (decision 0694 step 1): whether its rows hold `v` there, read in its
+/// node-keyed index (one group found, `hint` the last, and one bit), not by probing an index and reading candidates.
+/// `None` when the input has no such index (`Csr::node_bits_has`): the step probes as before.
+pub(super) fn node_bits_test(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], v: i64, hint: &mut u32) -> Option<bool> {
+    let Src::In(rel, ix) = src else { return None };
+    if keys.len() != 1 || !tests.is_empty() {
+        return None;
+    }
+    let (rel, ix) = j.src_in(rel, ix);
+    if ix.cols.len() != 1 || ix.cols[0] != keys[0].0 {
+        return None;
+    }
+    ix.node_bits_has(rel, v, hint)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -202,7 +218,9 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
                 // Only a join's step or a test asks so (`stream`): a fold's or a string join's need of 0 reads its rows.
                 if stream && need == 0 && v.keys_tested(&ix.cols) {
                     let found = v.tests_keys(&ix.cols, key, ix.lead, &mut last.cursor).unwrap_or_else(|| {
-                        v.find_keyed(&ix.cols, key, ix.lead).into_iter().any(|r| ix.cols.iter().zip(key).all(|(&c, &k)| v.src.value(r as usize, v.cols[c]) == k))
+                        let mut hit = false;
+                        v.each_keyed(&ix.cols, key, ix.lead, &mut |r| hit = hit || ix.cols.iter().zip(key).all(|(&c, &k)| v.src.value(r as usize, v.cols[c]) == k));
+                        hit
                     });
                     return (Rows::Source(v), Cands::Range(0, u32::from(found)));
                 }
@@ -215,7 +233,8 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
                         // The memo's list, which the probe before's candidates no longer hold, is this probe's.
                         // (Its answer alone is taken: its key's buffer is kept for the next.)
                         if let Some((_, q)) = &mut last.memo
-                            && let Probed::Read(Found::Many(rows), _) = std::mem::replace(q, Probed::Ids(rerail_blocks::vector::Vector::new()))
+                            && matches!(&*q, Probed::Read(Found::Many(_), _))
+                            && let Probed::Read(Found::Many(rows), _) = std::mem::replace(q, Probed::Pending)
                         {
                             last.spare = Some(rows);
                         }
@@ -226,14 +245,18 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
                         let read = v.find_read(&ix.cols, key, ix.lead, need, &mut last.cursor, &mut last.spare);
                         let p = match read {
                             Some(rows) => Probed::Read(rows, need),
-                            None => Probed::Ids(v.find_keyed(&ix.cols, key, ix.lead)),
+                            None => {
+                                let mut ids = last.ids();
+                                v.find_keyed_into(&ix.cols, key, ix.lead, Arc::get_mut(&mut ids).expect("the step's own list"));
+                                Probed::Ids(ids)
+                            }
                         };
                         match &mut last.memo {
                             Some((k, q)) => {
                                 k.clear();
                                 // copy: not block data (a probe key's values, kept to compare the next probe with)
                                 k.extend_from_slice(key);
-                                *q = p.clone();
+                                Probed::put(q, p.clone(), &mut last.spare_ids);
                             }
                             None => last.memo = Some((key.iter().copied().collect(), p.clone())),
                         }
@@ -241,7 +264,7 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
                     }
                 };
                 match probed {
-                    Probed::Ids(ids) => (Rows::Source(v), Cands::Owned(ids)),
+                    Probed::Ids(ids) => (Rows::Source(v), Cands::Shared(ids)),
                     Probed::Read(rows, _) => (Rows::Source(v), Cands::Read(rows)),
                     Probed::Pending => unreachable!("a pending probe is no memo's answer"),
                 }
@@ -315,6 +338,9 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     };
     asked.key.clear();
     asked.key.extend(keys.iter().map(|&(_, k)| val(k)));
+    if let Some(found) = node_bits_test(j, src, keys, tests, asked.key.first().copied().unwrap_or(0), &mut asked.hints[0]) {
+        return found;
+    }
     // As the join's step: the key columns the probe matched exactly, which its rows need not be checked for.
     let exact: u64 = if keys.is_empty() { 0 } else { exact_cols(j, src, tests.is_empty()) };
     let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
@@ -336,6 +362,12 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     rows.each(cands, need, &mut asked.last, |id, row| {
         !rows.dead(id) && keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
     })
+}
+
+/// Whether a test of one node column reads its node-keyed index: `RERAIL_NODE_BITS=off` (a measurement aid, the
+/// run's setting) probes as before.
+pub(super) fn node_bits_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_NODE_BITS").map_or(true, |v| v != "off"))
 }
 
 /// Whether a test of a derived input's whole key asks its sorted hash: `RERAIL_SORTED_HASH=off` (a measurement aid,

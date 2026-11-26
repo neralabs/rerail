@@ -1587,39 +1587,30 @@ pub mod tests {
     }
     use super::*;
 
-    /// A semi-join's rows at the held nodes read back as kept: the exports' digest they were taken of (or none), the
-    /// nodes walked, a node with no row among them, and each row; a width of 0, an unknown flag or rows that are not
-    /// whole are not read as kept.
+    /// A semi-join's counts read back as kept: the plan and statistics as written, the counts of the documents a
+    /// reader keeps; words that are not whole are not read as kept.
     #[test]
-    fn a_semijoins_kept_rows_read_back_as_written() {
+    fn a_semijoins_kept_counts_read_back_as_written() {
         let node = |d: i64, i: i64| d << 32 | i;
-        let kept = SemijoinRows { exports: None, stats: vec![[3, 2, 5, 5], [3, 3, 3, 3]], width: 3, held: vec![node(1, 0), node(1, 1), node(2, 4)], rows: vec![1 << 32, node(1, 0), 7, 1 << 32, node(1, 1), 9] };
-        assert_eq!(SemijoinRows::decode(&kept.encode()), Some(kept.clone()));
-        let known = SemijoinRows { exports: Some(u64::MAX - 3), ..kept.clone() };
-        assert_eq!(SemijoinRows::decode(&known.encode()), Some(known.clone()));
-        let mut words = kept.encode();
-        words.pop();
-        assert_eq!(SemijoinRows::decode(&words), None);
-        let mut flag = known.encode();
-        flag[0] = 2;
-        assert_eq!(SemijoinRows::decode(&flag), None);
-        assert_eq!(SemijoinRows::decode(&[0, 0, 0, 0, 0]), None);
-        assert_eq!(SemijoinRows::decode(&[0, 0, 9, 1]), None);
-    }
-
-    /// The exports' digest is of each export's digest in the exports' order, and none when one has no digest.
-    #[test]
-    fn the_exports_digest_is_of_every_exports_digest() {
-        let exports = vec!["a".to_owned(), "b".to_owned()];
-        let digests: HashMap<String, u64> = [("a".to_owned(), 1), ("b".to_owned(), 2)].into_iter().collect();
-        let d = exports_digest(&exports, &digests).expect("both digested");
-        let mut other = digests.clone();
-        other.insert("b".to_owned(), 3);
-        assert_ne!(exports_digest(&exports, &other), Some(d));
-        let swapped: HashMap<String, u64> = [("a".to_owned(), 2), ("b".to_owned(), 1)].into_iter().collect();
-        assert_ne!(exports_digest(&exports, &swapped), Some(d));
-        other.remove("b");
-        assert_eq!(exports_digest(&exports, &other), None);
+        let mut counts = super::super::keptstats::SemijoinCounts::new(2, 0);
+        for row in [[node(1, 0), 7], [node(1, 1), 9], [node(2, 4), 7]] {
+            counts.row(&row);
+        }
+        counts.document(3);
+        let stats = vec![[3, 3, 3, 3], [3, 2, 5, 5]];
+        let words = semijoin_words(u64::MAX - 3, &stats, &counts);
+        let (plan, read, at) = semijoin_header(&|i| words[i], words.len()).expect("kept");
+        assert_eq!((plan, &read), (u64::MAX - 3, &stats));
+        let mut back = super::super::keptstats::SemijoinCounts::new(2, 0);
+        back.add_encoded(&|i| words[i], at.start, at.end, &|_| true).expect("counts");
+        assert_eq!(back, counts);
+        let mut no2 = super::super::keptstats::SemijoinCounts::new(2, 0);
+        no2.add_encoded(&|i| words[i], at.start, at.end, &|d| d != 2).expect("counts");
+        assert_eq!((no2.rows(), no2.counts(2), no2.counts(3)), (2, false, true));
+        assert!(semijoin_header(&|i| words[i], 1).is_none());
+        assert!(semijoin_header(&|_| 9, 3).is_none());
+        // Cut short, the counts are not read.
+        assert!(super::super::keptstats::SemijoinCounts::new(2, 0).add_encoded(&|i| words[i], at.start, at.end - 1, &|_| true).is_none());
     }
 
     /// A kept input with its delta reads as its rows now: the changed owners' kept rows gone, their new rows after
@@ -2379,185 +2370,82 @@ pub(in crate::code_rule_dsl) fn put_base_stats(store: &ContentStore, was: &InKep
     store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'], BlockFlat::of_bytes(&bytes))]);
 }
 
-fn semijoin_rows_name(rel: &str) -> String {
-    format!("#semijoin-at-held/{rel}")
+fn semijoin_counts_name(rel: &str) -> String {
+    format!("#semijoin-counts-at-held/{rel}")
 }
 
-/// The digest of the exports `exports` as `digests` gives them (each its kept input's, decision 0117 step 1), in
-/// their order: the held nodes are their values, so exports of the same digest hold the same nodes. None when one
-/// has no digest.
-pub(in crate::code_rule_dsl) fn exports_digest(exports: &[String], digests: &HashMap<String, u64>) -> Option<u64> {
-    let mut words = Vec::with_capacity(2 * exports.len());
-    for rel in exports {
-        words.push(crate::code_rule_dsl::logic::plan::row_digest(&rel.bytes().map(i64::from).collect::<Vec<_>>()) as i64);
-        words.push(*digests.get(rel)? as i64);
-    }
-    Some(crate::code_rule_dsl::logic::plan::row_digest(&words))
-}
-
-/// A semi-join relation's rows at the nodes the exports held (Q396), kept beside the documents' table as the base
-/// relations' statistics are (`base_stats`), with the digest of the documents they were read of: the nodes walked
-/// (`held`, sorted), and each one's row (`rows`, `width` values a row, in `input_columns` order). A next run takes the
-/// rows of its held nodes from them and walks only the nodes they do not answer for, where reading every held node's
-/// document again made all of them (ep2's edit: 300 documents, 1.1 s). With the digest of the exports the nodes were
-/// taken of (`exports_digest`): a next run whose exports have it takes its held nodes from `held`, where visiting
-/// every export's rows for them took 1.6 s of ep2's edit. With the statistics counted of them (`stats`, each column's
-/// rows, distinct values and the two sums of squares, in the order of the relation's columns): a run of the same
-/// documents and exports takes them as they are, where counting every row again took 0.1 s of ep2's edit.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct SemijoinRows {
-    pub(in crate::code_rule_dsl) exports: Option<u64>,
-    pub(in crate::code_rule_dsl) stats: Vec<[i64; 4]>,
-    pub(in crate::code_rule_dsl) width: usize,
-    pub(in crate::code_rule_dsl) held: Vec<i64>,
-    pub(in crate::code_rule_dsl) rows: Vec<i64>,
-}
-
-impl SemijoinRows {
-    /// As words: whether the exports' digest is known and the digest, the statistics' number and theirs, the width,
-    /// the held nodes' number and the nodes, then the rows.
-    fn encode(&self) -> Vec<i64> {
-        let mut words = Vec::with_capacity(5 + 4 * self.stats.len() + self.held.len() + self.rows.len());
-        words.extend([i64::from(self.exports.is_some()), self.exports.unwrap_or(0) as i64, self.stats.len() as i64]);
-        words.extend(self.stats.iter().flatten());
-        words.extend([self.width as i64, self.held.len() as i64]);
-        words.extend_from_slice(&self.held);
-        words.extend_from_slice(&self.rows);
-        words
-    }
-
-    #[cfg(test)]
-    fn decode(words: &[i64]) -> Option<Self> {
-        let l = SemijoinLayout::of(&|i| words[i], words.len())?;
-        Some(SemijoinRows { exports: l.exports, stats: l.stats, width: l.width, held: words[l.held].to_vec(), rows: words[l.rows].to_vec() })
-    }
-}
-
-/// Where `SemijoinRows::encode`'s parts lie among `len` words, `get` reading one: its header read, the held nodes' and
-/// the rows' places.
-struct SemijoinLayout {
-    exports: Option<u64>,
-    stats: Vec<[i64; 4]>,
-    width: usize,
-    held: std::ops::Range<usize>,
-    rows: std::ops::Range<usize>,
-}
-
-impl SemijoinLayout {
-    fn of(get: &dyn Fn(usize) -> i64, len: usize) -> Option<SemijoinLayout> {
-        if len < 3 {
-            return None;
-        }
-        let exports = match get(0) {
-            0 => None,
-            1 => Some(get(1) as u64),
-            _ => return None,
-        };
-        let at = usize::try_from(get(2)).ok()?.checked_mul(4)?.checked_add(3)?;
-        if at + 2 > len {
-            return None;
-        }
-        let stats = (3..at).step_by(4).map(|i| [get(i), get(i + 1), get(i + 2), get(i + 3)]).collect();
-        let width = usize::try_from(get(at)).ok().filter(|&w| w > 0)?;
-        let n = usize::try_from(get(at + 1)).ok()?;
-        let end = (at + 2).checked_add(n).filter(|&e| e <= len)?;
-        (len - end).is_multiple_of(width).then_some(SemijoinLayout { exports, stats, width, held: at + 2..end, rows: end..len })
-    }
-}
-
-/// A semi-join relation's rows at the held nodes as kept (`semijoin_rows`): its header read, its held nodes and rows
-/// read where they lie when asked, where copying out both relations' entries (1.4 M words each, the held nodes in each)
-/// took 0.05 s of ep2's edit, which read only their statistics and one entry's held nodes.
-#[derive(Clone)]
+/// A semi-join relation's counts at the nodes the exports held (Q396, `keptstats::SemijoinCounts`), kept beside the
+/// documents' table as the base relations' statistics are (`base_stats`), with the digest of the documents they were
+/// counted of: the memo plan they were counted under (`memo_plan_tag`: an unchanged file's exports hold the same nodes
+/// only under it), the statistics counted of them (each column's rows, distinct values and the two sums of squares, in
+/// the order of the relation's columns), then the counts, by document. A run of the same documents and plan takes the
+/// statistics as they are; an edit under the same plan takes the counts of the documents it did not change, and counts
+/// only the changed documents' (in their chunks). They are counts, not the rows they were read of (decision 0458's
+/// follow-up): the rows at PostHog's 8.6 M held nodes were 26 M words.
 pub(in crate::code_rule_dsl) struct KeptSemijoin {
-    pub(in crate::code_rule_dsl) exports: Option<u64>,
+    pub(in crate::code_rule_dsl) plan: u64,
     pub(in crate::code_rule_dsl) stats: Vec<[i64; 4]>,
-    pub(in crate::code_rule_dsl) width: usize,
-    held: std::ops::Range<usize>,
-    rows: std::ops::Range<usize>,
-    words: SemijoinWords,
+    counts: std::ops::Range<usize>,
+    entry: kept_read::Entry,
 }
 
-/// Where a kept semi-join's words lie: the store's entry beside the documents' table, or a session's (decision 0458:
-/// a session holds its kept statistics and rows itself), its words as `SemijoinRows::encode` wrote them once.
-#[derive(Clone)]
-enum SemijoinWords {
-    Entry(kept_read::Entry),
-    Held(Arc<[i64]>),
-}
-
-impl SemijoinWords {
-    /// Each word, read where it lies.
-    fn read(&self, each: &mut dyn FnMut(&dyn Fn(usize) -> i64)) {
-        match self {
-            SemijoinWords::Entry(e) => {
-                let d = e.packed().col(0).dec();
-                each(&|i| d.get(i))
-            }
-            SemijoinWords::Held(w) => each(&|i| w[i]),
-        }
+/// The header of a kept semi-join's `len` words `get` reads (`semijoin_words`): the plan, the statistics, and where
+/// the counts lie.
+fn semijoin_header(get: &dyn Fn(usize) -> i64, len: usize) -> Option<(u64, Vec<[i64; 4]>, std::ops::Range<usize>)> {
+    if len < 2 {
+        return None;
     }
+    let at = usize::try_from(get(1)).ok()?.checked_mul(4)?.checked_add(2)?;
+    if at > len {
+        return None;
+    }
+    let stats = (2..at).step_by(4).map(|i| [get(i), get(i + 1), get(i + 2), get(i + 3)]).collect();
+    Some((get(0) as u64, stats, at..len))
 }
 
 impl KeptSemijoin {
-    /// `rows`, held as a session holds them (`HeldCorpus::semijoin`): their words, encoded once.
-    pub(in crate::code_rule_dsl) fn of_rows(rows: &SemijoinRows) -> Option<KeptSemijoin> {
-        let words: Arc<[i64]> = rows.encode().into();
-        let l = SemijoinLayout::of(&|i| words[i], words.len())?;
-        Some(KeptSemijoin { exports: l.exports, stats: l.stats, width: l.width, held: l.held, rows: l.rows, words: SemijoinWords::Held(words) })
-    }
-    /// The held nodes' number.
-    pub(in crate::code_rule_dsl) fn held_len(&self) -> usize {
-        self.held.len()
-    }
-    /// The held nodes, read where they lie.
-    pub(in crate::code_rule_dsl) fn held(&self) -> Box<dyn Iterator<Item = i64> + '_> {
-        match &self.words {
-            SemijoinWords::Entry(e) => {
-                let d = e.packed().col(0).dec();
-                Box::new(self.held.clone().map(move |i| d.get(i)))
-            }
-            SemijoinWords::Held(w) => Box::new(w[self.held.clone()].iter().copied()),
-        }
-    }
-    /// Each row, read where it lies.
-    pub(in crate::code_rule_dsl) fn each_row(&self, each: &mut dyn FnMut(&[i64])) {
-        let mut row = vec![0; self.width];
-        self.words.read(&mut |get| {
-            for at in self.rows.clone().step_by(self.width) {
-                for (c, w) in row.iter_mut().enumerate() {
-                    *w = get(at + c);
-                }
-                each(&row);
-            }
-        });
+    /// The counts of the documents `keep` takes added to `counts` (`SemijoinCounts::add_encoded`), read where they lie.
+    /// `None` where they are not counts of `counts`' shape.
+    pub(in crate::code_rule_dsl) fn add_to(&self, counts: &mut super::keptstats::SemijoinCounts, keep: &dyn Fn(i64) -> bool) -> Option<()> {
+        let d = self.entry.packed().col(0).dec();
+        counts.add_encoded(&|i| d.get(i), self.counts.start, self.counts.end, keep)
     }
 }
 
-/// Each semi-join relation `rels`' rows at the held nodes as kept beside the documents' table of `binds`
-/// (`put_semijoin_rows`), with the digest of the documents they were read of.
-pub(in crate::code_rule_dsl) fn semijoin_rows(store: &ContentStore, space: [u8; 32], binds: [u8; 32], rels: &[&str]) -> Result<HashMap<String, (u64, KeptSemijoin)>> {
+/// Semi-join relation `rel`'s kept counts as words (`KeptSemijoin`): the plan, the statistics' number and theirs, then
+/// the counts.
+fn semijoin_words(plan: u64, stats: &[[i64; 4]], counts: &super::keptstats::SemijoinCounts) -> Vec<i64> {
+    let mut words = Vec::with_capacity(2 + 4 * stats.len());
+    words.extend([plan as i64, stats.len() as i64]);
+    words.extend(stats.iter().flatten());
+    counts.encode(&mut words);
+    words
+}
+
+/// Each semi-join relation `rels`' counts at the held nodes as kept beside the documents' table of `binds`
+/// (`put_semijoin_counts`), with the digest of the documents they were counted of.
+pub(in crate::code_rule_dsl) fn semijoin_counts(store: &ContentStore, space: [u8; 32], binds: [u8; 32], rels: &[&str]) -> Result<HashMap<String, (u64, KeptSemijoin)>> {
     let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(HashMap::new()) };
     let ident = base_documents_ident(&binds);
     let mut out = HashMap::new();
     for rel in rels {
-        let Some(entry) = bound.entry(&semijoin_rows_name(rel), &ident, DOCS_PART) else { continue };
+        let Some(entry) = bound.entry(&semijoin_counts_name(rel), &ident, DOCS_PART) else { continue };
         if entry.width() != 1 {
             continue;
         }
         let d = entry.packed().col(0).dec();
-        let Some(l) = SemijoinLayout::of(&|i| d.get(i), entry.len()) else { continue };
-        let kept = KeptSemijoin { exports: l.exports, stats: l.stats, width: l.width, held: l.held, rows: l.rows, words: SemijoinWords::Entry(entry.clone()) };
-        out.insert((*rel).to_owned(), (entry.digest(), kept));
+        let Some((plan, stats, counts)) = semijoin_header(&|i| d.get(i), entry.len()) else { continue };
+        out.insert((*rel).to_owned(), (entry.digest(), KeptSemijoin { plan, stats, counts, entry: entry.clone() }));
     }
     Ok(out)
 }
 
-/// Queues semi-join relation `rel`'s rows at the held nodes, read of documents of digest `digest`, beside the
-/// documents' table (`semijoin_rows`).
-pub(in crate::code_rule_dsl) fn put_semijoin_rows(store: &ContentStore, was: &InKept, binds: [u8; 32], rel: &str, digest: u64, rows: &SemijoinRows) {
-    let words = rows.encode();
-    let name = KeptRel { name: semijoin_rows_name(rel), ident: base_documents_ident(&binds) };
+/// Queues semi-join relation `rel`'s counts at the held nodes and their statistics, counted of documents of digest
+/// `digest` under memo plan `plan`, beside the documents' table (`semijoin_counts`).
+#[allow(clippy::too_many_arguments)]
+pub(in crate::code_rule_dsl) fn put_semijoin_counts(store: &ContentStore, was: &InKept, binds: [u8; 32], rel: &str, digest: u64, plan: u64, stats: &[[i64; 4]], counts: &super::keptstats::SemijoinCounts) {
+    let words = semijoin_words(plan, stats, counts);
+    let name = KeptRel { name: semijoin_counts_name(rel), ident: base_documents_ident(&binds) };
     store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'], crate::content_store::kept_facts::BlockFlat::of_rows(&words, 1, true))]);
 }
 

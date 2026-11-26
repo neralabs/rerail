@@ -46,13 +46,21 @@ use Class::*;
 /// Every thread-local outside the tests: `(file under native/, name, class, why)` (Carried ones need no why: they
 /// are carried).
 pub const STATE: &[(&str, &str, Class, &str)] = &[
-    ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's scratch region for a freeze's sort keys, emptied at each use"),
-    ("crates/corpus_prep/src/code_rule_dsl/logic/plan/corpus/preparation/rules_pass.rs", "ENGINE", Thread, "this thread's own connection for rules passes (0679 §5.1): each run binds its inputs and forgets its relations"),
+    ("crates/blocks/src/census.rs", "ID", Thread, "this thread's number in the anonymous room's census (a measuring aid, off by default)"),
+    ("crates/blocks/src/census.rs", "N", Thread, "the census's next thread number, read once by `ID`'s first use on a thread"),
+    ("crates/blocks/src/maps.rs", "STACK", Thread, "this thread's handle on its stack's room (`scratch::StackRoom`): the same on any thread"),
+    ("crates/blocks/src/maps.rs", "WITHIN", Call, "the owner's room of the structures a call makes while it runs (`maps::within`); work it hands to another thread takes that thread's stack"),
+    ("crates/blocks/src/maps.rs", "LONG", Thread, "this thread's long-lived room (`long::LongRoom`, `maps::long`): what outlives the work it is made in"),
+    ("crates/blocks/src/scratch.rs", "ID", Thread, "this thread's number, the owner a stack's regions are popped by"),
+    ("crates/blocks/src/scratch.rs", "LARGE_ROOM", Thread, "this thread's free-listed blocks for its large regions (`maps::FreeRoom::large`)"),
+    ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's stack (decision 0342, amended 2026-11-24): its small structures' and its scratch uses' memory"),
+    ("crates/corpus_prep/src/code_rule_dsl/logic/plan/corpus/preparation/rules_pass.rs", "ENGINE", Thread, "this thread's own connection for rules passes (0701 §5.1): each run binds its inputs and forgets its relations"),
     ("crates/c_directives/src/expand.rs", "JIT", Thread, "this thread's Cranelift code of the process's pp words (0348), without a rustc build of them; the same on any thread"),
     ("crates/ukl_vec/src/exec.rs", "SLOTS", Thread, "this thread's last launches' slots, by their shape: storage the next launch of one reuses, written before it is read"),
     ("crates/ukl_vec/src/fiber.rs", "POOL", Thread, "this thread's spare fiber stacks, each emptied at its next use"),
     ("crates/ukl_vec/src/fiber.rs", "PREPARED", Thread, "the fibers this thread prepared, a count of its own work its tests read"),
     ("crates/ukl_vec/src/run.rs", "SLOTS", Thread, "this thread's last launches' slots, by their shape: storage the next launch of one reuses, written before it is read"),
+    ("crates/vector/src/lib.rs", "FOUND", Thread, "the run's room provider, kept once found (`default_room`): registered once at load, the same on any thread"),
     ("crates/compiler/src/pp_words.rs", "HOST_RUNS", Thread, "a count of this thread's work, read by tests and the profile"),
     ("crates/metal/src/buffer_observation.rs", "ACTIVE", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/test_pool.rs", "LEDGERS", Thread, "this thread's share of the test pool"),
@@ -127,6 +135,12 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's state"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "SHARD", Thread, "this thread's shard of its run's profile records, merged into them as they are read (decision 0442)"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "STACK", Thread, "this thread's open spans; a job opens its span under its caller's (`profile::here`, carried)"),
+    ("crates/prof/src/code_rule_dsl/logic/profile.rs", "ACCOUNTED", Thread, "the time this thread's profiled scopes have charged, read and set by its own scopes as they open and close"),
+    ("crates/facts_base/src/code_rule_dsl/facts/vtab.rs", "NEAR", Thread, "this thread's view of the process's interned column lists (`column_names`): the same list on any thread"),
+    ("crates/tape_format/src/f16/ops.rs", "SPARE", Thread, "this thread's format 16 writer between documents: its parts' buffers, the same on any thread"),
+    ("crates/transducer_base/src/code_rule_dsl/transducer/packed.rs", "SPARE_ARENA", Thread, "this thread's transducer execution arena and states between runs, cleared: their containers' room, the same on any thread"),
+    ("crates/vector/src/frame.rs", "ARENA", Thread, "this thread's frames' memory (decision 0687, `frame::op`): an operation's working memory, popped as it returns"),
+    ("crates/vector/src/probe.rs", "BUSY", Thread, "this thread is in the allocation probe (a measuring aid, off by default)"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "COMMAND", Outermost, "the command's clocks, on the thread that runs it and its outermost run"),
     ("crates/context/src/lib.rs", "SEEN", Thread, "this thread's copy of the settings its run under way read, held with that run (decision 0442)"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "WARM_SCOPE", Thread, "the warm check's mark of the transaction a store writer has open on this thread; its commit hook runs on it"),
@@ -201,7 +215,9 @@ pub const NOT_YET_PINNED: usize = 0;
 /// One carried piece of the run's context, taken on the caller's thread: entering it on another thread returns a
 /// guard that puts back what that thread had.
 pub trait Part: Send + Sync {
-    fn enter(&self) -> Box<dyn Any>;
+    /// Enters the part, its guard put into `into` (in place: a box a part a job entered was 1.32 M arrays on cold
+    /// PostHog).
+    fn enter(&self, into: &mut Entered);
 }
 
 /// What [`Carry::here`] takes, by the names of the thread-locals each part carries.
@@ -217,8 +233,8 @@ impl Capture {
 /// A part built from a pair of the owning module's functions: what to take, and how to enter it.
 pub struct Shared<T: Clone + Send + Sync + 'static, G: 'static>(pub T, pub fn(T) -> G);
 impl<T: Clone + Send + Sync + 'static, G: 'static> Part for Shared<T, G> {
-    fn enter(&self) -> Box<dyn Any> {
-        Box::new((self.1)(self.0.clone()))
+    fn enter(&self, into: &mut Entered) {
+        into.push((self.1)(self.0.clone()));
     }
 }
 
@@ -239,13 +255,64 @@ pub struct Carry {
     under: Option<String>,
 }
 
-/// While it lives, a job's thread is in its caller's context; dropped, the thread's own is back.
-pub struct Entered(Vec<Box<dyn Any>>);
+/// The guards an `Entered` holds in place, and the room of each.
+const HELD: usize = 8;
+const GUARD_WORDS: usize = 8;
+
+/// A part's guard held in place: its bytes, and how to drop them.
+struct Held {
+    bytes: std::mem::MaybeUninit<[usize; GUARD_WORDS]>,
+    drop: unsafe fn(*mut u8),
+}
+
+/// While it lives, a job's thread is in its caller's context; dropped, the thread's own is back. Its parts' guards
+/// are held in place (`HELD` of at most `GUARD_WORDS` words each); a larger one, or one past them, is boxed.
+pub struct Entered {
+    held: [std::mem::MaybeUninit<Held>; HELD],
+    len: usize,
+    boxed: Vec<Box<dyn Any>>,
+    /// Its guards put back the thread they were entered on: not sent.
+    _here: std::marker::PhantomData<*const ()>,
+}
+
+impl Entered {
+    fn new() -> Self {
+        Entered { held: [const { std::mem::MaybeUninit::uninit() }; HELD], len: 0, boxed: Vec::new(), _here: std::marker::PhantomData }
+    }
+
+    /// Holds guard `g` until the context is left, after every guard held before it.
+    pub fn push<G: 'static>(&mut self, g: G) {
+        unsafe fn drop_as<G>(p: *mut u8) {
+            // SAFETY: `p` holds a `G` written by `push`, dropped once (`Drop for Entered`).
+            unsafe { std::ptr::drop_in_place(p.cast::<G>()) }
+        }
+        let fits = size_of::<G>() <= size_of::<[usize; GUARD_WORDS]>() && align_of::<G>() <= align_of::<usize>();
+        // Once one is boxed, the later ones are too: the boxed are put back first, so the order of entry holds.
+        if fits && self.len < HELD && self.boxed.is_empty() {
+            let mut held = Held { bytes: std::mem::MaybeUninit::uninit(), drop: drop_as::<G> };
+            // SAFETY: the bytes are large and aligned enough for a `G` (`fits`).
+            unsafe { held.bytes.as_mut_ptr().cast::<G>().write(g) };
+            self.held[self.len].write(held);
+            self.len += 1;
+        } else {
+            self.boxed.push(Box::new(g));
+        }
+    }
+}
+
 impl Drop for Entered {
     fn drop(&mut self) {
-        // Put back in the reverse order of entry.
-        while let Some(g) = self.0.pop() {
+        // Put back in the reverse order of entry: the boxed (entered last) first.
+        while let Some(g) = self.boxed.pop() {
             drop(g);
+        }
+        while self.len > 0 {
+            self.len -= 1;
+            // SAFETY: slots below `len` were written by `push` and not yet dropped.
+            unsafe {
+                let held = self.held[self.len].assume_init_mut();
+                (held.drop)(held.bytes.as_mut_ptr().cast::<u8>());
+            }
         }
     }
 }
@@ -262,7 +329,11 @@ impl Carry {
 
     /// Puts the context on this thread while the guard lives.
     pub fn enter(&self) -> Entered {
-        Entered(self.parts.iter().map(|(_, p)| p.enter()).collect())
+        let mut entered = Entered::new();
+        for (_, p) in &self.parts {
+            p.enter(&mut entered);
+        }
+        entered
     }
 
     /// The profile's span open where it was taken.
@@ -279,3 +350,42 @@ impl Carry {
 
 // Its tests read every thread-local of the tree and what the whole program carries (`logic::CARRIERS`):
 // `rerail-logic`'s facade of this module mounts `tests.rs`.
+
+#[cfg(test)]
+mod entered_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    struct Small(u32, Rc<RefCell<Vec<u32>>>);
+    impl Drop for Small {
+        fn drop(&mut self) {
+            self.1.borrow_mut().push(self.0);
+        }
+    }
+    struct Large([u64; 16], Small);
+
+    /// Guards are put back in the reverse order of entry, held in place or boxed (one too large, or past `HELD`),
+    /// each once.
+    #[test]
+    fn guards_are_put_back_in_reverse_order_held_or_boxed() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut e = super::Entered::new();
+        e.push(Small(0, Rc::clone(&log)));
+        e.push(Small(1, Rc::clone(&log)));
+        e.push(Large([7; 16], Small(2, Rc::clone(&log))));
+        for i in 3..12 {
+            e.push(Small(i, Rc::clone(&log)));
+        }
+        drop(e);
+        assert_eq!(*log.borrow(), (0..12).rev().collect::<Vec<_>>());
+        assert_eq!(Rc::strong_count(&log), 1, "every guard dropped");
+
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut e = super::Entered::new();
+        for i in 0..super::HELD as u32 + 3 {
+            e.push(Small(i, Rc::clone(&log)));
+        }
+        drop(e);
+        assert_eq!(*log.borrow(), (0..super::HELD as u32 + 3).rev().collect::<Vec<_>>());
+    }
+}

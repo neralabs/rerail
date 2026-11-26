@@ -49,6 +49,8 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 [dependencies]
 # Its structures lie in blocks (`rerail_blocks::vector::Vector`, `maps`), as the engine\'s do.
 rerail-blocks = { path = "../blocks" }
+# The scratch survey's count of the heap's allocations (`rerail_vector::probe`, note t60), off unless asked for.
+rerail-vector = { path = "../vector" }
 rerail-section = { path = "../section" }
 rerail-accel = { path = "../../../accel" }
 rerail-context = { path = "../context" }

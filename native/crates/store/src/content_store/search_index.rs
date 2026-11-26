@@ -9,7 +9,7 @@
 
 #[cfg(any(test, feature = "test-hooks"))]
 use super::SEARCH_INDEX_FAMILY_WRITES;
-use super::kept_facts::{ChainRows, KeptPut, KeptSpace, KeptWhat, chain_rows, sorted_put, write_space};
+use super::kept_facts::{ChainRows, KeptPut, KeptSpace, KeptWhat, sorted_put, write_space};
 use super::{
     ContentStore, HashKey, MAX_PUBLICATION_BATCH, SearchKindLookup, StoreError, StoreResult,
     StoredKindPresence, TapeId, TapeSearchIndex, UnindexedTape,
@@ -67,10 +67,7 @@ fn gone(tape: i64) -> impl Iterator<Item = KeptPut> {
 }
 
 fn open(store: &std::path::Path, t: &Connection) -> StoreResult<Option<KeptSpace>> {
-    // Outside a write's transaction, a writer may commit and sweep the files the rows name before they are mapped:
-    // the rows are then read again (`KeptSpace::open_current`).
-    let rows = chain_rows(t, &space())?;
-    Ok(KeptSpace::open_current(store, &space(), rows, || chain_rows(t, &space()))?.map(|(_, kept)| kept))
+    KeptSpace::read(store, t, &space())
 }
 
 /// Tapes `tapes`' indexes gone, in transaction `t` of the store at `store`, which deletes their rows (their ids may

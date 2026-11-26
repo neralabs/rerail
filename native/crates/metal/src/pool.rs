@@ -135,7 +135,9 @@ pub fn drop_all() {
 mod tests {
     use super::*;
 
-    /// A returned block serves the next lease of its size class, written over in place.
+    /// A returned block serves the next lease of its size class, written over in place, unless the pool released it in
+    /// between: the tests run beside it lease too, and a lease past the budget releases the oldest idle buffers first
+    /// (`shared::make_room`), this one among them.
     #[test]
     fn blocks_are_reused_by_size_class() {
         if crate::lane::device().is_err() {
@@ -147,9 +149,13 @@ mod tests {
         assert!(a.byte_length() >= bytes);
         assert_eq!(a.read::<u32>(3), [7, 7, 7]);
         let first = a.device_buffer().device_address();
+        let released = shared::released_idle();
         drop(a);
         let b = zeroed::<u8>(bytes).unwrap();
-        assert!(!b.made, "the returned block served the lease");
+        if b.made {
+            assert!(shared::released_idle() > released, "the returned block served the lease, or was released");
+            return;
+        }
         assert_eq!(b.device_buffer().device_address(), first);
         assert_eq!(b.read::<u32>(3), [0, 0, 0]);
     }

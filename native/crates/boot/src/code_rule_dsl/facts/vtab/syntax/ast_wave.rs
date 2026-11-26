@@ -201,6 +201,10 @@ impl MatcherWave {
     fn on(&self, backend: crate::code_rule_dsl::transducer::packed::MatcherBackend) -> WaveFound {
         use crate::code_rule_dsl::transducer::packed::MatcherBackend;
         let started = std::time::Instant::now();
+        crate::code_rule_dsl::logic::profile::decision("ast matcher wave: matchers, passes, tapes, node-passes", || {
+            let nodes: usize = self.tapes.iter().map(|t| t.transducer_len()).sum();
+            format!("{} matchers, {} passes, {} tapes, {} node-passes", self.active.len(), self.wave.passes(), self.tapes.len(), nodes * self.wave.passes().max(1))
+        });
         // On the cores, parts of the tapes side by side: a tape's labels and roots read that tape alone, so each part's
         // roots are the whole's at its tapes (a corpus batch's wave over every file ran on one core, 8 s on t50's
         // product run). Each part's limited roots are placed back at their tapes.
@@ -339,17 +343,20 @@ fn matched(
             return Err(StoreError::Invalid("ast matcher wave: not a program's result".into()));
         };
         let r = r.0.downcast::<WaveFound>().map_err(|_| StoreError::Invalid("ast matcher wave: a result of another type".into()))?;
-        let (found, run, wall) = r.as_ref().clone().map_err(|e| StoreError::Invalid(format!("ast matcher wave: {e}")))?;
+        // Taken whole where this is its one holder: copied, each document's set of each matcher was made again
+        // (1.31 M on cold PostHog).
+        let r = std::sync::Arc::try_unwrap(r).unwrap_or_else(|r| r.as_ref().clone());
+        let (found, run, wall) = r.map_err(|e| StoreError::Invalid(format!("ast matcher wave: {e}")))?;
         if run.metal {
             profile::device("ast matcher wave", run.command_buffers as u64, run.device, wall, nodes);
         }
         profile::decision("ast matcher wave lane", || (if run.metal { "metal" } else { "cpu" }).to_owned());
         if crate::code_rule_dsl::prof::on() {
             for (m, ns) in matchers.list.iter().zip(&run.roots_cpu) {
-                crate::code_rule_dsl::prof::count_named(format!("wave.roots_us.{}", m.rel), (*ns / 1000) as usize);
+                crate::code_rule_dsl::prof::count_named_args(format_args!("wave.roots_us.{}", m.rel), (*ns / 1000) as usize);
             }
             for (m, per) in matchers.list.iter().zip(&found) {
-                crate::code_rule_dsl::prof::count_named(format!("wave.roots_n.{}", m.rel), per.iter().map(BTreeSet::len).sum());
+                crate::code_rule_dsl::prof::count_named_args(format_args!("wave.roots_n.{}", m.rel), per.iter().map(BTreeSet::len).sum());
             }
         }
         if !run.limited.is_empty() {
@@ -396,7 +403,7 @@ fn matched(
             if budget > 0 {
                 profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {budget} roots", m.rel));
             }
-            for row in found_rows.chunks_exact(1 + m.captures.len()) {
+            for row in found_rows.iter().flat_map(|t| t.chunks_exact(1)) {
                 r.push(row);
                 rows += 1;
             }
@@ -425,11 +432,12 @@ fn matched(
             let _captures = profile::span(|| "ast captures and confirmations (W's matcher at each root)".into());
             let roots: usize = found.iter().map(BTreeSet::len).sum();
             let (found_rows, limited, cpu) = captured_rows(m, &held, &found, at, tapes, atoms, Some(wave.w_key(c)))?;
+            let found_n = found_rows.iter().map(Vec::len).sum::<usize>() / (1 + m.captures.len());
             // What the host's confirmation costs each relation: its roots, the rows kept and the pool's CPU.
             if crate::code_rule_dsl::prof::on() {
-                crate::code_rule_dsl::prof::count_named(format!("wave.captures_us.{}", m.rel), (cpu / 1000) as usize);
+                crate::code_rule_dsl::prof::count_named_args(format_args!("wave.captures_us.{}", m.rel), (cpu / 1000) as usize);
                 profile::decision("ast captures by W at each root: roots, rows, captures, CPU ms", || {
-                    format!("{}: {roots} roots, {} rows, {} captures, {:.1} ms", m.rel, found_rows.len() / (1 + m.captures.len()), m.captures.len(), cpu as f64 / 1e6)
+                    format!("{}: {roots} roots, {} rows, {} captures, {:.1} ms", m.rel, found_n, m.captures.len(), cpu as f64 / 1e6)
                 });
             }
             if limited > 0 {
@@ -438,10 +446,10 @@ fn matched(
             // A relaxed matcher's cost (decision 0107 §3): the roots W confirmed on the host, and the rows it kept.
             if m.captor.verify {
                 crate::code_rule_dsl::prof::count("ast.relaxed_roots", roots);
-                crate::code_rule_dsl::prof::count("ast.relaxed_kept", found_rows.len() / (1 + m.captures.len()));
-                profile::decision("relaxed matchers: roots W confirmed, rows kept", || format!("{}: {roots} roots, {} kept", m.rel, found_rows.len() / (1 + m.captures.len())));
+                crate::code_rule_dsl::prof::count("ast.relaxed_kept", found_n);
+                profile::decision("relaxed matchers: roots W confirmed, rows kept", || format!("{}: {roots} roots, {} kept", m.rel, found_n));
             }
-            for row in found_rows.chunks_exact(1 + m.captures.len()) {
+            for row in found_rows.iter().flat_map(|t| t.chunks_exact(1 + m.captures.len())) {
                 r.push(row);
                 rows += 1;
             }
@@ -455,8 +463,7 @@ fn matched(
 /// A captured matcher's rows (decision 0107): at each root the transducer matched, W's matcher of the atom's rule
 /// matched again on the host, and each capture's nodes read from its bindings (a multi-capture's every node, so its
 /// rows are the product of the captures' nodes). A node the projection leaves out has no row. Tapes in parallel; also
-/// how many roots hit their file's visit budget (no rows). The rows flat, each `1 + m.captures.len()` wide: one vector a
-/// tape, not one a row.
+/// how many roots hit their file's visit budget (no rows).
 fn captured_rows(
     m: &Matcher,
     held: &[usize],
@@ -465,22 +472,22 @@ fn captured_rows(
     tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
     atoms: &dyn crate::content_store::AtomTable,
     w_key: Option<String>,
-) -> StoreResult<(Vector<i64>, usize, u128)> {
+) -> StoreResult<(Vec<Vec<i64>>, usize, u128)> {
     use crate::code_rule_dsl::transducer::packed::evaluation_costs as costs;
-    use crate::code_rule_dsl::waves::findings::Capture;
+    use crate::code_rule_dsl::waves::findings::Captured;
     use rayon::prelude::*;
     // W's steps at the roots and their subtrees' nodes, for its rate in the cost store (decision 0334): what the
     // wave weighs a clause over its budget against. And each tape's CPU, for the profile's captures (t45).
     let measure = w_key.is_some();
-    // A tape's rows, its roots past the budget, W's steps and nodes, and its CPU (ns).
-    type TapeRun = (Vector<i64>, usize, u64, u64, u128);
-    let width = 1 + m.captures.len();
+    // A tape's rows (`1 + captures` columns a row, one after another), its roots past the budget, W's steps and
+    // nodes, and its CPU (ns).
+    type TapeRun = (Vec<i64>, usize, u64, u64, u128);
     let per: Vec<StoreResult<TapeRun>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
         held
             .par_iter()
             .zip(found.par_iter())
             .map(crate::code_rule_dsl::logic::profile::carried("ast captures (pool)", |(&i, roots): (&usize, &BTreeSet<u32>)| {
-                let mut rows = Vector::new();
+                let mut rows = Vec::new();
                 let (mut limited, mut steps, mut nodes) = (0, 0_u64, 0_u64);
                 if roots.is_empty() {
                     return Ok((rows, limited, steps, nodes, 0));
@@ -496,46 +503,77 @@ fn captured_rows(
                     let local = p.local_of_node(core);
                     (local != NONE).then(|| p.global(local))
                 };
-                // A root's rows as captures are added (`k` wide), its next, and a capture's nodes: reused across roots.
-                let (mut product, mut next, mut captured): (Vec<i64>, Vec<i64>, Vec<i64>) = Default::default();
+                // Each root's captured values, capture by capture (`ends[k]` where capture k's end), reused root to
+                // root: scratch of this tape's work. The rows are the product of the captures' values, written one
+                // after another into the tape's rows (`width` a row), with no row made apart and copied.
+                let width = 1 + m.captures.len();
+                let (mut vals, mut ends): (Vec<i64>, Vec<usize>) = (Vec::new(), Vec::with_capacity(m.captures.len()));
+                let mut at: Vec<usize> = vec![0; m.captures.len()];
                 for &n in roots {
                     let Some(n_global) = global(n) else { continue };
-                    let (names, used) = crate::code_rule_dsl::waves::findings::captured_counted(&m.captor.grammar, &root, n, &m.captures, work);
+                    vals.clear();
+                    ends.clear();
+                    let mut interned: StoreResult<()> = Ok(());
+                    let (matched, used) = crate::code_rule_dsl::waves::findings::captured_each(&m.captor.grammar, &root, n, &m.captures, work, &mut |k, value| {
+                        while ends.len() < k {
+                            ends.push(vals.len());
+                        }
+                        match value {
+                            Captured::Node(core) => vals.extend(global(core)),
+                            // A transform's text is a symbol, the store's atom, as the program's constants are.
+                            Captured::Text(text) => match atoms.intern(&String::from_utf8_lossy(text)) {
+                                Ok(a) => vals.push(i64::from(a)),
+                                Err(e) => interned = Err(e),
+                            },
+                        }
+                    });
+                    interned?;
                     if measure {
                         steps += used as u64;
                         nodes += u64::from(tape.transducer_descendants(n).end.saturating_sub(n).max(1));
                     }
-                    let names = match names {
-                        Ok(Some(names)) => names,
-                        Ok(None) => continue,
+                    match matched {
+                        Ok(true) => {}
+                        Ok(false) => continue,
                         Err(_) => {
                             limited += 1;
                             continue;
                         }
-                    };
-                    product.clear();
-                    product.push(n_global);
-                    let mut k = 1;
-                    for capture in names {
-                        // A transform's text is a symbol, the store's atom, as the program's constants are.
-                        captured.clear();
-                        match capture {
-                            Capture::Nodes(found) => captured.extend(found.into_iter().filter_map(global)),
-                            Capture::Text(text) => captured.push(i64::from(atoms.intern(&text)?)),
-                        }
-                        next.clear();
-                        for row in product.chunks_exact(k) {
-                            for &x in &captured {
-                                next.extend_from_slice(row);
-                                next.push(x);
+                    }
+                    while ends.len() < m.captures.len() {
+                        ends.push(vals.len());
+                    }
+                    // A capture with no value (none bound, or none the projection holds): no row.
+                    if ends.iter().enumerate().any(|(k, &e)| e == if k == 0 { 0 } else { ends[k - 1] }) {
+                        continue;
+                    }
+                    // The product in the order the captures are named, the last varying fastest.
+                    at.iter_mut().enumerate().for_each(|(k, a)| *a = if k == 0 { 0 } else { ends[k - 1] });
+                    loop {
+                        rows.push(n_global);
+                        rows.extend(at.iter().map(|&a| vals[a]));
+                        let mut k = at.len();
+                        loop {
+                            if k == 0 {
+                                break;
+                            }
+                            k -= 1;
+                            at[k] += 1;
+                            if at[k] < ends[k] {
+                                break;
+                            }
+                            at[k] = if k == 0 { 0 } else { ends[k - 1] };
+                            if k == 0 {
+                                k = usize::MAX;
+                                break;
                             }
                         }
-                        std::mem::swap(&mut product, &mut next);
-                        k += 1;
+                        if k == usize::MAX || at.is_empty() {
+                            break;
+                        }
                     }
-                    debug_assert_eq!(k, width, "{}: a root's captures, not the matcher's", m.rel);
-                    rows.extend_from_slice(&product);
                 }
+                debug_assert_eq!(rows.len() % width, 0);
                 let cpu = (rerail_prof::thread_cpu() - started).as_nanos();
                 Ok((rows, limited, steps, nodes, cpu))
             }))
@@ -550,10 +588,6 @@ fn captured_rows(
             costs::observe([costs::Observation { program: key, steps, size: nodes, predicted: 0, over_budget: false }]);
         }
     }
-    let mut all = Vector::with_capacity(per.iter().map(|(rows, ..)| rows.len()).sum());
-    for (rows, ..) in &per {
-        all.extend_from_slice(rows);
-    }
-    Ok((all, limited, cpu))
+    Ok((per.into_iter().map(|(rows, ..)| rows).collect(), limited, cpu))
 }
 

@@ -3,7 +3,7 @@
 //! of its projection's numbering where they lie, through its entry (`ViewDoc`) in its batch's views' directory. The
 //! reads in CLIF (`rerail_clif::view_reads`) are the JIT's and the kernels'; these take the same steps over the same
 //! bytes, so the host's executor reads the same blocks as the device's. Tests hold them to the JIT's and to the
-//! host's rows (`the_rust_view_reads_are_the_jits_and_the_hosts` in the engine).
+//! host's rows (`the_view_reads_are_the_hosts_rows`, and an embedder's placement in `the_rust_reads_place_an_embedders_spans_as_its_segments_do`).
 //!
 //! The views no CLIF reads yet (`tape`, `ast_depth`, `node_order`, `next_sibling`, `rr_report_location`) are read here
 //! from the same entry and tape: their first definition, the host's rows the reference.
@@ -11,7 +11,7 @@
 use crate::reads::{NONE, f16, f16z::Z};
 use rerail_clif::ids::{INDEX_BITS, Numbering, SLOT_BITS, SPAN_SLOTS};
 use rerail_clif::view::{F16Z_FORMAT, TapeView};
-use rerail_clif::view_reads::{NO_ROW, PLACED_AT, PLACED_TABLE, ViewDoc};
+use rerail_clif::view_reads::{NO_ROW, NO_SPAN, PLACED_AT, PLACED_COPIED, PLACED_SEGMENTS, PLACED_TABLE, ViewDoc};
 
 /// A document's tape as the views read it: its bytes from its view's base, its view, in its format; a 16z tape with
 /// the cache its reads share.
@@ -165,15 +165,38 @@ pub enum Place {
 /// A document as its views' reads take it: its entry, its tape, and its line index (decision 0612: its language's
 /// one, `newlines`, with its word's room after it), where its directory row places them; and its source where it
 /// lies, whose bytes say where a line's text ends (its terminator's length: `Report`'s end column).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Doc<'a> {
     pub entry: &'a ViewDoc,
     pub tape: Tape<'a>,
     pub lines: &'a [u8],
     pub source: &'a [u8],
+    /// The numbered node last selected and its tape node (`tape_node`), and the `field` view's row it is the node of
+    /// (`fielded`; `u32::MAX`: none): a row's columns read one after another select its node once. `u32::MAX`: none
+    /// yet.
+    last: std::cell::Cell<Selected>,
+}
+
+/// What a `Doc` last selected (`Doc::selected`): numbered node `l`, its tape node `x`, and the `field` view's row
+/// `field_row` whose node it is (`u32::MAX`: none).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Selected {
+    pub l: u32,
+    pub x: u32,
+    pub field_row: u32,
+}
+
+impl Selected {
+    /// Nothing selected.
+    pub const NONE: Selected = Selected { l: u32::MAX, x: 0, field_row: u32::MAX };
 }
 
 impl<'a> Doc<'a> {
+    /// The document's reads, through its directory row's `entry`.
+    #[inline]
+    pub fn new(entry: &'a ViewDoc, tape: Tape<'a>, lines: &'a [u8], source: &'a [u8]) -> Doc<'a> {
+        Doc { entry, tape, lines, source, last: std::cell::Cell::new(Selected::NONE) }
+    }
     #[inline(always)]
     fn numbering(&self) -> &'a Numbering {
         // SAFETY: the entry's numbering, one, set where the entry was made (`ViewEntry::new`) to its projection's in
@@ -185,11 +208,29 @@ impl<'a> Doc<'a> {
         // SAFETY: one of the entry's runs of u32s, set where it was made, in its block.
         unsafe { run.as_slice::<u32>() }
     }
+    /// What it last selected: what a caller keeps to read the document again without selecting the node again.
+    #[inline]
+    pub fn selected(&self) -> Selected {
+        self.last.get()
+    }
+    /// It, knowing numbered node `l`'s tape node `x` (a probe's hop found it), and the `field` view's row it is the
+    /// node of (`u32::MAX`: not known).
+    #[inline]
+    pub fn knowing(self, l: u32, x: u32, field_row: u32) -> Self {
+        self.last.set(Selected { l, x, field_row });
+        self
+    }
     /// Numbered node `l`'s tape node (`num_select`).
     #[inline]
     pub fn tape_node(&self, l: u32) -> u32 {
+        let s = self.last.get();
+        if s.l == l {
+            return s.x;
+        }
         // SAFETY: the entry's numbering (`numbering`).
-        unsafe { self.numbering().select(0, l) }
+        let x = unsafe { self.numbering().select(0, l) };
+        self.last.set(Selected { l, x, field_row: u32::MAX });
+        x
     }
     /// The numbered nodes before tape node `x` (`num_rank`).
     #[inline]
@@ -283,9 +324,15 @@ impl<'a> Doc<'a> {
     /// The numbered node of the `field` view's row `i`, and its tape node.
     #[inline]
     pub fn fielded(&self, i: u32) -> (u32, u32) {
+        let s = self.last.get();
+        if s.field_row == i {
+            return (s.l, s.x);
+        }
         // SAFETY: as `tape_node`.
         let x = unsafe { self.numbering().select(2, i) };
-        (self.rank(x), x)
+        let l = self.rank(x);
+        self.last.set(Selected { l, x, field_row: i });
+        (l, x)
     }
     /// `view_field(i, col)`: the parent's id, the field atom, the child's id.
     #[inline]
@@ -394,6 +441,22 @@ impl<'a> Doc<'a> {
         // SAFETY: as `tape_node`.
         let order = unsafe { self.numbering().order_of(l) };
         (i64::from(self.entry.key) << 32) | i64::from(order)
+    }
+    /// The `op` view's row `i`: the document's `i`-th anonymous child of a numbered node (`Item::Op`), its tape node.
+    #[inline]
+    pub fn op_child(&self, i: u32) -> u32 {
+        // SAFETY: as `tape_node`.
+        unsafe { self.numbering().select(rerail_clif::ids::OP_ITEM, i) }
+    }
+    /// `view_op(i, col)`: row `i`'s numbered node's id (an anonymous child is no root), its name atom (by its tape
+    /// code, `ViewDoc::names`).
+    #[inline]
+    pub fn op(&self, i: u32, col: u32) -> i64 {
+        let x = self.op_child(i);
+        match col {
+            0 => self.parent_id(1, x),
+            _ => i64::from(self.items(&self.entry.names)[self.tape.number(x) as usize]),
+        }
     }
     /// The numbered node of the `next_sibling` view's row `i` (a node after a numbered sibling), and its tape node.
     #[inline]
@@ -512,19 +575,61 @@ impl<'a> Doc<'a> {
         }
     }
     /// A guest's span where it stands in its host: copied, each end moved by `delta` and kept within `within`; at
-    /// `within`. A file's own, as it is.
+    /// `within`; an embedder's, by its segments (`placed_segments`). A file's own, as it is. The CLIF read's
+    /// (`placed`); a placement by its table is `placed_loc`'s.
     #[inline]
     pub fn placed(&self, (s, e): (u32, u32)) -> (u32, u32) {
         let d = self.entry;
         match d.placement {
             0 => (s, e),
             PLACED_AT => (d.within_lo, d.within_hi),
-            _ => {
+            PLACED_SEGMENTS => self.placed_segments((s, e)),
+            PLACED_COPIED => {
                 let (lo, hi) = (i64::from(d.within_lo), i64::from(d.within_hi));
                 let clamp = |x: u32| (i64::from(x).wrapping_add(d.delta)).max(lo).min(hi) as u32;
                 (clamp(s), clamp(e))
             }
+            other => unreachable!("placement {other} places no span as read"),
         }
+    }
+    /// An embedder's program's span `s..e` where it stands in its host (`SegmentMap::file_ranges(s..e).primary()`),
+    /// read off its segments where they lie (`ViewDoc::segments`): the CLIF read's (`placed_segments`), step for step.
+    /// The segment holding `s` (or the last before it) and those starting before `e` give one piece each, a copied
+    /// one's overlapped part, a written one's whole anchor, pieces of no bytes left out; the span is the run of pieces,
+    /// overlapping or touching, that holds the first one, or, with none, the point `s` maps to.
+    fn placed_segments(&self, (s, e): (u32, u32)) -> (u32, u32) {
+        // SAFETY: the entry's segments (`SEGMENT_WORDS` u32s each), set where it was made, in its block.
+        let segs = unsafe { self.entry.segments.as_slice::<[u32; 5]>() };
+        if segs.is_empty() {
+            return (s, e);
+        }
+        // `[start, end, from, to, copied]`: its program range, its host range, 1 where it is copied.
+        let point = |g: &[u32; 5], at: u32| if g[4] != 0 { g[2].wrapping_add(at.max(g[0]).min(g[1]).wrapping_sub(g[0])) } else { g[2] };
+        let first = segs.partition_point(|g| g[1] <= s).min(segs.len() - 1);
+        let at = point(&segs[first], s);
+        if s == e {
+            return (at, at);
+        }
+        let last = segs.partition_point(|g| g[0] < e);
+        let (mut cs, mut ce, mut have) = (0u32, 0u32, false);
+        loop {
+            let mut grew = false;
+            for g in segs.iter().take(last).skip(first) {
+                let (ps, pe) = if g[4] != 0 { (point(g, s), point(g, e)) } else { (g[2], g[3]) };
+                if g[0] == g[1] || ps >= pe {
+                    continue;
+                }
+                if !have {
+                    (cs, ce, have) = (ps, pe, true);
+                } else if ps <= ce && cs <= pe && (ps < cs || pe > ce) {
+                    (cs, ce, grew) = (cs.min(ps), ce.max(pe), true);
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        if have { (cs, ce) } else { (at, at) }
     }
     /// `Loc` position `l`'s span where it stands in its host: by the entry's table where its placement is one
     /// (`PLACED_TABLE`: no word maps it, its spans placed once), else its span as read, placed (`placed`). The CLIF
@@ -611,6 +716,56 @@ impl<'a> Doc<'a> {
             }
         };
         if l < self.entry.nodes { l } else { NO_ROW }
+    }
+    /// `view_text_span(l)`: numbered node `l`'s bytes' range in its document's own source, `start << 32 | end`.
+    #[inline]
+    pub fn text_span(&self, l: u32) -> u64 {
+        let x = self.tape_node(l);
+        u64::from(self.tape.start(x)) << 32 | u64::from(self.tape.end(x))
+    }
+    /// `view_line_span(low)`: the line whose span's id has low bits `low` (`LINE_SLOT << INDEX_BITS | l`: line `l`
+    /// from 1, 0 the whole source) as its bytes in the document's own source, `start << 32 | stop`, `stop` one past
+    /// its terminator's last byte, or the source's end on its last line and on line 0; `NO_SPAN` for another id, a
+    /// guest's (its lines are its host's) or a line past its last.
+    #[inline]
+    pub fn line_span(&self, low: u32) -> u64 {
+        let l = low & ((1 << INDEX_BITS) - 1);
+        let count = self.loc_count();
+        if low >> INDEX_BITS != rerail_clif::ids::LINE_SLOT || self.entry.own_text == 0 || l > count {
+            return NO_SPAN;
+        }
+        let len = self.entry.source_len;
+        if l == 0 {
+            return u64::from(len);
+        }
+        let stop = if l >= count { len } else { self.loc_start(l) };
+        u64::from(self.loc_start(l - 1)) << 32 | u64::from(stop)
+    }
+    /// `view_line_terminated(low)`: whether that line ends with a terminator (from 1, before the last).
+    #[inline]
+    pub fn line_terminated(&self, low: u32) -> bool {
+        let l = low & ((1 << INDEX_BITS) - 1);
+        low >> INDEX_BITS == rerail_clif::ids::LINE_SLOT && l != 0 && l < self.loc_count()
+    }
+    /// The text of the line whose span's id has low bits `low` (`line_span`), read where the source lies, its
+    /// terminator's length off the source's bytes where it has one (`lines_terminator_length`), as
+    /// `LineTable::text_of` gives it.
+    pub fn line_text(&self, low: u32) -> Option<&'a str> {
+        let span = self.line_span(low);
+        if span == NO_SPAN {
+            return None;
+        }
+        let (start, mut stop) = ((span >> 32) as usize, span as u32 as usize);
+        if self.line_terminated(low) {
+            stop -= crate::newlines::length_ending_at(self.source, stop - 1);
+        }
+        std::str::from_utf8(self.source.get(start..stop)?).ok()
+    }
+    /// Numbered node `l`'s text, read where its source lies (`text_span`): none where the range is not the source's
+    /// text (a tape and a source that disagree).
+    pub fn text(&self, l: u32) -> Option<&'a str> {
+        let span = self.text_span(l);
+        std::str::from_utf8(self.source.get((span >> 32) as usize..span as u32 as usize)?).ok()
     }
 }
 

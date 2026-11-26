@@ -532,16 +532,33 @@ binding_value(a, v) :- kind(a, "named_expression"), field(a, "value", v).
 // The main "what is this expression" relation for rules. e.g. with `from django.db import models`, the expression
 // `models.Model` has sym_of "django.db.models.Model"; if a workspace package re-exports a name, resolve_export
 // (python/imports) follows it to the defining module.
-// Rule 1: through an import (qn) then re-exports. Rule 2: a local def/class, by its qualname. Rule 3: a def or class
-// of the run read as an attribute of its class, by its qualname: with `class Base` in pkg/m.py, `Base.Meta` is
-// "pkg.m.Base.Meta" and `Base.f` "pkg.m.Base.f" there, as where Base is imported. Like rule 2, it names definitions
-// only: a value the class assigns (`Base.X`, `Service.logger`) has none, as a module's own variable has none, so a
-// rule's fallback for names that do not resolve (`!sym_of(n, _)`) still reads it. Rule 4: a builtin.
+// Rule 1: through an import (qn) then re-exports. Rule 2: a local def/class, by its qualname. Rule 3 (#898): a def or
+// class a class of n's own file defines, read as the class's attribute, by its qualname: with `class Base` in
+// pkg/m.py, `Base.Meta` is "pkg.m.Base.Meta" and `Base.f` "pkg.m.Base.f" there, as where Base is imported. Like rule 2,
+// it names definitions only: a value the class assigns (`Base.X`, `Service.logger`) has none, as a module's own
+// variable has none, so a rule's fallback for names that do not resolve (`!sym_of(n, _)`) still reads it. Rule 4: a
+// builtin. Rules 2 and 3 are local_def's, by nodes of n's own file, so neither crosses files: an imported class's
+// attribute is rule 1's, its qn ("shop.base.Other.Meta") naming the definition. Rule 5: an attribute of a class
+// imported through a re-export (`from shop import Other`, then `Other.Meta`), whose qn ("shop.Other.Meta") names no
+// module's export: export_attr resolves it from its qn's prefix, by qualified names alone.
 .decl sym_of(n: node, q: symbol)
 sym_of(n, q) :- qn(n, q0), resolve_export(q0, q).
-sym_of(n, q) :- look(n, x, s), defn(s, x, f), qualname(f, q).
-sym_of(n, q) :- attr_of(n, o, a), sym_of(o, c), class_def(_, c), q = @dot(c, a), qualname(_, q).
+sym_of(n, q) :- local_def(n, f), qualname(f, q).
 sym_of(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
+sym_of(n, q) :- qn(n, q0), export_attr(q0, q).
+// local_def(n, f): n denotes definition f of its own file. Rule 2: a name looked up to its def or class. Rule 3: an
+// attribute of such a class naming a def or class its body defines (a class's body is its scope).
+.decl local_def(n: node, f: node)
+local_def(n, f) :- look(n, x, s), defn(s, x, f).
+local_def(n, f) :- attr_of(n, o, a), local_def(o, k), kind(k, "class_definition"), defn(k, a, f).
+// export_attr(q0, q): the qualified name q0 ("shop.Other.Meta") is attribute a of a class its prefix names through a
+// re-export ("shop.Other" is "shop.base.Other"), or of a class such a name is ("shop.Other.Meta.Inner"): q is the
+// qualname of the definition it names (rule 5 of sym_of). Every qn is asked of resolve_export (export_query).
+.decl export_attr(q0: symbol, q: symbol)
+export_attr(q0, q) :- export_query(q0), split_dot(q0, p, a), resolve_export(p, c), c != p, class_def(_, c),
+    q = @dot(c, a), qualname(_, q).
+export_attr(q0, q) :- export_query(q0), split_dot(q0, p, a), export_attr(p, c), class_def(_, c), q = @dot(c, a),
+    qualname(_, q).
 // global_ref(n, x): n reads builtin x (kept as a separate name for rules that speak of "globals").
 .decl global_ref(n: node, x: symbol)
 global_ref(n, x) :- builtin_ref(n, x).
@@ -753,12 +770,21 @@ builtin("__annotations__"). builtin("__builtins__"). builtin("__cached__").
         Service.logger.info(f"x {1}")
         ```
     .fixture "shop/__init__.py" ```
-        # package
+        from shop.base import Other
+        ```
+    .fixture "shop/views.py" ```
+        from shop import Other
+
+        e = Other.Meta
+        g = Other.Meta.Inner
         ```
     .fixture "shop/base.py" ```
         class Other:
             class Meta:
                 abstract = True
+
+                class Inner:
+                    pass
         ```
     .fixture "shop/models.py" ```
         from shop.base import Other
@@ -780,6 +806,8 @@ builtin("__annotations__"). builtin("__builtins__"). builtin("__cached__").
     .expect rhs("pkg/m.py", 12, "pkg.m.Base.f")
     .expect rhs("pkg/m.py", 14, "pkg.m.Base")
     .expect rhs("shop/models.py", 3, "shop.base.Other.Meta")
+    .expect rhs("shop/views.py", 3, "shop.base.Other.Meta")
+    .expect rhs("shop/views.py", 4, "shop.base.Other.Meta.Inner")
 .end
 
 // `class Meta(Base.Meta)`, Base of the same module, lists its base as an imported one's does (Django's Meta options).

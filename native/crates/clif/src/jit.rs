@@ -88,6 +88,12 @@ impl Reads {
         self.fns[name]
     }
 
+    /// Every compiled read in `READS`' order (each through its exported function, `call_{name}`): the table a
+    /// kernel's Rust calls them through by their places (`rerail_ukl_rust::Launch::reads`).
+    pub fn table(&self) -> Vec<*const u8> {
+        crate::reads::READS.iter().map(|read| self.fns[read.name]).collect()
+    }
+
     pub fn one(&self, name: &str, tape: &[u8], view: &TapeView, i: usize) -> u32 {
         // SAFETY: the read's signature: the tape's base, its view, a node.
         let f: extern "C" fn(*const u8, *const TapeView, u32) -> u32 = unsafe { std::mem::transmute(self.fns[name]) };

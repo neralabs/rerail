@@ -164,14 +164,29 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_tape", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tape },
     Read { family: Family::View, name: "view_depth", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::depth },
     Read { family: Family::View, name: "view_order", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::order },
+    // `op` read in place (decision 0353 row 7, the hub's `Item::Op` rows): after `view_order`, as `VIEWS` has it.
+    Read { family: Family::View, name: "view_op", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::op },
     // The views' directory's searches (decision 0353 step 3 on the CPU, step 2): the descriptor is the directory, in
     // its batch's block; each takes its caller's memo. Last, so no other read's number moves.
     Read { family: Family::Relation, name: "dir_doc_of_row", params: &[I32, I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_row },
     Read { family: Family::Relation, name: "dir_doc_of_key", params: &[I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_key },
     // A named node's place among its named siblings, in the tape's auxiliary index in its home (decision 0656 step
-    // 4): `child`'s place. Last, so no other read's number moves.
+    // 4): `child`'s place. Last but the one below, so no other read's number moves.
     Read { family: Family::Tape, name: "tape_place", params: &[I32], ret: I32, hot: false, body: place },
     Read { family: Family::Tape, name: "tape_place_past_comments", params: &[I32], ret: I32, hot: false, body: place_past_comments },
+    // A hashed index's place's mark (decision 0671). Last, so no other read's number moves.
+    Read { family: Family::Relation, name: "rel_group_mark", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_mark },
+    // A string's atom by its hash in a directory of runs of atoms (decision 0666): the descriptor is an
+    // `AtomsDirRoot`. Last, so no other read's number moves.
+    Read { family: Family::Relation, name: "atoms_find", params: &[I64, I32, I32], ret: I32, hot: false, body: crate::atoms_reads::atoms_find },
+    // A node's text read in place (decision 0287 §2): its bytes' range in its document's own source. After the reads
+    // above, so no earlier read's number moves.
+    Read { family: Family::View, name: "view_text_span", params: &[I32], ret: I64, hot: false, body: crate::view_reads::text_span },
+    // A line's text read in place (decision 0353 row 7): its bytes' range in its document's own source, and its
+    // terminator's length, read off the source's bytes (a read of the lines' family whose base is the source's).
+    Read { family: Family::View, name: "view_line_span", params: &[I32], ret: I64, hot: false, body: crate::view_reads::line_span },
+    Read { family: Family::View, name: "view_line_terminated", params: &[I32], ret: I32, hot: false, body: crate::view_reads::line_terminated },
+    Read { family: Family::Lines, name: "lines_terminator_length", params: &[I32], ret: I32, hot: false, body: terminator_length },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
@@ -294,6 +309,113 @@ pub fn lines_ukl_source() -> Result<String, String> {
         .collect();
     let body = crate::ukl::translate_reads(&funcs, "clif_", Family::Lines)?;
     Ok(format!("{}{body}", generated("lines_ukl_source", "a document's lines' reads in CLIF (decision 0612)", "the_lines_reads_are_these")))
+}
+
+/// Which of a read's values are addresses from its first pointer (a relation's descriptor, a view's entry, the
+/// lines' index): what a caller of its compiled code must know to call it from the reads' UKL. The UKL passes that
+/// pointer as a base `t` and an offset `a0` from it, and every address it computes is an offset from `t`
+/// (`ukl::translate_reads`); the compiled read takes the address itself (`t + a0`) and computes addresses. So where its
+/// result is an address, the UKL's is the compiled read's less `t`; and a parameter that is an address (an offset in
+/// the UKL) is passed to it plus `t`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Addresses {
+    /// Its result is an address from its first pointer.
+    pub result: bool,
+    /// Each of its own parameters (`Read::params`): an address from its first pointer.
+    pub params: Vec<bool>,
+}
+
+/// `read`'s addresses (`Addresses`): where its first pointer reaches its result, and where each of its own 64-bit
+/// parameters reaches an address (a load's, a store's, an atomic's, or another read's first pointer).
+pub fn addresses(read: &'static Read) -> Addresses {
+    let mut seen = std::collections::HashMap::new();
+    let params = (0..read.params.len())
+        .map(|k| read.params[k] == I64 && flow(read, &[read.family.pointers() + k], &mut seen).1)
+        .collect();
+    Addresses { result: returns_address(read, &mut seen), params }
+}
+
+/// Whether `read`'s result is an address from its first pointer (memoized in `seen`; a read that calls itself
+/// through others is taken as not).
+fn returns_address(read: &'static Read, seen: &mut std::collections::HashMap<&'static str, bool>) -> bool {
+    if let Some(&r) = seen.get(read.name) {
+        return r;
+    }
+    seen.insert(read.name, false);
+    let r = flow(read, &[0], seen).0;
+    seen.insert(read.name, r);
+    r
+}
+
+/// Where the values `read`'s parameters `from` (by their place in its signature) reach: its result, and an address
+/// (a load's, a store's, an atomic's, or another read's first pointer). A value reaches what is computed from it as
+/// an address is (an add, a subtraction from it, a mask, a select, a branch's argument, a call's result where the
+/// callee's result is an address of its first pointer); a value loaded is not.
+fn flow(read: &'static Read, from: &[usize], seen: &mut std::collections::HashMap<&'static str, bool>) -> (bool, bool) {
+    use cranelift_codegen::ir::{BlockArg, InstructionData, Opcode};
+    let f = build(read, CallConv::SystemV, UserFuncName::user(0, 0), &mut ByIndex);
+    let entry = f.layout.entry_block().expect("a body");
+    let mut on: std::collections::HashSet<Value> = from.iter().map(|&k| f.dfg.block_params(entry)[k]).collect();
+    let callee = |inst: ir::Inst| -> Option<&'static Read> {
+        let InstructionData::Call { func_ref, .. } = f.dfg.insts[inst] else { return None };
+        let ir::ExternalName::User(u) = f.dfg.ext_funcs[func_ref].name else { return None };
+        READS.get(f.params.user_named_funcs()[u].index as usize)
+    };
+    let (mut result, mut address) = (false, false);
+    loop {
+        let before = on.len();
+        for block in f.layout.blocks() {
+            for inst in f.layout.block_insts(block) {
+                let data = &f.dfg.insts[inst];
+                let args = f.dfg.inst_args(inst);
+                let any = args.iter().any(|a| on.contains(a));
+                let op = data.opcode();
+                let to = match op {
+                    Opcode::Iadd | Opcode::IaddImm | Opcode::Band | Opcode::BandImm | Opcode::Bitcast => any,
+                    Opcode::Isub => on.contains(&args[0]) && !on.contains(&args[1]),
+                    Opcode::Select | Opcode::SelectSpectreGuard => on.contains(&args[1]) || on.contains(&args[2]),
+                    Opcode::Call => {
+                        let r = callee(inst);
+                        if r.is_some() && args.first().is_some_and(|a| on.contains(a)) {
+                            address = true;
+                        }
+                        r.is_some_and(|r| args.first().is_some_and(|a| on.contains(a)) && returns_address(r, seen))
+                    }
+                    Opcode::Return => {
+                        result |= any;
+                        false
+                    }
+                    _ => {
+                        if op.can_load() || op.can_store() {
+                            // The address: a load's first argument, a store's second, an atomic's first.
+                            let at = match op {
+                                Opcode::Store | Opcode::Istore8 | Opcode::Istore16 | Opcode::Istore32 => args.get(1),
+                                _ => args.first(),
+                            };
+                            address |= at.is_some_and(|a| on.contains(a));
+                        }
+                        false
+                    }
+                };
+                if to {
+                    on.extend(f.dfg.inst_results(inst).iter().copied());
+                }
+                for call in data.branch_destination(&f.dfg.jump_tables, &f.dfg.exception_tables) {
+                    let target = call.block(&f.dfg.value_lists);
+                    for (k, a) in call.args(&f.dfg.value_lists).enumerate() {
+                        if let BlockArg::Value(v) = a
+                            && on.contains(&v)
+                        {
+                            on.insert(f.dfg.block_params(target)[k]);
+                        }
+                    }
+                }
+            }
+        }
+        if on.len() == before {
+            return (result, address);
+        }
+    }
 }
 
 /// Where a read's calls of other reads go when it is translated: by its place in `READS`, as the translators name
@@ -2650,6 +2772,43 @@ fn lines_line(b: &mut B<'_, '_>) -> Value {
     b.f.ins().iadd_imm(line, 1)
 }
 
+/// `lines_terminator_length(last)`: the length of the line terminator whose last byte is byte `last` of a source, its
+/// base this read's pointer (`newlines::length_ending_at`: CRLF and NEL's two bytes, LS's and PS's three, else one):
+/// its bytes alone say it, whatever the language's set. A line's text ends that many bytes before one past `last`.
+fn terminator_length(b: &mut B<'_, '_>) -> Value {
+    let last = b.arg(0);
+    let zero = b.c32(0);
+    let x = b.u8(zero, last);
+    let one = b.c32(1);
+    let after_first = b.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, last, 1);
+    b.either(I32, after_first, |b| {
+        let at = b.f.ins().iadd_imm(last, -1);
+        let zero = b.c32(0);
+        let p1 = b.u8(zero, at);
+        let is = |b: &mut B<'_, '_>, v: Value, k: i64| b.f.ins().icmp_imm(IntCC::Equal, v, k);
+        let (lf, cr) = (is(b, x, 0x0a), is(b, p1, 0x0d));
+        let crlf = b.f.ins().band(lf, cr);
+        let (nel, c2) = (is(b, x, 0x85), is(b, p1, 0xc2));
+        let nel = b.f.ins().band(nel, c2);
+        let two = b.f.ins().bor(crlf, nel);
+        let (a8, a9, e80) = (is(b, x, 0xa8), is(b, x, 0xa9), is(b, p1, 0x80));
+        let sep = b.f.ins().bor(a8, a9);
+        let sep = b.f.ins().band(sep, e80);
+        let after_second = b.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, last, 2);
+        let sep = b.f.ins().band(sep, after_second);
+        let three = b.either(I32, sep, |b| {
+            let at = b.f.ins().iadd_imm(last, -2);
+            let zero = b.c32(0);
+            let p2 = b.u8(zero, at);
+            let e2 = b.f.ins().icmp_imm(IntCC::Equal, p2, 0xe2);
+            let (three, one) = (b.c32(3), b.c32(1));
+            b.f.ins().select(e2, three, one)
+        }, |b| b.c32(1));
+        let two_v = b.c32(2);
+        b.f.ins().select(two, two_v, three)
+    }, |_| one)
+}
+
 /// `lines_count()`: the document's lines, one more than its line ends (`LineTable::count`).
 fn lines_count(b: &mut B<'_, '_>) -> Value {
     let m = lines_field(b, 0);
@@ -2686,6 +2845,24 @@ fn line_start_in(b: &mut B<'_, '_>, k: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    /// The reads whose result is an address from their first pointer, and the one parameter that is (`addresses`):
+    /// a kernel's Rust that calls their compiled code takes the UKL's offsets to and from them by these.
+    #[test]
+    fn the_reads_addresses_are_these() {
+        let mut results = Vec::new();
+        let mut params = Vec::new();
+        for read in super::READS.iter().filter(|r| r.family != super::Family::Tape) {
+            let a = super::addresses(read);
+            if a.result {
+                results.push(read.name);
+            }
+            params.extend(a.params.iter().enumerate().filter(|p| *p.1).map(|(k, _)| (read.name, k)));
+        }
+        assert_eq!(results, ["rows_col", "col_at", "rows_at", "atoms_at", "text_find", "text_open", "verdict_entry", "cache_open"]);
+        // `rel_get`'s far base (decision 0353 step 6): an address, as a kernel binds it.
+        assert_eq!(params, [("rel_get", 2), ("cache_done", 0)]);
+    }
+
     /// The numbering's kernels' reads are these, as UKL (`<ukl/reads/ids.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_facts_id_kernels_reads_are_these() {

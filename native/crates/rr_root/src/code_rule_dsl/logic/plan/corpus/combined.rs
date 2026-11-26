@@ -61,7 +61,7 @@ fn source_text(key: &[u8; 32]) -> String {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&bytes[..])
 }
 
 /// The entry's plan: what combining reads besides the texts and the library files.

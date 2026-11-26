@@ -112,33 +112,76 @@ pub struct Doc {
     pub first: Option<i64>,
 }
 
-/// An image being made: relations from their rows or their lines, then `finish`.
+/// An image being made: relations from their rows or their lines, then `finish`. Each relation is written into the
+/// image's regions as it is added (`rels`, `types`, `cols`), and each string once (`strings`, `ends`).
 pub struct Builder {
     flags: u64,
     overlay: bool,
     strings: Vec<u8>,
-    ends: Vector<u32>,
-    ids: HashMap<String, u32>,
-    rels: Vec<(u32, Vec<u8>, usize, Vector<i64>, u64)>,
+    /// The `ends` region: each string's end, little-endian.
+    ends: Vec<u8>,
+    /// Each string's index, found by its text (`text`): the text itself is `strings`'.
+    ids: hashbrown::HashTable<u32>,
+    rels: Vec<u8>,
+    types: Vec<u8>,
+    cols: Vec<u8>,
     docs: std::collections::BTreeMap<i64, (u64, u64)>,
     places: std::collections::BTreeMap<i64, (u64, i64)>,
+}
+
+/// Keeps the first of each run of equal items of `v` (`same`), in order, at its front: how many are kept.
+fn dedup_by<T: Copy>(v: &mut [T], mut same: impl FnMut(T, T) -> bool) -> usize {
+    let mut n = 0;
+    for i in 0..v.len() {
+        if n == 0 || !same(v[n - 1], v[i]) {
+            v[n] = v[i];
+            n += 1;
+        }
+    }
+    n
+}
+
+/// The hash a string is found by in an interner (`Builder::text`, `Rows::text_id`).
+fn text_hash(s: &[u8]) -> u64 {
+    use std::hash::Hasher;
+    let mut h = rustc_hash::FxHasher::default();
+    h.write(s);
+    h.finish()
 }
 
 impl Builder {
     /// A base image (`overlay`: false) or an overlay, its nodes shown as `flags` says.
     pub fn new(flags: u64, overlay: bool) -> Self {
-        Builder { flags, overlay, strings: Vec::new(), ends: rerail_blocks::vector::Vector::new(), ids: HashMap::new(), rels: Vec::new(), docs: Default::default(), places: Default::default() }
+        Builder { flags, overlay, strings: Vec::new(), ends: Vec::new(), ids: hashbrown::HashTable::new(), rels: Vec::new(), types: Vec::new(), cols: Vec::new(), docs: Default::default(), places: Default::default() }
     }
     /// The index of the string `s`, held once.
     pub fn text(&mut self, s: &str) -> u32 {
-        if let Some(&id) = self.ids.get(s) {
+        let (strings, ends) = (&self.strings, &self.ends);
+        let end = |id: u32| u32::from_le_bytes(ends[4 * id as usize..4 * id as usize + 4].try_into().unwrap()) as usize;
+        let at = |id: u32| &strings[if id == 0 { 0 } else { end(id - 1) }..end(id)];
+        let h = text_hash(s.as_bytes());
+        if let Some(&id) = self.ids.find(h, |&id| at(id) == s.as_bytes()) {
             return id;
         }
-        let id = self.ends.len() as u32;
+        let id = (self.ends.len() / 4) as u32;
         self.strings.extend_from_slice(s.as_bytes());
-        self.ends.push(self.strings.len() as u32);
-        self.ids.insert(s.to_owned(), id);
+        self.ends.extend_from_slice(&(self.strings.len() as u32).to_le_bytes());
+        let (strings, ends) = (&self.strings, &self.ends);
+        let end = |id: u32| u32::from_le_bytes(ends[4 * id as usize..4 * id as usize + 4].try_into().unwrap()) as usize;
+        self.ids.insert_unique(h, id, |&id| text_hash(&strings[if id == 0 { 0 } else { end(id - 1) }..end(id)]));
         id
+    }
+    /// A relation entry: its name, types, rows and kind, its columns' values written by `cols` (`n` per column,
+    /// column after column).
+    fn put_rel(&mut self, name: u32, types: &[u8], n: usize, kind: u64, cols: impl FnOnce(&mut Vec<u8>)) {
+        let (col_at, type_at) = ((self.cols.len() / 8) as u64, self.types.len() as u64);
+        for v in [u64::from(name), types.len() as u64, n as u64, col_at, type_at, kind] {
+            self.rels.extend_from_slice(&v.to_le_bytes());
+        }
+        self.types.extend_from_slice(types);
+        self.cols.reserve(8 * n * types.len());
+        cols(&mut self.cols);
+        debug_assert_eq!(self.cols.len() / 8, (col_at as usize) + n * types.len(), "a relation's columns, every value");
     }
     /// A document a node column names.
     pub fn doc(&mut self, key: i64, doc: &Doc) {
@@ -155,44 +198,44 @@ impl Builder {
         self.entry(name, types, rows, kind::WHOLE);
     }
     /// An entry of `kind` from its rows, flat: sorted, each row once.
-    fn entry(&mut self, name: &str, types: &[u8], mut rows: Vector<i64>, kind: u64) {
+    fn entry(&mut self, name: &str, types: &[u8], rows: Vector<i64>, kind: u64) {
         let name = self.text(name);
         let k = types.len();
-        if let Some(count) = rows.len().checked_div(k) {
-            let mut order: Vector<usize> = (0..count).collect();
+        let Some(count) = rows.len().checked_div(k) else {
+            self.put_rel(name, &[], usize::from(!rows.is_empty()), kind, |_| {});
+            return;
+        };
+        rerail_blocks::frame::op(|fr| {
+            let mut order = fr.collect(0..count);
             order.sort_unstable_by(|&a, &b| rows[a * k..a * k + k].cmp(&rows[b * k..b * k + k]));
-            order.dedup_by(|a, b| rows[*a * k..*a * k + k] == rows[*b * k..*b * k + k]);
-            let n = order.len();
+            let n = dedup_by(&mut order, |a, b| rows[a * k..a * k + k] == rows[b * k..b * k + k]);
             // Column-major: each column's values, in the rows' order.
-            let mut cols = rerail_blocks::vector![0i64; n * k];
-            for (i, &r) in order.iter().enumerate() {
+            self.put_rel(name, types, n, kind, |out| {
                 for c in 0..k {
-                    cols[c * n + i] = rows[r * k + c];
+                    for &r in &order[..n] {
+                        out.extend_from_slice(&rows[r * k + c].to_le_bytes());
+                    }
                 }
-            }
-            rows = cols;
-            self.rels.push((name, types.to_vec(), n, rows, kind));
-        } else {
-            self.rels.push((name, Vec::new(), usize::from(!rows.is_empty()), rerail_blocks::vector::Vector::new(), kind));
-        }
+            });
+        });
     }
     /// A relation of `types` from its rows, flat, in the order and number given (a memo entry's, decision 0240 §4:
     /// replayed as it was made). Readers of the run's outputs ask for `rows`, which sorts them.
-    pub fn rows_as_is(&mut self, name: &str, types: &[u8], rows: Vector<i64>) {
+    pub fn rows_as_is(&mut self, name: &str, types: &[u8], rows: &[i64]) {
         let name = self.text(name);
         let k = types.len();
         if k == 0 {
-            self.rels.push((name, Vec::new(), 0, rerail_blocks::vector::Vector::new(), kind::WHOLE));
+            self.put_rel(name, &[], 0, kind::WHOLE, |_| {});
             return;
         }
         let n = rows.len() / k;
-        let mut cols = rerail_blocks::vector![0i64; n * k];
-        for (i, row) in rows.chunks_exact(k).enumerate() {
-            for (c, &v) in row.iter().enumerate() {
-                cols[c * n + i] = v;
+        self.put_rel(name, types, n, kind::WHOLE, |out| {
+            for c in 0..k {
+                for row in rows.chunks_exact(k) {
+                    out.extend_from_slice(&row[c].to_le_bytes());
+                }
             }
-        }
-        self.rels.push((name, types.to_vec(), n, cols, kind::WHOLE));
+        });
     }
     /// A relation from the parts a run handed of it (`Rows`), their values as they are: a column is text where any
     /// part holds it as text (another part's integers there held as they are shown), a node column where `nodes`
@@ -319,22 +362,11 @@ impl Builder {
         let put = |w: &mut Vec<Vec<u8>>, r: R, v: u64| w[r as usize].extend_from_slice(&v.to_le_bytes());
         put(&mut w, R::Meta, if self.overlay { meta::OVERLAY } else { meta::BASE });
         put(&mut w, R::Meta, self.flags);
-        let (mut col_at, mut type_at) = (0u64, 0u64);
-        for (name, types, n, cols, kind) in &self.rels {
-            for v in [u64::from(*name), types.len() as u64, *n as u64, col_at, type_at, *kind] {
-                put(&mut w, R::Rels, v);
-            }
-            w[R::Types as usize].extend_from_slice(types);
-            for v in cols {
-                put(&mut w, R::Cols, *v as u64);
-            }
-            col_at += cols.len() as u64;
-            type_at += types.len() as u64;
-        }
+        w[R::Rels as usize] = self.rels;
+        w[R::Types as usize] = self.types;
+        w[R::Cols as usize] = self.cols;
         w[R::Bytes as usize] = self.strings;
-        for e in &self.ends {
-            w[R::Ends as usize].extend_from_slice(&e.to_le_bytes());
-        }
+        w[R::Ends as usize] = self.ends;
         for (key, (path, first)) in &self.docs {
             for v in [*key as u64, *path, *first] {
                 put(&mut w, R::Docs, v);
@@ -365,7 +397,8 @@ pub struct Rows {
     types: Vec<u8>,
     vals: Vector<i64>,
     texts: Vec<Box<str>>,
-    ids: HashMap<Box<str>, u32>,
+    /// Each text's index, found by the text (`text_id`): the text itself is `texts`'.
+    ids: hashbrown::HashTable<u32>,
     /// Rows of no columns.
     bare: usize,
 }
@@ -393,12 +426,19 @@ impl Rows {
         self.vals.len() * 8 + self.texts.iter().map(|t| t.len() * 2 + 32).sum::<usize>()
     }
     fn text_id(&mut self, s: &str) -> i64 {
-        if let Some(&id) = self.ids.get(s) {
+        // Texts held before any was found by content (`of_parts`): found by it from now on.
+        for id in self.ids.len()..self.texts.len() {
+            let texts = &self.texts;
+            self.ids.insert_unique(text_hash(texts[id].as_bytes()), id as u32, |&id| text_hash(texts[id as usize].as_bytes()));
+        }
+        let h = text_hash(s.as_bytes());
+        if let Some(&id) = self.ids.find(h, |&id| *self.texts[id as usize] == *s) {
             return i64::from(id);
         }
         let id = self.texts.len() as u32;
         self.texts.push(s.into());
-        self.ids.insert(s.into(), id);
+        let texts = &self.texts;
+        self.ids.insert_unique(h, id, |&id| text_hash(texts[id as usize].as_bytes()));
         i64::from(id)
     }
     /// Row `i`'s value in column `c`.
@@ -430,8 +470,8 @@ impl Rows {
             return Err(format!("a text of column {c} out of its texts"));
         }
         let texts: Vec<Box<str>> = texts.into_iter().map(String::into_boxed_str).collect();
-        let ids = texts.iter().enumerate().map(|(i, t)| (t.clone(), i as u32)).collect();
-        Ok(Rows { types, vals, texts, ids, bare: if k == 0 { count } else { 0 } })
+        // The texts are found by content only once a row is pushed (`text_id`).
+        Ok(Rows { types, vals, texts, ids: hashbrown::HashTable::new(), bare: if k == 0 { count } else { 0 } })
     }
     /// A row appended: of its columns' width and types (a text column may take an integer, held as it is shown; an
     /// integer column no text: that is a fault of the run that made the row).

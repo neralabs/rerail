@@ -22,7 +22,7 @@
 //!
 //! A digest is four words, little-endian.
 
-use super::super::kept_facts::{BlockFlat, ChainRows, KeptPut, KeptSpace, KeptWhat, chain_rows, sorted_put, write_space};
+use super::super::kept_facts::{BlockFlat, ChainRows, KeptPut, KeptSpace, KeptWhat, sorted_put, write_space};
 use super::super::{ContentStore, StoreError, StoreResult};
 use rerail_blocks::kept::{FactKey, Kept, KeptRead};
 use rusqlite::{Connection, OptionalExtension};
@@ -233,10 +233,7 @@ fn wants(t: &Connection, view: Option<&dyn KeptRead>) -> StoreResult<Vec<Want>> 
 }
 
 fn open(store: &Path, t: &Connection) -> StoreResult<Option<KeptSpace>> {
-    // Outside a write's transaction, a writer may commit and sweep the files the rows name before they are mapped:
-    // the rows are then read again (`KeptSpace::open_current`).
-    let rows = chain_rows(t, &space())?;
-    Ok(KeptSpace::open_current(store, &space(), rows, || chain_rows(t, &space()))?.map(|(_, kept)| kept))
+    KeptSpace::read(store, t, &space())
 }
 
 fn kept<'v>(view: Option<&'v dyn KeptRead>, w: &Want) -> Option<Kept<'v>> {

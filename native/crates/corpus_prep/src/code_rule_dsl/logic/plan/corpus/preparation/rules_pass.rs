@@ -1,4 +1,4 @@
-//! A rules pass's program (decision 0679 §5.1): an analysis over a program image, written as rules over the image's
+//! A rules pass's program (decision 0701 §5.1): an analysis over a program image, written as rules over the image's
 //! view (`rr/view.rerail`), lowered once and run by the native engine over the view read in place.
 
 use crate::code_rule_dsl::facts::vtab::{Modules, Source};

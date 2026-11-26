@@ -1,5 +1,5 @@
-// The view of a program image (decision 0679 §1): its rules, their literals and its fields as relations, which an
-// analysis pass's rules read. The engine reads the rows off the image in place (decision 0679 §5.1); what is derived
+// The view of a program image (decision 0701 §1): its rules, their literals and its fields as relations, which an
+// analysis pass's rules read. The engine reads the rows off the image in place (decision 0701 §5.1); what is derived
 // from them is here.
 //
 //   img_rule(r, head)              each rule, by its id, and its head's relation

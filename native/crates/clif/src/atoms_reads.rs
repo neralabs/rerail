@@ -4,6 +4,11 @@
 //!
 //! An id's run is found by a binary search of the runs' first ids; its string ends at `ends[id - from]` and begins
 //! where the one before it ends (`0` for the block's first). Id `0` is the empty string, in no run.
+//!
+//! A string is found by its hash (the store's, `content_store::atoms::hash_str`) in each run's table from hash to id
+//! (`atoms_find`): the read gives the atoms whose slot has the hash's high half and whose string is as long, and its
+//! caller compares their bytes, which lie where it reads them (the kernels' arena: another buffer than the
+//! directory's).
 
 use crate::reads::B;
 use cranelift_codegen::ir::{
@@ -22,6 +27,8 @@ const E_END: i32 = offset_of!(DirEntry, end) as i32;
 const E_FROM: i32 = offset_of!(DirEntry, from) as i32;
 const E_ENDS: i32 = offset_of!(DirEntry, ends) as i32;
 const E_STRINGS: i32 = offset_of!(DirEntry, strings) as i32;
+const E_TABLE: i32 = offset_of!(DirEntry, table) as i32;
+const SPAN_LEN: i32 = 8;
 const E_SIZE: i64 = size_of::<DirEntry>() as i64;
 const _: () = assert!(size_of::<Span<u8>>() == 16);
 
@@ -114,4 +121,100 @@ pub fn atoms_at(b: &mut B<'_, '_>) -> Value {
             )
         },
     )
+}
+
+/// `atoms_find(dir, h, len, k)`: the `k`th atom (from 0, the runs in order) whose slot in its run's table, probed
+/// from hash `h` (a u64) to the first empty slot, has `h`'s high half, whose id is one of the run's own
+/// (`first..end`), and whose string is `len` bytes; `u32::MAX` past the last. The caller compares each one's bytes
+/// with its string's and asks for the next on a difference: a string is one atom, so it stops at the first equal.
+pub fn atoms_find(b: &mut B<'_, '_>) -> Value {
+    let (h, len, want) = (b.arg(0), b.arg(1), b.arg(2));
+    let n = b.word_at(I64, b.tape, DIR_N);
+    let n = b.f.ins().ireduce(I32, n);
+    let entries = b.follow(b.tape, DIR_ENTRIES);
+    let tag = b.f.ins().band_imm(h, 0xFFFF_FFFF_0000_0000_u64 as i64);
+    let (run, run_body, probe, slot, taken, check, next_slot, next_run, done) = (
+        b.f.create_block(),
+        b.f.create_block(),
+        b.f.create_block(),
+        b.f.create_block(),
+        b.f.create_block(),
+        b.f.create_block(),
+        b.f.create_block(),
+        b.f.create_block(),
+        b.f.create_block(),
+    );
+    b.f.append_block_param(done, I32);
+    // The run `r`, and how many atoms matched before it.
+    b.f.append_block_param(run, I32);
+    b.f.append_block_param(run, I32);
+    let zero = b.c32(0);
+    b.f.ins().jump(run, &[zero.into(), zero.into()]);
+    b.f.switch_to_block(run);
+    let (r, seen) = (b.f.block_params(run)[0], b.f.block_params(run)[1]);
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, r, n);
+    let none = b.c32(NONE);
+    b.f.ins().brif(more, run_body, &[], done, &[none.into()]);
+    b.f.switch_to_block(run_body);
+    let e = b.item(entries, r, E_SIZE);
+    let table = b.follow(e, E_TABLE);
+    let slots = b.word_at(I64, e, E_TABLE + SPAN_LEN);
+    let mask = b.f.ins().iadd_imm(slots, -1);
+    let start = b.f.ins().band(h, mask);
+    let zero64 = b.c64(0);
+    // The probe `p` (of at most `slots`), at slot `i`, `seen` so far.
+    b.f.append_block_param(probe, I64);
+    b.f.append_block_param(probe, I64);
+    b.f.append_block_param(probe, I32);
+    b.f.ins().jump(probe, &[zero64.into(), start.into(), seen.into()]);
+    b.f.switch_to_block(probe);
+    let (p, i, seen) = (b.f.block_params(probe)[0], b.f.block_params(probe)[1], b.f.block_params(probe)[2]);
+    let r1 = b.f.ins().iadd_imm(r, 1);
+    b.f.append_block_param(next_run, I32);
+    b.f.append_block_param(next_run, I32);
+    let within = b.f.ins().icmp(IntCC::UnsignedLessThan, p, slots);
+    b.f.ins().brif(within, slot, &[], next_run, &[r1.into(), seen.into()]);
+    b.f.switch_to_block(slot);
+    let at = b.f.ins().ishl_imm(i, 3);
+    let at = b.f.ins().iadd(table, at);
+    let v = b.word_at(I64, at, 0);
+    let empty = b.f.ins().icmp_imm(IntCC::Equal, v, 0);
+    b.f.ins().brif(empty, next_run, &[r1.into(), seen.into()], taken, &[]);
+    b.f.switch_to_block(taken);
+    let high = b.f.ins().band_imm(v, 0xFFFF_FFFF_0000_0000_u64 as i64);
+    let same = b.f.ins().icmp(IntCC::Equal, high, tag);
+    let id = b.f.ins().ireduce(I32, v);
+    let id = b.f.ins().iadd_imm(id, -1);
+    let first = b.word_at(I32, e, E_FIRST);
+    let end = b.word_at(I32, e, E_END);
+    let lo = b.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, id, first);
+    let hi = b.f.ins().icmp(IntCC::UnsignedLessThan, id, end);
+    let own = b.f.ins().band(lo, hi);
+    let own = b.f.ins().band(own, same);
+    b.f.append_block_param(next_slot, I32);
+    b.f.ins().brif(own, check, &[], next_slot, &[seen.into()]);
+    b.f.switch_to_block(check);
+    let (s0, s1) = b.atoms_bounds(e, id);
+    let l = b.f.ins().isub(s1, s0);
+    let l = b.f.ins().ireduce(I32, l);
+    let long = b.f.ins().icmp(IntCC::Equal, l, len);
+    let this = b.f.ins().icmp(IntCC::Equal, seen, want);
+    let found = b.f.ins().band(long, this);
+    let seen1 = b.f.ins().iadd_imm(seen, 1);
+    let seen = b.f.ins().select(long, seen1, seen);
+    let go_on = b.f.create_block();
+    b.f.ins().brif(found, done, &[id.into()], go_on, &[]);
+    b.f.switch_to_block(go_on);
+    b.f.ins().jump(next_slot, &[seen.into()]);
+    b.f.switch_to_block(next_slot);
+    let seen = b.f.block_params(next_slot)[0];
+    let p1 = b.f.ins().iadd_imm(p, 1);
+    let i1 = b.f.ins().iadd_imm(i, 1);
+    let i1 = b.f.ins().band(i1, mask);
+    b.f.ins().jump(probe, &[p1.into(), i1.into(), seen.into()]);
+    b.f.switch_to_block(next_run);
+    let (r, seen) = (b.f.block_params(next_run)[0], b.f.block_params(next_run)[1]);
+    b.f.ins().jump(run, &[r.into(), seen.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
 }

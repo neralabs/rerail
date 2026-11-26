@@ -40,6 +40,7 @@ use rerail_tape_format::tape::{CodeSet, CodeSetBuf, Tape, nearest_all};
 use rerail_tape_format::with_tape;
 use parking_lot::Mutex;
 use crate::code_rule_dsl::facts::rows::source_room;
+use rerail_blocks::frame::{FrameVec, InlineVec};
 use rerail_blocks::vector::Vector;
 use rerail_blocks::maps::{BlockArray, BlockHash};
 use rustc_hash::FxHashMap;
@@ -292,16 +293,15 @@ impl Within {
     }
 
     /// `containers` on document `doc`'s tape `t`: the climb is the tape's parents, kept where the projection has them.
-    fn containers_on<T: Tape>(&self, t: &T, doc: usize, p: &Projected, local: u32) -> Vector<u32> {
+    fn containers_on<T: Tape>(&self, t: &T, doc: usize, p: &Projected, local: u32, out: &mut FrameVec<'_, u32>) {
         let set = self.set(doc, t);
         let axis = match self.mode {
             Mode::Axis(axis) => Some(axis),
             _ => None,
         };
         let id = p.node(local) as usize;
-        let mut out = Vector::new();
         if axis == Some(Axis::Has) && !set.contains(t.code(id)) {
-            return out;
+            return;
         }
         let mut up = t.parent(id);
         while let Some(a) = up {
@@ -314,20 +314,18 @@ impl Within {
             }
             up = t.parent(a);
         }
-        out
     }
 
     /// `contained` on document `doc`'s tape `t`: the subtree is the tape's interval, kept where the projection has it.
-    fn contained_on<T: Tape>(&self, t: &T, doc: usize, p: &Projected, local: u32) -> Vector<u32> {
+    fn contained_on<T: Tape>(&self, t: &T, doc: usize, p: &Projected, local: u32, out: &mut FrameVec<'_, u32>) {
         let set = self.set(doc, t);
         let axis = match self.mode {
             Mode::Axis(axis) => Some(axis),
             _ => None,
         };
         let id = p.node(local) as usize;
-        let mut out = Vector::new();
         if matches!(axis, Some(Axis::Nearest | Axis::Inside)) && !set.contains(t.code(id)) {
-            return out;
+            return;
         }
         let (mut n, end) = (id + 1, t.subtree_end(id));
         while n < end {
@@ -349,7 +347,6 @@ impl Within {
             }
             n += 1;
         }
-        out
     }
 
     /// The axis `axis` over the set of kind atoms `kinds`, its batch's solve run on `binding`. Nothing is made until
@@ -606,6 +603,11 @@ impl Within {
     /// and one is registered: `None` sends it to the host's.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn solved_on_device(&self) -> Option<Solved> {
+        // The binding first: the views' directory is the device's alone, and made for a run on the CPU it was most of
+        // an edit's within solve (every document's views made, then dropped for the host's solve).
+        if !self.on_device() {
+            return None;
+        }
         let views = super::device_chunk::views_in_place(&self.batch)?;
         let keep = Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>;
         self.solved_over(views, keep).map(|c| Solved { start: Vector::new(), rows: c.rows, by_outer: OnceLock::new(), start_in_block: Some(c.start) })
@@ -716,16 +718,15 @@ impl Within {
         &locals[starts[doc] as usize..starts[doc + 1] as usize]
     }
 
-    /// The nodes (locals) that hold `local`.
-    fn containers(&self, doc: usize, local: u32) -> Vector<u32> {
+    /// The nodes (locals) that hold `local`, added to `out`.
+    fn containers(&self, doc: usize, local: u32, out: &mut FrameVec<'_, u32>) {
         let p = &self.batch.docs[doc];
         if let Some(dt) = self.doc_tape(doc) {
-            return with_tape!(self.tape_of(dt), |t| self.containers_on(&t, doc, p, local));
+            return with_tape!(self.tape_of(dt), |t| self.containers_on(&t, doc, p, local, out));
         }
         if let Mode::Axis(axis) = self.mode {
-            let mut out = Vector::new();
             if axis == Axis::Has && !self.member(doc, local) {
-                return out;
+                return;
             }
             let mut up = p.parent(local as usize);
             while up != NONE {
@@ -737,16 +738,15 @@ impl Within {
                 }
                 up = p.parent(up as usize);
             }
-            return out;
+            return;
         }
         if self.mode == Mode::Tree {
-            let mut out = Vector::new();
             let mut up = p.parent(local as usize);
             while up != NONE {
                 out.push(up);
                 up = p.parent(up as usize);
             }
-            return out;
+            return;
         }
         let (s, e) = self.span(doc, local);
         let holds = |b: u32| {
@@ -754,9 +754,10 @@ impl Within {
             bs <= s && e <= be
         };
         if s == e {
-            return (0..p.len()).filter(|&b| holds(b)).collect();
+            out.extend((0..p.len()).filter(|&b| holds(b)));
+            return;
         }
-        let mut out = rerail_blocks::vector![local];
+        out.push(local);
         let mut up = p.parent(local as usize);
         while up != NONE {
             if holds(up) {
@@ -765,7 +766,8 @@ impl Within {
             up = p.parent(up as usize);
         }
         // Descendants with the same span: down through children of that span.
-        let mut stack = rerail_blocks::vector![local];
+        let mut stack = InlineVec::<u32, 16>::new();
+        stack.push(local);
         while let Some(n) = stack.pop() {
             for c in p.children(n) {
                 if self.span(doc, c) == (s, e) {
@@ -774,51 +776,51 @@ impl Within {
                 }
             }
         }
-        out
     }
 
-    /// The nodes (locals) that `local` holds.
-    fn contained(&self, doc: usize, local: u32) -> Vector<u32> {
+    /// The nodes (locals) that `local` holds, added to `out`.
+    fn contained(&self, doc: usize, local: u32, out: &mut FrameVec<'_, u32>) {
         let p = &self.batch.docs[doc];
         if let Some(dt) = self.doc_tape(doc) {
-            return with_tape!(self.tape_of(dt), |t| self.contained_on(&t, doc, p, local));
+            return with_tape!(self.tape_of(dt), |t| self.contained_on(&t, doc, p, local, out));
         }
         if let Mode::Axis(axis) = self.mode {
             let end = local + p.size(local as usize);
-            return match axis {
-                _ if axis != Axis::Has && !self.member(doc, local) => Vector::new(),
-                Axis::Inside => (local + 1..=end).collect(),
-                Axis::Has => (local + 1..=end).filter(|&n| self.member(doc, n)).collect(),
+            match axis {
+                _ if axis != Axis::Has && !self.member(doc, local) => {}
+                Axis::Inside => out.extend(local + 1..=end),
+                Axis::Has => out.extend((local + 1..=end).filter(|&n| self.member(doc, n))),
                 Axis::Nearest => {
                     // The subtree, less what lies below a nearer member: its nearest is that member or lower.
-                    let (mut out, mut n) = (Vector::new(), local + 1);
+                    let mut n = local + 1;
                     while n <= end {
                         out.push(n);
                         n += if self.member(doc, n) { p.size(n as usize) + 1 } else { 1 };
                     }
-                    out
                 }
-            };
+            }
+            return;
         }
         if self.mode == Mode::Tree {
-            return (local + 1..=local + p.size(local as usize)).collect();
+            out.extend(local + 1..=local + p.size(local as usize));
+            return;
         }
         let (s, e) = self.span(doc, local);
         let end = local + p.size(local as usize);
-        let mut out: Vector<u32> = Vector::from_iter(local..=end);
+        let from = out.len();
+        out.extend(local..=end);
         let mut up = p.parent(local as usize);
         while up != NONE && self.span(doc, up) == (s, e) {
             out.push(up);
             up = p.parent(up as usize);
         }
-        let (subtree, held) = ((end - local + 1) as usize, out.len());
+        let (subtree, held) = (from + (end - local + 1) as usize, out.len());
         for &z in self.zero(doc) {
             let (zs, _) = self.span(doc, z);
             if s <= zs && zs <= e && !(local..=end).contains(&z) && !out[subtree..held].contains(&z) {
                 out.push(z);
             }
         }
-        out
     }
 
     /// Whether node `n` is strictly below node `a` (ids): in one document, `n` in `a`'s preorder interval of the
@@ -840,27 +842,30 @@ impl Within {
         }
         let (doc, local) = self.at(row);
         let base = self.batch.nodes().at(doc) as u32;
-        let others = if side == 0 { self.containers(doc, local) } else { self.contained(doc, local) };
-        let mut made = self.made.lock();
-        if let Some(run) = made_run(runs, row) {
-            return run;
-        }
-        let start = made[side];
-        assert!(start + others.len() <= if side == 0 && self.solvable() { OUTER - LOOKED_UP } else { OUTER }, "within: more rows than ids");
-        for (i, other) in others.iter().enumerate() {
-            let (inner, outer) = if side == 0 { (row, base + other) } else { (base + other, row) };
-            let (k, at) = slot(start + i);
-            let chunk = self.chunks[side][k].get_or_init(|| Pairs::new(BASE << k));
-            chunk.at(at).store(u64::from(inner) << 32 | u64::from(outer), Ordering::Relaxed);
-        }
-        made[side] += others.len();
-        if side == 0 {
-            self.len.store(made[0], Ordering::Release);
-        }
-        let run = ((start + if side == 0 { self.looked_up() } else { OUTER }) as u32, others.len() as u32);
-        // After its rows: a reader that finds the run reads them.
-        runs.at(row as usize).store((u64::from(run.0) + 1) << 32 | u64::from(run.1), Ordering::Release);
-        run
+        rerail_blocks::frame::op(|f| {
+            let mut others = f.vec::<u32>();
+            if side == 0 { self.containers(doc, local, &mut others) } else { self.contained(doc, local, &mut others) };
+            let mut made = self.made.lock();
+            if let Some(run) = made_run(runs, row) {
+                return run;
+            }
+            let start = made[side];
+            assert!(start + others.len() <= if side == 0 && self.solvable() { OUTER - LOOKED_UP } else { OUTER }, "within: more rows than ids");
+            for (i, other) in others.iter().enumerate() {
+                let (inner, outer) = if side == 0 { (row, base + other) } else { (base + other, row) };
+                let (k, at) = slot(start + i);
+                let chunk = self.chunks[side][k].get_or_init(|| Pairs::new(BASE << k));
+                chunk.at(at).store(u64::from(inner) << 32 | u64::from(outer), Ordering::Relaxed);
+            }
+            made[side] += others.len();
+            if side == 0 {
+                self.len.store(made[0], Ordering::Release);
+            }
+            let run = ((start + if side == 0 { self.looked_up() } else { OUTER }) as u32, others.len() as u32);
+            // After its rows: a reader that finds the run reads them.
+            runs.at(row as usize).store((u64::from(run.0) + 1) << 32 | u64::from(run.1), Ordering::Release);
+            run
+        })
     }
 
     fn names(&self) -> [&'static str; 2] {
@@ -1166,15 +1171,19 @@ impl Source for Within {
         true
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+        let mut out = rerail_blocks::vector::Vector::new();
+        self.lookup_each(column, values, &mut |r| out.push(r));
+        Some(out)
+    }
+    fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
         // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
         let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
-        let mut out = rerail_blocks::vector::Vector::new();
         for &v in values {
             let Some((doc, local)) = self.batch.node(v, &mut memo) else { continue };
             let row = self.batch.nodes().at(doc) + local as usize;
             if column == 0 && self.reads_solved() {
                 let start = self.starts();
-                out.extend(start[row] as usize..start[row + 1] as usize);
+                (start[row] as usize..start[row + 1] as usize).for_each(&mut *each);
                 continue;
             }
             // By `a`, where the rows a scan reads are made (the batch's solve, or every node's containers), its
@@ -1183,22 +1192,26 @@ impl Source for Within {
             // Solved: its rows by `a` (`by_outer`), each a read.
             if column == 1 && self.solved.get().is_some() {
                 let (starts, rows) = self.by_outer();
-                out.extend(rows[starts[row] as usize..starts[row + 1] as usize].iter().map(|&r| r as usize));
+                rows[starts[row] as usize..starts[row + 1] as usize].iter().for_each(|&r| each(r as usize));
                 continue;
             }
             // Every node's containers made (a scan): in each contained node's run, the pair whose outer node is `a`.
             if column == 1 && self.all.get().is_some() {
                 let base = self.batch.nodes().at(doc);
-                for c in self.contained(doc, local) {
-                    let (from, n) = self.rows(0, (base + c as usize) as u32);
-                    out.extend((from as usize..(from + n) as usize).filter(|&r| self.pair(r) & 0xffff_ffff == row as u64));
-                }
+                rerail_blocks::frame::op(|f| {
+                    let mut held = f.vec::<u32>();
+                    self.contained(doc, local, &mut held);
+                    for &c in held.iter() {
+                        let (from, n) = self.rows(0, (base + c as usize) as u32);
+                        (from as usize..(from + n) as usize).filter(|&r| self.pair(r) & 0xffff_ffff == row as u64).for_each(&mut *each);
+                    }
+                });
                 continue;
             }
             let (start, n) = self.rows(column.min(1), row as u32);
-            out.extend(start as usize..(start + n) as usize);
+            (start as usize..(start + n) as usize).for_each(&mut *each);
         }
-        Some(out)
+        true
     }
     /// A pair's node's document: the key of the document its row is in (`Batch::locate`), no id read.
     fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {

@@ -230,7 +230,7 @@ pub fn facts_dir(store: &Path) -> PathBuf {
 }
 
 pub fn space_dir(store: &Path, space: &[u8; 32]) -> PathBuf {
-    facts_dir(store).join(space.iter().map(|b| format!("{b:02x}")).collect::<String>())
+    facts_dir(store).join(rerail_prof::code_rule_dsl::prof::lower_hex(&space[..]))
 }
 
 /// A space's chain as its rows name it, oldest first: (seq, name, tag).
@@ -255,11 +255,22 @@ impl KeptSpace {
         Self::mapped(store, space, rows).map_err(|(path, e)| StoreError::Corrupt(format!("a space's kept facts: {}: {e}", path.display())))
     }
 
-    /// The files `rows` name, mapped; where one is gone, the rows `now` reads (the store's last commit) in their place,
-    /// until a chain's files are all there: a writer that commits after the rows were read sweeps the files its commit
-    /// replaced (`sweep`) before they are mapped, and its rows name files that are there. A file gone from rows that
-    /// `now` reads again is corruption. The rows mapped, and their files; `None` where the chain keeps none.
-    pub fn open_current(store: &Path, space: &[u8; 32], mut rows: ChainRows, mut now: impl FnMut() -> StoreResult<ChainRows>) -> StoreResult<Option<(ChainRows, KeptSpace)>> {
+    /// `space` as connection `t` finds it: its chain's rows, read, then the files they name, mapped; `None` when it
+    /// keeps none. A writer's commit sweeps the files it replaced (`sweep`), and one the rows named can go between
+    /// the read and the mapping (another shared object's writer in this process, or another process): the rows are
+    /// read again, and name the files that commit wrote. Outside a transaction each read is the store's last commit;
+    /// inside a write transaction no commit comes between. A file gone from rows read twice the same is corruption.
+    pub fn read(store: &Path, t: &Connection, space: &[u8; 32]) -> StoreResult<Option<KeptSpace>> {
+        Ok(Self::read_rows(store, t, space)?.map(|(_, kept)| kept))
+    }
+
+    /// `read`, with the rows the space was mapped by (a reader that keeps a mapping while its chain stays).
+    pub fn read_rows(store: &Path, t: &Connection, space: &[u8; 32]) -> StoreResult<Option<(ChainRows, KeptSpace)>> {
+        Self::settle(store, t, space, chain_rows(t, space)?)
+    }
+
+    /// `read_rows` from `rows`, read on `t` earlier: the rows read again where a file they name is gone.
+    pub(crate) fn settle(store: &Path, t: &Connection, space: &[u8; 32], mut rows: ChainRows) -> StoreResult<Option<(ChainRows, KeptSpace)>> {
         loop {
             if rows.is_empty() {
                 return Ok(None);
@@ -267,11 +278,11 @@ impl KeptSpace {
             match Self::mapped(store, space, &rows) {
                 Ok(kept) => return Ok(Some((rows, kept))),
                 Err((path, e)) => {
-                    let again = if e.kind() == std::io::ErrorKind::NotFound { now()? } else { rows.clone() };
-                    if again == rows {
-                        return Err(StoreError::Corrupt(format!("a space's kept facts: {}: {e}", path.display())));
+                    let again = (e.kind() == std::io::ErrorKind::NotFound).then(|| chain_rows(t, space)).transpose()?;
+                    match again {
+                        Some(now) if now != rows => rows = now,
+                        _ => return Err(StoreError::Corrupt(format!("a space's kept facts: {}: {e}", path.display()))),
                     }
-                    rows = again;
                 }
             }
         }
@@ -377,7 +388,6 @@ fn stage_space(store: &Path, space: &[u8; 32], puts: &[KeptPut], flush: rerail_b
     let io = |e: std::io::Error| StoreError::Io(e);
     let _span = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: a gather's rows staged".into());
     let dir = space_dir(store, space);
-    private_dir(&dir).map_err(io)?;
     let tag = loop {
         let t = new_tag();
         if t != 0 {
@@ -386,7 +396,10 @@ fn stage_space(store: &Path, space: &[u8; 32], puts: &[KeptPut], flush: rerail_b
     };
     let name = format!("s-{tag:016x}.blk");
     let path = dir.join(&name);
+    // Staged before its directory is made: a collection's sweep leaves a directory a file is staged in
+    // (`sweep_committed`).
     staging().0.lock().expect("the staged kept files").insert(path.clone());
+    private_dir(&dir).map_err(io)?;
     let reserve = puts.iter().map(|p| room_of(&p.what)).sum::<usize>() + (64 << 20);
     let mut w = KeptW::create(&path, tag, reserve).map_err(io)?;
     for p in puts {
@@ -623,19 +636,28 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
 
 /// Collection's roll-up of `space` in transaction `t` (decision 0401 F4): its next base, one file of the entries
 /// `keep` keeps, when it keeps fewer than the space holds; with none kept, the space is dropped (its rows; its files
-/// go once committed, `sweep_space`). `None` when every entry stays.
+/// go once committed, `sweep_committed`). `None` when every entry stays.
 pub fn rewrite_space(store: &Path, t: &Connection, space: &[u8; 32], keep: &dyn Fn(&FactKey<'_>) -> bool) -> StoreResult<Option<ChainRows>> {
     write_chain(store, t, space, Vec::new(), None, Some(keep))
 }
 
-/// The files of `space` its chain does not name, removed (`sweep`), in `t`, a write's transaction that has not
-/// changed the chain: those a collection's roll-up replaced, once it committed. Its folder too, where it holds none.
-/// A sweep after the commit and outside a transaction would remove a later writer's files, which its rows do not name.
-pub fn sweep_space(store: &Path, t: &Connection, space: &[u8; 32]) -> StoreResult<()> {
-    let rows = chain_rows(t, space)?;
+/// The files of `space` the store's last commit does not name, removed (`sweep`), read in write transaction `t`: those
+/// a collection's roll-up replaced or dropped. Not by the rows the collection committed: another writer can commit
+/// after it (another shared object's in this process, or another process), and its chain's newest file, which those
+/// rows do not name, went with them; its readers then found it gone from the rows the store names ("a space's kept
+/// facts: No such file or directory"). A space left with no file loses its directory, where no file is staged in it.
+/// The transaction writes nothing, so its rows are the last commit's.
+fn sweep_committed(store: &Path, t: &Connection, space: &[u8; 32]) -> StoreResult<()> {
     let dir = space_dir(store, space);
+    let rows = chain_rows(t, space)?;
     sweep(&dir, &rows, &rows);
-    let _ = std::fs::remove_dir(dir);
+    // Under the staged files' lock, which a stager takes before it makes the directory (`stage_space`): fails where a
+    // file is left, a named or a staged one.
+    let staging = staging();
+    let pending = staging.0.lock().expect("the staged kept files");
+    if !pending.iter().any(|p| p.starts_with(&dir)) {
+        let _ = std::fs::remove_dir(&dir);
+    }
     Ok(())
 }
 
@@ -1084,8 +1106,10 @@ impl super::ContentStore {
                 }
             }
             let written = self.immediate_transaction(|t| {
+                // The mapping `kept_space` made above, where the chain is still the one it mapped: mapped again here,
+                // each space a commit changed was mapped twice a collection.
                 let rows = chain_rows(t, &space)?;
-                let old = KeptSpace::open(&path, &space, &rows)?;
+                let old = self.space_mapped(&space, rows)?;
                 let chain = old.view();
                 // The partitions whose holder the store no longer keeps (`HOLDER`).
                 let mut unheld = HashSet::new();
@@ -1122,7 +1146,8 @@ impl super::ContentStore {
             })?;
             let Some(rows) = written else { continue };
             done += 1;
-            self.immediate_transaction(|t| sweep_space(&path, t, &space))?;
+            // Once committed (the transaction may roll back until then), and under the store's write lock again.
+            self.immediate_transaction(|t| sweep_committed(&path, t, &space))?;
             super::held::snapshot_kept(&path, |kept| {
                 if let Some(kept) = kept {
                     kept.insert(space, rows);
@@ -1138,20 +1163,24 @@ impl super::ContentStore {
     /// this process, or another process), whose next write sweeps the files its commit replaced. The store's last
     /// commit is then read, held in their place, and opened. A file its rows name that is gone is corruption.
     pub fn open_kept(&self, space: &[u8; 32], rows: ChainRows) -> StoreResult<Option<(ChainRows, KeptSpace)>> {
-        let held = rows.clone();
-        let opened = KeptSpace::open_current(&self.database_path, space, rows, || {
-            let connection = self.connection.lock().expect("content store mutex poisoned");
-            chain_rows(&connection, space)
-        })?;
-        let now = opened.as_ref().map_or_else(Vec::new, |(rows, _)| rows.clone());
-        if now != held {
-            super::held::snapshot_kept(&self.database_path, |kept| {
-                if let Some(kept) = kept {
-                    kept.insert(*space, now.clone());
-                }
-            });
+        match KeptSpace::mapped(&self.database_path, space, &rows) {
+            Ok(kept) => return Ok(Some((rows, kept))),
+            Err((path, e)) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(StoreError::Corrupt(format!("a space's kept facts: {}: {e}", path.display())));
+            }
+            Err(_) => {}
         }
-        Ok(opened)
+        let read = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            KeptSpace::read_rows(&self.database_path, &connection, space)?
+        };
+        let now = read.as_ref().map(|(rows, _)| rows.clone()).unwrap_or_default();
+        super::held::snapshot_kept(&self.database_path, |kept| {
+            if let Some(kept) = kept {
+                kept.insert(*space, now.clone());
+            }
+        });
+        Ok(read)
     }
 
     /// The kept facts of `space` as this process holds its chain's rows (else the store's last commit), mapped
@@ -1171,6 +1200,22 @@ impl super::ContentStore {
         let kept = Arc::new(kept);
         mapped.0.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (rows, Arc::clone(&kept)));
         Ok(Some(kept))
+    }
+}
+
+impl super::ContentStore {
+    /// Space `space`'s files as `rows` name them, the mapping kept (`MappedSpaces`) where it is of these rows.
+    fn space_mapped(&self, space: &[u8; 32], rows: ChainRows) -> StoreResult<Arc<KeptSpace>> {
+        let key = (self.database_path.clone(), *space);
+        let mapped = rerail_prof::code_rule_dsl::logic::profile::shared::<MappedSpaces>();
+        if let Some((was, kept)) = mapped.0.lock().unwrap_or_else(|e| e.into_inner()).get(&key)
+            && *was == rows
+        {
+            return Ok(Arc::clone(kept));
+        }
+        let kept = Arc::new(KeptSpace::open(&self.database_path, space, &rows)?);
+        mapped.0.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (rows, Arc::clone(&kept)));
+        Ok(kept)
     }
 }
 
@@ -1236,7 +1281,7 @@ pub fn by_relation(path: &std::path::Path) -> StoreResult<Vec<KeptOf>> {
     let mut by: std::collections::HashMap<(String, &'static str), (usize, usize, usize)> = Default::default();
     for s in &spaces {
         let space: [u8; 32] = s.as_slice().try_into().map_err(|_| StoreError::Invalid("a space of another length".into()))?;
-        let kept = KeptSpace::open(path, &space, &chain_rows(&c, &space)?)?;
+        let Some(kept) = KeptSpace::read(path, &c, &space)? else { continue };
         for k in kept.view().all() {
             let bytes = (0..k.rows.arity as usize).map(|col| k.rows.col(col).bytes()).sum::<usize>() + k.rows.levels().map_or(0, |l| l.bytes());
             let what = match k.key.part { 0 => "rows", p if p > 0 => "granule", _ => "beside" };

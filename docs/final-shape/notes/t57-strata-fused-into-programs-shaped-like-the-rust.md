@@ -120,7 +120,7 @@ step 1). Each part becomes one fused program:
 
 ### 2.2 The fusion compiler
 
-Passes over the program's image (0679: passes that read a program are rules over its image), in order:
+Passes over the program's image (0701: passes that read a program are rules over its image), in order:
 
 1. **Partition** (exists): per-file and cross-file, by the split.
 2. **Keys and dependencies.** For each relation of a part: its key (a node of the document, a pair of nodes, the

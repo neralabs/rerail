@@ -220,7 +220,8 @@ pub enum Edit {
     Unused(usize, Decision),
     /// The scalar step's summaries are its bag's (`scalars::plan`).
     Bag(usize, Arc<scalars::Bag>),
-    /// The atom, aggregate or string join reads its derived relation through this index (`index_then`, `indexed`).
+    /// The step (an atom, a count, a min or max, a strjoin) probes its input through this index (`index_then`), its
+    /// keys in the index's column order (`in_index_order`, t50 step 9).
     Index(usize, Arc<Csr>),
     /// The split is at the last "." alone (`last_splits`).
     Last(usize),
@@ -238,7 +239,8 @@ impl Plan {
                     }
                 }
                 Edit::Index(i, ix) => {
-                    if let Step::Atom { src: Src::In(_, at), .. } | Step::Scalar { src: Src::In(_, at), .. } | Step::StrJoin { src: Src::In(_, at), .. } = &mut self.steps[i] {
+                    if let Step::Atom { src: Src::In(_, at), keys, .. } | Step::Scalar { src: Src::In(_, at), keys, .. } | Step::StrJoin { src: Src::In(_, at), keys, .. } = &mut self.steps[i] {
+                        super::in_index_order(&ix, keys);
                         *at = Bound(ix);
                     }
                 }

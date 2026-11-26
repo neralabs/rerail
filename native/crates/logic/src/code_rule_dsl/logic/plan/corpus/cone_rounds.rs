@@ -217,7 +217,7 @@ impl RoundProgram {
 
 }
 
-pub(in crate::code_rule_dsl) fn of_rows<'a>(width: usize, rows: impl Iterator<Item = &'a Vector<i64>>) -> Arc<dyn Source> {
+pub(in crate::code_rule_dsl) fn of_rows<'a>(width: usize, rows: impl Iterator<Item = &'a [i64]>) -> Arc<dyn Source> {
     let mut columns: Vec<Vector<i64>> = vec![rerail_blocks::vector::Vector::new(); width];
     for row in rows {
         for (c, v) in row.iter().enumerate() {
@@ -274,11 +274,139 @@ impl Inputs<'_> {
     }
 }
 
-/// What the answers gave: each request asked and the rows answers added, by relation.
+/// Rows of any width, flat: their values in one block, each row's end in another. A run's answers are kept so: a
+/// list a row, and a name and a list a key asked, were 1.31 M arrays of cold PostHog's log (`Answers::record`).
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct FlatRows {
+    values: Vector<i64>,
+    ends: Vector<u32>,
+}
+
+impl FlatRows {
+    fn push(&mut self, row: &[i64]) {
+        self.values.extend_from_slice(row);
+        self.ends.push(u32::try_from(self.values.len()).expect("a log under 2^32 values"));
+    }
+    fn len(&self) -> usize {
+        self.ends.len()
+    }
+    fn row(&self, i: usize) -> &[i64] {
+        let from = if i == 0 { 0 } else { self.ends[i - 1] as usize };
+        &self.values[from..self.ends[i] as usize]
+    }
+    fn iter(&self) -> impl Iterator<Item = &[i64]> + '_ {
+        (0..self.len()).map(|i| self.row(i))
+    }
+    fn append(&mut self, other: &FlatRows) {
+        for r in other.iter() {
+            self.push(r);
+        }
+    }
+    /// Keeps the rows `keep` holds, in order, moved down in place.
+    fn retain(&mut self, mut keep: impl FnMut(&[i64]) -> bool) {
+        let (mut from, mut to, mut kept) = (0usize, 0usize, 0usize);
+        for i in 0..self.ends.len() {
+            let end = self.ends[i] as usize;
+            if keep(&self.values[from..end]) {
+                self.values.copy_within(from..end, to);
+                to += end - from;
+                self.ends[kept] = to as u32;
+                kept += 1;
+            }
+            from = end;
+        }
+        self.values.truncate(to);
+        self.ends.truncate(kept);
+    }
+}
+
+/// A set of keys of any width, flat (`FlatRows`), found by their hash with no key made to test one; a key taken out is
+/// marked, and put back where it was if added again.
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct KeySet {
+    keys: FlatRows,
+    gone: Vec<bool>,
+    at: hashbrown::HashTable<u32>,
+    live: usize,
+}
+
+impl KeySet {
+    fn hash(k: &[i64]) -> u64 {
+        use std::hash::BuildHasher as _;
+        foldhash::fast::FixedState::with_seed(0).hash_one(k)
+    }
+    fn find(&self, k: &[i64]) -> Option<usize> {
+        self.at.find(Self::hash(k), |&i| self.keys.row(i as usize) == k).map(|&i| i as usize)
+    }
+    fn contains(&self, k: &[i64]) -> bool {
+        self.find(k).is_some_and(|i| !self.gone[i])
+    }
+    fn insert(&mut self, k: &[i64]) {
+        match self.find(k) {
+            Some(i) => {
+                if std::mem::replace(&mut self.gone[i], false) {
+                    self.live += 1;
+                }
+            }
+            None => {
+                let i = self.keys.len() as u32;
+                self.keys.push(k);
+                self.gone.push(false);
+                self.live += 1;
+                let keys = &self.keys;
+                self.at.insert_unique(Self::hash(k), i, |&j| Self::hash(keys.row(j as usize)));
+            }
+        }
+    }
+    fn remove(&mut self, k: &[i64]) {
+        if let Some(i) = self.find(k)
+            && !std::mem::replace(&mut self.gone[i], true)
+        {
+            self.live -= 1;
+        }
+    }
+    fn retain(&mut self, mut keep: impl FnMut(&[i64]) -> bool) {
+        for i in 0..self.keys.len() {
+            if !self.gone[i] && !keep(self.keys.row(i)) {
+                self.gone[i] = true;
+                self.live -= 1;
+            }
+        }
+    }
+    fn iter(&self) -> impl Iterator<Item = &[i64]> + '_ {
+        (0..self.keys.len()).filter(|&i| !self.gone[i]).map(|i| self.keys.row(i))
+    }
+    fn len(&self) -> usize {
+        self.live
+    }
+}
+
+/// What the answers gave: each request's keys asked, and the rows answers added, by relation.
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Answers {
-    asked: HashSet<(String, Vector<i64>)>,
-    rows: BTreeMap<String, Vec<Vector<i64>>>,
+    asked: BTreeMap<String, KeySet>,
+    rows: BTreeMap<String, FlatRows>,
+}
+
+impl Answers {
+    /// Whether `rel`'s key `k` was asked.
+    fn was_asked(&self, rel: &str, k: &[i64]) -> bool {
+        self.asked.get(rel).is_some_and(|s| s.contains(k))
+    }
+    /// `rel`'s keys asked, made the first time.
+    fn asked_of(&mut self, rel: &str) -> &mut KeySet {
+        if !self.asked.contains_key(rel) {
+            self.asked.insert(rel.to_owned(), KeySet::default());
+        }
+        self.asked.get_mut(rel).expect("inserted")
+    }
+    /// `rel`'s rows, made the first time.
+    fn rows_of(&mut self, rel: &str) -> &mut FlatRows {
+        if !self.rows.contains_key(rel) {
+            self.rows.insert(rel.to_owned(), FlatRows::default());
+        }
+        self.rows.get_mut(rel).expect("inserted")
+    }
 }
 
 impl Answers {
@@ -290,28 +418,32 @@ impl Answers {
     fn withdraw(&mut self, stale: &[Vector<i64>], asked_now: &HashSet<Vector<i64>>, per_file: &[(String, Arc<dyn Source>, usize)], ledger: &mut LoadLedger, withdrawn: &mut HashSet<i64>) -> BTreeSet<String> {
         let live: HashSet<(i64, i64)> = asked_now.iter().filter(|k| k.len() == 3).map(|k| (k[1], k[2])).collect();
         let gone: HashSet<(i64, i64)> = stale.iter().filter(|k| k.len() == 3).map(|k| (k[1], k[2])).filter(|mg| !live.contains(mg)).collect();
-        for k in stale {
-            self.asked.remove(&(super::world::LOAD.to_owned(), k.clone()));
+        if let Some(loads) = self.asked.get_mut(super::world::LOAD) {
+            for k in stale {
+                loads.remove(k);
+            }
         }
-        let files: HashSet<i64> = self.rows.get(super::world::LOADED).into_iter().flatten().filter(|r| r.len() == 3 && gone.contains(&(r[1], r[2]))).map(|r| r[0]).collect();
+        let files: HashSet<i64> = self.rows.get(super::world::LOADED).into_iter().flat_map(FlatRows::iter).filter(|r| r.len() == 3 && gone.contains(&(r[1], r[2]))).map(|r| r[0]).collect();
         // Their documents, as the answers recorded them. A file loaded under a module still asked keeps its `loaded`
         // row and its document.
         let at: HashMap<&str, usize> = per_file.iter().map(|(r, _, at)| (r.as_str(), *at)).collect();
-        let still: HashSet<i64> = self.rows.get(super::world::LOADED).into_iter().flatten().filter(|r| r.len() == 3 && !gone.contains(&(r[1], r[2]))).map(|r| r[0]).collect();
+        let still: HashSet<i64> = self.rows.get(super::world::LOADED).into_iter().flat_map(FlatRows::iter).filter(|r| r.len() == 3 && !gone.contains(&(r[1], r[2]))).map(|r| r[0]).collect();
         let taken: Vector<i64> = files.iter().filter(|f| !still.contains(*f)).copied().collect();
         let docs: HashSet<i64> = taken.iter().filter_map(|f| ledger.documents.get(f).copied()).collect();
         ledger.taken_back.extend(taken);
         // A load this run asked and was not given (past the budget, say) is asked again: a place may be free now.
-        let given: HashSet<(i64, i64)> = self.rows.get(super::world::LOADED).into_iter().flatten().filter(|r| r.len() == 3 && !gone.contains(&(r[1], r[2]))).map(|r| (r[1], r[2])).collect();
+        let given: HashSet<(i64, i64)> = self.rows.get(super::world::LOADED).into_iter().flat_map(FlatRows::iter).filter(|r| r.len() == 3 && !gone.contains(&(r[1], r[2]))).map(|r| (r[1], r[2])).collect();
         if !docs.is_empty() {
-            self.asked.retain(|(rel, k)| !(rel == super::world::LOAD && k.len() == 3 && !given.contains(&(k[1], k[2]))));
+            if let Some(loads) = self.asked.get_mut(super::world::LOAD) {
+                loads.retain(|k| !(k.len() == 3 && !given.contains(&(k[1], k[2]))));
+            }
         }
         withdrawn.extend(docs.iter().copied());
         let mut touched = BTreeSet::new();
         for (rel, rows) in self.rows.iter_mut() {
             let before = rows.len();
-            let of_doc = |r: &Vector<i64>| at.get(rel.as_str()).is_some_and(|c| r.get(*c).is_some_and(|v| docs.contains(&super::memo::document_of(*v))));
-            let loaded_gone = |r: &Vector<i64>| rel == super::world::LOADED && r.len() == 3 && gone.contains(&(r[1], r[2]));
+            let of_doc = |r: &[i64]| at.get(rel.as_str()).is_some_and(|c| r.get(*c).is_some_and(|v| docs.contains(&super::memo::document_of(*v))));
+            let loaded_gone = |r: &[i64]| rel == super::world::LOADED && r.len() == 3 && gone.contains(&(r[1], r[2]));
             rows.retain(|r| !(loaded_gone(r) || of_doc(r)));
             if rows.len() != before {
                 touched.insert(rel.clone());
@@ -323,10 +455,19 @@ impl Answers {
     /// Records an answer: `rel`'s `keys` asked, and what was given.
     pub(in crate::code_rule_dsl) fn record(&mut self, rel: &str, keys: &crate::code_rule_dsl::logic::native::component::Asked, given: &[(String, Vec<Vector<i64>>)]) {
         // The keys answered so far, across rounds: a set the rounds test against (derived, not the request's rows).
-        self.asked.extend(keys.iter().map(|k| (rel.to_owned(), k.iter().copied().collect())));
-        for (r, rows) in given {
-            self.rows.entry(r.clone()).or_default().extend(rows.iter().cloned());
-        }
+        // Both live the run: made in the thread's long room (decision 0342, amended 2026-11-24).
+        rerail_blocks::maps::long(|| {
+            let asked = self.asked_of(rel);
+            for k in keys.iter() {
+                asked.insert(&k);
+            }
+            for (r, rows) in given {
+                let held = self.rows_of(r);
+                for row in rows {
+                    held.push(row);
+                }
+            }
+        })
     }
 }
 
@@ -419,15 +560,16 @@ impl RoundProgram {
             Start::Closing(asks) => (None, Some(asks)),
         };
         // The answers recorded before the rounds (the gated fixpoint's), kept where the rounds keep them.
-        answers.rows = std::mem::take(&mut answers.rows).into_iter().fold(BTreeMap::new(), |mut m: BTreeMap<String, Vec<Vector<i64>>>, (r, rows)| {
-            m.entry(self.kept_as(&r)).or_default().extend(rows);
+        answers.rows = std::mem::take(&mut answers.rows).into_iter().fold(BTreeMap::new(), |mut m: BTreeMap<String, FlatRows>, (r, rows)| {
+            m.entry(self.kept_as(&r)).or_default().append(&rows);
             m
         });
         let mut provisional: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
         let mut still_n = 0;
         // The documents loaded this run and taken back (`Answers::withdraw`).
         let mut withdrawn: HashSet<i64> = HashSet::new();
-        let mut carried: HashSet<(String, Vector<i64>)> = HashSet::new();
+        // The last run's keys of each request, by request: tested by the key alone, no pair made to test one.
+        let mut carried: HashMap<String, KeySet> = HashMap::new();
         // Each gate's keys open: the last run's, or (closing) every key the fixpoint asked.
         let mut open: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
         if let Some(asks) = &closing {
@@ -471,7 +613,10 @@ impl RoundProgram {
                 provisional.insert(rel.clone(), got.into_iter().filter(|r| loaded(super::memo::document_of(r[*at]))).collect());
             }
             for (req, _) in &self.requests {
-                carried.extend(k.read_derived(on.store, req)?.unwrap_or_default().into_iter().map(|r| (req.clone(), r)));
+                let keys = carried.entry(req.clone()).or_default();
+                for r in k.read_derived(on.store, req)?.unwrap_or_default() {
+                    keys.insert(&r);
+                }
             }
             // A request of the file system the journal names no change for keeps its answer: its rows of the kept
             // answers are its answer again, and it is not asked.
@@ -506,14 +651,16 @@ impl RoundProgram {
                     for row in rows.iter().filter(|row| row.len() >= width) {
                         by.entry(&row[..width]).or_default().push(row);
                     }
-                    let candidates: Vec<_> = carried.iter().filter_map(|(q, key)| {
-                        (q == req && key.len() == width).then_some(key)
-                    }).collect();
-                    let keys: Vec<_> = candidates.into_iter().filter(|key| kept_key(req, key, by.get(key.as_slice()).map_or(&[], |v| v.as_slice()))).collect();
-                    let given: Vec<_> = keys.iter().flat_map(|key| by.get(key.as_slice()).into_iter().flatten().map(|row| (*row).clone())).collect();
+                    let keys: Vec<&[i64]> = carried.get(req).into_iter().flat_map(KeySet::iter).filter(|key| key.len() == width).filter(|key| kept_key(req, key, by.get(key).map_or(&[], |v| v.as_slice()))).collect();
                     still_n += keys.len();
-                    answers.asked.extend(keys.into_iter().map(|k| ((*req).to_owned(), k.clone())));
-                    answers.rows.entry(produced).or_default().extend(given);
+                    let asked = answers.asked_of(req);
+                    for key in &keys {
+                        asked.insert(key);
+                    }
+                    let held = answers.rows_of(&produced);
+                    for row in keys.iter().flat_map(|key| by.get(key).into_iter().flatten()) {
+                        held.push(row);
+                    }
                 }
             }
         }
@@ -538,10 +685,10 @@ impl RoundProgram {
                 let source = if let Some(c) = inputs.constants.get(&rel) {
                     Arc::clone(c)
                 } else if let Some(keys) = open.get(&rel) {
-                    of_rows(width, keys.iter())
+                    of_rows(width, keys.iter().map(|r| &r[..]))
                 } else {
-                    let mut seen: HashSet<&Vector<i64>> = HashSet::new();
-                    let all = corpus_rows.get(rel.as_str()).into_iter().flatten().chain(provisional.get(&rel).into_iter().flatten()).chain(answers.rows.get(&rel).into_iter().flatten()).filter(|r| seen.insert(*r));
+                    let mut seen: HashSet<&[i64]> = HashSet::new();
+                    let all = corpus_rows.get(rel.as_str()).into_iter().flatten().map(|r| &r[..]).chain(provisional.get(&rel).into_iter().flatten().map(|r| &r[..])).chain(answers.rows.get(&rel).into_iter().flat_map(FlatRows::iter)).filter(|r| seen.insert(*r));
                     of_rows(width, all)
                 };
                 let digest = retain::digest(source.as_ref(), &retain::cells_of(&atoms, &self.placed, domains, &rel, width));
@@ -562,8 +709,8 @@ impl RoundProgram {
             let mut unanswered: Vec<(String, Vec<Vector<i64>>, Vec<Vector<i64>>)> = Vec::new();
             for (req, _) in &self.requests {
                 let asked = next.read_derived(on.store, req)?.ok_or_else(|| Gave::Up(format!("{req} is not kept")))?;
-                let all: Vec<Vector<i64>> = asked.iter().filter(|r| !answers.asked.contains(&(req.clone(), (*r).clone()))).cloned().collect();
-                let fresh: Vec<Vector<i64>> = all.iter().filter(|r| provisional.is_empty() || !carried.contains(&(req.clone(), (*r).clone()))).cloned().collect();
+                let all: Vec<Vector<i64>> = asked.into_iter().filter(|r| !answers.was_asked(req, r)).collect();
+                let fresh: Vec<Vector<i64>> = all.iter().filter(|r| provisional.is_empty() || !carried.get(req).is_some_and(|c| c.contains(&r[..]))).cloned().collect();
                 unanswered.push((req.clone(), all, fresh));
             }
             if closing && unanswered.iter().any(|(_, all, _)| !all.is_empty()) {
@@ -624,7 +771,7 @@ impl RoundProgram {
                 // (those naming its file or a node of it), and the rounds run on to quiet: what only it asked for
                 // goes in turn.
                 let asked_now: HashSet<Vector<i64>> = next.read_derived(on.store, super::world::LOAD)?.unwrap_or_default().into_iter().collect();
-                let stale: Vec<Vector<i64>> = answers.asked.iter().filter(|(r, k)| r == super::world::LOAD && !asked_now.contains(k)).map(|(_, k)| k.clone()).collect();
+                let stale: Vec<Vector<i64>> = answers.asked.get(super::world::LOAD).into_iter().flat_map(KeySet::iter).filter(|k| !asked_now.contains(*k)).map(Vector::from).collect();
                 if stale.is_empty() {
                     break;
                 }
@@ -642,8 +789,8 @@ impl RoundProgram {
             open = opened;
         }
         let mut answered: BTreeMap<String, usize> = BTreeMap::new();
-        for (req, _) in &answers.asked {
-            *answered.entry(req.clone()).or_insert(0) += 1;
+        for (req, keys) in answers.asked.iter().filter(|(_, k)| k.len() > 0) {
+            answered.insert(req.clone(), keys.len());
         }
         let next = kept.expect("a round ran");
         // Written back as any kept part is (t33 K4): each relation whose rows or reads differ from its frame, each
@@ -691,5 +838,52 @@ impl RoundProgram {
     /// The ask relations, by gate.
     pub(in crate::code_rule_dsl) fn asks(&self) -> impl Iterator<Item = &String> {
         self.gates.iter().filter_map(|(_, a)| a.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod flat_tests {
+    use super::{FlatRows, KeySet};
+
+    /// Rows of any widths read back as pushed; retain keeps the rows it holds, in order, moved down in place.
+    #[test]
+    fn flat_rows_keep_their_widths_and_order_through_retain() {
+        let mut r = FlatRows::default();
+        let rows: [&[i64]; 5] = [&[1, 2, 3], &[4], &[], &[5, 6], &[7, 8, 9, 10]];
+        for x in rows {
+            r.push(x);
+        }
+        assert_eq!(r.iter().collect::<Vec<_>>(), rows.to_vec());
+        r.retain(|x| x.len() != 1 && x.len() != 3);
+        assert_eq!(r.iter().collect::<Vec<_>>(), vec![&[][..], &[5, 6][..], &[7, 8, 9, 10][..]]);
+        let mut s = FlatRows::default();
+        s.push(&[11]);
+        s.append(&r);
+        assert_eq!(s.len(), 4);
+        assert_eq!(s.row(3), &[7, 8, 9, 10]);
+    }
+
+    /// A key set tests keys by value; a key taken out is gone until added again, once.
+    #[test]
+    fn key_sets_test_take_out_and_put_back_by_value() {
+        let mut k = KeySet::default();
+        for x in [[1, 2, 3], [1, 2, 4], [1, 2, 3]] {
+            k.insert(&x);
+        }
+        assert_eq!(k.len(), 2);
+        assert!(k.contains(&[1, 2, 3]) && k.contains(&[1, 2, 4]) && !k.contains(&[1, 2]));
+        k.remove(&[1, 2, 3]);
+        assert!(!k.contains(&[1, 2, 3]));
+        assert_eq!(k.len(), 1);
+        k.insert(&[1, 2, 3]);
+        assert!(k.contains(&[1, 2, 3]));
+        assert_eq!(k.len(), 2);
+        k.retain(|x| x[2] == 4);
+        assert_eq!(k.iter().collect::<Vec<_>>(), vec![&[1, 2, 4][..]]);
+        for i in 0..1000 {
+            k.insert(&[i, i + 1]);
+        }
+        assert!((0..1000).all(|i| k.contains(&[i, i + 1])));
+        assert_eq!(k.len(), 1001);
     }
 }

@@ -24,7 +24,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 59
+VERSION = 60
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1652,6 +1652,86 @@ def free_test_slots(host):
         n += lock.held
         lock.release()
     return n
+
+
+class SlotQueue:
+    """A test command's place in the line for test slots (test-remote's `choose`): first come, first
+    served. Each command that looks for a slot holds a ticket here, named by when it came, that
+    lists the machines (`shared_base` names) it would take a slot of now. A slot of a machine is
+    taken only by a command with fewer commands ahead of it that would take that machine than the
+    machine has slots free: an earlier command runs first, whoever looks first after a slot frees.
+    Every command had tried the slots every 2 s without a line, so on a busy host the first to look
+    took each freed slot, and a command held to the M3 by `--host` waited 20 minutes while later
+    ones ran there (2026-11-24).
+
+    A ticket is held (flock) by its command, so one whose command is gone is found free and
+    removed; it is made under another name and moved into the line already held."""
+
+    def __init__(self, machines):
+        self.dir = os.path.dirname(state("tests", "queue", "x"))
+        self.name = f"{time.time_ns():020d}.{os.getpid()}"
+        part = os.path.join(self.dir, f".{self.name}")
+        self.f = open(part, "w")
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+        self.machines = None
+        self.update(machines)
+        self.path = os.path.join(self.dir, self.name)
+        os.rename(part, self.path)
+
+    def update(self, machines):
+        """The machines this command would take a slot of now."""
+        machines = sorted(set(machines))
+        if machines == self.machines:
+            return
+        self.machines = machines
+        self.f.seek(0)
+        self.f.truncate()
+        self.f.write(json.dumps({"machines": machines}))
+        self.f.flush()
+
+    def ahead(self, machine):
+        """How many commands still waiting came before this one and would take `machine`."""
+        counts = self.counts()
+        return counts.get(machine, 0) + counts.get("*", 0)
+
+    def counts(self):
+        """For each machine, how many commands still waiting came before this one and would take it."""
+        counts = {}
+        for name in sorted(os.listdir(self.dir)):
+            if name.startswith("."):
+                continue
+            if name >= self.name:
+                break
+            path = os.path.join(self.dir, name)
+            try:
+                f = open(path)
+            except OSError:
+                continue
+            with f:
+                try:
+                    fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    # held: its command waits (read mid-rewrite: counted for every machine, "*")
+                    try:
+                        machines = json.loads(f.read())["machines"]
+                    except (ValueError, KeyError, TypeError):
+                        machines = ["*"]
+                    for m in machines:
+                        counts[m] = counts.get(m, 0) + 1
+                    continue
+                # free: its command is gone
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        return counts
+
+    def leave(self):
+        try:
+            os.unlink(self.path)
+        except OSError:
+            pass
+        self.f.close()
 
 
 def test_slot_paths(name, host=None):

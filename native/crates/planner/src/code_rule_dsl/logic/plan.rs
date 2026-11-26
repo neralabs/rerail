@@ -202,10 +202,8 @@ impl Fx<'_> {
     fn stats(&self, name: &str, symbols_text: &dyn Fn(usize, usize) -> bool) -> Result<Vec<LiveRel>> {
         let _span = super::profile::span(|| "engine live statistics".into());
         if self.direct {
-            return Ok(super::native::component::live(self.db, name)?
-                .into_iter()
-                .map(LiveRel::of_native)
-                .collect());
+            // Made in the thread's long-lived room: the model keeps them for the run (decision 0342 amended).
+            return rerail_blocks::maps::long(|| Ok(super::native::component::live(self.db, name)?.into_iter().map(LiveRel::of_native).collect()));
         }
         let text: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))?;
         Ok(text.split('\n').enumerate().map(|(i, line)| LiveRel::parse(line, &|c| symbols_text(i, c))).collect())
@@ -221,10 +219,7 @@ impl Fx<'_> {
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| matches!(std::env::var("RERAIL_LIVE_ALL").as_deref(), Ok("on"))) {
             seen.clear();
         }
-        Ok(super::native::component::live_changed(self.db, name, seen)?
-            .into_iter()
-            .map(|l| l.map(LiveRel::of_native))
-            .collect())
+        rerail_blocks::maps::long(|| Ok(super::native::component::live_changed(self.db, name, seen)?.into_iter().map(|l| l.map(LiveRel::of_native)).collect()))
     }
     fn reprobe(&self, name: &str, i: usize, new: &Reprobe) -> Result<()> {
         let _span = super::profile::span(|| "engine reprobe".into());
@@ -461,9 +456,12 @@ fn add_answers(db: &Connection, answered: &mut BTreeMap<String, Vec<Vector<i64>>
         by.entry(p).or_default().extend(got);
     }
     if let Some(log) = log {
-        for (p, rows) in by.iter().filter(|(p, _)| !p.starts_with(super::answers::HELD_BACK)) {
-            log.entry(p.clone()).or_default().extend(rows.iter().cloned());
-        }
+        // The log lives the run: its rows made in the thread's long room (decision 0342, amended 2026-11-24).
+        rerail_blocks::maps::long(|| {
+            for (p, rows) in by.iter().filter(|(p, _)| !p.starts_with(super::answers::HELD_BACK)) {
+                log.entry(p.clone()).or_default().extend(rows.iter().cloned());
+            }
+        });
     }
     for (p, rows) in by {
         if let Some(req) = p.strip_prefix(super::answers::HELD_BACK) {
@@ -1775,9 +1773,9 @@ impl spike_eval::Calls for SpikeCalls<'_> {
         }
     }
 
-    fn node_read(&self, name: &str, n: i64) -> Option<String> {
+    fn node_read(&self, name: &str, n: i64) -> Option<rusqlite::types::Value> {
         let long = self.long.get_or_init(|| crate::code_rule_dsl::facts::vtab::bound_source(self.db, crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES));
-        crate::code_rule_dsl::logic::strings::functions::node_read(name, long.as_deref(), n)
+        crate::code_rule_dsl::logic::strings::functions::node_read(name, long.as_deref(), n, &[])
     }
 }
 
@@ -4423,7 +4421,9 @@ impl<'a> Run<'a, '_> {
             let idle = |line: &[(i64, i64)]| line.iter().all(|&(a, b)| a == 0 && b == 0);
             for ((o, &rule), line) in orders.iter().map(|(_, o)| o).chain(probes.iter().map(|p| &p.2)).zip(&line_bodies).map(|(o, b)| Order::new(b, o)).zip(&order_rules).zip(&steps) {
                 if !idle(line) {
-                    observe(&mut self.model.stats, rule, o, line);
+                    // The run's observations live through it: made in the thread's long-lived room (decision 0342
+                    // amended), not on its stack.
+                    rerail_blocks::maps::long(|| observe(&mut self.model.stats, rule, o, line));
                 }
             }
             // A step whose fanout was observed, or moved, is priced by it now: its probe is planned again.
@@ -7447,7 +7447,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let (mut clean_strata, mut held_again, mut held_rows) = (0usize, 0usize, 0usize);
     // Decision 0113: native strata issued ahead, as components on the executor's host stream, retired here in order.
     // Not in a run in mode `here`: a nested run whose caller is already one of the pool's jobs (a rules pass, decision
-    // 0679 §5.1) runs its strata on its own thread, paying no job, ambient or board a stratum.
+    // 0701 §5.1) runs its strata on its own thread, paying no job, ambient or board a stratum.
     let mut board = (issue::on() && native.contains("program") && !native.contains("here") && strata_kept.is_none() && maintaining.is_none()).then(|| issue::Board::new(&sccs, &deps));
     // Decision 0592: with strata issued ahead, a relation goes when its last reader to finish does.
     let mut reads_left = board.as_ref().filter(|_| release_finished()).map(|_| ReadsLeft::new(f0, &run_vs, &sccs, &by_stratum, &run.views));
@@ -8667,6 +8667,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
         BTreeSet::new()
     };
     let to_sql: Vec<String> = written.iter().filter(|r| !native_out.contains(*r)).cloned().collect();
+    // An output no rule made and no fact filled is read empty: its table, left to be made when SQL first needs it, is
+    // made now (decision 0665: a constant of the settings that a run's options leave with no row).
+    run.ensure(&to_sql)?;
     run.materialize(&to_sql)?;
     let outputs_of: Vec<&str> = f0.outputs().collect();
     let (outputs, nodes) = decoded_outputs(&outputs_of, &|r| f0.is_input(r), &|r| f0.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, lowered, &facts, atoms, &kept, &native_out)?;
@@ -9175,6 +9178,23 @@ pub fn decode_bound(
 /// `outputs` the outputs to decode; `is_input` and `arity` the program's (its inputs, its declarations' widths).
 #[allow(clippy::too_many_arguments)]
 fn decoded_outputs(
+    outputs_of: &[&str],
+    is_input: &dyn Fn(&str) -> bool,
+    types: &dyn Fn(&str) -> Option<Vec<String>>,
+    db: &Connection,
+    lowered: Option<lower::Lowering<'_>>,
+    facts: &str,
+    atoms: bool,
+    kept: &BTreeSet<String>,
+    native: &BTreeSet<String>,
+) -> Result<(BTreeMap<String, std::sync::Arc<output::Rows>>, BTreeMap<String, Vector<usize>>)> {
+    // The run's outputs live to its end: made in the thread's long-lived room (decision 0342 amended 2026-11-24). On
+    // the stack they held every region the run took after them.
+    rerail_blocks::maps::long(|| decoded_outputs_within(outputs_of, is_input, types, db, lowered, facts, atoms, kept, native))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decoded_outputs_within(
     outputs_of: &[&str],
     is_input: &dyn Fn(&str) -> bool,
     types: &dyn Fn(&str) -> Option<Vec<String>>,

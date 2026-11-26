@@ -123,7 +123,7 @@
         assert_eq!(super::named_within(&store, Duration::from_millis(50)), Ok(()), "asked again, the same answer");
     }
 
-    /// A cleanup removes an unused store's files, its lock file with them, and leaves every file of a store another
+    /// A cleanup removes an unused store's files and folders, its lock file with them, and leaves every file of a store another
     /// process owns (here an open file of the test's own, locked, as the OS sees another process's).
     #[test]
     fn a_cleanup_leaves_a_store_another_process_owns() {
@@ -133,14 +133,21 @@
         for name in &all {
             std::fs::write(dir.path().join(name), "").unwrap();
         }
+        // A store's folders (its objects, its kept facts), each with a file in it: they go with the store's files.
+        let folders = |store: &str| -> Vec<String> { [".objects", ".facts"].iter().map(|s| format!("{store}{s}")).collect() };
+        for name in folders("held.sqlite").into_iter().chain(folders("free.sqlite")) {
+            std::fs::create_dir(dir.path().join(&name)).unwrap();
+            std::fs::write(dir.path().join(&name).join("x"), "").unwrap();
+            all.push(name);
+        }
         let other = std::fs::OpenOptions::new().read(true).write(true).open(dir.path().join("held.sqlite-owner.lock")).unwrap();
         other.lock().unwrap();
         super::remove_unowned(dir.path(), &all);
         let mut left: Vec<String> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         left.sort();
-        all = names("held.sqlite");
+        all = names("held.sqlite").into_iter().chain(folders("held.sqlite")).collect();
         all.sort();
-        assert_eq!(left, all, "the held store's files stay; the free store's and the loose file go");
+        assert_eq!(left, all, "the held store's files and folders stay; the free store's and the loose file go");
     }
 
     /// One of the processes above: owns its store (a slot of `RERAIL_OWNER_CHILD_BASE`, or the one `RERAIL_TAPE_CACHE`

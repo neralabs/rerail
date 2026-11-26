@@ -457,7 +457,8 @@ er_site(d, l, cat("external-io-boundary:", x, "()"), s) :- er_sym(f, s), er_dec_
     def_name(f, x), line(f, l), docof(f, d), source(d, sp), text(sp, t), contains("external_io_boundary_eager", t).
 
 // er_ignored(d, c, s): the linter's per-file exemptions for transitive sites; er_text_ignored for text sites.
-.decl er_facade_site(d: number, s: symbol)
+// Cross-file: every file's symbols, placed at the facade modules (decision 0652).
+.decl er_facade_site(d: number, s: symbol) cross_file
 er_facade_site(d, s) :- er_sym(_, s), doc(d, p, _), (p = "l2055_lazy_result/lazy_result.py" ;
     p = "l2055_lazy_result/lazy_seq.py"), (er_facade(s) ; er_facade_prefix(q), prefix(q, s)).
 .decl er_ignored(d: number, c: symbol, s: symbol)

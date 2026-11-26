@@ -248,6 +248,10 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "SHARD"),
     ("code_rule_dsl/logic/profile.rs", "STACK"),
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
+    // Each nameless system thread's dispatch queue as last seen (macOS), to name its CPU in the report.
+    ("code_rule_dsl/logic/profile.rs", "QUEUE_LABELS"),
+    // The frame keys of the run under way, for its manifest to name: bound while the run runs, gone when it ends.
+    ("code_rule_dsl/logic/plan/corpus/reuse.rs", "RunFrame"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
     // The width census's counts by relation and by span (`RERAIL_WIDTH_CENSUS`), printed at the run's end: a
@@ -263,10 +267,10 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/rr.rs", "NODES"),
     // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.
     ("code_rule_dsl/logic/rr.rs", "SHAPE"),
-    // The kind set rules (0679 §5.1): a program of the engine's own files, lowered once, as `CORE`, the same for
+    // The kind set rules (0701 §5.1): a program of the engine's own files, lowered once, as `CORE`, the same for
     // every run.
     ("code_rule_dsl/logic/rr.rs", "RULES"),
-    // A thread's connection for rules passes (0679 §5.1): scratch, its inputs bound and its relations forgotten
+    // A thread's connection for rules passes (0701 §5.1): scratch, its inputs bound and its relations forgotten
     // within each run, nothing kept from one run for another.
     ("code_rule_dsl/logic/plan/corpus/preparation/rules_pass.rs", "ENGINE"),
     // The frame keys of the run under way (`reuse::Naming`), bound to the run's context for its manifest to name: the

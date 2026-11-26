@@ -134,6 +134,10 @@ pub(in crate::code_rule_dsl) const ROW_STRJOIN: u32 = 6;
 /// in the one rolling cache (decision 0478 step 2e) by the functions' id (`P[5]`) and the source symbol (key 7). A
 /// kept text is copied into the arena; one made is kept, up to `atoms::TEXT_MOST` bytes.
 pub(in crate::code_rule_dsl) const ROW_KEPT: u32 = 1 << 9;
+/// With a text function (`ROW_MAP`, `ROW_CAT`, …): its value is the atom whose string the made text is, found by the
+/// store's hash in the atoms directory's tables (decision 0666), and no row where no atom is. A symbol, not an arena
+/// text: an atom keyed by it is probed by value.
+pub(in crate::code_rule_dsl) const ROW_FIND: u32 = 1 << 10;
 pub(in crate::code_rule_dsl) const TEXTFN_LOWER: u32 = 0;
 pub(in crate::code_rule_dsl) const TEXTFN_HEAD: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_DIR: u32 = 2;
@@ -152,6 +156,16 @@ pub(in crate::code_rule_dsl) const TEXTFN_ZERO_PAD: u32 = 11;
 pub(in crate::code_rule_dsl) const TEXTFN_STR_BETWEEN: u32 = 12;
 /// `pkg_up(x, k)`: X less its last key 5 dotted parts; empty past its first.
 pub(in crate::code_rule_dsl) const TEXTFN_PKG_UP: u32 = 13;
+/// `rx_group(x, re, name)`: the range of X that regex `re`'s group `name` captures, by its program (the stage's
+/// automaton, `text::table::GroupProgram`, decision 0688); no row where `re` does not match or the group took no part.
+pub(in crate::code_rule_dsl) const TEXTFN_RX_GROUP: u32 = 14;
+/// A node's text (key 5's node), read where its document's source lies through the stage's `node` view (decision
+/// 0287 §2): `rr_node_text_any`'s at any length; `rr_node_text`'s past `text`'s inline bound alone, no row shorter. A
+/// node the directory does not hold (another batch's, a comment span) sets `TEXTFN_UNHELD`: the stratum on the host.
+pub(in crate::code_rule_dsl) const TEXTFN_NODE_TEXT_ANY: u32 = 15;
+pub(in crate::code_rule_dsl) const TEXTFN_NODE_TEXT: u32 = 16;
+// `row_text_one`'s bound for `TEXTFN_NODE_TEXT` (its `256u`) is `text`'s inline bound.
+const _: () = assert!(crate::code_rule_dsl::facts::vtab::syntax::core_rr::TEXT_INLINE == 256);
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// A `ROW_VERDICT` stage met a symbol the atoms directory does not hold: the stratum runs on the host.
 pub(in crate::code_rule_dsl) const TEXTFN_UNHELD: u32 = 4;
@@ -1022,7 +1036,16 @@ impl DevIndex {
     }
 }
 
+/// An index's last bucket offset before its build writes it (its rows, `ix_offs_one`): never a count of rows.
+const UNBUILT: u32 = u32::MAX;
+
+/// The byte in its block of index room `room`'s last bucket offset: its rows once built.
+fn last_offset(room: &rerail_blocks::relation::IndexRoom) -> usize {
+    room.offs + 4 * (room.mask as usize + 1)
+}
+
 /// The buffer of `home`'s block as it is now (reaching what it holds now), the block kept with it.
+
 fn bound(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<Held, Error> {
     let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
     held_block(device, home, Box::new(home.clone()))
@@ -1078,6 +1101,9 @@ struct Building {
     encoded: bool,
     /// Its work committed, and so told to its block (`Facts::ix`, `InFlight`): another batch's probe takes it.
     queued: bool,
+    /// Its program is held (`Batch::held`): told to no other batch until it launches, as no submission committed
+    /// before then holds its work.
+    held: bool,
     /// Whether it was queued after a gate (`Batch::gate`): not built when the gate stopped its program.
     gated: bool,
     /// Queued after its program's round ends (`Batch::round_end`): its program's round count, and how many ends lie
@@ -1414,18 +1440,6 @@ struct Canon {
     reserved: Arc<Reservation>,
 }
 
-/// Address space (`rerail_device::device::Reserved`) held by a ledger of its own over the whole of it, as a pooled
-/// lease is (`rerail_blocks::ledger::Tracked`, decision 0491 step 2): a kernel's bind of its buffer finds what holds
-/// it, and the work holds it, so dropped meanwhile it goes only once that work completes.
-type Reservation = rerail_blocks::ledger::Tracked<rerail_device::device::Reserved>;
-
-/// `bytes` of address space, its first `mapped` mapped (`rerail_device::device::reserve`), held as a `Reservation`.
-fn reserve(device: &rerail_device::device::Device, bytes: usize, mapped: usize, host_reads: bool) -> Result<Reservation, Error> {
-    let r = rerail_device::device::reserve(device, bytes, mapped, host_reads).map_err(|_| Error::BackendCapacity)?;
-    let (base, len) = r.address_space();
-    Ok(rerail_blocks::ledger::Tracked::new(r, base, len))
-}
-
 /// A canonical table's places to start with, and its header's bytes.
 const CANON_START: usize = 1 << 12;
 const CANON_HEADER: usize = 16;
@@ -1467,6 +1481,21 @@ pub(in crate::code_rule_dsl) const ARENA_START: usize = 64 << 10;
 /// bump of its header.
 fn text_arena_max() -> usize {
     rerail_accel::budget::metal_share(64 << 20).clamp(ARENA_START, u32::MAX as usize / 2)
+}
+
+/// Address space (`rerail_device::device::reserve`) held as a pooled lease is (decision 0491 step 2): by a ledger
+/// found at its host address (`rerail_blocks::ledger::Tracked`). A submission that binds it holds it, so what drops it
+/// while queued work reads it (an arena, a room, a sort's) lets it go only once that work completes; and a job's
+/// buffers in it are ones the ledger knows (`Pass::hold_for_later`'s check), as a block's and a lease's are.
+type Reservation = rerail_blocks::ledger::Tracked<rerail_device::device::Reserved>;
+
+/// `rerail_device::device::reserve`, its `bytes` of address space tracked from its first byte (a buffer the host
+/// cannot read is found by no address: nothing binds it by one).
+fn reserve(device: &rerail_device::device::Device, bytes: usize, mapped: usize, host_reads: bool) -> Result<Reservation, Error> {
+    let r = rerail_device::device::reserve(device, bytes, mapped, host_reads).map_err(|_| Error::BackendCapacity)?;
+    let base = r.buffer().contents().cast::<u8>();
+    let len = if base.is_null() { 1 } else { bytes };
+    Ok(rerail_blocks::ledger::Tracked::new(r, base, len))
 }
 
 impl Arena {
@@ -1695,6 +1724,9 @@ pub(in crate::code_rule_dsl) struct Batch {
     pass: Option<Pass>,
     /// The level's jobs, not in its program yet (`queue`).
     queued: Vec<Job>,
+    /// What the jobs queued since the program was last built reach, held from their queueing until its kit holds them
+    /// (`Kit::held`, decision 0491 step 2): the submission open at their queueing commits before it launches.
+    queued_held: Arc<rerail_blocks::ledger::Fence>,
     /// The levels flushed since the program last launched (`flush`, `run_program`, decision 0603).
     program: Program,
     /// A level's encoding failed partway (`flush`: a lease refused): its program is dropped unlaunched, and the batch
@@ -1702,6 +1734,10 @@ pub(in crate::code_rule_dsl) struct Batch {
     spoiled: bool,
     /// The programs launched since the last `finish`: read when their work is done.
     programs: Vec<Ran>,
+    /// Programs that go on from one before them (`Program::continues`), launched once every program before them is
+    /// whole (`finish`, decision 0679): one launched before then would read what its predecessor's later phases write
+    /// (its placed tables, its counts, its indexes) while a park or a next stack of it was still to run.
+    held: Vec<Ran>,
     committed: Vec<Submitted>,
     done: Done,
     dummy: Held,
@@ -1788,9 +1824,11 @@ impl Batch {
         Ok(Batch {
             pass: None,
             queued: Vec::new(),
+            queued_held: rerail_blocks::ledger::Fence::new(),
             program: Program::default(),
             spoiled: false,
             programs: Vec::new(),
+            held: Vec::new(),
             gated: false,
             again_on_rewrap: false,
             ends: None,
@@ -1945,7 +1983,7 @@ impl Batch {
         // committed after this and so run after (`InFlight`). One queued after a gate, or a live relation's, may not
         // be built (`finish`), as may one queued after a round end (decision 0657): none is told. Nor is any of a spoiled
         // batch's (`flush`): its builders may never launch.
-        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live && b.behind.is_none() && !self.spoiled) {
+        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.held && !b.gated && !b.live && b.behind.is_none() && !self.spoiled) {
             // Launched, or not told: its program is what says whether it was built.
             let Some(whole) = b.whole.clone() else { continue };
             let view = b.view.clone();
@@ -1992,12 +2030,28 @@ impl Batch {
             }
             if failed > 0 {
                 self.programs.clear();
+                self.held.clear();
                 break;
             }
             let (whole, again) = self.programs_done()?;
             failed += usize::from(!whole || self.spoiled);
-            if again.is_empty() || failed > 0 {
+            if failed > 0 {
+                self.held.clear();
                 break;
+            }
+            if again.is_empty() {
+                // Every program launched is whole: the first held one goes on from them, its builders told with its
+                // stack's submission, which holds their work.
+                if self.held.is_empty() {
+                    break;
+                }
+                let r = self.held.remove(0);
+                for b in self.building.iter_mut().filter(|b| b.held && b.whole.as_ref().is_some_and(|w| std::sync::Arc::ptr_eq(&w.ctl, &r.ctl))) {
+                    b.held = false;
+                }
+                self.launch(r)?;
+                self.submit_open()?;
+                continue;
             }
             for (r, remap) in again {
                 // A remap (an arena mapped further) is a run again with more room: its launch charges the run's
@@ -2165,7 +2219,7 @@ impl Batch {
     /// it is refused (`Error::BackendCapacity`), nothing copied (decision 0353 step 6); a view's relation of no values
     /// is made anew.
     pub(in crate::code_rule_dsl) fn index(&mut self, rel: &DevRel, cols: &[usize]) -> Result<DevIndex, Error> {
-        let mut ix = self.index_of(rel, cols)?;
+        let mut ix = self.index_of(rel, cols, true)?;
         ix.cols = cols.to_vec();
         Ok(ix)
     }
@@ -2188,7 +2242,10 @@ impl Batch {
         Ok(std::rc::Rc::new(self.index(rel, &ix.cols)?))
     }
 
-    fn index_of(&mut self, rel: &DevRel, cols: &[usize]) -> Result<DevIndex, Error> {
+    /// `may_move`: an index of a relation whose block has no room may go in a fresh home (a view's, or a far link's
+    /// block); one of that fresh relation may not (a home made for its index that still has no room is a sizing's
+    /// error, not a reason to make another).
+    fn index_of(&mut self, rel: &DevRel, cols: &[usize], may_move: bool) -> Result<DevIndex, Error> {
         let home = rel.home.clone().expect("an index of a relation, not of words");
         let r = rel.relation();
         // A continuation's index is of every row it reads (its base's first: `ix_key_one` reads by id, `rel_get`).
@@ -2218,6 +2275,11 @@ impl Batch {
             // `within` by an index this batch built in its last submission found 0 or 879 of its 66,093 rows).
             if let Some(b) = self.building.iter().find(|b| b.encoded && b.live == rel.live && std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.from == rel.from && b.room.rows_n as usize == rel.index_rows()) {
                 let (room, queued, at, built_by) = (b.room, b.queued, b.at(), b.buffer.clone());
+                // Built by an earlier program of this batch (launched or held): what reads it goes on from that one, so
+                // it runs once that one is whole, a park or a next stack of it included (`Batch::held`).
+                if b.whole.is_some() && !rel.live {
+                    self.program.continues = true;
+                }
                 if rel.live {
                     // A live relation's index in this batch's room for it, built again of its rows now: each round's,
                     // in the open submission, so its probes after it, binding the buffer it binds, are ordered after it.
@@ -2228,7 +2290,7 @@ impl Batch {
                 }
                 if queued {
                     let f = held.iter().find(|f| f.at == at && f.room.index == room.index).expect("a committed build is told to its block");
-                    taken = Some((room.index as u32, rerail_accel_gpu::gpu::join::Submitted::watching(&f.done), f.whole.clone()));
+                    taken = Some((room, f.done.clone(), f.whole.clone()));
                     break 'room None;
                 }
                 // Bound by the builder's buffer: its launches, before this batch's probes in the open submission,
@@ -2250,7 +2312,7 @@ impl Batch {
             let at = home.block.offset_of(std::ptr::from_ref(r));
             if let Some(f) = held.iter_mut().find(|f| f.at == at && f.room.key[..f.room.ncols] == *key && f.room.from == rel.from && f.room.rows_n as usize == rel.rows).filter(|_| !rel.live) {
                 f.lent = true;
-                taken = Some((f.room.index as u32, rerail_accel_gpu::gpu::join::Submitted::watching(&f.done), f.whole.clone()));
+                taken = Some((f.room, f.done.clone(), f.whole.clone()));
                 crate::code_rule_dsl::prof::count_named("device.index taken from another batch's build".into(), 4 * rel.rows);
                 break 'room None;
             }
@@ -2267,11 +2329,22 @@ impl Batch {
         // Out of the block's lock: its builder's work done before this batch encodes a read of it. A builder the device
         // failed fails this batch too.
         // One whose program stopped before it (`InFlight::whole`) is half written: so is this batch's read of it.
-        if let Some((index, builder, whole)) = taken {
-            if !builder.wait_ok().1 || !whole() {
+        // One whose builder's program parked before the build (flag 128: a room or an arena's pages short, the rest of
+        // the program a later submission's) is unbuilt still, its last bucket offset `UNBUILT` (decision 0664): this
+        // batch's work is ordered after none of that submission's.
+        if let Some((room, done, whole)) = taken {
+            if !rerail_accel_gpu::gpu::join::Submitted::watching(&done).wait_ok().1 || !whole() {
                 return Err(Error::BackendFailure);
             }
-            return Ok(DevIndex { index, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
+            // SAFETY: the builder's work is done; the room stays reserved while another batch took it (`lent`).
+            if rel.index_rows() > 0 && unsafe { home.block.base_ptr().add(last_offset(&room)).cast::<u32>().read_volatile() } == UNBUILT {
+                crate::code_rule_dsl::prof::count_named("device.index taken in flight, its builder parked before the build (its batch on the CPU)".into(), 1);
+                return Err(Error::BackendFailure);
+            }
+            // Read again at this batch's finish (`borrowed`): its builder's program may yet stop before the build (a
+            // later stack, a park), as its control words then say.
+            self.borrowed.push((rerail_accel_gpu::gpu::join::Submitted::watching(&done), whole));
+            return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
         }
         let Some(room) = room else {
             // A live relation grows where it lies: its index has room there, or it is refused.
@@ -2282,20 +2355,26 @@ impl Batch {
             // Either is kept by the batch until its work, which builds the index into it, completes (Q265: a fresh
             // relation dropped with its stage's handle gave back its index while the GPU built it).
             if let Some(view) = &rel.view {
-                crate::code_rule_dsl::prof::count_named(format!("device.index of a view in a fresh home (its home's room taken): {} rows keyed by {cols:?}", rel.rows), 1);
+                crate::code_rule_dsl::prof::count_named_args(format_args!("device.index of a view in a fresh home (its home's room taken): {} rows keyed by {cols:?}", rel.rows), 1);
+                if !may_move {
+                    return Err(Error::BackendCapacity);
+                }
                 let fresh = std::rc::Rc::new(DevRel::view(rel.cols, rel.rows, view.clone())?);
-                let ix = self.index(&fresh, cols)?;
+                let mut ix = self.index_of(&fresh, cols, false)?;
+                ix.cols = cols.to_vec();
                 return Ok(DevIndex { fresh: Some(fresh), ..ix });
             }
             // Nothing is copied for a key (decision 0353 step 6): the index goes in a device block of its own, built on a
             // link there that reads the relation as its far base (`Part::far_link`), which the batch binds beside it.
             if rel.far.is_none()
+                && may_move
                 && let Some(base) = rel.holder().filter(|p| std::ptr::eq(p.rel(), r))
                 && let Some(link) = crate::code_rule_dsl::facts::rows::Part::far_link(&base, rel.rows as u32)
             {
                 let fresh = std::rc::Rc::new(DevRel::in_block(&link.in_block(rel.rows as u32), rel.cols)?);
                 crate::code_rule_dsl::prof::count_named("device.index_beside: an index in a block of its own".to_owned(), rel.rows);
-                let ix = self.index(&fresh, cols)?;
+                let mut ix = self.index_of(&fresh, cols, false)?;
+                ix.cols = cols.to_vec();
                 return Ok(DevIndex { fresh: Some(fresh), ..ix });
             }
             // A relation that cannot be linked (its chain reaches another block already, or no device block is had)
@@ -2315,11 +2394,17 @@ impl Batch {
             return Err(Error::BackendCapacity);
         };
         let n = rel.rows;
+        if !rel.live && rel.index_rows() > 0 {
+            // Its last bucket offset unbuilt until its build writes its rows there (`ix_offs_one`): what a batch that
+            // takes it in flight checks once its builder's work is done (`index`).
+            // SAFETY: the room is this batch's, just reserved in the block; nothing reads or writes it yet.
+            unsafe { home.block.base_ptr().add(last_offset(&room)).cast::<u32>().write_volatile(UNBUILT) };
+        }
         // Held by the batch from here: an error before its builder is all encoded gives the room back when the batch
         // is done (`finish`), as the batch's work may already write it.
         let held = self.building.len();
         let before = Building::descriptor(std::ptr::from_ref(r));
-        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, gated: self.gated, behind: self.ends.clone(), live: rel.live, view: rel.view.clone(), buffer: None, whole: None });
+        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, held: false, gated: self.gated, behind: self.ends.clone(), live: rel.live, view: rel.view.clone(), buffer: None, whole: None });
         let buffer = bound(&home)?;
         self.building[held].buffer = Some(buffer.buffer.clone());
         self.queue_index(rel, cols, &room, &buffer)?;
@@ -2332,6 +2417,8 @@ impl Batch {
     fn cut(&mut self) -> Result<(), Error> {
         let residents = self.pass.as_ref().map(|p| p.residents()).unwrap_or_default();
         self.submit_open()?;
+        // What follows reads what the work before wrote: it runs once that work is whole (`Batch::held`).
+        self.program.continues = true;
         crate::code_rule_dsl::prof::count_named("device.batch cut: a block reached through a grown wrap".into(), 1);
         let pass = self.open()?;
         for (b, write) in &residents {
@@ -2365,7 +2452,7 @@ impl Batch {
         // Its keys at most (its items'), and the rows its room holds: a live relation mapped as reached has room for
         // its rows mapped, grown with them (`Kit::grow_rooms`), its items its bound's.
         let (n, m) = (rel.rows, rel.index_rows());
-        assert!(room.rows as u64 + 4 * m as u64 <= buffer.buffer.length(), "the index's room within the buffer bound");
+        assert!(room.rows as u64 + 8 * m as u64 <= buffer.buffer.length(), "the index's room (its rows, then their marks) within the buffer bound");
         if n == 0 {
             return Ok(());
         }
@@ -2452,6 +2539,14 @@ impl Batch {
             }
             None => job.reach(&self.dummy.buffer, 0, false)?,
         };
+        // A join's finds a binding (`stage_count_one`'s, its scatter's rows out): placed with its input where that is
+        // placed (its room its input's), as a row's values are.
+        if !from_one && stage.mode == JOIN {
+            let finds = Held::new(if left.placed() { 16 } else { 8 * n })?;
+            job.v_place = left.placed();
+            job.desc.v = job.reach(&finds.buffer, 0, true)?;
+            job.own.push(finds);
+        }
         (job.n, job.count, job.scatter) = (n, n, n);
         job.m = match (from_one, stage.r_len != 0) {
             (true, true) => (Some(job.desc.r + stage.r_at + REL_ROWS + ROWS_LEN), stage.nr as usize),
@@ -2615,9 +2710,18 @@ impl Batch {
     /// the same capacity), their count into `totals[out_slot]`; the first of equal rows is kept, and the order kept.
     /// Queued in the batch's level, as a stage is: a stratum's heads' dedups launch together.
     pub(in crate::code_rule_dsl) fn dedup(&mut self, table: &Table, cols: &[usize], in_slot: usize, out_slot: usize, totals: &Words, out: &Table) -> Result<(), Error> {
+        self.dedup_less(table, cols, in_slot, out_slot, totals, out, None)
+    }
+
+    /// `dedup`, less the rows relation `held.0` holds (decision 0567): read through its map (`held.1`, every row of
+    /// the relation placed in it, `set_map`), its columns `table`'s `cols` in order. Its rows out are placed in the map
+    /// as the rows they become past the relation's rows as the device holds them (`append_live` writes them there).
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn dedup_less(&mut self, table: &Table, cols: &[usize], in_slot: usize, out_slot: usize, totals: &Words, out: &Table,
+                                               held: Option<(&DevRel, LatMap<'_>)>) -> Result<(), Error> {
         assert!(cols.len() <= 16 && out.room() == table.room());
         let places = (2 * table.room()).next_power_of_two().max(16);
-        let mut d = [0u32; 23];
+        let mut d = [0u32; 32];
         d[0] = table.room() as u32;
         d[1] = in_slot as u32;
         d[2] = out_slot as u32;
@@ -2628,23 +2732,43 @@ impl Batch {
         }
         d[21] = out.room() as u32;
         d[22] = places as u32;
-        // Its places placed with its input where that is placed: twice its rows, a power of two (5d).
-        let p = Held::new(if table.placed() { 16 } else { 4 * places })?;
+        let hb = match held {
+            Some((r, map)) => {
+                assert!(map.places.is_power_of_two() && cols.len() == r.cols && cols.len() <= 8);
+                (d[23], d[24]) = (1, (map.places - 1) as u32);
+                for (w, v) in [(26, r.at), (28, r.rows_at()), (30, map.at as u64)] {
+                    (d[w], d[w + 1]) = (v as u32, (v >> 32) as u32);
+                }
+                Some((r, bound(map.home)?))
+            }
+            None => None,
+        };
+        // Its places placed with its input where that is placed: twice its rows, a power of two (5d); and as many
+        // again past them, each row's place (`dedup_claim_one`'s, its mark's).
+        let p = Held::new(if table.placed() { 16 } else { 2 * 4 * places })?;
         let n = table.room() + 1;
         let mut job = Job::new(JobKind::Dedup, 0, Stage::default());
         job.dedup = Some(d);
         job.reads_placed(table, &[(3, DD_CAP)]);
         job.makes_placed(out, &[(3, DD_OCAP)]);
-        job.h_place = table.placed().then_some(HPlace { block: 3, places: Some(DD_PLACES), mask: DD_MASK, arrays: 1 });
+        job.h_place = table.placed().then_some(HPlace { block: 3, places: Some(DD_PLACES), mask: DD_MASK, arrays: 2 });
         job.desc.l = table.reach_by(&mut job, false)?;
         job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
         job.desc.h = job.reach(&p.buffer, 0, true)?;
         job.desc.o = out.reach_by(&mut job, true)?;
-        (job.n, job.count, job.scatter, job.clear, job.claim) = (n, n, n, places, table.room());
+        let (mut reads, mut writes) = (vec![table.key(job.desc.l), job.desc.totals], vec![out.key(job.desc.o), job.desc.totals]);
+        if let Some((r, hb)) = hb {
+            job.desc.s = job.reach(&r.buffer.buffer, 0, false)?;
+            job.desc.vc = job.reach(&hb.buffer, 0, true)?;
+            reads.push(job.desc.s);
+            writes.push(job.desc.vc);
+            job.own.push(hb);
+        }
+        // Its clear a thread for 4 places (`dedup_clear_one`).
+        (job.n, job.count, job.scatter, job.clear, job.claim) = (n, n, n, places / 4, table.room());
         job.m = (Some(job.desc.totals + 4 * in_slot as u64), table.room());
         job.own.push(p);
-        let (l, o) = (table.key(job.desc.l), out.key(job.desc.o));
-        job.order(&[l, job.desc.totals], &[o, job.desc.totals]);
+        job.order(&reads, &writes);
         self.queue(job)
     }
 
@@ -2980,6 +3104,26 @@ impl Batch {
     /// A lattice head's key map made or grown before a program's rounds fold into it (`MapFirst::Ready`): emptied, and
     /// every key of the old one `old` placed in it again (`lat_hclear_one`, `lat_rehash_one`). `r`: the relation its
     /// slots' rows are of, its key its first `nkeys` columns.
+    /// A set's map (`dedup_less`) emptied and every row of `r`'s first `n` placed in it, a key of its own (code 4 of
+    /// `lat_rehash_one`): a program's first work, so a round its gate stopped leaves nothing in it.
+    pub(in crate::code_rule_dsl) fn set_map(&mut self, r: &DevRel, n: usize, map: LatMap<'_>) -> Result<(), Error> {
+        assert!(map.places.is_power_of_two() && 2 * n <= map.places && r.cols <= 8);
+        let p = LatParams { top: 0, n: n as u32, had: 0, nkeys: r.cols as u32, code: 4, after: NONE, pmask: 0, hmask: (map.places - 1) as u32, level: 0, omask: 0,
+                            counted: 0, r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at: 0 };
+        let hb = bound(map.home)?;
+        let mut job = Job::new(JobKind::Lattice, 0, Stage::default());
+        job.desc.s = job.reach(&r.buffer.buffer, 0, false)?;
+        job.desc.vc = job.reach(&hb.buffer, 0, true)?;
+        for d in [&mut job.desc.l, &mut job.desc.a, &mut job.desc.totals, &mut job.desc.h, &mut job.desc.o, &mut job.desc.counters, &mut job.desc.v, &mut job.desc.g] {
+            *d = job.desc.s;
+        }
+        job.p = Some(lat_bytes(&p).to_vec());
+        (job.count, job.clear, job.lattice) = (0, 0, [map.places, n]);
+        job.order(&[job.desc.s], &[job.desc.vc]);
+        job.own.push(hb);
+        self.queue(job)
+    }
+
     pub(in crate::code_rule_dsl) fn lattice_grow(&mut self, r: &DevRel, nkeys: usize, map: LatMap<'_>, old: Option<LatMap<'_>>) -> Result<(), Error> {
         assert!(map.places.is_power_of_two() && old.is_none_or(|o| o.places.is_power_of_two() && o.places <= map.places));
         let (omask, h0_at) = old.map_or((0, 0), |o| ((o.places - 1) as u32, o.at as u64));
@@ -3060,9 +3204,16 @@ impl Batch {
         }
         // Held from now, as a launch encoded now would hold them: the level launches at its end, and a caller may drop
         // what the job reads or writes once it is queued (decision 0491 step 2).
+        // The open submission may commit before the level does (a program launches in a submission of its own,
+        // `launch`), so the batch's fence holds them too, until its program's kit holds them (`Kit::held`).
         let pass = self.open()?;
         for (b, write) in &job.uses {
             pass.hold_for_later(b, *write);
+        }
+        for (b, _) in &job.uses {
+            if !b.contents().is_null() {
+                self.queued_held.uses_address(b.contents() as usize);
+            }
         }
         self.queued.push(job);
         Ok(())
@@ -3242,12 +3393,15 @@ impl Batch {
         let groups = |threads: usize| threads.div_ceil(rerail_accel_gpu::gpu::join::GROUP as usize).max(1);
         // A row stage's SIMD groups, a worker's group of them an item.
         let rows_a_group = rerail_accel_gpu::gpu::join::GROUP as usize / simd_group();
-        // A dedup's places placed with its input: its clear's count its places' word (its size script's).
-        // A fold's, its clear's and its merge's count its mask's word and one.
-        let clears: Vec<Option<(u64, u32)>> = jobs.iter().zip(&placed).map(|(j, at)| j.h_place.map(|h| match h.places {
-            Some(w) => (pa + at[h.block].expect("its places' block") + w.0, 0),
-            None => (pa + at[h.block].expect("its places' block") + h.mask.0, 1),
-        })).collect();
+        // A dedup's clear: its input's rows' count and 4, as its places are its rows' (`dedup_mask`: twice its rows, a
+        // power of two, 16 at least), 4 a thread. A fold's, its clear's and its merge's count its mask's word and one.
+        let clears: Vec<Option<(u64, u32)>> = jobs.iter().zip(&placed).map(|(j, at)| match (j.kind, j.dedup) {
+            (JobKind::Dedup, Some(d)) => Some((j.desc.totals + 4 * u64::from(d[1]), 4)),
+            _ => j.h_place.map(|h| match h.places {
+                Some(w) => (pa + at[h.block].expect("its places' block") + w.0, 0),
+                None => (pa + at[h.block].expect("its places' block") + h.mask.0, 1),
+            }),
+        }).collect();
         let job_phase = |prog: &mut Program, kinds: &[(JobKind, u32, fn(&Job) -> usize)]| {
             let mut items = Vec::new();
             let mut segs = Vec::new();
@@ -3316,6 +3470,8 @@ impl Batch {
             prog.rooms.sorts.extend(sort_room.take());
             // Its rows placed, and beside them its buckets' offsets, a thread a bucket (decision 0647).
             job_phase(prog, &[(JobKind::Index, PK_IX_PLACE, |j| j.count), (JobKind::Index, PK_IX_OFFS, |j| j.buckets + 1)]);
+            // Its marks (decision 0671), of its rows and buckets placed.
+            job_phase(prog, &[(JobKind::Index, PK_IX_MARK, |j| j.count)]);
         }
         job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLEAR, |j| j.clear), (JobKind::Map, PK_MAP, |j| j.count)]);
         job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLAIM, |j| j.claim)]);
@@ -3384,6 +3540,7 @@ impl Batch {
         }
         self.done.programs += 1;
         let mut prog = std::mem::take(&mut self.program);
+        let continues = prog.continues;
         // The next program's round ends are its own.
         self.ends = None;
         // The next program's claims go on past this one's, in the same arena: a table one places, a later one reads.
@@ -3480,15 +3637,39 @@ impl Batch {
         // What the open submission's levels made resident (a view's tapes, the atoms' blocks, the rolling cache: each
         // reached by address), which every stack's own submission makes resident again.
         let resident = self.pass.as_ref().map(|p| p.residents()).unwrap_or_default();
-        let kit = Kit { resident, descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, format, uses: prog.uses, hold: prog.hold, rooms: std::mem::take(&mut prog.rooms), maps_grown: false,
+        // What it reaches, held for its life (decision 0491 step 2): from its jobs' queueing (`queue`), and whatever it
+        // reaches beside them, as long as it may launch (a rerun, `finish`, binds them again after its first submission
+        // completed; a caller may have dropped them once they were queued).
+        let held = std::mem::replace(&mut self.queued_held, rerail_blocks::ledger::Fence::new());
+        for (b, _) in &prog.uses {
+            if !b.contents().is_null() {
+                held.uses_address(b.contents() as usize);
+            }
+        }
+        let kit = Kit { held, resident, descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, format, uses: prog.uses, hold: prog.hold, rooms: std::mem::take(&mut prog.rooms), maps_grown: false,
                         rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))?, tt: self.arena.as_ref().and_then(|a| a.canon_buffer()).map_or(Ok(0), |b| address(&b))? },
                         item_kinds: prog.items.iter().map(|i| i[0] >> 24).collect(), jumps: prog.jumps, last };
         let rounds = ProgramSizes::now().rounds.unwrap_or(STACK_ROUNDS_FIRST).max(1);
-        let r = Ran { ctl: std::sync::Arc::new(Words::zeroed(16)?), slots: Words::zeroed(2 * cap)?, cap, at: Some(0), list: 0, rounds, seq: 1, grids: None, kit };
-        // The builders whose jobs it holds (every one encoded and not launched yet): whether it built their indexes
-        // whole is read from its control words once its stacks are done (`Built`).
-        for b in self.building.iter_mut().filter(|b| b.encoded && b.whole.is_none()) {
-            b.whole = Some(Built { ctl: r.ctl.clone() });
+        // What its jobs reach, held while the program lives (`Ran::holds`).
+        let holds = rerail_blocks::ledger::Fence::new();
+        for (b, _) in kit.uses.iter().chain(&kit.resident) {
+            holds.uses_address(b.contents() as usize);
+        }
+        let r = Ran { ctl: std::sync::Arc::new(Words::zeroed(16)?), slots: Words::zeroed(2 * cap)?, cap, at: Some(0), list: 0, rounds, seq: 1, grids: None, kit, holds };
+        // One that goes on from a program that may still launch again (a park, a next stack: `finish`) is held until
+        // every program before it is whole: launched now, it would read that one's tables and counts before its later
+        // phases wrote them, and nothing would run it again (decision 0679: a waved stratum's heads, cut from its
+        // joins at a block wrapped again, were placed from a count of none, and the host took rows never written).
+        if continues && !(self.programs.is_empty() && self.held.is_empty()) {
+            // Its builders are its own: marked now, as its launch would mark them, so no other program's launch takes
+            // them; and told to no other batch until it launches (`Building::held`), as no submission committed before
+            // then holds their work.
+            for b in self.building.iter_mut().filter(|b| b.encoded && b.whole.is_none()) {
+                b.whole = Some(Built { ctl: r.ctl.clone() });
+                b.held = true;
+            }
+            self.held.push(r);
+            return Ok(());
         }
         self.launch(r)
     }
@@ -3552,6 +3733,13 @@ impl Batch {
         let table = self.arena.as_ref().filter(|_| kit.rebase.tt != 0).and_then(|a| a.canon_buffer());
         // Its own submission: what is open committed first, so the stack is one launch alone.
         self.submit_open()?;
+        // The builders whose jobs it holds (every one encoded and not launched yet): whether it built their indexes
+        // whole is read from its control words once its stacks are done (`Built`). Marked once what was open is
+        // committed: that submission tells only the builders it holds, not this program's, whose work is the stack's
+        // (a batch that took one waited for the submission before the stack, and read its index unbuilt).
+        for b in self.building.iter_mut().filter(|b| b.encoded && b.whole.is_none()) {
+            b.whole = Some(Built { ctl: r.ctl.clone() });
+        }
         let kit = &r.kit;
         let pass = self.open()?;
         pass.stack();
@@ -4156,6 +4344,9 @@ impl Kit {
 }
 
 struct Kit {
+    /// What it reaches (`uses`), held from its jobs' queueing until it is dropped: no launch of it binds a buffer
+    /// whose lease went back to the pool meanwhile.
+    held: Arc<rerail_blocks::ledger::Fence>,
     /// Its addresses as resolved, for a launch whose arena moved (`Kit::rebase`).
     rebase: Rebase,
     descs: Held,
@@ -4298,7 +4489,7 @@ impl Kit {
                 }
                 Ok(None) => {}
                 Err(why) => {
-                    crate::code_rule_dsl::prof::count_named(format!("device.a gate's room not grown: {why}"), 1);
+                    crate::code_rule_dsl::prof::count_named_args(format_args!("device.a gate's room not grown: {why}"), 1);
                     return Ok(false);
                 }
             }
@@ -4534,11 +4725,12 @@ const PK_GATE: u32 = 27;
 const PK_ROUND: u32 = 28;
 const PK_SIZE: u32 = 29;
 const PK_IX_OFFS: u32 = 30;
+const PK_IX_MARK: u32 = 31;
 /// The phases whose items are their jobs' rows' (`Job::rows_word`): each kernel's threads past its rows do nothing.
 /// Not a row's text (its SIMD groups stride its rows), an index (its sort is of every key), a clear, a fold's map or
 /// places, a scan's or a sort's tiles.
-const ROWS_ITEMS: [u32; 15] = [PK_COPY, PK_MAP, PK_DEDUP_CLAIM, PK_STAGE_COUNT, PK_SCAN_COUNT, PK_WITNESS_COUNT, PK_DEDUP_MARK, PK_STAGE_SCATTER, PK_SCAN_SCATTER,
-                               PK_ROW_SCATTER, PK_DEDUP_SCATTER, PK_LAT_CLAIM, PK_LAT_BEST, PK_IX_KEY, PK_IX_PLACE];
+const ROWS_ITEMS: [u32; 16] = [PK_COPY, PK_MAP, PK_DEDUP_CLAIM, PK_STAGE_COUNT, PK_SCAN_COUNT, PK_WITNESS_COUNT, PK_DEDUP_MARK, PK_STAGE_SCATTER, PK_SCAN_SCATTER,
+                               PK_ROW_SCATTER, PK_DEDUP_SCATTER, PK_LAT_CLAIM, PK_LAT_BEST, PK_IX_KEY, PK_IX_PLACE, PK_IX_MARK];
 
 /// A job's items in a phase as many as a count on the device needs (`join_stages`' `Seg`).
 #[repr(C)]
@@ -4561,6 +4753,9 @@ const SEG_EMPTY: u32 = 1 << 31;
 /// before it set (`join_grid`), stacked into launches (decision 0648). A phase reads what the phases before it wrote.
 #[derive(Default)]
 struct Program {
+    /// It goes on from a program before it (`Batch::cut`, or an index that one builds): its jobs read what that one's
+    /// wrote, so it runs once that one is whole (`Batch::held`).
+    continues: bool,
     descs: Vec<JobDesc>,
     items: Vec<[u32; 4]>,
     /// Each phase's first item, its items, its first segment and its segments.
@@ -4879,6 +5074,12 @@ struct Ran {
     seq: u32,
     grids: Option<Words>,
     kit: Kit,
+    /// What its jobs reach, held from its launch until it is dropped, its work done (decision 0491 step 2): the
+    /// submission that held them since they were queued (`Pass::hold_for_later`) is committed before its first stack,
+    /// and its next stacks are launched once the submissions before them completed, so what their holders dropped
+    /// meanwhile (a stage's parameters, a table's lease) would go back to its pool while a stack still reads it. A
+    /// fence never committed ends its uses when dropped.
+    holds: std::sync::Arc<rerail_blocks::ledger::Fence>,
 }
 
 /// A stack's phases at most (decision 0648): its grids' room.
@@ -5083,7 +5284,7 @@ struct Job {
     stage: Stage,
     write: Option<Stage>,
     probes: Option<[Stage; WITNESS_PROBES]>,
-    dedup: Option<[u32; 23]>,
+    dedup: Option<[u32; 32]>,
     /// Its parameters read through `P`: a row's words, a copy's, an index's.
     p: Option<Vec<u8>>,
     /// Its counts' values (0: none); its grids' threads: the count's (a map's, a copy's, an index's; a row's, its
@@ -5373,6 +5574,7 @@ pub mod tests {
             // SAFETY: row `i` is claimed (`for_device`), and nothing else writes the relation yet.
             unsafe { r.rows.put(i as u32, 0, v) };
         }
+        let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
         let (mut a, mut b, mut c) = (Batch::new().unwrap(), Batch::new().unwrap(), Batch::new().unwrap());
         let other = c.index(&rel, &[0]).unwrap();
         let built = a.index(&rel, &[0]).unwrap();
@@ -5664,6 +5866,7 @@ pub mod tests {
             assert_eq!(d.mask, w.mask);
             assert_eq!(d.offs.as_slice(), w.offs.as_slice(), "{cols:?}: the buckets");
             assert_eq!(d.rows.as_slice(), w.rows.as_slice(), "{cols:?}: each bucket's rows, in id order");
+            assert_eq!(d.marks.as_slice(), w.marks.as_slice(), "{cols:?}: each place's mark (decision 0671)");
             let _evaluation_later = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut later = Batch::new().unwrap();
             let found = later.index(dev, &cols).unwrap();
@@ -5702,6 +5905,31 @@ pub mod tests {
         taker.finish().unwrap();
         builder.finish().unwrap();
         assert_eq!(r.find_index(&[0], n as u32), Some(built.index as usize));
+        // Taken, and the same index built by the host meanwhile (it finds none marked): the builder, done first, keeps
+        // its own, which the taker's work may not have read yet. Given back, its entry in the directory was cleared,
+        // and a taker's probes read an empty index.
+        let mut builder = Batch::new().unwrap();
+        let built = builder.index(&placed, &[0, 1]).unwrap();
+        builder.commit_open().unwrap();
+        let mut taker = Batch::new().unwrap();
+        let taken = taker.index(&placed, &[0, 1]).unwrap();
+        assert!(!taken.built && taken.index == built.index, "taken");
+        let home = placed.home.as_ref().unwrap();
+        let hosts = {
+            let _lock = home.ix.lock().unwrap();
+            // SAFETY: under the block's index lock; the rows are written.
+            let room = unsafe { r.try_reserve_index(&home.block, &[0, 1], n as u32) }.unwrap();
+            unsafe {
+                r.build_index(&room);
+                r.index_built(&room);
+            }
+            room.index
+        };
+        builder.finish().unwrap();
+        let ix = r.index_at(built.index as usize);
+        assert!(ix.ncols == 2 && ix.state != rerail_blocks::relation::DEAD && ix.offs.len() == r.index_at(hosts).offs.len(), "a taken index kept by its builder");
+        assert_eq!(ix.rows.as_slice().len(), n, "its rows");
+        taker.finish().unwrap();
         // Not committed: each builds its own, and the second to finish gives its back.
         let (mut a, mut b) = (Batch::new().unwrap(), Batch::new().unwrap());
         let (ia, ib) = (a.index(&placed, &[1]).unwrap(), b.index(&placed, &[1]).unwrap());
@@ -5712,19 +5940,20 @@ pub mod tests {
         let ix = r.index_at(ib.index as usize);
         assert_eq!((ix.ncols, ix.state), (0, rerail_blocks::relation::DEAD), "the second given back");
         // A second build another batch took, whose builder finds the first built when it finishes: its room is kept,
-        // as the taker's stages may still be queued to read it (`InFlight::lent`).
+        // as the taker's stages may still be queued to read it (`InFlight::lent`). A key no build above marked (the
+        // host's [0, 1] is).
         let (mut x, mut a) = (Batch::new().unwrap(), Batch::new().unwrap());
-        let ix_x = x.index(&placed, &[0, 1]).unwrap();
-        let ix_a = a.index(&placed, &[0, 1]).unwrap();
+        let ix_x = x.index(&placed, &[1, 0]).unwrap();
+        let ix_a = a.index(&placed, &[1, 0]).unwrap();
         assert!(ix_x.built && ix_a.built && ix_x.index != ix_a.index);
         a.commit_open().unwrap();
         let mut t = Batch::new().unwrap();
-        let ix_t = t.index(&placed, &[0, 1]).unwrap();
+        let ix_t = t.index(&placed, &[1, 0]).unwrap();
         assert!(!ix_t.built && ix_t.index == ix_a.index, "the committed build taken");
         x.finish().unwrap();
         a.finish().unwrap();
         t.finish().unwrap();
-        assert_eq!(r.find_index(&[0, 1], n as u32), Some(ix_x.index as usize));
+        assert_eq!(r.find_index(&[1, 0], n as u32), Some(ix_x.index as usize));
         assert_ne!(r.index_at(ix_a.index as usize).state, rerail_blocks::relation::DEAD, "a taken build's room kept");
         // A delta read in place (its rows `from..`): its own index, though its count is that of the first rows'.
         let half = n / 2;
@@ -5839,6 +6068,7 @@ pub mod tests {
             let (d, w) = (r.index_at(ix.index as usize), h.index_at(hosts));
             assert_eq!(d.offs.as_slice(), w.offs.as_slice(), "{cols:?}: the buckets");
             assert_eq!(d.rows.as_slice(), w.rows.as_slice(), "{cols:?}: each bucket's rows, in id order");
+            assert_eq!(d.marks.as_slice(), w.marks.as_slice(), "{cols:?}: each place's mark (decision 0671)");
         }
     }
 
@@ -6069,6 +6299,49 @@ pub mod tests {
         assert_eq!(got, want);
     }
 
+    /// Decision 0679: a program cut from the one before it (`Batch::cut`, a block reached through a wrap made since)
+    /// reads what that one wrote, its placed table and its count. With a first arena of 16 bytes, the first program's
+    /// size script parks, and the program goes on only at `finish`, its arena mapped further; the second, launched at
+    /// once, copied by a count of none, and nothing ran it again (a waved stratum's heads, placed from its joins' rows,
+    /// were never written, and the host took its rooms' old bytes as rows). Held until the first is whole, it copies
+    /// every row the first made.
+    #[test]
+    fn a_program_cut_from_one_that_parks_reads_its_rows() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
+            return;
+        }
+        let _sizes = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_PROGRAM_ARENA", "16")]);
+        let (cap, n) = (5000, 4321);
+        let a = rows(cap, 7, 40);
+        let b = rows(cap, 11, 30);
+        let t = Table::new(3, cap).unwrap();
+        // SAFETY: the table holds 3 * cap values and nothing else refers to it yet.
+        let v = unsafe { std::slice::from_raw_parts_mut(t.buffer.buffer.contents().cast::<i64>(), 3 * cap) };
+        v[..cap].fill(0);
+        v[cap..2 * cap].copy_from_slice(&a);
+        v[2 * cap..].copy_from_slice(&b);
+        let totals = Words::zeroed(2).unwrap();
+        totals.set(0, n as u32);
+        let out = Table::new(2, cap).unwrap();
+        let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
+        let mut batch = Batch::new().unwrap();
+        batch.arena_reserved(true);
+        // The first program: the distinct rows, placed in its arena by its size script.
+        let distinct = batch.table(2, cap).unwrap();
+        batch.dedup(&t, &[2, 1], 0, 1, &totals, &distinct).unwrap();
+        // The second, cut from it: its rows copied by its count.
+        batch.cut().unwrap();
+        batch.copy(Rows::Table(&distinct), cap, Some((1, &totals)), &[Col::From(0), Col::From(1)], Rows::Table(&out), 0, None).unwrap();
+        let done = batch.finish().unwrap();
+        assert!(done.remaps > 0 && done.programs >= 2, "the first program parked at its arena, the second cut from it: {:?}", (done.remaps, done.programs));
+        let mut seen = std::collections::HashSet::new();
+        let want: Vec<(i64, i64)> = (0..n).map(|x| (b[x], a[x])).filter(|r| seen.insert(*r)).collect();
+        let got_n = totals.get(1) as usize;
+        assert_eq!(got_n, want.len(), "the first program's count");
+        let got: Vec<(i64, i64)> = (0..got_n).map(|x| (out.column(0, got_n)[x], out.column(1, got_n)[x])).collect();
+        assert_eq!(got, want, "the second program copied the first's rows");
+    }
+
 }
 
 /// A lattice relation's key map where it lies (decision 0384 step 5, `setfix::keys::KeyMap`): its block, its slots'
@@ -6208,4 +6481,20 @@ impl Batch {
 fn lat_bytes(p: &LatParams) -> &[u8] {
     // SAFETY: `LatParams` is `repr(C)`: an i64, eight u32s, two u64s, no padding (its size asserted).
     unsafe { std::slice::from_raw_parts((p as *const LatParams).cast::<u8>(), std::mem::size_of::<LatParams>()) }
+}
+
+
+#[cfg(test)]
+mod join_rust {
+    /// The join program's Rust (`rerail_ukl_rust::join_program`, decision 0567) was written from this source: each view
+    /// format's program text, as `program_pipes` assembles it off Metal, has a digest it runs for. A change to the
+    /// source is a change to that Rust too.
+    #[test]
+    fn the_join_programs_rust_is_of_this_source() {
+        let digests: Vec<u64> = [0, 16, rerail_clif::view::F16Z_FORMAT]
+            .iter()
+            .map(|&f| rerail_ukl_rust::digest(&format!("#define JOIN_PROGRAM 1\n{}", super::view_source(f)), &[]))
+            .collect();
+        assert_eq!(digests, rerail_ukl_rust::JOIN_PROGRAM, "join_stages.uglykl changed: bring rerail_ukl_rust::join_program to it, then its digests ({digests:#018x?})");
+    }
 }

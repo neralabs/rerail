@@ -10,7 +10,7 @@
 //   `Hello ${name}!`   "${}"   "$ {a}"   "{a}"   fine
 // The test is on the value (escapes applied), as ESLint's /\$\{[^}]+\}/u is. No options.
 .violation no_template_curly_in_string(at: node) code "no-template-curly-in-string"
-    "Change these quotes to backticks so the ${...} is interpolated, or escape the $ if the text is meant literally."
+    "Change these quotes to backticks so the ${{...}} is interpolated, or escape the $ if the text is meant literally."
     suppress eslint "no-template-curly-in-string"
     suppress oxlint "no-template-curly-in-string"
     suppress biome "lint/suspicious/noTemplateCurlyInString"

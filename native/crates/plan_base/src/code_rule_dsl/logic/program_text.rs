@@ -203,7 +203,7 @@ fn step_alias(key: &[u8; 32]) -> HashKey {
 }
 
 fn hex32(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(bytes)
 }
 
 fn unhex32(text: &str) -> Option<[u8; 32]> {

@@ -2,7 +2,7 @@
 //! (shared with the engine's crates); here are the engine's memory readings.
 
 #[allow(unused_imports)]
-pub use rerail_prof::{Stage, count, count_named, on, report, stages, time};
+pub use rerail_prof::{Stage, count, count_named, count_named_args, on, report, stages, time};
 #[cfg(target_family = "wasm")]
 pub use rerail_prof::single_thread_cpu;
 #[cfg(windows)]
@@ -251,13 +251,15 @@ pub fn thread_usage() -> (f64, f64) {
 
 /// `bytes` as lower-case hex, two digits a byte: how a SHA-256 digest is written.
 pub fn lower_hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        })
+    // The engine's one hex: a string a call, each byte's digits from the table (a `format!` a byte made a string
+    // each: 6.0 M on cold PostHog, at the observer's digests).
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        hex.push(char::from(DIGITS[usize::from(b >> 4)]));
+        hex.push(char::from(DIGITS[usize::from(b & 15)]));
+    }
+    hex
 }
 
 /// Return allocator pages after eviction closes idle SQLite connections.

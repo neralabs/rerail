@@ -483,10 +483,19 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
         // reads run first (struct, then types), and are listed with the reader's, in the order they ran, each once.
         let mut image = Vec::new();
         // Its exports are its outputs: the program read, given them (decision 0249), not its text with an `.output`
-        // after it read again.
+        // after it read again. A phase naming no language runs in its reader's (as phase 1 does): a library read by
+        // programs of several languages (tsx/names.rerail, by TypeScript's and Vue's) resolves over the reader's
+        // documents (decision 0665). The reader's dialect is in the options both runs share.
         let handed = {
             use crate::code_rule_dsl::logic::program_image::fields::FieldsMut;
             let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&program);
+            let mut settings = ProgramFields::settings(&*program);
+            if !settings.iter().any(|(k, _)| k == "language")
+                && let Some(language) = ProgramFields::settings(prog).into_iter().find(|(k, _)| k == "language")
+            {
+                settings.push(language);
+                b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
+            }
             for e in &declared.exports {
                 b.fields().add_output(e);
             }
@@ -705,7 +714,7 @@ pub fn sources(
     // Its frame, for a later process: where the run consulted what it read (a run that read nothing it can name is
     // not comparable, `changes_of`) and a store keeps it.
     let frame = (store.is_some() && !report.consulted.is_empty())
-        .then(|| super::Summary::of(&[], &[], Some(&handed), root, &options).ok().and_then(|s| s.encode()))
+        .then(|| super::Summary::of(&[], &[], &[], Some(&handed), root, &options).ok().and_then(|s| s.encode()))
         .flatten()
         .map(|summary| (identity, Some(super::frame::Frame { reads: report.consulted.clone(), plans: report.plans.clone(), summary, image: image.clone(), then: None })));
     let (one, exports) = one_of_rows(root, label, files, &declared, rows);

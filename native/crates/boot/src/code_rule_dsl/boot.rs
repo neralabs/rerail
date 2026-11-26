@@ -243,8 +243,9 @@ pub fn install_languages(tests: bool) {
     rerail_accel_gpu::install();
     // What a block of relations asks about the device: the run's binding's (decision 0342, Q58).
     facts::rows::install_block_device(logic::plan::placement::block_device);
-    // Every crate's vectors and maps made with no room take the run's open relation block (decision 0628 §3, §8).
-    facts::rows::install_run_room();
+    // Every crate's vectors and maps made with no room take the calling thread's stack, or the room of the owner
+    // making them (decision 0342, amended 2026-11-24, which supersedes 0628 §8's run room as the default).
+    rerail_blocks::maps::install();
     // Where the tape crate places the code tables it makes: a block (decision 0628 §2).
     rerail_tape_format::tape::place_tables_with(facts::rows::place_table);
     // The batches' relations held, for the heap report's spans (`rows`, below the batches' crate).

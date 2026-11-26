@@ -384,16 +384,19 @@ pub mod tests {
 
     /// The compiled grammar's tape is the engine's, node for node (extras and parents too), on
     /// documents it parses; the ones it leaves to the engine come back from there.
-    /// Tier 2's grammar calls are the machine's (`by_rules`): nested past `DEPTH`, a file is
-    /// refused (to the fallback), not run off the stack. Nested within it, it parses.
+    /// Tier 2's grammar calls are the machine's (`by_rules`): nested past the stack it may take
+    /// (`STACK_BYTES`), a file is refused (to the fallback), not run off the stack. Nested within it, it parses.
     #[test]
     fn deep_nesting_is_refused_not_overflowed() {
         let nested = |n: usize| format!(".decl r(x: number)\nr(x) :- x = {}1{}.\n", "(".repeat(n), ")".repeat(n));
         let c = crate::compiled().expect("compiles");
         let shallow = nested(100);
         assert_eq!(c.image(shallow.as_bytes()).ok(), Some(crate::engine_tape(&shallow)), "100 deep parses as the engine's");
-        let deep = nested(3_000);
-        assert!(c.image(deep.as_bytes()).is_err(), "3,000 deep: refused");
+        // The stack's bytes bound the calls open (`STACK_BYTES`), not their count: 30,000 deep passes them whatever a
+        // rule function's frame.
+        let deep = nested(30_000);
+        let got = c.image(deep.as_bytes());
+        assert!(got.is_err(), "30,000 deep: refused");
         // (The engine's parser, recursive too, runs off a test thread's stack at that depth.)
     }
 
@@ -537,8 +540,8 @@ pub mod tests {
     /// placed at once, before the node it wraps (a leaf's swap, or a larger node's rows moved,
     /// their parents with them); a dropped node taken out where it is dropped. Chains of wraps,
     /// wraps over large operands and inside them, and comments among them, as the engine's.
-    /// A reread that meets a dropped node's place refuses its statement, as the interpreter, which keeps the
-    /// dropped row there, and the reference do: recovered as the lean parser recovers it (decision 0650).
+    /// An aggregate's value of two terms in parentheses refuses its statement, as the lean parser's `agg_part`
+    /// refuses it: recovered as the lean parser recovers it (decision 0650).
     #[test]
     fn the_table_is_written_in_place() {
         let parsed = [
@@ -1698,9 +1701,9 @@ pub mod tests {
         }
     }
 
-    /// A token mark (decision 0129), `no_value`: an aggregate's word, then `(`, `)`, `:`, with
-    /// comments between or none, fails its statement, recovered as the lean parser's tape (decision 0650); with a
-    /// value, taken, as the engine's tape.
+    /// A token mark (decision 0129), `agg_call`: an aggregate's word, then `(`, `)`, `:`, with
+    /// comments between or none, is an aggregate whose value, none, fails its statement, recovered as the lean
+    /// parser's tape (decision 0650); with a value, taken, as the engine's tape.
     #[test]
     fn token_marks_refuse_and_take() {
         let c = crate::compiled().expect("compiles");
@@ -1752,19 +1755,17 @@ pub mod tests {
         }
     }
 
-    /// The token marks the grammar takes nowhere (`TokenMark::refuses`): `TOKEN` tests them, once
-    /// a token, and no state does. An I/O directive with no relation before an `#include` or at
-    /// the end: its statement fails, comments between the tokens or none, recovered as the lean parser's tape
-    /// (decision 0650); else taken, as the engine's tape. A functor named, not called, in a term: refused by its
+    /// An I/O directive's relations are none where a `.` is next (`io_none`), as the lean parser's
+    /// `list(DOT, …)`; before an `#include`, a `!` or at the end it reads a relation, so its statement fails,
+    /// comments between the tokens or none, recovered as the lean parser's tape (decision 0673 step 5); else
+    /// taken, as the engine's tape. rr has no token mark the grammar takes nowhere (`TokenMark::refuses`;
+    /// Kotlin's `bt_cref` is one). A functor named, not called, in a term: refused by its
     /// call's arguments (no mark: in a setting's line or a declaration's tail it is a word, as the
     /// engine reads it; decision 0650).
     #[test]
-    fn refusing_token_marks_refuse_at_any_level() {
+    fn bare_directives_and_functors_read_as_lean() {
         let c = crate::compiled().expect("compiles");
-        let refusing = c.program.token_marks.iter().filter(|m| m.refuses).count();
-        assert_eq!(refusing, 2, "`no_value`, `io_bare`");
-        let words = c.program.words.iter().filter(|&&w| rerail_compiler::program::split(w).0 == rerail_compiler::program::MARK);
-        assert!(words.clone().all(|&w| !c.program.token_marks.iter().any(|m| m.refuses && m.order == rerail_compiler::program::split(w).1 % 32)), "no state tests a refusing mark");
+        assert!(!c.program.token_marks.iter().any(|m| m.refuses), "no refusing mark: `io_none` is a peek");
         let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         let head = ".decl a(x: number)\n";
         let cases = [
@@ -1779,6 +1780,7 @@ pub mod tests {
             (format!("{head}.output a, a\n.input a\n"), true),
             (format!("{head}.input\n.decl b(x: number)\n"), true),
             (format!("{head}.input\n"), false),
+            (format!("{head}.input !a(x)\n"), false),
             (format!("{head}.output /* c */\n"), false),
             (format!("{head}.input\n#include \"x.rerail\"\n"), false),
         ];
@@ -1843,7 +1845,17 @@ pub mod tests {
             .replace(" at_on comma_rule bare_functor", " at_on")
             .replace("mark bare_functor = tokens \"@\" identifier ~\"(\"", "")
             .replace("(bare_functor value: lattice_functor | value: term)", "value: term")
+            // The directives' marks too: every statement is a setting, and a block holds no other.
+            .replace(" test_on fixtures_on policy_on decl_on violation_on edit_on functor_on type_on io_on lattice_on pragma_on json_flat paren_term paren_tilde paren_closes count_on agg_call agg_word", "")
+            .replace("negation | paren_term term [literal_tail] | paren_tilde paren_subject pattern_tail | group\n                        | term [literal_tail]", "negation | group | term [literal_tail]")
+            .replace("paren_closes paren_subject | term", "term")
+            .replace("                        | count_on aggregate | agg_call aggregate | agg_word aggregate\n", "")
+            .replace("(json_flat argument: json | argument: word | punctuation)* (newline | argument: json)", "(argument: json | argument: word | punctuation)* newline")
+            .replace("test_on test_block | fixtures_on fixtures_block | directive", "setting")
+            .replace("test_on refused | fixtures_on refused | directive", "setting")
             .lines()
+            .filter(|l| !["test_on", "fixtures_on", "policy_on", "decl_on", "violation_on", "edit_on", "functor_on", "type_on", "io_on", "lattice_on", "pragma_on", "json_flat", "paren_term", "paren_tilde", "paren_closes", "count_on", "agg_call", "agg_word"].iter().any(|m| l.starts_with(&format!("mark {m} "))))
+            .filter(|l| !(l.starts_with("  choice directive") || l.starts_with("                        | edit_on") || l.starts_with("                        | io_on")))
             .filter(|l| !(l.starts_with("escape ") && l.contains(" at number when ")))
             .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
             .map(|l| format!("{l}\n"))

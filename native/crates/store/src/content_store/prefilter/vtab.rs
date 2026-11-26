@@ -207,7 +207,7 @@ unsafe impl<'a> VTab<'a> for Table {
     }
 
     fn open(&'a mut self) -> Result<Cursor> {
-        Ok(Cursor { base: ffi::sqlite3_vtab_cursor::default(), store: self.store.clone(), which: self.which, db: self.db, opened: Arc::clone(&self.opened), counts_opened: Arc::clone(&self.counts), counts: None, space: None, units: Vec::new(), unit: 0, keys: Vec::new(), rows: Vec::new(), row: 0, rowid: 0 })
+        Ok(Cursor { base: ffi::sqlite3_vtab_cursor::default(), store: self.store.clone(), which: self.which, db: self.db, opened: Arc::clone(&self.opened), counts_opened: Arc::clone(&self.counts), counts: None, space: None, spaces_read: false, units: Vec::new(), unit: 0, keys: Vec::new(), rows: Vec::new(), row: 0, rowid: 0 })
     }
 }
 
@@ -221,6 +221,8 @@ struct Cursor {
     counts_opened: Opened,
     counts: Option<Arc<KeptSpace>>,
     space: Option<Arc<KeptSpace>>,
+    /// Whether `space` and `counts` are read (`filter`).
+    spaces_read: bool,
     /// The tapes still to read (a per-tape table), else one unit.
     units: Vec<i64>,
     unit: usize,
@@ -243,7 +245,9 @@ fn open_cached(opened: &Opened, connection: &Connection, store: &Path, space: &[
         let _ = at;
         return Ok(Some(Arc::clone(kept)));
     }
-    let kept = Arc::new(KeptSpace::open(store, space, &rows).map_err(error)?);
+    // Mapped by the rows it settles on (`KeptSpace::read_rows`: a file a later commit swept is read from that commit's).
+    let Some((rows, kept)) = KeptSpace::read_rows(store, connection, space).map_err(error)? else { return Ok(None) };
+    let kept = Arc::new(kept);
     *opened = Some((rows, Arc::clone(&kept)));
     Ok(Some(kept))
 }
@@ -471,8 +475,14 @@ unsafe impl VTabCursor for Cursor {
             .collect::<Result<Vec<_>>>()?;
         // SAFETY: the connection SQLite calls this filter on; not closed by the wrapper.
         let connection = unsafe { Connection::from_handle(self.db) }?;
-        self.space = open_cached(&self.opened, &connection, &self.store, &self.which.space())?;
-        self.counts = if self.which == Which::Vocabulary { open_cached(&self.counts_opened, &connection, &self.store, &kept::space())? } else { None };
+        // A cursor lives one run of its statement, through which the chains stay (a kept write is the store's, never
+        // a statement's): its spaces are read at its first filter, where a correlated read filters once an outer row
+        // and read the chain each time.
+        if !self.spaces_read {
+            self.space = open_cached(&self.opened, &connection, &self.store, &self.which.space())?;
+            self.counts = if self.which == Which::Vocabulary { open_cached(&self.counts_opened, &connection, &self.store, &kept::space())? } else { None };
+            self.spaces_read = true;
+        }
         self.units = match (self.per_tape(), self.space.as_ref()) {
             (false, None) if matches!(self.which, Which::State | Which::Decided) => vec![0],
             (_, None) => Vec::new(),

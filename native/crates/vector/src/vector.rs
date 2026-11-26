@@ -95,7 +95,8 @@ impl<T: Pod> Vector<T> {
             return Err(self);
         }
         let len = self.len;
-        let region = self.mem.take().expect("a region");
+        let mut region = self.mem.take().expect("a region");
+        region.tag.handed();
         Ok((region, len))
     }
 
@@ -105,12 +106,14 @@ impl<T: Pod> Vector<T> {
     }
 
     /// The CPU reads (or writes) `n` `T`s from its `from`th: its region's guard checks them (decision 0487 R4). With
-    /// none, no more than a load.
+    /// none, or none of the device's uses of its block queued, no more than a load: every read of a value through
+    /// `Deref` (each `v[i]`) passes here, and a call to the guard at each was a sixth of a cold PostHog run's
+    /// instructions (0.58 T of 3.70 T, decision 0684).
     #[inline]
     #[track_caller]
     fn check(&self, from: usize, n: usize, write: bool) {
         if let Some(m) = &self.mem
-            && !m.quiet()
+            && m.device_queued()
             && let Some((g, at)) = m.guard()
         {
             let (at, len) = (at + from * size_of::<T>(), (n * size_of::<T>()).max(1));
@@ -168,6 +171,9 @@ impl<T: Pod> Vector<T> {
             // copy: growth: an array that outgrew its region, moved once, as a vector's growth moves it
             unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.len) };
         }
+        if let Some(old) = self.mem.as_mut() {
+            region.tag.grown(&mut old.tag);
+        }
         (self.mem, self.ptr, self.cap) = (Some(region), ptr, cap);
     }
 
@@ -185,6 +191,9 @@ impl<T: Pod> Vector<T> {
             // SAFETY: as `reserve`'s.
             // copy: growth: an array that outgrew its region, moved once, as a vector's growth moves it
             unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.len) };
+        }
+        if let Some(old) = self.mem.as_mut() {
+            region.tag.grown(&mut old.tag);
         }
         (self.mem, self.ptr, self.cap) = (Some(region), ptr, need);
     }
@@ -381,10 +390,12 @@ impl<T: Pod> Vector<T> {
         other.clear();
     }
 
+    #[inline]
     pub fn as_slice(&self) -> &[T] {
         self
     }
 
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         self
     }
@@ -666,18 +677,21 @@ impl<T: Pod + Copy> From<&Vector<T>> for Vector<T> {
 }
 
 impl<T: Pod + Copy> std::borrow::Borrow<[T]> for Vector<T> {
+    #[inline]
     fn borrow(&self) -> &[T] {
         self
     }
 }
 
 impl<T: Pod> AsRef<[T]> for Vector<T> {
+    #[inline]
     fn as_ref(&self) -> &[T] {
         self
     }
 }
 
 impl<T: Pod> AsMut<[T]> for Vector<T> {
+    #[inline]
     fn as_mut(&mut self) -> &mut [T] {
         self
     }

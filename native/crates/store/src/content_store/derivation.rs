@@ -22,7 +22,7 @@
 
 #[allow(unused_imports)]
 use crate::content_store::Cached as _;
-use super::kept_facts::{ChainRows, KeptPut, KeptSpace, chain_rows, sorted_put, write_space};
+use super::kept_facts::{ChainRows, KeptPut, KeptSpace, sorted_put, write_space};
 use super::{ContentStore, StoreError, StoreResult, Sym};
 use rerail_blocks::kept::{FactKey, Kept, KeptRead};
 use rusqlite::Connection;
@@ -103,10 +103,7 @@ fn holds<R: KeptRead + ?Sized>(view: &R, derivation: &StoredDerivation) -> bool 
 }
 
 fn open(store: &std::path::Path, t: &Connection) -> StoreResult<Option<KeptSpace>> {
-    // Outside a write's transaction, a writer may commit and sweep the files the rows name before they are mapped:
-    // the rows are then read again (`KeptSpace::open_current`).
-    let rows = chain_rows(t, &space())?;
-    Ok(KeptSpace::open_current(store, &space(), rows, || chain_rows(t, &space()))?.map(|(_, kept)| kept))
+    KeptSpace::read(store, t, &space())
 }
 
 /// The puts of one write against the space as `old` holds it: each binding, in order (a rebinding bumps its

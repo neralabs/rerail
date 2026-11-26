@@ -832,7 +832,7 @@ impl Guests {
     /// the text of a document whose tape is `with`; `None` when either is not in the chunk.
     fn splice(&mut self, by_key: &HashMap<u32, &Document>, docs: &[Document], node: i64, with: &str) -> Result<Option<(String, String, String, String)>, String> {
         let Some(d) = by_key.get(&((node >> 32) as u32)).copied() else { return Ok(None) };
-        let Some(w) = docs.iter().find(|x| syntax::tape_hex(&x.digest) == with) else { return Ok(None) };
+        let Some(w) = docs.iter().find(|x| *syntax::tape_hex(&x.digest) == *with) else { return Ok(None) };
         let ids = self.numbering(d)?;
         let Some((_, id, _)) = ids.at((node & 0xffff_ffff) as u32) else { return Ok(None) };
         // Each document read in a batch of its own (`Facts::alone`): the splice reads two nodes of one and the text of
@@ -861,7 +861,7 @@ impl Guests {
                 label.to_owned()
             }
         };
-        Ok(Some((grammar, text, syntax::tape_hex(&d.digest), d.path.clone())))
+        Ok(Some((grammar, text, syntax::tape_hex(&d.digest).to_string(), d.path.clone())))
     }
 
     fn numbering(&mut self, host: &Document) -> Result<&syntax::Numbering, String> {

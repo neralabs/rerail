@@ -41,6 +41,9 @@ pub struct Lang {
     words: (usize, usize),
     /// The grammar's names of its ids (`Names`): what a parser without the grammar numbers its nodes by.
     names: Names,
+    /// Its kinds' part, each code's presence word by number (`presence::kind_word`), made once from the table: every
+    /// tape of the language starts with it (`ops::Writer::begin_with`).
+    kinds: Box<[u8]>,
 }
 
 /// A language's names, as its grammar has them (decision 0631): each kind id a node can have (a public symbol) with
@@ -153,7 +156,8 @@ impl Lang {
         let kinds = table.entries().map(|e| usize::from(e.kind) + 1).max().unwrap_or(0);
         let fields = table.entries().map(|e| usize::from(e.field) + 1).max().unwrap_or(0);
         let words = (kinds.div_ceil(64), fields.div_ceil(64));
-        Ok(Lang { table, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, words, names: Names::default() })
+        let kinds: Box<[u8]> = table.entries().flat_map(|e| presence::kind_word(e.kind, e.field, e.flags).to_le_bytes()).collect();
+        Ok(Lang { table, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, words, names: Names::default(), kinds })
     }
 
     /// The language with its grammar's names (`Names`).
@@ -182,6 +186,10 @@ impl Lang {
     /// The words of a presence's kinds' and fields' bitmaps: one bit a kind and a field the table names.
     pub fn presence_words(&self) -> (usize, usize) {
         self.words
+    }
+    /// Its kinds' part (`kinds`): each code's presence word, by number.
+    pub fn kinds_part(&self) -> &[u8] {
+        &self.kinds
     }
     pub fn table(&self) -> &CodeTable {
         &self.table
@@ -892,6 +900,11 @@ pub struct Finished {
     pub tape: Written,
 }
 
+/// The maker of a finished tape's auxiliary index (decision 0656 step 3), from the tape as it lies: given to a
+/// writer's `finish_with`, which lays the index after the presence where the writer wrote the tape, in its room
+/// before giving it out (0353 row 17), as `Written::lay_aux` lays it in a tape's own vector.
+pub type AuxMaker<'a> = &'a dyn Fn(&Written) -> Result<Vec<u8>, String>;
+
 impl Written {
     /// The nodes.
     pub fn len(&self) -> usize {
@@ -942,14 +955,11 @@ impl Written {
     /// Its bytes, where it owns them (a writer's tape, not a placed one): for the writer to write the next tape in
     /// (`ops::Writer::recycle`).
     pub fn into_own(self) -> Option<crate::Vector<u8>> {
-        let home = match self {
+        match self {
             Written::F16(t) => t.buf,
             Written::F16Z(t) => t.buf,
-        };
-        match home {
-            crate::home::Home::Own(v) => Some(v),
-            crate::home::Home::Placed(_) => None,
         }
+        .into_own()
     }
     pub fn extent(&self) -> &[u8] {
         match self {
@@ -1287,9 +1297,10 @@ pub(crate) fn write_with(mut w: impl WriterOps, n: usize, mut node: impl FnMut(u
 const NONE: u32 = u32::MAX;
 
 /// Format 16 (or 16z where `z`) written from the tree `t`, each node's code mapped to the language's number
-/// (`number`, by `t`'s code), in one pass (`write`): the tests' tapes (f16's, the auxiliary index's).
-#[cfg(test)]
-pub(crate) fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Written, String> {
+/// (`number`, by `t`'s code), in one pass (`write`): the tests' tapes (f16's, the auxiliary index's, the GPU's; other
+/// crates' tests' too, through `test-hooks`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Written, String> {
     write(lang, t.len(), source, terminators, tag, z, nodes_of(t, number))
 }
 
@@ -3788,6 +3799,99 @@ mod tests {
         let again = Writer::finish(&mut w).expect("the second tape").tape;
         assert_eq!(again.extent(), &want[..], "the tape written in the room given back");
         assert_eq!(again.extent().as_ptr(), at, "the tape is the room given back");
+    }
+
+    /// Test rooms (`home::Rooms`): regions of leaked memory, every `refuse`-th asked refused (0: none).
+    struct TestRooms {
+        asked: std::sync::atomic::AtomicUsize,
+        refuse: usize,
+    }
+
+    struct TestRegion(&'static mut [u8]);
+
+    #[derive(Debug)]
+    struct TestRoom(&'static [u8]);
+
+    impl crate::home::Room for TestRoom {
+        fn bytes(&self) -> &[u8] {
+            self.0
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    impl crate::home::Rooms for TestRooms {
+        fn region(&self, len: usize) -> Option<Box<dyn crate::home::Region>> {
+            let k = self.asked.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if self.refuse != 0 && k % self.refuse == 0 {
+                return None;
+            }
+            Some(Box::new(TestRegion(Box::leak(vec![0x5au8; len].into_boxed_slice()))))
+        }
+    }
+
+    impl crate::home::Region for TestRegion {
+        fn free(&mut self) -> &mut [u8] {
+            self.0
+        }
+        fn give(&mut self, len: usize) -> std::sync::Arc<dyn crate::home::Room> {
+            let (tape, rest) = std::mem::take(&mut self.0).split_at_mut(len);
+            self.0 = rest;
+            std::sync::Arc::new(TestRoom(tape))
+        }
+    }
+
+    fn test_rooms(refuse: usize) -> Option<std::sync::Arc<dyn crate::home::Rooms>> {
+        Some(std::sync::Arc::new(TestRooms { asked: Default::default(), refuse }))
+    }
+
+    /// Decision 0353 step 4a (row 17): a writer given rooms writes the reference writer's tape and presence in them,
+    /// R13's cases: its tape in a region from the start, the region grown as it fills (each case's hint a third of
+    /// its nodes), and a region refused in the middle of a tape leaving it in a vector of the writer's own.
+    #[test]
+    fn a_writer_with_rooms_writes_the_references_tape() {
+        for refuse in [0, 2, 3] {
+            writes_the_references_tape(|lang, source, z, blocks, nodes| {
+                let mut w = Writer::placing(test_rooms(refuse));
+                w.begin(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3);
+                w
+            });
+        }
+    }
+
+    /// A writer given rooms gives its tape out where it wrote it: placed, the bytes a writer without rooms writes, and
+    /// a writer used again writes the next tape in bytes of its own (the rest of its region, or a new one), the first
+    /// as it was.
+    #[test]
+    fn a_writer_with_rooms_gives_its_tape_out_where_it_lies() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        for z in [false, true] {
+            let mut own = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
+            by_ops(&mut own, &nodes, 1);
+            let want = Writer::finish(&mut own).expect("the tape").tape;
+            let mut w = Writer::placing(test_rooms(0));
+            let mut tapes = Vec::new();
+            for _ in 0..2 {
+                w.begin(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
+                by_ops(&mut w, &nodes, 1);
+                tapes.push(Writer::finish(&mut w).expect("the tape").tape);
+            }
+            for t in &tapes {
+                let home = match t {
+                    Written::F16(t) => t.home(),
+                    Written::F16Z(t) => t.home(),
+                };
+                assert!(home.placed(), "z {z}: the tape given out of its region");
+                assert_eq!(t.extent(), want.extent(), "z {z}: the tape a writer without rooms writes");
+            }
+            let (a, b) = (tapes[0].extent().as_ptr_range(), tapes[1].extent().as_ptr_range());
+            assert!(b.start >= a.end || b.end <= a.start, "z {z}: the second tape in bytes of its own, the first kept");
+        }
     }
 
     /// Decision 0434 §6, R15: the writer's ops compiled by the JIT write the reference writer's tape and presence:

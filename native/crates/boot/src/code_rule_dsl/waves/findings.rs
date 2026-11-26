@@ -319,28 +319,20 @@ fn metavariable(
 }
 
 /// Where each of `names` binds in W's match of `grammar` at `node` of `root`'s tape (an `ast` atom's captures,
-/// decision 0107): per name, its nodes as tape preorder ids, a single capture's node or a multi-capture's every node.
-/// A name of the rule's `transform` binds its text instead (`Capture::Text`). `None` where W does not match there or a
-/// name binds nothing; `Err` with the limit W's matcher hit within `work` visits.
-pub(in crate::code_rule_dsl) fn captured(
+/// decision 0107), handed to `each` as it is read: per name in order (its index), its nodes as tape preorder ids, a
+/// single capture's node or a multi-capture's every node, or the text a name of the rule's `transform` binds. Nothing
+/// is collected: the caller writes the values where its rows lie. `Ok(false)` where W does not match there (a name
+/// that binds nothing calls `each` for none of its values); `Err` with the limit W's matcher hit within `work` visits.
+/// And the steps W's matcher took (its utility steps: `work` less what was left), which price W's matcher against the
+/// transducer (decision 0334).
+pub(in crate::code_rule_dsl) fn captured_each(
     grammar: &GrammarMatcher,
     root: &AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
     node: u32,
     names: &[String],
     work: usize,
-) -> Result<Option<Vec<Capture>>, String> {
-    captured_counted(grammar, root, node, names, work).0
-}
-
-/// [`captured`], and the steps W's matcher took (its utility steps: `work` less what was left), which price W's
-/// matcher against the transducer (decision 0334).
-pub(in crate::code_rule_dsl) fn captured_counted(
-    grammar: &GrammarMatcher,
-    root: &AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
-    node: u32,
-    names: &[String],
-    work: usize,
-) -> (Result<Option<Vec<Capture>>, String>, usize) {
+    each: &mut dyn FnMut(usize, Captured<'_>),
+) -> (Result<bool, String>, usize) {
     begin_clause(grammar, work);
     let mut found = grammar.match_rule(node_at(root, node));
     let transformed = match (&grammar.transform, &mut found) {
@@ -349,39 +341,33 @@ pub(in crate::code_rule_dsl) fn captured_counted(
     };
     let (left, exceeded) = end_clause();
     let used = work.saturating_sub(left);
-    let result = (move || {
-        if let Some(limit) = exceeded {
-            return Err(format!("{limit:?}"));
+    if let Some(limit) = exceeded {
+        return (Err(format!("{limit:?}")), used);
+    }
+    if !transformed {
+        return (Err("Work".to_owned()), used);
+    }
+    let Some(found) = found else { return (Ok(false), used) };
+    let env = found.get_env();
+    for (k, name) in names.iter().enumerate() {
+        if let Some(text) = env.get_transformed(name) {
+            each(k, Captured::Text(text));
+        } else if let Some(node) = env.get_match(name) {
+            each(k, Captured::Node(node.node_id() as u32));
+        } else {
+            for node in env.get_multiple_matches(name) {
+                each(k, Captured::Node(node.node_id() as u32));
+            }
         }
-        if !transformed {
-            return Err("Work".to_owned());
-        }
-        let Some(found) = found else { return Ok(None) };
-        let env = found.get_env();
-        Ok(names
-            .iter()
-            .map(|name| {
-                if let Some(text) = env.get_transformed(name) {
-                    return Some(Capture::Text(String::from_utf8_lossy(text).into_owned()));
-                }
-                // A match's temporary, read into the rows at once: one block allocation a capture of every root cost
-                // more than the match.
-                let nodes: Vec<u32> = match env.get_match(name) {
-                    Some(node) => vec![node.node_id() as u32],
-                    None => env.get_multiple_matches(name).iter().map(|node| node.node_id() as u32).collect(),
-                };
-                (!nodes.is_empty()).then_some(Capture::Nodes(nodes))
-            })
-            .collect())
-    })();
-    (result, used)
+    }
+    (Ok(true), used)
 }
 
-/// What a name of an `ast` atom binds at a match (`captured`): nodes (a multi-capture's every node), or the text a
-/// rule's `transform` makes.
-pub(in crate::code_rule_dsl) enum Capture {
-    Nodes(Vec<u32>),
-    Text(String),
+/// One value a name of an `ast` atom binds at a match (`captured_each`): a node, or the text a rule's `transform`
+/// makes, lent from W's match.
+pub(in crate::code_rule_dsl) enum Captured<'a> {
+    Node(u32),
+    Text(&'a [u8]),
 }
 
 pub struct Layer {

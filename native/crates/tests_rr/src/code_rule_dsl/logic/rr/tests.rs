@@ -908,7 +908,7 @@ out_of_loop(c) :- callee(n, c), !inside(n, _, stop).
 fn_with_call(f) :- fname(a, f), has(a, n, stop), node(_, n, "block", _, _).
 .decl own(c: symbol, f: symbol)
 own(c, f) :- callee(n, c), fname(a, f), within_stop(n, a, stop).
-.decl lonely(c: symbol)
+.decl lonely(c: symbol) cross_file   // a name called in one file, defined in none (decision 0652)
 lonely(c) :- callee(_, c), !(callee(m, c), fname(f, c)), !(c = "h", callee(_, "f")).
 .output near, out_of_loop, fn_with_call, own, lonely
 "#;
@@ -1144,13 +1144,17 @@ fn sum_and_join_lower() {
     assert!(lit.contains(" by ($n, $i) sep \"\" : "), "{lit}");
     let types: Vec<String> = p.columns_of(&rel).unwrap().into_iter().map(|(_, t)| t).collect();
     assert_eq!(types, ["node", "int", "int", "sym"], "{atom}");
-    let (lit, over, _, rel) = agg(&p, "g");
+    let (lit, over, atom, rel) = agg(&p, "g");
     let over = over.unwrap();
     assert!(lit.contains(" = sum $") && over.starts_with("rr_val"), "{lit}");
     // A helper named by its content names its columns by their places (decision 0639 §4).
     let cols = p.columns_of(&rel).unwrap();
     assert_eq!(cols.len(), 4, "c, t, the named `_` and the value: {cols:?}");
-    assert!(cols.iter().any(|(_, t)| t == "int"), "{cols:?}");
+    // The helper is named by its content, its columns by their places (`rr_c<i>`, decision 0639 §3): the value is
+    // the atom's argument at an `int` column.
+    let args: Vec<&str> = atom.split_once('(').and_then(|(_, a)| a.strip_suffix(')')).unwrap_or_default().split(", ").collect();
+    let at = args.iter().position(|a| *a == format!("${over}")).unwrap_or_else(|| panic!("{over} in {atom}"));
+    assert_eq!(cols[at].1, "int", "{atom}: {cols:?}");
     let (_, _, _, rel) = agg(&p, "r");
     assert_ne!(rel, "arg", "arg(c, t, t) tests t = t: a helper relation");
     let e = ".decl a(x: number)\na(x) :- a(y), x = sum z sep \",\" : { a(z) }.";
@@ -2099,7 +2103,7 @@ g(d)
 comma(l, c) :- kind(n, "argument_list"), match_all(",", n, m), line(m, l), col(m, c).
 .decl in_node(t: symbol, k: number)
 in_node(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", n, _) }.
-.decl in_text(t: symbol, k: number)
+.decl in_text(t: symbol, k: number) cross_file   // texts and counts: values of the corpus (decision 0652)
 in_text(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", t, _, _, _) }.
 .output comma, in_node, in_text
 "#).unwrap();
@@ -2822,7 +2826,7 @@ objects(x, l, c) :- sqlstr(s), parsed(s, "sql", r), within(n, r), kind(n, "objec
 unscoped(k) :- node(_, _, k, _, _).
 .decl qualified(x: symbol)
 qualified(x) :- kind(n, "sql:object_reference"), text(n, x).
-.decl counted(c: number)
+.decl counted(c: number) cross_file   // the corpus's count (decision 0652)
 counted(c) :- c = count : { kind(_, "sql:object_reference") }.
 .output sqlkinds, docs, objects, unscoped, qualified, counted
 "#;
@@ -3480,7 +3484,7 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
         crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap()
     };
     let a = policy("a", "a", ".violation Fn(at: node) \"a def\"\nFn(f) :- def_at(f, _).");
-    let b = policy("b", "b", ".violation Dup(at: node) \"two defs\"\nDup(f) :- def_at(f, s), def_at(g, s), f != g.");
+    let b = policy("b", "b", ".decl twice(s: symbol) cross_file\ntwice(s) :- def_at(f, s), def_at(g, s), f != g.\n.violation Dup(at: node) \"two defs\"\nDup(f) :- def_at(f, s), twice(s).");
     let run = |programs: &[&str], out: &str| -> Vec<String> {
         let out = dir.join(out);
         crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -3519,7 +3523,7 @@ fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
     }
     let policy = |name: &str, scope: &str, body: &str| format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rerail\"\n.scope dirs \"{scope}\"\n{body}\n");
     let a = policy("a", "a", ".violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).");
-    let b = policy("b", "b", ".violation Dup(at: node) \"two calls\"\nDup(c) :- call_name(c, s), call_name(d, s), c != d.");
+    let b = policy("b", "b", ".decl twice(s: symbol) cross_file\ntwice(s) :- call_name(c, s), call_name(d, s), c != d.\n.violation Dup(at: node) \"two calls\"\nDup(c) :- call_name(c, s), twice(s).");
     let run = |programs: &[&str], out: &str| -> Vec<String> {
         let out = dir.join(out);
         crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -3593,9 +3597,9 @@ fn ordering_nodes_follows_preorder_across_granules() {
 xs(n) :- node(_, n, "identifier", _, _), text(n, "x").
 .decl before(a: number, b: number)
 before(la, lb) :- xs(a), xs(b), a < b, line(a, la), line(b, lb).
-.decl last(l: number)
+.decl last(l: number) cross_file
 last(l) :- m = max k : { xs(k) }, line(m, l).
-.decl first(l: number)
+.decl first(l: number) cross_file
 first(l) :- m = min k : { xs(k) }, line(m, l).
 .output before, last, first
 "#;
@@ -4777,7 +4781,7 @@ fn a_cone_is_taken_without_the_attributes_requests() {
 fn an_attribute_a_cross_file_reader_asks_for_is_eager() {
     let rule = r#"
 .policy "t:values" revision 1
-.decl pick(n: node)
+.decl pick(n: node) cross_file   // a node with its twin in another document (decision 0652)
 pick(n) :- kind(n, "integer"), kind(m, "integer"), docof(n, d), docof(m, e), d != e.
 .decl cv(v: symbol)
 cv(v) :- pick(n), value(n, v).
@@ -5101,6 +5105,45 @@ fn finishs_rewrites_run_on_the_version() {
     assert!(v.input_names().iter().any(|i| i == axis) && v.declares(axis), "the axis {axis} an input: {:?}", v.input_names());
 }
 
+/// A recursive rule whose recursion binds a `nearest`'s far end reads it from its near end (t57 §8, E1,
+/// `lowering_tail::NearEnds`, run as a program is prepared, not in the lowering, which stays T's front end's): the
+/// `nearest` and the atoms that bind its near end are a helper made once
+/// (`rr_near0`), read by the far end; two rules with the same part read one helper, and a rule with no recursion, or
+/// whose recursion binds the near end, is left as it was.
+#[test]
+fn a_recursions_nearest_is_read_from_its_near_end() {
+    let src = concat!(
+        "#include \"python/compare.rerail\"\n",
+        ".decl dk(k: symbol)\ndk(\"function_definition\"). dk(\"class_definition\").\n",
+        ".decl def(f: node, x: symbol)\n.decl qn(f: node, q: symbol)\n.decl top(f: node)\n.decl up(f: node, s: node)\n",
+        ".output qn, top, up\n",
+        "def(f, x) :- kind(f, k), dk(k), field(f, \"name\", n), text(n, x).\n",
+        "qn(f, x) :- def(f, x), !nearest(f, _, dk).\n",
+        "qn(f, q) :- def(f, x), nearest(f, s, dk), kind(s, \"class_definition\"), qn(s, p), q = @concat(p, \".\", x).\n",
+        "qn(f, q) :- def(f, x), nearest(f, s, dk), kind(s, \"function_definition\"), qn(s, p), q = @concat(p, \"/\", x).\n",
+        "top(f) :- def(f, _), nearest(f, s, dk), kind(s, \"module\").\n",
+        "up(f, s) :- def(f, _), nearest(f, s, dk).\n",
+        "up(f, s) :- up(f, t), nearest(t, s, dk).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let lowered = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    assert!(lowered.rules().all(|x| !lowered.show_rule(x).contains("rr_near")), "the lowered program is T's");
+    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("near ends", lowered);
+    p.program(&mut crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::NearEnds);
+    let (v, _) = p.finish().unwrap();
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    let helpers: Vec<&String> = rules.iter().filter(|x| x.starts_with("rr_near")).collect();
+    assert_eq!(helpers.len(), 1, "one helper for qn's two rules: {rules:#?}");
+    assert!(helpers[0].contains("def(") && helpers[0].contains("nearest"), "the part: {}", helpers[0]);
+    let recursive: Vec<&String> = rules.iter().filter(|x| x.starts_with("qn(") && x.contains("qn($s")).collect();
+    assert_eq!(recursive.len(), 2, "{rules:#?}");
+    assert!(recursive.iter().all(|x| x.contains("rr_near0(") && !x.contains("nearest") && !x.contains("def(")), "the recursion reads the helper: {recursive:#?}");
+    // No recursion, and a recursion that binds the near end (`up(f, t)` binds `t`): as written.
+    assert!(rules.iter().filter(|x| x.starts_with("top(") || x.starts_with("up(")).all(|x| !x.contains("rr_near")), "{rules:#?}");
+}
+
 /// `whole()`'s last passes before `front::finish_checks_on` run on a modular text's version (decision 0281's path, step 7b): a
 /// nullary relation is a set of the unit (a column, a `1` in its atoms), the `.scope` settings set the globs, and a
 /// reader of `value` asks for it, as the tree's `lower::whole_back` makes them; a debug build checks the image against the tree's (`link_seeded_version`).
@@ -5193,7 +5236,7 @@ fn span_patterns_are_found_on_the_version() {
 
 /// core.rerail's declarations and `node`'s projections are made on a modular text's version (decision 0281's path, step
 /// 7b): a rule reading `kind` reads it through the projection `kind(n, k) :- node(_, n, k, _, _)`, one of the
-/// program's rules, written as an edit of the linked program (`CoreDecls`, decision 0679 §5.1: after its own rules); a debug build
+/// program's rules, written as an edit of the linked program (`CoreDecls`, decision 0701 §5.1: after its own rules); a debug build
 /// checks the image against the tree's.
 #[test]
 fn core_declarations_and_projections_are_made_on_the_version() {
@@ -6239,7 +6282,7 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
         {
             let plain = |r: &String| !r.starts_with("rr_");
             let mut conflicts: Vec<String> = Vec::new();
-            let mut cols: BTreeMap<String, (usize, Vec<(String, String)>)> = BTreeMap::new();
+            let mut cols: BTreeMap<String, (usize, Vec<(String, String)>)> = std::collections::BTreeMap::new();
             let mut natives: BTreeMap<String, usize> = BTreeMap::new();
             let mut sets: BTreeMap<String, (usize, Vec<String>)> = BTreeMap::new();
             let mut inputs_from: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
@@ -6676,6 +6719,32 @@ fn every_module_lowers_alike_against_its_scopes_headers() {
     assert!(differ.is_empty(), "{} of {compared} modules differ against their scope's headers:\n{}", differ.len(), differ.join("\n"));
 }
 
+/// Decision 0639 §2: every library file a pack's program includes is in a module of the library's plan, the packs'
+/// tables beside the library (`#include "../packs/python/….stdlib.rerail"`) too. Planned as file seeds, which outside
+/// the library are a program's own text, they were in no module, and a run of RUF013 with any other program lowered
+/// it in a scope without its table ("relation stdlib_module is read by the rule for stdlib_known and not declared").
+#[test]
+fn every_library_file_a_pack_includes_is_a_planned_module() {
+    let lib = crate::code_rule_dsl::logic::rr::library();
+    let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
+    // A program that does not read is no evidence either way: named, with its error, where the tables are missed.
+    let mut unread: Vec<String> = Vec::new();
+    for path in walk_rr(&lib.join("../packs/python")) {
+        let Ok(src) = std::fs::read_to_string(&path) else { continue };
+        match super::modules(&src) {
+            Ok(Some(m)) => paths.extend(m.files.into_iter().map(|(p, _, _)| p)),
+            Ok(None) => {}
+            Err(e) => unread.push(format!("{}: {e}", path.display())),
+        }
+    }
+    assert!(paths.iter().any(|p| p.to_string_lossy().ends_with(".stdlib.rerail")), "a pack's table among the library files: {paths:?}\nprograms that do not read: {unread:#?}");
+    let plan = super::planned_library(&paths.iter().cloned().collect::<Vec<_>>()).unwrap();
+    let canonical = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let planned: BTreeSet<PathBuf> = plan.iter().flat_map(|m| m.files.lines().filter(|f| !f.is_empty()).map(|f| canonical(Path::new(f))).collect::<Vec<_>>()).collect();
+    let missing: Vec<&PathBuf> = paths.iter().filter(|p| !planned.contains(&canonical(p))).collect();
+    assert!(missing.is_empty(), "library files in no planned module: {missing:?}");
+}
+
 /// T8 (decision 0639 §4): the link is a union with nothing to decide, so two modules that give one relation two
 /// declarations (`link_conflict`), or one helper's name two sets of rules (`helper_conflict`), fail it; modules that
 /// agree link. That no library has either is T1 and T2: every program links.
@@ -6789,25 +6858,39 @@ fn a_templates_bytes_read_back_as_its_rule() {
 }
 
 /// Every pack's library and the phase programs' (decision 0639 §6a's tests): the pack, its library's plan, and each
-/// program with its text and its library files.
+/// program with its text and its library files. A pack's programs that read the library's files of different
+/// directories (the phase programs: Python's and TSX's, which each declare `export_from`) are libraries apart, as no
+/// run links them together: named `<pack> (<dirs>)`, where a pack has more than one.
 #[allow(clippy::type_complexity)]
 fn tail_libraries() -> Vec<(String, Vec<super::PlannedModule>, Vec<(PathBuf, String, Vec<PathBuf>)>)> {
+    let lib = super::library().canonical().unwrap();
     let mut out = Vec::new();
     for (pack, programs) in rule_packs(true) {
-        let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
-        let mut texts = Vec::new();
+        // By the library's directories the program's files lie in (`python`, `tsx`; its root's files in none).
+        let mut groups: std::collections::BTreeMap<BTreeSet<String>, (BTreeSet<PathBuf>, Vec<(PathBuf, String, Vec<PathBuf>)>)> = std::collections::BTreeMap::new();
         for (path, src) in program_srcs(programs) {
             if let Ok(Some(m)) = super::modules(&src) {
                 let files: Vec<PathBuf> = m.files.into_iter().map(|(p, _, _)| p).collect();
+                let dirs: BTreeSet<String> = files
+                    .iter()
+                    .filter_map(|f| f.strip_prefix(&lib).ok())
+                    .filter(|r| r.components().count() > 1)
+                    .filter_map(|r| r.components().next().map(|c| c.as_os_str().to_string_lossy().into_owned()))
+                    .collect();
+                let (paths, texts) = groups.entry(dirs).or_default();
                 paths.extend(files.iter().cloned());
                 texts.push((path, src, files));
             }
         }
-        if paths.is_empty() {
-            continue;
+        let several = groups.len() > 1;
+        for (dirs, (paths, texts)) in groups {
+            if paths.is_empty() {
+                continue;
+            }
+            let name = if several { format!("{pack} ({})", dirs.into_iter().collect::<Vec<_>>().join(",")) } else { pack.clone() };
+            let plan = super::planned_library(&paths.into_iter().collect::<Vec<_>>()).unwrap_or_else(|e| panic!("{name}: {e}"));
+            out.push((name, plan, texts));
         }
-        let plan = super::planned_library(&paths.into_iter().collect::<Vec<_>>()).unwrap_or_else(|e| panic!("{pack}: {e}"));
-        out.push((pack, plan, texts));
     }
     out
 }
@@ -6857,7 +6940,7 @@ fn source_rows(s: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<Vec<i64
     (0..s.len()).map(|r| (0..width).map(|c| s.value(r, c)).collect()).collect()
 }
 
-/// T15 (decision 0679 §1, §5.1): the view states, read off the image in place, each rule and its head, each body
+/// T15 (decision 0701 §1, §5.1): the view states, read off the image in place, each rule and its head, each body
 /// literal that names a relation, each declaration's arity, each relation with facts and each kind set given: on every
 /// pack's library tailed to just before `KindSets`, each relation's rows, their names read back as the image's atoms,
 /// are what the image's own reads give.
@@ -6910,7 +6993,7 @@ fn the_view_states_the_images_rules_literals_and_fields() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// The sets the fixed point `KindSets` ran before its rules (decision 0679 §5.1) takes out of `v`: those of `sets` the
+/// The sets the fixed point `KindSets` ran before its rules (decision 0701 §5.1) takes out of `v`: those of `sets` the
 /// image holds as relations (declared, with facts, or the head of a rule) that no rule reads but their own and those
 /// of sets taken out, to a fixed point; with those of them declared and those with facts. T16's reference.
 fn unread_sets(v: &Version, sets: &BTreeSet<String>) -> [BTreeSet<String>; 3] {
@@ -6939,7 +7022,7 @@ fn unread_sets(v: &Version, sets: &BTreeSet<String>) -> [BTreeSet<String>; 3] {
     [gone, undeclared, dropped]
 }
 
-/// T16 (decision 0679 §5.1; 0639's T10): `KindSets`, through the Pipeline, takes sets out by the rules of
+/// T16 (decision 0701 §5.1; 0639's T10): `KindSets`, through the Pipeline, takes sets out by the rules of
 /// `rr/kind-sets.rerail`, run by the native engine over the image's view: on every pack's library tailed to just
 /// before the pass, it takes out what the fixed point it replaced takes out (`unread_sets`): the same sets, the same
 /// declarations undeclared and the same facts dropped. The rules' run and the fixed point are each timed per pack.
@@ -6990,7 +7073,7 @@ fn kind_sets_take_out_by_rules_what_the_fixed_point_took_out() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// T16b (decision 0679 §5.1): on the module path, programs linked on their library's union (`Version::union_on`),
+/// T16b (decision 0701 §5.1): on the module path, programs linked on their library's union (`Version::union_on`),
 /// `KindSets` takes out what the fixed point it replaced takes out, whether the run kept with the library answers a
 /// program (its frame holds over the program) or the program runs. Up to four programs a pack, those of one library
 /// linked on one union, as `rr::linked_from_plan` links them; how many the kept run answered is printed.
@@ -7073,13 +7156,13 @@ fn kind_sets_on_the_module_path_take_out_what_the_fixed_point_took_out() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// Spike for decision 0679 §5.1 (T16's fixed cost): `KindSets`'s rules run over the packs named
+/// Spike for decision 0701 §5.1 (T16's fixed cost): `KindSets`'s rules run over the packs named
 /// (`RERAIL_SPIKE_PACKS`, default `sql`), `RERAIL_SPIKE_N` runs each (default 200), timed bare and then profiled,
 /// each span's own CPU a run (its time less the spans inside it, as t56 step 1 charges a walk's step: a lazy make
 /// or a wait inside it is its own span's).
 #[test]
-#[ignore = "spike for decision 0679 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
-fn spike_0679_a_rules_pass_run_profiled() {
+#[ignore = "spike for decision 0701 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
+fn spike_0701_a_rules_pass_run_profiled() {
     use crate::code_rule_dsl::logic::profile;
     use crate::code_rule_dsl::logic::program_image::{AtomId, view};
     let _store = crate::code_rule_dsl::logic::plan::corpus::use_store(crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store"));
@@ -7135,12 +7218,12 @@ fn spike_0679_a_rules_pass_run_profiled() {
     }
 }
 
-/// Spike for decision 0679 §5.1 (E16's `KindSets` a program against P1's run): the whole step through the Pipeline,
+/// Spike for decision 0701 §5.1 (E16's `KindSets` a program against P1's run): the whole step through the Pipeline,
 /// over each pack's library tailed to just before it (`RERAIL_SPIKE_PACKS`, `RERAIL_SPIKE_N` runs), each run over a
 /// twin of the input (a version whose analyses are not made yet, as a program's link is), profiled as P1 is.
 #[test]
-#[ignore = "spike for decision 0679 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
-fn spike_0679_b_kind_sets_step_profiled() {
+#[ignore = "spike for decision 0701 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
+fn spike_0701_b_kind_sets_step_profiled() {
     use crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::KindSets;
     use crate::code_rule_dsl::logic::profile;
     use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
@@ -7181,14 +7264,14 @@ fn spike_0679_b_kind_sets_step_profiled() {
     }
 }
 
-/// Spike for decision 0679 §5.1 (the frames' lever): a program's `KindSets` step on the module path, its link a union
+/// Spike for decision 0701 §5.1 (the frames' lever): a program's `KindSets` step on the module path, its link a union
 /// on its library's (`Version::union_on`), the library's run kept with the library (`view::Kept`, made by a warm
 /// step). Up to four programs a pack (`RERAIL_SPIKE_PACKS`, `RERAIL_SPIKE_N` runs each), each run over a twin of the
 /// program (its analyses not made yet, as a new program's are), timed bare and profiled; whether the kept run answered
 /// it is printed. P2 is the step that runs.
 #[test]
-#[ignore = "spike for decision 0679 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
-fn spike_0679_c_kind_sets_step_answered_by_the_library() {
+#[ignore = "spike for decision 0701 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
+fn spike_0701_c_kind_sets_step_answered_by_the_library() {
     use crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::KindSets;
     use crate::code_rule_dsl::logic::profile;
     use crate::code_rule_dsl::logic::program_image::manager::{self, Pipeline};
@@ -7434,6 +7517,9 @@ fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_c
             };
             let changed = |x: &BTreeMap<String, BTreeSet<String>>, y: &BTreeMap<String, BTreeSet<String>>| -> BTreeSet<String> { x.keys().chain(y.keys()).filter(|k| x.get(*k) != y.get(*k)).cloned().collect() };
             let (hm, hd) = (heads(&m), heads(&d));
+            // Whether the downward steps left an edit of the link (`manager::rebase`): where more than half of it is new
+            // (a small library's program, TSX's phase program over `tsx/exports.rerail`), the steps after run whole.
+            let an_edit = crate::code_rule_dsl::logic::program_image::manager::rebase(&m, &d).ok().flatten().is_some();
             let mut edit: BTreeSet<String> = changed(&hm, &hd).into_iter().chain(own_heads).collect();
             let (mut v, mut hv) = (d, hd);
             for step in after {
@@ -7474,7 +7560,7 @@ fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_c
             // program more than half new (no edit of the link, `rebase`) does.
             use crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::{AggregateDemand, WidenCyclicContexts};
             use crate::code_rule_dsl::logic::program_image::manager::{ProgramPass, Ran};
-            if tailed.onto.is_empty() {
+            if tailed.onto.is_empty() && an_edit {
                 return Some(format!("{pack}: {}: the steps after the downward ones did not run onto the link", path.display()));
             }
             if let Some((s, _)) = tailed.onto.iter().find(|(s, on_link)| *on_link && s.ran != Ran::Delta && ![AggregateDemand::NAME, WidenCyclicContexts::NAME].contains(&s.pass)) {
@@ -7488,6 +7574,8 @@ fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_c
                         return Some(format!("{pack}: {}: the program's steps change {r}, which the changes read off their versions do not hold", path.display()));
                     }
                 }
+                // A program more than half new is checked whole, as it runs whole.
+                None if !an_edit => {}
                 None => return Some(format!("{pack}: {}: a step's changes are not read off the version it made: the program is checked whole", path.display())),
             }
             None

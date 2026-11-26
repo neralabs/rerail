@@ -82,7 +82,7 @@ fn word_setters(g: &G<'_>) -> HashSet<String> {
 /// The rules `g` names (`Gram::Sym`), itself and inside.
 fn names<'g>(g: &'g Gram, out: &mut Vec<&'g str>) {
     match g {
-        Gram::Sym(n) => out.push(n),
+        Gram::Sym(n) | Gram::Leaf { rule: n, .. } => out.push(n),
         Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().for_each(|g| names(g, out)),
         Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => names(a, out),
         Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => names(body, out),
@@ -93,7 +93,7 @@ fn names<'g>(g: &'g Gram, out: &mut Vec<&'g str>) {
 /// `code`, a rule's that runs with no mark refused: its token takes without the test of the refused marks
 /// (`takes`, the `_nf` calls).
 fn no_refusing(code: &str) -> String {
-    ["tk", "word_leaf", "word_skip", "skip", "merge"].iter().fold(code.to_owned(), |c, t| c.replace(&format!("self.{t}("), &format!("self.{t}_nf(")))
+    ["tk", "word_leaf", "word_skip", "skip", "merge", "pass", "word_pass"].iter().fold(code.to_owned(), |c, t| c.replace(&format!("self.{t}("), &format!("self.{t}_nf(")))
 }
 
 /// What may run while a level refuses a mark (`Rl::hot`), and the levels whose calls save the marks refused
@@ -174,6 +174,7 @@ impl Rl<'_, '_> {
             }
             Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.holds_call(a)?,
             Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.holds_call(body)?,
+            Gram::Leaf { rule, .. } => self.holds_call(&Gram::Sym(rule.clone()))?,
             _ => false,
         })
     }
@@ -327,6 +328,8 @@ impl Rl<'_, '_> {
                 }
                 format!("self.reread_{}()?;\n{}", super::super::ident(reading), self.walk(body, rest, rule, k)?)
             }
+            // `leaf K R`: `R` reads the tokens, then one leaf of `K` over them (`leaf_open` holds where it starts).
+            Gram::Leaf { kind, rule: r } => format!("self.leaf_open();\n{}", self.walk(&Gram::Sym(r.clone()), rest, rule, format!("self.leaf_close({})?;\n{k}", self.g.kind_const(kind)?))?),
             other => return self.err(format!("rule {rule}: a level's call inside {other:?} is not written yet")),
         })
     }
@@ -361,20 +364,24 @@ impl Rl<'_, '_> {
             Stmt::Choice { body, .. } => (body, false),
             _ => unreachable!(),
         };
-        let mut code = String::from(if nested { "self.deeper()?;\n" } else { "" });
+        let counts = nested && self.g.counts_depth(n);
+        let mut code = String::from(if counts { "self.deeper()?;\n" } else { "" });
         // Its endings first (`ending`), as the rule's method has them before its close.
         let mut end = self.g.ending_code(n, "")?;
         if node {
             code.push_str(&self.open(n)?);
             end.push_str("self.close()?;\n");
         }
-        if nested {
+        if counts {
             end.push_str("self.depth -= 1;\n");
         }
-        end.push_str("self.marked = false;\n// The place the call returns to, then what a level's saved of its caller's.\n");
+        end.push_str("self.marked = false;\n");
+        // The place the call returns to, then what a level's saved of its caller's: one pop where it saved only the place,
+        // as the lean parser's `return`.
+        let restores = nested && ((self.refusing && self.saves.contains(n)) || self.asks);
         if nested && self.word && self.words.contains(n) {
             end.push_str("let top = self.stack.pop().unwrap_or(0);\nlet ret = top as u32 as usize;\nself.word = (top >> 32) as u16;\n");
-        } else {
+        } else if restores {
             end.push_str("let ret = self.stack.pop().unwrap_or(0) as usize;\n");
         }
         // A level's call saved its caller's state too, a rule's that is no level only the place.
@@ -384,7 +391,11 @@ impl Rl<'_, '_> {
         if nested && self.asks {
             end.push_str("self.asks = self.stack.pop().unwrap_or(0);\n");
         }
-        end.push_str("st = ret;\ncontinue 'run;\n");
+        if nested && self.word && self.words.contains(n) || restores {
+            end.push_str("st = ret;\ncontinue 'run;\n");
+        } else {
+            end.push_str("st = self.stack.pop().unwrap_or(0) as usize;\ncontinue 'run;\n");
+        }
         code.push_str(&self.walk(body, &[], n, end)?);
         self.places.borrow_mut()[first] = code;
         Ok(first)
@@ -422,10 +433,39 @@ pub(super) fn tier2(x: &Input<'_>) -> Result<(String, u32), String> {
         let code = g.rule(name)?;
         rules.push_str(&if rl.hot.contains(*name) { code } else { no_refusing(&code) });
     }
-    let mut arms = String::new();
-    for (l, code) in rl.places.borrow().iter().enumerate() {
-        let _ = write!(arms, "                {l} => {{\n{}                }}\n", super::super::indent(code, "                    "));
+    // A place that only goes to another is that other wherever it is named (decision 0673 step 11): no arm of its own,
+    // as the lean parser has no statement that only goes on to the next.
+    let places = rl.places.borrow();
+    let jump = |code: &str| code.strip_prefix("st = ").and_then(|r| r.strip_suffix(";\ncontinue 'run;\n")).and_then(|n| n.parse::<usize>().ok());
+    let mut to: Vec<usize> = (0..places.len()).collect();
+    for (l, code) in places.iter().enumerate() {
+        if l > 0
+            && let Some(m) = jump(code)
+        {
+            to[l] = m;
+        }
     }
+    let target = |mut l: usize| {
+        for _ in 0..to.len() {
+            if to[l] == l {
+                break;
+            }
+            l = to[l];
+        }
+        l
+    };
+    let mut arms = String::new();
+    for (l, code) in places.iter().enumerate() {
+        if target(l) != l {
+            continue;
+        }
+        let mut code = code.clone();
+        for n in (0..places.len()).filter(|&n| target(n) != n) {
+            code = code.replace(&format!("st = {n};\n"), &format!("st = {};\n", target(n))).replace(&format!("push({n});"), &format!("push({});", target(n))).replace(&format!("push({n} | "), &format!("push({} | ", target(n)));
+        }
+        let _ = write!(arms, "                {l} => {{\n{}                }}\n", super::super::indent(&code, "                    "));
+    }
+    drop(places);
     // The stack a local of the loop's, so its length and room stay in registers across the parser's calls.
     let arms = arms.replace("self.stack.", "stack.");
     if one.is_some() {
