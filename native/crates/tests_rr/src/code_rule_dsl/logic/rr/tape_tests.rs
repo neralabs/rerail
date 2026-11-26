@@ -400,6 +400,45 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
     assert!(any(&w1, "rules/a.rerail"), "{w1:?}");
 }
 
+/// A policy whose text does not read (an `#include` of no file) runs alone, with its error, and the batch's others
+/// still pack (decision 0168): the batch's texts are read a text at a time when they do not read together. Read
+/// together only, one such policy sent each of the Python pack's 537 policies to a run of its own.
+#[test]
+fn a_policy_whose_text_does_not_read_leaves_the_others_packed() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("batch-pack-bad-text");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("x.py"), "eval(\"1\")\nexec(\"2\")\n").unwrap();
+    let policy = |name: &str, head: &str, callee: &str| {
+        let path = root.with_extension(format!("{name}.rerail"));
+        std::fs::write(
+            &path,
+            format!(
+                ".policy \"t:{name}\" revision 1\n.language python\n{head}\
+                 .violation {name}_call(at: node) code \"{name}\" \"a call of {callee}\"\n\
+                 {name}_call(c) :- node(_, c, \"call\", _, _), field(c, \"function\", f), text(f, \"{callee}\").\n"
+            ),
+        )
+        .unwrap();
+        path
+    };
+    let paths = [
+        policy("ev", "#include \"python/calls.rerail\"\n", "eval"),
+        policy("bad", "#include \"no-such-module.rerail\"\n", "eval"),
+        policy("ex", "#include \"python/calls.rerail\"\n", "exec"),
+    ];
+    let batch = crate::code_rule_dsl::tools::run_policies(&paths, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+    for p in &paths {
+        let _ = std::fs::remove_file(p);
+    }
+    let runs = batch["runs"].as_array().unwrap();
+    let together: Vec<u64> = runs.iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
+    assert_eq!(together, [2, 0, 2], "{batch:#}");
+    assert!(runs[1]["error"].as_str().is_some_and(|e| e.contains("no-such-module.rerail")), "{batch:#}");
+    let codes: Vec<&str> = batch["diagnostics"].as_array().unwrap().iter().map(|d| d["code"].as_str().unwrap_or("")).collect();
+    assert_eq!(codes, ["ev", "ex"], "{batch:#}");
+}
+
 /// A policy's findings are its run alone's whatever else shares its pack (RUF060 beside C417; main's #923). `anns`
 /// reads `list_like` in a string annotation, as a rule of the annotation context (decision 0597): its own instance,
 /// over the annotations' trees. `cmps` reads `list_like` through `empty_literal` from the file: when the pack folded

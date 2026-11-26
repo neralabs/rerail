@@ -678,10 +678,12 @@ pub fn run_policies(
     let (texts, groups) = if packed {
         invocation.evaluate(|root| {
             let paths: Vec<_> = paths.iter().map(|p| p.as_path()).collect();
-            // A batch whose texts do not read runs each policy alone: said, as a failed pack is (`run_pack`).
+            // A batch whose texts do not read together is read a text at a time: a policy whose own text does not read
+            // (an `#include` of no file) runs alone and fails there with its error, and the others pack as before. One
+            // such policy sent all 537 of the Python pack's policies to run one by one, at many times the pack's time.
             let texts = program_texts(&paths).unwrap_or_else(|e| {
-                eprintln!("rerail: the batch's policies run one by one, their texts not read together: {e}");
-                Vec::new()
+                eprintln!("rerail: the batch's texts did not read together ({e}); each is read alone, and one that does not read runs alone");
+                paths.iter().map(|p| program_texts(std::slice::from_ref(p)).map(|mut t| t.remove(0)).unwrap_or_default()).collect()
             });
             let groups = policy_groups(&texts, root, options);
             Ok((texts, groups))
