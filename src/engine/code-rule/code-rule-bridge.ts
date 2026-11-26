@@ -837,7 +837,19 @@ interface WorktreeDiscovery {
   unrecorded: Set<string>;
   /** A mark of each of `roots`, made new each time Git lists one the session did not list before (`#syncWorktrees`). */
   readonly listed: Map<string, symbol>;
+  /**
+   * By worktree, a place the record takes (`walkGaps`): its first read found a change no rule checked
+   * (`#markUncheckedFirstRead`). One Git no longer lists leaves it (`#forgetWorktrees`).
+   */
+  readonly unchecked: Map<string, WalkGap>;
 }
+
+/**
+ * Why a worktree is in `WorktreeDiscovery.unchecked`, and what a person runs to check it. Its code keys the place
+ * (`reasonKind`), so other words for it are the same place on the session's record.
+ */
+const UNCHECKED_BEFORE_FIRST_READ =
+  "UNCHECKED_FIRST_READ: Files changed here before Rerail first read this worktree were not checked; `rerail scan --repo <this worktree> --scope git-diff` checks them";
 
 /**
  * The place of a call's writes outside the session folder in its own checkout, which a walk of the other worktrees reads
@@ -850,6 +862,7 @@ function worktreeDiscovery(): WorktreeDiscovery {
     roots: new Set(), fresh: new Set(), taking: new Set(), baselineRoots: new Set(), watch: undefined, gaps: [], unread: new Map(),
     walkedFrom: undefined, unrecorded: new Set(),
     listed: new Map(),
+    unchecked: new Map(),
   };
 }
 
@@ -1642,17 +1655,22 @@ function byPath(gaps: WalkGap[]): WalkGap[] {
 }
 /**
  * Every place the last walks of the session folder and of the other worktrees could not check, each unlisted file too
- * large to read among them, in path order: what the record takes (`#tellGaps`), at every checkpoint until it holds it.
+ * large to read among them, and each worktree marked unchecked, in path order: what the record takes (`#tellGaps`), at
+ * every checkpoint until it holds it.
  */
 function walkGaps(discovery: SourceDiscovery): WalkGap[] {
-  return byPath([...discovery.gaps, ...discovery.worktrees.gaps, ...unreadGaps(discovery.unread), ...unreadGaps(discovery.worktrees.unread)]);
+  return byPath([...discovery.gaps, ...worktreeGaps(discovery), ...unreadGaps(discovery.unread), ...unreadGaps(discovery.worktrees.unread)]);
+}
+/** The places the other worktrees' walks could not check: those the last walk met, and each worktree marked unchecked. */
+function worktreeGaps(discovery: SourceDiscovery): WalkGap[] {
+  return [...discovery.worktrees.gaps, ...discovery.worktrees.unchecked.values()];
 }
 /**
  * What a checkpoint says the walks could not check (`discoveryGap`): `walkGaps`, but each unlisted file too large to read
  * only at the first checkpoint that meets it at its stamp (`newlyUnread`).
  */
 function saidGaps(discovery: SourceDiscovery): WalkGap[] {
-  const gaps = [...discovery.gaps, ...discovery.worktrees.gaps];
+  const gaps = [...discovery.gaps, ...worktreeGaps(discovery)];
   for (const unread of [discovery.unread, discovery.worktrees.unread]) gaps.push(...newlyUnread(discovery, unread));
   return byPath(gaps);
 }
@@ -1704,8 +1722,8 @@ export const MAX_TOLD_AT_ONCE = 100;
 const UNTOLD_GAPS = `The walks could not check more than ${MAX_TOLD_GAPS} places; the rest are not recorded`;
 /**
  * What tells one gap from another (`DiscoveryGap.key`): its path (`""` for a walk that failed whole) and its reason's
- * kind, the error code that opens a filesystem error's text (`EACCES: permission denied, opendir '…'`), else the reason
- * whole, as for a file too large to read.
+ * kind, the code that opens a filesystem error's text (`EACCES: permission denied, opendir '…'`) or Rerail's own
+ * (`UNCHECKED_FIRST_READ: Files changed here…`), else the reason whole, as for a file too large to read.
  */
 function gapKey(path: string | undefined, kind: string): string {
   return JSON.stringify([path ?? "", kind]);
@@ -2242,8 +2260,9 @@ export type DiscoveryPendingBoundary = "turn" | "final" | "command" | "close";
 
 /**
  * One place the walks a checkpoint answered after could not fully check: a folder or file the last walk of the session
- * folder or of the other worktrees could not read, or an unlisted file too large to read, where shell writes went
- * unchecked. The checkpoint's `source-incomplete` failure joins each as `path: reason`.
+ * folder or of the other worktrees could not read, an unlisted file too large to read, or another worktree whose first
+ * read found a change no rule checked (`WorktreeDiscovery.unchecked`), where shell writes went unchecked. The
+ * checkpoint's `source-incomplete` failure joins each as `path: reason`.
  */
 export interface DiscoveryGap {
   readonly boundary: Extract<CodeRuleCheckpoint, "turn" | "final">;
@@ -3397,10 +3416,11 @@ export class CodeRuleBridge {
    * worktree at its path again by then (`walkHeld`).
    */
   #forgetWorktrees(discovery: SourceDiscovery, removed: ReadonlySet<string>): void {
-    const { fresh, listed } = discovery.worktrees;
+    const { fresh, listed, unchecked } = discovery.worktrees;
     for (const worktree of removed) {
       fresh.delete(worktree);
       listed.delete(worktree);
+      unchecked.delete(worktree);
     }
     discovery.worktrees.unrecorded = new Set([...discovery.worktrees.unrecorded].filter(path => !underBaselineRoot(removed, path)));
     for (const path of this.#observed.keys()) if (underBaselineRoot(removed, path)) this.#observed.delete(path);
@@ -4533,6 +4553,7 @@ export class CodeRuleBridge {
       }
       uncaptured.delete(edit.path);
       this.#sortUnownedWrite(edit, "other-writer", notOwn);
+      this.#markUncheckedFirstRead(discovery, walk, edit.path);
     }
     return own;
   }
@@ -4545,13 +4566,30 @@ export class CodeRuleBridge {
    * does, so a session whose long command runs elsewhere takes no other session's write there.
    */
   async #writtenByCall(discovery: SourceDiscovery, walk: WalkStart, edit: CodeRuleEdit): Promise<boolean> {
-    const worktree = walk.inSession ? undefined : this.#worktreeHolding(discovery, edit.path);
+    const worktree = this.#otherWorktreeOf(discovery, walk, edit.path);
     const asked: CallsAsked = worktree === undefined
       ? { held: discovery.missedFiles.get(edit.path) }
       : { place: worktree, counted: this.#ranIn(discovery, worktree, edit.path) };
     const since = walk.previous.get(edit.path)?.observedAt ?? discovery.startedAt;
     const written = { stamp: this.#observedSource(edit.path)?.modifiedAt, deleted: edit.deleted === true, since, until: walk.observedAt };
     return await this.#callRanAsWritten(discovery, asked, edit.path, written);
+  }
+
+  /**
+   * Marks the session's record with the worktree when the worktree's first read finds `path`, a change Git did not
+   * write, no call of the session that ran there made and no walk handed the session to record (`#claimOwnWrites`): no
+   * rule checked it, as the first read is the worktree's baseline. The read cannot tell who wrote it: a command of the
+   * session run in another folder, another session, or a person's editor.
+   */
+  #markUncheckedFirstRead(discovery: SourceDiscovery, walk: WalkStart, path: string): void {
+    const worktree = this.#otherWorktreeOf(discovery, walk, path);
+    if (worktree === undefined || !discovery.worktrees.fresh.has(worktree)) return;
+    discovery.worktrees.unchecked.set(worktree, { path: worktree, reason: UNCHECKED_BEFORE_FIRST_READ });
+  }
+
+  /** The other worktree, as the session names it, holding `path`, which a walk of the other worktrees found; none for the session folder's walk. */
+  #otherWorktreeOf(discovery: SourceDiscovery, walk: WalkStart, path: string): string | undefined {
+    return walk.inSession ? undefined : this.#worktreeHolding(discovery, path);
   }
 
   /**
