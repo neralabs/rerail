@@ -414,26 +414,20 @@ impl CpuComputeFunctionLibrary {
 
     /// The kernel `function_name`, with its arguments from its rows (`Name__ukl_params`, `Name__ukl_rows`).
     ///
-    /// THE CPU RUNS ONLY A KERNEL'S SIMD RUST (`rerail_ukl_rust`; the user's order, until they say otherwise): a
-    /// kernel with no Rust for this source is an error here. Its UKL, compiled by the host's compiler
-    /// (`Run::Compiled`) or interpreted (`Run::Interpreted`), NEVER runs: not as a fallback, not for a source the
-    /// Rust was not written from (a fallback hid a 1000x slowdown). That code is kept, and unreachable from here;
-    /// the library is still read for the kernel's argument rows, which its Rust binds.
+    /// THE JOIN PROGRAM'S KERNELS (`rerail_ukl_rust::JOIN_KERNELS`) RUN ONLY AS THEIR SIMD RUST on the CPU, until the
+    /// user says otherwise: one without Rust here is an error, never its UKL's build (a fallback that hid a 1000x
+    /// slowdown). Every other kernel runs its Rust where it has it, else its UKL, as before.
     pub fn get_function(&self, _device: &CpuDevice, function_name: &str) -> Result<CpuComputeFunction, String> {
-        if !self.host.iter().any(|(n, _)| *n == function_name) {
-            return Err(format!(
-                "{}: the kernel {function_name} has no Rust (rerail_ukl_rust) for this source: the CPU runs only a kernel's SIMD Rust, never its UKL",
-                self.name
-            ));
+        if rerail_ukl_rust::JOIN_KERNELS.contains(&function_name) && !self.host.iter().any(|(n, _)| *n == function_name) {
+            return Err(format!("{}: the join kernel {function_name} has no Rust (rerail_ukl_rust) for this source: the CPU runs the joins only as their SIMD Rust, never their UKL", self.name));
         }
         if let Code::Interpreted(i) = &self.code {
             let (text, rows) = i.rows(function_name)?;
             let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
             // Its Rust where it has it (`host`), its rows the interpreter's: no compiler's build at all.
-            // Its Rust (checked above); the interpreter gives only its rows. `Run::Interpreted` is never made.
             let entry = match self.host.iter().find(|(n, _)| *n == function_name) {
                 Some(&(_, k)) => Run::Host(k),
-                None => unreachable!("refused above: the CPU runs only a kernel's Rust ({:p})", Arc::as_ptr(i)),
+                None => Run::Interpreted(i.clone()),
             };
             return Ok(CpuComputeFunction { entry, name: function_name.to_string(), arguments, param_sizes });
         }
@@ -446,10 +440,9 @@ impl CpuComputeFunctionLibrary {
         let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
         // SAFETY: the shim's entry has this signature.
         let entry: Entry = unsafe { std::mem::transmute(entry) };
-        // Its Rust (checked above); the compiled library gives only its rows. `Run::Compiled` is never made.
         let entry = match self.host.iter().find(|(n, _)| *n == function_name) {
             Some(&(_, k)) => Run::Host(k),
-            None => unreachable!("refused above: the CPU runs only a kernel's Rust ({:p})", entry as *const ()),
+            None => Run::Compiled(entry),
         };
         Ok(CpuComputeFunction { entry, name: function_name.to_string(), arguments, param_sizes })
     }
@@ -522,8 +515,6 @@ pub fn resident_groups(threads: usize) -> usize {
 
 /// How a kernel runs: its compiled entry, or its library's interpreter.
 #[derive(Clone)]
-/// How a kernel runs. Only `Host`, its SIMD Rust, is ever made (`get_function`). `Compiled` and `Interpreted`, its
-/// UKL, MUST NOT RUN until the user says otherwise: their code is kept, not reached.
 enum Run {
     Compiled(Entry),
     Interpreted(Arc<dyn CpuInterpreter>),
@@ -1005,9 +996,19 @@ DEFINE_KERNEL2(t, t_divergent,
         let out = alloc_uninitialized_array_sync::<u32>(&device, 64);
         run(&device, &f, &out, None, 2, 32).unwrap();
         assert_eq!(transfer_to_host_sync::<u32>(&out, 64), (1000..1064).collect::<Vec<u32>>());
-        // A kernel of the library without Rust is refused: its UKL never runs on the CPU.
-        let e = lib.get_function(&device, "t_group").err().expect("a kernel without Rust refused");
-        assert!(e.contains("has no Rust"), "{e}");
+        // A kernel of the library without Rust: its compiled build.
+        let g = lib.get_function(&device, "t_group").unwrap();
+        assert!(matches!(g.entry, Run::Compiled(_)));
+    }
+
+    /// A join kernel (`rerail_ukl_rust::JOIN_KERNELS`) without Rust is refused, never its UKL's build; any other
+    /// kernel without Rust keeps its compiled build.
+    #[test]
+    fn a_join_kernel_without_rust_is_refused() {
+        let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
+        let e = lib.get_function(&device, "join_phase").err().expect("a join kernel without Rust refused");
+        assert!(e.contains("join kernel join_phase has no Rust"), "{e}");
+        assert!(matches!(lib.get_function(&device, "t_group").unwrap().entry, Run::Compiled(_)));
     }
 
     /// A kernel's Rust keeps its threadgroup memory itself: a launch that gives it a threadgroup row is refused.
@@ -1024,7 +1025,6 @@ DEFINE_KERNEL2(t, t_divergent,
 
     /// Threadgroup memory, a barrier and SIMD-group shuffles give each thread what a GPU gives it.
     #[test]
-    #[ignore = "runs a kernel's compiled UKL, which the CPU must not run until the user says otherwise (get_function refuses it)"]
     fn a_threadgroup_runs_as_on_a_gpu() {
         let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_group").unwrap();
@@ -1045,7 +1045,6 @@ DEFINE_KERNEL2(t, t_divergent,
     /// A lane that ends after a SIMD-group reduction is in it for the lanes that read it after: each lane's minimum
     /// is lane 0's 7, not the least of the lanes from it on.
     #[test]
-    #[ignore = "runs a kernel's compiled UKL, which the CPU must not run until the user says otherwise (get_function refuses it)"]
     fn a_lane_done_after_a_reduction_is_in_it() {
         let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_ends_after").unwrap();
@@ -1057,7 +1056,6 @@ DEFINE_KERNEL2(t, t_divergent,
 
     /// A barrier no thread can pass is an error that says who waits where, not a hang.
     #[test]
-    #[ignore = "runs a kernel's compiled UKL, which the CPU must not run until the user says otherwise (get_function refuses it)"]
     fn a_barrier_no_thread_can_pass_is_an_error() {
         let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_divergent").unwrap();

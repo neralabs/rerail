@@ -162,12 +162,12 @@ fn program_on(host: bool, name: &str, text: &str, defines: &[(&str, &str)]) -> R
             ship(name, text, defines);
         }
         let started = std::time::Instant::now();
-        // The CPU runs only a kernel's SIMD Rust (the user's order, until they say otherwise): `RERAIL_CPU_RUST=0`,
-        // which ran its UKL's build instead, is refused.
-        if std::env::var("RERAIL_CPU_RUST").is_ok_and(|v| v == "0") {
-            return Err("RERAIL_CPU_RUST=0 is refused: the CPU runs only a kernel's SIMD Rust, never its UKL".to_owned());
+        // `RERAIL_CPU_RUST=0` runs a kernel's UKL build in place of its Rust, except the joins': the CPU runs the join
+        // program only as its SIMD Rust (the user's order, until they say otherwise), so it is refused for that.
+        let rust = !std::env::var("RERAIL_CPU_RUST").is_ok_and(|v| v == "0");
+        if !rust && rerail_ukl_rust::is_join_program(text, defines) {
+            return Err(format!("{name}: RERAIL_CPU_RUST=0 is refused for the join program: the CPU runs the joins only as their SIMD Rust"));
         }
-        let rust = true;
         let (library, preprocessed, bytes) = if host || crate::vec::on(&shared.device) {
             // Its rows the interpreter's, its kernels that are Rust of this text and these defines that Rust.
             let library = crate::vec::library(name, &format!("/<kernels>/{name}"), text, defines)?;

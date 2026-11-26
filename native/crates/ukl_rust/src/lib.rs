@@ -58,12 +58,20 @@ pub fn digest(text: &str, defines: &[(&str, &str)]) -> u64 {
     h
 }
 
+/// The join program's kernels (decision 0648): on the CPU they run only as their SIMD Rust (`join_run`), never their
+/// UKL's build, until the user says otherwise. Every other kernel runs its Rust where it has it, else its UKL.
+pub const JOIN_KERNELS: [&str; 3] = ["join_grid", "join_phase", "join_chain"];
+
+/// Whether `text`, specialized by `defines`, is the join program (`JOIN_PROGRAM` defined, its kernels compiled).
+pub fn is_join_program(text: &str, defines: &[(&str, &str)]) -> bool {
+    (defines.iter().any(|(n, _)| *n == "JOIN_PROGRAM") || text.contains("#define JOIN_PROGRAM ")) && text.contains(", join_phase,")
+}
+
 /// The kernels of the program `text` (specialized by `defines`) that run as Rust on this processor: each its name
-/// and Rust. None where the program defines no kernel that has Rust here.
+/// and Rust. None where no kernel here was written from that text and those defines.
 ///
-/// A program that defines a kernel with Rust here, specialized as that Rust's (`written_for`), but whose text or
-/// defines are not the ones the Rust was written from, is an error: never run another build of it in the Rust's
-/// place. The interpreter or the host compiler runs it orders of magnitude slower, and nothing would say so.
+/// The join program whose text or defines are not the ones `join_run` was written from is an error: its UKL's build
+/// never runs in the Rust's place (it is orders of magnitude slower, and nothing would say so).
 pub fn kernels(text: &str, defines: &[(&str, &str)]) -> Result<Vec<(&'static str, Kernel)>, String> {
     let d = digest(text, defines);
     let mut out: Vec<(&'static str, Kernel)> = Vec::new();
@@ -73,34 +81,13 @@ pub fn kernels(text: &str, defines: &[(&str, &str)]) -> Result<Vec<(&'static str
     }
     if JOIN_PROGRAM.contains(&d) {
         out.extend([("join_grid", join_run::join_grid as Kernel), ("join_phase", join_run::join_phase), ("join_chain", join_run::join_chain)]);
-    }
-    if out.is_empty()
-        && let Some(name) = written_for(text, defines)
-    {
+    } else if is_join_program(text, defines) {
         return Err(format!(
-            "the kernel {name} has Rust here (rerail_ukl_rust), but this program is not the source it was written from (digest {d:#018x}): \
-             bring rerail_ukl_rust to the source and its digests to it. Another build of it is not run in the Rust's place."
+            "the join program's Rust (rerail_ukl_rust::join_run) was not written from this source (digest {d:#018x}): \
+             bring join_run to the source and JOIN_PROGRAM to its digests. Its UKL's build is not run in the Rust's place."
         ));
     }
     Ok(out)
-}
-
-/// Whether `text`, specialized by `defines`, compiles a kernel that has Rust on this processor: that kernel's name.
-/// The join program's kernels where `JOIN_PROGRAM` is defined; `label_parents` (aarch64) at view format 16.
-fn written_for(text: &str, defines: &[(&str, &str)]) -> Option<&'static str> {
-    let defined = |name: &str| defines.iter().find(|(n, _)| *n == name).map(|(_, v)| v.to_string()).or_else(|| {
-        let at = text.find(&format!("#define {name} "))? + name.len() + 9;
-        text[at..].split_whitespace().next().map(str::to_owned)
-    });
-    let has = |kernel: &str| text.contains(&format!(", {kernel},"));
-    if defined("JOIN_PROGRAM").is_some() && has("join_phase") {
-        return Some("join_phase");
-    }
-    #[cfg(target_arch = "aarch64")]
-    if defined("UKL_CONSTANT_0").as_deref() == Some("16") && has("label_parents") {
-        return Some("label_parents");
-    }
-    None
 }
 
 #[cfg(test)]
@@ -115,13 +102,13 @@ mod tests {
     }
 
     /// Another text, or the same with another define, has no kernel here: its compiler's build runs.
-    /// A program that compiles a kernel with Rust here, but is not the source its Rust was written from, is refused:
-    /// no other build runs in the Rust's place.
+    /// A join program that is not the source `join_run` was written from is refused: its UKL's build does not run in
+    /// the Rust's place.
     #[test]
-    fn a_changed_source_of_a_kernel_with_rust_is_refused() {
+    fn a_changed_join_program_is_refused() {
         let text = "#define JOIN_PROGRAM 1\nDEFINE_KERNEL2(join, join_phase, ...)\n";
         let e = super::kernels(text, &[]).unwrap_err();
-        assert!(e.contains("join_phase") && e.contains("not the source"), "{e}");
+        assert!(e.contains("join_run") && e.contains("not written from this source"), "{e}");
         // The same source without `JOIN_PROGRAM` compiles none of those kernels.
         assert!(super::kernels("DEFINE_KERNEL2(join, join_phase, ...)\n", &[]).unwrap().is_empty());
     }
