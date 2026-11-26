@@ -109,6 +109,13 @@ describe("shards and outputs", () => {
     expect(shards("windows", Object.keys(files), 10, TIMES)).toEqual([1, 2, 3, 4, 5]);
   });
 
+  it("count each job by its own platform's times", () => {
+    const swapped = { ...TIMES, win32: { firstShardExtraMs: 0, files: { ...files, "h.test.ts": 10, "l1.test.ts": 910 } } };
+    expect(shards("windows", ["h.test.ts"], 10, swapped)).toEqual([1]);
+    expect(shards("windows", ["l1.test.ts"], 10, swapped)).toEqual([1, 2, 3, 4, 5]);
+    expect(shards("linux", ["l1.test.ts"], 10, swapped)).toEqual([1]);
+  });
+
   // The 186 of 552 test files CI selected for a change to the daemon's tests: a third of the files and three fifths of
   // Windows' time. Counted by the files, two Windows shards each held half of it, and one was cancelled at 15 minutes.
   it("hold no more time in a shard of a selection heavy by time than in a shard of every file", () => {
