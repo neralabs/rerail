@@ -860,6 +860,33 @@ describe("CodeRuleBridge", () => {
     }
     expect(unhandled).toEqual([]);
   });
+
+  it("stops a walk whose list of the other worktrees was interrupted between its turns, and asks for no list in its place", async () => {
+    const root = await twoBranches();
+    const { roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    let interrupted = false;
+    // Asked in one run once the auditor is interrupted, the list records each worktree, and this one, naming none, would
+    // forget the worktree.
+    const worktreeRoots = vi.fn((): string[] => interrupted ? [] : roots);
+    const worktreeRootsInTurns = vi.fn(async (): Promise<readonly string[] | undefined> => interrupted ? undefined : roots);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    // The walk of the other worktrees after the first comes a minute later: only the session walk lists them here.
+    const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), ...extra, worktreeRoots, worktreeRootsInTurns }, { worktreeWalkGapMs: 60_000 });
+    try {
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+      interrupted = true;
+      const [lists, asked] = [worktreeRootsInTurns.mock.calls.length, worktreeRoots.mock.calls.length];
+      await bridge.checkpoint("turn");
+      await bridge.settleWalk();
+
+      expect(worktreeRootsInTurns.mock.calls.length).toBeGreaterThan(lists);
+      expect(worktreeRoots.mock.calls.length).toBe(asked);
+    } finally {
+      await bridge.close();
+    }
+  });
   it("keeps first-sight text only within its budget, and measures a shell edit past it as before", async () => {
     const root = await workspace();
     const [first, second] = [join(root, "src", "a.py"), join(root, "src", "b.py")];

@@ -3536,9 +3536,8 @@ export class CodeRuleBridge {
     const learning = this.#learnWorktrees(discovery, learnt);
     if (learning !== undefined && !(await learning)) return;
     const registry = storedRegistry(learnt);
-    // The first list of many worktrees records each one, with turns between, so other sessions are answered meanwhile.
-    const inTurns = this.#auditor.worktreeRootsInTurns?.(registry);
-    const worktrees = this.#syncWorktrees(discovery, registry, inTurns === undefined ? undefined : await inTurns);
+    const worktrees = await this.#listWorktrees(discovery, registry);
+    if (worktrees === undefined) return;
     const start: WalkStart = {
       inSession: true, baseline: !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),
       previous: new Map(this.#observed), versions: new Map(discovery.versions),
@@ -3564,6 +3563,18 @@ export class CodeRuleBridge {
    */
   #learnWorktrees(discovery: SourceDiscovery, learnt: WorktreeListLearning | undefined): Promise<boolean> | undefined {
     return learnt?.kind === "learning" ? learnt.done.then(() => !this.#abandoned(discovery)) : undefined;
+  }
+
+  /**
+   * The other worktrees a session walk takes (`#syncWorktrees`). The first list of many worktrees records each one, with
+   * turns between, so other sessions are answered meanwhile; undefined when the session closed or the auditor was
+   * interrupted while it took them: a list cut short names part of the worktrees, and taken it would forget the rest.
+   */
+  async #listWorktrees(discovery: SourceDiscovery, registry: WorktreeRegistry | undefined): Promise<readonly string[] | undefined> {
+    const inTurns = this.#auditor.worktreeRootsInTurns?.(registry);
+    if (inTurns === undefined) return this.#syncWorktrees(discovery, registry);
+    const listed = await inTurns;
+    return listed === undefined || this.#abandoned(discovery) ? undefined : this.#syncWorktrees(discovery, registry, listed);
   }
 
   #abandoned(discovery: SourceDiscovery): boolean {

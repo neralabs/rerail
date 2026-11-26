@@ -141,16 +141,36 @@ describe("a read of the recorded checkouts that records many worktrees", () => {
       const first = await turnsDuring(() => router.worktreeRootsInTurns(), () => lookups.mock.calls.length);
       const again = await turnsDuring(() => router.worktreeRootsInTurns());
 
-      expect(first.result.toSorted()).toEqual(clone.worktrees.toSorted());
+      expect(first.result?.toSorted()).toEqual(clone.worktrees.toSorted());
       // 40 worktrees first seen: 16, 16 and 8, with a turn between each, and no run of the thread looks up the owners of
       // more than one group (each worktree's owner before it is recorded and after): filtering all 40 after the last
       // turn looked up 48 at once.
       expect(first.turns).toBe(2);
       expect(first.most).toBeLessThanOrEqual(2 * 16);
-      expect(again.result.toSorted()).toEqual(clone.worktrees.toSorted());
+      expect(again.result?.toSorted()).toEqual(clone.worktrees.toSorted());
       expect(again.turns).toBe(0);
     } finally {
       lookups.mockRestore();
+      await router.close();
+      clone.close();
+    }
+  }, WORKTREES_TIMEOUT_MS);
+
+  it("records no group after the router is interrupted between two turns of a session's first list, and gives no list", async () => {
+    const clone = startedClone(40);
+    const router = await sessionRouter(clone);
+    const refreshes = vi.spyOn(clone.catalogs, "refreshAll");
+    try {
+      // The first group is recorded before the first turn, in which the session closes.
+      const listing = router.worktreeRootsInTurns();
+      router.interrupt();
+      const before = refreshes.mock.calls.length;
+
+      expect(await listing).toBeUndefined();
+      // The two groups left were recorded after the close, each in a read of the recorded checkouts.
+      expect(refreshes.mock.calls.length - before).toBe(0);
+    } finally {
+      refreshes.mockRestore();
       await router.close();
       clone.close();
     }

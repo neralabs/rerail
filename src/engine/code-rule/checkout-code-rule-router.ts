@@ -579,14 +579,18 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * worktrees records each of them and then finds each one's owner afresh (recording changes what the owners know), and
    * done at once that held the daemon's thread for seconds on Windows. Each group is recorded and filtered before the
    * next turn. The list is Git's as the first turn read it (`registry` as `worktreeRoots` takes it); the next list
-   * reads Git's registry again.
+   * reads Git's registry again. Undefined once the router is interrupted between two turns: it records no group after,
+   * and what it listed by then is part of the worktrees, which no caller may take for all of them.
    */
-  async worktreeRootsInTurns(registry?: WorktreeRegistry): Promise<string[]> {
+  async worktreeRootsInTurns(registry?: WorktreeRegistry): Promise<string[] | undefined> {
     const roots = this.#listedWorktreeRoots(registry);
     if (roots.every(root => this.#eligibility.has(root))) return this.#worktreesThatMayRun(roots);
     const running: string[] = [];
     for (let at = 0; at < roots.length; at += ELIGIBILITY_PER_TURN) {
-      if (at > 0) await new Promise(resolve => setImmediate(resolve));
+      if (at > 0) {
+        await new Promise(resolve => setImmediate(resolve));
+        if (this.#closing) return undefined;
+      }
       const group = roots.slice(at, at + ELIGIBILITY_PER_TURN);
       this.#readEligibility(group);
       running.push(...this.#worktreesThatMayRun(group));
