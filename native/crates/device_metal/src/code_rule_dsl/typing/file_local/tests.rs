@@ -1354,6 +1354,42 @@ at(f, l) :- uses(f, _), docof(f, d), line(f, l), d > 0.
     }
 }
 
+/// A pushed join hands on only what the cross part reads (p297's `effect`, the 300-file bench): a bound of a variable
+/// nothing else outside reads stays in the join, and so does a relation of stated facts. Handing on `n` for its bound
+/// alone and `k` for `effect_kind`, the helper held every node under each `e` with its kind: 7 rows a node, half of
+/// what a chunk kept. Its interface is `e` alone, and the join, which narrows its nodes by their kind, is pushed though
+/// `refers` reads `e` whole. One that narrows none (`docof(n, d), lead(d)`) stays the filter's (ed8dd88c04).
+#[test]
+fn a_pushed_join_hands_on_only_what_the_cross_part_reads() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl within(n: node, a: node)
+.decl docof(n: node, d: number)
+.input node, text, within, docof
+.decl refers(c: node, e: node)
+refers(c, e) :- node(_, c, "call", _, _), text(c, s), node(_, e, "identifier", _, _), text(e, s).
+.decl effect_kind(k: symbol)
+effect_kind("call"). effect_kind("await").
+.decl effect(e: node)
+.output effect
+effect(e) :- refers(_, e), effect_kind(k), node(_, n, k, _, _), within(n, e), n < 1000000.
+.decl lead(d: number)
+lead(d) :- node(_, i, "future_import_statement", _, _), docof(i, d).
+.decl late(e: node)
+.output late
+late(e) :- refers(_, e), docof(e, d), lead(d).
+"#;
+    let (out, made) = pushed(read(text));
+    let helpers: Vec<_> = out.rules().filter(|r| { let h = out.rel_name(r.head().rel()); h.starts_with("fl") && h.ends_with("_effect") }).collect();
+    assert_eq!(helpers.len(), 1, "effect's join is pushed: {made:?}\n{}", out.show());
+    assert_eq!(helpers[0].head().args().count(), 1, "its helper hands on `e` alone:\n{}", out.show());
+    let reads_stated = helpers[0].body().filter_map(|l| l.atom()).any(|a| out.rel_name(a.rel()) == "effect_kind");
+    let keeps_bound = helpers[0].body().any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Cmp { .. }));
+    assert!(reads_stated && keeps_bound, "the facts and the bound are the join's:\n{}", out.show());
+    assert!(!out.rules().any(|r| { let h = out.rel_name(r.head().rel()); h.starts_with("fl") && h.ends_with("_late") }), "late's join narrows no node: the filter's:\n{}", out.show());
+}
+
 #[test]
 fn a_local_join_can_export_a_node_bound_by_equality() {
     let text = r#"

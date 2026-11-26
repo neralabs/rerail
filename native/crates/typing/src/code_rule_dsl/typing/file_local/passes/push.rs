@@ -250,10 +250,16 @@ fn placeless(split: &FileLocal) -> BTreeSet<String> {
 /// `rounds`: the rounds it took, each a split of the whole program.
 fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, split: &FileLocal, keep_unrestricted: bool, rounds: &mut usize) -> Result<Option<Pushed<'v>>, String> {
     let local = &split.local;
-    let placeless = placeless(split);
-    let joinable = |rel: &str| local.contains(rel) && !placeless.contains(rel);
-    let equal_columns = push_equal_columns();
     let rules: Vec<RuleRef<'v>> = v.rules().collect();
+    let heads: HashSet<&str> = rules.iter().map(|r| v.rel_name(r.head().rel())).collect();
+    let rules_of = |rel: &str| heads.contains(rel);
+    let placeless = placeless(split);
+    // A relation of stated facts alone (`effect_kind("call")`, no rule of it) is every chunk's too, as a constant of
+    // the split is: a component takes it, so its variable stays inside rather than every row's value being handed on
+    // to the cross part.
+    let stated = |rel: &str| f.facts(rel).is_some_and(|x| !x.about()) && !rules_of(rel);
+    let joinable = |rel: &str| (local.contains(rel) && !placeless.contains(rel)) || split.constants.contains(rel) || stated(rel);
+    let equal_columns = push_equal_columns();
     let decl_names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
     let base = |rel: &str| f.is_input(rel);
     let mut level: BTreeMap<usize, u8> = BTreeMap::new();
@@ -365,13 +371,11 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, split: &FileLocal, keep_unr
                         outside.extend(lit_vars(v, rule, *l));
                     }
                 }
-                // A bound (`$x < k`) is the reader's, its variable handed on: two rules that differ only in their
-                // bounds (a narrow copy, its original and its candidates, decision 0575) then push one join.
-                for &j in &lits {
-                    if let L::Cmp { op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge, l: TermRef::Var(_), r: TermRef::Int(_) } = body[j].view() {
-                        outside.extend(lit_vars(v, rule, body[j]));
-                    }
-                }
+                // A bound (`$x < k`) is the reader's where its variable is handed on anyway: two rules that differ only
+                // in their bounds (a narrow copy, its original and its candidates, decision 0575) then push one join.
+                // A bound of a variable nothing else outside reads stays in the join: handing the variable on for it
+                // alone made a row of every value (`p297_effect`'s `$n < …`: every node under each `e`, 7 rows a node
+                // of the 300-file bench).
                 // The literals in one order whatever the rule's (by their text), and the interface by first sight in
                 // it: two rules that push the same join with their literals written in another order (a recheck and
                 // its original, decision 0575) name one helper.
@@ -394,7 +398,12 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, split: &FileLocal, keep_unr
                         && matches!(l.view(), L::Atom(a) if !a.neg() && !f.lattice(rel(&a)) && !candidate(*l)
                             && iface.iter().all(|x| has_var(v, rule, a, x)))
                 });
-                if !must && joined_away && filtered {
+                // A join on a variable it projects away whose interface a cross-file read binds whole stays in the cross
+                // part, which starts from the filter (ed8dd88c04: F823's pairs, 15.4 M rows for one file). An interface
+                // of one variable is no product: at most a row a value. Where the join narrows its nodes (a kind of
+                // `effect_kind`'s), the chunk makes it once and the memo keeps it; one that narrows none
+                // (`docof(n, d), lead(d)`) is a row of every node, and stays the filter's.
+                if !must && joined_away && filtered && (iface.len() > 1 || unrestricted(v, f, rule, &atoms)) {
                     continue;
                 }
                 let typed: Option<Vec<(String, String)>> = iface
