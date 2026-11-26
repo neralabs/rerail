@@ -36,6 +36,9 @@ pub(super) struct Bytes<'a> {
     /// Whether a read with no form of the bytes stays as it is (`partial_windows`), its mask in `failed`.
     partial: bool,
     pub(super) failed: std::collections::HashSet<String>,
+    /// The fills' and escapes' windows and tests written (`wf_*`, `af_*`).
+    wmemo: HashMap<Expr, String>,
+    amemo: std::cell::RefCell<HashMap<Expr, String>>,
     /// The operators' pairs masks the loop reads (`k_pair_K`): each row's pairs of bytes, a pair's first byte's bit where
     /// the second is the byte after (lean's `pair`), made of the block's classes too.
     pub(super) pairs: Vec<(String, Vec<(u8, u8)>)>,
@@ -86,7 +89,7 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default() }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default() }
     }
 
     /// `code` with each read of the masks it has (`locals`) in the windows' form, no block's words (decision 0703): a
@@ -242,6 +245,26 @@ impl<'a> Bytes<'a> {
     /// `e` at byte `at` (Rust, a `usize`), a test of the bytes there: none past the file or before it. At a token's
     /// first byte (`s`) the byte is in the file.
     pub(super) fn at(&self, e: &Expr, at: &str, depth: usize) -> Result<String, String> {
+        // A fill's or an escape's test written once (`af_*`), where a read may stay as it is (`partial_windows`).
+        if self.partial && matches!(e, Expr::Call(f, _) if f == "fill" || f == "escaped") {
+            let got = self.amemo.borrow().get(e).cloned();
+            let f = match got {
+                Some(f) => f,
+                None => {
+                    let body = self.at_raw(e, "q", depth)?;
+                    let f = format!("af_{}", self.amemo.borrow().len());
+                    self.amemo.borrow_mut().insert(e.clone(), f.clone());
+                    let code = format!("/// Whether a fill or an escape holds at byte `q`, from the bytes.\n#[inline]\n#[allow(unused_variables, dead_code)]\nfn {f}(src: &[u8], n: usize, q: usize) -> bool {{\n    {body}\n}}\n\n");
+                    self.named.borrow_mut().push((f.clone(), code));
+                    f
+                }
+            };
+            return Ok(format!("{f}(src, n, {at})"));
+        }
+        self.at_raw(e, at, depth)
+    }
+
+    fn at_raw(&self, e: &Expr, at: &str, depth: usize) -> Result<String, String> {
         if depth > 64 {
             return Err("a mask's definition reads itself".into());
         }
@@ -257,7 +280,28 @@ impl<'a> Bytes<'a> {
                         format!("({i} < n && {})", test(&format!("src[{i}]")))
                     }
                 } else if let Some(d) = self.defs.get(n) {
-                    self.at(d, at, depth + 1)?
+                    if self.partial {
+                        // Each mask's test written once (`at_M`), as the lean lexer writes a read once.
+                        let f = format!("at_{}", ident(n));
+                        if !self.named.borrow().iter().any(|x| x.0 == f) {
+                            self.named.borrow_mut().push((f.clone(), String::new()));
+                            match self.at(&d.clone(), "q", depth + 1) {
+                                Ok(body) => {
+                                    let code = format!("/// Whether mask `{n}` holds at byte `q`, from the bytes.\n#[inline]\n#[allow(unused_variables, dead_code)]\nfn {f}(src: &[u8], n: usize, q: usize) -> bool {{\n    {body}\n}}\n\n");
+                                    if let Some(x) = self.named.borrow_mut().iter_mut().find(|x| x.0 == f) {
+                                        x.1 = code;
+                                    }
+                                }
+                                Err(e) => {
+                                    self.named.borrow_mut().retain(|x| x.0 != f);
+                                    return Err(e);
+                                }
+                            }
+                        }
+                        format!("{f}(src, n, {at})")
+                    } else {
+                        self.at(d, at, depth + 1)?
+                    }
                 } else {
                     return Err(format!("`{n}` is no class or mask of the bytes"));
                 }
@@ -271,6 +315,11 @@ impl<'a> Bytes<'a> {
             Expr::Call(f, args) if f == "escaped" && self.partial && let [Arg::E(b)] = args.as_slice() => {
                 let t = self.at(b, "q", depth + 1)?;
                 format!("(esc_back(({at}) as isize, |q: usize| {t}) == 1)")
+            }
+            // A fill's byte (`partial_windows`): its run read back from the byte to its nearest start or end.
+            Expr::Call(f, args) if f == "fill" && self.partial && let [Arg::E(st), Arg::E(e)] = args.as_slice() => {
+                let (st, e) = (self.at(st, "q", depth + 1)?, self.at(e, "q", depth + 1)?);
+                format!("(fill_back(({at}) as isize + 1, |q: usize| {st}, |q: usize| {e}) == 1)")
             }
             // `text(T)`: the bytes from here are `T`'s.
             Expr::Call(f, args) if f == "text" && let [Arg::S(t)] = args.as_slice() && !t.is_empty() => {
@@ -291,6 +340,29 @@ impl<'a> Bytes<'a> {
     /// `e`'s bits in the 64 bytes from byte `p + off`: none past the file or before it. `escaped`: the search's
     /// carried escapes (`esc`), from its first byte.
     fn win(&mut self, e: &Expr, off: i64, depth: usize) -> Result<String, String> {
+        // A fill's or an escape's window written once (`wf_*`), where a read may stay as it is (`partial_windows`).
+        if self.partial && matches!(e, Expr::Call(f, _) if f == "fill" || f == "escaped") {
+            let f = match self.wmemo.get(e) {
+                Some(f) => f.clone(),
+                None => {
+                    let body = self.win_raw(e, 0, depth)?;
+                    let f = format!("wf_{}", self.wmemo.len());
+                    self.wmemo.insert(e.clone(), f.clone());
+                    let _ = write!(self.code, "/// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline]\n#[allow(unused_variables, dead_code)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {{\n    {body}\n}}\n\n");
+                    f
+                }
+            };
+            let p = match off {
+                0 => "p".to_owned(),
+                o if o < 0 => format!("(p - {})", -o),
+                o => format!("(p + {o})"),
+            };
+            return Ok(format!("unsafe {{ {f}::<S>(src, n, {p}) }}"));
+        }
+        self.win_raw(e, off, depth)
+    }
+
+    fn win_raw(&mut self, e: &Expr, off: i64, depth: usize) -> Result<String, String> {
         if depth > 64 {
             return Err("a mask's definition reads itself".into());
         }
@@ -362,7 +434,18 @@ impl<'a> Bytes<'a> {
                         _ => format!("unsafe {{ {f}::<S>(src, n, {p}) }}"),
                     }
                 } else if let Some(d) = self.defs.get(n).cloned() {
-                    self.win(&d, off, depth + 1)?
+                    if self.partial {
+                        // Each mask's window written once (`d_M`), at any byte.
+                        let f = format!("d_{}", ident(n));
+                        if !self.written.contains(&f) {
+                            self.written.push(f.clone());
+                            let body = self.win(&d, 0, depth + 1).inspect_err(|_| self.written.retain(|w| *w != f))?;
+                            let _ = write!(self.code, "/// Mask `{n}`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline]\n#[allow(unused_variables, dead_code)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {{\n    {body}\n}}\n\n");
+                        }
+                        format!("unsafe {{ {f}::<S>(src, n, {p}) }}")
+                    } else {
+                        self.win(&d, off, depth + 1)?
+                    }
                 } else {
                     return Err(format!("`{n}` is no class or mask of the bytes"));
                 }
@@ -388,6 +471,13 @@ impl<'a> Bytes<'a> {
                 let at = self.at(b, "q", depth + 1)?;
                 let b = self.win(b, off, depth + 1)?;
                 format!("{{ let mut c = esc_back({p}, |q: usize| {at}); escaped_step({b}, &mut c) }}")
+            }
+            // A fill from anywhere (`partial_windows`): stage 1's add, its carry the fill at the byte before the
+            // window, read back over the run to its nearest start (in) or end (out), as the lean lexer reads a run.
+            Expr::Call(f, args) if f == "fill" && self.partial && let [Arg::E(st), Arg::E(e)] = args.as_slice() => {
+                let (sa, ea) = (self.at(st, "q", depth + 1)?, self.at(e, "q", depth + 1)?);
+                let (sw, ew) = (self.win(st, off, depth + 1)?, self.win(e, off, depth + 1)?);
+                format!("{{ let (fs, fe) = ({sw}, {ew}); let c = fill_back({p}, |q: usize| {sa}, |q: usize| {ea}); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, {p}) }}")
             }
             // `text(T)`: each of `T`'s bytes in its window, `k` bytes on.
             Expr::Call(f, args) if f == "text" && self.partial && let [Arg::S(t)] = args.as_slice() && !t.is_empty() => {
@@ -1507,6 +1597,24 @@ fn esc_back(p: isize, t: impl Fn(usize) -> bool) -> u64 {
         q -= 1;
     }
     c
+}
+
+/// A fill's carry at the window from `p`, from the bytes: whether it holds at the byte before, the nearest byte back
+/// its start `s` or its end `e` holds at deciding.
+#[inline(always)]
+fn fill_back(p: isize, s: impl Fn(usize) -> bool, e: impl Fn(usize) -> bool) -> u64 {
+    let mut q = p;
+    while q > 0 {
+        let j = (q - 1) as usize;
+        if s(j) {
+            return 1;
+        }
+        if e(j) {
+            return 0;
+        }
+        q -= 1;
+    }
+    0
 }
 
 /// Byte `c`'s bits in the 64 bytes from `p`: none past the file or before it.
