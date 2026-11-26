@@ -20,9 +20,11 @@ ungrounded. Each cause is listed under "Engine and translator gaps".
 
 ## Per rule
 
-Each rule follows the JSON. Nothing differs, so the JSON is never set aside. ESLint 9.39.5 with eslint-plugin-vue
-10.11.1 (npx on a box, typescript-eslint's parser for `<script lang="ts">`) agrees with both sides on the cases below,
-line and column.
+Each rule follows the JSON on both corpora: nothing there differs. Where the review found ESLint and the translation
+apart (below, "Review fixes"), the rule follows ESLint; the corpora hold none of those shapes, so the suite still
+reports `same`, and whether the JSON originals share each defect is not measured. ESLint 9.39.5 with
+eslint-plugin-vue 10.11.1 (npx on a box, typescript-eslint's parser for `<script lang="ts">`) agrees with both sides
+on the cases below, line and column.
 
 - **no-unused-vars.** A destructured alias is checked even when a later one is used:
   `<div v-for="({a, b}, [c, d], e, f) in foo">{{f}}</div>` reports a, b, c and d, and e passes. tsx/names binds
@@ -49,7 +51,40 @@ This file holds what two or more of the rules share: the template's arrows and p
 `vv_destructured`, `vv_read`), name resolution over the view (`vv_site`, `vv_site_only`, `vv_pattern_name`), the
 scripts' top-level names (`vv_module_name`), and `<script setup>`'s statements (`vv_setup_stmt`, `vv_marker`). Each
 rule keeps its own version of "the component's definition object": the three JSON originals differ in it (which
-argument, which definers, an `as`/`satisfies`, `// @vue/component`).
+argument, which definers, an `as`/`satisfies`, `// @vue/component`). What the review added: `vv_marked` (an object
+under `// @vue/component`, the plugin's getVueObjectType "mark"), `vv_same_element` and `vv_attr_first` (one element's
+v-for and slot, in attribute order), enum and TypeScript class names in `vv_module_name`, and `vv_read` resolving a
+read to the earlier of a same-named v-for alias and slot parameter on one element.
+
+## Review fixes (review/vue-02.review.md)
+
+All 21 defects and the message difference are fixed; none is disputed. Each counterexample, and the cases the fixes
+raised (`x01`–`x05`), is a `.test` of its rule expecting exactly ESLint's lines: 36 tests, all pass under
+`rerail-engine test-rr`, and ESLint and the translations give the same 49 (file, rule, line) keys on them. ptcheck
+afterwards: all five `same`, with the same counts as before (fixtures 61, 51, 26, 7, 138; samples-vue 12, 0, 0, 13, 0).
+
+- **no-setup-props-reactivity-loss.** `barrier` now draws eslint-scope's scopes: a switch's body, not its
+  discriminant; a `for` only when its head declares with let or const (`for (i = 0; …)`, `for (var x of …)` open
+  none). `export default { … } as T` and `satisfies T` are no component (isVueComponentFile wants the object);
+  `// @vue/component` marks one; `#imports` is Vue's. An object or array literal assigned is reported only in the
+  context's own code: `const Comp = { setup(props) { … props.a … } }` under the marker reported the object too.
+- **no-side-effects-in-computed-properties.** ``list.value[`push`](1)`` is a mutator call; ``[`d`]() {}`` is named
+  "d" in the message.
+- **no-template-shadow.** In a file with `<script setup>`, every top-level binding of both scripts counts, TypeScript
+  class and enum names included. defineProps' type is split as flattenTypeNodes does (`&`, `|`, parentheses, an
+  alias or interface by name, aliases of aliases), and `defineProps(def)` follows a `const def = { … }`. Group keys
+  and names are getStaticPropertyName's (`['data']`, ``[`row`]``, a props array's `` `item` ``). A definer's object
+  is its last argument only; `// @vue/component` marks one. On one element, the v-for or v-slot attribute that comes
+  second is reported (`<Comp v-slot="row" v-for="row in rows">`: the v-for's).
+- **no-unused-refs.** Enum names read refs in `<script setup>`; setup()'s returned `['box']` and ``[`panel`]`` keys
+  read refs; `// @vue/component` marks a component; `useTemplateRef` reads only in a script, its first argument
+  through comments and parentheses.
+- **no-unused-vars.** A variable read in another attribute of its own element is used (a slot element's `:prop` or
+  v-if, a v-for's v-if), counting only references the attribute's expression does not declare itself
+  (`v-if="ys.some(x => x)"` reads no x), and not the v-for's own list (`v-for="x in x.items"` leaves x unused).
+  Found while fixing: where one element's v-for and slot declare one name, vue-eslint-parser resolves the children's
+  reads to the earlier attribute's variable (`<Comp v-for="item in items" v-slot="item">{{ item }}</Comp>`: the
+  slot's item is unused), which `vv_read` now does.
 
 ## Library changes wanted (existing files, not edited here)
 
@@ -58,7 +93,9 @@ argument, which definers, an `as`/`satisfies`, `// @vue/component`).
   Write them with literal kinds, `(kind(p, "a") ; kind(p, "b"))`. The view's dialect specialises a kind written in an
   atom, not one compared with `=`, so over the view these declare nothing today. `{ a }` in a pattern is then a
   reference, and a TypeScript parameter declares nothing. Once that is fixed, `vv_site`, `vv_pattern_scope` and
-  `vv_module_name`'s pattern and type branches can go.
+  `vv_module_name`'s pattern and type branches can go. Over the view `bind_name` also gives no binding for an enum's
+  name (`enum row { A }`) nor a TypeScript class's (`class col {}`, a `type_identifier`), which typescript-eslint's
+  scope manager declares; `vv_module_name` adds both.
 - **lib/vue/code, component, mutation and template's code relations** read rrlab's `parsed` roles, which the engine
   never makes, so they are dead in engine runs. The other vue rules built on them (no-dupe-keys, no-mutating-props,
   no-ref-as-operand, require-valid-default-prop, return-in-computed-property, no-async-in-computed-properties,
@@ -73,6 +110,9 @@ argument, which definers, an `as`/`satisfies`, `// @vue/component`).
 - Over the view, `value(n, v)` has no rows for strings (`str` has them), and neither do `prev_token` and `token`. `op`,
   `structural_before`, `structural_after`, comments and `end_line` work. The translator writes `value` for the
   `vue|@vue/composition-api|…` source tests, so its outputs take a Vue import for a foreign one.
+- A second view node in a body has no rows unless an atom ties it to the view: its own `docof(n, g)`, or a structural
+  atom (`within`, `child`) from a node that has one. `vv_param(m, x, _), vv_param(n, x, _), m != n` finds nothing;
+  with `docof(n, g)` it finds the pairs. `vv_same_element` and `vv_attr_first` carry the docof atoms for that.
 - The translator's side-effects output is refused as ungrounded (its line 539: the `@vue/component` alternative,
   `not: {not: …}`, nests a count over an outer variable). It also applies the `constraints` on T after `unset(T)`,
   which would drop every mutation but Object.assign's.

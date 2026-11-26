@@ -5,14 +5,15 @@
 .mode steer
 .scope include "**/*.vue"
 #include "vue/vue-02.rerail"
-//   vv_param(n, x, a), vv_destructured(n), vv_read(r, n)
+//   vv_param(n, x, a), vv_destructured(n), vv_read(r, n), vv_site(r, d)
 
 // eslint-plugin-vue's no-unused-vars over the component's view (vue/view): a variable a template element declares
 // (a v-for alias, a v-slot, #slot, slot-scope or scope parameter) that no template code reads. A read is a reference
 // in the view, except a component tag's (`<Foo>` is `Foo;`) and a Vue 2 filter's name (`{{ a | f }}`). Positional
-// variables are checked from the last: an unused one before a used one passes, unless it is destructured. An alias
-// read in the v-if of its own element counts as read, and so does a name that a descendant's tag spells. No options
-// (the plugin's ignorePattern is not in the JSON).
+// variables are checked from the last: an unused one before a used one passes, unless it is destructured. A variable
+// read in another attribute of its own element counts as read (vue-eslint-parser resolves an element's variables over
+// all its attributes: a v-for's v-if, a slot element's `:prop` or v-if), and so does a name that a descendant's tag
+// spells. No options (the plugin's ignorePattern is not in the JSON).
 //   <li v-for="(item, i) in items">{{ i }}</li>                item passes: i after it is used
 //   <li v-for="(item, i) in items">{{ item }}</li>             i is reported
 //   <comp v-slot="{ a, b }">{{ b }}</comp>                    a is reported: it is destructured
@@ -20,7 +21,7 @@
 .violation unused_var(at: node, x: symbol) code "vue/no-unused-vars" "'{x}' is defined but never used."
     suppress eslint "vue/no-unused-vars"
 unused_var(n, x) :- docof(n, g), (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx")),
-    vv_param(n, x, _), !used(n), !if_read(n, x), !tag_named(n, x), (vv_destructured(n) ; !used_after(n)).
+    vv_param(n, x, _), !used(n), !attr_read(n, x), !tag_named(n, x), (vv_destructured(n) ; !used_after(n)).
 
 .decl used(n: node)
 used(n) :- vv_read(r, n), (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")), !tag_read(r),
@@ -28,20 +29,19 @@ used(n) :- vv_read(r, n), (kind(r, "identifier") ; kind(r, "shorthand_property_i
 // used_after(n): a variable declared after n in its parameter list, or after the pattern n is in, is used.
 .decl used_after(n: node)
 used_after(n) :- vv_param(n, _, _), nearest(n, ps, "formal_parameters"), (p = n ; within(n, p), within(p, ps)),
-    precedes(p, s), (q = s ; within(q, s)), vv_param(q, y, _), (used(q) ; if_read(q, y)).
+    precedes(p, s), (q = s ; within(q, s)), vv_param(q, y, _), (used(q) ; attr_read(q, y)).
 
-// if_read(n, x): `<li v-for="x in xs" v-if="x.ok">`: Vue 3 runs the v-if first, so the view puts the condition
-// outside the alias's arrow, `if ((x.ok)) { (xs), (x) => { … }; }`; the plugin counts it as a read.
-.decl if_read(n: node, x: symbol)
-if_read(n, x) :- vv_param(n, x, a), child(sq, a, _), kind(sq, "sequence_expression"), child(e, sq, _),
-    kind(e, "expression_statement"), host_node(e, h), has_v_if(h), child(b, e, _), kind(b, "statement_block"),
-    child(i, b, _), kind(i, "if_statement"), field(i, "condition", c), within(r, c),
-    (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")), text(r, x).
-.decl has_v_if(h: node)
-has_v_if(h) :- child(h, d, _), v_if(d).
-has_v_if(h) :- child(h, t, _), (kind(t, "start_tag") ; kind(t, "self_closing_tag")), child(t, d, _), v_if(d).
-.decl v_if(d: node)
-v_if(d) :- kind(d, "directive_attribute"), match("v-(?:else-)?if(?:[.:=\\s]|$).*", d).
+// attr_read(n, x): an attribute of n's element that the view puts outside n's arrow reads x. Vue 3 runs a v-if before
+// the v-for, so the view writes `if ((x.ok)) { (xs), (x) => { … }; }`; a slot's arrow holds only the children, so
+// `<Comp v-slot="{ a }" :p="a">` is `Comp; (a); ({ a }) => { … };`. The read is a reference of the attribute's own
+// expression that nothing in that expression declares (`v-if="ys.some(x => x)"` reads no x). The v-for's own list is
+// no such read: `<li v-for="x in x.items">` leaves x unused.
+.decl attr_read(n: node, x: symbol)
+attr_read(n, x) :- vv_param(n, x, a), host_node(a, h), (kind(t, "start_tag") ; kind(t, "self_closing_tag")),
+    child(h, t, _), child(t, d, _), kind(d, "directive_attribute"), !match("v-for(?:[\\s=][\\s\\S]*)?", d),
+    host_node(r, v), (v = d ; within(v, d)), (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")),
+    ref(r, x, "value"), !vv_declares(r), !within(r, a), docof(r, g), docof(a, g),
+    count : { vv_site(r, s), host_node(s, hs), (hs = d ; within(hs, d)) } = 0.
 
 // tag_named(n, x): a descendant of the declaring element has the tag x (not a dotted `<x.Y>`).
 .decl tag_named(n: node, x: symbol)
@@ -69,3 +69,97 @@ pipe(p) :- kind(p, "binary_expression"), op(p, "|").
 .decl filter_top(x: node)  // the parentheses of `(E);` for a {{ }} or a v-bind
 filter_top(x) :- child(e, x, _), kind(e, "expression_statement"), host_node(x, h),
     (kind(h, "interpolation") ; kind(h, "directive_attribute"), match("(?:v-bind(?:[:.=\\s]|$)|[:.]).*", h)).
+
+// Tests (decision 0130): run by `rerail-engine test-rr`, left out of the rule otherwise. The review's counterexamples
+// (review/vue-02.review.md) and the cases its fixes raised, each expecting exactly the lines ESLint 9.39.5 with
+// eslint-plugin-vue 10.11.1 reports.
+// vue-eslint-parser resolves an element's variables over all its attributes.
+.test a_v_if_on_the_slot_element_reads_its_parameters exactly
+    .fixture "u03-slot-vif.vue" ```
+        <template>
+          <div>
+            <Comp v-slot="{ a }" v-if="a">x</Comp>
+            <Comp><template #default="{ b }" v-if="b">x</template></Comp>
+          </div>
+        </template>
+        ```
+.end
+
+// `:prop="a"` on the element with `v-slot` or `slot-scope`.
+.test a_bound_attribute_of_the_slot_element_reads_its_parameters exactly
+    .fixture "u07-slot-attr.vue" ```
+        <template>
+          <div>
+            <Comp v-slot="{ a }" :prop="a"></Comp>
+            <Comp slot-scope="{ b }" :prop="b"></Comp>
+          </div>
+        </template>
+        ```
+.end
+
+// `ys.some(x => x)` reads its own x; `obj.z` reads no z.
+.test a_v_if_arrow_parameter_is_no_read_of_the_alias exactly
+    .fixture "u04-vif-arrow.vue" ```
+        <template>
+          <ul>
+            <li v-for="x in xs" v-if="ys.some(x => x)">y</li>
+            <li v-for="z in xs" v-if="obj.z">y</li>
+          </ul>
+        </template>
+        ```
+    .expect "vue/no-unused-vars" at "u04-vif-arrow.vue":3
+    .expect "vue/no-unused-vars" at "u04-vif-arrow.vue":4
+.end
+
+// `v-for="x in x.items"` leaves x unused; on one element with the same name, neither variable is read here.
+.test the_v_for_list_is_no_read_of_its_alias exactly
+    .fixture "x01-for-src.vue" ```
+        <template>
+          <ul>
+            <li v-for="x in x.items">y</li>
+            <Comp v-for="item in items"
+              v-slot="item">y</Comp>
+            <Comp v-for="row in rows" v-slot="{ a }" :p="row">{{ a }}</Comp>
+          </ul>
+        </template>
+        ```
+    .expect "vue/no-unused-vars" at "x01-for-src.vue":3
+    .expect "vue/no-unused-vars" at "x01-for-src.vue":4
+    .expect "vue/no-unused-vars" at "x01-for-src.vue":5
+.end
+
+// `{{ row }}` reads the slot's row (first): the v-for's is unused.
+.test reads_resolve_to_the_earlier_attribute_v_slot_first exactly
+    .fixture "s14-same-element-lines.vue" ```
+        <template>
+          <div>
+            <Comp
+              v-slot="row"
+              v-for="row in rows">{{ row }}</Comp>
+          </div>
+        </template>
+        ```
+    .expect "vue/no-unused-vars" at "s14-same-element-lines.vue":5
+.end
+
+// `{{ item }}` reads the v-for's item (first): the slot's is unused.
+.test reads_resolve_to_the_earlier_attribute_v_for_first exactly
+    .fixture "x03-shadow-order.vue" ```
+        <script setup lang="ts">
+        type A = { a: string }
+        type B = A | { b: string }
+        interface C { c: string }
+        defineProps<(B) & C>()
+        </script>
+        <template>
+          <div>
+            <Comp v-for="item in items"
+              v-slot="item">{{ item }}</Comp>
+            <div v-for="a in list">{{ a }}</div>
+            <div v-for="b in list">{{ b }}</div>
+            <div v-for="c in list">{{ c }}</div>
+          </div>
+        </template>
+        ```
+    .expect "vue/no-unused-vars" at "x03-shadow-order.vue":10
+.end

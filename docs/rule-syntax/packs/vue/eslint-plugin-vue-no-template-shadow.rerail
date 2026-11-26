@@ -6,63 +6,87 @@
 .scope include "**/*.vue"
 #include "vue/vue-02.rerail"
 #include "vue/compare.rerail"
-//   vv_arrow(a), vv_param(n, x, a), vv_module_name(k), vv_setup_stmt(s), vv_site(r, d), vv_site_only(d), cmp_unquoted(n, x)
+//   vv_arrow(a), vv_param(n, x, a), vv_same_element(a, o), vv_attr_first(m, n), vv_module_name(k), vv_setup_stmt(s),
+//   vv_marker(m, k), vv_marked(o), vv_site(r, d), vv_site_only(d), cmp_unquoted(n, x)
 
 // eslint-plugin-vue's no-template-shadow over the component's view (vue/view): a template variable (a v-for alias,
 // a slot parameter) whose name is already taken by
-//   a variable of an outer element's v-for or slot;
-//   a top-level binding of <script setup> (imports included);
-//   a prop defineProps declares: `defineProps({ a: … })`, `defineProps(["a"])`, `defineProps<{ a: T }>()`, or the
-//   members of the interface or type alias `defineProps<Props>()` names;
+//   a variable of an outer element's v-for or slot, or of an earlier v-for or v-slot attribute of its own element;
+//   in a file with <script setup>, a top-level binding of either script (imports, classes, enums, types included);
+//   a prop defineProps declares: `defineProps({ a: … })`, `defineProps(["a"])`, `defineProps(def)` of a
+//   `const def = { … }`, `defineProps<{ a: T }>()`, through `&`, `|` and the interfaces and type aliases it names;
 //   a member of the component's props, computed, data, asyncData, methods or setup: an object's key, a returned
-//   object's key, or a string of a props array.
+//   object's key, or a string of a props array (getStaticPropertyName's names: `a`, `'a'`, `['a']`, ``[`a`]``).
 // No options (the plugin's allow is not in the JSON).
 //   <li v-for="item in items"><p v-for="item in item.parts" /></li>    the inner item is reported
 //   data() { return { item: 1 } } … <li v-for="item in items" />       reported
+//   <Comp v-slot="row" v-for="row in rows">                            the v-for's row is reported
 .violation shadow(at: node, x: symbol) code "vue/no-template-shadow" "Variable '{x}' is already declared in the upper scope."
     suppress eslint "vue/no-template-shadow"
 shadow(n, x) :- docof(n, g), (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx")),
     vv_param(n, x, a), taken(n, x, a).
 .decl taken(n: node, x: symbol, a: node)
-taken(n, x, a) :- vv_param(n, x, a), within(a, o), vv_arrow(o), vv_param(_, x, o).
+taken(n, x, a) :- vv_param(n, x, a), within(a, o), vv_arrow(o), vv_param(_, x, o), !vv_same_element(a, o).
+taken(n, x, a) :- vv_param(n, x, a), vv_param(m, x, o), vv_same_element(a, o), vv_attr_first(m, n).
 taken(n, x, a) :- vv_param(n, x, a), cmp_unquoted(n, t), declared(k), cmp_unquoted(k, t), docof(n, g), docof(k, g).
 // declared(k): k names something the script declares for the template.
 .decl declared(k: node)
-declared(k) :- (kind(k, "identifier") ; kind(k, "shorthand_property_identifier_pattern")), vv_module_name(k),
-    within(k, st), vv_setup_stmt(st).
-declared(k) :- member_key(m, k), child(o, m, _), kind(o, "object"), child(as, o, _), kind(as, "arguments"),
-    child(c, as, _), props_call(c).
-declared(k) :- kind(k, "string"), child(r, k, _), kind(r, "array"), child(as, r, _), kind(as, "arguments"),
-    child(c, as, _), props_call(c).
-declared(k) :- signature_name(s, k), child(t, s, _), kind(t, "object_type"), child(ta, t, _), kind(ta, "type_arguments"),
-    child(c, ta, _), props_call(c).
-declared(k) :- signature_name(s, k), child(b, s, _), (kind(b, "interface_body") ; kind(b, "object_type")),
-    child(d, b, _), (kind(d, "interface_declaration") ; kind(d, "type_alias_declaration")), field(d, "name", tn),
-    kind(tn, "type_identifier"), text(tn, t), inside(d, p, "program"), has(p, u, "type_identifier"), text(u, t),
-    child(ta, u, _), kind(ta, "type_arguments"), child(c, ta, _), props_call(c).
+declared(k) :- (kind(k, "identifier") ; kind(k, "type_identifier") ; kind(k, "shorthand_property_identifier_pattern")),
+    vv_module_name(k), inside(k, p, "program"), child(p, m, _), vv_marker(m, "setup").
+declared(k) :- member_key(m, k), child(o, m, _), kind(o, "object"), props_value(o).
+declared(k) :- name_literal(k), child(r, k, _), kind(r, "array"), props_value(r).
+declared(k) :- signature_name(s, k), child(b, s, _), (kind(b, "object_type") ; kind(b, "interface_body")),
+    props_type(b).
 declared(k) :- member_key(m, k), child(o, m, _), group_object(o).
-declared(k) :- kind(k, "string"), child(r, k, _), kind(r, "array"), child(p, r, _), group_pair(p).
+declared(k) :- name_literal(k), child(r, k, _), kind(r, "array"), child(p, r, _), group_pair(p).
 
 // props_call(c): a defineProps() call in <script setup>.
 .decl props_call(c: node)
 props_call(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), text(f, "defineProps"),
     within(c, st), vv_setup_stmt(st).
-// member_key(m, k): object member m's static name k: `a: 1`, `'a': 1`, `['a']: 1`, `a() {}`, `{ a }`.
+// props_value(v): what defineProps' argument is: the object or array itself, or (getObjectOrArray) the one a
+// `const` it names is initialised with, through parentheses.
+.decl props_value(v: node)
+props_value(v) :- child(as, v, _), kind(as, "arguments"), child(c, as, _), props_call(c).
+props_value(v) :- props_value(p), kind(p, "parenthesized_expression"), child(p, v, _).
+props_value(v) :- props_value(i), kind(i, "identifier"), vv_site(i, s), vv_site_only(s), (d = s ; within(s, d)),
+    kind(d, "variable_declarator"), field(d, "name", nm), kind(nm, "identifier"), field(d, "value", v),
+    child(l, d, _), kind(l, "lexical_declaration"), op(l, "const").
+// props_type(t): a type defineProps<T>() reads, as the plugin's flattenTypeNodes splits it: T, each side of an `&`
+// or `|`, and the body of the interface or type alias a name refers to (aliases of aliases too).
+.decl props_type(t: node)
+props_type(t) :- child(ta, t, _), kind(ta, "type_arguments"), child(c, ta, _), props_call(c).
+props_type(t) :- props_type(u), (kind(u, "intersection_type") ; kind(u, "union_type") ; kind(u, "parenthesized_type")),
+    child(u, t, _).
+props_type(b) :- props_type(u), kind(u, "type_identifier"), text(u, tn), inside(u, p, "program"),
+    (has(p, d, "type_alias_declaration"), field(d, "value", b) ;
+     has(p, d, "interface_declaration"), field(d, "body", b)),
+    field(d, "name", nm), text(nm, tn), nearest(d, q, block_scope), kind(q, "program").
+// member_key(m, k): object member m's static name k: `a: 1`, `'a': 1`, `['a']: 1`, ``[`a`]: 1``, `a() {}`, `{ a }`.
 .decl member_key(m: node, k: node)
 member_key(m, k) :- (kind(m, "pair"), field(m, "key", n) ; kind(m, "method_definition"), field(m, "name", n)),
     (k = n, (kind(n, "property_identifier") ; kind(n, "string")) ;
-     kind(n, "computed_property_name"), child(n, k, _), kind(k, "string")).
+     kind(n, "computed_property_name"), child(n, k, _), name_literal(k)).
 member_key(k, k) :- kind(k, "shorthand_property_identifier").
+.decl name_literal(k: node)  // a string, or a template literal without `${…}`
+name_literal(k) :- kind(k, "string").
+name_literal(k) :- kind(k, "template_string"), count : { child(k, s, _), kind(s, "template_substitution") } = 0.
 .decl signature_name(s: node, k: node)  // `a: T;` or `a(): T;` in a type
 signature_name(s, k) :- (kind(s, "property_signature") ; kind(s, "method_signature")), field(s, "name", k),
     (kind(k, "property_identifier") ; kind(k, "string")).
 
-// The options API: an object the component's definition holds, and its groups that name things for the template.
+// The options API: the component's definition object, and its groups that name things for the template.
+// component_object(o): `export default { … }`, the last argument of a definer's call, the first of `new Vue(…)`, or
+// an object under a `// @vue/component` line (the plugin's getVueObjectType).
 .decl component_object(o: node)
-component_object(o) :- kind(o, "object"), child(p, o, _),
-    (kind(p, "export_statement") ;
-     kind(p, "arguments"), child(c, p, _), kind(c, "call_expression"), field(c, "function", f), definer(f) ;
-     kind(p, "arguments"), child(c, p, _), kind(c, "new_expression"), field(c, "constructor", v), text(v, "Vue")).
+component_object(o) :- kind(o, "object"), child(p, o, _), kind(p, "export_statement").
+component_object(o) :- kind(o, "object"), child(p, o, _), kind(p, "arguments"), child(c, p, _),
+    kind(c, "call_expression"), field(c, "function", f), definer(f),
+    count : { child(p, b, _), !kind(b, "comment"), precedes(o, b) } = 0.
+component_object(o) :- kind(o, "object"), child(p, o, _), kind(p, "arguments"), child(c, p, _),
+    kind(c, "new_expression"), field(c, "constructor", v), text(v, "Vue"),
+    count : { child(p, b, _), !kind(b, "comment"), precedes(b, o) } = 0.
+component_object(o) :- vv_marked(o).
 // definer(f): defineComponent and the like, unless the name resolves to a non-Vue import, a function, a class, a
 // catch parameter or a `const { … } = require("other")`.
 .decl definer(f: node)
@@ -92,6 +116,268 @@ group_object(o) :- kind(o, "object"), child(r, o, _), kind(r, "return_statement"
     kind(b, "statement_block"), child(f, b, _), group_function(f).
 group_object(o) :- kind(o, "object"), child(pe, o, _), kind(pe, "parenthesized_expression"), child(f, pe, _),
     kind(f, "arrow_function"), group_function(f).
+// group_name(k): the key is a group's name, as getStaticPropertyName reads it: `data`, `'data'`, `['data']`,
+// ``[`data`]``.
 .decl group_name(k: node)
-group_name(k) :- (field(_, "key", k) ; field(_, "name", k)),
-    match("['\"]?(props|computed|data|asyncData|methods|setup)['\"]?", k).
+group_name(k) :- (field(_, "key", k) ; field(_, "name", k)), !kind(k, "computed_property_name"), cmp_unquoted(k, x),
+    group_word(x).
+group_name(k) :- kind(k, "computed_property_name"), child(k, s, _), name_literal(s), cmp_unquoted(s, x), group_word(x).
+.decl group_word(x: symbol)
+group_word("props"). group_word("computed"). group_word("data"). group_word("asyncData"). group_word("methods").
+group_word("setup").
+
+// Tests (decision 0130): run by `rerail-engine test-rr`, left out of the rule otherwise. The review's counterexamples
+// (review/vue-02.review.md) and the cases its fixes raised, each expecting exactly the lines ESLint 9.39.5 with
+// eslint-plugin-vue 10.11.1 reports.
+// vue-eslint-parser reads both scripts as one program: the plain <script>'s import and const shadow too.
+.test plain_script_bindings_in_a_file_with_script_setup exactly
+    .fixture "s01-plain-script.vue" ```
+        <script>
+        import { item } from './items'
+        const row = 1
+        export default {}
+        </script>
+        <script setup>
+        const other = 1
+        </script>
+        <template>
+          <div v-for="item in items">{{ item }}</div>
+          <div v-for="row in items">{{ row }}</div>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "s01-plain-script.vue":10
+    .expect "vue/no-template-shadow" at "s01-plain-script.vue":11
+.end
+
+// typescript-eslint gives each a module-scope variable.
+.test typescript_type_interface_and_class_names exactly
+    .fixture "s16-types.vue" ```
+        <script setup lang="ts">
+        type item = string
+        interface row { a: 1 }
+        class col {}
+        </script>
+        <template>
+          <div v-for="item in list">{{ item }}</div>
+          <div v-for="row in list">{{ row }}</div>
+          <div v-for="col in list">{{ col }}</div>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "s16-types.vue":7
+    .expect "vue/no-template-shadow" at "s16-types.vue":8
+    .expect "vue/no-template-shadow" at "s16-types.vue":9
+.end
+
+// An enum and a TypeScript class too; a `for (const …)` binding is no module binding.
+.test typescript_declarations_at_the_top_level exactly
+    .fixture "s09-ts-decls.vue" ```
+        <script setup lang="ts">
+        import type { item } from './t'
+        enum row { A }
+        function cell() {}
+        class col {}
+        namespace ns { export const x = 1 }
+        for (const loopv of [1]) {}
+        </script>
+        <template>
+          <div v-for="item in list">{{ item }}</div>
+          <div v-for="row in list">{{ row }}</div>
+          <div v-for="cell in list">{{ cell }}</div>
+          <div v-for="col in list">{{ col }}</div>
+          <div v-for="ns in list">{{ ns }}</div>
+          <div v-for="loopv in list">{{ loopv }}</div>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "s09-ts-decls.vue":10
+    .expect "vue/no-template-shadow" at "s09-ts-decls.vue":11
+    .expect "vue/no-template-shadow" at "s09-ts-decls.vue":12
+    .expect "vue/no-template-shadow" at "s09-ts-decls.vue":13
+    .expect "vue/no-template-shadow" at "s09-ts-decls.vue":14
+.end
+
+// flattenTypeNodes splits `A & B`.
+.test define_props_through_an_intersection exactly
+    .fixture "s02-intersection.vue" ```
+        <script setup lang="ts">
+        defineProps<{ a: string } & { item: string }>()
+        </script>
+        <template>
+          <div v-for="item in list">{{ item }}</div>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "s02-intersection.vue":5
+.end
+
+// flattenTypeNodes follows a type alias to its type, recursively.
+.test define_props_through_an_alias_of_an_alias exactly
+    .fixture "s03-alias-chain.vue" ```
+        <script setup lang="ts">
+        type Base = { item: string }
+        type Props = Base
+        defineProps<Props>()
+        </script>
+        <template>
+          <div v-for="item in list">{{ item }}</div>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "s03-alias-chain.vue":7
+.end
+
+// `(B) & C` with B an alias of `A | {…}`; and on one element a v-slot after a v-for is reported.
+.test define_props_through_union_parentheses_and_interface_and_same_element_order exactly
+    .fixture "x03-shadow-order.vue" ```
+        <script setup lang="ts">
+        type A = { a: string }
+        type B = A | { b: string }
+        interface C { c: string }
+        defineProps<(B) & C>()
+        </script>
+        <template>
+          <div>
+            <Comp v-for="item in items"
+              v-slot="item">{{ item }}</Comp>
+            <div v-for="a in list">{{ a }}</div>
+            <div v-for="b in list">{{ b }}</div>
+            <div v-for="c in list">{{ c }}</div>
+          </div>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "x03-shadow-order.vue":10
+    .expect "vue/no-template-shadow" at "x03-shadow-order.vue":11
+    .expect "vue/no-template-shadow" at "x03-shadow-order.vue":12
+    .expect "vue/no-template-shadow" at "x03-shadow-order.vue":13
+.end
+
+// getObjectOrArray follows the argument to its const's object.
+.test define_props_of_a_const_object exactly
+    .fixture "s04-props-const.vue" ```
+        <script setup>
+        const propsDef = { item: String }
+        defineProps(propsDef)
+        </script>
+        <template>
+          <div v-for="item in list">{{ item }}</div>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "s04-props-const.vue":6
+.end
+
+// `['data']() {}` is the data group.
+.test a_computed_group_key exactly
+    .fixture "s06-computed-group-key.vue" ```
+        <script>
+        export default {
+          ['data']() { return { item: 1 } },
+          'methods': { row() {} }
+        }
+        </script>
+        <template>
+          <div v-for="item in list">{{ item }}</div>
+          <div v-for="row in list">{{ row }}</div>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "s06-computed-group-key.vue":8
+    .expect "vue/no-template-shadow" at "s06-computed-group-key.vue":9
+.end
+
+// A props array's `` `item` `` and a data key ``[`row`]``.
+.test template_literal_names exactly
+    .fixture "s13-template-literal.vue" ```
+        <script>
+        export default {
+          props: [`item`],
+          data() { return { [`row`]: 1 } }
+        }
+        </script>
+        <template>
+          <div v-for="item in list">{{ item }}</div>
+          <div v-for="row in list">{{ row }}</div>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "s13-template-literal.vue":8
+    .expect "vue/no-template-shadow" at "s13-template-literal.vue":9
+.end
+
+// `["props"]`, `"computed"`, ``[`cell`]()``.
+.test computed_and_quoted_group_and_member_keys exactly
+    .fixture "x05-shadow-options.vue" ```
+        <script>
+        import { defineComponent } from 'vue'
+        export default defineComponent({
+          ["props"]: { [`item`]: String },
+          "computed": { row() { return 1 } },
+          methods: { [`cell`]() {} }
+        })
+        </script>
+        <template>
+          <div v-for="item in list">{{ item }}</div>
+          <div v-for="row in list">{{ row }}</div>
+          <div v-for="cell in list">{{ cell }}</div>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "x05-shadow-options.vue":10
+    .expect "vue/no-template-shadow" at "x05-shadow-options.vue":11
+    .expect "vue/no-template-shadow" at "x05-shadow-options.vue":12
+.end
+
+// getVueObjectType's "mark".
+.test an_object_under_vue_component_is_a_component exactly
+    .fixture "s07-vue-component-comment.vue" ```
+        <script>
+        // @vue/component
+        const Comp = {
+          data() { return { item: 1 } }
+        }
+        export default Comp
+        </script>
+        <template>
+          <div v-for="item in list">{{ item }}</div>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "s07-vue-component-comment.vue":9
+.end
+
+// Vue.mixin({ … }, 1) defines nothing.
+.test only_a_definers_last_argument_is_a_component exactly
+    .fixture "s12-last-arg.vue" ```
+        <script>
+        import Vue from 'vue'
+        Vue.component('x', { data() { return { item: 1 } } })
+        Vue.mixin({ methods: { row() {} } }, 1)
+        </script>
+        <template>
+          <div v-for="item in list">{{ item }}</div>
+          <div v-for="row in list">{{ row }}</div>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "s12-last-arg.vue":7
+.end
+
+// node.variables keep attribute order: the v-for's row, second, is reported.
+.test a_v_slot_before_a_v_for_on_one_element exactly
+    .fixture "s14-same-element-lines.vue" ```
+        <template>
+          <div>
+            <Comp
+              v-slot="row"
+              v-for="row in rows">{{ row }}</Comp>
+          </div>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "s14-same-element-lines.vue":5
+.end
+
+// The slot's item, second, is reported.
+.test a_v_for_before_a_v_slot_on_one_element exactly
+    .fixture "x01-for-src.vue" ```
+        <template>
+          <ul>
+            <li v-for="x in x.items">y</li>
+            <Comp v-for="item in items"
+              v-slot="item">y</Comp>
+            <Comp v-for="row in rows" v-slot="{ a }" :p="row">{{ a }}</Comp>
+          </ul>
+        </template>
+        ```
+    .expect "vue/no-template-shadow" at "x01-for-src.vue":5
+.end

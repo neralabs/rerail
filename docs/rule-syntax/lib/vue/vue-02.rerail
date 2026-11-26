@@ -7,7 +7,11 @@
 //   vv_arrow(a)           a is the arrow of a v-for or a slot: a statement's arrow, or the arrow after a v-for's list
 //   vv_param(n, x, a)     arrow a's parameters declare x at n, destructured or not: `item`, `{ a, b: [c] }`, `d = 1`
 //   vv_destructured(n)    n is declared inside a pattern: `{ a }`, `[c]` (main's `param-destructured`)
-//   vv_read(r, n)         reference r reads the template variable declared at n
+//   vv_read(r, n)         reference r reads the template variable declared at n; where one element's v-for and slot
+//                         declare one name, the earlier attribute's (vue-eslint-parser resolves to the first)
+//   vv_same_element(a, o) a and o are the arrows of one element's v-for and slot (the view nests the slot's in the
+//                         v-for's; vue-eslint-parser keeps the element's variables in attribute order)
+//   vv_attr_first(m, n)   template code m comes before n in the `.vue` file: `<C v-slot="row" v-for="row in rs">`
 //   vv_site(r, d)         reference r reads the variable declared at d: tsx/names' ref_site, where a name a pattern
 //                         declares is a declaration too (`const { a } = o`, `({ a }) => a`, `(a = 1) => a`); d is
 //                         that name, as tsx/names' decl_site has it
@@ -16,8 +20,10 @@
 //   vv_setup_stmt(s)      s is in <script setup>: a statement after a <script setup>'s `;` marker (vue/view), and
 //                         after no plain <script>'s marker that follows one (main's `setup-statement`)
 //   vv_module_name(k)     k names a binding of the scripts' top level (main's `binds: {scope: module}`): an import,
-//                         a declaration, a type or interface, or a name a top-level declarator's pattern binds:
-//                         `const { a, b: [c] } = f()`
+//                         a declaration, a class, enum, type or interface, or a name a top-level declarator's
+//                         pattern binds: `const { a, b: [c] } = f()`
+//   vv_marked(o)          o is an object on the line after a comment that says `@vue/component` (the plugin's
+//                         getVueObjectType "mark": `// @vue/component` above `const Comp = { … }`)
 //   <li v-for="(item, i) in items">{{ item }}</li>     view: (items), (item, i) => { (item); };
 //     vv_param(<item>, "item", <arrow>), vv_param(<i>, "i", <arrow>), vv_read(<the item of {{ }}>, <item>)
 //
@@ -51,7 +57,19 @@ vv_destructured(n) :- vv_param(n, _, _), (kind(n, "shorthand_property_identifier
     inside(n, _, "pair_pattern") ; inside(n, _, "array_pattern")).
 
 .decl vv_read(r: node, n: node)
-vv_read(r, n) :- vv_site(r, n), vv_param(n, _, _).
+vv_read(r, n) :- vv_site(r, n), vv_param(n, _, _), !vv_moved(n, _).
+vv_read(r, n) :- vv_site(r, m), vv_moved(m, n).
+// vv_moved(m, n): slot parameter m names what the same element's earlier v-for alias n does, which reads resolve to.
+.decl vv_moved(m: node, n: node)
+vv_moved(m, n) :- vv_param(m, x, o), vv_param(n, x, a), vv_same_element(a, o), within(o, a), vv_attr_first(n, m).
+
+// A second view node in a body needs its own docof (or a structural atom such as within) to the view: without one it
+// has no rows (an engine gap, NOTES-vue-02.md).
+.decl vv_same_element(a: node, o: node)
+vv_same_element(a, o) :- vv_arrow(a), docof(a, g), host_node(a, h), host_node(o, h), docof(o, g), vv_arrow(o), a != o.
+.decl vv_attr_first(m: node, n: node)
+vv_attr_first(m, n) :- docof(m, g), docof(n, g), host_node(m, hm), host_node(n, hn), node(_, hm, _, s, _),
+    node(_, hn, _, t, _), s < t.
 
 .decl vv_site(r: node, d: node)
 vv_site(r, d) :- ref(r, x, "value"), !vv_declares(r), look(r, x, "value", s), vv_decl(s, x, d), !vv_nearer(r, x, s).
@@ -85,7 +103,15 @@ vv_module_name(k) :- vv_pattern_name(k), nearest(k, d, "variable_declarator"), f
     child(v, d, _), (kind(v, "lexical_declaration") ; kind(v, "variable_declaration")), child(p, v, _),
     kind(p, "program"), nearest(k, p, fn_scope).
 vv_module_name(k) :- kind(k, "type_identifier"), field(t, "name", k),
-    (kind(t, "type_alias_declaration") ; kind(t, "interface_declaration")), nearest(t, p, block_scope), kind(p, "program").
+    (kind(t, "type_alias_declaration") ; kind(t, "interface_declaration") ; kind(t, "class_declaration") ;
+     kind(t, "abstract_class_declaration")), nearest(t, p, block_scope), kind(p, "program").
+// An enum's name is an identifier, but tsx/names declares nothing for it.
+vv_module_name(k) :- kind(k, "identifier"), field(t, "name", k), kind(t, "enum_declaration"),
+    nearest(t, p, block_scope), kind(p, "program").
+
+.decl vv_marked(o: node)
+vv_marked(o) :- kind(o, "object"), inside(o, p, "program"), has(p, c, "comment"), text(c, t),
+    contains("@vue/component", t), end_line(c, l), line(o, lo), lo = l + 1.
 
 .decl vv_setup_stmt(s: node)
 vv_setup_stmt(s) :- precedes(m, s), vv_marker(m, "setup"), !vv_reopened(s).

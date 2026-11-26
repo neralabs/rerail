@@ -5,15 +5,16 @@
 .mode steer
 .scope include "**/*.vue"
 #include "vue/vue-02.rerail"
-//   vv_site(r, d), vv_marker(m, k)
+//   vv_site(r, d), vv_marker(m, k), vv_marked(o)
 
 // eslint-plugin-vue's no-setup-props-reactivity-loss over the component's view (vue/view). No options. The props are
 // setup()'s first parameter (context "setup"), or what `defineProps()` (or `withDefaults(defineProps(), …)`) is
 // assigned to at the top of <script setup> (context "script"). Destructuring them there is reported at the pattern:
 //   setup({ count }) {}         const [a] = defineProps(…)         const { a: { b } } = defineProps(…)
-// Reading a value out of them is reported where the read is in the context's own code (no nested function, class,
-// loop, switch, catch or block between): a call holding the read, an array or object literal assigned, the base of
-// an assigned member chain, a template literal or a conditional assigned, or a pattern assigned from them:
+// Reading a value out of them is reported where the read is in the context's own scope, as eslint-scope draws it (no
+// nested function, class, block, `catch`, switch body, or `for` that declares with let or const, between): a call
+// holding the read, an array or object literal assigned, the base of an assigned member chain, a template literal or
+// a conditional assigned, or a pattern assigned from them:
 //   const x = props.x        foo(props.x)        const o = { x: props.x }        const { x } = props
 //   const c = computed(() => props.x)            not reported: read in a nested function
 // A name destructured from defineProps (`const { x } = defineProps()`) counts as a read wherever it is read so.
@@ -35,7 +36,7 @@ where("setup", " in setup()"). where("script", "").
 // read_at(n, c): the get-property cases, in context c.
 .decl read_at(n: node, c: symbol)
 read_at(n, c) :- kind(n, "call_expression"), !tagged(n), own_code(n, c), within(r, n), member_ref(r, c).
-read_at(n, c) :- (kind(n, "array") ; kind(n, "object")), rhs_slot(n), within(r, n), member_ref(r, c).
+read_at(n, c) :- (kind(n, "array") ; kind(n, "object")), rhs_slot(n), own_code(n, c), within(r, n), member_ref(r, c).
 read_at(n, c) :- kind(n, "identifier"), member_ref(n, c), chain_up(n),
     count : { chain_up_pattern(n), props_id(n, c) } = 0.
 read_at(n, c) :- !kind(n, "parenthesized_expression"), holds_ref(n, c), child(s, n, _),
@@ -122,12 +123,16 @@ own_code(n, "setup") :- nearest(n, f, barrier), setup_fn(f).
 own_code(n, "script") :- node(_, n, _, _, _), !in_barrier(n).
 .decl in_barrier(n: node)
 in_barrier(n) :- nearest(n, _, barrier).
-// barrier(b): a function, class, loop, switch, catch, or a block that is no function's body.
+// barrier(b): what opens a scope of its own (eslint-scope): a function, a class, a `catch`, a switch's body (not its
+// discriminant), a `for` whose head declares with let or const (not `for (i = 0; …)` nor `for (var x of …)`), or a
+// block that is no function's body.
 .decl barrier(b: node)
 barrier(b) :- kind(b, "function_expression") ; kind(b, "arrow_function") ; kind(b, "function_declaration") ;
     kind(b, "generator_function") ; kind(b, "generator_function_declaration") ; kind(b, "method_definition") ;
-    kind(b, "class_declaration") ; kind(b, "class") ; kind(b, "class_static_block") ; kind(b, "for_statement") ;
-    kind(b, "for_in_statement") ; kind(b, "switch_statement") ; kind(b, "catch_clause").
+    kind(b, "class_declaration") ; kind(b, "class") ; kind(b, "class_static_block") ; kind(b, "switch_body") ;
+    kind(b, "catch_clause").
+barrier(b) :- kind(b, "for_statement"), field(b, "initializer", i), kind(i, "lexical_declaration").
+barrier(b) :- kind(b, "for_in_statement"), (op(b, "let") ; op(b, "const")).
 barrier(b) :- kind(b, "statement_block"), !fn_body(b).
 .decl fn_body(b: node)
 fn_body(b) :- field(f, "body", b), (kind(f, "function_expression") ; kind(f, "arrow_function") ;
@@ -192,12 +197,12 @@ setup_key(k) :- kind(k, "computed_property_name"), child(k, s, _), setup_key_lit
 .decl setup_key_literal(s: node)
 setup_key_literal(s) :- kind(s, "string"), child(s, f, _), kind(f, "string_fragment"), text(f, "setup").
 setup_key_literal(s) :- kind(s, "template_string"), text(s, "`setup`").
-// vue_object(o): `export default { … }` (`as`/`satisfies` too), the last argument of defineComponent(…) and the
-// like, the first of `new Vue(…)`.
+// vue_object(o): `export default { … }` (not `{ … } as T` nor `satisfies T`: the plugin's isVueComponentFile wants
+// the object itself), the last argument of defineComponent(…) and the like, the first of `new Vue(…)`, or an object
+// under a `// @vue/component` line.
 .decl vue_object(o: node)
 vue_object(o) :- kind(o, "object"), field(e, "value", o), kind(e, "export_statement").
-vue_object(o) :- kind(o, "object"), child(x, o, _), (kind(x, "as_expression") ; kind(x, "satisfies_expression")),
-    field(e, "value", x), kind(e, "export_statement").
+vue_object(o) :- vv_marked(o).
 vue_object(o) :- kind(o, "object"), child(as, o, _), kind(as, "arguments"), child(c, as, _), definition_call(c),
     count : { child(as, b, _), !kind(b, "comment"), precedes(o, b) } = 0.
 vue_object(o) :- kind(o, "object"), child(as, o, _), kind(as, "arguments"), child(c, as, _), kind(c, "new_expression"),
@@ -211,8 +216,141 @@ definer(f) :- kind(f, "member_expression"), field(f, "object", o), kind(o, "iden
 definer(f) :- kind(f, "identifier"), text(f, "defineNuxtComponent").
 definer(f) :- kind(f, "identifier"), match("component|createApp|defineComponent", f),
     count : { vv_site(f, s), (d = s ; within(s, d)), own_binding(d) } = 0.
-.decl own_binding(d: node)  // a function, a class, or an import from elsewhere than Vue
+.decl own_binding(d: node)  // a function, a class, or an import from elsewhere than Vue (Nuxt's #imports is Vue's)
 own_binding(d) :- kind(d, "function_declaration") ; kind(d, "class_declaration").
 own_binding(d) :- kind(d, "import_specifier"),
     count : { inside(d, i, "import_statement"), field(i, "source", m),
-              match("['\"](vue|@vue/composition-api|@nuxtjs/composition-api)['\"]", m) } = 0.
+              match("['\"](vue|@vue/composition-api|@nuxtjs/composition-api|#imports)['\"]", m) } = 0.
+
+// Tests (decision 0130): run by `rerail-engine test-rr`, left out of the rule otherwise. The review's counterexamples
+// (review/vue-02.review.md) and the cases its fixes raised, each expecting exactly the lines ESLint 9.39.5 with
+// eslint-plugin-vue 10.11.1 reports.
+// eslint-scope opens the switch's scope after its discriminant: a call there holding props.size is reported; a bare
+// props.kind is not.
+.test a_switch_discriminant_is_setups_own_code exactly
+    .fixture "p01-switch.vue" ```
+        <script>
+        export default {
+          setup(props) {
+            switch (String(props.size)) {
+              case 'a': break
+            }
+            switch (props.kind) {
+              default: break
+            }
+          }
+        }
+        </script>
+        ```
+    .expect "vue/no-setup-props-reactivity-loss" at "p01-switch.vue":4
+.end
+
+// The same at <script setup>'s top level.
+.test a_switch_discriminant_in_script_setup exactly
+    .fixture "p02-switch-script.vue" ```
+        <script setup>
+        const props = defineProps({ size: String })
+        switch (normalize(props.size)) {
+          default: break
+        }
+        </script>
+        ```
+    .expect "vue/no-setup-props-reactivity-loss" at "p02-switch-script.vue":3
+.end
+
+// `for (i = 0; …)` and `for (var x of …)` open no scope, so their head and braceless body are setup()'s;
+// `for (const y of …)` does.
+.test a_for_without_let_or_const_opens_no_scope exactly
+    .fixture "p03-for-novar.vue" ```
+        <script>
+        export default {
+          setup(props) {
+            let i
+            for (i = 0; i < 3; i++) track(props.a)
+            for (var x of toList(props.list)) {}
+            for (const y of toList(props.list)) {}
+          }
+        }
+        </script>
+        ```
+    .expect "vue/no-setup-props-reactivity-loss" at "p03-for-novar.vue":5
+    .expect "vue/no-setup-props-reactivity-loss" at "p03-for-novar.vue":6
+.end
+
+// A `let` head opens a scope; a `var` for-in's head and body do not; a switch's cases are in its scope.
+.test for_heads_and_switch_cases exactly
+    .fixture "x02-for-let.vue" ```
+        <script>
+        export default {
+          setup(props) {
+            for (let i = 0; i < 3; i++) track(props.a)
+            for (var k in toObj(props.o)) track(props.b)
+            switch (f(props.c)) {
+              case 1: g(props.d)
+            }
+          }
+        }
+        </script>
+        ```
+    .expect "vue/no-setup-props-reactivity-loss" at "x02-for-let.vue":5
+    .expect "vue/no-setup-props-reactivity-loss" at "x02-for-let.vue":6
+.end
+
+// isVueComponentFile wants the exported object itself: `{ … } as any` is no component, so its setup() is not checked.
+.test export_default_as_is_no_component exactly
+    .fixture "p04-export-as.vue" ```
+        <script lang="ts">
+        export default {
+          setup(props: any) {
+            const a = props.a
+          }
+        } as any
+        </script>
+        ```
+.end
+
+// Nor is `{ … } satisfies Component`.
+.test export_default_satisfies_is_no_component exactly
+    .fixture "p05-export-satisfies.vue" ```
+        <script lang="ts">
+        import type { Component } from 'vue'
+        export default {
+          setup(props: any) {
+            const a = props.a
+          }
+        } satisfies Component
+        </script>
+        ```
+.end
+
+// getVueObjectType's "mark": the object on the line after `// @vue/component`. Only the read in setup() is
+// reported, not the object assigned at the top level.
+.test an_object_under_vue_component_is_a_component exactly
+    .fixture "p06-vue-component-comment.vue" ```
+        <script>
+        // @vue/component
+        const Comp = {
+          setup(props) {
+            const a = props.a
+          }
+        }
+        export default Comp
+        </script>
+        ```
+    .expect "vue/no-setup-props-reactivity-loss" at "p06-vue-component-comment.vue":5
+.end
+
+// defineComponent imported from #imports is Vue's (createCompositionApiTraceMap).
+.test define_component_from_nuxt_imports exactly
+    .fixture "p07-imports.vue" ```
+        <script>
+        import { defineComponent } from '#imports'
+        export default defineComponent({
+          setup(props) {
+            const a = props.a
+          }
+        })
+        </script>
+        ```
+    .expect "vue/no-setup-props-reactivity-loss" at "p07-imports.vue":5
+.end
