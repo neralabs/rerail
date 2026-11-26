@@ -137,3 +137,26 @@ statements and blocks end.
 21. **An extra's reader gives its mark where a mark tests a token** (`Reader::retag`). The token loop passes over an
     extra's tokens by its mark, which only a reader gives; a comment whose first byte (`#`) gives its kind had no
     retag. Where a mark's token test exists, the extra's reader now gives its own kind with the mark.
+22. **An f-string is regions and their tails** (`python.bitlex`). Each of the eight quotes (`'`, `"`, triple, with an
+    `f` or `t` prefix or not) is a region. An f-string's region closes at its quote or at an interpolation's `{`
+    (`or i_open`: a `{` that is not part of a `{{`). Past the interpolation's code, a tail region (`ts1 = rbrace ..
+    sq_c or i_open resumes fs1`) continues the string's token record (decision 0600). A format spec is one region,
+    `spec = colon .. next(rbrace) after fs1 fd1 fs3 fd3`: it opens only where the last region closed at its
+    template's `{`. The tape is the lean parser's: `string_start` (the prefix and quote), `string_content` with
+    `escape_interpolation`, `interpolation` (`expression:`, `type_conversion:`, `format_specifier:`), and
+    `string_end`. The braces and the spec's text are implied tokens of their nodes. What is not read yet is refused
+    by an escape, never a wrong tape: a nested spec, a raw f-string, `=`, a `:` in brackets, braces or `#` in an
+    interpolation's code, an empty interpolation or spec, a `}` alone, a run of three braces.
+23. **One reader reads resumed and plain regions** (`bitlex_masks`). A first byte gives one reader, so `"` reads the
+    plain string and the f-string's tails at once. The resumed regions share one template, and the plain ones have
+    none. Where the two kinds are mixed, a resumed region opens only past its template (`prev(f_K)`).
+24. **An `after` region's reader opens at its taken opener** (`o_K`). A spec's `:` is a code token's too, so the
+    reader opens only where the walk opened the region, and the code's `:` is the other rule's. A plain region's
+    reader keeps its opener's bytes, which the token loop tests without the walk.
+25. **A start mask an arm reads stays made** (`BlockNative::readers_tags`). A reader's tag replaces its start masks
+    on the CPU, but where an arm's opener, closer, last or template is such a mask, the token loop reads its row.
+26. **The token loop's punctuation shortcut gives way to a reader's tag** (`native_cpu_block`). Where a byte is a
+    reader's opener as well as punctuation (a spec's `:`), the tag is taken first.
+27. **A node moved into a slot is one of the slot's kinds** (`NODE_SUPER m=1`, both tiers). A wrap moves the
+    expression read so far into its slot (an assignment's `left` into `pattern`). Where the slot has no row for the
+    node's kind (a list as a target, which tree-sitter reads as a `list_pattern`), the file is refused at that pc.

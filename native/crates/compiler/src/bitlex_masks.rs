@@ -1042,14 +1042,18 @@ impl Lowering {
                         // A region read in parts: its reader's arm, and each part's start and
                         // bytes; the closer and the parts are rows of their own (`Inside`).
                         Some(::bitlex::syntax::TokenRule::ReadParts(rs, parts)) => {
-                            // One region: its opener and closer. Several (`read K | L parts`):
-                            // one arm, at their openers taken (`o_K`), to each one's closer
+                            // One region: its opener, and its closer; an `after` kind's opener
+                            // taken (`o_K`), as it opens only past its template (a format
+                            // spec's `:` beside the code's). A plain one's is its bytes', which
+                            // the token loop tests without the regions' walk. Several (`read K | L parts`):
+                            // one arm, at their openers taken, to each one's closer
                             // outside the others' fills (a `"` in a raw string closes no
                             // string), each closer's last by `closer_last`. The first closer
                             // after the opener is its own region's: the bytes before it are
                             // its fill's.
                             let (opener, closer) = match rs.as_slice() {
-                                [r] => (self.expr(&r.opener)?, self.expr(&r.closers())?),
+                                [r] if r.after.is_empty() => (self.expr(&r.opener)?, self.expr(&r.closers())?),
+                                [r] => (self.expr(&Expr::Name(format!("o_{}", r.kind)))?, self.expr(&r.closers())?),
                                 _ => {
                                     let name = |x: String| Expr::Name(x);
                                     let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
@@ -1081,9 +1085,21 @@ impl Lowering {
                                 self.token_resumes.insert(kind.clone());
                             }
                             if rs.iter().any(resumed) {
-                                let ts: Vec<Option<Expr>> = rs.iter().map(|r| r.or.as_ref().filter(|_| resumed(r)).map(|o| o.0.clone())).collect();
-                                let Some(t) = ts[0].clone().filter(|t| ts.iter().all(|x| x.as_ref().is_some_and(|x| format!("{x:?}") == format!("{t:?}")))) else {
-                                    return Err(format!("token {kind}: regions resumed with different templates, or with ones that are not"));
+                                // The resumed regions' one template; the reader's other regions
+                                // have no second closer. The template's output holds only where
+                                // a resumed region closed at it (`prev(f_K)`), so a plain string
+                                // of the same reader (Python's, beside its f-strings) ends at
+                                // its closer whatever the template's bytes.
+                                let ts: Vec<Expr> = rs.iter().filter(|r| resumed(r)).filter_map(|r| r.or.as_ref().map(|o| o.0.clone())).collect();
+                                let n = rs.iter().filter(|r| resumed(r)).count();
+                                let Some(t) = ts.first().cloned().filter(|t| ts.len() == n && ts.iter().all(|x| format!("{x:?}") == format!("{t:?}")) && rs.iter().all(|r| resumed(r) || r.or.is_none())) else {
+                                    return Err(format!("token {kind}: regions resumed with different templates, or beside ones with a second closer"));
+                                };
+                                let t = if rs.iter().all(resumed) {
+                                    t
+                                } else {
+                                    let f = rs.iter().filter(|r| resumed(r)).map(|r| Expr::Name(format!("f_{}", r.kind))).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a resumed region");
+                                    Expr::And(Box::new(t), Box::new(Expr::Call("prev".into(), vec![Arg::E(f)])))
                                 };
                                 let t = self.expr(&t)?;
                                 self.token_templates.insert(kind.clone(), t);
@@ -1109,7 +1125,12 @@ impl Lowering {
                                 if r.or.is_some() {
                                     return Err(format!("token {kind}: a `read` of region {} with a second closer: read it in parts", r.kind));
                                 }
-                                let (opener, closer) = (self.expr(&r.opener)?, self.expr(&r.closer)?);
+                                // Its opener: its bytes', which the token loop tests without the
+                                // regions' walk; an `after` kind's taken (`o_K`), as it opens only
+                                // past its template, so a token of another kind at its first byte
+                                // (a format spec's `:` beside the code's) is the other rule's.
+                                let opener = if r.after.is_empty() { r.opener.clone() } else { Expr::Name(format!("o_{}", r.kind)) };
+                                let (opener, closer) = (self.expr(&opener)?, self.expr(&r.closer)?);
                                 let off = if r.outside { -1 } else { r.bytes as i8 - 1 };
                                 let none = match (&r.empty, r.outside, &r.open) {
                                     (Some((_, m)), ..) => crate::records::ReadNone::Bytes(*m),

@@ -7282,6 +7282,16 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     if common {
         let (punct, rest) = (f.create_block(), f.create_block());
         let is_p = f.ins().band_imm(entry, 1 << TOKEN_PUNCT);
+        // A token a reader tagged is its reader's, though its first byte is a punctuation's
+        // (Python's format spec at a `:`): its tag below, not the punctuation's code.
+        let is_p = match retag {
+            Some(tag) => {
+                let untagged = f.ins().icmp_imm(IntCC::SignedLessThan, tag, 0);
+                let zero = f.ins().iconst(types::I64, 0);
+                f.ins().select(untagged, is_p, zero)
+            }
+            None => is_p,
+        };
         f.ins().brif(is_p, punct, &[], rest, &[]);
         f.switch_to_block(punct);
         let bits = if by_pair.is_some() {

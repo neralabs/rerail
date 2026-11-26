@@ -6748,6 +6748,17 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                         let nodes = mget(&mut f, Mem::Nodes);
                         f.ins().iadd_imm(nodes, -1)
                     };
+                    // A node a wrap moved: one of the slot's kinds (a row of its table), else the
+                    // file is refused, as by the interpreter.
+                    if on == On::Moved {
+                        let k = kind_c.get(&mut f, last);
+                        let mut not_of = f.ins().iconst(types::I8, 1);
+                        for r in native.super_classes.iter().filter(|r| r.0 == kind) {
+                            let other = f.ins().icmp_imm(IntCC::NotEqual, k, i64::from(r.1));
+                            not_of = f.ins().band(not_of, other);
+                        }
+                        guard(&mut f, not_of, pc);
+                    }
                     let had = field_c.get(&mut f, last);
                     let x = f.ins().bor_imm(had, i64::from(crate::stream_analysis::slot_of(&classes, kind)) << crate::stream_analysis::SLOT_SHIFT);
                     field_c.put(&mut f, last, x);

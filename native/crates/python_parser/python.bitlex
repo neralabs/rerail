@@ -30,6 +30,17 @@ class pfx       = 'r' 'R' 'b' 'B' 'f' 'F' 't' 'T' 'u' 'U'
 class raw_l     = 'r' 'R'
 class bytes_l   = 'b' 'B'
 class format_l  = 'f' 'F' 't' 'T'
+class f_l       = 'f' 'F'
+class t_l       = 't' 'T'
+class lbrace    = '{'
+class rbrace    = '}'
+class colon     = ':'
+class bang      = '!'
+class eq        = '='
+class lt_gt     = '<' '>'
+class lpb       = '(' '['
+class rpb       = ')' ']'
+class conv_l    = 'r' 's' 'a'
 # What a backslash and one byte make an escape of (tree-sitter-python's `escape_sequence`).
 class esc_one   = '\n' '\'' '"' 'a' 'b' 'f' 'r' 'n' 't' 'v' '\\'
 class hex       = '0'..'9' 'a'..'f' 'A'..'F'
@@ -63,32 +74,55 @@ mask sq_c       = sq & ~escaped(bslash)
 mask dq_c       = dq & ~escaped(bslash)
 mask sq3_c      = sq3 & ~next(sq, 3) & ~escaped(bslash)
 mask dq3_c      = dq3 & ~next(dq, 3) & ~escaped(bslash)
+# A quote after a prefix with an `f`: an f-string's opener.
+mask fq         = quote & (prev(p1 & f_l) | prev(p2 & f_l, 2) | prev(f_l & prev(p2)))
+# An interpolation's `{`: one alone (`{{` is text).
+mask i_open     = lbrace & ~next(lbrace) & ~prev(lbrace)
 # A raw string closes as any does (a quote no backslash escapes); only its escapes differ, so it
 # is a region of its quotes' kind, and `in_raw` says which strings are raw.
+# An f-string closes at its quote or at an interpolation's `{` (`or i_open`), as Kotlin's at a
+# template's `$`. After the interpolation's code, its tail (`t…`) opens at the `}`, and goes on
+# as the kind of f-string the interpolation is in (`resumes`): the string's text to its quote or
+# the next interpolation. A format spec is a region of its own, from its `:` to the byte before
+# the `}`, in an interpolation's code only (`after`).
 regions hidden {
   cmt = hash .. lf outside
-  s1  = sq & ~sq3 .. sq_c
-  d1  = dq & ~dq3 .. dq_c
-  s3  = sq3 .. sq3_c bytes 3
-  d3  = dq3 .. dq3_c bytes 3
+  s1  = sq & ~sq3 & ~fq .. sq_c
+  d1  = dq & ~dq3 & ~fq .. dq_c
+  s3  = sq3 & ~fq .. sq3_c bytes 3
+  d3  = dq3 & ~fq .. dq3_c bytes 3
+  fs1 = sq & ~sq3 & fq .. sq_c or i_open
+  fd1 = dq & ~dq3 & fq .. dq_c or i_open
+  fs3 = sq3 & fq .. sq3_c bytes 3 or i_open
+  fd3 = dq3 & fq .. dq3_c bytes 3 or i_open
+  ts1 = rbrace .. sq_c or i_open resumes fs1
+  td1 = rbrace .. dq_c or i_open resumes fd1
+  ts3 = rbrace .. sq3_c bytes 3 or i_open resumes fs3
+  td3 = rbrace .. dq3_c bytes 3 or i_open resumes fd3
+  spec = colon .. next(rbrace) after fs1 fd1 fs3 fd3
 }
-mask o_str      = o_s1 | o_d1 | o_s3 | o_d3
-mask f_str      = f_s1 | f_d1 | f_s3 | f_d3
+mask o_f        = o_fs1 | o_fd1 | o_fs3 | o_fd3
+mask o_t        = o_ts1 | o_td1 | o_ts3 | o_td3
+mask f_f        = f_fs1 | f_fd1 | f_fs3 | f_fd3
+mask f_t        = f_ts1 | f_td1 | f_ts3 | f_td3
+mask o_str      = o_s1 | o_d1 | o_s3 | o_d3 | o_f
+mask f_str      = f_s1 | f_d1 | f_s3 | f_d3 | f_f | f_t
 mask in_raw     = fill(raw_q & o_str, ~f_str)
-mask code       = ~hidden & ~o_cmt & ~o_str
+mask code       = ~hidden & ~o_cmt & ~o_str & ~o_t & ~o_spec
 
 # --- Strings -----------------------------------------------------------------------------------
 
 # A string's bytes after its opener; a triple's two quotes after its first are its opener's too.
-mask t_open     = o_s3 | o_d3
+mask t_open     = o_s3 | o_d3 | o_fs3 | o_fd3
 mask t_more     = prev(t_open) | prev(t_open, 2)
-mask s_body     = f_str & ~o_str & ~t_more
+mask s_body     = f_str & ~o_str & ~o_t & ~t_more
 mask body       = s_body & ~in_raw
 mask r_body     = s_body & in_raw
-escape "an f-string" when o_str & (prev(p1 & format_l) | prev(p2 & format_l, 2) | prev(format_l & prev(p2)))
+escape "a template string" when o_str & (prev(p1 & t_l) | prev(p2 & t_l, 2) | prev(t_l & prev(p2)))
+escape "a raw f-string" when o_f & raw_q
 escape "a string prefix of three letters or more" when code & pw & next(pfx) & next(pfx, 2) & (next(quote, 3) | next(pfx, 3) & next(quote, 4))
 escape "a string open at the end of the file" when f_str & ~next(~empty)
-escape "a line break in a one-line string that no backslash escapes" when (f_s1 | f_d1) & lf & ~escaped(bslash)
+escape "a line break in a one-line string that no backslash escapes" when (f_s1 | f_d1 | f_fs1 | f_fd1 | f_ts1 | f_td1) & lf & ~escaped(bslash)
 escape "a carriage return in a string" when f_str & cr
 # A triple opened by four quotes or more (but the empty triple's six), or closed by four or more
 # not after a backslash: the lean lexer closes at the first three.
@@ -118,6 +152,32 @@ mask r_plain    = r_body & ~bslash & ~(escaped(bslash) & (quote | bslash | lf))
 mask r_none     = fill(r_body & ~prev(r_body) & ~r_plain, r_plain | ~r_body)
 escape "a raw string of backslashes only" when r_none & r_body & ~next(r_body) & ~r_plain
 escape "a backslash" when code & bslash
+
+# --- F-strings ---------------------------------------------------------------------------------
+
+# An f-string's text (its own and its tails'); the `{` an f-string or a tail closes at, and the
+# interpolation's code after it, up to its tail.
+mask fb         = f_f & ~o_f & ~t_more | f_t & ~o_t
+mask i_at       = i_open & prev(f_f | f_t)
+mask icode      = fill(prev(i_at), o_t | o_spec)
+# `{{` and `}}` in the text: one brace each (lean's `escape_interpolation`).
+mask esc_ib     = fb & (lbrace & next(lbrace) & ~prev(lbrace & fb) | rbrace & next(rbrace) & ~prev(rbrace & fb))
+# `!r`, `!s`, `!a` before the interpolation's end or spec.
+mask conv_at    = code & bang & next(conv_l) & next(o_t | o_spec, 2)
+escape "an empty interpolation" when (o_t | o_spec) & prev(i_at)
+escape "an empty format spec" when o_spec & next(rbrace)
+escape "a run of three braces in an f-string" when fb & (lbrace & next(lbrace) & next(lbrace, 2) | rbrace & next(rbrace) & next(rbrace, 2))
+escape "a `}` alone in an f-string's text" when fb & rbrace & ~esc_ib & ~prev(esc_ib)
+escape "a brace, a line break or a comment in an interpolation" when icode & (lbrace | rbrace | lf | hash)
+escape "a `{` or a line break in a format spec" when f_spec & (lbrace | lf)
+# A `:` in the interpolation's brackets is no spec's (a slice's, a lambda's); one after nested
+# brackets, where one fill can not say whether they are closed, is not read.
+mask inb        = fill(icode & lpb, rpb)
+mask after_nest = fill(icode & lpb & prev(inb), o_t | o_spec)
+escape "a `:` in an interpolation's brackets" when o_spec & prev(inb | after_nest)
+# `{x=}`: the lean parser keeps the `=` and the `}`. Not read yet.
+mask eq_end     = icode & eq & ~prev(eq | bang | lt_gt)
+escape "an interpolation's `=`" when (o_t | o_spec | conv_at) & (prev(eq_end) | prev(blank) & prev(eq_end, 2))
 escape "a byte above 0x7f outside a comment" when code & high
 # A line's indentation: the blanks after its line break. A tab or a form feed counts as tree-sitter's
 # scanner counts it, not read yet.
@@ -154,7 +214,7 @@ escape "a number with an `_` not between digits" when number & us & ~(prev(digit
 escape "a number with more after its exponent" when (exp_at | n_dot) & fill(prev(exp_at) & number, ~number)
 escape "a hex number with no digits" when hex_n & x_any & prev(int_start) & ~next(hex | us)
 
-mask word_start = w & alpha & ~prev(w) & ~p1 & ~p2 & ~number
+mask word_start = w & alpha & ~prev(w) & ~p1 & ~p2 & ~number & ~prev(conv_at)
 mask name_more  = fill(word_start, ~w) & ~word_start
 
 assume "a name starts at a word's first letter: a start is never in a word" at starts word_start = alpha
@@ -168,7 +228,7 @@ token integer   = start int_start | dot_start run number
 
 pairs two_start = "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>="
 mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
-mask p_start    = code & punct & ~second & ~number
+mask p_start    = code & punct & ~second & ~number & ~conv_at
 assume "an operator starts at its first byte: a start is never a pair's second" at starts p_start = punct
 token punct     = start p_start pair two_start
 
@@ -177,15 +237,32 @@ token comment   = start hash & o_cmt read cmt
 # A string: its prefix, its opener (a quote, and a triple's two more), its parts, and its closer.
 token str_prefix = start (p1 | p2) & code run prev(p2)
 # One reader of every kind of string, as each starts at its quote; a raw string's body has no
-# escapes (`esc` is a plain string's).
-token string_start = start o_str read s1 | d1 | s3 | d3 parts {
+# escapes (`esc` is a plain string's). An f-string's regions are resumed by its tails; the
+# plain ones have no second closer.
+token string_start = start o_str read s1 | d1 | s3 | d3 | fs1 | fd1 | fs3 | fd3 parts {
                     quote2 = prev(t_open) bytes 2
                     escape_sequence = e_any last e_last
                     '\\' = esc & ~e_any bytes 1
+                    escape_interpolation = esc_ib bytes 2
                   } else str_text closes {
-                    string_end = prev(f_s3 | f_d3) bytes 3
-                    string_end = prev(f_s1 | f_d1) bytes 1
+                    string_end = prev(f_s3 | f_d3 | f_fs3 | f_fd3) & quote bytes 3
+                    string_end = prev(f_s1 | f_d1 | f_fs1 | f_fd1) & quote bytes 1
+                    interp_open = i_at bytes 1
                   }
+# An interpolation's tail: its `}` (or a spec's `:`, its text and its `}`), then the string's
+# text as above.
+token interp_end = start o_ts1 | o_td1 | o_ts3 | o_td3 read ts1 | td1 | ts3 | td3 parts {
+                    escape_sequence = e_any last e_last
+                    '\\' = esc & ~e_any bytes 1
+                    escape_interpolation = esc_ib bytes 2
+                  } else str_text closes {
+                    string_end = prev(f_ts3 | f_td3) & quote bytes 3
+                    string_end = prev(f_ts1 | f_td1) & quote bytes 1
+                    interp_open = i_at bytes 1
+                  }
+# A format spec: its `:` and its text, one token.
+token spec_text = start o_spec read spec
+token type_conversion = start conv_at run prev(conv_at)
 
 keywords identifier {
   "False" "None" "True" "and" "as" "assert" "break" "class" "continue" "def" "del" "elif" "else"
@@ -358,14 +435,19 @@ tree python {
   # text and escapes), its end.
   node string           = str_prefix merge string_start string_start string_rest
                         | string_start string_rest
-  choice string_rest    = [merge string_start quote2] [string_content] string_end
+  choice string_rest    = [merge string_start quote2] [string_content] (interpolation [string_content])* string_end
+  # `{`, its expression, a conversion (`!r`), and its `}` or its format spec (`:` and its text).
+  node interpolation    = interp_open expression: expression [type_conversion: type_conversion] [format_specifier: format_specifier] interp_end
+  node format_specifier = spec_text
   # A backslash that starts no escape is a leaf of its own (lean's `Backslash`); a raw string's
   # are its text.
-  node string_content   = (str_text | escape_sequence | '\\')+
+  node string_content   = (str_text | escape_sequence | '\\' | escape_interpolation)+
   hidden newline indent dedent trail future generic kw_sep real
   # The tokens tree-sitter's grammar implies: no leaf on the tape.
   implied pass_statement 'pass'
   implied string_content str_text
+  implied interpolation interp_open interp_end
+  implied format_specifier spec_text
   implied if_statement 'if' ':'
   implied elif_clause 'elif' ':'
   implied else_clause 'else' ':'

@@ -494,8 +494,13 @@ impl BlockNative {
     /// The outputs of the start masks the CPU's readers say instead (`Records::retags`): where
     /// its token loop runs, a reader gives its token's kind and marks, and the walk a part's, so it
     /// makes none of them. A token's own kind no reader gives (a `0x`, decision 0509) it reads.
+    /// A start mask a reader's arm reads too (its opener taken, a format spec's `:` beside the
+    /// code's) the loop reads from its row: it stays made.
     pub fn readers_tags(&self) -> Vec<usize> {
-        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.retags.iter().filter(|t| !crate::records::own_retag(r, t)).map(|t| usize::from(t.o)).collect())
+        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| {
+            let armed: Vec<u16> = r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last).chain(a.template))).collect();
+            r.retags.iter().filter(|t| !crate::records::own_retag(r, t) && !armed.contains(&t.o)).map(|t| usize::from(t.o)).collect()
+        })
     }
 
     /// The outputs of the errors the CPU's token loop checks (`Records::untaken`), where it finds

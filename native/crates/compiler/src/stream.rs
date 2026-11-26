@@ -993,7 +993,15 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             NODE_FIELD if mode == 1 => nodes[moved].field = operand,
             NODE_FIELD => nodes.last_mut().expect("a node before its field").field = operand,
             // A node's slot (decision 0698): its first `NODE_SUPER`; its classes are filled in at the end.
-            NODE_SUPER if mode == 1 => nodes[moved].supers = vec![operand],
+            // The node a wrap moved into a slot: one of the slot's kinds (a row of its table), else
+            // the grammar read as the slot's what tree-sitter reads as another kind (a list as an
+            // assignment's target is a `list_pattern`), and the file is refused.
+            NODE_SUPER if mode == 1 => {
+                if !program.super_classes.iter().any(|r| r.0 == operand && r.1 == nodes[moved].kind) {
+                    return limit!(pc - 1, "a node moved into a slot not of its kind");
+                }
+                nodes[moved].supers = vec![operand];
+            }
             NODE_SUPER => {
                 let n = nodes.last_mut().expect("a node before its supertype");
                 if n.supers.is_empty() {

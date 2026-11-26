@@ -109,6 +109,23 @@ fn dictionaries_are_the_lean_parsers() {
 }
 
 #[test]
+fn assignment_targets_are_the_lean_parsers() {
+    same(&["a.b = c\n", "a[0] = c\n", "a = b = c\n", "a.b += 1\n"]);
+    // A list or a call as a target: tree-sitter's `list_pattern`, or no pattern at all. Not read yet.
+    refused(&["[a] = b\n", "[[a]] = b\n", "f() = 1\n", "(a) = b\n"]);
+}
+
+#[test]
+fn f_strings_are_the_lean_parsers() {
+    same(&["x = f\"a{b}c\"\n", "x = f\"{b}\"\n", "x = f\"a{b!r}\"\n", "x = f\"{b:>10}\"\n", "x = f\"{a.b(c)}\"\n", "x = f'{a[\"k\"]}'\n"]);
+    same(&["x = f\"{{x}}\"\n", "x = f\"\"\"a\n{b}\n\"\"\"\n", "x = f\"{a + 1}\"\n", "x = F'{a}{b}' + f\"{c:%Y-%m-%d} {d!s:>3}\"\n", "x = f\"\"\n", "x = f\"{a[1]}:{b}\"\n"]);
+    same(&["def f():\n    return f\"{a}\"\n", "x = {'a': f'{b}'}\n"]);
+    // Not read yet: a nested spec, a raw f-string, `=`, a `:` in brackets, braces in code, an
+    // empty interpolation or spec, a `}` alone.
+    refused(&["x = f\"{x:}\"\n", "x = f\"{b:{w}}\"\n", "x = rf\"a{b}\"\n", "x = f\"{b=}\"\n", "x = f\"{a[1:2]}\"\n", "x = f\"{ {a} }\"\n", "x = f\"{}\"\n", "x = f\"a}\"\n"]);
+}
+
+#[test]
 fn numbers_are_the_lean_parsers() {
     same(&["x = 1j\n", "x = 1.5j\n", "x = 0x1F\n", "x = 1_000\n", "x = 1.\n", "x = .5\n", "x = 1e5\n", "x = 1.5e-3\n", "x = 1E+5\n", "x = 0XAB\n"]);
     same(&["x = 1_0.2_5\n", "x = a.b + 1.5\n", "x = 2e-3 - e - 5\n", "x = [1.5, .25]\n", "x = f(1.)\n", "x = 0\n", "x = 007\n", "x = 0x_1\n"]);
@@ -126,9 +143,9 @@ fn operators_are_the_lean_parsers() {
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&["x.5\n", "x\\\n", "\tx\n", "x = 0o17\n", "x = 1L\n", "x = 1e5e3\n", "x = 1__0\n", "x = 0x\n"]);
-    // An f-string, a `\N{…}`, a raw string of backslashes only (its end starts at them), an open
+    // A template string, a `\N{…}`, a raw string of backslashes only (its end starts at them), an open
     // string, a triple closed by four quotes, a three-letter prefix, `\u` in bytes.
-    refused(&["f'{x}'\n", "u\"\\N{DASH}\"\n", "r'\\\\'\n", "r'\\''\n", "'a\n", "'''a''''\n", "rbu'x'\n", "b'\\u1234'\n"]);
+    refused(&["t'{x}'\n", "u\"\\N{DASH}\"\n", "r'\\\\'\n", "r'\\''\n", "'a\n", "'''a''''\n", "rbu'x'\n", "b'\\u1234'\n"]);
 }
 
 /// The corpus: a folder of `.py` files, each read by both. `same`: the compiled grammar's tape is
