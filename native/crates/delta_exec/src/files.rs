@@ -5,10 +5,12 @@
 //!
 //! - the observer's digest step (`Observer::digest_step`) reuses the answer it holds while the file's stat holds,
 //!   under the racy rule; no byte is read then;
-//! - a file it must read is read once, by the observer's placed read (`DigestRead::read_placed`), into a room of the
-//!   document's tape block (`place_in`), and its digest recorded (`Observer::digest_read`);
-//! - the rr parser writes the tape into the same block's room (`rerail_rr_syntax::tape_in`, `InBlock`), where it
-//!   lies; the block is then frozen: the document's source and tape, which an operation reads as a slot (`intern`,
+//! - a file it must read is read once, by the observer's placed read (`DigestRead::read_placed`), into a room of a
+//!   slab (`place_in`), and its digest recorded (`Observer::digest_read`); the slabs are the residency's, as the
+//!   engine places a read (`rerail_slabs::placed`): blocks many documents share, each source and tape a room written
+//!   once (`Directory::slab_room`), host memory or a block the device reads where the run is bound to one;
+//! - the rr parser writes the tape into a room of the same slab (`rerail_rr_syntax::tape_in`, `InBlock`), where it
+//!   lies; the rooms are then sealed: the document's source and tape, which an operation reads as a slot (`intern`,
 //!   `k0_pass`) or through a reference to it;
 //! - the source and the tape are each a blob (P§11.4: "source text, tapes: blobs, by content"), housed from their
 //!   placed bytes (`Blobs::house`, P§12 item 1: `house(bytes: Placed) -> BlobId`, "takes bytes where they lie"), as
@@ -103,8 +105,8 @@ impl Blobs {
     /// Houses the bytes at `p` where they lie, named by their sha256 (`house(bytes: Placed) -> BlobId`): the name,
     /// and whether they are new (a row added). A second of the same bytes is the first; its place is not kept.
     pub fn house(&mut self, reg: &Registry, dir: &mut Directory, p: Placed) -> Result<(BlobId, bool), String> {
-        if !dir.is_frozen(p.block) {
-            return Err(format!("a blob's bytes in {}, a block not frozen (a blob is never versioned)", p.block));
+        if !dir.is_fixed(p.block, p.at + p.len) {
+            return Err(format!("a blob's bytes in {}, not fixed: a block not frozen, or a slab's room not sealed (a blob is never versioned)", p.block));
         }
         let id = {
             let l = dir.read("house", &[p.block])?;
@@ -204,7 +206,7 @@ impl Files {
             DigestStep::Read(r) => Some(r),
         };
         let size = read.as_ref().and_then(|r| r.stat()).map_or(1 << 20, |s| s.size as usize);
-        let (block, b) = tape_block(dir, size).map_err(|e| format!("{path}: {e}"))?;
+        let (block, b) = dir.slab_room(kind::TAPE, room(size)).map_err(|e| format!("{path}: {e}"))?;
         let place = |len: usize, fill: &mut dyn FnMut(&mut [u8]) -> std::io::Result<()>| place_in(&b, len, fill);
         let placed = match read {
             Some(r) => match r.read_placed(&place) {
@@ -217,15 +219,17 @@ impl Files {
             None => rerail_observe::git_workspace::snapshot::read_placed(&abs, &place).ok().map(|home| (DigestRead::hashed(&home).1, home)),
         };
         let Some((digest, source)) = placed else {
-            dir.release(block);
+            dir.seal(block)?;
             return Err(format!("{path}: could not be read"));
         };
         self.reads += 1;
         if let Some((k, b)) = kept
             && k == digest
         {
-            // Read again (its stat changed, or a check), the same bytes: the identity.
-            dir.release(block);
+            // Read again (its stat changed, or a check), the same bytes: the identity. Its room stays in its slab, as
+            // the residency's rooms do, until the slab goes.
+            drop(source);
+            dir.seal(block)?;
             return Ok(doc(Some(b), b));
         }
         let id = house(reg, dir, blobs, block, b, source).map_err(|e| format!("{path}: {e}"))?;
@@ -234,9 +238,9 @@ impl Files {
     }
 }
 
-/// A document of a source in hand (a test's, the bootstrap's own), in a tape block of its own, as a read places one.
+/// A document of a source in hand (a test's, the bootstrap's own), in a slab's rooms, as a read places one.
 pub fn doc_of(reg: &Registry, dir: &mut Directory, blobs: &mut Blobs, src: &str) -> Result<DocIds, String> {
-    let (block, b) = tape_block(dir, src.len())?;
+    let (block, b) = dir.slab_room(kind::TAPE, room(src.len()))?;
     let home = place_in(&b, src.len(), &mut |out| {
         out.copy_from_slice(src.as_bytes()); // copy: load (a source in hand, written into its room)
         Ok(())
@@ -245,34 +249,21 @@ pub fn doc_of(reg: &Registry, dir: &mut Directory, blobs: &mut Blobs, src: &str)
     house(reg, dir, blobs, block, b, home)
 }
 
-/// A document's source in its tape block's room: the tape parsed from it into the same block, the block frozen, and
-/// the two housed as blobs. The block is let go when it holds nothing new (both blobs housed already) or on an error.
+/// A document's source in its slab's room: the tape parsed from it into a room of the same slab, the rooms sealed, and
+/// the two housed as blobs. Rooms whose bytes were housed already, or a parse refused, stay in the slab until it goes.
 fn house(reg: &Registry, dir: &mut Directory, blobs: &mut Blobs, block: BlockId, b: Arc<rerail_blocks::block::Block>, source: home::Home) -> Result<DocIds, String> {
-    let placed = parse(block, b, source).and_then(|(s, t)| {
-        dir.freeze(block)?;
-        let (source, new_s) = blobs.house(reg, dir, s)?;
-        let (tape, new_t) = blobs.house(reg, dir, t)?;
-        Ok((DocIds { source, tape }, new_s || new_t))
-    });
-    match placed {
-        Ok((ids, new)) => {
-            if !new {
-                dir.release(block);
-            }
-            Ok(ids)
-        }
-        Err(e) => {
-            dir.release(block);
-            Err(e)
-        }
-    }
+    let parsed = parse(block, b, source);
+    dir.seal(block)?;
+    let (s, t) = parsed?;
+    let (source, _) = blobs.house(reg, dir, s)?;
+    let (tape, _) = blobs.house(reg, dir, t)?;
+    Ok(DocIds { source, tape })
 }
 
-/// A document's source in its tape block's room, and its tape parsed into the same block: where each lies. Every
-/// handle on the block is let go here (the block holds no free list: letting a region go frees nothing), so the block
-/// can be frozen.
+/// A document's source in its slab's room, and its tape parsed into a room of the same slab: where each lies. Every
+/// handle on the slab is let go here, and the rooms are written: they are sealed next.
 fn parse(block: BlockId, b: Arc<rerail_blocks::block::Block>, source: home::Home) -> Result<(Placed, Placed), String> {
-    let src_at = source.room().and_then(|r| r.as_any().downcast_ref::<SourceRoom>()).map(|r| r.region.region().at()).ok_or("a source placed in its tape block")?;
+    let src_at = source.room().and_then(|r| r.as_any().downcast_ref::<SourceRoom>()).map(|r| r.region.region().at()).ok_or("a source placed in its slab")?;
     let src = home::Text::new(source).map_err(|e| format!("not UTF-8: {e}"))?;
     let text = Text::parse_in(src, Arc::new(InBlock(b.clone())))?;
     let tape_at = match text.tape.home() {
@@ -316,12 +307,10 @@ fn place_in(b: &Arc<rerail_blocks::block::Block>, len: usize, fill: &mut dyn FnM
     Ok(home::Home::Placed(Arc::new(SourceRoom { region: m.freeze(), len })))
 }
 
-/// A document's tape block, for a source of about `len` bytes: a sparse reservation its source and the parser's
-/// writes reach into (nothing is resident until written).
-fn tape_block(dir: &mut Directory, len: usize) -> Result<(BlockId, Arc<rerail_blocks::block::Block>), String> {
-    let reserve = (80 * len).max(1 << 20).next_power_of_two();
-    let id = dir.make_capped(kind::TAPE, 8, reserve, reserve);
-    Ok((id, dir.block(id).expect("just made")))
+/// The room a document of a source of `len` bytes needs in its slab: the source and a word past it, and the parser's
+/// tape at its bound (80 times the source). It is address space; what is resident is what the two write.
+fn room(len: usize) -> usize {
+    81 * len + (64 << 10)
 }
 
 #[cfg(test)]

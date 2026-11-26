@@ -50,31 +50,31 @@ fn a_document_is_its_path_its_module_and_a_tape_from_nothing() {
     assert!(reads(l.block(0), s, l.block(0), t).len() > 100, "l0's tape");
 }
 
-/// The source lies where the read placed it, and the tape where the parser wrote it: both in the document's tape
-/// block, frozen, each a blob named by the sha256 of its bytes where they lie.
+/// The source lies where the read placed it, and the tape where the parser wrote it: both rooms of a slab, sealed,
+/// each a blob named by the sha256 of its bytes where they lie.
 #[test]
-fn the_source_and_the_tape_are_blobs_in_the_documents_frozen_tape_block() {
+fn the_source_and_the_tape_are_blobs_in_sealed_rooms_of_a_slab() {
     use sha2::{Digest as _, Sha256};
     let (_, mut files) = root("room");
     let (reg, mut blobs, mut dir) = fresh();
     let d = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
     let (s, t) = (blobs.get(&dir, &d.after.source).unwrap().unwrap(), blobs.get(&dir, &d.after.tape).unwrap().unwrap());
     assert_eq!(s.block, t.block);
-    assert!(dir.is_frozen(t.block), "a blob is never versioned");
+    assert!(dir.is_fixed(s.block, s.at + s.len) && dir.is_fixed(t.block, t.at + t.len), "a blob is never versioned");
     assert_eq!(dir.block(t.block).unwrap().header().kind, kind::TAPE);
     let l = dir.read("t", &[t.block]).unwrap();
     let b = l.block(0);
     assert_eq!(&b[s.at..s.at + s.len], crate::L0.as_bytes(), "the source, read where it lies in the block");
     assert_eq!(d.after.source.0, <[u8; 32]>::from(Sha256::digest(crate::L0.as_bytes())));
     assert_eq!(d.after.tape.0, <[u8; 32]>::from(Sha256::digest(&b[t.at..t.at + t.len])));
-    // The same bytes housed again are the first blob, and their block is let go.
+    // The same bytes housed again are the first blob.
     let again = doc_of(&reg, &mut dir, &mut blobs, crate::L0).unwrap();
     assert_eq!(again, d.after);
     assert_eq!(blobs.len(&dir).unwrap(), 2);
 }
 
 /// Two sources of the same shape have the same tape: the second's tape blob is the first's, where it lies, and its
-/// source a new blob in a block of its own. Both are read through `reads`, from their two blocks.
+/// source a new blob in a room of its own. Both are read through `reads`, from their two places.
 #[test]
 fn a_new_source_may_share_an_earlier_tape() {
     let (reg, mut blobs, mut dir) = fresh();
@@ -83,8 +83,8 @@ fn a_new_source_may_share_an_earlier_tape() {
     assert_ne!(a.source, b.source);
     assert_eq!(a.tape, b.tape, "the tape holds the shape, not the text");
     let (s, t) = (blobs.get(&dir, &b.source).unwrap().unwrap(), blobs.get(&dir, &b.tape).unwrap().unwrap());
-    assert_ne!(s.block, t.block);
-    assert!(dir.is_frozen(s.block));
+    assert!(s.at > t.at, "the second source's room, past the first document's tape");
+    assert!(dir.is_fixed(s.block, s.at + s.len));
     let l = dir.read("t", &[s.block, t.block]).unwrap();
     let r = reads(l.block(0), s, l.block(1), t);
     assert_eq!(r.text(r.len() - 1), "4");
@@ -136,4 +136,34 @@ fn a_file_that_does_not_parse_is_refused_naming_its_path() {
     assert!(e.starts_with("broken.rerail: "), "{e}");
     let e = files.answer("missing.rerail", &reg, &mut blobs, &mut dir).unwrap_err();
     assert!(e.starts_with("missing.rerail: "), "{e}");
+}
+
+/// Documents share a slab, as the residency's do (`rerail_slabs`): each one's source and tape are rooms of it, sealed
+/// as they are written, read in place by a launch and by a reference while the slab takes more; a document past the
+/// slab's room starts the next.
+#[test]
+fn documents_share_a_slab_their_rooms_sealed_as_written() {
+    let (reg, mut blobs, mut dir) = fresh();
+    let a = doc_of(&reg, &mut dir, &mut blobs, "e(1, 2).\n").unwrap();
+    let b = doc_of(&reg, &mut dir, &mut blobs, "p(x) :- e(x, _).\n").unwrap();
+    let place = |dir: &Directory, blobs: &Blobs, id| blobs.get(dir, id).unwrap().unwrap();
+    let (at, bt) = (place(&dir, &blobs, &a.tape), place(&dir, &blobs, &b.tape));
+    assert_eq!(at.block, bt.block, "one slab");
+    let slab = dir.block(at.block).unwrap();
+    assert!(slab.is_writable() && slab.reserved() >= crate::dir::SLAB_BYTES, "an open slab, taking more");
+    assert!(dir.is_fixed(at.block, bt.at + bt.len) && !dir.is_fixed(at.block, slab.used() + 1), "sealed to what is written");
+    // A block may refer to a sealed room while the slab takes more, and a launch reads it there.
+    let r = dir.make(kind::CONTROL, 8);
+    dir.refer(r, at.block, at.at).unwrap();
+    let c = doc_of(&reg, &mut dir, &mut blobs, "q(y) :- p(y).\n").unwrap();
+    let ct = place(&dir, &blobs, &c.tape);
+    assert_eq!(ct.block, at.block);
+    {
+        let l = dir.read("t", &[r]).unwrap();
+        assert_eq!(l.table().block(at.block.0).map(|x| x.len() > bt.at), Some(true), "the slab, reached by reference");
+    }
+    // A source past the slab's room: a slab of its own size.
+    let big = "e(1, 2).\n".repeat(crate::dir::SLAB_BYTES / 81 / 9 + 1);
+    let d = doc_of(&reg, &mut dir, &mut blobs, &big).unwrap();
+    assert_ne!(place(&dir, &blobs, &d.tape).block, at.block, "the next slab");
 }

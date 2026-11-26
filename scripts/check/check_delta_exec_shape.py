@@ -477,6 +477,11 @@ def b6(failures: list) -> None:
         failures.append("k0.rs: k0_pass has no read-write slot for L1's cache")
     if re.search(r"for drop_at in \[", (CRATE / "src/l1_tests.rs").read_text()):
         failures.append("l1_tests.rs: L5's cache dropped at fixed steps, not random ones")
+    dirs = (CRATE / "src/dir.rs").read_text()
+    if "dir.slab_room(kind::TAPE" not in files or re.search(r"make_(capped|placed)\(", files):
+        failures.append("files.rs: a document's source and tape not rooms of a shared slab (the residency's, rerail_slabs)")
+    if not re.search(r"alloc::block\(&need\)", dirs) or "Device::May" not in dirs:
+        failures.append("dir.rs: a documents' slab not made by the block policy, as the device may read it (Need::SLAB, Device::May)")
     interned = (TWINS / "src/intern.rs").read_text()
     if re.search(r"is_leaf\(n\)\s*\{\s*put\(", interned):
         failures.append("delta_twins/src/intern.rs: every leaf interned (intern names only identifiers and strings)")

@@ -38,6 +38,13 @@ impl std::fmt::Display for BlockId {
     }
 }
 
+/// A referenced block, held: a frozen one, or a slab, whose sealed rooms are fixed while the slab takes more.
+#[derive(Clone)]
+enum Held {
+    Frozen(Frozen),
+    Slab(Arc<Block>),
+}
+
 enum Own {
     Open(Arc<Block>),
     Frozen(Frozen),
@@ -50,7 +57,9 @@ struct Entry {
     /// Its whole-block region's handle, kept while it has a replica (`replicate`): the region holds the replica.
     placed: Option<rerail_blocks::region::Shared<u8>>,
     /// The blocks it refers to, each held while it does.
-    held: Vec<(BlockId, Frozen)>,
+    held: Vec<(BlockId, Held)>,
+    /// A slab's (`slab_room`): how far its rooms are sealed, each written once and never again (0: no slab).
+    sealed: Cell<usize>,
     weak: Weak<Block>,
     /// Its body's bytes, as made: what a freeze trims to the body's used length.
     body: usize,
@@ -88,6 +97,10 @@ impl Drop for Evaluation<'_> {
     }
 }
 
+/// A documents' slab's bytes: the residency's (`rerail_slabs::SLAB_BYTES`, PIAT §20.2.1's default), reserved as
+/// address space, resident as rooms are written.
+pub const SLAB_BYTES: usize = 64 << 20;
+
 /// Where a block's memory is (P§12's `Placement`, as a shape holds it: `ShapeW::placement`).
 pub const PLACE_RUN: u32 = 0;
 pub const PLACE_KEPT: u32 = 1;
@@ -101,6 +114,8 @@ pub type Slabs = Box<dyn Fn(usize) -> Option<Box<dyn rerail_blocks::block::Backi
 #[derive(Default)]
 pub struct Directory {
     entries: Vec<Entry>,
+    /// The slab documents' rooms go to now (`slab_room`).
+    slab: Option<BlockId>,
     kept: Option<PathBuf>,
     slabs: Option<Slabs>,
     ledger: Ledger,
@@ -231,7 +246,7 @@ impl Directory {
         let found = rerail_blocks::kept::trace_folder::blocks(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
         let n = found.iter().map(|&(id, _)| id as usize + 1).max().unwrap_or(0);
         let mut dir = Directory::default().with_kept(folder);
-        dir.entries = (0..n).map(|_| Entry { own: Own::Released, placed: None, held: Vec::new(), weak: Weak::new(), body: 8, file: None, cap: Cell::new(0) }).collect();
+        dir.entries = (0..n).map(|_| Entry { own: Own::Released, placed: None, held: Vec::new(), sealed: Cell::new(0), weak: Weak::new(), body: 8, file: None, cap: Cell::new(0) }).collect();
         for (id, p) in &found {
             let f = Block::open_file(p, kind)?;
             let e = &mut dir.entries[*id as usize];
@@ -247,7 +262,7 @@ impl Directory {
                     return Err(format!("{}: block {id} refers to {t}, which is not kept there", folder.display()));
                 };
                 let g = g.clone();
-                dir.entries[*id as usize].held.push((t, g));
+                dir.entries[*id as usize].held.push((t, Held::Frozen(g)));
             }
         }
         Ok(dir)
@@ -268,7 +283,7 @@ impl Directory {
             gens::init_refs(w.bytes_mut().expect("a write pin"));
         }
         let weak = Arc::downgrade(&b);
-        self.entries.push(Entry { own: Own::Open(b), placed: None, held: Vec::new(), weak, body: body.max(8), file, cap: Cell::new(0) });
+        self.entries.push(Entry { own: Own::Open(b), placed: None, held: Vec::new(), sealed: Cell::new(0), weak, body: body.max(8), file, cap: Cell::new(0) });
         BlockId(self.entries.len() as u32 - 1)
     }
 
@@ -295,17 +310,55 @@ impl Directory {
         self.block(id).is_some_and(|b| !b.is_writable())
     }
 
+    /// Whether block `id`'s bytes up to `end` are fixed: a frozen block, or a slab's sealed rooms.
+    pub fn is_fixed(&self, id: BlockId, end: usize) -> bool {
+        self.is_frozen(id) || self.entries.get(id.0 as usize).is_some_and(|e| end <= e.sealed.get())
+    }
+
+    /// A slab with `need` bytes of room past its rooms, for a document's source and tape (the residency's slabs,
+    /// `rerail_slabs`): the current one, else a new one, of `SLAB_BYTES` or the need, by the block policy
+    /// (`alloc::block`, `Need::SLAB`: host memory, or a block the device reads where the run is bound to one). Many
+    /// documents share a slab; each room in it is written once, then sealed (`seal`), and read in place by every
+    /// reader, and by a reference, while the slab takes more.
+    pub fn slab_room(&mut self, kind: u32, need: usize) -> Result<(BlockId, Arc<Block>), String> {
+        if let Some(id) = self.slab
+            && let Some(b) = self.block(id)
+            && b.reserved().saturating_sub(b.used()) >= need
+        {
+            return Ok((id, b));
+        }
+        self.sweep();
+        let bytes = SLAB_BYTES.max(BODY_AT + 8 + need + rerail_blocks::block::PAGE).next_multiple_of(rerail_blocks::block::PAGE);
+        let need = rerail_blocks::alloc::Need { kind, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::May, ..rerail_blocks::alloc::Need::SLAB };
+        let b = rerail_blocks::alloc::block(&need)?;
+        let id = self.adopt_new(b, 8, None);
+        let b = self.block(id).expect("just made");
+        self.entries[id.0 as usize].sealed.set(b.used());
+        self.slab = Some(id);
+        Ok((id, b))
+    }
+
+    /// Seals slab `id`'s rooms written so far: fixed from now on.
+    pub fn seal(&self, id: BlockId) -> Result<(), String> {
+        let e = self.entry(id)?;
+        if e.sealed.get() == 0 {
+            return Err(format!("{id} is no slab"));
+        }
+        e.sealed.set(self.block(id).ok_or_else(|| format!("{id} is held by nothing"))?.used());
+        Ok(())
+    }
+
     /// The blocks `id` refers to.
     pub fn refs(&self, id: BlockId) -> Vec<BlockId> {
         self.entries.get(id.0 as usize).map_or(Vec::new(), |e| e.held.iter().map(|(r, _)| *r).collect())
     }
 
     /// Block `from` refers to what lies at `at` in block `to` from now on (O§2: by block id and offset): written in
-    /// `from`'s reference table, and `to` held while `from` is. Refused for a `to` that is not frozen, or a `from` that
-    /// is.
+    /// `from`'s reference table, and `to` held while `from` is. Refused for a `to` whose bytes at `at` are not fixed
+    /// (a block not frozen, or a slab's room not sealed), or a `from` that is frozen.
     pub fn refer(&mut self, from: BlockId, to: BlockId, at: usize) -> Result<(), String> {
         let target = self.block(to).ok_or_else(|| format!("a reference to {to}, which nothing holds"))?;
-        if target.is_writable() {
+        if !self.is_fixed(to, at + 1) {
             return Err(format!("a reference from {from} to {to}, a block not frozen"));
         }
         let Own::Open(src) = &self.entry(from)?.own else {
@@ -314,11 +367,12 @@ impl Directory {
         let mut w = pin_block(src, "refer", true).map_err(|e| format!("a reference from {from}: {e}"))?;
         gens::add_ref(w.bytes_mut().expect("a write pin"), to.0, at).map_err(|e| format!("{from}: {e}"))?;
         drop(w);
-        let frozen = match &self.entry(to)?.own {
-            Own::Frozen(f) => f.clone(),
+        let held = match &self.entry(to)?.own {
+            Own::Frozen(f) => Held::Frozen(f.clone()),
+            _ if target.is_writable() => Held::Slab(target),
             _ => self.entries.iter().flat_map(|e| &e.held).find(|(r, _)| *r == to).map(|(_, f)| f.clone()).expect("a frozen block held"),
         };
-        self.entries[from.0 as usize].held.push((to, frozen));
+        self.entries[from.0 as usize].held.push((to, held));
         Ok(())
     }
 

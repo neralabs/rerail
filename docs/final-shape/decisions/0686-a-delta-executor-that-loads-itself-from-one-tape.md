@@ -1324,3 +1324,35 @@ least recent use. The change instead gave each document a slab of its own, reser
 the source and resident whole. `tape_block` is back to a sparse reservation in run memory, and the change's test is
 gone. A document's source and tape still do not lie in the residency's rooms; B4's "read once into a slab room
 through read_placed and a placer" is still not built.
+
+**Slab rooms, as the residency's (B4)**. Sources and tapes now lie as the residency places them (`rerail_slabs`):
+
+- **Shared slabs.** Many documents share a slab, a block of `SLAB_BYTES` (64 MB, the residency's constant) or the
+  need, whichever is larger.
+- **One room each.** Each source and each tape is a room of the slab, written once: the observer's placed read
+  writes the source, and the rr parser writes the tape (`InBlock`).
+- **Made by the block policy.** `Directory::slab_room` makes a slab with `alloc::block` (`Need::SLAB`,
+  `Device::May`). That is host memory, reserved as address space and resident as rooms are written, and a block the
+  device reads where the run is bound to one. A slab does not live on the device to be usable by one; it only has to
+  be laid out so a device can use it.
+- **Sealed rooms are fixed.** A slab is never frozen while it takes more. Instead the directory seals it to what is
+  written (`seal`), and `is_fixed(id, end)` holds for a frozen block or a sealed room. A blob is housed only from
+  fixed bytes, and a reference may point into a sealed room (`Held::Slab` holds the slab).
+- **A slab's room.** A document needs its source and the tape's bound in address space. One past that starts the
+  next slab.
+- **No more per-document blocks.** The 80-times sparse reservation is gone.
+
+Not built yet: retiring a slab. Rooms whose bytes were housed already, and a re-read with no change, stay in their
+slab, as the residency's rooms do until it retires the slab whole. The directory keeps its slabs while it lives,
+which no block did differently before.
+
+Checks (Relax, local, 76 of 76):
+- `documents_share_a_slab_their_rooms_sealed_as_written`:
+  - three documents' tapes lie in one open slab of at least `SLAB_BYTES`, fixed up to what is written and not past
+    it;
+  - a block refers to a sealed room while the slab takes another document, and a launch reaches the slab through
+    that reference;
+  - a source past the slab's room starts the next slab.
+- The earlier B4 checks hold over slab rooms, with sealed in place of frozen.
+- The shape script refuses a per-document block for a document, and a documents' slab made otherwise than by the
+  block policy, as the device may read it.
