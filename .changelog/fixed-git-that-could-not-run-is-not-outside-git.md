@@ -1,0 +1,1 @@
+When the Git Rerail asks where a checkout is could not run (Windows could not start it, it ran past its time limit, it was killed) or failed, Rerail took the checkout for a folder outside Git, and a starting session could record it so. That ask now fails with the reason, which the daemon logs.

@@ -40,6 +40,7 @@ import {
   type RemoteAddress,
   type RemoteSource,
 } from "./checkouts/kept-remote.js";
+import { LOCATE_ARGS, locateAnswer } from "./checkouts/git-locate.js";
 import { openNoFollowSync } from "../no-follow.js";
 import { GitUnavailableError, gitText, runGit, runGitAsync, sharedRead, type GitReadOptions, type GitReads, type GitResult, type SharedRead } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
@@ -67,8 +68,16 @@ function nonGitLocation(requested: string, gitFolderGone = false): RepositoryIde
 /** The file in Git's common metadata directory that holds a clone's id, shared by every linked worktree. */
 export const GIT_IDENTITY_FILE = "rerail-repository-id";
 
-/** What {@link gitLocation} reads: Git's top level, common directory and Git directory, as absolute paths. */
-const LOCATE_ARGS = ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"];
+/**
+ * Where `requested` is by Git's answer `result` ({@link locateAnswer}), or by the disk where no Git ran (`result`
+ * undefined: Git would find none, `none`, or is not installed). Throws `locateAnswer`'s error where Git ran and gave no
+ * answer, except in a read its owner stopped (`signal` aborted), which reads as outside Git and is kept by nothing.
+ */
+function locatedFrom(requested: string, result: GitResult | undefined, none: "outside" | "gone" | undefined, signal?: AbortSignal): RepositoryIdentityLocation {
+  const stopped = signal?.aborted === true && result?.status !== 0;
+  const printed = result === undefined || stopped ? undefined : locateAnswer(requested, result);
+  return printed === undefined ? nonGitLocation(requested, none === "gone") : gitLocation(requested, printed);
+}
 
 /**
  * Git's answers for the folders it took for their own checkout's top level, each kept while what Git read to give it,
@@ -111,7 +120,9 @@ function gitPlaced(common: string): boolean {
  * linked worktree, or `.rerail/repository-id` outside Git (or when Git is not installed). A folder that holds a `.git`
  * entry is answered as Git last answered while what Git reads there is unchanged, and a linked worktree of a repository
  * Git placed a checkout of is answered from its files ({@link linkedWorktreeFromFiles}); every other folder, and every
- * case those files do not decide, is asked of Git.
+ * case those files do not decide, is asked of Git. Outside Git is Git's own answer only: where the Git asked gives none
+ * (it could not start, ran past its time limit, was killed or failed otherwise) this throws `GitCouldNotAnswerError`
+ * (`checkouts/git-locate.ts`) and keeps nothing, so the next call asks Git again.
  */
 export function repositoryIdentityLocation(workspace: string): RepositoryIdentityLocation {
   return placed(resolve(workspace), false);
@@ -198,7 +209,7 @@ async function locatedWithoutBlocking(requested: string, gitFolderThere: boolean
   const searched = searchedUp(requested);
   const none = gitFindsNone(requested, gitFolderThere);
   const result = none === undefined ? await runGitAsync(requested, LOCATE_ARGS, options).catch(noGitInstalled) : undefined;
-  const location = result === undefined || result.status !== 0 ? nonGitLocation(requested, none === "gone") : gitLocation(requested, result.stdout);
+  const location = locatedFrom(requested, result, none, options.signal);
   return { location, byGit: true, searched };
 }
 
@@ -215,7 +226,7 @@ function locatedByGit(requested: string, gitFolderThere: boolean): Located {
   const searched = searchedUp(requested);
   const none = gitFindsNone(requested, gitFolderThere);
   const result = none === undefined ? locateInGit(requested) : undefined;
-  const location = result === undefined || result.status !== 0 ? nonGitLocation(requested, none === "gone") : gitLocation(requested, result.stdout);
+  const location = locatedFrom(requested, result, none);
   return { location, byGit: true, searched };
 }
 
@@ -314,7 +325,7 @@ export async function repositoryIdentityLocationAsync(workspace: string, signal?
   const requested = resolve(workspace);
   const none = gitFindsNone(requested);
   const result = none === undefined ? await runGitAsync(requested, LOCATE_ARGS, { signal }).catch(noGitInstalled) : undefined;
-  return result === undefined || result.status !== 0 ? nonGitLocation(requested, none === "gone") : gitLocation(requested, result.stdout);
+  return locatedFrom(requested, result, none, signal);
 }
 
 /** Undefined when Git is not installed; any other failure is thrown again. */

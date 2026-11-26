@@ -447,6 +447,20 @@ Rerail is not installed on this computer. Install it with npx @neralabs/rerail s
 
 There is no installation in `~/.rerail` (or `RERAIL_HOME`, when set). Run set-up.
 
+### `Git could not say where the repository of … is`
+
+```text
+Git could not say where the repository of C:\code\app is: exit status 3221225794 (0xC0000142), signal none, stderr: nothing
+```
+
+Rerail asked Git where the folder's repository is, and that Git gave no answer: Windows could not start it
+(0xC0000142, often while the machine runs out of resources for new processes), it ran past its time limit of 10 seconds
+(`no exit status`, with the time limit named), something ended it (a signal, or on Windows exit status 1 with no
+output), or it failed with the message after `stderr:`. Rerail takes none of these for a folder outside Git, so it
+records nothing for the folder and asks Git again at the next command or hook. A command that needs the answer stops
+with the line; the daemon writes it to `daemon.log` once for each folder and reason. When it keeps coming, run
+`git -C <folder> rev-parse --show-toplevel` in a terminal: Git's own error says what to mend.
+
 ### Node was upgraded or removed after set-up
 
 If the Node that ran set-up is gone and the next `node` on `PATH` is older than 24, `rerail` stops with

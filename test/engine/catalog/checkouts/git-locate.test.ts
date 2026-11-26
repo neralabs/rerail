@@ -36,7 +36,11 @@ vi.mock("../../../../src/engine/child-process.js", async importOriginal => {
   return { ...actual, spawn, spawnSync };
 });
 
-/** Each ending: Windows' status for a process it could not start, and Linux's loader failing; past the time limit; exit 1. */
+/**
+ * Each ending: Windows' status for a process it could not start, and Linux's loader failing; past the time limit; exit 1;
+ * killed (Windows has no signals: its kill ends a process with exit status 1); a wrapper that prints Git's own line for a
+ * folder outside a repository but exits 1. And Git's own answer, dying (128), here for a config it cannot read.
+ */
 const STAND_IN = String.raw`
 const ending = process.argv[2];
 if (ending === "never-ran" && process.platform === "win32") process.exit(3221225794);
@@ -48,6 +52,15 @@ if (ending === "past-limit") setTimeout(() => process.exit(0), 60000);
 if (ending === "failed") {
   process.stderr.write("error: could not lock config file .git/config: File exists\n");
   process.exit(1);
+}
+if (ending === "killed") process.kill(process.pid, "SIGKILL");
+if (ending === "wrapped") {
+  process.stderr.write("fatal: not a git repository (or any of the parent directories): .git\n");
+  process.exit(1);
+}
+if (ending === "git-refuses") {
+  process.stderr.write("fatal: bad config line 1 in file .git/config\n");
+  process.exit(128);
 }
 `;
 
@@ -82,6 +95,8 @@ const SAID: Readonly<Record<string, RegExp>> = {
     : /: exit status 127 \(0x0000007F\), signal none, stderr: git: error while loading shared libraries: /u,
   "past-limit": /: no exit status \(.*(?:ETIMEDOUT|time limit).*\), signal \w+, stderr: nothing$/u,
   failed: /: exit status 1 \(0x00000001\), signal none, stderr: error: could not lock config file \.git\/config: File exists$/u,
+  killed: process.platform === "win32" ? /: exit status 1 \(0x00000001\), signal none, stderr: nothing$/u : /: no exit status \(.*\), signal SIGKILL, stderr: nothing$/u,
+  wrapped: /: exit status 1 \(0x00000001\), signal none, stderr: fatal: not a git repository /u,
 };
 
 const READS = {
@@ -95,9 +110,12 @@ describe("a read of where a folder's repository is, whose Git gives no answer", 
     for (const ending of Object.keys(SAID)) {
       it(`fails ${name} when that Git ends so (${ending}), and the next ask places the checkout`, async () => {
         const top = checkout();
+        const write = vi.spyOn(process.stderr, "write");
         next.ending = ending;
         await expect(read(top)).rejects.toThrow(SAID[ending]!);
         expect(next.ending).toBeUndefined();
+        // Only the daemon writes the line: here the thrown error is the line.
+        expect(write).not.toHaveBeenCalled();
         await expect(read(top)).resolves.toMatchObject({ git: true, main: true, workspaceRoot: top });
       }, 30_000);
     }
@@ -148,6 +166,22 @@ describe("Git's own answer that a folder is outside any repository", () => {
     vi.stubEnv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
     expect(repositoryIdentityLocation(top)).toMatchObject({ git: false });
     await expect(repositoryIdentityLocationAsync(top)).resolves.toMatchObject({ git: false });
+  });
+
+  it("reads a folder whose Git dies for any reason of its own (128) as outside Git, whatever line it prints", async () => {
+    const top = checkout();
+    next.ending = "git-refuses";
+    expect(repositoryIdentityLocation(top)).toMatchObject({ git: false, workspaceRoot: top });
+    next.ending = "git-refuses";
+    await expect(repositoryIdentityLocationAsync(top)).resolves.toMatchObject({ git: false });
+  });
+
+  it("reads a folder whose .git file Git cannot read as one as outside Git", () => {
+    made += 1;
+    const folder = join(root, `garbled-${made}`);
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, ".git"), "not a gitdir line\n");
+    expect(repositoryIdentityLocation(folder)).toMatchObject({ git: false, workspaceRoot: folder });
   });
 
   it("reads a Git folder, which has no top level, as outside Git", () => {
