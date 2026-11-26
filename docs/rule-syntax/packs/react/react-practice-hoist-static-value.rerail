@@ -46,9 +46,11 @@ in_body(n, f) :- (kind(n, "lexical_declaration") ; kind(n, "function_declaration
 // own(site, f): the declaration at site belongs to top function f's own scope: its nearest function is f.
 .decl own(site: node, f: node)
 own(site, f) :- ref_site(_, site), nearest(site, f, function_kind), top(f).
-// reads_component(v, f): v reads a name of f's own scope (a type name too).
+// reads_component(v, f): v reads a name of f's own scope (a type name too, a type parameter of f's among them).
 .decl reads_component(v: node, f: node)
 reads_component(v, f) :- candidate(v, f), has(v, r, read_kind), ref_site(r, site), own(site, f).
+reads_component(v, f) :- candidate(v, f), has(v, t, "type_identifier"), pr_type_param(t, tp),
+    nearest(tp, f, function_kind).
 .decl read_kind(k: symbol)
 read_kind("identifier"). read_kind("shorthand_property_identifier"). read_kind("type_identifier").
 
@@ -104,8 +106,8 @@ invoked(r) :- field(c, "function", r), kind(c, "call_expression").
 invoked(r) :- field(c, "constructor", r), kind(c, "new_expression").
 // `const x: Box<T> = …` with T a type parameter of the component.
 .decl typed_by_component(d: node)
-typed_by_component(d) :- field(d, "type", a), has(a, t, "type_identifier"), ref_site(t, site),
-    inside(site, ps, "type_parameters"), child(f, ps, _), top(f).
+typed_by_component(d) :- field(d, "type", a), has(a, t, "type_identifier"), pr_type_param(t, tp),
+    inside(tp, ps, "type_parameters"), child(f, ps, _), top(f).
 
 // escape(f, x): a name x declared in f's own scope is passed on by identity in f.
 .decl escape(f: node, x: symbol)
@@ -165,8 +167,173 @@ builds_kind("call_expression"). builds_kind("array"). builds_kind("spread_elemen
 .violation HOIST_STATIC_VALUE(at: node, name: symbol)
     "{name} reads nothing from this component or hook, yet it is rebuilt every render and passed on by identity; move it to module scope unless each instance needs its own copy."
 HOIST_STATIC_VALUE(d, x) :- static_const(d, v, f), !reads_component(v, f), field(d, "name", n), text(n, x),
-    escape(f, x), !mutated(f, x), docof(d, doc), react_doc(doc).
+    escape(f, x), !mutated(f, x), docof(d, doc), pr_react_doc(doc).
 .violation HOIST_STATIC_FUNCTION(at: node, name: symbol)
     "Function {name} reads nothing from this component or hook, yet it is recreated every render and passed on by identity; move it to module scope."
 HOIST_STATIC_FUNCTION(g, x) :- static_function(g, f), !reads_component(g, f), field(g, "name", n), text(n, x),
-    escape(f, x), !mutated(f, x), docof(g, doc), react_doc(doc).
+    escape(f, x), !mutated(f, x), docof(g, doc), pr_react_doc(doc).
+
+// Review (react-practice-a): a `@jsxImportSource` comment naming another JSX library (a block or a line comment)
+// skips the file. The lines are the JSON original's.
+.test review_jsx_import_source_comment exactly
+    .fixture "plain/src/Hoist.tsx" ```
+        import { Box } from './Box';
+
+        export function Hoist() {
+          const padding = { x: 2, y: 4 };
+          return <Box padding={padding} />;
+        }
+        ```
+    .fixture "pragma/src/Hoist.tsx" ```
+        /** @jsxImportSource preact */
+        import { Box } from './Box';
+
+        export function Hoist() {
+          const padding = { x: 2, y: 4 };
+          return <Box padding={padding} />;
+        }
+        ```
+    .fixture "pragma-line/src/Hoist.tsx" ```
+        // @jsxImportSource solid-js
+        import { Box } from './Box';
+
+        export function Hoist() {
+          const padding = { x: 2, y: 4 };
+          return <Box padding={padding} />;
+        }
+        ```
+    .expect HOIST_STATIC_VALUE at "plain/src/Hoist.tsx":4
+.end
+
+// Review (react-practice-a): the package's tsconfig.json (else jsconfig.json) `compilerOptions.jsxImportSource`,
+// over a relative `extends`, decides the runtime before its dependencies. The lines are the JSON original's.
+.test review_tsconfig_jsx_import_source exactly
+    .fixture "tsc/package.json" ```
+        { "name": "tsc-app", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "tsc/tsconfig.json" ```
+        { "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "preact" } }
+        ```
+    .fixture "tsc/src/Hoist.tsx" ```
+        import { Box } from './Box';
+
+        export function Hoist() {
+          const padding = { x: 2, y: 4 };
+          return <Box padding={padding} />;
+        }
+        ```
+    .fixture "tsc-ext/package.json" ```
+        { "name": "tsc-ext", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "tsc-ext/tsconfig.base.json" ```
+        {
+          "compilerOptions": {
+            "jsx": "react-jsx",
+            "jsxImportSource": "solid-js"
+          }
+        }
+        ```
+    .fixture "tsc-ext/tsconfig.json" ```
+        {
+          // comment
+          "extends": "./tsconfig.base",
+          "compilerOptions": { "strict": true },
+        }
+        ```
+    .fixture "tsc-ext/src/Hoist.tsx" ```
+        import { Box } from './Box';
+
+        export function Hoist() {
+          const padding = { x: 2, y: 4 };
+          return <Box padding={padding} />;
+        }
+        ```
+    .fixture "tsc-react/package.json" ```
+        { "name": "tsc-react", "dependencies": { "preact": "10.0.0" } }
+        ```
+    .fixture "tsc-react/tsconfig.json" ```
+        { "compilerOptions": { "jsxImportSource": "react" } }
+        ```
+    .fixture "tsc-react/src/Hoist.tsx" ```
+        import { Box } from './Box';
+
+        export function Hoist() {
+          const padding = { x: 2, y: 4 };
+          return <Box padding={padding} />;
+        }
+        ```
+    .expect HOIST_STATIC_VALUE at "tsc-react/src/Hoist.tsx":4
+.end
+
+// Review (react-practice-a): a type parameter of the component or Hook is one of its names: a value typed by it (in
+// a cast, an annotation, a parameter) reads the component. A nested generic's own T shadows it (Shadow: render),
+// and a type name nothing declares is no read (other). The lines are the JSON original's.
+.test review_type_parameters_are_component_reads exactly
+    .fixture "src/grid/TypedGrid.tsx" ```
+        import { Grid, Column } from './Grid';
+
+        export function TypedGrid<Row>({ rows }: { rows: Row[] }) {
+          const columns = [] as Column<Row>[];
+          return <Grid rows={rows} columns={columns} />;
+        }
+        ```
+    .fixture "src/table/DataTable.tsx" ```
+        import { Table, type ColumnDef } from './Table';
+
+        export function DataTable<TRow>({ rows }: { rows: TRow[] }) {
+          const columns: ColumnDef<TRow>[] = [{ id: 'select' }];
+          return <Table rows={rows} columns={columns} />;
+        }
+        ```
+    .fixture "src/GenericFn.tsx" ```
+        import { List } from './List';
+
+        export function GenericFn<T>({ items }: { items: T[] }) {
+          function render(item: T) {
+            return String(item);
+          }
+          return <List items={items} render={render} />;
+        }
+        ```
+    .fixture "src/useGeneric.ts" ```
+        import { useSorted } from './sorted';
+
+        export function useGeneric<T>(items: T[]) {
+          const compare = (a: T, b: T) => 0;
+          return useSorted(items, compare);
+        }
+        ```
+    .fixture "src/ArrowGen.tsx" ```
+        import { List } from './List';
+
+        export const ArrowGen = <T,>({ items }: { items: T[] }) => {
+          const pick = (x: T) => x;
+          const cols = [] as Array<T>;
+          return <List items={items} pick={pick} cols={cols} />;
+        };
+        ```
+    .fixture "src/Inner.tsx" ```
+        import { List } from './List';
+
+        export function Inner<T>({ items }: { items: T[] }) {
+          const fmt = () => {
+            const xs: T[] = [];
+            return xs;
+          };
+          return <List items={items} fmt={fmt} />;
+        }
+        ```
+    .fixture "src/Shadow.tsx" ```
+        import { List } from './List';
+
+        export function Shadow<T>({ items }: { items: T[] }) {
+          function render<T>(item: T) {
+            return String(item);
+          }
+          const other: Array<U> = [];
+          return <List items={items} render={render} other={other} />;
+        }
+        ```
+    .expect HOIST_STATIC_FUNCTION at "src/Shadow.tsx":4
+    .expect HOIST_STATIC_VALUE at "src/Shadow.tsx":7
+.end

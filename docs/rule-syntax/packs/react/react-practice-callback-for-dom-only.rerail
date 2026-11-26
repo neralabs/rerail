@@ -84,6 +84,98 @@ handler_slot(e) :- field(b, "right", e), kind(b, "binary_expression"), (op(b, "&
 .violation CALLBACK_FOR_DOM_ONLY(at: node, x: symbol)
     "Declare {x} as a plain function, not in useCallback: it is only called or passed to built-in element event props, so nothing reads its identity."
 CALLBACK_FOR_DOM_ONLY(x, t) :- memoized(x, d), nearest(x, f, function_kind), component_or_hook(f), bind_name(x, site),
-    site_used(site), !identity_read(site), text(x, t), docof(x, doc), react_doc(doc).
+    site_used(site), !identity_read(site), text(x, t), docof(x, doc), pr_react_doc(doc).
 .decl identity_read(site: node)
 identity_read(site) :- memoized(x, _), bind_name(x, site), site_occurrence(site, o), !harmless(o).
+
+// Review (react-practice-a): a `@jsxImportSource` comment naming another JSX library (a block or a line comment)
+// skips the file. The lines are the JSON original's.
+.test review_jsx_import_source_comment exactly
+    .fixture "plain/src/Save.tsx" ```
+        import { useCallback } from 'react';
+
+        export function Save({ submit }: { submit: () => void }) {
+          const save = useCallback(() => submit(), [submit]);
+          return <button onClick={save}>save</button>;
+        }
+        ```
+    .fixture "pragma/src/Save.tsx" ```
+        /** @jsxImportSource preact */
+        import { useCallback } from 'react';
+
+        export function Save({ submit }: { submit: () => void }) {
+          const save = useCallback(() => submit(), [submit]);
+          return <button onClick={save}>save</button>;
+        }
+        ```
+    .fixture "pragma-line/src/Save.tsx" ```
+        // @jsxImportSource solid-js
+        import { useCallback } from 'react';
+
+        export function Save({ submit }: { submit: () => void }) {
+          const save = useCallback(() => submit(), [submit]);
+          return <button onClick={save}>save</button>;
+        }
+        ```
+    .expect CALLBACK_FOR_DOM_ONLY at "plain/src/Save.tsx":4
+.end
+
+// Review (react-practice-a): the package's tsconfig.json (else jsconfig.json) `compilerOptions.jsxImportSource`,
+// over a relative `extends`, decides the runtime before its dependencies. The lines are the JSON original's.
+.test review_tsconfig_jsx_import_source exactly
+    .fixture "tsc/package.json" ```
+        { "name": "tsc-app", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "tsc/tsconfig.json" ```
+        { "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "preact" } }
+        ```
+    .fixture "tsc/src/Save.tsx" ```
+        import { useCallback } from 'react';
+
+        export function Save({ submit }: { submit: () => void }) {
+          const save = useCallback(() => submit(), [submit]);
+          return <button onClick={save}>save</button>;
+        }
+        ```
+    .fixture "tsc-ext/package.json" ```
+        { "name": "tsc-ext", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "tsc-ext/tsconfig.base.json" ```
+        {
+          "compilerOptions": {
+            "jsx": "react-jsx",
+            "jsxImportSource": "solid-js"
+          }
+        }
+        ```
+    .fixture "tsc-ext/tsconfig.json" ```
+        {
+          // comment
+          "extends": "./tsconfig.base",
+          "compilerOptions": { "strict": true },
+        }
+        ```
+    .fixture "tsc-ext/src/Save.tsx" ```
+        import { useCallback } from 'react';
+
+        export function Save({ submit }: { submit: () => void }) {
+          const save = useCallback(() => submit(), [submit]);
+          return <button onClick={save}>save</button>;
+        }
+        ```
+    .fixture "tsc-react/package.json" ```
+        { "name": "tsc-react", "dependencies": { "preact": "10.0.0" } }
+        ```
+    .fixture "tsc-react/tsconfig.json" ```
+        { "compilerOptions": { "jsxImportSource": "react" } }
+        ```
+    .fixture "tsc-react/src/Save.tsx" ```
+        import { useCallback } from 'react';
+
+        export function Save({ submit }: { submit: () => void }) {
+          const save = useCallback(() => submit(), [submit]);
+          return <button onClick={save}>save</button>;
+        }
+        ```
+    .expect CALLBACK_FOR_DOM_ONLY at "tsc-react/src/Save.tsx":4
+.end

@@ -24,13 +24,13 @@
 memo(c, cb, e) :- kind(c, "call_expression"), field(c, "function", f), react_api(f, "useMemo", s, _),
     (s = "" ; iglob("{react,react-dom}", s)), call_arg(c, cb, 0), deps(c, a), !call_arg(c, _, 2),
     !match("\\[\\s*,?\\s*\\]", a), plain_callback(cb), returns(cb, e), cheap(e), !reads_current(cb),
-    !uncovered(c, cb), docof(c, d), react_doc(d).
+    !uncovered(c, cb), docof(c, d), pr_react_doc(d).
 .decl deps(c: node, a: node)
 deps(c, a) :- call_arg(c, a, 1), kind(a, "array").
 
-// A callback without parameters that is not async.   () => x,  function () { return x; }
+// A callback without parameters that is not async (`async` on any line: `(?s)`).   () => x,  function () { return x; }
 .decl plain_callback(cb: node)
-plain_callback(cb) :- (kind(cb, "arrow_function") ; kind(cb, "function_expression")), !match("async\\b.*", cb),
+plain_callback(cb) :- (kind(cb, "arrow_function") ; kind(cb, "function_expression")), !match("(?s)async\\b.*", cb),
     !arrow_param(cb), (!field(cb, "parameters", _) ; field(cb, "parameters", ps), match("\\(\\s*\\)", ps)).
 .decl arrow_param(cb: node)  // x => …
 arrow_param(cb) :- field(cb, "parameter", p), kind(p, "identifier").
@@ -93,11 +93,14 @@ chain_kind("member_expression"). chain_kind("subscript_expression"). chain_kind(
 ref_same_ask(e, x, "static") :- memo_shape(cb), call_arg(c, cb, 0), deps(c, a), child(a, e, _), !kind(e, "comment"),
     (has(cb, x, "identifier") ; has(cb, r, "identifier"), chain(r, x)).
 
-// The returned value is a dependency (or one cast: `user as T`, `user satisfies T`, `user!`).
+// The returned value is a dependency, in parentheses or not (ref_same looks through them), or one cast of it:
+// `user as T`, `user satisfies T`, `user!`.
 .decl identity(c: node, e: node)
 identity(c, e) :- memo(c, _, e), listed(c, e).
 identity(c, e) :- memo(c, _, e), (kind(e, "as_expression") ; kind(e, "satisfies_expression") ;
     kind(e, "non_null_expression")), first_named(e, i), listed(c, i).
+ref_same_ask(x, e, "static") :- memo_shape(cb), call_arg(c, cb, 0), returns(cb, e), deps(c, a), child(a, x, _),
+    !kind(x, "comment").
 ref_same_ask(x, i, "static") :- memo_shape(cb), call_arg(c, cb, 0), returns(cb, e), deps(c, a), child(a, x, _),
     !kind(x, "comment"), first_named(e, i).
 // The returned value reads a property: a member or subscript, maybe cast or in parentheses.
@@ -116,3 +119,282 @@ MEMO_PROPERTY_READ(c, t) :- memo(c, _, e), !identity(c, e), property_read(e), te
 .violation MEMO_TRIVIAL_EXPRESSION(at: node, e: symbol)
     "Compute `{e}` inline during render instead of in useMemo: it reads only the memo's dependencies and costs less than the dependency check."
 MEMO_TRIVIAL_EXPRESSION(c, t) :- memo(c, _, e), !identity(c, e), !property_read(e), text(e, t).
+
+// Review (react-practice-a): a `@jsxImportSource` comment naming another JSX library (a block or a line comment,
+// the first comment that has one) skips the file; one naming React's or an unknown package does not. The lines
+// are the JSON original's.
+.test review_jsx_import_source_comment exactly
+    .fixture "plain/src/Memo.tsx" ```
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "pragma/src/Memo.tsx" ```
+        /** @jsxImportSource preact */
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "pragma-line/src/Memo.tsx" ```
+        // @jsxImportSource solid-js
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "pragma-react/src/Memo.tsx" ```
+        /** @jsxImportSource @emotion/react */
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "pragma-second/src/Memo.tsx" ```
+        // a file
+        /* @jsxImportSource vue */
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "pragma-unknown/src/Memo.tsx" ```
+        /** @jsxImportSource my-jsx */
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .expect MEMO_TRIVIAL_EXPRESSION at "plain/src/Memo.tsx":4
+    .expect MEMO_TRIVIAL_EXPRESSION at "pragma-react/src/Memo.tsx":5
+    .expect MEMO_TRIVIAL_EXPRESSION at "pragma-unknown/src/Memo.tsx":5
+.end
+
+// Review (react-practice-a): the package's tsconfig.json (else jsconfig.json) `compilerOptions.jsxImportSource`,
+// over a relative `extends`, decides the runtime before its dependencies: its own value over its base's, a
+// tsconfig.json without one over a jsconfig.json, an unknown package not at all (the dependencies decide), and a
+// file's comment over all of them. A tsconfig.json below the package folder is not the package's. The lines are the
+// JSON original's.
+.test review_tsconfig_jsx_import_source exactly
+    .fixture "tsc/package.json" ```
+        { "name": "tsc-app", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "tsc/tsconfig.json" ```
+        { "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "preact" } }
+        ```
+    .fixture "tsc/src/Memo.tsx" ```
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "tsc-ext/package.json" ```
+        { "name": "tsc-ext", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "tsc-ext/tsconfig.base.json" ```
+        {
+          "compilerOptions": {
+            "jsx": "react-jsx",
+            "jsxImportSource": "solid-js"
+          }
+        }
+        ```
+    .fixture "tsc-ext/tsconfig.json" ```
+        {
+          // comment
+          "extends": "./tsconfig.base",
+          "compilerOptions": { "strict": true },
+        }
+        ```
+    .fixture "tsc-ext/src/Memo.tsx" ```
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "tsc-react/package.json" ```
+        { "name": "tsc-react", "dependencies": { "preact": "10.0.0" } }
+        ```
+    .fixture "tsc-react/tsconfig.json" ```
+        { "compilerOptions": { "jsxImportSource": "react" } }
+        ```
+    .fixture "tsc-react/src/Memo.tsx" ```
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "jsc/jsconfig.json" ```
+        { "compilerOptions": { "jsxImportSource": "preact" } }
+        ```
+    .fixture "jsc/package.json" ```
+        { "name": "jsc", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "jsc/src/Memo.tsx" ```
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "deps-preact/package.json" ```
+        { "name": "deps-preact", "dependencies": { "preact": "10.0.0" } }
+        ```
+    .fixture "deps-preact/src/Memo.tsx" ```
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "tsc-over/package.json" ```
+        { "name": "tsc-over", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "tsc-over/tsconfig.base.json" ```
+        { "compilerOptions": { "jsxImportSource": "preact" } }
+        ```
+    .fixture "tsc-over/tsconfig.json" ```
+        { "extends": "./tsconfig.base.json", "compilerOptions": { "jsxImportSource": "react" } }
+        ```
+    .fixture "tsc-over/src/Memo.tsx" ```
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "tsc-unknown/package.json" ```
+        { "name": "tsc-unknown", "dependencies": { "preact": "10.0.0" } }
+        ```
+    .fixture "tsc-unknown/tsconfig.json" ```
+        { "compilerOptions": { "jsxImportSource": "my-jsx" } }
+        ```
+    .fixture "tsc-unknown/src/Memo.tsx" ```
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "both/jsconfig.json" ```
+        { "compilerOptions": { "jsxImportSource": "preact" } }
+        ```
+    .fixture "both/package.json" ```
+        { "name": "both", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "both/tsconfig.json" ```
+        { "compilerOptions": { } }
+        ```
+    .fixture "both/src/Memo.tsx" ```
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "nested/package.json" ```
+        { "name": "nested", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "nested/src/Memo.tsx" ```
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .fixture "nested/src/tsconfig.json" ```
+        { "compilerOptions": { "jsxImportSource": "preact" } }
+        ```
+    .fixture "pragma-over-tsc/package.json" ```
+        { "name": "pot", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "pragma-over-tsc/tsconfig.json" ```
+        { "compilerOptions": { "jsxImportSource": "preact" } }
+        ```
+    .fixture "pragma-over-tsc/src/Memo.tsx" ```
+        /** @jsxImportSource react */
+        import { useMemo } from 'react';
+
+        export function Memo({ a, b }: { a: number; b: number }) {
+          const s = useMemo(() => a + b, [a, b]);
+          return <div>{s}</div>;
+        }
+        ```
+    .expect MEMO_TRIVIAL_EXPRESSION at "both/src/Memo.tsx":4
+    .expect MEMO_TRIVIAL_EXPRESSION at "nested/src/Memo.tsx":4
+    .expect MEMO_TRIVIAL_EXPRESSION at "pragma-over-tsc/src/Memo.tsx":5
+    .expect MEMO_TRIVIAL_EXPRESSION at "tsc-over/src/Memo.tsx":4
+    .expect MEMO_TRIVIAL_EXPRESSION at "tsc-react/src/Memo.tsx":4
+.end
+
+// Review (react-practice-a): an async callback is never reported, on one line or many (the JSON's `^async`); a name
+// that starts with async is no async callback. The lines are the JSON original's.
+.test review_async_callback_on_many_lines exactly
+    .fixture "src/AsyncMulti.tsx" ```
+        import { useMemo } from 'react';
+
+        export function AsyncMulti({ total }: { total: number }) {
+          const p = useMemo(async () => {
+            return total;
+          }, [total]);
+          const q = useMemo(async function () {
+            return total;
+          }, [total]);
+          const r = useMemo(async () =>
+            total, [total]);
+          const s = useMemo(async () => total, [total]);
+          const asyncValue = total;
+          const t = useMemo(() => asyncValue, [asyncValue]);
+          return <div>{String(p)}{String(q)}{String(r)}{String(s)}{t}</div>;
+        }
+        ```
+    .expect MEMO_IDENTITY at "src/AsyncMulti.tsx":14
+.end
+
+// Review (react-practice-a): a dependency returned in parentheses is MEMO_IDENTITY (isSameReference looks through
+// them); a cast in parentheses stays an expression, and a property read of one a property read. The lines are the
+// JSON original's.
+.test review_parenthesised_identity exactly
+    .fixture "src/Paren.tsx" ```
+        import { useMemo } from 'react';
+
+        export function Paren({ user, a }: { user: string; a: number }) {
+          const u = useMemo(() => (user), [user]);
+          const w = useMemo(() => { return (a); }, [a]);
+          const x = useMemo(() => ((user)), [user]);
+          const y = useMemo(() => (user as string), [user]);
+          const z = useMemo(() => (user).length, [user]);
+          return <div>{u}{w}{x}{y}{z}</div>;
+        }
+        ```
+    .expect MEMO_IDENTITY at "src/Paren.tsx":4
+    .expect MEMO_IDENTITY at "src/Paren.tsx":5
+    .expect MEMO_IDENTITY at "src/Paren.tsx":6
+    .expect MEMO_TRIVIAL_EXPRESSION at "src/Paren.tsx":7
+    .expect MEMO_PROPERTY_READ at "src/Paren.tsx":8
+.end

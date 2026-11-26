@@ -19,9 +19,14 @@
 //                            unnamed expression or arrow, the name it is stored under (`const n =`, `n =`, `{ n: … }`,
 //                            a default `{ n = … }`), or an object method's name; a computed key names nothing
 //   pr_ident(n)              n is a name: an identifier, a property name or a shorthand pattern
+//   pr_type_param(t, tp)     type name t reads the type parameter tp: the `<T>` of the nearest generic around t that
+//                            declares T (tsx/names gives a type parameter no ref_site)
+//   pr_react_doc(d)          document d's JSX is React's or of no known library: tsx/react's react_doc, with the
+//                            package's tsconfig.json (else jsconfig.json) `compilerOptions.jsxImportSource` read too
 //
 //   const memo = React.useMemo(() => a + b, [a, b]);       react_api(React.useMemo, "useMemo", "react", "member")
 #include "tsx/names.rerail"
+#include "tsx/react.rerail"
 
 .decl pr_global(r: node, x: symbol)
 pr_global(r, x) :- kind(r, "identifier"), ref(r, x, "value"), !ref_site(r, _).
@@ -61,3 +66,73 @@ pr_stored_as(f, n) :- field(a, "right", f), (kind(a, "assignment_expression") ; 
 pr_stored_as(f, n) :- field(p, "value", f), kind(p, "pair"), field(p, "key", n), !kind(n, "computed_property_name").
 .decl pr_ident(n: node)
 pr_ident(n) :- kind(n, "identifier") ; kind(n, "property_identifier") ; kind(n, "shorthand_property_identifier_pattern").
+
+// ---- type parameters ------------------------------------------------------------------------------------------
+// `<T>` binds T in its owner: a function, arrow, method, class, interface, type alias or signature (tsx/names's
+// more_site). A generic inside the owner that declares T again shadows it there:
+//   function List<T>({ items }: { items: T[] }) { function show<T>(x: T) {} }    the first T[] reads List's T,
+//                                                                                 x: T reads show's
+.decl pr_type_param(t: node, tp: node)
+pr_type_param(t, tp) :- kind(t, "type_identifier"), text(t, x), more_site(o, x, tp, "type_param"), within(t, o),
+    !pr_type_param_shadowed(t, o, x).
+.decl pr_type_param_shadowed(t: node, o: node, x: symbol)  // a generic within o, around t, declares x again
+pr_type_param_shadowed(t, o, x) :- kind(t, "type_identifier"), text(t, x), more_site(o, x, _, "type_param"),
+    within(t, o), more_site(q, x, _, "type_param"), q != o, within(t, q), within(q, o).
+
+// ---- the JSX runtime ------------------------------------------------------------------------------------------
+// Rerail's file gate (native/src/code_rule_dsl/language.rs jsx_runtime_in_source, then package_manifest.rs
+// Manifest::jsx_runtime) reads, in order: the file's first @jsxImportSource comment naming a known library, a
+// `@jsx React…` comment, a top-level `h`/`createElement` import from another JSX library (tsx/react has these three),
+// then the package's project configuration: `compilerOptions.jsxImportSource` of the tsconfig.json beside its
+// package.json (else its jsconfig.json), over a relative `extends` chain, the configuration's own value first; only
+// when that names no known library, the package's dependencies.
+//   tsc/package.json  { "dependencies": { "react": "18" } }
+//   tsc/tsconfig.json { "compilerOptions": { "jsxImportSource": "preact" } }      tsc/src/*.tsx are Preact's
+.decl pr_react_doc(d: number)
+pr_react_doc(d) :- doc(d, _, _), !pr_other_jsx(d).
+.decl pr_other_jsx(d: number)
+pr_other_jsx(d) :- import_source_names(d, "other").
+pr_other_jsx(d) :- !import_source_names(d, _), factory_import(d).
+pr_other_jsx(d) :- !import_source_names(d, _), !factory_import(d), !jsx_pragma_react(d), doc(d, p, _),
+    package_for(p, dir), pr_package_runtime(dir, "other").
+// pr_package_runtime(dir, r): the package in dir renders JSX with runtime r, by its configuration, else its
+// dependencies.
+.decl pr_package_runtime(dir: symbol, r: symbol)
+pr_package_runtime(dir, r) :- pr_config_source(dir, s), pr_source_runtime(s, r).
+pr_package_runtime(dir, "other") :- package_for(_, dir), !pr_config_known(dir), deps_on(dir, "other"),
+    !deps_on(dir, "react").
+.decl pr_config_known(dir: symbol)  // the configuration's jsxImportSource names a known library
+pr_config_known(dir) :- pr_config_source(dir, s), pr_source_runtime(s, _).
+.decl pr_source_runtime(s: symbol, r: symbol)  // "preact", "preact/compat": "other"; "react": "react"
+pr_source_runtime(s, r) :- pr_config_source(_, s), jsx_library(p, r), (s = p ; prefix(cat(p, "/"), s)).
+// The engine answers file reads (dir_entry, file_line) only for paths computed from constants, not from a document's
+// or the repository's facts, so the package folders are found by walking the folders from the root, as
+// tsx/node-npm-01 does (version-control, cache and dependency folders skipped).
+.decl pr_dir(d: symbol)
+pr_dir("").
+pr_dir(c) :- pr_dir(p), dir_entry(p, x, 1), !pr_skip_dir(x), c = @join(p, x).
+.decl pr_skip_dir(x: symbol)
+pr_skip_dir(".git"). pr_skip_dir(".hg"). pr_skip_dir(".svn"). pr_skip_dir(".rerail"). pr_skip_dir(".venv").
+pr_skip_dir("__pycache__"). pr_skip_dir("node_modules"). pr_skip_dir(".next"). pr_skip_dir(".turbo").
+pr_skip_dir("coverage"). pr_skip_dir("target").
+// pr_config_file(dir, f, k): f is the k-th configuration of the chain of the package in dir: 0 its own (tsconfig.json,
+// else jsconfig.json, beside its package.json), k + 1 the base the k-th names with a relative `"extends": "./base"`
+// (`.json` added; only tsconfig*/jsconfig* names, eight steps at most, as the engine reads them). Configurations are
+// read by lines: a string `extends` on one line and a `jsxImportSource` string on one line are what is found, outside
+// `//` comment lines; an `extends` list is not read.
+.decl pr_config_file(dir: symbol, f: symbol, k: number)
+pr_config_file(dir, f, 0) :- pr_dir(dir), dir_entry(dir, "package.json", 0), dir_entry(dir, "tsconfig.json", 0),
+    f = @join(dir, "tsconfig.json").
+pr_config_file(dir, f, 0) :- pr_dir(dir), dir_entry(dir, "package.json", 0), !dir_entry(dir, "tsconfig.json", 0),
+    dir_entry(dir, "jsconfig.json", 0), f = @join(dir, "jsconfig.json").
+pr_config_file(dir, b, k + 1) :- pr_config_file(dir, f, k), k < 8, file_line(f, _, t), !match("\\s*//.*", t),
+    match(".*\"extends\"\\s*:\\s*\"(?<x>\\.[^\"]*)\".*", t), j = @join(@dir(f), x),
+    (suffix(".json", j), b = j ; !suffix(".json", j), b = cat(j, ".json")),
+    match("(.*/)?(tsconfig|jsconfig)[^/]*\\.json", b).
+// pr_config_source(dir, s): the jsxImportSource of the first configuration in dir's chain that sets one.
+.decl pr_config_source(dir: symbol, s: symbol)
+pr_config_source(dir, s) :- pr_config_file(dir, _, 0), m = min k : { pr_config_file(dir, f, k), pr_config_value(f, _) },
+    pr_config_file(dir, g, m), pr_config_value(g, s).
+.decl pr_config_value(f: symbol, s: symbol)
+pr_config_value(f, s) :- pr_config_file(_, f, _), file_line(f, _, t), !match("\\s*//.*", t),
+    match(".*\"jsxImportSource\"\\s*:\\s*\"(?<x>[^\"]*)\".*", t), s = x.

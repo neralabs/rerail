@@ -59,11 +59,13 @@ global_method(c, f, o, x) :- method_call(c, f), field(f, "object", r), pr_global
 props(x, fn) :- dep_fn(x, fn), comp_fn(fn), text(x, t), props_param(fn, t), !memoized(fn).
 .decl props_param(fn: node, t: symbol)
 props_param(fn, t) :- kind(fn, "arrow_function"), field(fn, "parameter", p), kind(p, "identifier"), text(p, t).
-props_param(fn, t) :- field(fn, "parameters", ps), kind(ps, "formal_parameters"), first_named(ps, p), param_name(p, t),
+props_param(fn, t) :- field(fn, "parameters", ps), kind(ps, "formal_parameters"), first_named(ps, p), props_name(p, t),
     !third_named(ps), !odd_second(ps).
-.decl param_name(p: node, t: symbol)  // an untyped or object-typed parameter without a default
-param_name(p, t) :- kind(p, "identifier"), text(p, t).
-param_name(p, t) :- kind(p, "required_parameter"), field(p, "pattern", i), kind(i, "identifier"), text(i, t),
+// An untyped or object-typed parameter without a default. (Named apart from tsx/names's param_name, which this
+// relation once added its rows to.)
+.decl props_name(p: node, t: symbol)
+props_name(p, t) :- kind(p, "identifier"), text(p, t).
+props_name(p, t) :- kind(p, "required_parameter"), field(p, "pattern", i), kind(i, "identifier"), text(i, t),
     !field(p, "value", _), !scalar_type(p).
 .decl scalar_type(p: node)
 scalar_type(p) :- field(p, "type", a), kind(a, "type_annotation"), child(a, y, _),
@@ -136,16 +138,122 @@ verb("useCallback", "returns a new function").
 .violation FRESH_DERIVED_DEPENDENCY(at: node, x: symbol, m: symbol, hook: symbol, hverb: symbol)
     "{x} is a new array from {m}() on every render, so this {hook} {hverb} each time; build {x} inside useMemo, or depend on the values it is built from."
 FRESH_DERIVED_DEPENDENCY(x, t, m, ht, v) :- derived(x, m, "array"), dep(x, _, f, h), verb(h, v), text(x, t), text(f, ht),
-    docof(x, d), react_doc(d).
+    docof(x, d), pr_react_doc(d).
 .violation FRESH_DERIVED_OBJECT_DEPENDENCY(at: node, x: symbol, m: symbol, hook: symbol, hverb: symbol)
     "{x} is a new object from {m}() on every render, so this {hook} {hverb} each time; build {x} inside useMemo, or depend on the values it is built from."
 FRESH_DERIVED_OBJECT_DEPENDENCY(x, t, m, ht, v) :- derived(x, m, "object"), dep(x, _, f, h), verb(h, v), text(x, t),
-    text(f, ht), docof(x, d), react_doc(d).
+    text(f, ht), docof(x, d), pr_react_doc(d).
 .violation FRESH_PROPS_DEPENDENCY(at: node, p: symbol, hook: symbol, hverb: symbol)
     "{p} is a new object each time the parent renders, so this {hook} {hverb} with it; destructure the {p} fields it uses above the hook and list those instead of {p}."
 FRESH_PROPS_DEPENDENCY(x, t, ht, v) :- props(x, _), dep(x, c, f, h), !passed_on(x, c), verb(h, v), text(x, t),
-    text(f, ht), docof(x, d), react_doc(d).
+    text(f, ht), docof(x, d), pr_react_doc(d).
 .violation FRESH_PROPS_MEMO(at: node, p: symbol, hook: symbol)
     "{p} is a new object each time the parent renders, so this {hook} rarely reuses its result; destructure the {p} fields it needs above the hook, then pass and list those."
 FRESH_PROPS_MEMO(x, t, ht) :- props(x, _), dep(x, c, f, h), passed_on(x, c), (h = "useMemo" ; h = "useCallback"),
-    text(x, t), text(f, ht), docof(x, d), react_doc(d).
+    text(x, t), text(f, ht), docof(x, d), pr_react_doc(d).
+
+// Review (react-practice-a): a `@jsxImportSource` comment naming another JSX library (a block or a line comment)
+// skips the file. The lines are the JSON original's.
+.test review_jsx_import_source_comment exactly
+    .fixture "plain/src/Fresh.tsx" ```
+        import { useEffect } from 'react';
+
+        export function Fresh(props: { items: string[] }) {
+          const open = props.items.filter(Boolean);
+          useEffect(() => {}, [open]);
+          useEffect(() => {}, [props]);
+          return <div>{open.length}</div>;
+        }
+        ```
+    .fixture "pragma/src/Fresh.tsx" ```
+        /** @jsxImportSource preact */
+        import { useEffect } from 'react';
+
+        export function Fresh(props: { items: string[] }) {
+          const open = props.items.filter(Boolean);
+          useEffect(() => {}, [open]);
+          useEffect(() => {}, [props]);
+          return <div>{open.length}</div>;
+        }
+        ```
+    .fixture "pragma-line/src/Fresh.tsx" ```
+        // @jsxImportSource solid-js
+        import { useEffect } from 'react';
+
+        export function Fresh(props: { items: string[] }) {
+          const open = props.items.filter(Boolean);
+          useEffect(() => {}, [open]);
+          useEffect(() => {}, [props]);
+          return <div>{open.length}</div>;
+        }
+        ```
+    .expect FRESH_DERIVED_DEPENDENCY at "plain/src/Fresh.tsx":5
+    .expect FRESH_PROPS_DEPENDENCY at "plain/src/Fresh.tsx":6
+.end
+
+// Review (react-practice-a): the package's tsconfig.json (else jsconfig.json) `compilerOptions.jsxImportSource`,
+// over a relative `extends`, decides the runtime before its dependencies. The lines are the JSON original's.
+.test review_tsconfig_jsx_import_source exactly
+    .fixture "tsc/package.json" ```
+        { "name": "tsc-app", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "tsc/tsconfig.json" ```
+        { "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "preact" } }
+        ```
+    .fixture "tsc/src/Fresh.tsx" ```
+        import { useEffect } from 'react';
+
+        export function Fresh(props: { items: string[] }) {
+          const open = props.items.filter(Boolean);
+          useEffect(() => {}, [open]);
+          useEffect(() => {}, [props]);
+          return <div>{open.length}</div>;
+        }
+        ```
+    .fixture "tsc-ext/package.json" ```
+        { "name": "tsc-ext", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "tsc-ext/tsconfig.base.json" ```
+        {
+          "compilerOptions": {
+            "jsx": "react-jsx",
+            "jsxImportSource": "solid-js"
+          }
+        }
+        ```
+    .fixture "tsc-ext/tsconfig.json" ```
+        {
+          // comment
+          "extends": "./tsconfig.base",
+          "compilerOptions": { "strict": true },
+        }
+        ```
+    .fixture "tsc-ext/src/Fresh.tsx" ```
+        import { useEffect } from 'react';
+
+        export function Fresh(props: { items: string[] }) {
+          const open = props.items.filter(Boolean);
+          useEffect(() => {}, [open]);
+          useEffect(() => {}, [props]);
+          return <div>{open.length}</div>;
+        }
+        ```
+    .fixture "tsc-react/package.json" ```
+        { "name": "tsc-react", "dependencies": { "preact": "10.0.0" } }
+        ```
+    .fixture "tsc-react/tsconfig.json" ```
+        { "compilerOptions": { "jsxImportSource": "react" } }
+        ```
+    .fixture "tsc-react/src/Fresh.tsx" ```
+        import { useEffect } from 'react';
+
+        export function Fresh(props: { items: string[] }) {
+          const open = props.items.filter(Boolean);
+          useEffect(() => {}, [open]);
+          useEffect(() => {}, [props]);
+          return <div>{open.length}</div>;
+        }
+        ```
+    .expect FRESH_DERIVED_DEPENDENCY at "tsc-react/src/Fresh.tsx":5
+    .expect FRESH_PROPS_DEPENDENCY at "tsc-react/src/Fresh.tsx":6
+.end

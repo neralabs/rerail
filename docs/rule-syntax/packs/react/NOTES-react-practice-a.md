@@ -5,7 +5,8 @@ tool: the JSON is the rule, so each translation follows it, except where the JSO
 the rule's own description (named below). Every rule is `same` on the suite's corpora (examples, fixtures,
 samples-react). Each was also run beside its original on ad-hoc files (`useMemo` aliases, `require("react")`,
 `memo(forwardRef(…))`, wrapped options, tRPC chains, type parameters, mutations, async components, `@jsxImportSource`
-files); the differences found there are listed per rule.
+files, tsconfig `jsxImportSource`); the differences found there are listed per rule. The original side of an ad-hoc
+run: `node --import tsx scripts/ship/product-run.ts <checkout> <corpus> <out.json> <dir holding the rule's JSON>`.
 
 Shared vocabulary is in `lib/tsx/react-practice-a.rerail`:
 
@@ -16,6 +17,39 @@ Shared vocabulary is in `lib/tsx/react-practice-a.rerail`:
   declares), `pr_import(r, src, x)`.
 - `pr_fn_name(f, n)`, `pr_ident(n)`: the name a function is known by (own name, the name it is stored under, an object
   method's). fresh-dependency and hoist-static-value both name components and Hooks this way.
+- `pr_react_doc(d)`: the JSON's `file.jsxRuntime: ["react", "unknown"]` gate, which all six rules use. It is
+  tsx/react's `react_doc` with the package's project configuration read too (below, "Library changes needed").
+- `pr_type_param(t, tp)`: a type name's type parameter (hoist-static-value).
+
+## Review fixes (review/react-practice-a.review.md)
+
+Each counterexample of the review is a `.test` of its rule, expecting the JSON original's lines (run as above), and
+each passes.
+
+- **All six, `@jsxImportSource` comment (review defect A).** Already fixed on the integration branch before this
+  batch's review was fixed: tsx/react's `first_source_comment` orders the comments by offset since the react-04 review
+  (`visit_index` has no rows under `run-policies`). The tests `review_jsx_import_source_comment` keep it fixed.
+- **All six, tsconfig `jsxImportSource` (review defect B).** The engine's gate reads the package's
+  `compilerOptions.jsxImportSource` (`module_graph::Config`) before its dependencies; `react_doc` read only the
+  dependencies. Fixed in the batch's own library, `pr_react_doc`, not in tsx/react (which this batch does not own):
+  the tsconfig.json beside the package.json (else its jsconfig.json), over a relative string `extends` chain, its own
+  value first; a known library decides, an unknown package leaves it to the dependencies. Tests
+  `review_tsconfig_jsx_import_source` (memo-trivial-expression has the full set: extends, jsconfig, a tsconfig without
+  the option over a jsconfig with it, an unknown source, a nested tsconfig, a comment over the configuration).
+- **cache-update-in-mutate-call: a receiver written over several lines.** The `queryClient`/`qc` test of a
+  `refetchQueries` receiver is a whole-text match, so its `.` now crosses newlines (`(?is)`).
+- **hoist-static-value: the component's type parameters.** tsx/names gives a type parameter no `ref_site`, so
+  `reads_component` and `typed_by_component` never saw them. `pr_type_param` binds a type name to the `<T>` of the
+  nearest generic around it that declares it (a nested generic's own `T` shadows the component's, as in the JSON's
+  binding); a value or function reading it, or a `const` annotated with it, is the component's.
+- **memo-trivial-expression: a multi-line async callback** is excluded (`(?s)async\b.*`), **and a dependency returned
+  in parentheses** is `MEMO_IDENTITY`: `ref_same` is asked for the returned expression itself, and looks through the
+  parentheses as `isSameReference` does.
+- Not in the review: fresh-dependency declared its own `param_name`, which tsx/names also declares, so its clauses
+  were added to names' relation (check_rr: "param_name declared 2 times"). Renamed `props_name`.
+
+The rule cases (`packs/react/upstream/react-practice/<id>.cases.json`) are pack test data on S3; this checkout could
+not pull them (no AWS credentials). The review ran them all: the only differences were the defects above.
 
 ## react-practice-memo-trivial-expression
 
@@ -48,15 +82,10 @@ it.
 
 ## react-practice-lifecycle-hook
 
-Follows the JSON, with two differences:
-
-- The JSON's ref and state Hook callee also accepts an identifier named `useRef` (or `useState`, …) declared as
-  `const useRef = React`: its site test is "a declarator whose value is React's object", which that declarator passes.
-  That names React's object, not its Hook, so the translation does not follow it (react_api's shorthand and alias
-  forms are the destructurings the JSON means). No corpus file has it.
-- Files whose JSX runtime a `@jsxImportSource` comment names as another library (`/** @jsxImportSource preact */`)
-  are skipped by the original and checked by the translation. That is a gap of tsx/react (below), shared by every
-  React translation that gates on `react_doc`. Right: original.
+Follows the JSON, with one difference: the JSON's ref and state Hook callee also accepts an identifier named `useRef`
+(or `useState`, …) declared as `const useRef = React`: its site test is "a declarator whose value is React's object",
+which that declarator passes. That names React's object, not its Hook, so the translation does not follow it
+(react_api's shorthand and alias forms are the destructurings the JSON means). No corpus file has it.
 
 ## react-practice-fresh-dependency
 
@@ -67,17 +96,20 @@ Follows the JSON. A derived dependency is matched by name to a `const` of its ow
 
 Follows the JSON. A component read is a name whose declaration's nearest function is the top-level component or Hook
 (`own`), as the JSON's `site inside stopBy fn matches top-cmp`: a function declaration's own name is no reference, so a
-static function is not its own read.
+static function is not its own read. A type parameter's declaration is its `<T>` (`pr_type_param`).
 
 ## Library changes needed (existing files, not edited here)
 
-- **tsx/react: `@jsxImportSource` and `@jsx` comments are never read.** `first_source_comment` and `pragma_comment`
-  take the first comment by `visit_index`, and `visit_index` has no rows under `rerail-engine run-policies` (a probe
-  rule: `kind(c, "comment"), visit_index(c, i)` holds for no comment, while `kind(c, "comment"), comment(c, t),
-  contains("@jsxImportSource", t)` holds). So `react_doc` never excludes a file by its comment. Proposed: order the
-  comments by start offset instead, `i = min s : { kind(n, "comment"), docof(n, d), comment(n, t),
-  contains("@jsxImportSource", t), node(d, n, _, s, _) }`, then `node(d, c, "comment", i, _)`; the same for
-  `pragma_comment`.
+- **tsx/react: `react_doc` does not read the package's `compilerOptions.jsxImportSource`.** Every React port gating
+  on it treats a package that depends on React but compiles JSX with Preact (`"jsxImportSource": "preact"`) as
+  React's, where the engine's gate does not. Proposed: move `pr_react_doc` and its configuration reading
+  (`pr_package_runtime`, `pr_config_file`, `pr_config_source`) from lib/tsx/react-practice-a.rerail into tsx/react as
+  `react_doc`, and drop `pr_react_doc` here. The reading is by lines (a string `extends` and a `jsxImportSource`
+  string each on one line; an `extends` list is not followed), and finds the package folders by walking from the
+  root (below, "Engine gaps").
+- **tsx/names: type parameters have no `ref_site`.** `more_site` binds them for main's binding terms, but `look`
+  never reaches them, so `ref_site(t, _)` has no row for a `T` read in a generic. Proposed: `ref_site(t, tp)` for a
+  `type_identifier` t from the nearest enclosing `more_site(o, x, tp, "type_param")`, as `pr_type_param` does here.
 - **tsx/names: a free reference.** The JSON's `resolves.global: [x]` is "a value reference to x that nothing in the
   file declares". names.rerail's `global_ref` also requires `es_global(x)`, which has no React Hook in it, so a JSON
   `resolves.global: ["useMemo"]` cannot use it. `pr_global` here is that relation; it belongs in names.rerail as
@@ -85,6 +117,13 @@ static function is not its own read.
 
 ## Engine gaps
 
+- **Open engine request: the package's `jsxImportSource` as a repository input.** The engine computes it already
+  (`module_graph::Config::jsx_import_source`, JSONC, the whole `extends` chain), but core gives a rule only
+  `tsconfig(dir, base_url)` and `tsconfig_path`. A rule must read the files itself, and the engine answers
+  `dir_entry`/`file_line` only for paths computed from constants ("the cone of requests reads base relation
+  package_for"), so `pr_config_file` walks every folder from the root to find package folders with a configuration.
+  Proposed: `.decl package_jsx_import_source(dir: symbol, source: symbol)` in core, the value `Manifest` carries
+  (`DerivedPackages`), one row per package folder that has one.
 - A glob's empty alternative never matches, silently: `glob("{react-use,ahooks}{,/esm,/lib}", s)` holds for
   `"react-use/esm"` and `"ahooks/lib"`, not for `"react-use"`. lifecycle-hook uses
   `match("(react-use|ahooks|…)(/(esm|es|lib|dist))?", s)`. core's text tests should accept `{,x}` or refuse it when the

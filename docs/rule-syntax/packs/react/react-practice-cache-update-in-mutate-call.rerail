@@ -77,7 +77,7 @@ callback_key(k) :- text(k, t), glob("{onSuccess,onSettled,onError,'on{Success,Se
 .decl cache_call(c: node, m: node)
 cache_call(c, p) :- callee_member(c, f, p, x), glob("{invalidateQueries,setQueryData,setQueriesData,resetQueries,removeQueries}", x).
 cache_call(c, p) :- callee_member(c, f, p, "refetchQueries"), (query_file(f) ; field(f, "object", o), text(o, t),
-    match("(?i)(.*\\.)?(query_?client|qc)", t)).
+    match("(?is)(.*\\.)?(query_?client|qc)", t)).
 cache_call(c, p) :- callee_member(c, f, p, x), glob("{invalidate,refetch,reset,setData,setInfiniteData}", x),
     trpc_receiver(f).
 .decl callee_member(c: node, f: node, p: node, x: symbol)
@@ -106,4 +106,146 @@ utils_call(c) :- kind(c, "call_expression"), field(c, "function", f), text(f, t)
 .violation CACHE_UPDATE_IN_MUTATE_CALL(at: node, m: symbol)
     "Move this {m} call into the mutation's own options: callbacks passed to mutate() are dropped if the component unmounts first. Keep toasts here."
 CACHE_UPDATE_IN_MUTATE_CALL(c, x) :- cache_call(c, p), nearest(c, f, function_kind), callback(f), text(p, x),
-    docof(c, d), react_doc(d).
+    docof(c, d), pr_react_doc(d).
+
+// Review (react-practice-a): a `@jsxImportSource` comment naming another JSX library (a block or a line comment)
+// skips the file. The lines are the JSON original's.
+.test review_jsx_import_source_comment exactly
+    .fixture "plain/src/Cache.tsx" ```
+        import { useMutation, useQueryClient } from '@tanstack/react-query';
+
+        export function Cache() {
+          const queryClient = useQueryClient();
+          const bump = useMutation({ mutationFn: async () => 1 });
+          bump.mutate(undefined, { onSuccess: () => queryClient.invalidateQueries() });
+          return <button>x</button>;
+        }
+        ```
+    .fixture "pragma/src/Cache.tsx" ```
+        /** @jsxImportSource preact */
+        import { useMutation, useQueryClient } from '@tanstack/react-query';
+
+        export function Cache() {
+          const queryClient = useQueryClient();
+          const bump = useMutation({ mutationFn: async () => 1 });
+          bump.mutate(undefined, { onSuccess: () => queryClient.invalidateQueries() });
+          return <button>x</button>;
+        }
+        ```
+    .fixture "pragma-line/src/Cache.tsx" ```
+        // @jsxImportSource solid-js
+        import { useMutation, useQueryClient } from '@tanstack/react-query';
+
+        export function Cache() {
+          const queryClient = useQueryClient();
+          const bump = useMutation({ mutationFn: async () => 1 });
+          bump.mutate(undefined, { onSuccess: () => queryClient.invalidateQueries() });
+          return <button>x</button>;
+        }
+        ```
+    .expect CACHE_UPDATE_IN_MUTATE_CALL at "plain/src/Cache.tsx":6
+.end
+
+// Review (react-practice-a): the package's tsconfig.json (else jsconfig.json) `compilerOptions.jsxImportSource`,
+// over a relative `extends`, decides the runtime before its dependencies. The lines are the JSON original's.
+.test review_tsconfig_jsx_import_source exactly
+    .fixture "tsc/package.json" ```
+        { "name": "tsc-app", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "tsc/tsconfig.json" ```
+        { "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "preact" } }
+        ```
+    .fixture "tsc/src/Cache.tsx" ```
+        import { useMutation, useQueryClient } from '@tanstack/react-query';
+
+        export function Cache() {
+          const queryClient = useQueryClient();
+          const bump = useMutation({ mutationFn: async () => 1 });
+          bump.mutate(undefined, { onSuccess: () => queryClient.invalidateQueries() });
+          return <button>x</button>;
+        }
+        ```
+    .fixture "tsc-ext/package.json" ```
+        { "name": "tsc-ext", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "tsc-ext/tsconfig.base.json" ```
+        {
+          "compilerOptions": {
+            "jsx": "react-jsx",
+            "jsxImportSource": "solid-js"
+          }
+        }
+        ```
+    .fixture "tsc-ext/tsconfig.json" ```
+        {
+          // comment
+          "extends": "./tsconfig.base",
+          "compilerOptions": { "strict": true },
+        }
+        ```
+    .fixture "tsc-ext/src/Cache.tsx" ```
+        import { useMutation, useQueryClient } from '@tanstack/react-query';
+
+        export function Cache() {
+          const queryClient = useQueryClient();
+          const bump = useMutation({ mutationFn: async () => 1 });
+          bump.mutate(undefined, { onSuccess: () => queryClient.invalidateQueries() });
+          return <button>x</button>;
+        }
+        ```
+    .fixture "tsc-react/package.json" ```
+        { "name": "tsc-react", "dependencies": { "preact": "10.0.0" } }
+        ```
+    .fixture "tsc-react/tsconfig.json" ```
+        { "compilerOptions": { "jsxImportSource": "react" } }
+        ```
+    .fixture "tsc-react/src/Cache.tsx" ```
+        import { useMutation, useQueryClient } from '@tanstack/react-query';
+
+        export function Cache() {
+          const queryClient = useQueryClient();
+          const bump = useMutation({ mutationFn: async () => 1 });
+          bump.mutate(undefined, { onSuccess: () => queryClient.invalidateQueries() });
+          return <button>x</button>;
+        }
+        ```
+    .expect CACHE_UPDATE_IN_MUTATE_CALL at "tsc-react/src/Cache.tsx":6
+.end
+
+// Review: refetchQueries on a receiver ending in queryClient or qc (any case, after a dot or alone), written on
+// one line or several; not on clientQuery, a queryClient's member, or myqc.
+.test review_query_client_receiver_on_many_lines exactly
+    .fixture "src/Sync.tsx" ```
+        import { useMutation } from 'some-lib';
+
+        export function Sync({ store }: { store: any }) {
+          const m = useMutation({});
+          return <button onClick={() => m.mutate(undefined, {
+            onSuccess: () => store
+              .queryClient.refetchQueries(),
+          })}>x</button>;
+        }
+        ```
+    .fixture "src/SyncMore.tsx" ```
+        import { useMutation } from 'some-lib';
+
+        export function SyncMore({ store, qc }: { store: any; qc: any }) {
+          const m = useMutation({});
+          m.mutate(undefined, { onSuccess: () => store.queryClient.refetchQueries() });
+          m.mutate(undefined, { onSuccess: () => store
+            .qc
+            .refetchQueries() });
+          m.mutate(undefined, { onSuccess: () => store.clientQuery.refetchQueries() });
+          m.mutate(undefined, { onSuccess: () => store.queryClient.x.refetchQueries() });
+          m.mutate(undefined, { onSuccess: () => qc.refetchQueries() });
+          m.mutate(undefined, { onSuccess: () => myqc.refetchQueries() });
+          m.mutate(undefined, { onSuccess: () => store.Query_Client.refetchQueries() });
+          return null;
+        }
+        ```
+    .expect CACHE_UPDATE_IN_MUTATE_CALL at "src/Sync.tsx":6
+    .expect CACHE_UPDATE_IN_MUTATE_CALL at "src/SyncMore.tsx":5
+    .expect CACHE_UPDATE_IN_MUTATE_CALL at "src/SyncMore.tsx":6
+    .expect CACHE_UPDATE_IN_MUTATE_CALL at "src/SyncMore.tsx":11
+    .expect CACHE_UPDATE_IN_MUTATE_CALL at "src/SyncMore.tsx":13
+.end

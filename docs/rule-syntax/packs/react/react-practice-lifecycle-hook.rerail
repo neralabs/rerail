@@ -86,4 +86,96 @@ state_hook("useId").
 .violation LIFECYCLE_HOOK_HIDES_DEPS(at: node, hook: symbol)
     "{hook} runs once on mount, so dependency checks miss what its callback reads. If these values can change while mounted, use useEffect and list them as its dependencies; if reading them once is intended, keep {hook} (on React 19.2+, useEffectEvent makes that explicit)."
 LIFECYCLE_HOOK_HIDES_DEPS(c, h) :- mount_call(c, f), callback(c, fn), has(fn, r, read_kind), read(r), text(f, h),
-    docof(c, d), react_doc(d).
+    docof(c, d), pr_react_doc(d).
+
+// Review (react-practice-a): a `@jsxImportSource` comment naming another JSX library (a block or a line comment)
+// skips the file. The lines are the JSON original's.
+.test review_jsx_import_source_comment exactly
+    .fixture "plain/src/Mount.tsx" ```
+        import { useMount } from 'react-use';
+
+        export function Mount({ id }: { id: string }) {
+          useMount(() => { console.log(id); });
+          return <div>{id}</div>;
+        }
+        ```
+    .fixture "pragma/src/Mount.tsx" ```
+        /** @jsxImportSource preact */
+        import { useMount } from 'react-use';
+
+        export function Mount({ id }: { id: string }) {
+          useMount(() => { console.log(id); });
+          return <div>{id}</div>;
+        }
+        ```
+    .fixture "pragma-line/src/Mount.tsx" ```
+        // @jsxImportSource solid-js
+        import { useMount } from 'react-use';
+
+        export function Mount({ id }: { id: string }) {
+          useMount(() => { console.log(id); });
+          return <div>{id}</div>;
+        }
+        ```
+    .expect LIFECYCLE_HOOK_HIDES_DEPS at "plain/src/Mount.tsx":4
+.end
+
+// Review (react-practice-a): the package's tsconfig.json (else jsconfig.json) `compilerOptions.jsxImportSource`,
+// over a relative `extends`, decides the runtime before its dependencies. The lines are the JSON original's.
+.test review_tsconfig_jsx_import_source exactly
+    .fixture "tsc/package.json" ```
+        { "name": "tsc-app", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "tsc/tsconfig.json" ```
+        { "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "preact" } }
+        ```
+    .fixture "tsc/src/Mount.tsx" ```
+        import { useMount } from 'react-use';
+
+        export function Mount({ id }: { id: string }) {
+          useMount(() => { console.log(id); });
+          return <div>{id}</div>;
+        }
+        ```
+    .fixture "tsc-ext/package.json" ```
+        { "name": "tsc-ext", "dependencies": { "react": "18.0.0" } }
+        ```
+    .fixture "tsc-ext/tsconfig.base.json" ```
+        {
+          "compilerOptions": {
+            "jsx": "react-jsx",
+            "jsxImportSource": "solid-js"
+          }
+        }
+        ```
+    .fixture "tsc-ext/tsconfig.json" ```
+        {
+          // comment
+          "extends": "./tsconfig.base",
+          "compilerOptions": { "strict": true },
+        }
+        ```
+    .fixture "tsc-ext/src/Mount.tsx" ```
+        import { useMount } from 'react-use';
+
+        export function Mount({ id }: { id: string }) {
+          useMount(() => { console.log(id); });
+          return <div>{id}</div>;
+        }
+        ```
+    .fixture "tsc-react/package.json" ```
+        { "name": "tsc-react", "dependencies": { "preact": "10.0.0" } }
+        ```
+    .fixture "tsc-react/tsconfig.json" ```
+        { "compilerOptions": { "jsxImportSource": "react" } }
+        ```
+    .fixture "tsc-react/src/Mount.tsx" ```
+        import { useMount } from 'react-use';
+
+        export function Mount({ id }: { id: string }) {
+          useMount(() => { console.log(id); });
+          return <div>{id}</div>;
+        }
+        ```
+    .expect LIFECYCLE_HOOK_HIDES_DEPS at "tsc-react/src/Mount.tsx":4
+.end
