@@ -249,10 +249,12 @@ pub(super) fn phase_files(read: &[crate::code_rule_dsl::logic::rr::TextNames], d
 /// `<phase>__<x>` that no rule of `prog` makes (by its rules' `shape`), where `<phase>` is a phase program.
 pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, dir: Option<&Path>) -> Result<BTreeMap<String, Vec<(String, String)>>> {
     let declared_here = declared(prog);
-    // Only the reads an output (or, in a phase, an export) reaches: a library a program includes for one rule may hold
-    // rules that read a phase no output needs (python/calls.rerail's points-to, for a policy that takes `call_arg`),
-    // and that phase would run at every run and every edit for nothing. A program that names no output reads all.
-    let roots: Vec<String> = prog.output_names().into_iter().chain(declared_here.iter().flat_map(|d| d.exports.iter().cloned())).collect();
+    // Only the reads an output reaches: a library a program includes for one rule may hold rules that read a phase no
+    // output needs (python/calls.rerail's points-to, for a policy that takes `call_arg`), and that phase would run at
+    // every run and every edit for nothing. A phase's run names as outputs the exports its reader reads (`facts`); a
+    // phase program read as it is, with none, reaches from all its exports. A program that names neither reads all.
+    let outputs = prog.output_names();
+    let roots: Vec<String> = if outputs.is_empty() { declared_here.iter().flat_map(|d| d.exports.iter().cloned()).collect() } else { outputs.into_iter().collect() };
     let reached: Option<BTreeSet<&str>> = (!roots.is_empty()).then(|| {
         let mut seen: BTreeSet<&str> = BTreeSet::new();
         let mut todo: Vec<&str> = roots.iter().map(String::as_str).collect();
@@ -412,7 +414,7 @@ pub fn batch_plans(root: &str, plan: [u8; 32], also: &[[u8; 32]]) -> Option<Vect
 pub struct PhaseRun {
     pub name: String,
     pub report: Report,
-    /// Each export's rows.
+    /// The rows of each export its reader read (the run made no other).
     pub exports: Vec<(String, usize)>,
     /// The phase's frame (`frame`): its key, and its facts where this run made them (the reader's run keeps them, and
     /// names the frame either way, so collection keeps it while it keeps the run).
@@ -479,8 +481,12 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
                 return Err(Error::Plan(format!("{rel}: {} columns, where phase {name}'s {export} has {}", have.len(), want.len())));
             }
         }
-        // The phase's run: its own program, its own scratch, its exports written as its outputs. The earlier phases it
-        // reads run first (struct, then types), and are listed with the reader's, in the order they ran, each once.
+        // The phase's run: its own program, its own scratch, the exports its reader reads written as its outputs. An
+        // export no rule of the reader reads is no output, so preparation drops it and every rule only it reached
+        // ("relations no output reads"): `bandit-b113` reads none of `py_names`' Django facts, which made 700,000 rows
+        // over 224 files. The earlier phases it reads run first (struct, then types), and are listed with the
+        // reader's, in the order they ran, each once.
+        let wanted: Vec<String> = reads.iter().map(|(_, e)| e.clone()).collect::<BTreeSet<String>>().into_iter().collect();
         let mut image = Vec::new();
         // Its exports are its outputs: the program read, given them (decision 0249), not its text with an `.output`
         // after it read again. A phase naming no language runs in its reader's (as phase 1 does): a library read by
@@ -496,12 +502,13 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
                 settings.push(language);
                 b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
             }
-            for e in &declared.exports {
+            for e in &wanted {
                 b.fields().add_output(e);
             }
             b.finish().map_err(Error::Plan)?.0
         };
-        let (upstream, upstream_runs) = self::facts(&*program, &crate::code_rule_dsl::logic::program_image::manager::analysis::<super::shape::Shape>(&program).unwrap_or_else(|_| std::sync::Arc::new(super::shape::Shape::of(&program))), root, modes, binding, chunk_nodes, typing, options)?;
+        // The phases it reads, as far as its wanted exports reach.
+        let (upstream, upstream_runs) = self::facts(&*handed, &crate::code_rule_dsl::logic::program_image::manager::analysis::<super::shape::Shape>(&handed).unwrap_or_else(|_| std::sync::Arc::new(super::shape::Shape::of(&handed))), root, modes, binding, chunk_nodes, typing, options)?;
         for r in upstream_runs {
             if !runs.iter().any(|x: &PhaseRun| x.name == r.name) {
                 runs.push(r);
@@ -513,9 +520,9 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
             let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: run"));
             super::run_read_handing(&handed, None, root, Path::new(""), modes, binding, chunk_nodes, typing, options, Some(&mut image), super::FactPhase::of(entry.as_ref()))?
         };
-        let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &*program, &declared, &image)? };
+        let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &*program, &wanted, &image)? };
         { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&reads, &rows, &mut facts); }
-        let exports = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, |v| v.len()))).collect();
+        let exports = wanted.iter().map(|e| (e.clone(), rows.get(e).map_or(0, |v| v.len()))).collect();
         runs.push(PhaseRun { name, report, exports, frame: None });
     }
     Ok((facts, runs))
@@ -681,7 +688,7 @@ pub fn sources(
             Some(changed) if changed.is_empty() => {
                 crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || format!("kept: every one of its run's {} reads as it was, its exports taken, not run (t33 K4)", kept.reads.len()));
                 // Its exports, read off the image its run wrote, as that run read them.
-                let rows = read_exports(NAME, &*program, &declared, &kept.image)?;
+                let rows = read_exports(NAME, &*program, &declared.exports, &kept.image)?;
                 let (one, exports) = one_of_rows(root, label, files, &declared, rows);
                 let report = Report { consulted: kept.reads, plans: kept.plans, ..Report::default() };
                 return Ok((one, PhaseRun { name: NAME.to_owned(), report, exports, frame: Some((identity, None)) }));
@@ -710,7 +717,7 @@ pub fn sources(
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: run"));
         super::run_read_handing(&handed, Some(texts), root, Path::new(""), modes, binding, chunk_nodes, typing, &options, Some(&mut image), super::FactPhase::of(entry.as_ref()))?
     };
-    let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &*program, &declared, &image)? };
+    let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &*program, &declared.exports, &image)? };
     // Its frame, for a later process: where the run consulted what it read (a run that read nothing it can name is
     // not comparable, `changes_of`) and a store keeps it.
     let frame = (store.is_some() && !report.consulted.is_empty())
@@ -770,11 +777,12 @@ fn loads_documents(program: &Version, dir: Option<&Path>, seen: &mut BTreeSet<St
 
 /// A phase's exports, as its run wrote them in `out` (which goes): each row's values as the export's columns are
 /// declared, read from the outputs' image (`output::Outputs`), nothing parsed.
-fn read_exports(name: &str, program: &(impl ProgramFields + ?Sized), declared: &Declared, bytes: &[u8]) -> Result<BTreeMap<String, Vec<Vec<Value>>>> {
+/// The rows of `exports`, the outputs of phase `name`'s run.
+fn read_exports(name: &str, program: &(impl ProgramFields + ?Sized), exports: &[String], bytes: &[u8]) -> Result<BTreeMap<String, Vec<Vec<Value>>>> {
     use crate::code_rule_dsl::logic::plan::output;
     let outputs = output::Outputs::of(bytes).map_err(|e| Error::Plan(format!("phase {name}: {e}")))?;
     let mut rows: BTreeMap<String, Vec<Vec<Value>>> = BTreeMap::new();
-    for export in &declared.exports {
+    for export in exports {
         let rel = outputs.get(export).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not in its outputs ({:?})", outputs.names())))?;
         let declared_types = program.columns_of(export).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not declared")))?;
         let types: Vec<&str> = declared_types.iter().map(|(_, t)| t.as_str()).collect();
