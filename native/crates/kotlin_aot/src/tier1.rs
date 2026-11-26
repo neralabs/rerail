@@ -3048,16 +3048,10 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
     // Whether a gap mask (`lf & code`) held since the grammar token before, and since the record before.
     let mut acc_0 = false;
     let mut rec_0 = false;
-    // Whether a gap mask (`close_at`) held since the grammar token before, and since the record before.
-    let mut acc_1 = false;
-    let mut rec_1 = false;
     // Whether a gap mask (`((lf & code) & prev(as_lt)) & prev(gt)`) held since the grammar token before.
-    let mut acc_2 = false;
+    let mut acc_1 = false;
     // The closer the region token read ends at, where a fill the loop keeps opens after it, or a read resumes a string's.
     let mut close: usize;
-    // `fill(prev(code & semicolon), solid)` at the last byte of the token before, and its `X`.
-    let mut fill_2 = false;
-    let mut xl_2 = false;
     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))` at the last byte of the token before, and its `X`.
     let mut fill_4 = false;
     let mut xl_4 = false;
@@ -3147,11 +3141,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         }
         // Whether `s1.m_lf` holds in the gap before the token.
         let gap_m_lf = s > at && s1_past(src, &mut st1, &mut s1, wfirst_in(n, at, s - 1, |p: isize, esc: &mut u64| unsafe { w_m_lf::<S>(src, n, p, esc) })).is_some();
-        // `fill(prev(code & semicolon), solid)`: at the byte before the token.
-        let fs_2 = fill_2 || (s > at && xl_2);
-        let xs_2 = s == at && xl_2;
-        // Over the gap.
-        let fgap_2 = fill_2 || xl_2;
         // The token's first byte's group, by the dispatch tables (simdjson's `classify`).
         let c = src[s];
         let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();
@@ -3201,14 +3190,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             rec_0 = true;
         }
         // The skipped bytes before the token, for the gap masks (none where there are none).
-        if (!fgap_2 && gap_m_lf) {
-            acc_1 = true;
-            rec_1 = true;
-        }
-        let here_1 = ((open == usize::MAX && ((src[s] == b'}'))) && (fs_2 || xs_2));
-        // The skipped bytes before the token, for the gap masks (none where there are none).
         if (s > at && at > 0 && fill_6 && ((at - 1 < n && (src[at - 1] == b'>'))) && ((at < n && (src[at] == b'\n')))) {
-            acc_2 = true;
+            acc_1 = true;
         }
         let mut hits = 0u32;
         let (l, kind, extra, mut marks, word): (usize, u32, bool, u32, u32) = {
@@ -3354,8 +3337,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-                    fill_2 = (xs_2 || fs_2);
-                    xl_2 = false;
                     fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
@@ -3411,8 +3392,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-                    fill_2 = (xs_2 || fs_2);
-                    xl_2 = false;
                     fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
@@ -3437,8 +3416,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
-                    fill_2 = if l > s { false } else { xs_2 };
-                    xl_2 = false;
                     fill_4 = if l > s { match wlast_in(s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t63::<S>(src, n, p, esc) }) { Some(q) => s1_past(src, &mut st1, &mut s1, wfirst_in(n, q - 1, l - 1, |p: isize, esc: &mut u64| unsafe { w_t61::<S>(src, n, p, esc) })).is_some(), None => ((xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) || s1_past(src, &mut st1, &mut s1, wfirst_in(n, s, l - 1, |p: isize, esc: &mut u64| unsafe { w_t61::<S>(src, n, p, esc) })).is_some()) } } else { (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) };
                     xl_4 = if l > s { ((l >= 1 && ((((l - 1 < n && matches!(src[l - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && ((l - 1) < n && !((l - 1) >= 1 && ((((l - 1) - 1) < n && matches!(src[((l - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((l - 1) - 1) < n && matches!(src[((l - 1) - 1)], 0x80..=0xff)))))) && (((l - 1) + 2 <= n && src[(l - 1)] == 0x61 && src[(l - 1) + 1] == 0x73) || ((l - 1) + 2 <= n && src[(l - 1)] == 0x69 && src[(l - 1) + 1] == 0x73))) && ((l - 1) < n && !((((l - 1) + 2) < n && matches!(src[((l - 1) + 2)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((l - 1) + 2) < n && matches!(src[((l - 1) + 2)], 0x80..=0xff))))))) } else { ((s >= 1 && ((((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && ((s - 1) < n && !((s - 1) >= 1 && ((((s - 1) - 1) < n && matches!(src[((s - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((s - 1) - 1) < n && matches!(src[((s - 1) - 1)], 0x80..=0xff)))))) && (((s - 1) + 2 <= n && src[(s - 1)] == 0x61 && src[(s - 1) + 1] == 0x73) || ((s - 1) + 2 <= n && src[(s - 1)] == 0x69 && src[(s - 1) + 1] == 0x73))) && ((s - 1) < n && !((((s - 1) + 2) < n && matches!(src[((s - 1) + 2)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((s - 1) + 2) < n && matches!(src[((s - 1) + 2)], 0x80..=0xff))))))) };
                     fill_5 = (((xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) && fs_5) && !s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t64::<S>(src, n, p, esc) })).is_some());
@@ -3491,8 +3468,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
-                    fill_2 = if l > s { false } else { xs_2 };
-                    xl_2 = false;
                     fill_4 = if l > s { match wlast_in(s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t63::<S>(src, n, p, esc) }) { Some(q) => false, None => (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } } else { (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) };
                     xl_4 = false;
                     fill_5 = (if l > s { match wlast_in(s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t63::<S>(src, n, p, esc) }) { Some(q) => false, None => (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } } else { (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } && (((xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) && fs_5) || s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, l, |p: isize, esc: &mut u64| unsafe { w_m_dot::<S>(src, n, p, esc) })).is_some()));
@@ -3542,8 +3517,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
-                    fill_2 = if l > s { false } else { xs_2 };
-                    xl_2 = false;
                     fill_4 = if l > s { match wlast_in(s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t63::<S>(src, n, p, esc) }) { Some(q) => false, None => (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } } else { (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) };
                     xl_4 = false;
                     fill_5 = (if l > s { match wlast_in(s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t63::<S>(src, n, p, esc) }) { Some(q) => false, None => (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } } else { (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } && ((xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) || s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, l, |p: isize, esc: &mut u64| unsafe { w_m_dot::<S>(src, n, p, esc) })).is_some()));
@@ -3593,8 +3566,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
-                    fill_2 = if l > s { false } else { xs_2 };
-                    xl_2 = false;
                     fill_4 = if l > s { match wlast_in(s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t63::<S>(src, n, p, esc) }) { Some(q) => false, None => (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } } else { (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) };
                     xl_4 = false;
                     fill_5 = (if l > s { match wlast_in(s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t63::<S>(src, n, p, esc) }) { Some(q) => false, None => (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } } else { (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } && ((xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) && fs_5));
@@ -3639,8 +3610,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
-                    fill_2 = if l > s { false } else { xs_2 };
-                    xl_2 = false;
                     fill_4 = if l > s { match wlast_in(s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t63::<S>(src, n, p, esc) }) { Some(q) => false, None => (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } } else { (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) };
                     xl_4 = false;
                     fill_5 = (if l > s { match wlast_in(s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t63::<S>(src, n, p, esc) }) { Some(q) => false, None => (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } } else { (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } && ((xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) && fs_5));
@@ -3745,8 +3714,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-                    fill_2 = xs_2;
-                    xl_2 = false;
                     fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
@@ -3870,8 +3837,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-                    fill_2 = xs_2;
-                    xl_2 = false;
                     fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
@@ -3978,8 +3943,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-                    fill_2 = xs_2;
-                    xl_2 = false;
                     fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
@@ -4125,8 +4088,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-                    fill_2 = xs_2;
-                    xl_2 = false;
                     fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
@@ -4203,8 +4164,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-                    fill_2 = xs_2;
-                    xl_2 = false;
                     fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
@@ -4315,8 +4274,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-                    fill_2 = xs_2;
-                    xl_2 = false;
                     fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
@@ -4444,8 +4401,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-                    fill_2 = xs_2;
-                    xl_2 = false;
                     fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
@@ -4578,8 +4533,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-                    fill_2 = xs_2;
-                    xl_2 = false;
                     fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
@@ -4630,8 +4583,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
-                    fill_2 = if l > s { false } else { xs_2 };
-                    xl_2 = false;
                     fill_4 = if l > s { match wlast_in(s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t63::<S>(src, n, p, esc) }) { Some(q) => false, None => (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } } else { (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) };
                     xl_4 = false;
                     fill_5 = (if l > s { match wlast_in(s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t63::<S>(src, n, p, esc) }) { Some(q) => false, None => (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } } else { (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } && ((xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) && fs_5));
@@ -4690,8 +4641,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-                    fill_2 = xs_2;
-                    xl_2 = false;
                     fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
@@ -4726,8 +4675,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-                    fill_2 = xs_2;
-                    xl_2 = false;
                     fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
@@ -4749,8 +4696,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
-                    fill_2 = if l > s { ((l - 1 < n && (src[l - 1] == b';'))) } else { xs_2 };
-                    xl_2 = if l > s { false } else { ((src[s] == b';')) };
                     fill_4 = if l > s { match wlast_in(s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t63::<S>(src, n, p, esc) }) { Some(q) => false, None => (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } } else { (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) };
                     xl_4 = false;
                     fill_5 = (if l > s { match wlast_in(s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t63::<S>(src, n, p, esc) }) { Some(q) => false, None => (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } } else { (xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) } && (((xs_4 || (!(!((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') || matches!(src[s], 0x80..=0xff)) || (src[s] == b'.')) || src[s] == 0x20) || src[s] == 0x3f) || src[s] == 0x3c) || src[s] == 0x3e)) && fs_4)) && (((src[s] == b'.')) || fs_5)) || s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, l, |p: isize, esc: &mut u64| unsafe { w_m_dot::<S>(src, n, p, esc) })).is_some()));
@@ -4797,9 +4742,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                 if rec_0 {
                     marks |= 1 << 0;
                 }
-                if rec_1 || here_1 {
-                    marks |= 1 << 4;
-                }
             pending |= hits & 0xffff | hits >> 16;
         } else {
             let tested = pending | hits;
@@ -4810,12 +4752,9 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                 // `by_lf`: its carrier's bit (`DERIVED`)
                 // `ann_lf`: its carrier's bit (`DERIVED`)
                 // `semi`: its carrier's bit (`DERIVED`)
-                // `semi_close`
-                if (tested >> 4 & 1 == 1 || acc_1 || here_1) && !matches!(before, 41) {
-                    marks |= 1 << 4;
-                }
+                // `semi_close`: its carrier's bit (`DERIVED`)
                 // `as_open`
-                if (tested >> 5 & 1 == 1 || acc_2) {
+                if (tested >> 5 & 1 == 1 || acc_1) {
                     marks |= 1 << 5;
                 }
                 // `own_line`: tier 2 asks it of the spans between the records (`SPANNED`)
@@ -4833,11 +4772,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         // The gap mask `lf & code`: on after a token the grammar skips; else from this token's bytes after its start.
         acc_0 = extra && acc_0;
         rec_0 = false;
-        // The gap mask `close_at`: on after a token the grammar skips; else from this token's bytes after its start.
-        acc_1 = extra && (acc_1 || here_1);
-        rec_1 = false;
         // The gap mask `((lf & code) & prev(as_lt)) & prev(gt)`: on after a token the grammar skips; else from this token's bytes after its start.
-        acc_2 = extra && acc_2;
+        acc_1 = extra && acc_1;
         if open != usize::MAX {
             clear(&mut code_l, s, l);
         }
@@ -5144,7 +5080,7 @@ fn load8_at_end(src: &[u8], i: usize) -> u64 {
 
 /// The marks tier 1's records leave to tier 2 (decisions 0623, 0655): those it asks of the bytes (`ASKED`), those whose
 /// token tests it asks (`TESTED`), and the token marks its code reads no bit of (it asks them of the tokens).
-pub const UNRECORDED: u32 = 0x1ce;
+pub const UNRECORDED: u32 = 0x1de;
 
 /// The marks whose token tests tier 2 asks (decision 0655 step 6): none, the records hold them.
 pub const TESTED: u32 = 0;
@@ -5157,7 +5093,7 @@ pub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {
 
 /// The gap marks tier 1 writes one bit for, the carrier's, the others of its mask asked of it where a rule reads one
 /// (decision 0703), as the lean parser asks `asi` of a token's `nl`.
-pub const DERIVED: u32 = 0xe;
+pub const DERIVED: u32 = 0x1e;
 
 /// Whether derived mark `b` holds at a token whose marks are `marks`, after a token of word `before`.
 #[inline(always)]
@@ -5166,13 +5102,16 @@ pub fn derived(b: u32, marks: u32, before: u32) -> bool {
         1 => marks >> 0 & 1 == 1,
         2 => marks >> 0 & 1 == 1 && !matches!(before, 41),
         3 => marks >> 0 & 1 == 1 && !matches!(before, 41),
+        4 => marks >> 0 & 1 == 1 && !matches!(before, 41),
         _ => false,
     }
 }
 
-/// Marks `bits` with the carriers of the derived ones (`DERIVED`): an extra's own, read of its code.
+/// Marks `bits` with the carriers of the derived ones (`DERIVED`): an extra's own, read of its code, after a grammar
+/// token of word `before`. A mark whose mask holds its `unless after` (`under_unless`) holds none after those words.
 #[inline(always)]
-pub const fn carried(bits: u32) -> u32 {
+pub const fn carried(before: u32, bits: u32) -> u32 {
+    let _ = before;
     let mut r = bits;
     if bits >> 1 & 1 == 1 {
         r |= 1 << 0;
@@ -5181,6 +5120,9 @@ pub const fn carried(bits: u32) -> u32 {
         r |= 1 << 0;
     }
     if bits >> 3 & 1 == 1 {
+        r |= 1 << 0;
+    }
+    if bits >> 4 & 1 == 1 && !matches!(before, 41) {
         r |= 1 << 0;
     }
     r

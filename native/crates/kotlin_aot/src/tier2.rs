@@ -621,7 +621,6 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
 /// Each byte's record kind, as a token's first byte (`Records::kinds`).
 const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 19, 20, 21, 22, 2, 13, 3, 4, 6, 17, 18, 5, 7, 1, 9, 10, 8, 0, 0, 14, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 0, 0, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 16, 15, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16];
 
-
 /// An extra's node kind: a later extra kind's by its bit, else the first's.
 fn extra_kind(code: u32) -> u16 {
     if code >> 28 & 1 == 1 {
@@ -629,7 +628,6 @@ fn extra_kind(code: u32) -> u16 {
     }
     k::LINE_COMMENT
 }
-
 
 type R<X = ()> = Result<X, u32>;
 
@@ -839,9 +837,15 @@ impl<'a, L: Layout> P<'a, L> {
         x
     }
 
+    /// The word of the grammar token before extra `j` (none before the first).
+    fn before_x(&self, j: usize) -> u32 {
+        let k = self.recs.partition_point(|r| r.start < self.xs[j].start);
+        k.checked_sub(1).map_or(0, |p| self.word_at(p))
+    }
+
     /// Whether one of the marks `bits` holds at a record (`rec`): a comment's are the marks it keeps of its own gap.
     fn rec_marks_hold(&self, x: bool, j: usize, bits: u32) -> bool {
-        if x { self.xs[j].code >> 16 & crate::tier1::carried(bits) != 0 } else { self.marks_hold(j, bits) }
+        if x { self.xs[j].code >> 16 & crate::tier1::carried(self.before_x(j), bits) != 0 } else { self.marks_hold(j, bits) }
     }
 
     #[inline(always)]
@@ -930,7 +934,6 @@ impl<'a, L: Layout> P<'a, L> {
         }
     }
 
-
     #[cold]
     fn refuse<X>(&self) -> R<X> {
         // `RERAIL_TIER2_TRACE`: where, as the lean parser's `RERAIL_KOTLIN_TRACE` says it.
@@ -994,7 +997,7 @@ impl<'a, L: Layout> P<'a, L> {
         while self.pend < self.xi {
             let j = self.pend;
             let c = self.xs[j].code;
-            if c >> 16 & crate::tier1::carried(1 << bit) != 0 && Some(j) != moved && Some(j) != through {
+            if c >> 16 & crate::tier1::carried(self.before_x(j), 1 << bit) != 0 && Some(j) != moved && Some(j) != through {
                 break;
             }
             self.pend += 1;
@@ -1229,7 +1232,6 @@ impl<'a, L: Layout> P<'a, L> {
             }
         }
     }
-
 
     /// The node made last at this level and the nodes inside it read again: `way` gives each
     /// kind's (`Some(Some(K))` read as `K`, `Some(None)` gone and its children in its place,
@@ -4929,13 +4931,10 @@ impl<L: Layout> P<'_, L> {
         self.take_as_open()
     }
 
-
     #[inline]
     fn h_bt_cref(&self) -> bool {
         (((self.pat_bt_cref_0_0(self.i, self.n))))
     }
-
-
 
     /// Mark `label_at` holds at the token, not taken there; once a token (`held`).
     #[inline]

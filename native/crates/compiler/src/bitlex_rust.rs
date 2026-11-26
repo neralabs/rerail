@@ -3732,7 +3732,12 @@ impl<'a> G<'a> {
             return Err("tier 2 as Rust: the takes' place in the runtime".into());
         }
         out = out.replace("@TAKE\n", &take).replace("@TAKES\n", &takes);
-        Ok(plain_writer(&no_dead_methods(&out)))
+        // The pruned methods leave no blank lines behind.
+        let mut out = no_dead_methods(&out);
+        while out.contains("\n\n\n") {
+            out = out.replace("\n\n\n", "\n\n");
+        }
+        Ok(plain_writer(&out))
     }
 }
 
@@ -4220,9 +4225,15 @@ impl<'a, L: Layout> P<'a, L> {
         x
     }
 
+    /// The word of the grammar token before extra `j` (none before the first).
+    fn before_x(&self, j: usize) -> u32 {
+        let k = self.recs.partition_point(|r| r.start < self.xs[j].start);
+        k.checked_sub(1).map_or(0, |p| self.word_at(p))
+    }
+
     /// Whether one of the marks `bits` holds at a record (`rec`): a comment's are the marks it keeps of its own gap.
     fn rec_marks_hold(&self, x: bool, j: usize, bits: u32) -> bool {
-        if x { self.xs[j].code >> 16 & crate::tier1::carried(bits) != 0 } else { self.marks_hold(j, bits) }
+        if x { self.xs[j].code >> 16 & crate::tier1::carried(self.before_x(j), bits) != 0 } else { self.marks_hold(j, bits) }
     }
 
     #[inline(always)]
@@ -4379,7 +4390,7 @@ impl<'a, L: Layout> P<'a, L> {
         while self.pend < self.xi {
             let j = self.pend;
             let c = self.xs[j].code;
-            if c >> 16 & crate::tier1::carried(1 << bit) != 0 && Some(j) != moved && Some(j) != through {
+            if c >> 16 & crate::tier1::carried(self.before_x(j), 1 << bit) != 0 && Some(j) != moved && Some(j) != through {
                 break;
             }
             self.pend += 1;

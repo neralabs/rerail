@@ -5837,10 +5837,24 @@ impl Gen<'_> {
         let mut unplaced_masked = false;
         // Each mark's token tests: the kind, `after`, the test, the mask, the least, the bit.
         let mut tests: Vec<(String, bool, TokenTest, Expr, u32, u8)> = Vec::new();
+        // The marks whose `unless after` their mask was taken under (`under_unless`): an extra's own holds it too.
+        let mut absorbed = 0u32;
         for (m, s) in marks.iter().enumerate() {
             let Stmt::Mark { kind, at, unless, unplaced, checks, .. } = s else { continue };
             let Some(bit) = x.mark_bits.get(m).copied().flatten() else { continue };
             mark_names.insert(bit, kind.clone());
+            // Under `unless after` one-byte tokens, none of their bytes is code in the gap: a code byte of one is a
+            // grammar token, the one before (decision 0703). Its mask with those terms gone, so a mark that is its
+            // carrier's there takes the carrier's accumulator (`DERIVED`).
+            let mut after = [false; 256];
+            for w in unless.iter().filter(|w| w.len() == 1) {
+                after[usize::from(w[0])] = true;
+            }
+            let simpler = if after.iter().any(|&b| b) { under_unless(at, &after, x.stmts, 0) } else { at.clone() };
+            if &simpler != at {
+                absorbed |= 1 << bit;
+            }
+            let at = &simpler;
             // A mask made of the regions: kept by the loop where it is known in each place.
             let mut acc = None;
             if !matches!(at, Expr::Empty) && self.regional(at) && self.opens.is_some() {
@@ -7501,9 +7515,10 @@ impl Gen<'_> {
             }
             out.push_str("        _ => false,\n    }\n}\n");
         }
-        let _ = write!(out, "\n/// Marks `bits` with the carriers of the derived ones (`DERIVED`): an extra's own, read of its code.\n#[inline(always)]\npub const fn carried(bits: u32) -> u32 {{\n    let mut r = bits;\n");
-        for (b, c, _) in &derived {
-            let _ = writeln!(out, "    if bits >> {b} & 1 == 1 {{\n        r |= 1 << {c};\n    }}");
+        let _ = write!(out, "\n/// Marks `bits` with the carriers of the derived ones (`DERIVED`): an extra's own, read of its code, after a grammar\n/// token of word `before`. A mark whose mask holds its `unless after` (`under_unless`) holds none after those words.\n#[inline(always)]\npub const fn carried(before: u32, bits: u32) -> u32 {{\n    let _ = before;\n    let mut r = bits;\n");
+        for (b, c, u) in &derived {
+            let u = if absorbed >> b & 1 == 1 { u.clone() } else { String::new() };
+            let _ = writeln!(out, "    if bits >> {b} & 1 == 1{u} {{\n        r |= 1 << {c};\n    }}");
         }
         out.push_str("    r\n}\n");
         let sbits = spanned.iter().fold(0u32, |m, d| m | 1 << d.0);
@@ -7592,6 +7607,46 @@ fn lookup_code(l: &crate::bitlex_pair_lookup::Lookup) -> String {
 }
 
 /// Whether `e` holds at a byte `b`, where that says (its classes, and the masks of them); `None` where it reads more.
+/// `e` in a gap where no byte of `after` is code (`unless after` one-byte tokens): `code & C`, `C` a class of those
+/// bytes, is none, and what it empties. A mask it changes is read through its definition; any other stays by name.
+fn under_unless(e: &Expr, after: &[bool; 256], stmts: &[Stmt], depth: usize) -> Expr {
+    if depth > 32 {
+        return e.clone();
+    }
+    let r = |x: &Expr| under_unless(x, after, stmts, depth + 1);
+    let none_but = |x: &Expr| bytes_of_expr(x, stmts).is_some_and(|set| set.iter().any(|&b| b) && (0..256).all(|i| !set[i] || after[i]));
+    let code = |x: &Expr| matches!(x, Expr::Name(n) if n == "code");
+    match e {
+        Expr::Name(n) => match stmts.iter().rev().find_map(|s| match s {
+            Stmt::Mask(m, x) if m == n => Some(x),
+            _ => None,
+        }) {
+            Some(d) => {
+                let s = r(d);
+                if &s == d { e.clone() } else { s }
+            }
+            None => e.clone(),
+        },
+        Expr::And(a, b) if (code(a) && none_but(b)) || (code(b) && none_but(a)) => Expr::Empty,
+        Expr::And(a, b) => match (r(a), r(b)) {
+            (Expr::Empty, _) | (_, Expr::Empty) => Expr::Empty,
+            (x, Expr::Not(n)) | (Expr::Not(n), x) if *n == Expr::Empty => x,
+            (x, y) => Expr::And(Box::new(x), Box::new(y)),
+        },
+        Expr::Or(a, b) => match (r(a), r(b)) {
+            (Expr::Empty, x) | (x, Expr::Empty) => x,
+            (x, y) => Expr::Or(Box::new(x), Box::new(y)),
+        },
+        Expr::Not(a) => Expr::Not(Box::new(r(a))),
+        Expr::Call(f, args) => {
+            let args: Vec<Arg> = args.iter().map(|a| if let Arg::E(x) = a { Arg::E(r(x)) } else { a.clone() }).collect();
+            let first_empty = matches!(args.first(), Some(Arg::E(Expr::Empty)));
+            if first_empty && matches!(f.as_str(), "prev" | "next" | "fill") { Expr::Empty } else { Expr::Call(f.clone(), args) }
+        }
+        _ => e.clone(),
+    }
+}
+
 fn at_byte(e: &Expr, b: u8, stmts: &[Stmt]) -> Option<bool> {
     let f = |x: &Expr| at_byte(x, b, stmts);
     match e {

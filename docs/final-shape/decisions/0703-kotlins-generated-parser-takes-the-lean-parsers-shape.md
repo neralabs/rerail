@@ -136,14 +136,19 @@ them.
    settings at calls are 27, each a rule's one switch (an `if`'s or a `while`'s condition, a parameter's type, a
    template), and 22 levels and contexts set their own. rr's code changes only in an inlined block's indent; JSON has
    neither.
+14. **A mark's mask is taken under its `unless after` one-byte tokens** (`under_unless`). In the gap since the
+   grammar token before, no byte of such a token is code: a code byte of one is a grammar token, the one before,
+   which the `unless` excludes. So `code & C`, `C` a class of those bytes, is none there, and what it empties goes
+   (a `prev` or a `fill` of none). Kotlin's `semi_close` (`close_at unless after ";"`) is then `lf & code`, the line
+   break's carrier: a derived mark (`DERIVED`), not tier 1's. A comment's own mark of such a mask holds its `unless`
+   too, of the grammar token before it (`carried(before, bits)`, `before_x`), as the interpreter's mask gives it
+   (after a `;`, none). Tier 1 writes three of the ten marks: the line break (the lean lexer's `nl`), `as_open` and
+   `real`. rr's code changes in `carried`'s parameter and two blank lines; JSON's not.
 
 What stays: stage 1 makes the 5 vectors tier 2 reads a string's parts by, for the whole file, where the lean lexer
-makes 5 masks a block for its loop; and tier 1 computes four marks into the token's code: `head_ctor`'s line break
-(the lean lexer's `nl`), `semi_close` and `as_open` (each of a fill tier 1 keeps over the gap), and `real` (a count of
-a number's bytes). Its strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or
-t_dollar resumes str`), a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in
-parts, from tier 1's masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state
-(`next_*`). `semi_close` and `as_open` stay tier 1's: each reads `code` back over bytes the gap does not bound
-(`after_semi`'s fill from a `;`, `as_lt`'s run over a type's tokens), and tier 2 has no form of `code` from the bytes
-(a `;` in a comment is no code). `semi_close` is no derived mark either: a comment keeps its own, which after a `;` is
-not its carrier's.
+makes 5 masks a block for its loop; and tier 1 computes three marks into the token's code: `head_ctor`'s line break
+(the lean lexer's `nl`), `as_open` (of a fill tier 1 keeps over the gap), and `real` (a count of a number's bytes).
+Its strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or t_dollar resumes
+str`), a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in parts, from tier 1's
+masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state (`next_*`). `as_open` stays
+tier 1's: it reads `code` back over a type's tokens (`as_lt`'s run), and tier 2 has no form of `code` from the bytes.

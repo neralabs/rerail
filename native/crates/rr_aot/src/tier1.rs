@@ -572,9 +572,11 @@ pub fn derived(b: u32, marks: u32, before: u32) -> bool {
     false
 }
 
-/// Marks `bits` with the carriers of the derived ones (`DERIVED`): an extra's own, read of its code.
+/// Marks `bits` with the carriers of the derived ones (`DERIVED`): an extra's own, read of its code, after a grammar
+/// token of word `before`. A mark whose mask holds its `unless after` (`under_unless`) holds none after those words.
 #[inline(always)]
-pub const fn carried(bits: u32) -> u32 {
+pub const fn carried(before: u32, bits: u32) -> u32 {
+    let _ = before;
     let mut r = bits;
     r
 }

@@ -552,7 +552,6 @@ impl<'a, L: Layout> P<'a, L> {
         }
     }
 
-
     /// The token taken: its span; the next token's marks not yet taken.
     #[inline(always)]
     fn take(&mut self) -> R<(u32, u32)> {
@@ -1803,7 +1802,6 @@ impl<L: Layout> P<'_, L> {
             j += 1;
         }
     }
-
 
     /// Past the token, to the next grammar token's record.
     #[inline(always)]
