@@ -28,6 +28,7 @@
       "title": "TanStack Query practice: read query data from the query, never copy it into useState",
       "group": "TanStack Query practice",
       "on": true,
+      "dimensions": { "risk": "correctness", "layer": "ui", "severity": "medium" },
       "examples": {
         "caught": {
           "path": "src/features/todos/todo-list.tsx",
@@ -45,6 +46,7 @@
       "title": "TanStack Query practice: a queryFn or mutationFn that calls fetch() throws when the response is not ok",
       "group": "TanStack Query practice",
       "on": true,
+      "dimensions": { "risk": "correctness", "layer": "ui", "severity": "medium" },
       "examples": {
         "caught": {
           "path": "src/lib/api/todos.ts",
@@ -68,6 +70,7 @@
       "title": "TanStack Query practice: one query key, one query function",
       "group": "TanStack Query practice",
       "on": false,
+      "dimensions": { "risk": "correctness", "layer": "ui", "severity": "medium" },
       "examples": {
         "caught": {
           "path": "src/features/billing/use-billing-user.ts",

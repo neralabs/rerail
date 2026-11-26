@@ -225,6 +225,7 @@
       "title": "Next.js practice: A Server Action that writes to the database checks the session inside the action",
       "group": "Next.js practice",
       "on": true,
+      "dimensions": { "risk": "security", "layer": "server", "severity": "critical", "hazard": "auth.mutation-without-auth" },
       "examples": {
         "caught": {
           "path": "src/app/admin/actions.ts",
@@ -242,6 +243,7 @@
       "title": "Next.js practice: Put middleware.ts or proxy.ts beside the app's app/ or pages/ directory, and use proxy.ts only on Next.js 16",
       "group": "Next.js practice",
       "on": true,
+      "dimensions": { "risk": "security", "layer": "server", "severity": "high" },
       "examples": {
         "caught": {
           "path": "middleware.ts",

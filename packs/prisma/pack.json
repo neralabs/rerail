@@ -31,6 +31,7 @@
       "title": "Prisma practice: pass values to $queryRawUnsafe, $executeRawUnsafe and Prisma.raw as query parameters, never pasted into the SQL text",
       "group": "Prisma practice",
       "on": false,
+      "dimensions": { "risk": "security", "layer": "data-access", "severity": "critical", "hazard": "orm.raw-sql-interpolation" },
       "examples": {
         "caught": {
           "path": "app/api/search/route.ts",
@@ -48,6 +49,7 @@
       "title": "Prisma practice: load or write a list's rows in one query (an `in` filter, include, createMany, updateMany or a $transaction batch), not one query per item",
       "group": "Prisma practice",
       "on": false,
+      "dimensions": { "risk": "performance", "layer": "data-access", "severity": "medium", "hazard": "orm.query-in-loop" },
       "examples": {
         "caught": {
           "path": "app/orders/queries.ts",

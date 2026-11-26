@@ -23,6 +23,7 @@
       "title": "Postgres migrations practice: add a foreign key or CHECK constraint to an existing table with NOT VALID, and validate it in a later migration",
       "group": "Postgres migrations practice",
       "on": true,
+      "dimensions": { "risk": "availability", "layer": "migrations", "severity": "high", "hazard": "pg.constraint-without-not-valid" },
       "examples": {
         "caught": {
           "path": "prisma/migrations/20240301000000_comment_post_fk/migration.sql",
@@ -40,6 +41,7 @@
       "title": "Postgres migrations practice: make an existing column NOT NULL only after a validated CHECK (col IS NOT NULL), so SET NOT NULL does not scan the table under lock",
       "group": "Postgres migrations practice",
       "on": true,
+      "dimensions": { "risk": "availability", "layer": "migrations", "severity": "high", "hazard": "pg.set-not-null-scans" },
       "examples": {
         "caught": {
           "path": "prisma/migrations/20261120093000_require_phone/migration.sql",
@@ -57,6 +59,7 @@
       "title": "Postgres migrations practice: start a migration that locks an existing table with SET lock_timeout",
       "group": "Postgres migrations practice",
       "on": false,
+      "dimensions": { "risk": "availability", "layer": "migrations", "severity": "medium", "hazard": "pg.no-lock-timeout" },
       "examples": {
         "caught": {
           "path": "prisma/migrations/20261120093000_add_flag/migration.sql",
