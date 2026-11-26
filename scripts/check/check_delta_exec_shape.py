@@ -895,13 +895,16 @@ def declared(failures: list) -> None:
     if "pub fn infer(" not in shapes or "fn closure(" not in shapes:
         failures.append("shapes.rs: no inference of derived relations' facts through their rules (0361)")
     phase = strip_rust((CRATE / "src" / "phase.rs").read_text())
+    if "fn along_of(" not in phase or "return self.wave_along(" not in phase or ".with_facts(" not in phase:
+        failures.append("phase.rs: no algorithm found from the facts: a recursion along a declared tree in one wave (0361 item 4; Operations, class 30)")
     if "crate::shapes::infer(" not in phase or ".with_inferred(inferred)" not in phase:
         failures.append("phase.rs: a level does not infer its strata's heads' facts, or a stratum does not read them (0361)")
     tests = (CRATE / "src" / "plan_tests.rs").read_text() + (CRATE / "src" / "phase_tests.rs").read_text()
     tests += (CRATE / "src" / "shapes_tests.rs").read_text() if (CRATE / "src" / "shapes_tests.rs").exists() else ""
     for t in ("fn a_rules_head_keeps_the_keys_its_body_determines", "fn a_fanout_carries_where_an_atoms_row_determines_the_heads_and_unions_keep_nothing",
               "fn a_derived_relations_inferred_key_gives_a_later_line_its_default_plan", "fn a_declared_key_or_fanout_bounds_a_probe",
-              "fn a_declared_tree_and_order_give_their_keys_and_are_checked", "fn a_declared_line_takes_its_default_plan_and_a_broken_declaration_is_planned_from_statistics",
+              "fn a_declared_tree_and_order_give_their_keys_and_are_checked",
+              "fn a_recursion_along_a_declared_tree_runs_in_one_wave_with_the_rounds_levels", "fn a_declared_line_takes_its_default_plan_and_a_broken_declaration_is_planned_from_statistics",
               "fn a_levels_declared_keys_give_its_lines_default_plans"):
         if t not in tests:
             failures.append(f"0361's test {t} is missing")

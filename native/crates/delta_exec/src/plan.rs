@@ -157,6 +157,8 @@ pub struct Planned {
     /// Lines given their default plan by their relations' declarations (0361), and those whose rows broke them.
     pub declared: u64,
     pub broken: u64,
+    /// Recursions run along a declared tree in one wave, unplanned (0361's algorithms; Operations, class 30).
+    pub waves: u64,
 }
 
 impl std::ops::AddAssign for Planned {
@@ -174,6 +176,7 @@ impl std::ops::AddAssign for Planned {
         self.critical += o.critical;
         self.declared += o.declared;
         self.broken += o.broken;
+        self.waves += o.waves;
     }
 }
 

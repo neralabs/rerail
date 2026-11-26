@@ -2084,3 +2084,25 @@ Checks (Relax, local, 128 of 128): `declared_rows_give_each_relations_facts` (a 
 declared kept once). `a_declared_tree_and_order_give_their_keys_and_are_checked`: a line over an ordered `e` and the
 trees `f` and `g` takes its default plan. A second parent of `f`'s node 3, read on the before side by a later
 change to `e` at 3, is caught as broken. With no keys implied, both fail.
+
+### An algorithm from the facts: a recursion along a tree, in one wave (0361 item 4; Operations, class 30; 2026-11-26)
+
+0361 item 4: "Algorithms are found from the facts … a tree plus recursion along it gives a walk." Operations, class
+30: "a linear recursion along one column in one wave." A stratum finds this form from its facts
+(`Stratum::with_facts`, `along_of`):
+- one head;
+- its one rule reading the head is `r(.., x, ..) :- e(x, y), r(.., y, ..)`, differing at one column `j`, with
+  distinct variables;
+- `e` is a relation in whose facts `x` and `y` are a tree (`Facts::trees`, from `tree` rows).
+
+The head's other rules are its base. Run cold, the stratum plans and runs its base rules as before, then does the
+rest in one host wave (`wave_along`), with no lines planned. Each level's rows go to `e`'s predecessors, by a
+probe of `e`'s `y` column read in place. A row already present keeps its level, the least: one more than the row it
+was carried from, as the rounds give. So a later edit runs Δfix by levels from the wave's levels unchanged. The wave
+holds for any `e`, and the tree is what makes it the choice. `Planned::waves` counts it.
+
+Checks (Relax, local, 129 of 129):
+- `a_recursion_along_a_declared_tree_runs_in_one_wave_with_the_rounds_levels`. `anc` over a 40-node heap: one wave,
+  fewer lines than the rounds, and the levelled trace equal to the rounds' over the same facts undeclared. An edit
+  moving node 5 from under 2 to under 3 runs Δfix from each, and both give the rows of a cold run.
+- Mutations: off by one in the wave's level, and the form never found. A test fails each time.

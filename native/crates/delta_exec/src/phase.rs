@@ -130,6 +130,19 @@ pub struct Stratum {
     pub recursive: bool,
     /// The facts earlier strata's rules give the relations it reads (0361, `shapes::infer`).
     pub inferred: Vec<(i64, Facts)>,
+    /// Its algorithm, found from the facts (0361 item 4): a recursion along a tree, run cold in one wave.
+    pub along: Option<Along>,
+}
+
+/// A linear recursion along one column (Operations, class 30; 0361: "a tree plus recursion along it gives a walk"):
+/// one head, its one rule reading it `r(.., x, ..) :- e(x, y), r(.., y, ..)` at column `j`, over a relation `e`
+/// whose facts declare its edges a tree; `e`'s columns of `x` and `y`. Its rules' other rules are its base.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Along {
+    pub j: usize,
+    pub e: i64,
+    pub x: usize,
+    pub y: usize,
 }
 
 /// What a stratum's run reads, on its two sides: each input port's heads and the partitions it changed in, the
@@ -450,7 +463,89 @@ impl Stratum {
                 ins.push((d, sh.clone()));
             }
         }
-        Ok(Stratum { ops, module, before, after, known, tape, ins, heads, recursive, inferred: Vec::new() })
+        Ok(Stratum { ops, module, before, after, known, tape, ins, heads, recursive, inferred: Vec::new(), along: None })
+    }
+
+    /// It, with its algorithm found from the facts `of` gives the relations it reads (0361 item 4): `Along` where its
+    /// rules are a linear recursion along a relation declared a tree.
+    pub fn with_facts(mut self, of: &impl Fn(i64) -> Option<Facts>) -> Stratum {
+        self.along = self.along_of(of);
+        self
+    }
+
+    fn along_of(&self, of: &impl Fn(i64) -> Option<Facts>) -> Option<Along> {
+        let [head] = &self.heads[..] else { return None };
+        if !self.recursive {
+            return None;
+        }
+        let h = head.rel;
+        let reading: Vec<&Rule> = self.after.iter().filter(|r| r.steps.iter().any(|s| s.rel == h)).collect();
+        let [step] = reading[..] else { return None };
+        let [a, b] = &step.steps[..] else { return None };
+        let (o, e) = if a.rel == h { (a, b) } else { (b, a) };
+        if o.kind != Kind::Atom || e.kind != Kind::Atom || e.rel == h || e.args.len() != 2 || self.known.view(e.rel).is_some() || self.port_of(e.rel).is_none() {
+            return None;
+        }
+        let vars = |ts: &[Term]| -> Option<Vec<i64>> {
+            let v: Vec<i64> = ts.iter().map(|t| if let Term::Var(v) = t { Some(*v) } else { None }).collect::<Option<_>>()?;
+            (v.iter().collect::<BTreeSet<_>>().len() == v.len()).then_some(v)
+        };
+        let (hv, ov, ev) = (vars(&step.args)?, vars(&o.args)?, vars(&e.args)?);
+        if hv.len() != ov.len() {
+            return None;
+        }
+        let differ: Vec<usize> = (0..hv.len()).filter(|&i| hv[i] != ov[i]).collect();
+        let [j] = differ[..] else { return None };
+        let (x, y) = (hv[j], ov[j]);
+        if hv.contains(&y) || ov.contains(&x) {
+            return None;
+        }
+        let (cx, cy) = match ev[..] {
+            [a, b] if (a, b) == (x, y) => (0, 1),
+            [a, b] if (a, b) == (y, x) => (1, 0),
+            _ => return None,
+        };
+        let f = of(e.rel)?;
+        f.trees.iter().any(|&(p, c)| (p, c) == (cx, cy) || (p, c) == (cy, cx)).then_some(Along { j, e: e.rel, x: cx, y: cy })
+    }
+
+    /// The recursion along a tree in one wave (Operations, class 30), from ∅: from the base rows `seeds`, each level's
+    /// rows carried to `e`'s predecessors (a row with `y` at column `j`, to `x` for each `e` row joining them, read in
+    /// place by a probe of `e`'s `y` column), a row present keeping its level, the least. The levels are those the
+    /// rounds give (one more than the row read), so a later edit runs Δfix by levels from them.
+    #[allow(clippy::too_many_arguments)]
+    fn wave_along(&self, cx: &mut Cx<'_>, s: &Sides, a: Along, w: &mut [Trace], base: &[Option<BlockId>], seeds: Found, work: &mut Work) -> Result<(), String> {
+        let p = self.port_of(a.e).expect("along a port");
+        let arity = self.ins[p - usize::from(self.tape)].1.columns.len();
+        let mut now: BTreeMap<Vec<i64>, i64> = seeds.into_iter().next().unwrap_or_default();
+        if let Some(after) = s.heads[p].1 {
+            let l = cx.dir.read("a tree's edges", &[after])?;
+            let table = l.table();
+            let e = View::chain(&table, Some(after.0), arity)?;
+            let (xc, yc) = (ColumnIndex::new(a.x as u16), ColumnIndex::new(a.y as u16));
+            let mut frontier: Vec<Vec<i64>> = now.keys().cloned().collect(); // copy: derived (the wave's frontier, its rows found)
+            let mut level = 0;
+            while !frontier.is_empty() {
+                level += 1;
+                let mut next = Vec::new();
+                for row in &frontier {
+                    work.probes += 1;
+                    for id in Read::matching(&e, &[yc], &[row[a.j]]) {
+                        let mut r = row.clone();
+                        r[a.j] = Read::get(&e, id, xc);
+                        if !now.contains_key(&r) {
+                            now.insert(r.clone(), level);
+                            next.push(r);
+                        }
+                    }
+                }
+                frontier = next;
+            }
+        }
+        work.planned.waves += 1;
+        let rows: Vec<(Vec<i64>, i64, i32)> = now.into_iter().map(|(r, l)| (r, l, 1)).collect(); // copy: derived (the wave's rows and levels, written once)
+        work.rows_written += rows.len() as u64;
+        self.put(cx, &mut w[0], base[0], &rows)
     }
 
     /// It, with the facts `inferred` gives the relations it reads and does not write (0361).
@@ -725,6 +820,10 @@ impl Stratum {
                 p.chain(Walk { rule: r, order: &order, head: own(r.head).expect("own"), sign: 1, cand: None, below: None }, Docs::All, Docs::All, &[]);
             }
             found(&mut seeds, self.derive(cx, s, &p, work)?);
+            // Along a tree, the rest in one wave, unplanned (0361 item 4).
+            if let Some(a) = self.along {
+                return self.wave_along(cx, s, a, w, base, seeds, work);
+            }
         } else {
             // Candidates (0364 §2.1): the rows that lost a derivation through a gone input row, the derivation on the
             // inputs' before side and the heads as kept.
@@ -1264,6 +1363,11 @@ impl Level {
             let l = bench.dir.read("atoms", &[atoms.0])?;
             Stratum::new(ops, m, before, after, known.clone(), &shapes, l.block(0)).map_err(|e| format!("rule {}: {}", e.rule, e.why))?.with_inferred(inferred)
         };
+        let declared = self.declared(&bench.dir, known, facts)?;
+        let st = st.with_facts(&|r: i64| match (declared.get(&r), inferred.get(&r)) {
+            (Some(a), Some(b)) => Some(a.and(b)),
+            (a, b) => a.or(b).cloned(),
+        });
         for h in &st.heads {
             if !self.rels.contains_key(&h.rel) {
                 let head = Trace::new(&h.shape)?.with_roll_up(RollUp::Never).resumed(self.place, None);

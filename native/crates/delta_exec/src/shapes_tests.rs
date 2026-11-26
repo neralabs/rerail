@@ -27,9 +27,9 @@ fn rule(args: &[Term], steps: Vec<Step>) -> Rule {
 /// e(x, y): key x, fanout y few; f(y, z): key y; g(z): key z.
 fn base(r: i64) -> Option<Facts> {
     match r {
-        E => Some(Facts { keys: vec![0b01], caps: vec![(1, FEW)] }),
-        F => Some(Facts { keys: vec![0b01], caps: Vec::new() }),
-        G => Some(Facts { keys: vec![0b1], caps: Vec::new() }),
+        E => Some(Facts { keys: vec![0b01], caps: vec![(1, FEW)], trees: Vec::new() }),
+        F => Some(Facts { keys: vec![0b01], caps: Vec::new(), trees: Vec::new() }),
+        G => Some(Facts { keys: vec![0b1], caps: Vec::new(), trees: Vec::new() }),
         _ => None,
     }
 }
@@ -82,8 +82,8 @@ fn declared_rows_give_each_relations_facts() {
     let keys = BTreeSet::from([vec![E, 0, 0], vec![E, 1, 1], vec![E, 1, 2], vec![F, 0, 0]]);
     let fanouts = BTreeSet::from([vec![E, 0, few], vec![F, 1, one], vec![G, 0, many]]);
     let s = declared(&[keys.clone(), fanouts.clone(), BTreeSet::new(), BTreeSet::new()], Some(one), Some(few));
-    assert_eq!(s[&E], Facts { keys: vec![0b001, 0b110], caps: vec![(0, FEW)] });
-    assert_eq!(s[&F], Facts { keys: vec![0b1], caps: vec![(1, 1.0)] });
+    assert_eq!(s[&E], Facts { keys: vec![0b001, 0b110], caps: vec![(0, FEW)], trees: Vec::new() });
+    assert_eq!(s[&F], Facts { keys: vec![0b1], caps: vec![(1, 1.0)], trees: Vec::new() });
     assert!(!s.contains_key(&G));
     assert_eq!(s[&E].cap(0b110), 1.0);
     assert_eq!(s[&E].cap(0b011), 1.0);

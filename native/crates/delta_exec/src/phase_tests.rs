@@ -800,3 +800,51 @@ fn a_declared_tree_and_order_give_their_keys_and_are_checked() {
     assert!(edit.planned.broken >= 1, "{:?}", edit.planned);
     assert_eq!(r.rows(1, "p").len(), 41, "e(3, 1) derives what e(3, 0) does");
 }
+
+/// 0361's algorithms from the facts: a recursion along a relation declared a tree runs cold in one wave, unplanned
+/// (Operations, class 30). Its rows and their levels are those of Δfix's rounds over the same facts undeclared, and an
+/// edit moving a subtree runs Δfix by levels from them to the rows a cold run gives.
+#[test]
+fn a_recursion_along_a_declared_tree_runs_in_one_wave_with_the_rounds_levels() {
+    let par = |moved: bool| (1..40).map(|i| format!("par({i}, {}).\n", if moved && i == 5 { 3 } else { i / 2 })).collect::<String>();
+    let run = |rel: &str| {
+        let mut r = Run::new(&format!("phase-along-{rel}"));
+        r.write("base.rerail", &par(false), 50);
+        r.write("decl.rerail", &format!("{rel}(\"par\", 1, 0).\n"), 50);
+        r.write("rule.rerail", "anc(x, z) :- par(x, z).\nanc(x, z) :- par(x, y), anc(y, z).\n", 50);
+        r.names(&["base.rerail", "base", "decl.rerail", "decl", "rule.rerail", "rule", "rr"]);
+        let rr = r.s("rr");
+        let files = [("base.rerail", "base", 1), ("decl.rerail", "decl", 1), ("rule.rerail", "rule", 2)];
+        let load: Vec<Vec<i64>> = files.iter().map(|(p, m, _)| vec![r.s(p), r.s(m), rr]).collect();
+        let boot: Vec<Vec<i64>> = files.iter().map(|(p, _, k)| vec![r.s(p), *k]).collect();
+        r.fact("load", &load);
+        r.fact("boot", &boot);
+        let cold = r.run();
+        r
+            .levels
+            .levels
+            .get(1)
+            .and_then(|l| l.rels.get(&r.s("anc")))
+            .map(|t| rows_at(&r.bench.dir, &t.head, t.head.head()).unwrap())
+            .map(|levelled| (r, cold, levelled))
+            .expect("anc")
+    };
+    let (mut rounds, plain, by_rounds) = run("other");
+    let (mut wave, along, by_wave) = run("tree");
+    assert_eq!((plain.planned.waves, along.planned.waves), (0, 1), "{:?} {:?}", plain.planned, along.planned);
+    assert!(along.planned.lines < plain.planned.lines, "the rounds' lines unplanned: {:?} {:?}", plain.planned, along.planned);
+    assert_eq!(by_wave, by_rounds, "the rows and their levels");
+    // anc(i, 0) for every i, and 1 + 2 + … per depth: a heap of 40 nodes.
+    assert!(wave.rows(1, "anc").contains(&vec![39, 0]));
+    // 5 moves from under 2 to under 3: both by Δfix from what each run kept, the rows of a cold run.
+    for r in [&mut rounds, &mut wave] {
+        r.write("base.rerail", &par(true), 40);
+        r.run();
+    }
+    let edited = wave.rows(1, "anc");
+    assert_eq!(edited, rounds.rows(1, "anc"));
+    assert!(edited.contains(&vec![11, 3]) && !edited.contains(&vec![11, 2]), "11's parent 5 is under 3");
+    wave.last = None;
+    wave.run();
+    assert_eq!(wave.rows(1, "anc"), edited, "cold");
+}

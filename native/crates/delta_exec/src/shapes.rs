@@ -20,11 +20,13 @@
 use crate::program::{Cmp, Kind, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// A relation's facts: its keys, each a mask of its columns, and its columns' fanout caps.
+/// A relation's facts: its keys, each a mask of its columns, its columns' fanout caps, and its trees, each `(p, c)`:
+/// its rows' edges `p -> c` are a forest.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Facts {
     pub keys: Vec<u64>,
     pub caps: Vec<(usize, f64)>,
+    pub trees: Vec<(usize, usize)>,
 }
 
 impl Facts {
@@ -42,11 +44,16 @@ impl Facts {
                 None => f.caps.push((c, x)),
             }
         }
+        for &t in &o.trees {
+            if !f.trees.contains(&t) {
+                f.trees.push(t);
+            }
+        }
         f
     }
 
     pub fn is_empty(&self) -> bool {
-        self.keys.is_empty() && self.caps.is_empty()
+        self.keys.is_empty() && self.caps.is_empty() && self.trees.is_empty()
     }
 
     /// The rows a probe with columns `mask` bound returns at most: one where they hold a key, a column's cap where
@@ -64,12 +71,15 @@ impl Facts {
         w.extend(self.keys.iter().map(|&k| k as i64));
         w.push(self.caps.len() as i64);
         w.extend(self.caps.iter().flat_map(|&(c, x)| [c as i64, x.to_bits() as i64]));
+        w.push(self.trees.len() as i64);
+        w.extend(self.trees.iter().flat_map(|&(p, c)| [p as i64, c as i64]));
     }
 
     pub fn of_words(next: &mut impl FnMut() -> i64) -> Facts {
         let keys = (0..next()).map(|_| next() as u64).collect();
         let caps = (0..next()).map(|_| (next() as usize, f64::from_bits(next() as u64))).collect();
-        Facts { keys, caps }
+        let trees = (0..next()).map(|_| (next() as usize, next() as usize)).collect();
+        Facts { keys, caps, trees }
     }
 }
 
@@ -97,13 +107,17 @@ pub fn declared(rows: &[BTreeSet<Vec<i64>>; 4], one: Option<i64>, few: Option<i6
     for r in fanouts.iter().filter(|r| r.len() >= 3 && (0..64).contains(&r[1])) {
         let cap = if Some(r[2]) == one { 1.0 } else if Some(r[2]) == few { crate::body::FEW } else { continue };
         let f = s.entry(r[0]).or_default();
-        *f = f.and(&Facts { keys: Vec::new(), caps: vec![(r[1] as usize, cap)] });
+        *f = f.and(&Facts { caps: vec![(r[1] as usize, cap)], ..Facts::default() });
+    }
+    for r in trees.iter().filter(|r| (0..64).contains(&r[1]) && (0..64).contains(&r[2])) {
+        let f = s.entry(r[0]).or_default();
+        *f = f.and(&Facts { trees: vec![(r[1] as usize, r[2] as usize)], ..Facts::default() });
     }
     let col = |c: i64| (0..64).contains(&c).then(|| 1u64 << c);
     let implied = trees.iter().filter_map(|r| Some((r[0], col(r[2])?))).chain(orders.iter().filter_map(|r| Some((r[0], col(r[1])? | col(r[2])?))));
     for (rel, k) in implied {
         let f = s.entry(rel).or_default();
-        *f = f.and(&Facts { keys: vec![k], caps: Vec::new() });
+        *f = f.and(&Facts { keys: vec![k], ..Facts::default() });
     }
     s
 }
@@ -172,7 +186,7 @@ pub fn infer(head: i64, rules: &[&Rule], recursive: bool, of: &impl Fn(i64) -> O
                 if let Some(Term::Var(v)) = s.args.get(c)
                     && let Some(hc) = at(*v)
                 {
-                    out = out.and(&Facts { keys: Vec::new(), caps: vec![(hc, x)] });
+                    out = out.and(&Facts { caps: vec![(hc, x)], ..Facts::default() });
                 }
             }
         }

@@ -525,7 +525,7 @@ fn a_handed_off_order_is_limited_again() {
 /// else none.
 #[test]
 fn a_declared_key_or_fanout_bounds_a_probe() {
-    let s = StepPrice { decl: Facts { keys: vec![0b011], caps: vec![(2, FEW)] }, ..StepPrice::default() };
+    let s = StepPrice { decl: Facts { keys: vec![0b011], caps: vec![(2, FEW)], trees: Vec::new() }, ..StepPrice::default() };
     assert_eq!(s.cap(0b011), 1.0);
     assert_eq!(s.cap(0b111), 1.0);
     assert_eq!(s.cap(0b001), f64::INFINITY, "half a key");
