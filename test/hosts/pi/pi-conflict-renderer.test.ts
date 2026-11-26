@@ -63,9 +63,10 @@ describe("Pi's Merge Assist conflict line", () => {
   it("strips control characters from the conflict's words, its address and the note", () => {
     const hostile: ConflictNotice = { id: "conflict:b", text: "your edit overlaps x\u001b[2J\u0007 (Sam): a.ts", url: "http://127.0.0.1:4737/\u0007\u001b]8;;http://evil/" };
     const rows = formatPiConflict("note\u001b[31m red\u0007", hostile, { expanded: true, hyperlinks: true, mark: MARK }, theme);
-    const escapes = rows.flatMap(row => row.text.match(/\u001b[^\]]|\u001b\]8;;[^\u0007]*\u0007/gu) ?? []);
+    // Whole CSI sequences and OSC 8 framings, then any other ESC with the character after it.
+    const escapes = rows.flatMap(row => row.text.match(/\u001b\[[0-?]*[ -/]*[@-~]|\u001b\]8;;[^\u0007]*\u0007|\u001b[\s\S]/gu) ?? []);
     // The only escapes left are the link's own framing, around the stripped address, and the linked word's underline.
-    expect(new Set(escapes)).toEqual(new Set(["\u001b]8;;http://127.0.0.1:4737/]8;;http://evil/\u0007", "\u001b]8;;\u0007", "\u001b["]));
+    expect(new Set(escapes)).toEqual(new Set(["\u001b]8;;http://127.0.0.1:4737/]8;;http://evil/\u0007", "\u001b]8;;\u0007", "\u001b[4m", "\u001b[24m"]));
     expect(rows[0]!.text).toContain("\u001b[4mopen\u001b[24m\u001b]8;;\u0007");
     expect(rows[0]!.text).toContain("your edit overlaps x[2J (Sam): a.ts");
     expect(rows.at(-1)!.text).toBe("<dim>note[31m red</dim>");
