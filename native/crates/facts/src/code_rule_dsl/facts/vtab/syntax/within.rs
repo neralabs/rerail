@@ -955,14 +955,14 @@ impl Source for Within {
     /// `node` view, which a stage's walk reads a node's kind, ancestors and subtree through, and the set's atoms.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
-        use super::device_chunk::{VIEW_NODE, read_kind, views_in_place};
+        use super::device_chunk::{VIEW_NODE, views_in_place};
         if self.mode != Mode::Axis(Axis::Has) {
             return None;
         }
         let chunk = self.batch.chunk();
         let v = views_in_place(&self.batch, chunk)?;
-        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
-        view.failed = view.cache_failed();
+        // The node view as the join programs here read it: at the host's addresses where they run on the host.
+        let view = v.read_of(VIEW_NODE, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)?;
         Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes: self.batch.nodes().last().copied().unwrap_or(0), view, kinds: Arc::clone(&self.kinds) })
     }
     /// A kind-set axis or containment read whole (the device's keyed read, decision 0277): the batch's solve

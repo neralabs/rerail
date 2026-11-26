@@ -453,17 +453,22 @@ impl Layered {
         let dv_ref = dv.as_mut()?;
         // A view not read in place is made from the chunk's batch alone: it holds none of the values' rows.
         let v = dv_ref.in_place.as_mut()?;
+        // A placed base (`places::Places`: the view's rows, then its spans') is no view of one directory: its rows
+        // and the values' are in no order one directory holds. Its `PlacedDir` is not the values' directory, which a
+        // read of its kind would take for one.
+        if v.kind & super::places::VIEW_PLACED != 0 {
+            return None;
+        }
         let dir = self.values.dir(&batch)?;
         let views = &dir.views;
         let loc = (super::device_chunk::VIEW_LOC_LINE..=super::device_chunk::VIEW_LOC_DOCOF).contains(&dv_ref.view);
-        if (dv_ref.view == super::device_chunk::VIEW_LINE && !views.lines) || (loc && !views.locs) {
+        let (lines, locs) = views.holds();
+        if (dv_ref.view == super::device_chunk::VIEW_LINE && !lines) || (loc && !locs) {
             return None;
         }
-        v.dir = views.dir?;
-        v.buffers = views.buffers.clone();
-        v.cache = views.cache.clone();
-        v.keep = Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>;
-        v.failed = v.cache_failed();
+        // The base's kind, the directory of every document as the join programs here read it (the host's, where
+        // they run on the host).
+        *v = crate::code_rule_dsl::facts::vtab::ViewInPlace { kind: v.kind, ..views.read_of(dv_ref.view, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>)? };
         dv_ref.rows = self.len();
         dv
     }

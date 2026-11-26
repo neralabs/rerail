@@ -193,6 +193,33 @@ pub struct ViewsInPlace {
     _entries: Vec<super::view_docs::ViewEntry>,
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl ViewsInPlace {
+    /// Whether the join programs that read a view here run on the host: bound to it (`on_host`), or with no process
+    /// device.
+    pub fn read_on_host() -> bool {
+        rerail_accel::gpu::shared::is_on_host() || rerail_accel::gpu::shared::layer().is_none()
+    }
+    /// Whether the directory here (`read_on_host`'s, or the device's) holds every document's lines, and every
+    /// document's `Loc` rows.
+    pub fn holds(&self) -> (bool, bool) {
+        if Self::read_on_host() { (self.host.lines, self.host.locs) } else { (self.lines, self.locs) }
+    }
+    /// View `view`'s read in place as the join programs here read it (`read_on_host`): on the host, the directory at
+    /// its host address with no buffer made resident (its cache's included); on the device, at the device's, with
+    /// its buffers. `None` where the device has no address for it.
+    pub fn read_of(&self, view: u32, keep: Arc<dyn std::any::Any + Send + Sync>) -> Option<crate::code_rule_dsl::facts::vtab::ViewInPlace> {
+        let (dir, buffers, cache) = if Self::read_on_host() {
+            (self.host.dir, Vec::new(), self.cache.clone().map(|c| crate::code_rule_dsl::facts::vtab::ZCache { buffer: None, ..c }))
+        } else {
+            (self.dir?, self.buffers.clone(), self.cache.clone())
+        };
+        let mut read = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir, kind: read_kind(view), buffers, cache, failed: 0, format: self.format, keep };
+        read.failed = read.cache_failed();
+        Some(read)
+    }
+}
+
 
 /// A views' directory as the host reads it: its host address, and whether it holds every document's lines and `Loc`
 /// rows there (the device's refusals of homes it has no address for are not the host's).
