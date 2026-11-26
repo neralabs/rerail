@@ -378,12 +378,17 @@ impl Run {
 
     /// B§8's run from the last pins.
     fn run(&mut self) -> Work {
+        self.try_run().unwrap()
+    }
+
+    /// B§8's run from the last pins, or its refusal.
+    fn try_run(&mut self) -> Result<Work, String> {
         let last = self.last.take();
         let facts: Vec<FactIn<'_>> = self.facts.iter().map(|(rel, t, shape)| FactIn { rel: *rel, trace: t, shape: shape.clone() }).collect();
         let module = L0_PATH.strip_suffix(".rerail").unwrap();
-        let (pins, _, work) = crate::boot::run(&self.l1, &mut self.inst, &mut self.levels, L0_PATH, module, self.atoms, &facts, &mut self.docs, &mut self.bench, last.as_ref()).unwrap();
+        let (pins, _, work) = crate::boot::run(&self.l1, &mut self.inst, &mut self.levels, L0_PATH, module, self.atoms, &facts, &mut self.docs, &mut self.bench, last.as_ref())?;
         self.last = Some(pins);
-        work
+        Ok(work)
     }
 
     /// Level `k`'s relation `rel`'s rows, each its relation's columns (a level dropped).
@@ -534,4 +539,112 @@ fn a_later_process_resumes_the_levels_where_the_last_run_left_them() {
     r.run();
     assert_eq!(r.rows(1, "twice"), BTreeSet::from([vec![1, 2], vec![1, 3], vec![2, 3]]));
     assert_eq!(r.rows(1, "top"), BTreeSet::from([vec![1], vec![2]]));
+}
+
+/// The kernel's files (B§10 step 7), by path relative to the bootstrap's root, in stratum order: K1's reader, then
+/// the binding lowerer, one file a stratum (O4).
+const KERNEL: [(&str, &str); 5] = [
+    ("kernel/k1-0-read.rerail", include_str!("../rerail/kernel/k1-0-read.rerail")),
+    ("kernel/k1-1-steps.rerail", include_str!("../rerail/kernel/k1-1-steps.rerail")),
+    ("kernel/k1-2-binds.rerail", include_str!("../rerail/kernel/k1-2-binds.rerail")),
+    ("kernel/k1-3-place.rerail", include_str!("../rerail/kernel/k1-3-place.rerail")),
+    ("kernel/k1-4-emit.rerail", include_str!("../rerail/kernel/k1-4-emit.rerail")),
+];
+
+/// What L3 reads: the stand-in for the compiler's files (Bootstrap §6: "P3 loads the full compiler"), a K0 file of
+/// L2's whose `load` facts P3 then asks, with their files' strata: the facts first, as a base the rules negate.
+const ASK: &str = "load(\"u-facts.rerail\", \"u-facts\", \"rr\").\nboot(\"u-facts.rerail\", 1).\nload(\"u.rerail\", \"u\", \"rr\").\nboot(\"u.rerail\", 2).\n";
+const FACTS: &str = "e(1, 2).\ne(2, 3).\ne(3, 1).\ne(2, 4).\nb(3).\n";
+/// K1: filters written before the atoms that bind their variables, which K0 refuses (B§7).
+const K1_RULES: &str = "h(x, z) :- x != z, !b(y), e(x, y), e(y, z).\ng(x) :- e(x, y), y > 2, e(y, _).\n";
+/// The same rules ordered by hand, in K0.
+const K0_RULES: &str = "h(x, z) :- e(x, y), !b(y), e(y, z), x != z.\ng(x) :- e(x, y), y > 2, e(y, _).\n";
+
+/// A run over the kernel: L2 loads `ask.rerail` and the kernel's files, the boot rows their strata; it exports P3, the
+/// lowerer, which L3 runs over the files `ask.rerail` loads, exporting their rules lowered; L4 runs them.
+fn kernel_run(name: &str, rules: &str) -> Run {
+    let mut r = Run::new(name);
+    std::fs::create_dir_all(r.root.join("kernel")).unwrap();
+    for (path, text) in KERNEL {
+        r.write(path, text, 50);
+    }
+    r.write("ask.rerail", ASK, 50);
+    r.write("u-facts.rerail", FACTS, 50);
+    r.write("u.rerail", rules, 50);
+    let modules: Vec<(String, String)> = std::iter::once(("ask.rerail".to_string(), "ask".to_string()))
+        .chain(KERNEL.iter().map(|(p, _)| (p.to_string(), p.trim_start_matches("kernel/").trim_end_matches(".rerail").to_string())))
+        .collect();
+    let names: Vec<&str> = modules.iter().flat_map(|(p, m)| [p.as_str(), m.as_str()]).chain(["rr"]).collect();
+    r.names(&names);
+    let rr = r.s("rr");
+    let load: Vec<Vec<i64>> = modules.iter().map(|(p, m)| vec![r.s(p), r.s(m), rr]).collect();
+    let boot: Vec<Vec<i64>> = modules.iter().zip(1..).map(|((p, _), k)| vec![r.s(p), k]).collect();
+    r.fact("load", &load);
+    r.fact("boot", &boot);
+    r
+}
+
+/// The same files read at L2's place, the a/b test's way: L2 reads them in K0, L3 runs them.
+fn hand_run(name: &str, rules: &str) -> Run {
+    let mut r = Run::new(name);
+    r.write("hand-facts.rerail", FACTS, 50);
+    r.write("hand.rerail", rules, 50);
+    r.names(&["hand-facts.rerail", "hand-facts", "hand.rerail", "hand", "rr"]);
+    let (pf, mf, p, m, rr) = (r.s("hand-facts.rerail"), r.s("hand-facts"), r.s("hand.rerail"), r.s("hand"), r.s("rr"));
+    r.fact("load", &[vec![pf, mf, rr], vec![p, m, rr]]);
+    r.fact("boot", &[vec![pf, 1], vec![p, 2]]);
+    r
+}
+
+/// The first K1 feature, in rules (B§10 step 7; the rebuild plan, O2 and O4): `kernel/`'s binding lowerer, in K0, one
+/// file a stratum, places a body's filters after their variables are bound, at keys (p, f) with no arithmetic. A K1
+/// rule lowered by P3 and run gives the same rows as its hand-ordered K0 form, through edits, unchanged and cold;
+/// the K1 rule as written is refused by K0's executor.
+#[test]
+fn a_k1_rule_lowered_by_p3_gives_the_rows_of_its_hand_ordered_k0_form() {
+    let mut r = kernel_run("phase-k1", K1_RULES);
+    r.run();
+    assert_eq!(r.levels.levels.len(), 3, "L2 exports P3; L3 lowers u's files and exports them; L4 runs them and exports none");
+    let mut h = hand_run("phase-k1-hand", K0_RULES);
+    h.run();
+    let rows = |r: &Run, k: usize| (r.rows(k, "h"), r.rows(k, "g"));
+    let want = (BTreeSet::from([vec![1, 3], vec![1, 4], vec![3, 2]]), BTreeSet::from([vec![2]]));
+    assert_eq!(rows(&h, 1), want, "the hand-ordered form's rows");
+    assert_eq!(rows(&r, 2), want, "the lowered form's rows");
+    // The filters' keys: `x != z` after the atom binding z (written at 0, now at (3, 0)), `!b(y)` after the one binding
+    // y ((2, 1)), `y > 2` where it was bound ((0, 1)); the atoms where they were read.
+    let keys = |kind: &str, rel: &str| -> BTreeSet<(i64, i64)> {
+        let (kind, rel) = (r.s(kind), r.s(rel));
+        r.rows(1, "k_step").into_iter().filter(|x| x[4] == kind && x[5] == rel).map(|x| (x[2], x[3])).collect()
+    };
+    assert_eq!(keys("cmp", "!="), BTreeSet::from([(3, 0)]));
+    assert_eq!(keys("not", "b"), BTreeSet::from([(2, 1)]));
+    assert_eq!(keys("cmp", ">"), BTreeSet::from([(0, 1)]));
+    assert_eq!(keys("atom", "e"), BTreeSet::from([(0, -1), (2, -1), (3, -1)]), "e's steps at (k, -1)");
+    // Unchanged: the identity at every level.
+    let work = r.run();
+    assert!(work.is_checks_only(), "{work:?}");
+    // Edits, the same on both sides: an edge gone and one added; a rule's literals reordered, which K0 takes as written.
+    let facts = "e(1, 2).\ne(2, 3).\ne(3, 1).\ne(3, 5).\ne(5, 6).\nb(3).\n";
+    r.write("u-facts.rerail", facts, 40);
+    h.write("hand-facts.rerail", facts, 40);
+    r.run();
+    h.run();
+    assert_eq!(rows(&r, 2), rows(&h, 1), "the facts' edit");
+    r.write("u.rerail", "h(x, z) :- e(y, z), x != z, e(x, y), !b(y).\ng(x) :- y > 2, e(y, _), e(x, y).\n", 30);
+    r.run();
+    assert_eq!(rows(&r, 2), rows(&h, 1), "the rules' reorder");
+    // Cold: the same rows.
+    let warm = rows(&r, 2);
+    r.last = None;
+    r.run();
+    assert_eq!(rows(&r, 2), warm, "cold");
+    // The K1 rules as written, run at L2's place with no lowering: K0's executor refuses the filter before its binding.
+    let mut raw = hand_run("phase-k1-raw", K1_RULES);
+    let e = raw.try_run().unwrap_err();
+    assert!(e.contains("module hand.rerail") && e.contains("variable x is not bound by an earlier step"), "{e}");
+    // A level reads its documents before its rules run, so a `load` its program derives is refused.
+    r.write("ask.rerail", "load(p, \"u\", \"rr\") :- boot(p, 2).\nboot(\"u.rerail\", 2).\n", 20);
+    let e = r.try_run().unwrap_err();
+    assert!(e.contains("module ask.rerail") && e.contains("a load that is not a fact"), "{e}");
 }

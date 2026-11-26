@@ -237,7 +237,7 @@ impl Program {
             }
         }
         let p = Program { modules };
-        p.check()?;
+        p.check(atoms)?;
         Ok(p)
     }
 
@@ -254,13 +254,14 @@ impl Program {
     }
 
     /// B§7's checks, each a refusal naming the module and the rule.
-    fn check(&self) -> Result<(), Refused> {
+    fn check(&self, atoms: &[u8]) -> Result<(), Refused> {
+        let n = |s: i64| crate::sym::name_of(atoms, s);
         let mut writers: BTreeMap<i64, i64> = BTreeMap::new();
         for (&m, md) in &self.modules {
             for h in md.heads() {
                 if let Some(&other) = writers.get(&h) {
                     let rule = md.rules.iter().find(|r| r.head == h).map_or(-1, |r| r.id);
-                    return Err(Refused { module: m, rule, why: format!("relation {h} is written by module {other} too: a relation is one stratum's") });
+                    return Err(Refused { module: m, rule, why: format!("relation {} is written by module {} too: a relation is one stratum's", n(h), n(other)) });
                 }
                 writers.insert(h, m);
             }
@@ -280,7 +281,7 @@ impl Program {
                         Kind::Atom => bound.extend(vars),
                         Kind::Not | Kind::Cmp(_) => {
                             if let Some(v) = vars.clone().find(|v| !bound.contains(v)) {
-                                return Err(rule.refuse(format!("step {:?}: variable {v} is not bound by an earlier step", s.key)));
+                                return Err(rule.refuse(format!("step {:?}: variable {} is not bound by an earlier step", s.key, n(v))));
                             }
                             if matches!(s.kind, Kind::Cmp(_)) && s.args.len() != 2 {
                                 return Err(rule.refuse(format!("step {:?}: a comparison of {} terms", s.key, s.args.len())));
@@ -292,19 +293,19 @@ impl Program {
                     {
                         let neg = s.kind == Kind::Not;
                         if w == m && neg {
-                            return Err(rule.refuse(format!("step {:?} negates relation {}, its own stratum's head", s.key, s.rel)));
+                            return Err(rule.refuse(format!("step {:?} negates relation {}, its own stratum's head", s.key, n(s.rel))));
                         }
                         if w != m && order[&w] > order[&m] {
-                            return Err(rule.refuse(format!("step {:?} reads relation {}, the head of module {w}, a later stratum", s.key, s.rel)));
+                            return Err(rule.refuse(format!("step {:?} reads relation {}, the head of module {}, a later stratum", s.key, n(s.rel), n(w))));
                         }
                         if w != m && md.k.is_some() && self.modules[&w].k == md.k {
-                            return Err(rule.refuse(format!("step {:?} reads relation {}, the head of module {w}, of the same stratum place", s.key, s.rel)));
+                            return Err(rule.refuse(format!("step {:?} reads relation {}, the head of module {}, of the same stratum place", s.key, n(s.rel), n(w))));
                         }
                     }
                 }
                 for t in &rule.args {
                     match t {
-                        Term::Var(v) if !bound.contains(v) => return Err(rule.refuse(format!("head variable {v} is bound by no step"))),
+                        Term::Var(v) if !bound.contains(v) => return Err(rule.refuse(format!("head variable {} is bound by no step", n(*v)))),
                         Term::Wild => return Err(rule.refuse("a head argument is _".into())),
                         _ => {}
                     }

@@ -43,6 +43,14 @@ pub struct Refused {
     pub why: String,
 }
 
+impl Refused {
+    /// The refusal with its module named, by its document's path (B§7: "A refusal names the rule's module and
+    /// node").
+    pub fn named(&self, module: &str) -> String {
+        format!("module {module} rule {}: {}", self.rule, self.why)
+    }
+}
+
 impl std::fmt::Display for Refused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "module {} rule {}: {}", self.module, self.rule, self.why)

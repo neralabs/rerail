@@ -1,0 +1,7 @@
+// The binding lowerer's first stratum (decision 0686; Steps, Strata, Roll-up §2; B§10 step 7): each rule's atoms and
+// filters, as read. A filter is a `not` or a `cmp`; an atom binds its variables.
+in_atom(d, r, v, k) :- read_step(d, r, k, -1, "atom", _), read_arg(d, r, k, -1, _, t), read_var(d, t, v).
+filter(d, r, f) :- read_step(d, r, f, -1, "not", _).
+filter(d, r, f) :- read_step(d, r, f, -1, "cmp", _).
+in_filter(d, r, f, v) :- filter(d, r, f), read_arg(d, r, f, -1, _, t), read_var(d, t, v).
+bound_before(d, r, v, k) :- in_atom(d, r, v, k), in_atom(d, r, v, j), j < k.

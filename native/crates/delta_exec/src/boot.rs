@@ -93,6 +93,19 @@ impl DocSet {
         self.row_at(dir, atoms, path)
     }
 
+    /// Document `d`'s path, for messages (`#d` when the set holds none).
+    pub fn path_of(&self, dir: &Directory, atoms: Atoms, d: i64) -> String {
+        let path = || -> Option<i64> {
+            let h = self.tape.head()?;
+            let l = self.tape.read(dir, &[Some(h)]).ok()?;
+            let table = l.table();
+            let s = self.tape.state(&table, Some(h)).ok()?;
+            let r = Read::matching(&s, &[ColumnIndex::new(0)], &[d]).next()?;
+            Some(Read::get(&s, r, ColumnIndex::new(TAPE_PATH as u16)))
+        };
+        path().map_or_else(|| format!("#{d}"), |p| atoms.name(dir, p))
+    }
+
     fn row_at(&self, dir: &Directory, atoms: Atoms, path: &str) -> Result<Option<Vec<i64>>, String> {
         let (Some(p), Some(h)) = (atoms.find(dir, path), self.tape.head()) else { return Ok(None) };
         let l = self.tape.read(dir, &[Some(h)])?;

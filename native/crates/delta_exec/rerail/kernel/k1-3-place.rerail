@@ -1,0 +1,5 @@
+// The third stratum (negates the second): a filter goes after the atom that binds the last of its variables, and is
+// then moved. A filter with no variable, or one an atom never binds, stays where it was written: the executor refuses
+// the second (B§7).
+place(d, r, f, k) :- in_filter(d, r, f, v), binds(d, r, v, k), !waits(d, r, f, k).
+moved(d, r, f) :- place(d, r, f, _).

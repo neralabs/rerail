@@ -1868,3 +1868,56 @@ Checks (Relax, local, `rerail-delta-exec --lib` 111 of 111):
 - `plan.rs`, its tests and `contract.rs` may name `rerail_accel`, for the join model, as the residency does for its
   budget.
 - `check_no_block_copies.py` and `check_dev_features.py` pass.
+
+### The first K1 feature, in rules: the binding lowerer (B§10 step 7; the rebuild plan, O2 and O4; 2026-11-26)
+
+`kernel/k1-binding.rerail` is built as O4 settled it: the binding lowerer of *Steps, Strata, Roll-up* §2, in K0, one
+file a stratum, with O2's step keys and no arithmetic. It is in `native/crates/delta_exec/rerail/kernel/`:
+
+- `k1-1-steps`: `in_atom`, `filter` (a `not` or a `cmp`), `in_filter`, `bound_before`;
+- `k1-2-binds` (negates the first): `binds`, a variable's first atom, and `waits`;
+- `k1-3-place` (negates the second): `place`, after the atom binding a filter's last variable, and `moved`;
+- `k1-4-emit` (negates the third): K-form's relations, a moved filter at `(p, f)` and every other step where it was
+  read, at `(k, -1)`, and `k_order` from `boot`, as in l0.
+
+Ahead of them is **`k1-0-read`**, K1's reader: l0's thirteen reader rules with their heads named `read_*`. The
+Bootstrap page's L3 reads its files ("P3 loads the full compiler"), so P3 holds a reader. The steps page's excerpt
+reads `k_step` itself, but at L3 `k_step` is what the lowering emits: a level's K-form relations are its export, the
+next program (O6). So a file as read is `read_*`, and only `k1-4-emit` writes K-form.
+
+**What a level reads.** Bootstrap §5: "its load facts ask the loader". A level's documents are the `load` rows of its
+facts in and the `load` facts of its own program (`Level::answer`). They are read before its rules run, so a `load`
+the program derives, a rule with a body, is refused, naming its module. A level's own `load` facts are its asks,
+answered in it, and are not passed on as facts out. In the test, L2 loads `ask.rerail` and the kernel's files, with
+`boot` rows for their strata. `ask.rerail` stands in for the compiler's files: its `load` and `boot` facts are P3's,
+so L3 reads the two files they name.
+
+**Refusals name their module** by its document's path (`DocSet::path_of`; a module's id is its document's key, not a
+symbol). Relations and variables are named by their text (`Refused::named`; B§7: "A refusal names the rule's module
+and node").
+
+Checks (Relax, local, `rerail-delta-exec --lib` 112 of 112):
+
+- `a_k1_rule_lowered_by_p3_gives_the_rows_of_its_hand_ordered_k0_form`:
+  - L2 exports P3, L3 lowers `u-facts.rerail` and `u.rerail` and exports them, and L4 runs them and exports none;
+  - `h(x, z) :- x != z, !b(y), e(x, y), e(y, z)` and `g(x) :- e(x, y), y > 2, e(y, _)` give the rows of their
+    hand-ordered K0 form;
+  - the filters' keys: `x != z` at `(3, 0)`, `!b(y)` at `(2, 1)`, `y > 2` at `(0, 1)`, and the atoms at `(k, -1)`;
+  - unchanged, the run is checks only;
+  - after an edit of the facts and a reorder of the rules' literals, the rows equal the hand form's;
+  - cold gives the same rows;
+  - the K1 rules as written, read at L2 with no lowering, are refused ("module hand.rerail … variable x is not bound
+    by an earlier step");
+  - a derived `load` is refused, naming `ask.rerail`.
+- A mutation was caught: `place` without `!waits` places a filter at every binding atom's key. L4 then refuses `x != z`
+  at `(2, 0)` ("module u.rerail rule 1: step (2, 0): variable z is not bound by an earlier step"). It was restored.
+- The shape script's new section, K1, requires:
+  - the five files and each stratum's heads;
+  - no lowerer in the crate's Rust;
+  - a level answering its program's `load` facts and keeping its asks out of its facts out;
+  - the test.
+
+  Removing `moved`'s rule fails it.
+- `load(` stays refused in the crate's `.rerail` files: the kernel's files load nothing, and the test's `ask.rerail`
+  is the test's.
+- Clippy is clean on `delta_exec` and `delta_twins`; `check_no_block_copies.py` and `check_dev_features.py` pass.

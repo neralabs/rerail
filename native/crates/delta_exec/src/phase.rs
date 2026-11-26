@@ -443,7 +443,7 @@ impl Stratum {
             let rules = if side.iter().any(|q| q.head == r.head) { side } else { before };
             let sf: BTreeSet<bool> = rules.iter().filter(|q| q.head == r.head).map(|q| q.single_file(known)).collect();
             if sf.len() > 1 {
-                return Err(Refused { module, rule: r.id, why: format!("relation {} is written by single-file and cross-file rules both", r.head) });
+                return Err(Refused { module, rule: r.id, why: format!("relation {} is written by single-file and cross-file rules both", crate::sym::name_of(atoms, r.head)) });
             }
             let name = crate::sym::name_of(atoms, r.head);
             heads.push(Head { rel: r.head, arity: r.args.len(), counts: None, shape: head_shape(&name, r.args.len(), sf.contains(&true)) });
@@ -454,7 +454,7 @@ impl Stratum {
         for h in &mut heads {
             if recursive {
                 if h.arity == 0 {
-                    return Err(Refused { module, rule: side[0].id, why: format!("relation {} is nullary and recursive: a level is a column of a row (0364)", h.rel) });
+                    return Err(Refused { module, rule: side[0].id, why: format!("relation {} is nullary and recursive: a level is a column of a row (0364)", crate::sym::name_of(atoms, h.rel)) });
                 }
                 h.shape = levelled(&h.shape);
             } else {
@@ -994,6 +994,8 @@ pub struct Level {
     /// This run's start: each relation's head and the documents', where its roll-up starts.
     start: BTreeMap<i64, (Option<BlockId>, Option<BlockId>)>,
     tapes_start: Option<BlockId>,
+    /// `load`'s symbol: the level's asks, kept out of its facts out.
+    load: Option<i64>,
 }
 
 /// A level's run: its work, and whether it exported a program.
@@ -1008,7 +1010,7 @@ impl Level {
     /// An empty level, its layers placed at `place`.
     pub fn new(place: u32) -> Result<Level, String> {
         let tapes = Trace::new(&tape_shape())?.with_roll_up(RollUp::Never).resumed(place, None);
-        Ok(Level { place, rels: BTreeMap::new(), ran: Program::default(), tapes, seen: BTreeMap::new(), start: BTreeMap::new(), tapes_start: None })
+        Ok(Level { place, rels: BTreeMap::new(), ran: Program::default(), tapes, seen: BTreeMap::new(), start: BTreeMap::new(), tapes_start: None, load: None })
     }
 
     /// Its relation `rel`'s trace between this run's start and now.
@@ -1034,9 +1036,10 @@ impl Level {
         Ok(false)
     }
 
-    /// Its facts out, the next level's facts in (O6): every relation it writes that is not K-form.
+    /// Its facts out, the next level's facts in (O6): every relation it writes that is not K-form, and not its own
+    /// `load` facts, which this level answered.
     pub fn facts(&self, ksyms: &[Option<i64>]) -> Vec<FactIn<'_>> {
-        self.rels.iter().filter(|(r, _)| !ksyms.contains(&Some(**r))).map(|(&rel, r)| FactIn { rel, trace: &r.head, shape: r.shape.clone() }).collect()
+        self.rels.iter().filter(|(r, _)| !ksyms.contains(&Some(**r)) && self.load != Some(**r)).map(|(&rel, r)| FactIn { rel, trace: &r.head, shape: r.shape.clone() }).collect()
     }
 
     /// Each fact in seen where it is now (a run's end, after the level before it rolled its traces up).
@@ -1082,10 +1085,12 @@ impl Level {
         let rows = program_rows(&bench.dir, program)?;
         let (next, known) = {
             let l = bench.dir.read("atoms", &[atoms.0])?;
-            (Program::read(&rows, l.block(0)).map_err(|e| e.to_string())?, Known::new(l.block(0)))
+            (Program::read(&rows, l.block(0)).map_err(|e| e.named(&docs.path_of(&bench.dir, atoms, e.module)))?, Known::new(l.block(0)))
         };
-        // Its documents: the `load` answers its facts ask.
-        self.answer(bench, docs, leaves, atoms, &known, facts).map_err(|e| format!("a level's documents: {e}"))?;
+        // Its documents: the `load` answers its facts in ask, and its program's `load` facts (Bootstrap §5: "its load
+        // facts ask the loader"; P3 loads what L3 reads).
+        self.load = known.load;
+        self.answer(bench, docs, leaves, atoms, &known, facts, &next).map_err(|e| format!("a level's documents: {e}"))?;
         // A head whose shape the edit changed (its grain, its stratum's recursion): a trace keeps one shape, so the
         // level runs from ∅, its documents kept.
         let mut reset = false;
@@ -1093,7 +1098,7 @@ impl Level {
             let l = bench.dir.read("atoms", &[atoms.0])?;
             'modules: for (&m, md) in &next.modules {
                 let before = self.ran.modules.get(&m).map_or(&[][..], |b| &b.rules[..]);
-                let (heads, _) = Stratum::heads_of(m, before, &md.rules, &known, l.block(0)).map_err(|e| e.to_string())?;
+                let (heads, _) = Stratum::heads_of(m, before, &md.rules, &known, l.block(0)).map_err(|e| e.named(&docs.path_of(&bench.dir, atoms, m)))?;
                 for h in &heads {
                     if self.rels.get(&h.rel).is_some_and(|r| !r.fits(h)) {
                         reset = true;
@@ -1111,7 +1116,7 @@ impl Level {
         for m in order {
             let before = self.ran.modules.get(&m).map_or(Vec::new(), |md| md.rules.clone());
             let after = next.modules.get(&m).map_or(Vec::new(), |md| md.rules.clone());
-            work += self.run_module(ops, bench, atoms, &known, m, before, after, facts).map_err(|e| format!("module {}: {e}", atoms.name(&bench.dir, m)))?;
+            work += self.run_module(ops, bench, atoms, &known, m, before, after, facts).map_err(|e| format!("module {}: {e}", docs.path_of(&bench.dir, atoms, m)))?;
         }
         self.ran = next;
         for f in facts {
@@ -1122,19 +1127,32 @@ impl Level {
         Ok(LevelRun { work, program, reset })
     }
 
-    /// The level's documents moved to the `load` rows of its facts: each path read through the document set (its
-    /// load, parse and intern answers), and its row in the level's documents.
-    fn answer(&mut self, bench: &mut Bench, docs: &mut DocSet, leaves: &mut LeavesW, atoms: Atoms, known: &Known, facts: &[FactIn<'_>]) -> Result<(), String> {
-        let mut want: BTreeSet<Vec<i64>> = BTreeSet::new();
-        if let Some(load) = known.load
-            && let Some(f) = facts.iter().find(|f| f.rel == load)
-        {
-            for r in rows_at(&bench.dir, f.trace, f.trace.head())? {
-                let (path, module) = (atoms.name(&bench.dir, r[0]), atoms.name(&bench.dir, r[1]));
-                docs.read(bench, leaves, atoms, &path, &module)?;
-                if let Some(row) = docs.row_of(&bench.dir, atoms, &path)? {
-                    want.insert(row);
+    /// The level's documents moved to the `load` rows of its facts in and of its program's facts: each path read
+    /// through the document set (its load, parse and intern answers), and its row in the level's documents. The
+    /// documents are read before the rules run, so a `load` the program derives (a rule with a body) is refused.
+    #[allow(clippy::too_many_arguments)]
+    fn answer(&mut self, bench: &mut Bench, docs: &mut DocSet, leaves: &mut LeavesW, atoms: Atoms, known: &Known, facts: &[FactIn<'_>], program: &Program) -> Result<(), String> {
+        let mut asked: BTreeSet<Vec<i64>> = BTreeSet::new();
+        if let Some(load) = known.load {
+            if let Some(f) = facts.iter().find(|f| f.rel == load) {
+                asked.extend(rows_at(&bench.dir, f.trace, f.trace.head())?);
+            }
+            for r in program.modules.values().flat_map(|m| &m.rules).filter(|r| r.head == load) {
+                let row: Option<Vec<i64>> = r.args.iter().map(|a| if let Term::Const(v) = a { Some(*v) } else { None }).collect();
+                match row {
+                    Some(row) if r.steps.is_empty() && row.len() == 3 => {
+                        asked.insert(row);
+                    }
+                    _ => return Err(format!("module {} rule {}: a load that is not a fact of a path, a module and a grammar: a level reads its documents before its rules run", docs.path_of(&bench.dir, atoms, r.module), r.id)),
                 }
+            }
+        }
+        let mut want: BTreeSet<Vec<i64>> = BTreeSet::new();
+        for r in asked {
+            let (path, module) = (atoms.name(&bench.dir, r[0]), atoms.name(&bench.dir, r[1]));
+            docs.read(bench, leaves, atoms, &path, &module)?;
+            if let Some(row) = docs.row_of(&bench.dir, atoms, &path)? {
+                want.insert(row);
             }
         }
         docs.resident(bench)?;
@@ -1154,7 +1172,7 @@ impl Level {
         shapes.extend(self.rels.iter().map(|(&r, t)| (r, t.shape.clone())));
         let st = {
             let l = bench.dir.read("atoms", &[atoms.0])?;
-            Stratum::new(ops, m, before, after, known.clone(), &shapes, l.block(0)).map_err(|e| e.to_string())?
+            Stratum::new(ops, m, before, after, known.clone(), &shapes, l.block(0)).map_err(|e| format!("rule {}: {}", e.rule, e.why))?
         };
         for h in &st.heads {
             if !self.rels.contains_key(&h.rel) {

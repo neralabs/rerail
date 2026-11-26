@@ -811,16 +811,44 @@ def planning(failures: list) -> None:
             failures.append(f"the planning track's tests lack {t}")
 
 
+def k1(failures: list) -> None:
+    """B§10 step 7, the first K1 feature in rules: the binding lowerer in K0, one file a stratum (O4), K1's reader
+    before it; no lowering in Rust; a level's documents the `load` facts of its facts in and of its program."""
+    kernel = CRATE / "rerail" / "kernel"
+    files = ("k1-0-read", "k1-1-steps", "k1-2-binds", "k1-3-place", "k1-4-emit")
+    heads = {"k1-1-steps": ("in_atom", "filter", "in_filter", "bound_before"), "k1-2-binds": ("binds", "waits"),
+             "k1-3-place": ("place", "moved"), "k1-4-emit": ("k_rule", "k_step", "k_arg", "k_var", "k_order")}
+    for f in files:
+        path = kernel / f"{f}.rerail"
+        if not path.exists():
+            failures.append(f"kernel/{f}.rerail missing (B§10 step 7, one file a stratum)")
+            continue
+        code = strip_rerail(path.read_text())
+        for h in heads.get(f, ()):
+            if not re.search(rf"^{h}\(", code, re.M):
+                failures.append(f"kernel/{f}.rerail: no rule writes {h} (Steps, Strata, Roll-up §2)")
+    for path in sorted((CRATE / "src").rglob("*.rs")):
+        if path.name.endswith("_tests.rs"):
+            continue
+        hits(path, strip_rust(path.read_text()), r"\bbound_before\b|\bwaits\b|\bk1-\d", "the binding lowerer in Rust "
+             "(it is rules, in kernel/)", failures)
+    phase = strip_rust((CRATE / "src" / "phase.rs").read_text())
+    if "r.head == load" not in phase or "self.load != Some(" not in phase:
+        failures.append("phase.rs: a level answers no load facts of its program, or passes its asks on as facts out")
+    if "fn a_k1_rule_lowered_by_p3_gives_the_rows_of_its_hand_ordered_k0_form" not in (CRATE / "src" / "phase_tests.rs").read_text():
+        failures.append("B§10 step 7's test is missing")
+
+
 def main() -> int:
     failures: list = []
-    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, b6, reach, e1, kept, b8, planning):
+    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, b6, reach, e1, kept, b8, planning, k1):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, B6, reach, E1, kept, B8, planning)")
+    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, B6, reach, E1, kept, B8, planning, K1)")
     return 0
 
 
