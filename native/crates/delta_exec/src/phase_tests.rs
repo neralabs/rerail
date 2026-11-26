@@ -566,7 +566,7 @@ const KERNEL: [(&str, &str); 13] = [
 
 /// The compiler (B§6, L4; B§10 step 9): the full lowerer, written in the language the kernel lowers. L3 reads it into
 /// P4, which reads the user's files at L4.
-const COMPILER: [(&str, &str); 23] = [
+const COMPILER: [(&str, &str); 25] = [
     ("compiler/c-1-read.rerail", include_str!("../rerail/compiler/c-1-read.rerail")),
     ("compiler/c-2-shared.rerail", include_str!("../rerail/compiler/c-2-shared.rerail")),
     ("compiler/c-3-rank.rerail", include_str!("../rerail/compiler/c-3-rank.rerail")),
@@ -590,6 +590,8 @@ const COMPILER: [(&str, &str); 23] = [
     ("compiler/c-21-phases.rerail", include_str!("../rerail/compiler/c-21-phases.rerail")),
     ("compiler/c-22-phase-own.rerail", include_str!("../rerail/compiler/c-22-phase-own.rerail")),
     ("compiler/c-23-phase-map.rerail", include_str!("../rerail/compiler/c-23-phase-map.rerail")),
+    ("compiler/c-24-live.rerail", include_str!("../rerail/compiler/c-24-live.rerail")),
+    ("compiler/c-25-dead.rerail", include_str!("../rerail/compiler/c-25-dead.rerail")),
 ];
 
 /// What L3 reads: the stand-in for the compiler's files (Bootstrap §6: "P3 loads the full compiler"), a K0 file of
@@ -1006,6 +1008,41 @@ deco(z) :- st__def(x), y = @cat(x, \"!\"), z = @cat(y, \"?\").\n";
     r.last = None;
     let e = r.try_run().expect_err("an aggregate of its own stratum");
     assert!(e.contains("zz/zz_in"), "{e}");
+}
+
+/// The passes' kill group (the program-bistate page's §4; today's `Prune`, `DropUnread`): a program that declares
+/// outputs keeps the rules of the relations they read, directly or through other rules (a negation's, an aggregate's
+/// included), and of the relations the engine reads of a level (its loads, the next program's K-form); every other
+/// rule is dropped. A program that declares none is read whole. Edits give what a cold run gives.
+#[test]
+fn rules_no_output_reads_are_dropped_by_the_compilers_pass() {
+    const OUT: &str = ".output keep, cnt, has_extra\n";
+    const U: &str = "keep(x) :- a(x), !gone(x).\ncnt(k) :- k = count : { seen(_) }.\njunk2(x) :- junk(x).\n\
+load(\"extra.rerail\", \"extra\", \"rr\").\nhas_extra(p) :- doc(_, p, _), p = \"extra.rerail\".\n";
+    // An earlier module (a negation and an aggregate read one), with a relation only a dropped rule reads.
+    const F: &str = "base(\"a\").\nbase(\"b\").\nbase(\"c\").\na(x) :- base(x).\ngone(x) :- base(x), x = \"b\".\nseen(x) :- base(x).\njunk(x) :- base(x).\n";
+    let mut r = compiler_files("phase-prune", ROOTS, &[("u-facts.rerail", F), ("u.rerail", &format!("{OUT}{U}")), ("extra.rerail", "ex(1).\n")]);
+    r.run();
+    let one = |r: &Run, xs: &[&str]| -> BTreeSet<Vec<i64>> { xs.iter().map(|x| vec![r.s(x)]).collect() };
+    let check = |r: &Run, what: &str, outputs: bool| {
+        assert_eq!(r.rows(3, "keep"), one(r, &["a", "c"]), "{what}: an output");
+        assert_eq!(r.rows(3, "gone"), one(r, &["b"]), "{what}: a negation an output reads");
+        assert_eq!(r.rows(3, "cnt"), [vec![3]].into_iter().collect(), "{what}: an aggregate of a relation only it reads");
+        assert_eq!(r.rows(3, "has_extra"), one(r, &["extra.rerail"]), "{what}: a load no output reads, the engine's");
+        let junk = if outputs { BTreeSet::new() } else { one(r, &["a", "b", "c"]) };
+        assert_eq!(r.rows(3, "junk"), junk, "{what}: a relation no output reads");
+        assert_eq!(r.rows(3, "junk2"), junk, "{what}: and one it reads");
+    };
+    check(&r, "cold", true);
+    r.write("u.rerail", U, 40);
+    r.run();
+    check(&r, "no outputs", false);
+    r.write("u.rerail", &format!("{OUT}{U}"), 30);
+    r.run();
+    check(&r, "outputs again", true);
+    r.last = None;
+    r.run();
+    check(&r, "cold again", true);
 }
 
 /// Lattices (B§6, L4; `core.rerail`; L4-i): a relation whose last column is a lattice keeps one row a key, the join

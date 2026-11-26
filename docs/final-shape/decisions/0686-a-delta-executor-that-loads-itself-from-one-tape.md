@@ -2696,3 +2696,36 @@ Checks (Relax, local, 145 of 145, at a load average of 43 to 60: the suite took 
 Still to build in step 9: the other passes of §4's groups (pruning what no output reads, the per-rule rewrites,
 demand's rules, the file-local split, the declarations). Then, from B§6's L4 row: ordered by, must/may, and
 violations and edits.
+
+### L4: the passes' kill group, rules no output reads dropped (the program-bistate page's §4; 2026-11-26)
+
+§4's first group, "Kill only… which rules go (reachability from outputs…)": today's `Prune` and `DropUnread`. As
+the compiler's rules, two files (c-24, c-25), applied by c-10, the emission:
+- **c-24:** each rule's head and reads under their names in the program: a phase's renamed (c-23), a negation's
+  and an aggregate's folded relation included, and a pattern's rule (c-20) as any other.
+  - An output is a relation `.output` names, in a file that is no phase's, since a phase hands on its exports alone.
+    Violations will be outputs too, when they are built.
+  - The relations the engine reads of a level are outputs as well: `load`, which it answers, and the next program's
+    K-form.
+  - Live: the outputs, and whatever a live relation's rules read.
+- **c-25:** a rule is dead when the program declares an output and no live relation is its head. A program that
+  declares none is read whole: every relation is its output. That is how the tests read every level and the
+  compiler reads itself.
+- **c-10** writes no dead rule's rule, steps or arguments. **c-11's graph** is now built on the per-rule heads and
+  reads of the rules kept, so a dropped rule orders nothing and puts no module in a cycle. Its own copy of the phase
+  map (the last section's) is gone.
+
+Checks (Relax, local, 146 of 146, at a load average of 18 to 39: the suite took 151 s):
+`rules_no_output_reads_are_dropped_by_the_compilers_pass`.
+- An output's rules are kept, through a negation and through an aggregate of a relation only that aggregate reads,
+  across two modules.
+- A `load` rule no output reads is kept, and its file is loaded.
+- An unread chain across both modules is dropped.
+- The outputs taken away (every relation is then read) and put back, then a cold run: each gives what it should.
+- **Mutations caught:**
+  - dead without the "declares an output" guard (a program of no output kept nothing);
+  - an aggregate's reads not followed;
+  - `load` not among the engine's reads.
+
+Still to build in step 9, from §4's groups: the per-rule rewrites, demand's rules, the file-local split, the
+declarations. Then, from B§6's L4 row: ordered by, must/may, and violations and edits.

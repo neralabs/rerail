@@ -1,0 +1,4 @@
+// The kill group's pass (c-24), decided: a rule is dead when the program declares an output and no output reads its
+// relation. A program that declares none is read whole: every relation is its output. c-10 writes no dead rule, and
+// c-11's graph has none.
+dead(d, r) :- rule_head(d, r, h), has_output(_), !live(h).

@@ -1,0 +1,28 @@
+// The passes (the program-bistate page's §4, as B§ has them: rules that decide, c-10 that writes), the kill group's:
+// the rules of relations no output reads, directly or through other rules, are dropped (today's `Prune` and
+// `DropUnread`). This stratum: each rule's head and reads under their names in the program (a phase's renamed, c-23),
+// the outputs, and what is live.
+rule_head(d, r, h) :- read_rule(d, r, h), !ph_module(d).
+rule_head(d, r, n) :- read_rule(d, r, h), ph_own(d, h, n).
+rule_head(pd, r, h) :- p_rule(pd, r, h).
+rule_read(d, r, x) :- read_step(d, r, _, -1, "atom", x), !ph_module(d) ; read_step(d, r, _, -1, "not", x), !ph_module(d).
+rule_read(d, r, y) :- read_step(d, r, _, -1, s, x), ph_step(d, s, x, y), s != "call", s != "cmp".
+rule_read(d, r, x) :- read_arg(d, r, _, _, _, t), agg_rel(d, t, x), !ph_module(d).
+rule_read(d, r, y) :- read_arg(d, r, _, _, _, t), agg_rel(d, t, x), ph_rel(d, x, y).
+// An output: a relation `.output` names, in a file that is no phase's (a phase hands on its exports alone). The
+// relations the engine reads of a level are outputs too: the loads it answers, and the next program's K-form.
+out_rel(d, n) :- kind(d, x, "io_directive"), node(d, x, _, s, _), node(d, w, ".output", s, _), kind(d, w, ".output"), field(d, x, "relation", o), field(d, o, "name", m), text(d, m, n), !ph_module(d).
+engine_reads("load").
+engine_reads("k_rule").
+engine_reads("k_step").
+engine_reads("k_arg").
+engine_reads("k_var").
+engine_reads("k_str").
+engine_reads("k_num").
+engine_reads("k_wild").
+engine_reads("k_decl").
+engine_reads("k_order").
+has_output(1) :- out_rel(_, _).
+live(x) :- out_rel(_, x).
+live(x) :- engine_reads(x).
+live(y) :- live(x), rule_head(d, r, x), rule_read(d, r, y).

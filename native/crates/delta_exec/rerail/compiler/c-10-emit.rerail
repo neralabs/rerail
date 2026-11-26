@@ -2,14 +2,14 @@
 // its last variable, t its turn there, every other step where it was read, at (k, -1): steps run in (k, j) order,
 // and (p, t) sorts after (p, -1) and before (p + 1, -1).
 // A phase's file (c-21..c-23) is written through its map: its relations renamed, its fact space its own.
-k_rule(d, r, h) :- read_rule(d, r, h), !ph_module(d).
-k_rule(d, r, n) :- read_rule(d, r, h), ph_own(d, h, n).
-k_step(d, r, p, n, s, x) :- at(d, r, f, p), turn(d, r, f, n), read_step(d, r, f, -1, s, x), !ph_module(d).
-k_step(d, r, p, n, s, y) :- at(d, r, f, p), turn(d, r, f, n), read_step(d, r, f, -1, s, x), ph_step(d, s, x, y).
-k_step(d, r, k, -1, s, x) :- read_step(d, r, k, -1, s, x), !placed(d, r, k), !ph_module(d).
-k_step(d, r, k, -1, s, y) :- read_step(d, r, k, -1, s, x), !placed(d, r, k), ph_step(d, s, x, y).
-k_arg(d, r, p, n, i, t) :- at(d, r, f, p), turn(d, r, f, n), read_arg(d, r, f, -1, i, t).
-k_arg(d, r, k, j, i, t) :- read_arg(d, r, k, j, i, t), !placed(d, r, k).
+// A dead rule (c-25: no output reads its relation) is not written.
+k_rule(d, r, h) :- rule_head(d, r, h), read_rule(d, r, _), !dead(d, r).
+k_step(d, r, p, n, s, x) :- at(d, r, f, p), turn(d, r, f, n), read_step(d, r, f, -1, s, x), !ph_module(d), !dead(d, r).
+k_step(d, r, p, n, s, y) :- at(d, r, f, p), turn(d, r, f, n), read_step(d, r, f, -1, s, x), ph_step(d, s, x, y), !dead(d, r).
+k_step(d, r, k, -1, s, x) :- read_step(d, r, k, -1, s, x), !placed(d, r, k), !ph_module(d), !dead(d, r).
+k_step(d, r, k, -1, s, y) :- read_step(d, r, k, -1, s, x), !placed(d, r, k), ph_step(d, s, x, y), !dead(d, r).
+k_arg(d, r, p, n, i, t) :- at(d, r, f, p), turn(d, r, f, n), read_arg(d, r, f, -1, i, t), !dead(d, r).
+k_arg(d, r, k, j, i, t) :- read_arg(d, r, k, j, i, t), !placed(d, r, k), !dead(d, r).
 k_var(d, t, v) :- read_var(d, t, v), !is_text(d).
 k_str(d, t, s) :- read_str(d, t, s), !is_text(d).
 k_str(d, t, s) :- agg_rel(d, t, s), !is_text(d), !ph_module(d).
@@ -24,9 +24,9 @@ k_rule(d, x, h) :- ph_refuse(d, x, h, _).
 k_arg(d, x, -1, -1, 0, x) :- ph_refuse(d, x, _, _).
 k_var(d, x, m) :- ph_refuse(d, x, _, m).
 // Each pattern's rule (L4-h, c-20), in its code's module.
-k_rule(pd, r, s) :- p_rule(pd, r, s).
-k_step(pd, r, k, j, s, x) :- p_step(pd, r, k, j, s, x).
-k_arg(pd, r, k, j, i, t) :- p_arg(pd, r, k, j, i, t).
+k_rule(pd, r, s) :- p_rule(pd, r, s), !dead(pd, r).
+k_step(pd, r, k, j, s, x) :- p_step(pd, r, k, j, s, x), !dead(pd, r).
+k_arg(pd, r, k, j, i, t) :- p_arg(pd, r, k, j, i, t), !dead(pd, r).
 k_var(pd, t, v) :- p_kvar(pd, t, v).
 k_str(pd, t, s) :- p_kstr(pd, t, s).
 k_num(pd, t, n) :- p_knum(pd, t, n).
