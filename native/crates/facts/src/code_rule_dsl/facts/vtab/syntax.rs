@@ -4849,12 +4849,16 @@ impl Viewed {
     /// the batch's (`node_order`'s key is one: `key << 32 | order`), or a `u32` (a kind, a field, a position, a
     /// line, a column, a depth, a size, a child's place, a tape id; the report's columns, `col + 1`, are too: a
     /// position is a `u32` offset in a text of at most `u32::MAX` bytes, so a column is at most `u32::MAX - 1`). Not
-    /// known: `tape`'s parent (its root's is `-1`).
+    /// known: `tape`'s parent (its root's is `-1`), `end_point`'s span.
     pub(super) fn col_kind(&self, column: usize) -> Option<made::ColKind> {
         use made::ColKind;
         match (self.view, *Self::columns(self.view).get(column)?) {
-            (View::Tape, "par") => None,
+            // `end_point`'s point is a span (`-1` where it has none).
+            (View::Tape, "par") | (View::End, "p") => None,
             (View::Node | View::Core | View::Loc(Place::Docof), "d") => Some(ColKind::Key),
+            // A node's text and an anonymous child's name: atoms, interned where they are read (`text_atom`, the
+            // names' atoms, decision 0353 row 7).
+            (View::Text | View::Op, "s") => Some(ColKind::Atom),
             (View::Loc(Place::Col), "c") => Some(ColKind::U32),
             (View::Order, "k") | (_, "n" | "p" | "c" | "a" | "b") => Some(ColKind::Node),
             (View::Node, "kind" | "start" | "end_")
