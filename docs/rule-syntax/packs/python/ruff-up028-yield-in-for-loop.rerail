@@ -1,17 +1,20 @@
-.policy "ruff-up028-yield-in-for-loop" revision 2
+.policy "ruff-up028-yield-in-for-loop" revision 3
 .description "Use yield from to delegate to an iterable instead of looping over it and yielding each item."
 .language python
 .mode steer
 .scope include "**/*"
 
-// Ruff UP028 (pyupgrade): `for x in it: yield x`, which is `yield from it`. The loop's body is that one yield,
-// the loop has no `else`, its function is not `async` (where `yield from` is a SyntaxError), and the yield
-// gives back the target unchanged: the same name, or the same names in the same order (`for a, b in z:
-// yield a, b`). The loop variables must not be read anywhere else in the scope, nested functions included
-// (`yield from` does not bind them); `del x` reads x too. The finding is at the loop.
-// "Read" is Ruff's: the scope's latest real binding of x carries the reads of every binding it replaced, back to
-// the last unconditional `del x` before it (one not under an if, while, match, except or else). So a read before
-// such a `del`, or one that the `del` leaves unbound, does not count.
+// Ruff UP028 (pyupgrade): `for x in it: yield x`, which is `yield from it`. The loop's body is that one yield
+// (parentheses around it or its value count for nothing), the loop has no `else`, its scope is not an `async`
+// function (where `yield from` is a SyntaxError; a class body or the module is never async), and the yield gives
+// back the target unchanged: the same name, or a tuple of the same names and tuples in the same order
+// (`for a, (b, c) in z: yield a, (b, c)`). `for (x) in y` targets the name x: `yield x,` is a tuple, not it.
+// The loop variables must not be read anywhere else (`del x`, `x += 1` and a nested `nonlocal x` read x too):
+// `yield from` does not bind them. The finding is at the loop.
+// "Read" is Ruff's, after its walk (python/python-12-scopes): Ruff checks the latest binding of x in the loop's
+// own scope that is bound (not a `del`, a bare annotation, or the end of an `except … as x` handler), and the
+// reads it carries: its own, and those of the bindings it replaced back to the last unconditional `del x`, handler
+// end, `global x` or `nonlocal x`. The iterable of `for x in x` is read before the loop binds x.
 //   for x in y:
 //       yield x                 ← UP028: yield from y
 //   for x, y in z:
@@ -23,69 +26,603 @@
 //       yield x
 //   print(x); del x; x = 1      ← UP028: the latest binding, x = 1, starts after the `del`
 #include "python/upgrade.rerail"
-//   body_stmt(b, s, i), body_len(b, k), run_scope(n, s, k), is_async(f), look(n, x, s), expr_ctx(n, c)
+//   body_stmt(b, s, i), body_len(b, k), run_scope(n, s, k), is_async(f), unparen(e, m)
+#include "python/python-12-scopes.rerail"
+//   ruff_scope_want(x), ruff_read_at(n, x, s, p), ruff_carries(s, x, e)
 
 .violation UP028(at: node, it: node) code "UP028"
     "Replace this loop with `yield from {it}` (parenthesize a bare tuple). Keep the loop if its target is declared global or nonlocal, or if callers send values the iterable cannot accept."
     suppress ruff "UP028"
-UP028(l, it) :- kind(l, "for_statement"), !op(l, "async"), !field(l, "alternative", _), field(l, "right", it),
-    field(l, "body", b), body_len(b, 1), body_stmt(b, st, 0), kind(st, "expression_statement"), child(st, y, 0),
-    !child(st, _, 1), kind(y, "yield"), !op(y, "from"), child(y, v, 0), field(l, "left", t), same_names(t, v),
-    run_scope(l, f, "function"), !is_async(f), !read_elsewhere(l).
-// yield_pair(t, v): a for loop's target t and the value v a `yield` in its body gives: the pairs same_names tests.
-// Without them, same_names would pair every identifier with every identifier of that name in the run.
-.decl yield_pair(t: node, v: node)
-yield_pair(t, v) :- kind(l, "for_statement"), field(l, "left", t), field(l, "body", b), body_stmt(b, st, 0),
-    kind(st, "expression_statement"), child(st, y, 0), kind(y, "yield"), child(y, v, 0).
-// same_names(t, v): the loop target t and the yielded value v are the same name, or tuples of the same names.
-.decl same_names(t: node, v: node)
-same_names(t, v) :- yield_pair(t, v), kind(t, "identifier"), unparen(v, w), kind(w, "identifier"), text(t, x), text(w, x).
-same_names(t, v) :- yield_pair(t, v), names_of(t, n), unparen(v, w), names_of(w, n),
-    count : { name_at(t, i, x), !name_at(w, i, x) } = 0.
-// names_of(e, n): e is a tuple (with or without parentheses) of n plain names; name_at gives the i-th.
-.decl name_at(e: node, i: number, x: symbol)
-name_at(e, i, x) :- tuple_kind(e), child(e, c, i), kind(c, "identifier"), text(c, x).
-.decl names_of(e: node, n: number)
-names_of(e, n) :- tuple_kind(e), n = count : { child(e, _, _) }, n = count : { name_at(e, _, _) }.
-.decl tuple_kind(e: node)
-tuple_kind(e) :- kind(e, k), (k = "pattern_list" ; k = "tuple_pattern" ; k = "tuple" ; k = "expression_list").
-// read_elsewhere(l): a target name x of loop l, bound in scope s, has a read other than the yield's own that Ruff
-// counts (up_counts).
+UP028(l, it) :- yf_loop(l, t, v), yf_same(t, v), field(l, "right", it), run_scope(l, s, _), !is_async(s),
+    !read_elsewhere(l).
+// yf_loop(l, t, v): l is `for t in …:` with no else and one statement, a yield of v (parentheses off).
+.decl yf_loop(l: node, t: node, v: node)
+yf_loop(l, t, v) :- kind(l, "for_statement"), !op(l, "async"), !field(l, "alternative", _), field(l, "left", t),
+    field(l, "body", b), body_len(b, 1), body_stmt(b, st, 0), kind(st, "expression_statement"), child(st, y0, 0),
+    !child(st, _, 1), unparen(y0, y), kind(y, "yield"), !op(y, "from"), child(y, v, 0).
+
+// ---- the same names: Ruff's is_same_expr, on its tree (no parentheses) -------------------------------------------
+// yf_pair(t, v): a target and a value is_same_expr compares: the loop's, then their elements at the same index.
+.decl yf_pair(t: node, v: node)
+yf_pair(t, v) :- yf_loop(_, t, v).
+yf_pair(a, b) :- yf_pair(t, v), yf_bare(t, t2), yf_bare(v, v2), yf_elem(t2, a, i), yf_elem(v2, b, i).
+// yf_paren(e, c): e is c in parentheses. tree-sitter parses the target `(x)` as a tuple pattern of one element, as
+// `(x,)`; only the comma after the element (the tape has no token for it) makes it one.
+.decl yf_paren(e: node, c: node)
+yf_paren(e, c) :- kind(e, "parenthesized_expression"), unparen(e, c), c != e.
+yf_paren(e, c) :- kind(e, "tuple_pattern"), count : { child(e, c2, _), !kind(c2, "comment") } = 1,
+    child(e, c, _), !kind(c, "comment"), node(_, e, _, s, en), node(_, c, _, _, ce), text(e, t),
+    match("\\s*(#[^\\n]*\\n\\s*)*\\)", substr(t, ce - s, en - ce)).
+.decl yf_term(e: node)
+yf_term(e) :- yf_pair(e, _).
+yf_term(e) :- yf_pair(_, e).
+yf_term(c) :- yf_term(e), yf_paren(e, c).
+// yf_bare(e, m): e with its parentheses off.
+.decl yf_bare(e: node, m: node)
+yf_bare(e, e) :- yf_term(e), !yf_paren(e, _).
+yf_bare(e, m) :- yf_term(e), yf_paren(e, c), yf_bare(c, m).
+.decl yf_tuple(e: node)
+yf_tuple(e) :- yf_bare(_, e), kind(e, k), (k = "pattern_list" ; k = "tuple_pattern" ; k = "tuple" ;
+    k = "expression_list").
+// yf_elem(e, c, i): c is tuple e's i-th element.
+.decl yf_elem(e: node, c: node, i: number)
+yf_elem(e, c, i) :- yf_tuple(e), child(e, c, j), !kind(c, "comment"),
+    i = count : { child(e, c2, j2), j2 < j, !kind(c2, "comment") }.
+// yf_diff(t, v): not the same: names differ, a side is neither a name nor a tuple (`*a`, `[a, b]`), the tuples'
+// lengths differ, or two elements differ.
+.decl yf_diff(t: node, v: node)
+yf_diff(t, v) :- yf_pair(t, v), yf_bare(t, a), yf_bare(v, b), kind(a, "identifier"), kind(b, "identifier"),
+    text(a, x), text(b, y), x != y.
+yf_diff(t, v) :- yf_pair(t, v), yf_bare(t, a), yf_bare(v, b), yf_kind_of(a, ka), yf_kind_of(b, kb), ka != kb.
+yf_diff(t, v) :- yf_pair(t, v), yf_bare(t, a), yf_bare(v, b), yf_tuple(a), yf_tuple(b),
+    n = count : { yf_elem(a, _, _) }, m = count : { yf_elem(b, _, _) }, n != m.
+yf_diff(t, v) :- yf_pair(t, v), yf_bare(t, t2), yf_bare(v, v2), yf_elem(t2, a, i), yf_elem(v2, b, i), yf_diff(a, b).
+// yf_kind_of(e, k): "name", "tuple", or "other" for anything else (`*a`, `[a, b]`, `a.b`), which is never the same.
+.decl yf_kind_of(e: node, k: symbol)
+yf_kind_of(e, "name") :- yf_bare(_, e), kind(e, "identifier").
+yf_kind_of(e, "tuple") :- yf_bare(_, e), yf_tuple(e).
+yf_kind_of(e, "other") :- yf_bare(_, e), !kind(e, "identifier"), !yf_tuple(e).
+yf_diff(t, v) :- yf_pair(t, v), yf_bare(t, a), yf_kind_of(a, "other").
+.decl yf_same(t: node, v: node)
+yf_same(t, v) :- yf_pair(t, v), !yf_diff(t, v).
+// yf_vname(l, w, x): w is a name x in the value loop l yields (Ruff's collect_names).
+.decl yf_vname(l: node, w: node, x: symbol)
+yf_vname(l, w, x) :- yf_loop(l, _, v), yf_pair(_, b), (b = v ; within(b, v)), yf_bare(b, w), kind(w, "identifier"),
+    text(w, x).
+ruff_scope_want(x) :- yf_vname(_, _, x).
+// read_elsewhere(l): a name the loop yields is read somewhere other than that name in the yield.
 .decl read_elsewhere(l: node)
-read_elsewhere(l) :- up_target(l, x, s), ast_name(n, x), expr_ctx(n, c), c != "store", look(n, x, s),
-    !yield_name(l, n), up_counts(s, x, n).
-.decl up_target(l: node, x: symbol, s: node)
-up_target(l, x, s) :- kind(l, "for_statement"), field(l, "left", t), (kind(t, "identifier"), x0 = t ; child(t, x0, _)),
-    text(x0, x), look(x0, x, s).
-.decl yield_name(l: node, n: node)
-yield_name(l, n) :- yield_pair(t, v), field(l, "left", t), (n = v ; within(n, v)).
-// Events of x in s by offset: a binding takes effect at the end of its site, an unconditional `del x` at the end
-// of its name (its own read sees what came before). up_last: the latest binding, the one Ruff checks.
-.decl up_bind(s: node, x: symbol, p: number)
-up_bind(s, x, p) :- up_target(_, x, s), binding(s, x, site, _), node(_, site, _, _, p).
-.decl up_last(s: node, x: symbol, b: number)
-up_last(s, x, b) :- up_target(_, x, s), b = max p : { up_bind(s, x, p) }.
-.decl up_del(s: node, x: symbol, p: number)
-up_del(s, x, p) :- up_target(_, x, s), del_name(st, n), kind(n, "identifier"), text(n, x), nearest(st, s, scope),
-    !cond_del(st), node(_, n, _, _, p).
-// del_name(st, n): n is a target of `del` statement st, through tuples, lists and parentheses (`del (x), [y]`).
-.decl del_name(st: node, n: node)
-del_name(st, n) :- kind(st, "delete_statement"), child(st, n, _).
-del_name(st, n) :- del_name(st, m), kind(m, k), (k = "expression_list" ; k = "parenthesized_expression" ;
-    k = "tuple" ; k = "list"), child(m, n, _).
-// cond_del(st): Ruff makes no deletion binding for a `del` on a conditional branch, in a handler or an else.
-.decl cond_del(st: node)
-cond_del(st) :- kind(st, "delete_statement"), within(st, a), kind(a, k), (k = "if_statement" ; k = "while_statement" ;
-    k = "match_statement" ; k = "except_clause" ; k = "except_group_clause" ; k = "else_clause" ;
-    k = "conditional_expression").
-// up_counts(s, x, n): read n reaches the latest binding's chain. Read in s's own walk, n sees the latest event
-// above it, which must be a binding with no `del` between it and the latest binding (or n, if n is later). Read
-// from a nested function, n sees s's final state: the latest binding, unless a `del` follows it.
-.decl up_counts(s: node, x: symbol, n: node)
-up_counts(s, x, n) :- up_target(_, x, s), look(n, x, s), up_direct(n, s), node(_, n, _, r, _),
-    q0 = max q : { up_bind(s, x, q), q <= r }, up_last(s, x, b), count : { up_del(s, x, q), q > q0, q < max(r, b) } = 0.
-up_counts(s, x, n) :- up_target(_, x, s), look(n, x, s), !up_direct(n, s), up_last(s, x, b),
-    count : { up_del(s, x, q), q > b } = 0.
-.decl up_direct(n: node, s: node)
-up_direct(n, s) :- look(n, _, s), up_fn_of(n, s).
-up_direct(n, s) :- look(n, _, s), kind(s, "module"), !up_fn_of(n, _).
+read_elsewhere(l) :- yf_vname(l, w, x), run_scope(l, s, _), ruff_read_at(n, x, s, e), n != w, ruff_carries(s, x, e).
+
+// an `except … as x` unbinds x at its end; `x = 1` after it carries no reads (UP028)
+.test except_target_unbinding_restarts_the_chain exactly
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            print(x)
+            try: pass
+            except Exception as x: pass
+            x = 1
+        ```
+    .expect UP028 at "a.py":2
+.end
+// `except*` unbinds its target the same way
+.test except_star_target_unbinding_restarts_the_chain exactly
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            print(x)
+            try: pass
+            except* Exception as x: pass
+            x = 1
+        ```
+    .expect UP028 at "a.py":2
+.end
+// a read after the handler belongs to the unbound name; the handler's binding carries only the loop's reads
+.test read_after_handler_end_is_not_the_loops exactly
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            try: pass
+            except Exception as x: pass
+            print(x)
+        ```
+    .expect UP028 at "a.py":2
+.end
+// a read inside the handler is the handler binding's, which carries the loop's reads
+.test read_in_handler_counts
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            try: pass
+            except Exception as x: print(x)
+        ```
+    .expect no UP028
+.end
+// nested tuples of names are the same expression
+.test nested_tuple_target exactly
+    .fixture "a.py" ```
+        def f(items):
+            for x, (y, z) in items:
+                yield x, (y, z)
+        ```
+    .expect UP028 at "a.py":2
+.end
+// Ruff's tree has no parentheses: `(a), (b)` and `(yield x)`
+.test parentheses_count_for_nothing exactly
+    .fixture "a.py" ```
+        def a(z):
+            for a, b in z:
+                yield (a), (b)
+
+        def b(y):
+            for (x) in y:
+                (yield x)
+        ```
+    .expect UP028 at "a.py":2
+    .expect UP028 at "a.py":6
+.end
+// `for (x)` targets the name x; `yield x,` is a tuple
+.test parenthesized_target_is_not_a_tuple
+    .fixture "a.py" ```
+        def f(y):
+            for (x) in y:
+                yield x,
+        ```
+    .expect no UP028
+.end
+// `(x,)` is a tuple of one, the same as `x,`
+.test one_tuple_target exactly
+    .fixture "a.py" ```
+        def f(y):
+            for (x,) in y:
+                yield x,
+        ```
+    .expect UP028 at "a.py":2
+.end
+// each yielded name is excluded alone: `yield x, x` reads x twice
+.test duplicate_target_names
+    .fixture "a.py" ```
+        def f(z):
+            for x, x in z:
+                yield x, x
+        ```
+    .expect no UP028
+.end
+// `x += 1` reads x before binding it
+.test augmented_assignment_reads
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            x += 1
+        ```
+    .expect no UP028
+.end
+// a nested `nonlocal x` is a read of the enclosing binding
+.test nested_nonlocal_reads
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            def g():
+                nonlocal x
+        ```
+    .expect no UP028
+.end
+// a bare annotation is the scope's first binding; the loop carries the read it got
+.test read_of_bare_annotation_carries_over
+    .fixture "a.py" ```
+        def f(y):
+            x: int
+            print(x)
+            for x in y:
+                yield x
+        ```
+    .expect no UP028
+.end
+// Ruff binds a global target in the function's scope; another function's read does not reach it
+.test global_target_binds_locally exactly
+    .fixture "a.py" ```
+        def f(y):
+            global x
+            for x in y:
+                yield x
+
+        def g():
+            return x
+        ```
+    .expect UP028 at "a.py":3
+.end
+// a read after `global x` is the declaration's, and the loop carries it
+.test read_of_global_declaration_carries_over
+    .fixture "a.py" ```
+        def f(y):
+            global x
+            print(x)
+            for x in y:
+                yield x
+        ```
+    .expect no UP028
+.end
+// a nonlocal target binds in the inner function; the outer function's read is not its
+.test nonlocal_target_binds_locally exactly
+    .fixture "a.py" ```
+        def o():
+            x = 0
+            def f(y):
+                nonlocal x
+                for x in y:
+                    yield x
+            return x
+        ```
+    .expect UP028 at "a.py":5
+.end
+// a nested function that declares `global x` reads its own binding
+.test nested_global_read_is_not_the_loops exactly
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            def g():
+                global x
+                return x
+        ```
+    .expect UP028 at "a.py":2
+.end
+// a def clears the except-handler flag: its `del` is unconditional
+.test handler_does_not_reach_into_a_def exactly
+    .fixture "a.py" ```
+        try:
+            pass
+        except E:
+            def f(y):
+                for x in y:
+                    yield x
+                print(x)
+                del x
+                x = 1
+        ```
+    .expect UP028 at "a.py":5
+.end
+// an `if` around the def makes its `del` conditional
+.test if_reaches_into_a_def
+    .fixture "a.py" ```
+        if c:
+            def f(y):
+                for x in y:
+                    yield x
+                print(x)
+                del x
+                x = 1
+        ```
+    .expect no UP028
+.end
+// a loop's else around the def makes its `del` conditional
+.test loop_else_reaches_into_a_def
+    .fixture "a.py" ```
+        for _ in z:
+            pass
+        else:
+            def f(y):
+                for x in y:
+                    yield x
+                print(x)
+                del x
+                x = 1
+        ```
+    .expect no UP028
+.end
+// a `del` in a try's else makes no deletion
+.test try_else_delete_is_conditional
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            print(x)
+            try:
+                pass
+            except E:
+                pass
+            else:
+                del x
+            x = 1
+        ```
+    .expect no UP028
+.end
+// `for x in x` reads x before the loop binds it
+.test iterable_read_before_target exactly
+    .fixture "a.py" ```
+        def f():
+            for x in x:
+                yield x
+        ```
+    .expect UP028 at "a.py":2
+.end
+// Ruff checks a loop at module level too
+.test module_scope_loop exactly
+    .fixture "a.py" ```
+        for x in y:
+            yield x
+        ```
+    .expect UP028 at "a.py":1
+.end
+// and in a class body
+.test class_scope_loop exactly
+    .fixture "a.py" ```
+        class C:
+            for x in y:
+                yield x
+        ```
+    .expect UP028 at "a.py":2
+.end
+// a class body read before the class binds x reaches the function's x
+.test class_body_read_before_its_binding
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            class C:
+                print(x)
+                x = 1
+        ```
+    .expect no UP028
+.end
+// a class body is never an async context
+.test class_in_async_function_is_not_async exactly
+    .fixture "a.py" ```
+        async def f():
+            class C:
+                for x in y:
+                    yield x
+        ```
+    .expect UP028 at "a.py":3
+.end
+// a lambda reads the final binding
+.test lambda_read_counts
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            g = lambda: x
+        ```
+    .expect no UP028
+.end
+// a nested function's `del x` is in its own scope
+.test nested_del_is_its_own_scopes exactly
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            def g():
+                del x
+        ```
+    .expect UP028 at "a.py":2
+.end
+// a list is not the same expression as a tuple
+.test list_is_not_a_tuple
+    .fixture "a.py" ```
+        def f(y):
+            for (a, b) in y:
+                yield [a, b]
+        ```
+    .expect no UP028
+.end
+// the plain case
+.test simple_loop exactly
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+        ```
+    .expect UP028 at "a.py":2
+.end
+// another order is another tuple
+.test other_order_is_not_the_same
+    .fixture "a.py" ```
+        def f(z):
+            for x, y in z:
+                yield y, x
+        ```
+    .expect no UP028
+.end
+// a read after the loop is the loop binding's
+.test read_after_loop
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            print(x)
+        ```
+    .expect no UP028
+.end
+// an unconditional `del` ends the chain: `x = 1` carries no reads
+.test rebinding_after_unconditional_del exactly
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            print(x)
+            del x
+            x = 1
+        ```
+    .expect UP028 at "a.py":2
+.end
+// the first `del` reads the loop binding, the latest bound one
+.test second_del_reads_the_loop_binding
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            del x
+            del x
+        ```
+    .expect no UP028
+.end
+// a `del` in a handler of the same function makes no deletion
+.test handler_del_is_conditional
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            print(x)
+            try:
+                pass
+            except E:
+                del x
+            x = 1
+        ```
+    .expect no UP028
+.end
+// a `del` in a for body is not conditional for Ruff
+.test loop_body_del_is_unconditional exactly
+    .fixture "a.py" ```
+        def f(y, z):
+            for x in y:
+                yield x
+            print(x)
+            for _ in z:
+                del x
+            x = 1
+        ```
+    .expect UP028 at "a.py":2
+.end
+// a nested function's read before its own binding of x reaches the outer x
+.test nested_read_before_its_own_binding
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            def g():
+                print(x)
+                x = 2
+        ```
+    .expect no UP028
+.end
+// a comprehension's target is its own scope's
+.test comprehension_binds_its_own exactly
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            return [x for x in y]
+        ```
+    .expect UP028 at "a.py":2
+.end
+// a comprehension's element reads the function's x
+.test comprehension_reads_outer
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            return [x for _ in y]
+        ```
+    .expect no UP028
+.end
+// a method does not see the class body's names
+.test method_does_not_see_class_names exactly
+    .fixture "a.py" ```
+        class C:
+            for x in y:
+                yield x
+            def m(self):
+                return x
+        ```
+    .expect UP028 at "a.py":2
+.end
+// nor does a comprehension in the class body
+.test comprehension_does_not_see_class_names exactly
+    .fixture "a.py" ```
+        class C:
+            for x in y:
+                yield x
+            z = [x for _ in w]
+        ```
+    .expect UP028 at "a.py":2
+.end
+// a walrus after the loop carries the loop's reads: the yield's only
+.test walrus_rebinding_carries_only_the_yield exactly
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            if (x := 1):
+                pass
+        ```
+    .expect UP028 at "a.py":2
+.end
+// the loop carries the parameter's reads
+.test read_of_parameter_carries_over
+    .fixture "a.py" ```
+        def f(y, x):
+            print(x)
+            for x in y:
+                yield x
+        ```
+    .expect no UP028
+.end
+// a `del` before the loop ends the parameter's chain
+.test read_before_del_does_not_carry exactly
+    .fixture "a.py" ```
+        def f(y, x):
+            print(x)
+            del x
+            for x in y:
+                yield x
+        ```
+    .expect UP028 at "a.py":4
+.end
+// `yield from` is not allowed in an async function
+.test async_function
+    .fixture "a.py" ```
+        async def f(y):
+            for x in y:
+                yield x
+        ```
+    .expect no UP028
+.end
+// a loop with an else is kept
+.test loop_with_else
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            else:
+                pass
+        ```
+    .expect no UP028
+.end
+// the yield must give the target back unchanged
+.test yield_of_another_expression
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x + 1
+        ```
+    .expect no UP028
+.end
+// a nested def's default is read in the function's walk
+.test default_argument_reads_in_the_function
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            def g(a=x):
+                pass
+        ```
+    .expect no UP028
+.end
+// `del (x)` reads x
+.test parenthesized_del_reads
+    .fixture "a.py" ```
+        def f(y):
+            for x in y:
+                yield x
+            del (x)
+        ```
+    .expect no UP028
+.end

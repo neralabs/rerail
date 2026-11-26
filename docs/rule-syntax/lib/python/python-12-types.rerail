@@ -1,0 +1,110 @@
+// python/python-12-types: the strings Ruff parses as type expressions outside annotations, and the trees parsed
+// from them (python/names' parsed_in covers the strings of annotations); and the type code Ruff walks after the
+// function bodies. UP024 and UP026 read them; a rule that looks for expressions inside type strings (UP030-UP032)
+// can read type_str for the strings and their roots.
+//
+// Interface
+//   type_node(n)          n is read as a type by Ruff (in_type_definition), outside annotations: below a root
+//                         (below), or in a tree parsed from a type string
+//   type_str(s, r)        Ruff parses str literal s (or adjacent literals as a whole) as a type expression, and r is
+//                         the root of the parsed tree; s is in the file, or in a tree parsed from another type_str
+//   type_guest(e, s0)     e is in a tree parsed from a type_str; s0 is the outermost string, the one in the file.
+//                         A rule's finding at such an e must name type_guest in its clause (engine: a guest's node
+//                         is reported only with its guest relation there), e.g. `UP024(e) :- …, type_guest(e, _).`
+//   late_type(n)          n is in a `type` statement's value or a PEP 695 bound or default: Ruff walks it after
+//                         every function body (with the type-parameter definitions), whatever its place
+//   in_stub_bases(n, c)   n is in the bases or keywords of class c of a stub: Ruff walks them after the code around
+//                         c (after the module's own walk, before the function bodies, for a class outside functions)
+//
+// Ruff background (checkers/ast/mod.rs, visit_expr)
+//   - Ruff visits as a type definition: the type of typing's cast (first positional, or `typ=`) and TypeForm
+//     (first), NewType's second (`tp=`), TypeAliasType's second (`value=`), a TypeVar's constraints, `bound=` and
+//     `default=`; the arguments of a generic subscript (a typing name, a builtin list/dict/set/frozenset/tuple/type,
+//     a collections.abc class), but not `Literal[…]`'s and only `Annotated[…]`'s first; a PEP 613 alias's value
+//     (`X: TypeAlias = …`); a `type` statement's value; PEP 695 bounds and defaults. Below one, everything is a
+//     type too, except a call's arguments.
+//   - A str literal there is a forward reference: Ruff parses it after the whole file and visits its tree (and
+//     any string in that tree, as a type again). Bytes and f-strings are not parsed.
+//   - Not followed: NamedTuple's and TypedDict's functional fields, mypy_extensions' Arg forms, Ruff's full table
+//     of generic standard-library classes.
+//   - Ruff's deferred walk: the module (class bodies in it), then (in a stub) the class bases it met, the function
+//     bodies one nesting depth at a time, type-parameter bounds and defaults and `type` values, lambda bodies,
+//     annotations under PEP 563 (a stub's too), string type definitions; then the stub class bases met in
+//     functions, and so on until none is left (checkers/ast/mod.rs, visit_deferred).
+//
+//   from typing import cast, List
+//   cast("socket.error(1)", x)        type_str(<"socket.error(1)">, <socket.error(1)>), type_guest(<socket>, <…>)
+//   y = List["mock.mock.Y"]           type_str(<"mock.mock.Y">, …): a typing generic's argument
+//   z = foo["mock.mock.Y"]            no row: foo is not generic
+//   cast("Literal['a']", x)           type_str for the outer string only: `'a'` is a Literal's value
+//   type T = "IOError()"              type_str: a `type` value
+//   type X = mock.mock.Y              late_type(<mock.mock.Y>)
+//   class A(mock.mock.B): ...         in a .pyi: in_stub_bases(<mock.mock.B>, <A>)
+#include "python/upgrade.rerail"   // typing_ref, sym_at, up_arg, up_kwarg; python/names (parsed_in, ann_ctx, literal_str)
+
+// tys_root(r): an expression Ruff visits as a type definition, outside annotations.
+//   cast(List[int], x)     tys_root(<List[int]>)
+.decl tys_root(r: node)
+tys_root(a) :- tys_call(c, m), (m = "cast" ; m = "TypeForm"), up_arg(c, 0, a).
+tys_root(a) :- tys_call(c, m), (m = "NewType" ; m = "TypeAliasType"), up_arg(c, 1, a).
+tys_root(a) :- tys_call(c, "TypeVar"), up_arg(c, i, a), i > 0.
+tys_root(v) :- tys_call(c, m), up_kwarg(c, k, ka), tys_kw(m, k), field(ka, "value", v).
+tys_root(a) :- kind(s, "subscript"), field(s, "value", h), tys_generic(h, m), m != "Literal", field(s, "subscript", a),
+    (m != "Annotated" ; count : { field(s, "subscript", b), b < a } = 0).
+tys_root(v) :- kind(a, "assignment"), field(a, "type", t), unparen(t, t0), child(t0, n, 0), typing_ref(n, "TypeAlias"),
+    field(a, "right", v).
+tys_root(v) :- kind(a, "type_alias_statement"), field(a, "right", v).
+tys_root(b) :- type_param(_, _, _, _, _, b, _), !unset(b).
+tys_root(d) :- type_param(_, _, _, _, _, _, d), !unset(d).
+// tys_kw(m, k): keyword k of typing's m is a type.   NewType("N", tp="int")    tys_kw("NewType", "tp")
+.decl tys_kw(m: symbol, k: symbol)
+tys_kw("cast", "typ"). tys_kw("NewType", "tp"). tys_kw("TypeVar", "bound"). tys_kw("TypeVar", "default").
+tys_kw("TypeAliasType", "value").
+// tys_call(c, m): c calls typing's (or typing_extensions') m, parentheses off the callee.
+//   (typing.cast)("int", x)     tys_call(<call>, "cast")
+.decl tys_call(c: node, m: symbol)
+tys_call(c, m) :- kind(c, "call"), field(c, "function", f), unparen(f, f0), typing_ref(f0, m).
+// tys_generic(h, m): subscript head h is a class Ruff takes type arguments for.   list["int"]   tys_generic(<list>, "list")
+.decl tys_generic(h: node, m: symbol)
+tys_generic(h, m) :- typing_ref(h, m).
+tys_generic(h, x) :- sym_at(h, q), split_dot(q, "builtins", x),
+    (x = "list" ; x = "dict" ; x = "set" ; x = "frozenset" ; x = "tuple" ; x = "type").
+tys_generic(h, x) :- sym_at(h, q), split_dot(q, "collections.abc", x).
+
+// type_node(n): below a root, or in a parsed tree, and not in a call's arguments nor in `Annotated[…]`'s metadata.
+//   cast(f("int"), x)      type_node(<f("int")>), type_node(<f>); not <"int">
+//   cast(Annotated[int, "m"], x)    type_node(<int>); not <"m">
+.decl type_node(n: node)
+type_node(n) :- tys_root(n).
+type_node(r) :- type_str(_, r).
+type_node(c) :- type_node(p), child(p, c, _), !tys_call_args(c), !tys_meta(c).
+.decl tys_call_args(a: node)
+tys_call_args(a) :- kind(c, "call"), field(c, "arguments", a).
+.decl tys_meta(a: node)  // an argument after the first of `Annotated[…]`
+tys_meta(a) :- kind(s, "subscript"), field(s, "value", h), tys_generic(h, "Annotated"), field(s, "subscript", a),
+    count : { field(s, "subscript", b), b < a } > 0.
+// type_str(s, r): a str literal (or a whole implicit concatenation of them) read as a type, not a Literal's value,
+// and not in an annotation (those are parsed_in's).
+//   cast("List['int']", x)     type_str(<"List['int']">, <List['int']>), type_str(<'int'>, <int>)
+.decl type_str(s: node, r: node)
+type_str(s, r) :- type_node(s), kind(s, "string"), string_form(s, "str"), !concat_part(s), !literal_str(s),
+    !ann_ctx(s), !parsed_in(s, _), parsed(s, "annotation", r).
+type_str(s, r) :- type_node(s), kind(s, "concatenated_string"), !fstring(s), child(s, c, 0), string_form(c, "str"),
+    !literal_str(s), !ann_ctx(s), !parsed_in(s, _), parsed(s, "annotation", r).
+// type_guest(e, s0): e is in a tree parsed from type string s0 of the file, or from a string nested in it.
+//   cast("List['int']", x)     type_guest(<int>, <"List['int']">)
+.decl type_guest(e: node, s0: node)
+type_guest(e, s) :- type_str(s, r), docof(s, d), doc_role(d, "primary"), (e = r ; within(e, r)).
+type_guest(e, s0) :- type_guest(s, s0), type_str(s, r), (e = r ; within(e, r)).
+
+// ---- the deferred walk ---------------------------------------------------------------------------------------
+// late_type(n): a `type` value, or a type parameter's bound or default, holds n.
+//   def f[T: socket.error = int](): …     late_type(<socket.error>), late_type(<socket>), late_type(<int>)
+.decl late_type(n: node)
+late_type(n) :- kind(a, "type_alias_statement"), field(a, "right", v), (n = v ; within(n, v)).
+late_type(n) :- type_param(_, _, _, _, _, b, d), (n = b ; within(n, b) ; n = d ; within(n, d)).
+// in_stub_bases(n, c): n is in the argument list after class c's name, in a stub.
+//   class C(Base, metaclass=M): …          in a.pyi: in_stub_bases(<Base>, <C>), in_stub_bases(<M>, <C>)
+.decl in_stub_bases(n: node, c: node)
+in_stub_bases(n, c) :- kind(c, "class_definition"), field(c, "superclasses", p), within(n, p), docof(c, d),
+    stub_file(d).

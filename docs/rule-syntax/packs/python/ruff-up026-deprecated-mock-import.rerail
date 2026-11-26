@@ -1,4 +1,4 @@
-.policy "ruff-up026-deprecated-mock-import" revision 2
+.policy "ruff-up026-deprecated-mock-import" revision 3
 .description "Use the standard library unittest.mock instead of the separate mock package; it has been built into Python since version 3.3."
 .language python
 .mode steer
@@ -9,29 +9,42 @@
 //   import mock, sys            ← UP026 at `mock` (each `mock` or `mock.mock` item, aliased or not)
 //   from mock import patch      ← UP026 at the statement (from `mock` only: `from mock.mock import x` is not)
 //   mock.mock.Mock()            ← UP026 at `mock.mock`: the object of an attribute, `mock.mock` by spelling
-//                                 (parentheses off), once Ruff has seen an import of the `mock` package
+//                                 (parentheses off), once Ruff has seen an import of the `mock` package; in a
+//                                 `case` pattern too (`case mock.mock.Y:`, `case mock.mock.Y():`, `{mock.mock.Y: 1}`),
+//                                 and in a string read as a type (`cast("mock.mock.Y", x)`, `List["mock.mock.Y"]`)
 //   x = mock.mock               not reported: nothing is read from it
-// "Once seen" is Ruff's walk order (seen_module): the module first, then function bodies a nesting level at a
-// time (all bodies of depth 1 in source order, then depth 2, …), then lambda bodies, then deferred annotations
-// (string annotations; every annotation in a stub, under `from __future__ import annotations`, or from 3.14).
+// "Once seen" is Ruff's walk order (seen_module): the module first, then (in a stub) the bases of the module's
+// classes, then function bodies a nesting level at a time (all bodies of depth 1 in source order, then depth 2,
+// …), then type-parameter bounds and defaults and `type` values, lambda bodies, deferred annotations (every
+// annotation in a stub, under `from __future__ import annotations`, or from 3.14), and last strings read as types
+// (string annotations, `cast("…")`); then the bases of a stub's classes defined in functions.
 //   def f(): return mock.mock.X       not reported: f's body is walked before outer's, which holds the import
 //   def outer():
 //       def inner(): return (mock).mock.X     ← UP026: depth 2, after the import at depth 1
 //       import mock
+//   type X = mock.mock.Y               ← UP026: walked after the module, whose next line imports mock
+//   import mock
 // The JSON's three clauses, one message each.
 #include "python/upgrade-imports.rerail"
+#include "python/python-12-types.rerail"
 //   plain_import(i, a, m, l), from_stmt(i, m), late_annotation(n) (python/upgrade)
+//   type_guest(e, s0): e is in a string Ruff parses as a type outside annotations   (python/python-12-types)
 
 .violation UP026(at: node, msg: symbol) code "UP026" "{msg}"
     suppress ruff "UP026"
 UP026(a, m) :- item_spelled(_, a, y), (y = "mock" ; y = "mock.mock"), says("import", m).
 UP026(i, m) :- from_stmt(i, "mock"), says("from", m).
-UP026(e, m) :- mock_attr(e), mock_seen(e), says("attribute", m).
+UP026(e, m) :- mock_attr(e), mock_seen(e), !type_guest(e, _), says("attribute", m).
+// In a type string (python/python-12-types): the engine reports a guest's node only with its guest relation here.
+UP026(e, m) :- mock_attr(e), mock_seen(e), type_guest(e, _), says("attribute", m).
 
-// mock_attr(e): e is `mock.mock`, parentheses off, and the object of an attribute.
+// mock_attr(e): e is `mock.mock`, parentheses off, and the object of an attribute; or a `case` pattern's dotted
+// name `mock.mock.…` (tree-sitter has no node for its `mock.mock`; the name starts where it does).
 .decl mock_attr(e: node)
 mock_attr(e) :- attr_of(_, o, _), unparen(o, e), attr_of(e, h0, "mock"), unparen(h0, h), kind(h, "identifier"),
     text(h, "mock").
+mock_attr(d) :- kind(d, "dotted_name"), inside(d, _, "case_pattern"), text(d, t),
+    match("mock\\.mock\\..+", @replace_all(t, "\\s+", "")).
 // item_spelled(i, a, y): item a of `import` statement i names module y, spaces taken out (`mock . mock`).
 .decl item_spelled(i: node, a: node, y: symbol)
 item_spelled(i, a, @replace_all(x, "\\s+", "")) :- plain_import(i, a, x, _).
@@ -43,14 +56,22 @@ mock_import(i, d) :- from_stmt(i, x), @head(x) = "mock", docof(i, d).
 // mock_seen(e): Ruff has visited a mock import before it visits e.
 .decl mock_seen(e: node)
 mock_seen(e) :- mock_attr(e), mock_late(e, d), mock_import(_, d).
-mock_seen(e) :- mock_attr(e), !mock_late(e, _), walk_depth(e, de), node(d, e, _, se, _), mock_import(i, d),
-    walk_depth(i, di), node(d, i, _, si, _), (di < de ; di = de, si < se).
-// mock_late(e, d): e of document d is walked after every function body: in a lambda's body, or an annotation
-// Ruff defers (a string annotation's tree belongs to the string's document).
+mock_seen(e) :- mock_attr(e), !mock_late(e, _), !stub_base(e), walk_depth(e, de), node(d, e, _, se, _),
+    mock_import(i, d), walk_depth(i, di), node(d, i, _, si, _), (di < de ; di = de, si < se).
+// A stub's class bases (keywords too) are walked after the module's own walk, before the function bodies.
+mock_seen(e) :- mock_attr(e), !mock_late(e, _), stub_base(e), docof(e, d), mock_import(i, d), walk_depth(i, 0).
+.decl stub_base(e: node)
+stub_base(e) :- mock_attr(e), in_stub_bases(e, c), !nearest(c, _, fn_body).
+// mock_late(e, d): e of document d is walked after every function body: in a lambda's body, a `type` value, a
+// type parameter's bound or default, an annotation Ruff defers, a string read as a type (its tree belongs to the
+// string's document), or the bases of a stub's class defined in a function (deferred again).
 .decl mock_late(e: node, d: number)
 mock_late(e, d) :- mock_attr(e), kind(l, "lambda"), field(l, "body", b), (e = b ; within(e, b)), docof(e, d).
 mock_late(e, d) :- mock_attr(e), parsed_in(e, s), docof(s, d).
+mock_late(e, d) :- mock_attr(e), type_guest(e, s), docof(s, d).
 mock_late(e, d) :- mock_attr(e), late_annotation(e), docof(e, d).
+mock_late(e, d) :- mock_attr(e), late_type(e), docof(e, d).
+mock_late(e, d) :- mock_attr(e), in_stub_bases(e, c), nearest(c, _, fn_body), docof(e, d).
 // walk_depth(n, k): n is walked with the function bodies of nesting depth k (0: the module's own walk). A def's
 // decorators, defaults and annotations are walked with the code around it; only its body is deferred.
 .decl fn_body(b: node)
@@ -67,3 +88,107 @@ walk_depth(n, k + 1) :- (mock_attr(n) ; mock_import(n, _)), nearest(n, b, fn_bod
 says("import", "Import mock from the standard library with `from unittest import mock` (add `as NAME` if it is aliased). Keep the separate package only if the code must still run on Python 2.").
 says("from", "Import from `unittest.mock` instead of `mock`; `from mock import mock` becomes `from unittest import mock`. Keep the separate package only if the code must still run on Python 2.").
 says("attribute", "Drop the redundant `.mock`: write `mock.NAME` instead of `mock.mock.NAME`.").
+
+// Strings read as types outside annotations are parsed and walked last: `cast`'s type (positional or `typ=`), a
+// typing generic's arguments; not an unknown subscript's.
+.test type_strings_outside_annotations exactly
+    .fixture "a.py" ```
+        import mock
+        from typing import cast, List
+        cast("mock.mock.Y", 1)
+        x = List["mock.mock.Y"]
+        y = cast(typ="mock.mock.Z", val=1)
+        z = foo["mock.mock.Y"]
+        v = cast(List["mock.mock.Y"], 1)
+        ```
+    .expect UP026 at "a.py":1
+    .expect UP026 at "a.py":3
+    .expect UP026 at "a.py":4
+    .expect UP026 at "a.py":5
+    .expect UP026 at "a.py":7
+.end
+
+// A type string is walked after the function bodies; the type itself is not.
+.test type_string_sees_import_in_function exactly
+    .fixture "a.py" ```
+        from typing import cast
+        x = cast("mock.mock.Y", 1)
+        y = cast(mock.mock.Z, 1)
+        def g():
+            import mock
+        ```
+    .expect UP026 at "a.py":2
+    .expect UP026 at "a.py":5
+.end
+
+// `type` values and type-parameter bounds and defaults are walked after the module and the function bodies.
+.test type_alias_value_is_deferred exactly
+    .fixture "a.py" ```
+        type X = mock.mock.Y
+        import mock
+        ```
+    .expect UP026 at "a.py":1
+    .expect UP026 at "a.py":2
+.end
+
+.test type_parameter_bounds_are_deferred exactly
+    .fixture "a.py" ```
+        def f[T: mock.mock.Y](): pass
+        class A[T = mock.mock.Y]: pass
+        type Z = "mock.mock.Y"
+        def g():
+            import mock
+        ```
+    .expect UP026 at "a.py":1
+    .expect UP026 at "a.py":2
+    .expect UP026 at "a.py":3
+    .expect UP026 at "a.py":5
+.end
+
+// Value, class, mapping and keyword patterns are attributes to Ruff; a bare `mock.mock` reads nothing from it.
+.test match_patterns exactly
+    .fixture "a.py" ```
+        import mock
+        match x:
+            case mock.mock.Y: pass
+            case mock.mock.Y(): pass
+            case {mock.mock.Y: 1}: pass
+            case mock.mock: pass
+            case P(a=mock.mock.Y.Z): pass
+            case [mock.mock.Q, 1]: pass
+        ```
+    .expect UP026 at "a.py":1
+    .expect UP026 at "a.py":3
+    .expect UP026 at "a.py":4
+    .expect UP026 at "a.py":5
+    .expect UP026 at "a.py":7
+    .expect UP026 at "a.py":8
+.end
+
+// A stub's class bases and keywords are walked after the module; those of a class in a function, after the
+// function bodies.
+.test stub_class_bases_are_deferred exactly
+    .fixture "a.pyi" ```
+        class A(mock.mock.B): ...
+        import mock
+        class C(metaclass=mock.mock.M): ...
+        def f():
+            class D(mock.mock.B): ...
+            import mock
+        ```
+    .expect UP026 at "a.pyi":1
+    .expect UP026 at "a.pyi":2
+    .expect UP026 at "a.pyi":3
+    .expect UP026 at "a.pyi":5
+    .expect UP026 at "a.pyi":6
+.end
+
+// … but before the function bodies: an import in a function comes too late.
+.test stub_class_base_before_function_bodies exactly
+    .fixture "a.pyi" ```
+        class A(mock.mock.B): ...
+        def f():
+            import mock
+        ```
+    .expect UP026 at "a.pyi":3
+.end

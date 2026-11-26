@@ -1,4 +1,4 @@
-.policy "ruff-up031-printf-string-formatting" revision 2
+.policy "ruff-up031-printf-string-formatting" revision 3
 .description "Use f-strings or str.format() instead of printf-style % formatting of string literals."
 .language python
 .mode steer
@@ -9,43 +9,45 @@
 // first piece that does not parse: no finding. A piece with a placeholder that has no `{}` equivalent is
 // reported at once, whatever R is, with the "by hand" message: a `%d`, `%i`, `%u` or `%c`; a `*` width or
 // precision; an empty key `%()s`; `%r`/`%a` with flags, width or precision; a width on `%s`; a placeholder
-// without a key when R is a dict. Otherwise R decides: a literal, a name, an attribute, a subscript, a call, a
-// tuple or a dict is reported (a dict whose keys are not distinct identifier strings by hand), anything else is
-// left (`"%s" % [x]`, `"%s" % (a + b)`, `"%s" % -1`). A finding Ruff can fix is at the `%` expression (from a
-// `(` around S); a by-hand one is at S itself, inside any parentheses.
-// Ruff checks a string annotation's code too.
+// without a key when R is a dict. Otherwise R decides: a literal (not a t-string), a name, an attribute, a
+// subscript, a call, a tuple or a dict is reported, anything else is left (`"%s" % [x]`, `"%s" % (a + b)`,
+// `"%s" % -1`). A dict is done by hand when its keys are not distinct identifier strings, or when it spans lines
+// and no key starts its line (Ruff indents the keywords like one). A finding Ruff can fix is at the `%`
+// expression (from a `(` around S); a by-hand one is at S itself, inside any parentheses.
+// The pieces are parsed by Ruff's own parser (python-12): a key runs to its balancing `)`, a width or precision
+// past 2147483647 does not parse, and `%b` is a bytes conversion. Ruff checks the code of a string annotation (and
+// other type-expression strings) too; one with escapes or adjacent literals makes Ruff 0.17.6 panic here, so it
+// is left.
 //   "%s %s" % (a, b)           ← UP031: "{} {}".format(a, b)
 //   "%d items" % (n + 1)       ← UP031, by hand
 //   "%" "s" % (x,)             not reported: the piece "%" does not parse
-//   b"%s" % (x,)   "%4%" % ()  not reported (bytes; does not parse)
+//   b"%s" % (x,)   "%4%" % ()   "%b" % x   "%s" % t"x"     not reported
 #include "python/upgrade-format.rerail"
-//   percent_fmt(b, s, r, v), pct_ok(v), pct_spec, pct_conv, rhs_form(e), lit_piece(e, s)
+//   percent_fmt(b, s, r, v), rhs_form(e), str_lit(e, v)
 #include "python/python-12.rerail"
-//   plain_str rows for the literals of string annotations
+//   rpct_value, rpct_ok, rpct_spec, str_body; tdef_guest, simple_guest; plain_str rows for type-expression strings
 
 // seg(b, k, x): the k-th piece of b's left string has the source text x between its quotes. Each is parsed
-// (pct_value is the parsers' seed).
+// (rpct_value is the parser's seed).
 .decl seg(b: node, k: number, x: symbol)
-seg(b, 0, x) :- percent_fmt(b, s, _, _), unparen(s, m), kind(m, "string"), raw_body(m, x).
+seg(b, 0, x) :- percent_fmt(b, s, _, _), unparen(s, m), kind(m, "string"), str_body(m, x).
 seg(b, k, x) :- percent_fmt(b, s, _, _), unparen(s, m), kind(m, "concatenated_string"), child(m, p, k),
-    kind(p, "string"), raw_body(p, x).
-pct_value(x) :- seg(_, _, x).
-.decl raw_body(p: node, x: symbol)
-raw_body(p, @slice(t, strlen(a), strlen(t) - strlen(z))) :- kind(p, "string"), text(p, t), child(p, st, 0),
-    kind(st, "string_start"), text(st, a), child(p, en, i), kind(en, "string_end"), text(en, z),
-    !child(p, _, i + 1).
+    kind(p, "string"), str_body(p, x).
+rpct_value(x) :- seg(_, _, x).
 // parsed_to(b, k): pieces 0 … k of b's left string all parse.
 .decl parsed_to(b: node, k: number)
-parsed_to(b, k) :- seg(b, k, x), pct_ok(x), count : { seg(b, j, y), j < k, !pct_ok(y) } = 0.
+parsed_to(b, k) :- seg(b, k, x), rpct_ok(x), count : { seg(b, j, y), j < k, !rpct_ok(y) } = 0.
 // at_left(b, s0): where Ruff reports: b's left string without parentheses.
 .decl at_left(b: node, s0: node)
-at_left(b, s0) :- percent_fmt(b, s, _, _), unparen(s, s0).
+at_left(b, s0) :- percent_fmt(b, s, _, _), unparen(s, s0), !complex_guest(b).
+.decl complex_guest(b: node)
+complex_guest(b) :- percent_fmt(b, _, _, _), tdef_guest(b, _), !simple_guest(b).
 
 .violation printf_string_formatting(at: node) code "UP031"
     "Replace this percent-format with an f-string or `.format()`; if the right side is a name that may hold a tuple, leave it or unpack it explicitly."
     suppress ruff "UP031"
-printf_string_formatting(b) :- percent_fmt(b, _, r, _), !manual(b), rhs_form(r),
-    count : { seg(b, k, _), !parsed_to(b, k) } = 0, !dict_bad(r).
+printf_string_formatting(b) :- percent_fmt(b, _, r, _), !manual(b), rhs_form(r), !string_form(r, "tstr"),
+    count : { seg(b, k, _), !parsed_to(b, k) } = 0, !dict_bad(r), !complex_guest(b).
 
 .violation printf_string_formatting_manual(at: node) code "UP031"
     "Rewrite this percent-format string as an f-string or `.format()` by hand: `%d`, `%i`, `%u`, `%c`, `*` widths and unusual dict keys need explicit conversion."
@@ -57,14 +59,15 @@ printf_string_formatting_manual(s0) :- percent_fmt(b, _, r, _), at_left(b, s0), 
 // manual(b): a piece that parses, after pieces that all parse, has a placeholder Ruff cannot convert.
 .decl manual(b: node)
 manual(b) :- seg(b, k, x), parsed_to(b, k), by_hand(x).
-manual(b) :- percent_fmt(b, _, r, _), kind(r, "dictionary"), seg(b, k, x), parsed_to(b, k), pct_spec(x, _, "", _, _, _).
+manual(b) :- percent_fmt(b, _, r, _), kind(r, "dictionary"), seg(b, k, x), parsed_to(b, k),
+    rpct_spec(x, _, "", _, _, _, _).
 // by_hand(x): a placeholder of x has no `{}` equivalent Ruff writes for it.
 .decl by_hand(x: symbol)
-by_hand(x) :- pct_star(x).
-by_hand(x) :- pct_conv(x, _, _, c), (c = "d" ; c = "i" ; c = "u" ; c = "c").
-by_hand(x) :- pct_spec(x, _, "()", _, _, _).
-by_hand(x) :- pct_conv(x, i, fl, c), (c = "a" ; c = "r"), pct_spec(x, i, _, w, p, _), (fl != "" ; w != "" ; p != "").
-by_hand(x) :- pct_conv(x, i, _, "s"), pct_spec(x, i, _, w, _, _), w != "".
+by_hand(x) :- rpct_spec(x, _, _, _, w, p, _), (w = "*" ; p = ".*").
+by_hand(x) :- rpct_spec(x, _, _, _, _, _, c), (c = "d" ; c = "i" ; c = "u" ; c = "c").
+by_hand(x) :- rpct_spec(x, _, "()", _, _, _, _).
+by_hand(x) :- rpct_spec(x, _, _, fl, w, p, c), (c = "a" ; c = "r"), (fl != "" ; w != "" ; p != "").
+by_hand(x) :- rpct_spec(x, _, _, _, w, _, "s"), w != "".
 // dict_bad(r): Ruff cannot write dict r as keywords: it is empty, or a key is not a str literal naming an
 // identifier, or two keys are the same (`**m` entries are kept).
 .decl dict_bad(r: node)
@@ -74,3 +77,91 @@ dict_bad(r) :- kind(r, "dictionary"), child(r, p, _), kind(p, "pair"), field(p, 
     !identifier(x).
 dict_bad(r) :- kind(r, "dictionary"), child(r, p, i), kind(p, "pair"), field(p, "key", k), str_lit(k, x),
     child(r, q, j), j < i, kind(q, "pair"), field(q, "key", k2), str_lit(k2, x).
+// Over several lines, Ruff writes one keyword per line indented like the first str key that starts its line
+// (only blanks before it); with none it gives up.
+dict_bad(r) :- kind(r, "dictionary"), line(r, l), !end_line(r, l), !key_starts_line(r).
+.decl key_starts_line(r: node)
+key_starts_line(r) :- kind(r, "dictionary"), child(r, p, _), kind(p, "pair"), field(p, "key", k), str_lit(k, _),
+    docof(k, d), line(k, l), col(k, c), split_line(d, l, t), match("[ \\t\\f]*", @slice(t, 0, c)).
+
+// `%b` is a bytes-only conversion: in a str the piece does not parse.
+.test percent_b_in_str_does_not_parse
+    .fixture "a.py" ```
+        "%b" % x
+        ```
+    .expect no UP031
+.end
+
+// A mapping key runs to its balancing `)`; an unclosed one does not parse.
+.test mapping_key_parentheses_balance exactly
+    .fixture "a.py" ```
+        "%(a(b))s" % x
+        "%(a(b)s" % x
+        "%(a(b)c)s" % x
+        ```
+    .expect UP031 at "a.py":1
+    .expect UP031 at "a.py":3
+.end
+
+// Width and precision are read as i32: a larger one does not parse.
+.test width_and_precision_overflow exactly
+    .fixture "a.py" ```
+        "%2147483648f" % x
+        "%2147483647f" % x
+        "%.2147483648f" % x
+        "%.2147483647f" % x
+        "%.0002147483647f" % x
+        ```
+    .expect UP031 at "a.py":2
+    .expect UP031 at "a.py":4
+    .expect UP031 at "a.py":5
+.end
+
+// A dict over several lines becomes keywords one per line, indented like a key that starts its line; with no
+// such key Ruff gives up and reports the string by hand.
+.test multiline_dict_needs_a_key_at_line_start exactly
+    .fixture "a.py" ```
+        x = (
+            "%(a)s"
+        ) % {"a": [
+            1]}
+        y = (
+            "%(a)s"
+        ) % {
+            "a": 1}
+        z = (
+            "%(a)s"
+        ) % {**k,
+            **j}
+        ```
+    .expect UP031 at "a.py":2
+    .expect UP031 at "a.py":5
+    .expect UP031 at "a.py":10
+.end
+
+// A t-string right side is none of the forms Ruff rewrites; a bytes one is.
+.test t_string_right_side exactly
+    .fixture "a.py" ```
+        "%s" % t"x"
+        "%s" % b"x"
+        ```
+    .expect UP031 at "a.py":2
+.end
+
+// Adjacent literals inside a string annotation are one str literal there, each piece parsed on its own.
+.test concatenated_literals_in_string_annotation exactly
+    .fixture "a.py" ```
+        z: "'%s' '%s' % (a, b)"
+        ```
+    .expect UP031 at "a.py":1
+.end
+
+// Annotated's metadata is not a type expression; cast's first argument is.
+.test type_expression_strings exactly
+    .fixture "a.py" ```
+        from typing import Annotated, cast
+        x: Annotated[int, "'%s' % a"]
+        cast("'%s' % a", q)
+        ```
+    .expect UP031 at "a.py":3
+.end

@@ -1,25 +1,65 @@
-.policy "ruff-up033-lru-cache-with-maxsize-none" revision 2
+.policy "ruff-up033-lru-cache-with-maxsize-none" revision 3
 .description "Use functools.cache instead of functools.lru_cache with maxsize=None; it is the same unbounded cache without the call."
 .language python
 .mode steer
 .scope include "**/*"
 
-// Ruff UP033 (pyupgrade): a decorator `@functools.lru_cache(maxsize=None)`, with that one keyword and nothing
-// else; parentheses count for nothing (`@(functools.lru_cache)(maxsize=(None))`). Python 3.9 added
+// Ruff UP033 (pyupgrade): a function's decorator `@functools.lru_cache(maxsize=None)`, with that one keyword and
+// nothing else; parentheses count for nothing (`@(functools.lru_cache)(maxsize=(None))`). Python 3.9 added
 // `functools.cache`, the same unbounded cache; below a 3.9 target the rule is off. Ruff's range starts where the
-// decorator's function ends, so the finding is at the function's last name.
+// decorator's function ends, so the finding is at the function's last name. A class's decorators are not looked
+// at, and the name is resolved in its own file only: Ruff does not follow another module's re-export.
 //   @functools.lru_cache(maxsize=None)        ← UP033
 //   @(functools.lru_cache  # c
 //   )(maxsize=None)                           ← UP033 on the first line, where lru_cache ends
 //   @lru_cache(user_func, maxsize=None)       not reported
+//   from mymod import lru_cache               not reported: `mymod.lru_cache` to Ruff, whatever mymod imports
 #include "python/upgrade.rerail"
-//   sym_at(e, q): e names q, through the bindings visible where it runs; targets(m): Python 3.m or later
+//   up_chain_name(e, q, how): e names q through the bindings visible where it runs, in its own file;
+//   targets(m): Python 3.m or later
 
 .violation UP033(at: node) code "UP033"
     "Replace `lru_cache(maxsize=None)` with `functools.cache` (importing `cache` from functools if needed); it is the same unbounded cache and takes no call."
     suppress ruff "UP033"
-UP033(at) :- targets(9), decorator(_, e), unparen(e, c), kind(c, "call"), field(c, "function", f), unparen(f, f0),
-    sym_at(f0, "functools.lru_cache"), (kind(f0, "identifier"), at = f0 ; field(f0, "attribute", at)),
+UP033(at) :- targets(9), decorator(d, e), kind(d, "function_definition"), unparen(e, c), kind(c, "call"),
+    field(c, "function", f), unparen(f, f0), up_chain_name(f0, "functools.lru_cache", _),
+    (kind(f0, "identifier"), at = f0 ; field(f0, "attribute", at)),
     field(c, "arguments", al), count : { child(al, a, _), !kind(a, "comment") } = 1, child(al, k, _),
     kind(k, "keyword_argument"), field(k, "name", n), text(n, "maxsize"), field(k, "value", v0), unparen(v0, v),
     kind(v, "none").
+
+// Ruff's lru_cache_with_maxsize_none runs on function definitions only.
+.test class_decorators_are_not_looked_at
+    .fixture "a.py" ```
+        import functools
+
+        @functools.lru_cache(maxsize=None)
+        class C: pass
+        ```
+    .expect no UP033
+.end
+
+// Ruff resolves `lru_cache` in use.py to `mymod.lru_cache`; it does not follow mymod's import of functools'.
+.test another_modules_reexport_is_not_followed
+    .fixture "mymod.py" ```
+        from functools import lru_cache
+        ```
+    .fixture "use.py" ```
+        from mymod import lru_cache
+
+        @lru_cache(maxsize=None)
+        def f(): pass
+        ```
+    .expect no UP033
+.end
+
+// The same import made in the file itself is functools' lru_cache.
+.test a_direct_import_is_reported exactly
+    .fixture "direct.py" ```
+        from functools import lru_cache
+
+        @lru_cache(maxsize=None)
+        def f(): pass
+        ```
+    .expect UP033 at "direct.py":3
+.end

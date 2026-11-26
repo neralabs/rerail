@@ -1,0 +1,158 @@
+// python/python-12-scopes: names as Ruff's semantic model binds and reads them, for its pyupgrade rules UP028 and
+// UP029. python/names follows Python: a `global x` write binds x in the module. Ruff does not: every binding
+// stays in the scope it is written in, a `global`/`nonlocal` declaration is a binding of that scope, and a read
+// resolves against the bindings a scope has *at that point of Ruff's walk*. Rules that compare with Ruff's
+// shadowing and references need that view.
+//
+// Interface (all on demand: the includer names the identifiers it asks about)
+//   ruff_scope_want(x)        the includer asks about identifier x
+//   ruff_site_scope(site, x, s)   python/names' binding of x at site is, for Ruff, in scope s: where it is
+//                             written (a comprehension's target in the comprehension, a walrus in the scope
+//                             around it), whatever `global` or `nonlocal` says
+//   ruff_del_name(st, n)      n is a name `del` statement st deletes, through tuples, lists and parentheses
+//   ruff_cond_del(st)         Ruff makes no deletion for `del` statement st (on_conditional_branch and its flags)
+//   ruff_event(s, x, p, k)    scope s gets an event of x at offset p, of kind k (below)
+//   ruff_read_at(n, x, s, p)  name n reads x, and Ruff hangs the read on s's event at p
+//   ruff_bound(s, x, f)       f is the offset of s's latest event of x that is bound: the binding Ruff's
+//                             `get_all(x).find(!is_unbound)` gives
+//   ruff_carries(s, x, e)     the reads of the event at e are among that binding's references
+//
+// Ruff background (crates/ruff_linter/src/checkers/ast/mod.rs: add_binding, handle_node_delete,
+// visit_except_handler, Stmt::Global/Nonlocal; ruff_python_semantic: resolve_load, resolve_del)
+//   - Events, in the scope's own walk. "bind": a binding, where Ruff makes it: a for loop's after its iterable,
+//     an assignment's and a walrus' after their value, `x += 1` after it has read x, the rest (def, class,
+//     import, parameter, with or match target) at their end. "exc": an `except … as x` handler binds x at its
+//     start; "unexc": it unbinds it at its end. "del": an unconditional `del x`. "decl": `global x` or
+//     `nonlocal x` in a function or class (Ruff ignores one at module level). "ann": a bare annotation `x: T`,
+//     only when the scope has nothing for x yet (Ruff keeps it aside otherwise), and never at module level for
+//     a builtin name (Ruff has already put the builtin there).
+//   - A `del` is conditional (no event) under an if, while or match statement or any else clause, even outside
+//     the def it is in (Ruff defers a body with the statement stack and flags it had), or in an except handler
+//     of its own function or class body (a def or class clears that flag). A for body or a try body is not.
+//   - A binding takes over the references of the one it replaces, unless that one is a `del` or a handler's end;
+//     a `del` and a `global`/`nonlocal` (added without add_binding) take over nothing.
+//   - A read belongs to the latest event above it in its scope's walk. Lookup starts at the scope the read runs
+//     in (python/pyflakes' run_scope) and goes out, over class bodies (seen only from directly inside). A
+//     function or lambda body is walked after the scopes around it: from there, a scope offers its last event.
+//     The first scope that has an event of x then takes the read (a bare annotation in a class body passes it
+//     on). `del x` reads its own scope only; a nested `nonlocal x` reads the scope above its own.
+//
+//   def f(y):
+//       for x in y:          ruff_event(f, "x", <end of y>, "bind")
+//           yield x          ruff_read_at(<x>, "x", f, <end of y>)
+//       print(x)             read of the loop's binding
+//       del x                ruff_event(f, "x", …, "del"); it reads the loop's binding first
+//       x = 1                ruff_bound(f, "x", <end of x = 1>); ruff_carries: only its own event (none read it)
+//   try:
+//       pass
+//   except E:
+//       def g(): del z       not ruff_cond_del: the def clears the handler flag
+//   if c:
+//       def h(): del z       ruff_cond_del: the if is on the statement stack
+#include "python/pyflakes.rerail"   // run_scope; python/ast (ast_name, expr_ctx), python/names (binding, tgt, tscope)
+
+.decl ruff_scope_want(x: symbol) extensible
+
+// ---- where Ruff binds ---------------------------------------------------------------------------------------------
+.decl ruff_site_scope(site: node, x: symbol, s: node)
+ruff_site_scope(p, x, s) :- ruff_scope_want(x), binding(s, x, p, "param").
+ruff_site_scope(t, x, s) :- ruff_scope_want(x), binding(_, x, t, form), form != "param", tgt(t), tscope(t, s).
+ruff_site_scope(site, x, s) :- ruff_scope_want(x), binding(_, x, site, form), form != "param", !tgt(site),
+    nearest(site, s, scope).
+// rsc_bind_pos(site, p): where the binding at site takes effect.
+.decl rsc_bind_pos(site: node, p: number)
+rsc_bind_pos(t, p) :- ruff_site_scope(t, _, _), tgt(t), nearest(t, a, target_stmt), rsc_takes_effect(a, p).
+rsc_bind_pos(t, p) :- ruff_site_scope(t, _, _), tgt(t), nearest(t, a, target_stmt), !rsc_takes_effect(a, _),
+    node(_, t, _, _, p).
+rsc_bind_pos(site, p) :- ruff_site_scope(site, _, _), !tgt(site), node(_, site, _, _, p).
+.decl rsc_takes_effect(a: node, p: number)
+rsc_takes_effect(a, p) :- kind(a, "for_statement"), field(a, "right", r), node(_, r, _, _, p).
+rsc_takes_effect(a, p) :- kind(a, k), (k = "assignment" ; k = "augmented_assignment" ; k = "named_expression"),
+    node(_, a, _, _, p).
+
+// ---- deletions ---------------------------------------------------------------------------------------------------
+.decl ruff_del_name(st: node, n: node)
+ruff_del_name(st, n) :- rsc_del_item(st, n), kind(n, "identifier").
+.decl rsc_del_item(st: node, n: node)
+rsc_del_item(st, n) :- kind(st, "delete_statement"), child(st, n, _).
+rsc_del_item(st, n) :- rsc_del_item(st, m), kind(m, k), (k = "expression_list" ; k = "parenthesized_expression" ;
+    k = "tuple" ; k = "list"), child(m, n, _).
+.decl ruff_cond_del(st: node)
+ruff_cond_del(st) :- kind(st, "delete_statement"), inside(st, _, rsc_cond_kind).
+ruff_cond_del(st) :- kind(st, "delete_statement"), nearest(st, h, rsc_handler_stop), kind(h, "except_clause").
+.decl rsc_cond_kind(k: symbol)
+rsc_cond_kind("if_statement"). rsc_cond_kind("while_statement"). rsc_cond_kind("match_statement").
+rsc_cond_kind("else_clause").
+.decl rsc_handler_stop(k: symbol)
+rsc_handler_stop("except_clause"). rsc_handler_stop("function_definition"). rsc_handler_stop("class_definition").
+
+// ---- events ------------------------------------------------------------------------------------------------------
+.decl rsc_ev0(s: node, x: symbol, p: number, k: symbol)
+rsc_ev0(s, x, p, "bind") :- ruff_site_scope(site, x, s), !binding(_, x, site, "except"), rsc_bind_pos(site, p).
+rsc_ev0(s, x, p, "exc") :- ruff_site_scope(t, x, s), binding(_, x, t, "except"), nearest(t, h, "except_clause"),
+    node(_, h, _, p, _).
+rsc_ev0(s, x, p, "unexc") :- ruff_site_scope(t, x, s), binding(_, x, t, "except"), nearest(t, h, "except_clause"),
+    node(_, h, _, _, p).
+rsc_ev0(s, x, p, "del") :- ruff_del_name(st, n), text(n, x), ruff_scope_want(x), nearest(st, s, scope),
+    !ruff_cond_del(st), node(_, n, _, _, p).
+rsc_ev0(s, x, p, "decl") :- (kind(g, "global_statement") ; kind(g, "nonlocal_statement")), child(g, n, _),
+    text(n, x), ruff_scope_want(x), nearest(g, s, scope), !kind(s, "module"), node(_, g, _, _, p).
+.decl ruff_event(s: node, x: symbol, p: number, k: symbol)
+ruff_event(s, x, p, k) :- rsc_ev0(s, x, p, k).
+ruff_event(s, x, p, "ann") :- rsc_ann(s, x, p), count : { rsc_ev0(s, x, q, _), q < p } = 0,
+    count : { rsc_ann(s, x, q), q < p } = 0, !rsc_module_builtin(s, x).
+.decl rsc_ann(s: node, x: symbol, p: number)
+rsc_ann(s, x, p) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), ruff_scope_want(x),
+    field(a, "type", _), !field(a, "right", _), nearest(a, s, scope), node(_, a, _, _, p).
+.decl rsc_module_builtin(s: node, x: symbol)
+rsc_module_builtin(s, x) :- rsc_ann(s, x, _), kind(s, "module"), builtin(x).
+
+// ---- reads -------------------------------------------------------------------------------------------------------
+// rsc_read(n, x, s, late): n reads x; lookup starts at s, after (late 1) or during s's walk.
+.decl rsc_read(n: node, x: symbol, s: node, late: number)
+rsc_read(n, x, s, 0) :- ast_name(n, x), ruff_scope_want(x), expr_ctx(n, "load"), !ruff_del_name(_, n),
+    run_scope(n, s, _).
+rsc_read(t, x, s, 0) :- binding(_, x, t, "augassign"), ruff_scope_want(x), run_scope(t, s, _).
+rsc_read(n, x, s, 1) :- kind(g, "nonlocal_statement"), child(g, n, _), text(n, x), ruff_scope_want(x),
+    run_scope(g, f, _), rsc_up(f, s).
+// rsc_up(s, p): lookup goes from scope s to p, over class bodies.
+.decl rsc_up(s: node, p: node)
+rsc_up(s, p) :- kind(s, k0), lscope(k0), run_scope(s, p, k), k != "class".
+rsc_up(s, p) :- kind(s, k0), lscope(k0), run_scope(s, c, "class"), rsc_up(c, p).
+.decl rsc_fn(s: node)
+rsc_fn(s) :- kind(s, "function_definition").
+rsc_fn(s) :- kind(s, "lambda").
+// rsc_path(n, x, s, late): the scopes above n's, late once the path has left a function or lambda body.
+// rsc_chain: those the lookup of n reaches.
+.decl rsc_path(n: node, x: symbol, s: node, late: number)
+rsc_path(n, x, s, l) :- rsc_read(n, x, s, l).
+rsc_path(n, x, p, l) :- rsc_path(n, x, s, l), rsc_up(s, p), !rsc_fn(s).
+rsc_path(n, x, p, 1) :- rsc_path(n, x, s, _), rsc_up(s, p), rsc_fn(s).
+// rsc_has(n, x, s, late): s has x when n is looked up there: an event above n, or any once s is done (a
+// comprehension's names are bound before its element is read, though written after it).
+.decl rsc_has(n: node, x: symbol, s: node, late: number)
+rsc_has(n, x, s, l) :- rsc_path(n, x, s, l), ruff_event(s, x, p, k), k != "ann", node(_, n, _, r, _),
+    (l = 1 ; rsc_comp(s) ; p <= r).
+rsc_has(n, x, s, l) :- rsc_path(n, x, s, l), ruff_event(s, x, p, "ann"), !kind(s, "class_definition"),
+    node(_, n, _, r, _), (l = 1 ; rsc_comp(s) ; p <= r).
+.decl rsc_comp(s: node)
+rsc_comp(s) :- kind(s, k), comp_scope(k).
+.decl rsc_chain(n: node, x: symbol, s: node, late: number)
+rsc_chain(n, x, s, l) :- rsc_read(n, x, s, l).
+rsc_chain(n, x, p, l) :- rsc_chain(n, x, s, l), !rsc_has(n, x, s, l), rsc_up(s, p), !rsc_fn(s).
+rsc_chain(n, x, p, 1) :- rsc_chain(n, x, s, l), !rsc_has(n, x, s, l), rsc_up(s, p), rsc_fn(s).
+.decl ruff_read_at(n: node, x: symbol, s: node, p: number)
+ruff_read_at(n, x, s, p) :- rsc_chain(n, x, s, l), node(_, n, _, r, _),
+    p = max q : { ruff_event(s, x, q, _), (l = 1 ; q <= r) }.
+ruff_read_at(n, x, s, p) :- ruff_del_name(st, n), text(n, x), ruff_scope_want(x), nearest(st, s, scope),
+    node(_, n, _, r, _), p = max q : { ruff_event(s, x, q, _), q <= r }.
+
+// ---- the binding Ruff checks -------------------------------------------------------------------------------------
+.decl ruff_bound(s: node, x: symbol, f: number)
+ruff_bound(s, x, f) :- ruff_event(s, x, _, _),
+    f = max p : { ruff_event(s, x, p, k), (k = "bind" ; k = "exc" ; k = "decl") }.
+// An event's reads are carried up to f unless a `del`, a handler's end or a declaration comes after it (a
+// declaration itself starts a run).
+.decl ruff_carries(s: node, x: symbol, e: number)
+ruff_carries(s, x, e) :- ruff_bound(s, x, f), ruff_event(s, x, e, k), e <= f, k != "del", k != "unexc",
+    count : { ruff_event(s, x, b, kb), b > e, b <= f, (kb = "del" ; kb = "unexc" ; kb = "decl") } = 0.

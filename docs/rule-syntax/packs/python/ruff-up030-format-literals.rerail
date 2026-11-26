@@ -1,4 +1,4 @@
-.policy "ruff-up030-format-literals" revision 2
+.policy "ruff-up030-format-literals" revision 3
 .description "Use automatic {} fields instead of explicit positional indices such as {0} and {1} in str.format() calls."
 .language python
 .mode steer
@@ -12,10 +12,12 @@
 //   "{1} {0}".format(a, b)        ← UP030: "{} {}".format(b, a)
 //   "{0} {0}".format(a)   "{1} {0}".format(*args)   "{0:<{1}}".format(a, 4)     not reported
 //   x: "'{1} {0}'.format(a, b)"   ← UP030: Ruff checks a string annotation's code too
+// The string is Ruff's own parse of the decoded value (python-12): `r"\N{x} {0}"` has one field, `{0!x}` and
+// `{0.a]}` parse, and an index too large for a usize is a keyword.
 #include "python/pyflakes-format.rerail"
-//   format_call(c, v), brace_ok(v), brace_name, brace_arg, brace_nested; call_pos, call_kw, call_kwsplat
+//   format_call(c, v); call_pos, call_kw, call_kwsplat
 #include "python/python-12.rerail"
-//   plain_str rows for the literals of string annotations
+//   rfmt_sum, rfmt_sum_ok, rfmt_nested, rfmt_arg, rfmt_index; plain_str rows for type-expression strings
 
 .violation UP030(at: node) code "UP030"
     "Replace the explicit indices (`{{0}}`, `{{1}}`) with automatic `{{}}` fields; if they are out of order, also reorder the arguments to match, unless that would change the order of side effects."
@@ -23,17 +25,97 @@
 UP030(c) :- format_call(c, v), indexed(v), in_order(v).
 UP030(c) :- format_call(c, v), indexed(v), !in_order(v), permutation(v, n), count : { call_pos(c, _, _) } >= n,
     !call_kw(c, _, _), !call_kwsplat(c).
+rfmt_value(v, 0) :- format_call(_, v).
 
-// indexed(v): v parses, has fields, every one an index, and none nested in a spec.
+// indexed(v): v's summary parses, has fields, every one an index, and none nested in a spec.
 .decl indexed(v: symbol)
-indexed(v) :- brace_ok(v), brace_name(v, _, _, _), !brace_nested(v, _, _, _, _, _),
-    count : { brace_arg(v, _, a), !match("[0-9]+", a) } = 0.
+indexed(v) :- format_call(_, v), rfmt_sum_ok(v), rfmt_sum(v, _, _), !rfmt_nested(v),
+    count : { rfmt_sum(v, _, n), rfmt_arg(n, a), !rfmt_index(a, _) } = 0.
 // index_at(v, r, i): the r-th field of v (from 0) refers to argument i.
 .decl index_at(v: symbol, r: number, i: number)
-index_at(v, r, to_number(a)) :- indexed(v), brace_arg(v, k, a), r = count : { brace_name(v, k2, _, _), k2 < k }.
+index_at(v, r, i) :- indexed(v), rfmt_sum(v, k, n), rfmt_arg(n, a), rfmt_index(a, i),
+    r = count : { rfmt_sum(v, k2, _), k2 < k }.
 .decl in_order(v: symbol)
 in_order(v) :- indexed(v), count : { index_at(v, r, i), r != i } = 0.
 // permutation(v, n): v's n fields name 0 … n-1, each once.
 .decl permutation(v: symbol, n: number)
 permutation(v, n) :- indexed(v), n = count : { index_at(v, _, _) }, count : { index_at(v, _, i), i >= n } = 0,
     count : { index_at(v, r1, i), index_at(v, r2, i), r1 != r2 } = 0.
+
+// Ruff parses the decoded value as a non-raw format string: `\N{…}` after an unescaped backslash is a literal,
+// whatever the source's prefix, so `{x}` is no field and `{0}` stands alone.
+.test unicode_name_escape_is_literal exactly
+    .fixture "a.py" ```
+        r'\N{x} {0}'.format(a)
+        "\\N{0}".format(a)
+        "\\N{x} {0}".format(a)
+        "\\\\N{0}".format(a)
+        ```
+    .expect UP030 at "a.py":1
+    .expect UP030 at "a.py":3
+    .expect UP030 at "a.py":4
+.end
+
+// Ruff's parser takes any one character after `!` as the conversion; none, or two, do not parse.
+.test any_conversion_character exactly
+    .fixture "a.py" ```
+        "{0!x}".format(a)
+        "{0!}".format(a)
+        "{0!rr}".format(a)
+        ```
+    .expect UP030 at "a.py":1
+.end
+
+// An attribute part runs to the next `.` or `[`: a `]` is part of it.
+.test bracket_in_attribute exactly
+    .fixture "a.py" ```
+        "{0.a]}".format(a)
+        ```
+    .expect UP030 at "a.py":1
+.end
+
+// A field name of digits that overflows usize is a keyword; leading zeros are fine.
+.test index_overflow_is_keyword exactly
+    .fixture "a.py" ```
+        "{0}{99999999999999999999999}".format(a)
+        "{00000000000000000000000}{1}".format(a, b)
+        "{1}{00000000000000000000000}".format(a, b)
+        ```
+    .expect UP030 at "a.py":2
+    .expect UP030 at "a.py":3
+.end
+
+// Adjacent literals inside a string annotation are one str literal there.
+.test concatenated_literals_in_string_annotation exactly
+    .fixture "a.py" ```
+        t: "'{0}' '{1}'.format(a, b)"
+        ```
+    .expect UP030 at "a.py":1
+.end
+
+// A spec is parsed as a format string of its own, escapes too; Annotated's metadata is not a type expression,
+// cast's first argument is.
+.test specs_and_type_expressions exactly
+    .fixture "a.py" ```
+        from typing import Annotated, cast
+        "{0:\\N{x}}".format(a)
+        "{0:{1}}".format(a, b)
+        x: Annotated[int, "'{0}'.format(a)"]
+        cast("'{1}{0}'.format(a, b)", q)
+        "{1} {0}".format(*a)
+        "{0} {0}".format(a)
+        ```
+    .expect UP030 at "a.py":2
+    .expect UP030 at "a.py":5
+.end
+
+// `{{` is a literal brace even where a field could start (UP030_0.py:63, 65).
+.test doubled_braces_beside_fields exactly
+    .fixture "a.py" ```
+        r'\d{{1,2}} {0}'.format(42)
+        "{{{0}}}".format(123)
+        "{{0}".format(1)
+        ```
+    .expect UP030 at "a.py":1
+    .expect UP030 at "a.py":2
+.end

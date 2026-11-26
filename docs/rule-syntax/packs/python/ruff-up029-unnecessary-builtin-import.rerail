@@ -1,39 +1,45 @@
-.policy "ruff-up029-unnecessary-builtin-import" revision 2
+.policy "ruff-up029-unnecessary-builtin-import" revision 3
 .description "Remove imports of Python 3 builtins from compatibility shims such as builtins, six and io; the names are already available without importing."
 .language python
 .mode steer
 .scope include "**/*"
 
 // Ruff UP029 (pyupgrade): a `from m import x` of a name Python 3 has as a builtin, where m is `builtins` or one
-// of the Python 2 compatibility modules that re-export it (six, six.moves, six.moves.builtins, io). The
-// statement is reported once. Not reported: a relative import, a name imported `as` another, and an import
-// that rebinds a name already bound in the same scope (it restores the builtin on purpose). Ruff checks after
-// the whole statement has bound its names, so a name the statement binds twice is a rebinding too, and so is a
-// name the scope declares `global` or `nonlocal` above it (that declaration is a binding of the scope).
+// of the Python 2 compatibility modules that re-export it (six, six.moves, six.moves.builtins, io; spaces in the
+// dotted name count for nothing). The statement is reported once. Not reported: a relative import, a name
+// imported `as` another, and an import that rebinds a name the same scope already has (it restores the builtin
+// on purpose). Ruff checks after the whole statement has bound its names, so a name the statement binds twice
+// is a rebinding too.
+// "The same scope already has" is Ruff's, from its walk (python/python-12-scopes): an event of the name in the
+// import's own scope (module, class or function) before it: a binding written there, whatever `global` or
+// `nonlocal` says (Ruff binds there, not in the scope declared); `global x` or `nonlocal x` in a function or class
+// (Ruff ignores one at module level); a bare annotation in a function or class (at module level Ruff already has
+// the builtin, and keeps the annotation aside); an unconditional `del x`. A function's body is not its enclosing
+// scope's.
 //   from builtins import ascii, bytes        ← UP029
 //   from six.moves import filter, zip_longest ← UP029 (filter)
 //   from math import pow
 //   from builtins import pow                 not reported: shadows math's pow
 //   from builtins import str, str            not reported: the second str shadows the first
-#include "python/ast.rerail"
-//   import_alias(i, a, m, x, local), from_module_raw(i, m), binding(s, x, site, form), scope_node(n, s)
+//   def f():
+//       global str
+//       str = 1
+//   from builtins import str                 ← UP029: f's str is bound in f's scope
+#include "python/python-12-scopes.rerail"
+//   ruff_scope_want(x), ruff_event(s, x, p, k); python/ast: name(n, q), scope_node(n, s)
 
 .violation UP029(at: node) code "UP029"
     "Remove the names Python 3 already provides as builtins from this import, and the whole statement if nothing else remains. Keep it only if the code must still run on Python 2."
     suppress ruff "UP029"
-UP029(i) :- up29_name(i, s, x), !restores(s, x, i).
-UP029(i) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"),
-    from_module_raw(i, m), builtin_from(m, "*"), child(i, w, _), kind(w, "wildcard_import").
-// up29_name(i, s, x): statement i of scope s imports builtin x under its own name.
-.decl up29_name(i: node, s: node, x: symbol)
-up29_name(i, s, x) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"),
-    from_module_raw(i, m), builtin_from(m, x), field(i, "name", a), kind(a, "dotted_name"), text(a, x),
-    scope_node(i, s).
-// restores(s, x, i): when i is done, its binding of x shadows another binding of x in s.
-.decl restores(s: node, x: symbol, i: node)
-restores(s, x, i) :- up29_name(i, s, x), count : { binding(s, x, site, _), (earlier(site, i) ; within(site, i)) } > 1.
-restores(s, x, i) :- up29_name(i, s, x), (kind(g, "global_statement") ; kind(g, "nonlocal_statement")),
-    child(g, n, _), text(n, x), scope_node(g, s), earlier(g, i).
+UP029(i) :- bi_name(i, s, x), node(_, i, _, _, e), count : { ruff_event(s, x, p, _), p <= e } = 1.
+UP029(i) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), name(mn, m),
+    builtin_from(m, "*"), child(i, w, _), kind(w, "wildcard_import").
+// bi_name(i, s, x): statement i of scope s imports builtin x under its own name. It is reported when its binding
+// of x is the only event of x in s up to its end: nothing before it, and no other name of the statement binds x.
+.decl bi_name(i: node, s: node, x: symbol)
+bi_name(i, s, x) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"),
+    name(mn, m), builtin_from(m, x), field(i, "name", a), kind(a, "dotted_name"), text(a, x), scope_node(i, s).
+ruff_scope_want(x) :- bi_name(_, _, x).
 
 // builtin_from(m, x): Ruff's table of the builtins each module re-exports.
 .decl builtin_from(m: symbol, x: symbol)
@@ -48,3 +54,183 @@ py3_builtin("filter"). py3_builtin("hex"). py3_builtin("input"). py3_builtin("in
 py3_builtin("list"). py3_builtin("map"). py3_builtin("max"). py3_builtin("min"). py3_builtin("next").
 py3_builtin("object"). py3_builtin("oct"). py3_builtin("open"). py3_builtin("pow"). py3_builtin("range").
 py3_builtin("round"). py3_builtin("str"). py3_builtin("super"). py3_builtin("zip").
+
+// the documented cases
+.test builtins_and_six_moves exactly
+    .fixture "a.py" ```
+        from builtins import ascii, bytes
+        from six.moves import filter, zip_longest
+        ```
+    .expect UP029 at "a.py":1
+    .expect UP029 at "a.py":2
+.end
+// an import that shadows another binding restores the builtin on purpose
+.test shadows_an_import
+    .fixture "a.py" ```
+        from math import pow
+        from builtins import pow
+        ```
+    .expect no UP029
+.end
+// the statement's second str shadows its first
+.test same_name_twice
+    .fixture "a.py" ```
+        from builtins import str, str
+        ```
+    .expect no UP029
+.end
+// `map as zip` binds zip first: only max is reported
+.test aliased_rebinding exactly
+    .fixture "a.py" ```
+        from builtins import zip, map as zip, max
+        ```
+    .expect UP029 at "a.py":1
+.end
+// Ruff binds a `global str` write in the function's own scope, not the module's
+.test global_write_in_another_function exactly
+    .fixture "a.py" ```
+        def f():
+            global str
+            str = 1
+        from builtins import str
+        ```
+    .expect UP029 at "a.py":4
+.end
+// a nested function's `nonlocal str` write binds in the nested function
+.test nested_nonlocal_write exactly
+    .fixture "a.py" ```
+        def f():
+            def g():
+                nonlocal str
+                str = 2
+            from builtins import str
+        ```
+    .expect UP029 at "a.py":5
+.end
+// Ruff ignores `global` at module level
+.test module_level_global exactly
+    .fixture "a.py" ```
+        global str
+        from builtins import str
+        ```
+    .expect UP029 at "a.py":2
+.end
+// a bare annotation in a function is a binding of its scope
+.test bare_annotation_in_function
+    .fixture "a.py" ```
+        def f():
+            str: type
+            from builtins import str
+        ```
+    .expect no UP029
+.end
+// and in a class body
+.test bare_annotation_in_class
+    .fixture "a.py" ```
+        class C:
+            str: type
+            from builtins import str
+        ```
+    .expect no UP029
+.end
+// at module level the builtin is already bound: the annotation is kept aside
+.test bare_annotation_at_module_level exactly
+    .fixture "a.py" ```
+        str: type
+        from builtins import str
+        ```
+    .expect UP029 at "a.py":2
+.end
+// the same after a read
+.test bare_annotation_at_module_level_after_read exactly
+    .fixture "a.py" ```
+        print(str)
+        str: type
+        from builtins import str
+        ```
+    .expect UP029 at "a.py":3
+.end
+// a `del` in a try body is unconditional: the import shadows the deletion
+.test unconditional_delete_in_try
+    .fixture "a.py" ```
+        try:
+            del str
+        except NameError:
+            pass
+        from builtins import str
+        ```
+    .expect no UP029
+.end
+// a `del` under an if makes no deletion
+.test conditional_delete exactly
+    .fixture "a.py" ```
+        if c:
+            del str
+        from builtins import str
+        ```
+    .expect UP029 at "a.py":3
+.end
+// nor does one in an except handler
+.test delete_in_handler exactly
+    .fixture "a.py" ```
+        try:
+            pass
+        except NameError:
+            del str
+        from builtins import str
+        ```
+    .expect UP029 at "a.py":5
+.end
+// Ruff's module name has no spaces
+.test spaces_in_dotted_module exactly
+    .fixture "a.py" ```
+        from six . moves import zip
+        from six.moves  .builtins import str
+        ```
+    .expect UP029 at "a.py":1
+    .expect UP029 at "a.py":2
+.end
+// a function's `global str` is a binding of its scope
+.test global_declaration_in_function
+    .fixture "a.py" ```
+        def f():
+            global str
+            from builtins import str
+        ```
+    .expect no UP029
+.end
+// an `except … as str` binds str
+.test except_target
+    .fixture "a.py" ```
+        try:
+            pass
+        except E as str:
+            pass
+        from builtins import str
+        ```
+    .expect no UP029
+.end
+// a parameter binds str
+.test parameter
+    .fixture "a.py" ```
+        def f(str):
+            from builtins import str
+        ```
+    .expect no UP029
+.end
+// a comprehension's target binds in the comprehension
+.test comprehension_target_is_its_own exactly
+    .fixture "a.py" ```
+        [str for str in y]
+        from builtins import str
+        ```
+    .expect UP029 at "a.py":2
+.end
+// a walrus in a comprehension binds in the module
+.test walrus_in_comprehension
+    .fixture "a.py" ```
+        [(str := 1) for a in y]
+        from builtins import str
+        ```
+    .expect no UP029
+.end

@@ -1,4 +1,4 @@
-.policy "ruff-up024-os-error-alias" revision 2
+.policy "ruff-up024-os-error-alias" revision 3
 .description "Use the builtin OSError instead of its legacy aliases such as IOError, EnvironmentError, WindowsError and socket.error; since Python 3.3 they are all the same class."
 .language python
 .mode steer
@@ -6,22 +6,28 @@
 
 // Ruff UP024 (pyupgrade): an alias of OSError: the builtins EnvironmentError, IOError and WindowsError, and
 // `error` of mmap, resource, select, socket and os. Since Python 3.3 they are all OSError itself. Ruff looks
-// where an exception is named: an except clause, a `raise`, and the function of a call. In an except tuple
-// the tuple is reported once.
+// where an exception is named: an except clause, a `raise`, and the function of a call (parentheses off). In an
+// except tuple the tuple is reported once.
 //   except IOError:                       ← UP024 at IOError
 //   except (OSError, socket.error):       ← UP024 at the tuple
 //   except KeyError, IOError:             ← UP024 at KeyError, where the tuple starts (Python 3.14, PEP 758)
 //   except (IOError, KeyError), e:        not reported: the elements are a tuple and `e`
 //   raise mmap.error(1)                   ← UP024 at mmap.error
-//   from .mmap import error; raise error  not reported: a local module's error
+//   (socket.error)(1)                     ← UP024 at socket.error
+//   from .mmap import error; raise error  not reported: a local module's error (or, outside a package, nothing)
+// Names are resolved as Ruff's resolve_qualified_name does, at the moment its walk reaches them (below).
 #include "python/upgrade-imports.rerail"
-//   exc_site(e, how), handler_tuple(t, e), up_qual(e, q)        (python/upgrade-imports)
-//   builtin_at(e, x)                                         (python/upgrade)
+#include "python/python-12-types.rerail"
+//   exc_site(e, how), handler_tuple(t, e), up_handler_type(x, t)   (python/upgrade-imports)
+//   binding, site_root, late_annotation   (python/names, python/upgrade)
+//   type_guest(e, s0): e is in a string Ruff parses as a type outside annotations   (python/python-12-types)
 
 .violation UP024(at: node) code "UP024"
     "Replace `{at}` with the builtin `OSError`; since Python 3.3 it is the same class. Leave it only if `OSError` is rebound to something else in this scope."
     suppress ruff "UP024"
-UP024(e) :- exc_site(e, how), how != "handler", os_alias(e).
+UP024(e) :- exc_site(f, how), how != "handler", unparen(f, e), os_alias(e), !type_guest(e, _).
+// In a type string (python/python-12-types): the engine reports a guest's node only with its guest relation here.
+UP024(e) :- exc_site(f, "call"), unparen(f, e), os_alias(e), type_guest(e, _).
 UP024(t) :- up_handler_type(x, t), one_type(x), !kind(t, "tuple"), os_alias(t).
 UP024(t) :- handler_tuple(t, e), up_handler_type(x, t), one_type(x), os_alias(e).
 UP024(t) :- bare_tuple(t, e), os_alias(e).
@@ -33,10 +39,316 @@ one_type(x) :- kind(x, "except_clause"), count : { field(x, "value", _) } = 1.
 bare_tuple(t, e) :- kind(x, "except_clause"), count : { field(x, "value", _) } > 1, field(x, "value", t),
     child(x, t, i), count : { field(x, "value", u), child(x, u, j), j < i } = 0, field(x, "value", v), unparen(v, e).
 .decl os_alias(e: node)
-os_alias(e) :- builtin_at(e, x), old_name(x).
-os_alias(e) :- up_qual(e, q), split_dot(q, m, "error"), error_module(m).
+os_alias(e) :- r_qual(e, q), split_dot(q, m, x), (m = "builtins", old_name(x) ; x = "error", error_module(m)).
 .decl old_name(x: symbol)
 // WindowsError is a builtin on Windows only; Ruff (and python/names) count it as one everywhere.
 old_name("EnvironmentError"). old_name("IOError"). old_name("WindowsError").
 .decl error_module(m: symbol)
 error_module("mmap"). error_module("resource"). error_module("select"). error_module("socket"). error_module("os").
+
+// ---- names, as Ruff's walk resolves them ---------------------------------------------------------------------
+// Ruff walks the module (class bodies included) in order, then function bodies a nesting level at a time, then
+// type-parameter bounds and defaults and `type` values, lambdas, deferred annotations, and last every string read
+// as a type. A name reads, in the first scope of its chain that offers one, the latest binding that scope has when
+// the walk reaches it: a scope finished by then (one outside the function or lambda the name is in, or any scope
+// for the deferred kinds) offers its last binding. Where python/upgrade's sym_at differs:
+//   - a comprehension is a scope; its targets are bound before its element, each before its own `if`s and the
+//     next `for`s (`[IOError() for IOError in e]` is not the builtin);
+//   - `except E as x` binds x for the clause only, its type included; after it x is what it was before;
+//   - an unconditional `del x` unbinds x (not under an if, while, match, handler or else);
+//   - a PEP 695 type parameter is no qualified name (`def f[IOError](): raise IOError`);
+//   - `global x`/`nonlocal x` do not move a function's bindings of x out of it (Ruff marks them, in place);
+//   - a def's defaults and annotations and a class's bases are read in the scope around it;
+//   - type-parameter bounds and defaults, `type` values and strings read as types are deferred, and strings read
+//     as types outside annotations (`cast("socket.error(1)", x)`, `List["…"]`) are parsed (python/python-12-types);
+//   - a relative import that leaves the top package (or has none) names nothing;
+//   - a workspace re-export is not followed (`from mymod import error` is `mymod.error`).
+// cand(e): an expression UP024 resolves. rp(m, p): m is a Name/Attribute chain (parentheses off) spelled p.
+.decl cand(e: node)
+cand(e) :- exc_site(f, _), unparen(f, e).
+cand(e) :- handler_tuple(_, e).
+cand(e) :- bare_tuple(_, e).
+.decl rchain(e: node, m: node)
+rchain(e, e) :- cand(e).
+rchain(e, m) :- rchain(e, n), attr_of(n, o, _), unparen(o, m).
+.decl rp(m: node, p: symbol)
+rp(h, x) :- rchain(_, h), ast_name(h, x), expr_ctx(h, "load").
+rp(m, @dot(p, a)) :- rchain(_, m), attr_of(m, o, a), unparen(o, o2), rp(o2, p).
+// rhead(h, x): head h of a candidate names x, which can resolve to an alias: an old name, or bound by an import
+// or a def somewhere.
+.decl rhead(h: node, x: symbol)
+rhead(h, x) :- cand(e), rp(e, _), rchain(e, h), ast_name(h, x), rname(x).
+.decl rname(x: symbol)
+rname(x) :- old_name(x).
+rname(x) :- binding(_, x, site, _), site_root(site, _, _).
+// bp(h, n): where h stands in its file: itself, or the outermost string it was parsed from.
+.decl bp(h: node, n: node)
+bp(h, h) :- rhead(h, _), !parsed_in(h, _), !type_guest(h, _).
+bp(h, s) :- rhead(h, _), parsed_in(h, s).
+bp(h, s) :- rhead(h, _), type_guest(h, s).
+// header(n, s): n is in a part of scope node s that runs in the scope around it: a def's parameters (defaults,
+// annotations) and return annotation, a lambda's parameters, a class's bases, a comprehension's first iterable.
+.decl header(n: node, s: node)
+header(n, s) :- bp(_, n), (kind(s, "function_definition"), (field(s, "parameters", p) ; field(s, "return_type", p))
+    ; kind(s, "lambda"), field(s, "parameters", p) ; kind(s, "class_definition"), field(s, "superclasses", p)
+    ; first_for(s, fc), field(fc, "right", p)), (n = p ; within(n, p)).
+.decl climb(n: node, s: node)
+climb(n, s) :- bp(_, n), nearest(n, s, lscope).
+climb(n, p) :- climb(n, s), header(n, s), nearest(s, p, lscope).
+// rch(h, s, d): scope s at depth d of h's chain (class bodies passed over after the first).
+.decl rch(h: node, s: node, d: number)
+rch(h, s, 0) :- bp(h, n), climb(n, s), !header(n, s).
+rch(h, p, d + 1) :- rch(h, s, d), nearest(s, p, lfscope).
+// late(h): h is read after every body of its file. rdone(h, s): scope s is finished when h is read.
+.decl late(h: node)
+late(h) :- bp(h, n), n != h.
+late(h) :- rhead(h, _), late_annotation(h).
+late(h) :- rhead(h, _), late_type(h).
+late(h) :- rhead(h, _), in_stub_bases(h, _).
+.decl rdone(h: node, s: node)
+rdone(h, s) :- rch(h, s, _), late(h).
+rdone(h, s) :- rch(h, s, d), rch(h, f, d2), d2 < d, (kind(f, "function_definition") ; kind(f, "lambda")).
+// rb(s, x, site, form): scope s binds x at site, where Ruff puts the binding (no global/nonlocal move), and the
+// unconditional `del`s (form "del").
+.decl rb(s: node, x: symbol, site: node, form: symbol)
+rb(s, x, site, f) :- rname(x), binding(s, x, site, f), !moved(site, x).
+rb(s0, x, site, f) :- rname(x), binding(s, x, site, f), moved(site, x), nearest(site, s0, scope).
+rb(s, x, n, "del") :- rname(x), ast_name(n, x), expr_ctx(n, "del"), nearest(n, s, lscope), !cond_del(n).
+.decl moved(site: node, x: symbol)
+moved(site, x) :- rname(x), binding(s, x, site, _), nearest(site, s0, scope), decl(s0, x, s), s0 != s.
+.decl cond_del(n: node)
+cond_del(n) :- expr_ctx(n, "del"), (k = "if_statement" ; k = "while_statement" ; k = "match_statement"),
+    kind(b, k), within(n, b).
+cond_del(n) :- expr_ctx(n, "del"), (kind(b, "except_clause") ; kind(b, "else_clause")), within(n, b),
+    nearest(n, s, scope), within(b, s).
+// offer(h, k, site, i): the scope at chain depth k/2 offers binding site (visit index i) to h.
+.decl offer(h: node, k: number, site: node, i: number)
+offer(h, 2 * d, site, i) :- rch(h, s, d), rhead(h, x), rb(s, x, site, f), f != "except", visit_index(site, i),
+    (rdone(h, s) ; seen(h, s, site)).
+// `except E as x`: inside its clause (not deferred), x is the caught exception.
+offer(h, 2 * d, t, i) :- rch(h, s, d), !rdone(h, s), rhead(h, x), rb(s, x, t, "except"), kind(c, "except_clause"),
+    within(t, c), within(h, c), visit_index(t, i).
+// seen(h, s, site): the walk of s binds at site before it reaches h.
+.decl seen(h: node, s: node, site: node)
+seen(h, s, site) :- rch(h, s, _), !comp(s), rhead(h, x), rb(s, x, site, _), earlier(site, h), !within(h, site).
+seen(h, c, site) :- rch(h, c, _), comp(c), rhead(h, x), rb(c, x, site, _), field(c, "body", b), within(h, b).
+seen(h, c, site) :- rch(h, c, _), comp(c), rhead(h, x), rb(c, x, site, _), child(c, f, i), within(site, f),
+    child(c, g, j), j > i, within(h, g).
+.decl comp(c: node)
+comp(c) :- kind(c, k), comp_scope(k).
+// A PEP 695 type parameter of o (site: its name), between o's own scopes and the scopes around o: an odd key.
+offer(h, 2 * d - 1, nm, 0) :- rhead(h, x), tp_ref(h, x), type_param(o, _, nm, _, _, _, _), text(nm, x), within(h, o),
+    !in_default(h, o), d = min d2 : { rch(h, s, d2), s != o, !within(s, o) }.
+.decl in_default(h: node, o: node)
+in_default(h, o) :- rhead(h, _), sig_param(o, _, _, _, _, _, v), (h = v ; within(h, v)).
+// A forward reference (a string read as a type, a deferred annotation) reads the module's last binding first,
+// unless that unbinds the name (a `del`, the end of an `except … as`): Ruff's PEP 563 preference.
+offer(h, -2, site, i) :- rhead(h, x), late_ann_or_str(h), rch(h, m, _), kind(m, "module"),
+    i = max i2 : { rb(m, x, s2, _), visit_index(s2, i2) }, rb(m, x, site, f), visit_index(site, i), f != "del",
+    f != "except".
+.decl late_ann_or_str(h: node)
+late_ann_or_str(h) :- bp(h, n), n != h.
+late_ann_or_str(h) :- rhead(h, _), late_annotation(h).
+// rsel(h, site): the binding h reads; with none, h is the builtin of its name.
+.decl rsel(h: node, site: node)
+rsel(h, site) :- rhead(h, _), k = min k2 : { offer(h, k2, _, _) }, i = max i2 : { offer(h, k, _, i2) },
+    offer(h, k, site, i).
+.decl rel_open(a: node)  // an alias of a relative import that leaves the top package, or has none
+rel_open(a) :- import_alias(i, a, _, _, _), rel_base(i, "").
+// r_qual(e, q): Ruff's resolve_qualified_name(e).
+.decl r_qual(e: node, q: symbol)
+r_qual(e, cat(r, @slice(p, strlen(x), strlen(p)))) :- cand(e), rp(e, p), rchain(e, h), rhead(h, x), rsel(h, site),
+    !rel_open(site), site_root(site, r, _).
+r_qual(e, @dot("builtins", p)) :- cand(e), rp(e, p), rchain(e, h), rhead(h, x), !rsel(h, _), builtin(x).
+
+// Outside a package a relative import names nothing (Ruff has no module path to resolve it against).
+.test root_relative_import_is_not_os_error
+    .fixture "a.py" ```
+        from .mmap import error
+        raise error
+        from . import socket
+        raise socket.error
+        ```
+    .expect no UP024
+.end
+
+// In a package, `.mmap` is the package's own module.
+.test package_relative_import_is_not_os_error
+    .fixture "pkg/__init__.py" ```
+        ```
+    .fixture "pkg/a.py" ```
+        from .mmap import error
+        raise error
+        from . import socket
+        raise socket.error
+        ```
+    .expect no UP024
+.end
+
+// Ruff's AST has no parentheses: the callee is the name inside them.
+.test parenthesized_callee exactly
+    .fixture "a.py" ```
+        import socket
+        (IOError)(1)
+        (socket.error)(1)
+        ```
+    .expect UP024 at "a.py":2
+    .expect UP024 at "a.py":3
+.end
+
+// A comprehension's targets are bound before its element and its `if`s, after its first iterable.
+.test comprehension_target_shadows exactly
+    .fixture "a.py" ```
+        import socket
+        x = [socket.error() for socket in y]
+        z = [IOError for IOError in y if IOError()]
+        w = [1 for a in IOError() for IOError in a]
+        v = {IOError(): 1 for IOError in y}
+        u = [IOError for IOError in IOError()]
+        ```
+    .expect UP024 at "a.py":4
+    .expect UP024 at "a.py":6
+.end
+
+// `except E as x` binds x before the type is read, and for the clause only: after it x is what it was.
+.test except_target exactly
+    .fixture "a.py" ```
+        try: pass
+        except IOError as IOError: raise IOError
+        raise IOError
+        import socket
+        try: pass
+        except socket.error as socket: pass
+        raise socket.error
+        ```
+    .expect UP024 at "a.py":3
+    .expect UP024 at "a.py":7
+.end
+
+// The review's case: after the clause the name is the builtin again.
+.test except_target_unbinds_after_clause exactly
+    .fixture "a.py" ```
+        try: pass
+        except Exception as IOError: pass
+        raise IOError
+        ```
+    .expect UP024 at "a.py":3
+.end
+
+// An unconditional `del` unbinds the name, for later reads and for function bodies (walked after the module).
+.test del_unbinds exactly
+    .fixture "a.py" ```
+        del IOError
+        raise IOError
+        def f():
+            raise IOError
+        if x:
+            del EnvironmentError
+        raise EnvironmentError
+        del WindowsError
+        WindowsError = 1
+        for a in b:
+            del IOError
+        ```
+    .expect UP024 at "a.py":7
+.end
+
+// A PEP 695 type parameter is no qualified name; a def's defaults are read outside its type parameters.
+.test type_parameters_shadow exactly
+    .fixture "a.py" ```
+        def f[IOError](a=IOError()):
+            raise IOError
+        class C[IOError](IOError):
+            def g(self): raise IOError
+        type X[IOError] = IOError()
+        raise IOError
+        ```
+    .expect UP024 at "a.py":1
+    .expect UP024 at "a.py":6
+.end
+
+// `global` marks the function's own binding; the module and other functions still read the builtin.
+.test global_assignment_in_function_body exactly
+    .fixture "a.py" ```
+        raise IOError
+        def f():
+            global IOError
+            IOError = 1
+        def g():
+            raise IOError
+        ```
+    .expect UP024 at "a.py":1
+    .expect UP024 at "a.py":6
+.end
+
+// String annotations are read last, imported names and `builtins.` included; after an `except … as error`
+// the name is the import again.
+.test string_annotations exactly
+    .fixture "a.py" ```
+        from socket import error
+        x: "error(1)" = 1
+        import builtins, socket
+        y: "builtins.IOError(1)" = 1
+        z: "socket.error(1)" = 1
+        try: pass
+        except Exception as error: pass
+        raise error
+        ```
+    .expect UP024 at "a.py":2
+    .expect UP024 at "a.py":4
+    .expect UP024 at "a.py":5
+    .expect UP024 at "a.py":8
+.end
+
+// Strings read as types outside annotations are parsed too: `cast`'s type, a typing generic's arguments, a
+// `type` value; not a `Literal`'s, not an unknown subscript's.
+.test type_strings_outside_annotations exactly
+    .fixture "a.py" ```
+        from typing import cast, List
+        import socket
+        cast("socket.error(1)", x)
+        y = List["IOError()"]
+        z = cast("Literal['x']", 1)
+        v = foo["IOError()"]
+        u = cast(typ="IOError()", val=1)
+        q = cast(List["IOError()"], x)
+        type T = "IOError()"
+        ```
+    .expect UP024 at "a.py":3
+    .expect UP024 at "a.py":4
+    .expect UP024 at "a.py":7
+    .expect UP024 at "a.py":8
+    .expect UP024 at "a.py":9
+.end
+
+// A type string is read after the whole file, and prefers the module's binding to a function's own.
+.test type_strings_are_forward_references exactly
+    .fixture "a.py" ```
+        from typing import cast
+        cast("socket.error(1)", x)
+        import socket
+        def f():
+            socket = 1
+            x: "socket.error(1)" = 2
+            return cast("socket.error(1)", x)
+        ```
+    .expect UP024 at "a.py":2
+    .expect UP024 at "a.py":6
+    .expect UP024 at "a.py":7
+.end
+
+// `type` values and type-parameter bounds and defaults are read after the module; lambdas too.
+.test deferred_type_values exactly
+    .fixture "a.py" ```
+        type X = socket.error(1)
+        import socket
+        def g[T: IOError() = socket.error()](): pass
+        class A[T: mmap.error()]: pass
+        import mmap
+        f = lambda: socket.error()
+        ```
+    .expect UP024 at "a.py":1
+    .expect UP024 at "a.py":3
+    .expect UP024 at "a.py":4
+    .expect UP024 at "a.py":6
+.end

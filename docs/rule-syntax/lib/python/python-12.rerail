@@ -1,22 +1,182 @@
-// python/python-12: string values inside string annotations, for Ruff's format-string rules (UP030, UP031, UP032).
+// python/python-12: Ruff's view of format strings for its pyupgrade rules UP030, UP031 and UP032: the code of the
+// strings it parses as type expressions, and its own parsers of str.format and printf-style strings, which differ
+// from CPython's (python/pyflakes-format) in the corners below.
 //
 // Interface
-//   plain_str(e, v)      (python/ast) gains rows for str literals inside a tree parsed from a string annotation
-//                        (names' parsed_in), where the engine gives `str` but no `value` rows. Every rule built on
-//                        plain_str (format_call, percent_fmt, str_lit) then sees the code of string annotations, as
-//                        Ruff, which checks a string annotation's expression like any other.
+//   1. Type-expression strings: annotations (python/names' parsed_in) and the others (python/python-12-types)
+//     tdef_guest(e, s0)       e is in a tree parsed from a string Ruff reads as a type; s0 is the outermost string,
+//                             in the file. A finding at such an e names tdef_guest in its clause (python-12-types'
+//                             engine note), as format_call and percent_fmt do through plain_str
+//     simple_guest(e)         ... and s0 is "simple": one literal whose source between the quotes is its value (no
+//                             escape, no implicit concatenation, no line continuation)
+//     plain_str(e, v)         (python/ast) gains rows for the str literals of those trees, where the engine gives
+//                             `str` but no `value` rows, so format_call and percent_fmt see them
+//     str_body(p, x)          x is string literal p's source text between its quotes, escapes as written
+//   2. str.format, as Ruff's FormatString parses it (ruff_python_literal::format), on texts a rule seeds:
+//     rfmt_value(x, raw)      seed: parse x (raw = 1: as from_raw_str)
+//     rfmt_ok(x, raw)         x parses
+//     rfmt_field(x, raw, i, name, conv, spec)   token i of x is a field; conv "" or "!c"; spec "" or ":…"
+//     rfmt_name_ok(name)      FieldName::parse accepts name
+//     rfmt_arg(name, a)       name's first part (before `.` or `[`)
+//     rfmt_index(a, n)        a is an index (Ruff's parse_index), n its value (1000000000 for any above 9 digits;
+//                             one of 20 digits or more is taken as a keyword, where Ruff still reads up to usize::MAX)
+//     rfmt_part(name, j, what, p, rest)   the j-th `.attr` ("attr") or `[key]` ("index"/"key") part of name
+//     rfmt_sum(v, k, name)    Ruff's FormatSummary of v (seeded raw = 0): every field, the nested ones of a spec too
+//                             (k orders them: i * 1000, then i * 1000 + j + 1)
+//     rfmt_sum_ok(v)          the summary parses (v, its fields' names, their specs, the nested fields' names)
+//     rfmt_nested(v)          v has a field nested in a spec
+//   3. printf-style, as Ruff's CFormatString parses a str (ruff_python_literal::cformat):
+//     rpct_value(x)           seed
+//     rpct_ok(x)              x parses
+//     rpct_spec(x, i, key, flags, width, prec, conv)   placeholder i; key keeps its parentheses, prec its dot
 //
-// Python background
-//   - Ruff parses `x: "'{1} {0}'.format(a, b)"` and runs its expression rules on what it finds; the inner
-//     `'{1} {0}'` is a plain str literal there. The guest is parsed from the decoded string, so its literals'
-//     `str` is their decoded value, which is what `value` gives on a file's own literals.
+// Ruff background
+//   - Ruff parses a string as a type expression where it visits it as a type definition (python-12-types' header),
+//     annotations included, except in a call's arguments, in `Literal[…]` and in the metadata of `Annotated[T, …]`.
+//     names' parsed_in parses every string of an annotation; the two last are taken out here (for the outermost
+//     string: a metadata string nested in a parsed annotation is still read).
+//   - Its expression rules run on the parsed tree. A "complex" string (escapes, adjacent literals) is parsed from
+//     its value and every node has the string's range; UP032 then finds no tokens of its own and reports nothing.
+//   - str.format: a non-raw parse reads `\N{…}` after an unescaped backslash as one literal; the conversion is any
+//     one character; an attribute part runs to the next `.` or `[` (a `]` is part of it); an index is all ASCII
+//     digits that fit a usize (more is a keyword).
+//   - printf: a key runs to its balancing `)`; width and precision are i32 (2147483648 does not parse); `%b` is a
+//     bytes conversion only.
 //
-//   x: "'{1} {0}'.format(a, b)"      plain_str(<'{1} {0}'>, "{1} {0}")  → UP030
-//   y: "'%s' % a"                    plain_str(<'%s'>, "%s")            → UP031
-// Proposed instead: `value` rows for guest documents' literals (NOTES-python-12.md); this file then goes.
-#include "python/ast.rerail"
+//   x: "'{1} {0}'.format(a, b)"            tdef_guest, plain_str(<'{1} {0}'>, "{1} {0}")        → UP030
+//   x: Annotated[int, "'{}'.format(a)"]    no row: metadata is a value                         (UP032)
+//   cast("'{}'.format(a)", q)              tdef_guest (type_guest)                              → UP032
+//   r"\N{x} {0}".format(a)                 rfmt_sum: one field, {0}                             → UP030
+//   "%(a(b))s" % x                         rpct_spec key "(a(b))"                               → UP031
+#include "python/pyflakes.rerail"         // identifier, field_name; python/ast (plain_str, ann_str), python/names
+#include "python/python-12-types.rerail"  // type_guest
 
-plain_str(e, v) :- parsed_in(e, _), string_form(e, "str"), !fstring(e), str(e, v).
-plain_str(e, v) :- parsed_in(e, _), kind(e, "concatenated_string"),
+// ---- 1. type-expression strings ---------------------------------------------------------------------------------
+.decl tdef_guest(e: node, s0: node)
+tdef_guest(e, s0) :- parsed_in(e, s0), !p12_call_arg_str(s0), !p12_meta_str(s0).
+tdef_guest(e, s0) :- type_guest(e, s0).
+// p12_call_arg_str(s): string s is in a call's arguments (in an annotation: `x: f("int")`).
+.decl p12_call_arg_str(s: node)
+p12_call_arg_str(s) :- ann_str(s), inside(s, c, "call"), field(c, "arguments", al), within(s, al).
+// p12_meta_str(s): string s is (in) an argument after the first of `Annotated[…]`.
+.decl p12_meta_str(s: node)
+p12_meta_str(s) :- ann_str(s), inside(s, g, "generic_type"), child(g, v, 0), text(v, x),
+    (x = "Annotated" ; suffix(".Annotated", x)), child(g, tp, 1), kind(tp, "type_parameter"), child(tp, m, i), i >= 1,
+    (s = m ; within(s, m)).
+p12_meta_str(s) :- ann_str(s), inside(s, g, "subscript"), field(g, "value", v), text(v, x),
+    (x = "Annotated" ; suffix(".Annotated", x)), child(g, m, i), i >= 2, (s = m ; within(s, m)).
+.decl simple_guest(e: node)
+simple_guest(e) :- tdef_guest(e, s0), simple_host(s0).
+.decl simple_host(s: node)
+simple_host(s) :- tdef_guest(_, s), kind(s, "string"), str_body(s, x), str(s, x).
+// str_body(p, x): string literal p's source text between its quotes (after its prefix), escapes as written.
+.decl str_body(p: node, x: symbol)
+str_body(p, @slice(t, strlen(a), strlen(t) - strlen(z))) :- kind(p, "string"), text(p, t), child(p, st, 0),
+    kind(st, "string_start"), text(st, a), child(p, en, i), kind(en, "string_end"), text(en, z),
+    !child(p, _, i + 1).
+
+plain_str(e, v) :- tdef_guest(e, _), string_form(e, "str"), !fstring(e), str(e, v).
+plain_str(e, v) :- guest_concat(e, v).
+// Through a relation of its own: the same body written as a plain_str clause gives no rows on a guest.
+.decl guest_concat(e: node, v: symbol)
+guest_concat(e, v) :- tdef_guest(e, _), kind(e, "concatenated_string"),
     count : { child(e, s0, _), !kind(s0, "comment"), !string_form(s0, "str") } = 0,
     v = join x by i sep "" : { child(e, s, i), kind(s, "string"), str(s, x) }.
+
+// ---- 2. str.format ----------------------------------------------------------------------------------------------
+// The parser reads literals and fields left to right. A non-raw parse first drops what cannot hold a field, in
+// the same left-to-right pass Ruff makes: `{{`, `}}` and whole fields are kept, a pair of backslashes and a
+// `\N{…}` that follows an odd backslash are dropped. What is left is split into tokens as pyflakes-format does.
+// A field starts at a lone `{` (`{{` is a literal brace), so its text never starts with `{`.
+.decl rfmt_value(x: symbol, raw: number)
+.decl rfmt_norm(x: symbol, raw: number, y: symbol)
+rfmt_norm(x, 0, @rx_replace(x, "(?<k>\\{\\{|\\}\\}|\\{(?:[^{}](?:[^{}]|\\{[^{}]*\\})*)?\\})|\\\\\\\\|\\\\N\\{[^}]*\\}", "${k}")) :-
+    rfmt_value(x, 0).
+rfmt_norm(x, 1, x) :- rfmt_value(x, 1).
+.decl rfmt_rest(x: symbol, raw: number, r: symbol, i: number)
+rfmt_rest(x, raw, y, 0) :- rfmt_norm(x, raw, y).
+rfmt_rest(x, raw, rest, i + 1) :- rfmt_rest(x, raw, r, i), match("[^{}]*(\\{\\{|\\}\\})(?<rest>[\\s\\S]*)", r).
+rfmt_rest(x, raw, rest, i + 1) :- rfmt_tok(x, raw, i, _, rest).
+// rfmt_tok(x, raw, i, c, rest): token i is a field with c between its braces (one level of nested braces).
+.decl rfmt_tok(x: symbol, raw: number, i: number, c: symbol, rest: symbol)
+rfmt_tok(x, raw, i, c, rest) :- rfmt_rest(x, raw, r, i),
+    match("[^{}]*\\{(?<c>([^{}]([^{}]|\\{[^{}]*\\})*)?)\\}(?<rest>[\\s\\S]*)", r).
+// A field splits at its first `:` (the spec), then at its first `!` (the conversion).
+.decl rfmt_field(x: symbol, raw: number, i: number, name: symbol, conv: symbol, spec: symbol)
+rfmt_field(x, raw, i, n, cv, sp) :- rfmt_tok(x, raw, i, c, _), match("(?<a>[^:]*)(?<sp>(:[\\s\\S]*)?)", c),
+    match("(?<n>[^!]*)(?<cv>(![\\s\\S]*)?)", a).
+.decl rfmt_bad(x: symbol, raw: number)
+rfmt_bad(x, raw) :- rfmt_rest(x, raw, r, i), (contains("{", r) ; contains("}", r)),
+    !match("[^{}]*(\\{\\{|\\}\\})[\\s\\S]*", r), !rfmt_tok(x, raw, i, _, _).
+rfmt_bad(x, raw) :- rfmt_field(x, raw, _, _, cv, _), cv != "", !match("![\\s\\S]", cv).
+.decl rfmt_ok(x: symbol, raw: number)
+rfmt_ok(x, raw) :- rfmt_value(x, raw), !rfmt_bad(x, raw).
+// Field names: the first part, then `.attr` and `[key]` parts.
+.decl rfmt_name(n: symbol)
+rfmt_name(n) :- rfmt_field(_, _, _, n, _, _).
+.decl rfmt_name_ok(n: symbol)
+rfmt_name_ok(n) :- rfmt_name(n), match("[^.\\[]*(\\.[^.\\[]+|\\[[^\\]]+\\])*", n).
+.decl rfmt_arg(n: symbol, a: symbol)
+rfmt_arg(n, a) :- rfmt_name(n), match("(?<a>[^.\\[]*)[\\s\\S]*", n).
+.decl rfmt_index(a: symbol, i: number)
+rfmt_index(a, to_number(d)) :- rfmt_arg(_, a), match("0*(?<d>[0-9]{1,9})", a).
+rfmt_index(a, 1000000000) :- rfmt_arg(_, a), match("0*[1-9][0-9]{9,18}", a).
+// rfmt_part(n, j, what, p): the parts after the first; a key of digits is an index, others a string key.
+.decl rfmt_prest(n: symbol, r: symbol, j: number)
+rfmt_prest(n, r, 0) :- rfmt_name_ok(n), match("[^.\\[]*(?<r>[\\s\\S]*)", n).
+rfmt_prest(n, r, j + 1) :- rfmt_part(n, j, _, _, r).
+.decl rfmt_part(n: symbol, j: number, what: symbol, p: symbol, rest: symbol)
+rfmt_part(n, j, "attr", p, r) :- rfmt_prest(n, r0, j), match("\\.(?<p>[^.\\[]+)(?<r>[\\s\\S]*)", r0).
+rfmt_part(n, j, "index", p, r) :- rfmt_prest(n, r0, j), match("\\[(?<p>[0-9]+)\\](?<r>[\\s\\S]*)", r0).
+rfmt_part(n, j, "key", p, r) :- rfmt_prest(n, r0, j), match("\\[(?<p>[^\\]]+)\\](?<r>[\\s\\S]*)", r0),
+    !match("[0-9]+", p).
+field_name(p) :- rfmt_part(_, _, "attr", p, _).   // pyflakes' identifier answers for these too
+// The summary: the value's fields, and those nested in their specs. A spec is parsed as a format string too, by
+// a copy of the parser above (its fields hold no braces: the field around it allowed one level).
+.decl rfmt_spec_of(v: symbol, i: number, s: symbol)
+rfmt_spec_of(v, i, s) :- rfmt_field(v, 0, i, _, _, sp), match(":(?<s>[\\s\\S]+)", sp).
+.decl rspec_rest(s: symbol, r: symbol, i: number)
+rspec_rest(s, @rx_replace(s, "(?<k>\\{\\{|\\}\\}|\\{(?:[^{}](?:[^{}]|\\{[^{}]*\\})*)?\\})|\\\\\\\\|\\\\N\\{[^}]*\\}", "${k}"), 0) :-
+    rfmt_spec_of(_, _, s).
+rspec_rest(s, rest, i + 1) :- rspec_rest(s, r, i), match("[^{}]*(\\{\\{|\\}\\})(?<rest>[\\s\\S]*)", r).
+rspec_rest(s, rest, i + 1) :- rspec_tok(s, i, _, rest).
+.decl rspec_tok(s: symbol, i: number, c: symbol, rest: symbol)
+rspec_tok(s, i, c, rest) :- rspec_rest(s, r, i), match("[^{}]*\\{(?<c>([^{}]([^{}]|\\{[^{}]*\\})*)?)\\}(?<rest>[\\s\\S]*)", r).
+.decl rspec_field(s: symbol, i: number, name: symbol, conv: symbol)
+rspec_field(s, i, n, cv) :- rspec_tok(s, i, c, _), match("(?<a>[^:]*)(:[\\s\\S]*)?", c),
+    match("(?<n>[^!]*)(?<cv>(![\\s\\S]*)?)", a).
+rfmt_name(n) :- rspec_field(_, _, n, _).
+.decl rspec_bad(s: symbol)
+rspec_bad(s) :- rspec_rest(s, r, i), (contains("{", r) ; contains("}", r)),
+    !match("[^{}]*(\\{\\{|\\}\\})[\\s\\S]*", r), !rspec_tok(s, i, _, _).
+rspec_bad(s) :- rspec_field(s, _, _, cv), cv != "", !match("![\\s\\S]", cv).
+.decl rfmt_sum(v: symbol, k: number, name: symbol)
+rfmt_sum(v, i * 1000, n) :- rfmt_field(v, 0, i, n, _, _).
+rfmt_sum(v, i * 1000 + j + 1, n) :- rfmt_spec_of(v, i, s), rspec_field(s, j2, n, _),
+    j = count : { rspec_field(s, j3, _, _), j3 < j2 }.
+.decl rfmt_nested(v: symbol)
+rfmt_nested(v) :- rfmt_spec_of(v, _, s), rspec_field(s, _, _, _).
+.decl rfmt_sum_bad(v: symbol)
+rfmt_sum_bad(v) :- rfmt_sum(v, _, n), !rfmt_name_ok(n).
+rfmt_sum_bad(v) :- rfmt_spec_of(v, _, s), rspec_bad(s).
+.decl rfmt_sum_ok(v: symbol)
+rfmt_sum_ok(v) :- rfmt_ok(v, 0), !rfmt_sum_bad(v).
+
+// ---- 3. printf-style --------------------------------------------------------------------------------------------
+// A placeholder: `%`, a key in balanced parentheses (three levels deep here), flags, a width and a precision
+// that fit an i32 (the flags take every leading 0), a length modifier, and a conversion: `%b` is bytes-only.
+.decl rpct_value(x: symbol)
+.decl rpct_rest(x: symbol, r: symbol, i: number)
+rpct_rest(x, x, 0) :- rpct_value(x).
+rpct_rest(x, rest, i + 1) :- rpct_rest(x, r, i), match("[^%]*%%(?<rest>[\\s\\S]*)", r).
+rpct_rest(x, rest, i + 1) :- rpct_tok(x, i, _, _, _, _, _, rest).
+.decl rpct_tok(x: symbol, i: number, key: symbol, fl: symbol, w: symbol, p: symbol, cv: symbol, rest: symbol)
+rpct_tok(x, i, key, fl, w, p, cv, rest) :- rpct_rest(x, r, i), match(
+    "[^%]*%(?<key>(\\([^()]*(\\([^()]*(\\([^()]*\\)[^()]*)*\\)[^()]*)*\\))?)(?<fl>[#0 +\\-]*)(?<w>(\\*|[1-9][0-9]{0,8}|1[0-9]{9}|20[0-9]{8}|21[0-3][0-9]{7}|214[0-6][0-9]{6}|2147[0-3][0-9]{5}|21474[0-7][0-9]{4}|214748[0-2][0-9]{3}|2147483[0-5][0-9]{2}|21474836[0-3][0-9]|214748364[0-7])?)(?<p>(\\.(\\*|0*([1-9][0-9]{0,8}|1[0-9]{9}|20[0-9]{8}|21[0-3][0-9]{7}|214[0-6][0-9]{6}|2147[0-3][0-9]{5}|21474[0-7][0-9]{4}|214748[0-2][0-9]{3}|2147483[0-5][0-9]{2}|21474836[0-3][0-9]|214748364[0-7])?))?)[hlL]?(?<cv>[diouxXeEfFgGcrsa])(?<rest>[\\s\\S]*)",
+    r).
+.decl rpct_spec(x: symbol, i: number, key: symbol, fl: symbol, w: symbol, p: symbol, cv: symbol)
+rpct_spec(x, i, key, fl, w, p, cv) :- rpct_tok(x, i, key, fl, w, p, cv, _).
+.decl rpct_bad(x: symbol)
+rpct_bad(x) :- rpct_rest(x, r, i), contains("%", r), !match("[^%]*%%[\\s\\S]*", r), !rpct_tok(x, i, _, _, _, _, _, _).
+.decl rpct_ok(x: symbol)
+rpct_ok(x) :- rpct_value(x), !rpct_bad(x).

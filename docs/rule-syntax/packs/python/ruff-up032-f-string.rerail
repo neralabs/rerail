@@ -1,43 +1,50 @@
-.policy "ruff-up032-f-string" revision 2
+.policy "ruff-up032-f-string" revision 3
 .description "Use f-strings instead of str.format() calls on string literals."
 .language python
 .mode steer
 .scope include "**/*"
 
-// Ruff UP032 (pyupgrade): `"…".format(…)` on a str literal that Ruff can rewrite as an f-string. Every field
-// must find its argument (`{}` the next positional one, `{0}` by index, `{x}` by keyword; unused ones may be
-// dropped), and there may be no nested field in a spec and no `{}` mixed with `{0}`. Ruff looks at every
-// argument, used or not, parentheses off: none may be `*args` or `**kwargs`, hold a quote character (it could
-// not go inside `{…}` before Python 3.12) or span lines, and there must be at least one. One used by two fields
-// of the same piece of the literal (Ruff converts adjacent literals one by one) is evaluated once today, so it
-// must be free of effects (a call, await, yield, subscript, comprehension, or an
-// operator on anything but literals). A format string inside django's gettext()/gettext_lazy() is left for
+// Ruff UP032 (pyupgrade): `"…".format(…)` on a str literal that Ruff can rewrite as an f-string. The decoded
+// string must parse, with no nested field in a spec and no `{}` mixed with `{0}`. Ruff looks at every argument,
+// used or not, parentheses off: none may be `*args` or `**kwargs`, hold a quote character (it could not go
+// inside `{…}` before Python 3.12) or span lines (a bare generator's range has no parentheses), and there must be
+// at least one. Then it rewrites each piece of the literal (adjacent literals one by one) from its source text,
+// escapes undecoded: the piece must parse (`"{{ {}"` does, `"\x7b}"` does not), and each field must find its
+// argument (`{}` the next positional one, counted across pieces, `{0}` by index, `{x}` by keyword; unused ones
+// may be dropped), have a conversion s, r or a, attributes that are identifiers (`{0.class}` is not) and string
+// keys without a backslash or the quote the f-string will use for them. An argument used by two fields of one
+// piece is evaluated once today, so it must be free of effects (a call, await, yield, subscript, comprehension,
+// assignment expression, or an operator on anything but literals). A format string inside a call to django's
+// gettext()/gettext_lazy(), as the file imports it (a re-export elsewhere is not followed), is left for
 // translation. Ruff 0.17 does not measure the line. The call's function may be parenthesized
-// (`("{}".format)(x)`), and Ruff checks a string annotation's code too.
+// (`("{}".format)(x)`). Ruff checks the code of a string annotation and of other type-expression strings (cast,
+// TypeVar, NewType, TypeAlias, `type`), not Annotated's metadata; in a string with escapes or adjacent literals
+// its nodes have no tokens of their own, and nothing is reported.
 //   "{} {}".format(a, b)       ← UP032: f"{a} {b}"
 //   "{}".format((a  # it's
 //   ))                         ← UP032: the argument is `a`
 //   "{x} {x}".format(x=f())    "{}".format(a["b"])    "{} {}".format(*a)    "{}".format(a, "b")    not reported
 // The finding is at the call.
 #include "python/upgrade.rerail"
-//   sym_at(e, q)
+//   up_chain_name(e, q, how): what a name is bound to where it runs, re-exports not followed
 #include "python/upgrade-format.rerail"
-//   lit_piece; and, through it, python/pyflakes-format.rerail: format_call, brace_ok, brace_arg,
-//   brace_name, brace_nested, call_pos, call_kwarg
+//   lit_piece; and, through it, python/pyflakes-format.rerail: format_call, call_pos, call_kwarg
 #include "python/python-12.rerail"
-//   plain_str rows for the literals of string annotations
+//   rfmt_* (Ruff's str.format parser), str_body, tdef_guest, simple_guest; plain_str rows for type-expression
+//   strings
 
 .violation UP032(at: node) code "UP032"
     "Replace this `.format()` call with an f-string, putting each argument inside its `{{}}` placeholder; keep `.format()` when the string is passed to a translation function."
     suppress ruff "UP032"
-UP032(c) :- format_call(c, v), brace_ok(v), !brace_nested(v, _, _, _, _, _), !mixed(v), up_args_ok(c),
-    count : { brace_name(v, k, _, _), !refers(c, k, _) } = 0, !split_field(c),
-    count : { refers(c, k1, e), refers(c, k2, e), k1 != k2, same_piece(c, k1, k2), effect(e) } = 0,
-    !translated(c).
+UP032(c) :- format_call(c, v), rfmt_sum_ok(v), !rfmt_nested(v), !mixed(v), up_args_ok(c),
+    count : { piece(c, j, _, _, _), !piece_ok(c, j) } = 0, !effect_twice(c), !translated(c), !complex_guest(c).
+rfmt_value(v, 0) :- format_call(_, v).
 
 // `("{}".format)(x)`: Ruff's call.func is the attribute, the parentheses gone.
 format_call(c, v) :- kind(c, "call"), field(c, "function", f0), kind(f0, "parenthesized_expression"), unparen(f0, f),
     attr_of(f, o, "format"), unparen(o, s), plain_str(s, v).
+.decl mixed(v: symbol)  // `{}` and `{0}` together: a ValueError
+mixed(v) :- rfmt_sum(v, _, n), rfmt_arg(n, ""), rfmt_sum(v, _, n2), rfmt_arg(n2, a), rfmt_index(a, _).
 
 // up_args_ok(c): Ruff's FormatSummaryValues: at least one argument, and each one, parentheses off, plain.
 .decl up_arg_node(c: node, e: node)  // each argument of c (a keyword's value), parentheses off
@@ -45,59 +52,240 @@ up_arg_node(c, e) :- format_call(c, _), field(c, "arguments", al), kind(al, "arg
     !kind(a, "comment"), !kind(a, "keyword_argument"), unparen(a, e).
 up_arg_node(c, e) :- format_call(c, _), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, _),
     kind(a, "keyword_argument"), field(a, "value", w), unparen(w, e).
-up_arg_node(c, g) :- format_call(c, _), field(c, "arguments", g), kind(g, "generator_expression").
+up_arg_node(c, g) :- bare_gen(c, g).
+.decl bare_gen(c: node, g: node)  // `"{}".format(x for x in y)`: the generator is the call's arguments node
+bare_gen(c, g) :- format_call(c, _), field(c, "arguments", g), kind(g, "generator_expression").
 .decl up_args_ok(c: node)
-up_args_ok(c) :- format_call(c, _), up_arg_node(c, _), count : { up_arg_node(c, e), bad_arg(e) } = 0.
-.decl bad_arg(e: node)
-bad_arg(e) :- up_arg_node(_, e), (kind(e, "list_splat") ; kind(e, "dictionary_splat")).
-bad_arg(e) :- up_arg_node(_, e), text(e, t), (contains("'", t) ; contains("\"", t)).
-bad_arg(e) :- up_arg_node(_, e), line(e, l), !end_line(e, l).
+up_args_ok(c) :- format_call(c, _), up_arg_node(c, _), count : { up_arg_node(c, e), bad_arg(c, e) } = 0.
+.decl bad_arg(c: node, e: node)
+bad_arg(c, e) :- up_arg_node(c, e), (kind(e, "list_splat") ; kind(e, "dictionary_splat")).
+bad_arg(c, e) :- up_arg_node(c, e), !bare_gen(c, e), text(e, t), (contains("'", t) ; contains("\"", t)).
+bad_arg(c, e) :- up_arg_node(c, e), !bare_gen(c, e), line(e, l), !end_line(e, l).
+// A bare generator's range runs from its element to the end of its last clause.
+bad_arg(c, g) :- bare_gen(c, g), child(g, x, _), !kind(x, "comment"), text(x, t), (contains("'", t) ; contains("\"", t)).
+bad_arg(c, g) :- bare_gen(c, g), field(g, "body", b), line(b, l),
+    count : { child(g, x, _), !kind(x, "comment"), end_line(x, l2), l2 != l } > 0.
 
-// refers(c, k, e): field k of c's string takes argument e.
-.decl refers(c: node, k: number, e: node)
-refers(c, k, e) :- format_call(c, v), brace_arg(v, k, ""), r = count : { brace_arg(v, k2, ""), k2 < k },
-    call_pos(c, r, e).
-refers(c, k, e) :- format_call(c, v), brace_arg(v, k, a), match("[0-9]+", a), call_pos(c, to_number(a), e).
-refers(c, k, e) :- format_call(c, v), brace_arg(v, k, x), x != "", !match("[0-9]+", x), call_kwarg(c, x, e).
-.decl mixed(v: symbol)  // `{}` and `{0}` together: a ValueError
-mixed(v) :- brace_arg(v, _, ""), brace_arg(v, _, a), match("[0-9]+", a).
-// split_field(c): a piece of c's adjacent literals has unbalanced braces (`'{' '0}'`): Ruff converts each piece
-// on its own, so a field across two pieces stops it.
-.decl split_field(c: node)
-split_field(c) :- fmt_str(c, s), lit_piece(s, p), str(p, x), @count_matches("[{]", x) != @count_matches("[}]", x).
+// piece(c, j, x, raw, q): the j-th piece of c's literal has source text x between its quotes; raw when its
+// prefix has an r; q is the quote a string key gets in the f-string (`"` unless the piece is quoted with `"`).
 .decl fmt_str(c: node, s: node)  // the literal of format call c
 fmt_str(c, s) :- format_call(c, _), field(c, "function", f0), unparen(f0, f), attr_of(f, s0, _), unparen(s0, s).
-// same_piece(c, k1, k2): fields k1 and k2 of c's literal are in the same piece of it. Each piece of adjacent
-// literals is parsed too (brace_value seeds the parser), to number its fields: field_ord counts top-level fields
-// (no nested ones get this far), piece_first gives the first ordinal of each piece.
-brace_value(x) :- fmt_str(_, s), kind(s, "concatenated_string"), child(s, p, _), kind(p, "string"), str(p, x).
-.decl piece_nf(c: node, j: number, n: number)
-piece_nf(c, j, n) :- fmt_str(c, s), kind(s, "concatenated_string"), child(s, p, j), kind(p, "string"), str(p, x),
-    n = count : { brace_field(x, _, _, _, _, _) }.
-.decl piece_first(c: node, j: number, f: number)
-piece_first(c, j, f) :- piece_nf(c, j, _), f = sum n : { piece_nf(c, j2, n), j2 < j }.
-.decl field_ord(c: node, k: number, r: number)
-field_ord(c, i * 1000, r) :- format_call(c, v), brace_field(v, i, _, _, _, _),
-    r = count : { brace_field(v, i2, _, _, _, _), i2 < i }.
-.decl field_piece(c: node, k: number, j: number)
-field_piece(c, k, 0) :- fmt_str(c, s), kind(s, "string"), field_ord(c, k, _).
-field_piece(c, k, j) :- field_ord(c, k, r), piece_nf(c, j, n), piece_first(c, j, f), r >= f, r < f + n.
-.decl same_piece(c: node, k1: number, k2: number)
-same_piece(c, k1, k2) :- field_piece(c, k1, j), field_piece(c, k2, j).
+.decl piece(c: node, j: number, x: symbol, raw: number, q: symbol)
+piece(c, 0, x, raw, q) :- fmt_str(c, s), kind(s, "string"), piece_of(s, x, raw, q).
+piece(c, j, x, raw, q) :- fmt_str(c, s), kind(s, "concatenated_string"), child(s, p, j), kind(p, "string"),
+    piece_of(p, x, raw, q).
+.decl piece_of(p: node, x: symbol, raw: number, q: symbol)
+piece_of(p, x, raw, q) :- str_body(p, x), child(p, st, 0), kind(st, "string_start"), text(st, a),
+    (match("[uU]?[rR][\\s\\S]*", a), raw = 1 ; !match("[uU]?[rR][\\s\\S]*", a), raw = 0),
+    child(p, en, i), kind(en, "string_end"), text(en, z), !child(p, _, i + 1), (z = "\"", q = "'" ; z != "\"", q = "\"").
+rfmt_value(x, raw) :- piece(_, _, x, raw, _).
+.decl piece_ok(c: node, j: number)
+piece_ok(c, j) :- piece(c, j, "", _, _).
+piece_ok(c, j) :- piece(c, j, x, raw, _), x != "", rfmt_ok(x, raw), count : { pfield(c, j, i, _, _), !pfield_ok(c, j, i) } = 0.
+// pfield(c, j, i, name, conv): field i of piece j. pfield_ok: Ruff can write it in the f-string.
+.decl pfield(c: node, j: number, i: number, name: symbol, conv: symbol)
+pfield(c, j, i, n, cv) :- piece(c, j, x, raw, _), rfmt_field(x, raw, i, n, cv, _).
+.decl pfield_ok(c: node, j: number, i: number)
+pfield_ok(c, j, i) :- pfield(c, j, i, n, cv), (cv = "" ; cv = "!s" ; cv = "!r" ; cv = "!a"), rfmt_name_ok(n),
+    pref(c, j, i, _, _), count : { rfmt_part(n, _, "attr", p, _), !identifier(p) } = 0,
+    piece(c, j, _, _, q), count : { rfmt_part(n, _, "key", p, _), contains(q, p) } = 0,
+    count : { rfmt_part(n, _, "key", p2, _), contains("\\", p2) } = 0.
+// pref(c, j, i, key, e): field i of piece j takes argument e; key names it ("#n" for position n, or the
+// keyword). `{}` counts the automatic fields before it, in this piece and the earlier ones.
+.decl pref(c: node, j: number, i: number, key: symbol, e: node)
+pref(c, j, i, cat("#", to_string(o)), e) :- pfield(c, j, i, n, _), rfmt_arg(n, ""), pauto_first(c, j, f),
+    o = f + count : { pfield(c, j, i2, n2, _), i2 < i, rfmt_arg(n2, "") }, call_pos(c, o, e).
+pref(c, j, i, cat("#", to_string(o)), e) :- pfield(c, j, i, n, _), rfmt_arg(n, a), rfmt_index(a, o), call_pos(c, o, e).
+pref(c, j, i, a, e) :- pfield(c, j, i, n, _), rfmt_arg(n, a), a != "", !rfmt_index(a, _), call_kwarg(c, a, e).
+.decl pautos(c: node, j: number, n: number)
+pautos(c, j, n) :- piece(c, j, _, _, _), n = count : { pfield(c, j, _, n2, _), rfmt_arg(n2, "") }.
+.decl pauto_first(c: node, j: number, f: number)
+pauto_first(c, j, f) :- pautos(c, j, _), f = sum n : { pautos(c, j2, n), j2 < j }.
+// effect_twice(c): one piece uses an argument with an effect twice.
+.decl effect_twice(c: node)
+effect_twice(c) :- pref(c, j, i1, key, e), pref(c, j, i2, key, e), i1 < i2, effect(e).
 // effect(e): Ruff's contains_effect: e may have an effect, so it cannot be evaluated twice.
 .decl effect(e: node)
-effect(e) :- refers(_, _, e), unparen(e, m), (n = m ; within(n, m)), kind(n, k), effect_kind(k).
-effect(e) :- refers(_, _, e), unparen(e, m), (n = m ; within(n, m)), kind(n, "binary_operator"),
+effect(e) :- pref(_, _, _, _, e), unparen(e, m), (n = m ; within(n, m)), kind(n, k), effect_kind(k).
+effect(e) :- pref(_, _, _, _, e), unparen(e, m), (n = m ; within(n, m)), kind(n, "binary_operator"),
     (field(n, "left", o) ; field(n, "right", o)), unparen(o, o0), !lit_operand(o0).
 .decl effect_kind(k: symbol)
 effect_kind("call"). effect_kind("await"). effect_kind("subscript"). effect_kind("yield").
 effect_kind("list_comprehension"). effect_kind("set_comprehension"). effect_kind("dictionary_comprehension").
-effect_kind("generator_expression").
+effect_kind("generator_expression"). effect_kind("named_expression").
 .decl lit_operand(o: node)  // operands that keep a `+` or `%` free of effects in Ruff's eyes
 lit_operand(o) :- kind(o, k), (k = "string" ; k = "concatenated_string" ; k = "integer" ; k = "float" ;
     k = "true" ; k = "false" ; k = "none" ; k = "ellipsis" ; k = "list" ; k = "tuple" ; k = "set" ;
     k = "dictionary" ; k = "list_comprehension" ; k = "set_comprehension" ; k = "dictionary_comprehension").
-// translated(c): c is inside the arguments of django's gettext or gettext_lazy.
+// translated(c): c is inside a call to django's gettext or gettext_lazy, as Ruff resolves names: through the
+// file's own imports.
 .decl translated(c: node)
-translated(c) :- format_call(c, _), inside(c, g, "call"), field(g, "function", f),
-    (sym_at(f, "django.utils.translation.gettext") ; sym_at(f, "django.utils.translation.gettext_lazy")).
+translated(c) :- format_call(c, _), inside(c, g, "call"), field(g, "function", f), up_chain_name(f, q, "import"),
+    (q = "django.utils.translation.gettext" ; q = "django.utils.translation.gettext_lazy").
+// complex_guest(c): c is in a type-expression string with escapes or adjacent literals.
+.decl complex_guest(c: node)
+complex_guest(c) :- format_call(c, _), tdef_guest(c, _), !simple_guest(c).
+
+// Ruff parses each piece's source text with its format parser: `{{` is a literal brace, not half of a field.
+.test escaped_braces_are_literal exactly
+    .fixture "a.py" ```
+        "{{ {}".format(a)
+        "{}}}".format(a)
+        ```
+    .expect UP032 at "a.py":1
+    .expect UP032 at "a.py":2
+.end
+
+// The source text is parsed undecoded: `\x7b}` holds a lone `}`, which does not parse.
+.test hex_escaped_brace_is_not_a_field exactly
+    .fixture "a.py" ```
+        '\x7b}'.format(a)
+        '\x7b\x7b{}'.format(a)
+        ```
+    .expect UP032 at "a.py":2
+.end
+
+// An assignment expression has an effect: a field used twice stops the rewrite.
+.test walrus_is_an_effect exactly
+    .fixture "a.py" ```
+        "{x} {x}".format(x=(y := 1))
+        "{x}".format(x=(y := 1))
+        ```
+    .expect UP032 at "a.py":2
+.end
+
+// An attribute part must be an identifier and no keyword.
+.test attribute_must_be_an_identifier exactly
+    .fixture "a.py" ```
+        "{0.class}".format(a)
+        "{0.a-b}".format(a)
+        "{0.real}".format(a)
+        ```
+    .expect UP032 at "a.py":3
+.end
+
+// A string key may not hold the quote the f-string will use for it, nor a backslash.
+.test subscript_key_quote_and_backslash exactly
+    .fixture "a.py" ```
+        "{0[it's]}".format(a)
+        "{0[a\\b]}".format(a)
+        '{0[say "x"]}'.format(a)
+        '''{0[it's]}'''.format(a)
+        "{0[key]}".format(a)
+        ```
+    .expect UP032 at "a.py":4
+    .expect UP032 at "a.py":5
+.end
+
+// A bare generator argument's range is its own, without the call's parentheses.
+.test multiline_bare_generator exactly
+    .fixture "a.py" ```
+        "{}".format(
+            x for x in y
+        )
+        "{}".format(x
+            for x in y)
+        ```
+    .expect UP032 at "a.py":1
+.end
+
+// A string annotation made of adjacent strings: Ruff's tokens are the outer ones, and it does not report.
+.test concatenated_annotation_strings exactly
+    .fixture "a.py" ```
+        z: "'{}'" ".format(a)"
+        y: "'{}'.format(a)"
+        ```
+    .expect UP032 at "a.py":2
+.end
+
+// Ruff parses strings in other type expressions too: cast, TypeVar, NewType, TypeAlias, `type`.
+.test type_expression_strings exactly
+    .fixture "a.py" ```
+        from typing import TypeVar, NewType, TypeAlias, cast
+        T = TypeVar("T", bound="'{}'.format(a)")
+        U = NewType("U", "'{}'.format(a)")
+        V: TypeAlias = "'{}'.format(a)"
+        W = TypeVar("W", "'{}'.format(a)", "int")
+        cast(typ="'{}'.format(a)", val=q)
+        type X = "'{}'.format(a)"
+        cast("'{}'.format(a)", q)
+        cast(int, "'{}'.format(a)")
+        ```
+    .expect UP032 at "a.py":2
+    .expect UP032 at "a.py":3
+    .expect UP032 at "a.py":4
+    .expect UP032 at "a.py":5
+    .expect UP032 at "a.py":6
+    .expect UP032 at "a.py":7
+    .expect UP032 at "a.py":8
+.end
+
+// Annotated's metadata is a value, not a type expression.
+.test annotated_metadata_is_not_parsed exactly
+    .fixture "a.py" ```
+        from typing import Annotated
+        x: Annotated[int, "'{}'.format(a)"]
+        y: Annotated["'{}'.format(a)", 1]
+        ```
+    .expect UP032 at "a.py":3
+.end
+
+// Ruff resolves gettext through the file's own imports only; a re-export in another module is not followed.
+.test gettext_reexport_not_followed exactly
+    .fixture "mymod.py" ```
+        from django.utils.translation import gettext
+        ```
+    .fixture "use.py" ```
+        from mymod import gettext
+        gettext("{}".format(a))
+        from django.utils.translation import gettext_lazy
+        gettext_lazy("{}".format(a))
+        ```
+    .expect UP032 at "use.py":2
+.end
+
+// What the rewrite keeps from before: a field split across pieces, an effect repeated within one piece only,
+// mixed `{}` and `{0}`, a parenthesized callee or argument, unicode-name escapes in the source.
+.test pieces_effects_and_arguments exactly
+    .fixture "a.py" ```
+        '{' '0}'.format(1)
+        "{0}" "{0}".format(x for x in a)
+        "{0} {0}".format(x for x in a)
+        "{} {1}".format(1, 2)
+        ("{}".format)(x)
+        "{}".format((a  # it's
+        ))
+        "{}".format(a, "b")
+        "{} {}".format(*a)
+        '\N{DIGIT ONE} {}'.format(a)
+        "{a.b[0][c]!r:>10}".format(a=x)
+        "{}" "{}".format(a, b)
+        "{}".format(a=1)
+        ```
+    .expect UP032 at "a.py":2
+    .expect UP032 at "a.py":5
+    .expect UP032 at "a.py":6
+    .expect UP032 at "a.py":10
+    .expect UP032 at "a.py":11
+    .expect UP032 at "a.py":12
+.end
+
+// Ruff reads the arguments of a generic subscript (typing, builtin and collections.abc generics) and PEP 695
+// bounds as types too; Annotated's metadata is a value wherever it stands.
+.test generic_subscripts_and_bounds exactly
+    .fixture "a.py" ```
+        from typing import Annotated, List, cast
+        cast(Annotated[int, "'{}'.format(a)"], q)
+        u = List["'{}'.format(a)"]
+        v = Foo["'{}'.format(a)"]
+        w = list["'{}'.format(a)"]
+        def f[T: "'{}'.format(a)"](): pass
+        x: Annotated["'{}'.format(a)", "'{}'.format(b)"]
+        y = Annotated["'{}'.format(a)", "'{}'.format(b)"]
+        ```
+    .expect UP032 at "a.py":3
+    .expect UP032 at "a.py":5
+    .expect UP032 at "a.py":6
+    .expect UP032 at "a.py":7
+    .expect UP032 at "a.py":8
+.end
