@@ -46,6 +46,8 @@ describe("rerail support-bundle with a repository whose stored aliases do not re
     expect(exit).toBe(0);
     const bundle = JSON.parse(readFileSync(output, "utf8")) as SupportBundle;
     expect(bundle.problems.filter(problem => problem.startsWith("repositories:"))).toEqual([]);
-    expect(stderr).toContain(`repository ${repositoryKey} reads with no aliases: the aliases_json of its row is not a JSON array of strings`);
+    // The whole line, so it fails when the line loses the repository, what it reads or the reason.
+    expect(stderr.split("\n")).toContain(`rerail: ${defaultRerailDatabasePath()}: repository ${repositoryKey} reads with no aliases: `
+      + "the aliases_json of its row is not a JSON array (Unexpected end of JSON input), which only a damaged file or a hand edit leaves.");
   });
 });
