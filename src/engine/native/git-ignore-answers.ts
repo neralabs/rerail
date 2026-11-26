@@ -107,15 +107,18 @@ function indexStamp(path: string, digest: IndexDigest): string | undefined {
   }
 }
 
-/** `indexStamp` of the open index file `descriptor`; it throws where the file ends before the size its stat gave. */
+/**
+ * `indexStamp` of the open index file `descriptor`; it throws where the file ends before the size its stat gave. Only
+ * an index with no checksum takes the stamp's stat (`bigint`, which costs more), so one with Git's checksum costs what
+ * it did.
+ */
 function openStamp(descriptor: number, digest: IndexDigest): string {
-  const stats = fstatSync(descriptor, { bigint: true });
-  const size = Number(stats.size);
+  const { size } = fstatSync(descriptor);
   const end = Buffer.alloc(Math.min(size, CHECKSUM_BYTES));
   const read = readSync(descriptor, end, 0, end.length, size - end.length);
   if (read < end.length) throw new Error(`the index ended ${end.length - read} bytes before its size`);
   if (end.subarray(-SHA1_BYTES).some(byte => byte !== 0)) return `checksum ${size} ${end.toString("hex")}`;
-  return `digest ${digest.of(descriptor, stats)}`;
+  return `digest ${digest.of(descriptor, fstatSync(descriptor, { bigint: true }))}`;
 }
 
 /**
