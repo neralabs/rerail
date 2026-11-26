@@ -594,6 +594,21 @@ resolved(k, q) :- answer(k, q).
         assert_eq!((q.rounds[0].constants_measured, q.rounds[1].constants_measured), (1, 0), "round 2 reads its chunk's constants as round 1 measured them");
     }
 
+    /// A held relation is stored, never recomputed in its readers (decision 0705). tsx_names' `exported_decl`, which
+    /// `ans_def` reads beside the asks, is held; over a 560-file sample the estimates inlined it, so the chunk made no
+    /// rows of it, kept no entry of its files, and round 2 built every file again. Told to inline it here
+    /// (`RERAIL_INLINE_ONLY`), the chunks store it all the same: round 2 builds `d.ts`, the asked file, alone.
+    #[test]
+    fn a_held_relation_is_never_inlined() {
+        let _inline = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_INLINE_ONLY", "exported_decl")]);
+        let reader = ".language typescript\n#include \"tsx/names.rerail\"\n.decl s(p: symbol, q: symbol)\ns(p, q) :- sym_of(n, q), docof(n, d), doc(d, p, _).\n.output s\n";
+        let t = AskedTree::new("asked-held-inline", &[], &[("a.ts", "import { g } from \"./d\";\ng();\n"), ("d.ts", "export function g() {}\nexport function h() {}\n")]);
+        let report = t.run(reader).unwrap();
+        assert_eq!(t.rows("s"), [["a.ts", "d#g"]]);
+        let rounds: Vec<(usize, usize)> = report.phase_runs.iter().find(|r| r.name == "tsx_names").expect("tsx_names ran").rounds.iter().map(|r| (r.asks, r.files - r.memo.0)).collect();
+        assert_eq!(rounds, [(1, 2), (1, 1)], "round 2 builds d.ts alone: round 1's entries were kept");
+    }
+
     /// An asked phase's run starts from the asks its last run over the root ended with (decision 0705): over an
     /// unchanged tree it runs one round; when the asks shrink, the smaller set is the run's, and a removed import's
     /// ask is in no export after it.

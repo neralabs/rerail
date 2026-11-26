@@ -3127,6 +3127,17 @@ fn run_observed_within(
     } else {
         local_version
     };
+    // An asked phase's held relations are stored, never recomputed in their readers (`no_inline`, decision 0099): an
+    // entry holds their rows (decision 0705). Inlined (tsx_names' `exported_decl` over a 560-file sample, by the
+    // estimates), a chunk made no rows of them, and no entry of its files was kept: every round built every file.
+    let local_version = if asked_held_rels.is_empty() {
+        local_version
+    } else {
+        let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&local_version);
+        let words: Vec<(&str, &str)> = asked_held_rels.iter().map(|r| (r.as_str(), "no_inline")).collect();
+        b.fields().add_qualifiers(&words);
+        b.finish_overlay().map_err(Error::Plan)?
+    };
     let (mut local, mut cross) = (part_of(local_version), part_of(cross_version));
     // The run's constants made of earlier phases' exports (`v_enum(q, n) :- struct__base(q, _, b), …, n = count :
     // { struct__member(q, x, "") }`): one answer for the run, so derived once, before the chunks, by the same engine

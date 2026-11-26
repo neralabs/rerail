@@ -147,7 +147,10 @@ a view of an input's columns as `kind` is: read in place, decision 0353). For py
 `qualname`, `all_here` and `all_assigned`. Each is kept to the chunk's end, not handed off, and its rows go into the
 files' entries alone, never to the cross part. A later round's partial hit stops its cone at them
 (`wanted_cone`'s boundary): it reads their rows from its files' entries as inputs (`flat_source`) and derives only
-the rules that read the asks, and the new entries carry those rows on. Before, round 2 derived `def_name`,
+the rules that read the asks, and the new entries carry those rows on. A held relation is stored, never recomputed in its readers: the
+file-local part declares each `no_inline` (decision 0099). The estimates inlined tsx_names' `exported_decl` over
+tscorp's 560 files (its one reader, `ans_def`'s, reads little of it), so no chunk made its rows, no entry of a file was
+kept, and each round built every file (`a_held_relation_is_never_inlined`). Before, round 2 derived `def_name`,
 `qualname`, `value`, `all_assigned`, `rr_value_req` and the `modname` strata again for each asked file (about
 0.6 s of round 2's CPU over bwh's Django sample): now it runs `ans_def_at` and `ans_pub_at` alone.
 `Report::memo_partial_rules` (`Round::partial_rules`) is the most rules a chunk of partial hits ran:
