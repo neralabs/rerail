@@ -107,7 +107,7 @@ impl Look {
 }
 
 /// An entry's filler: given the entry taken, it writes the payload and gives whether it fits.
-type Fill<'f> = &'f dyn Fn(*mut u8) -> bool;
+pub type Fill<'f> = &'f dyn Fn(*mut u8) -> bool;
 
 /// The entry of `key` (`reads::cache_lookup`): looked up in the live generations, head first, a hit in the oldest
 /// copied into the head; with `fill`, an entry another thread writes waited for (`SPIN` times at most), and on a miss
@@ -117,7 +117,7 @@ type Fill<'f> = &'f dyn Fn(*mut u8) -> bool;
 ///
 /// # Safety
 /// `cache` is a live cache (`Spec::init`), and `fill` writes only its entry's `size` bytes.
-unsafe fn lookup(cache: *mut u8, key: u64, size: u32, fill: Option<Fill<'_>>) -> u64 {
+pub unsafe fn lookup(cache: *mut u8, key: u64, size: u32, fill: Option<Fill<'_>>) -> u64 {
     // SAFETY: the caller's.
     let l = unsafe { Look::new(cache, key) };
     let open = fill.is_none();
