@@ -146,8 +146,11 @@ impl TreeWatcher {
         Ok(())
     }
 
-    /// Takes every notice since the last take, at most one per root, with what the OS reported
-    /// before the take that the adapter's thread had not read yet. Never blocks on the OS.
+    /// Takes every notice since the last take, at most one per root, with what the OS held for the
+    /// adapter when the take began that its thread had not read yet. It never waits for a change to
+    /// come: on Linux it reads at most the events the kernel held at its start, and waits for the
+    /// adapter's thread only while that thread holds its buffer, for one read of 64 KiB at most and
+    /// the reports of what it read.
     /// A root whose watch ended is let go of here: the adapter that ended it may still hold it
     /// (an FSEvents stream cannot stop itself from its callback).
     #[napi(catch_unwind)]
