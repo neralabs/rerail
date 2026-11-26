@@ -1,0 +1,172 @@
+// python/python-14: the calls and shapes of the flake8-comprehensions (C4) rules C400 to C406 and C408, in a file and
+// in the tree parsed from a string type definition, which Ruff checks as code and reports at the string.
+// comprehensions' and ruff's relations miss the nodes of a parsed string (engine gaps, NOTES-python-14): a body that
+// joins kind(c, K), field(c, F, x) and kind(x, K2) gives no row for them (call_item, c4_call, c4_named are such
+// bodies), and a count over an input relation (`child`) counts none of them. So call_nargs and call_nkwargs are 0
+// for every parsed call, c4_only never holds there, and C408 took `list(x)` for `list()`. These relations step from
+// the call to its parts through relations of their own, and say "one" and "none" by negation.
+//
+// Interface
+//   c14_call(c)            c is a call of a file, or of a string type definition's tree (python-01's typedef_node):
+//                          a call parsed from another string (`Literal["list()"]`) is not one
+//   c14_named(c, x)        c4_named: c calls the name x, whatever it is bound to
+//   c14_bname(c, x)        c4_call: c calls the name x, and x is the builtin there (not `builtins.x`; Ruff's
+//                          has_builtin_binding: never a name its function declares `global`)
+//   c14_builtin(c, x)      c4_builtin: c's callee resolves to the builtin x, by name or as `builtins.x` (in a file;
+//                          in a parsed string, by name only); Ruff's resolve_builtin_symbol, `global x` included
+//   c14_only(c, a)         c, a call of the name list, set or dict, has exactly one argument, the positional a
+//                          (not `*a`), parentheses off: c4_only for the C4 rules' callees
+//   c14_nopos(c)           c has no positional argument and no `*xs`: call_nargs(c, 0)
+//   c14_nokw(c)            c has no keyword argument and no `**kw`: call_nkwargs(c, 0)
+//   c14_kwsplat(c)         c passes `**kw`: call_kwsplat
+//   c14_simple(e, fc)      c4_simple: comprehension e has one `for` clause fc, not `async for`, and no `if`
+//   c14_passthrough(e)     c4_passthrough on c14_simple: `x for x in y`
+//   c14_two(t)             t, parentheses off, is a tuple of exactly two elements, `(k, *v)` too
+//   c14_pair(e)            c4_pair: c14_two, neither element `*x`
+//
+//   a: "list(x for x in xs)"         c14_call(<list(…)>), c14_only(<list(…)>, <x for x in xs>), c14_passthrough
+//   y = cast("list()", 1)            c14_call(<list()>), c14_nopos, c14_nokw: `cast`'s type is a type definition
+//   z: Literal["list()"]             no c14_call: a literal's string is a value, not parsed
+#include "python/comprehensions.rerail"   // c4_comp, c4_comp_kind, c4_elt, c4_clause, cmp_same_ask
+#include "python/python-01.rerail"       // typedef_node
+
+.decl c14_call(c: node)
+c14_call(c) :- kind(c, "call"), c14_file(c).
+c14_call(c) :- typedef_node(c), kind(c, "call").
+.decl c14_file(n: node)
+c14_file(n) :- docof(n, d), doc_role(d, "primary").
+.decl c14_fn(c: node, f: node)  // c's callee, as written
+c14_fn(c, f) :- c14_call(c), field(c, "function", f).
+.decl c14_named(c: node, x: symbol)
+c14_named(c, x) :- c14_fn(c, f), kind(f, "identifier"), text(f, x).
+.decl c14_bname(c: node, x: symbol)
+c14_bname(c, x) :- c14_fn(c, f), c14_file(c), kind(f, "identifier"), builtin_at(f, x), !c14_global_ref(f, _).
+c14_bname(c, x) :- c14_name_at(c, x, p), c4_builtin_here(p, x).
+.decl c14_builtin(c: node, x: symbol)
+c14_builtin(c, x) :- c14_fn(c, f), c14_file(c), unparen(f, m), builtin_at(m, x), !c14_global_ref(m, _).
+c14_builtin(c, x) :- c14_fn(c, f), c14_global_ref(f, s), c14_seen(f, s), builtin_at(f, x).
+c14_builtin(c, x) :- c14_name_at(c, x, p), c4_builtin_here(p, x).
+
+// ---- `global x` and the order of Ruff's visits ---------------------------------------------------------------------
+// Ruff's has_builtin_binding (C400 to C406) reads a name its function declares `global` as that function's binding,
+// not the builtin. Its resolve_builtin_symbol (C408) does the same until it has visited an import of the module
+// builtins, and then resolves the name through the module to the builtin. Ruff visits the module's statements
+// first, then the function bodies, outermost first, each depth in source order.
+//   def a(): global dict; return dict()     no C408: nothing has imported builtins when a's body is visited
+//   def b(): import builtins
+//   def c(): global list; return list()     C408 (and C408 in a too with `import builtins` anywhere at module level)
+// c14_global_ref(f, s): the callee f is a name that its function s declares global.
+.decl c14_global_ref(f: node, s: node)
+c14_global_ref(f, s) :- c14_fn(c, f), c14_file(c), kind(f, "identifier"), text(f, x), c14_coll_name(x),
+    nearest(f, s, scope), kind(s, "function_definition"), decl(s, x, m), kind(m, "module").
+// c14_seen(f, s): Ruff has visited an import of builtins before f, in function s: one at module level (or in a class
+// body there), in a shallower function, in one as deep that comes first, or above f in s itself.
+.decl c14_seen(f: node, s: node)
+c14_seen(f, s) :- c14_global_ref(f, s), docof(f, d), c14_bimport(i, d), !nearest(i, _, fdef).
+c14_seen(f, s) :- c14_global_ref(f, s), docof(f, d), c14_bimport(i, d), nearest(i, g, fdef), c14_depth(g, dg),
+    c14_depth(s, ds), (dg < ds ; dg = ds, visit_index(g, a), visit_index(s, b), a < b ; g = s, earlier(i, f)).
+.decl c14_bimport(i: node, d: number)
+c14_bimport(i, d) :- import_alias(i, _, "builtins", _, _), docof(i, d).
+// c14_depth(g, n): function g is nested in n - 1 functions.
+.decl c14_depth_ask(g: node)
+c14_depth_ask(s) :- c14_global_ref(_, s).
+c14_depth_ask(g) :- c14_bimport(i, _), nearest(i, g, fdef).
+.decl c14_outer(g: node, p: node)
+c14_outer(g, p) :- c14_depth_ask(g), nearest(g, p, fdef).
+c14_outer(g, q) :- c14_outer(g, p), nearest(p, q, fdef).
+.decl c14_depth(g: node, n: number)
+c14_depth(g, n) :- c14_depth_ask(g), n = 1 + count : { c14_outer(g, _) }.
+
+// ---- where a callee's name is looked up ---------------------------------------------------------------------------
+// Python evaluates a parameter's annotation and the return annotation where the def runs, outside the function, so
+// `def f(list: int) -> "list(x for x in xs)"` calls the builtin list (Ruff's C400). builtin_at takes the function's
+// own bindings there, and does not look up a name parsed from a string outside an annotation (`cast("list()", x)`).
+// c14_name_at(c, x, p): c calls the name x, which is read as at p: the def for a call in a parameter's or the return
+// annotation, else the file's string the call was parsed from (through nested strings), and c4_builtin_here says
+// whether x is the builtin there. A call of a file outside a signature keeps builtin_at.
+.decl c14_name_at(c: node, x: symbol, p: node)
+c14_name_at(c, x, p) :- c14_named(c, x), c14_coll_name(x), !c14_file(c), c14_fn(c, f), c14_top(f, s),
+    c14_where(s, p).
+c14_name_at(c, x, p) :- c14_named(c, x), c14_coll_name(x), c14_file(c), c14_fn(c, f), annotation(f),
+    c14_sig(f, p).
+c4_builtin_ask(p, x) :- c14_name_at(_, x, p).
+.decl c14_coll_name(x: symbol)
+c14_coll_name("list"). c14_coll_name("set"). c14_coll_name("dict"). c14_coll_name("tuple").
+// c14_top(n, s): n is in the tree parsed from the type definition string s of the file, or from a string in one.
+.decl c14_host(n: node, s: node)
+c14_host(n, s) :- type_ctx(s), typedef_str(s), parsed(s, "annotation", r), (n = r ; within(n, r)).
+.decl c14_top(n: node, s: node)
+c14_top(n, s) :- c14_host(n, s), c14_file(s).
+c14_top(n, s0) :- c14_host(n, s), !c14_file(s), c14_top(s, s0).
+.decl c14_where(s: node, p: node)
+c14_where(s, f) :- c14_top(_, s), c14_sig(s, f).
+c14_where(s, s) :- c14_top(_, s), !c14_sig(s, _).
+// c14_sig(n, f): n is in a parameter's annotation or the return annotation of def f.
+.decl c14_sig(n: node, f: node)
+c14_sig(n, f) :- c14_sig_ask(n), within(n, t), field(f, "return_type", t).
+c14_sig(n, f) :- c14_sig_ask(n), field(f, "return_type", n).
+c14_sig(n, f) :- c14_sig_ask(n), (n = t ; within(n, t)), field(p, "type", t), c14_param(p, f).
+.decl c14_sig_ask(n: node)
+c14_sig_ask(s) :- c14_top(_, s).
+c14_sig_ask(f) :- c14_fn(c, f), c14_file(c), annotation(f).
+.decl c14_param(p: node, f: node)
+c14_param(p, f) :- kind(f, "function_definition"), field(f, "parameters", ps), child(ps, p, _).
+
+// ---- arguments (python/ruff's call_item and pos_item; a lone generator is the argument list itself) -------------
+.decl c14_args(c: node, al: node)
+c14_args(c, al) :- c14_call(c), field(c, "arguments", al).
+.decl c14_item(c: node, a: node, j: number)
+c14_item(c, a, j) :- c14_args(c, al), kind(al, "argument_list"), child(al, a, j), !kind(a, "comment"),
+    !kind(a, "line_continuation").
+.decl c14_positional(a: node)
+c14_positional(a) :- c14_item(_, a, _), !kind(a, "keyword_argument"), !kind(a, "dictionary_splat").
+// c14_two_items(c): c's argument list has two items or more; asked of the C4 callees only, as pairs of items are
+// quadratic in a call's length.
+.decl c14_two_items(c: node)
+c14_two_items(c) :- c14_coll(c), c14_item(c, _, j), c14_item(c, _, k), j < k.
+.decl c14_coll(c: node)
+c14_coll(c) :- c14_named(c, x), (x = "list" ; x = "set" ; x = "dict").
+.decl c14_only(c: node, a: node)
+c14_only(c, m) :- c14_coll(c), c14_item(c, a, _), c14_positional(a), !kind(a, "list_splat"), !c14_two_items(c),
+    unparen(a, m).
+c14_only(c, g) :- c14_coll(c), c14_args(c, g), kind(g, "generator_expression").
+.decl c14_nopos(c: node)
+c14_nopos(c) :- c14_args(c, al), kind(al, "argument_list"), !c14_pos(c).
+.decl c14_pos(c: node)
+c14_pos(c) :- c14_item(c, a, _), c14_positional(a).
+.decl c14_nokw(c: node)
+c14_nokw(c) :- c14_call(c), !c14_kw(c).
+.decl c14_kw(c: node)
+c14_kw(c) :- c14_item(c, a, _), !c14_positional(a).
+.decl c14_kwsplat(c: node)
+c14_kwsplat(c) :- c14_item(c, a, _), kind(a, "dictionary_splat").
+
+// ---- comprehensions ------------------------------------------------------------------------------------------------
+// c14_simple(e, fc): `[f(x) for x in y]` has one; `[x for x in y if x]`, `[x for y in z for x in y]` and
+// `[x async for x in y]` have none.
+.decl c14_simple(e: node, fc: node)
+c14_simple(m, fc) :- kind(m, t), c4_comp_kind(t, _), child(m, fc, _), kind(fc, "for_in_clause"), !op(fc, "async"),
+    !c14_other_clause(m, fc).
+.decl c14_other_clause(m: node, fc: node)
+c14_other_clause(m, fc) :- kind(m, t), c4_comp_kind(t, _), child(m, fc, _), kind(fc, "for_in_clause"),
+    child(m, o, _), o != fc, kind(o, k), c4_clause(k).
+.decl c14_passthrough(e: node)
+c14_passthrough(e) :- c14_simple(e, fc), c4_elt(e, x), field(fc, "left", t), cmp_same(x, t).
+cmp_same_ask(x, t) :- c14_simple(e, fc), c4_elt(e, x), field(fc, "left", t).
+
+// ---- tuples --------------------------------------------------------------------------------------------------------
+// child numbers a tuple's named children, comments too: one without comments has two elements when it has children 0
+// and 1 and no 2; one with comments (rare) has two elements at child numbers a < b and no third.
+.decl c14_two(e: node)
+c14_two(e) :- unparen(e, m), kind(m, "tuple"), !c14_commented(m), child(m, _, 1), !child(m, _, 2).
+c14_two(e) :- unparen(e, m), c14_at(m, a), c14_at(m, b), a < b, !c14_three(m).
+.decl c14_commented(m: node)
+c14_commented(m) :- kind(m, "tuple"), child(m, c, _), kind(c, "comment").
+.decl c14_at(m: node, j: number)  // commented tuple m has an element at child number j
+c14_at(m, j) :- c14_commented(m), child(m, e, j), !kind(e, "comment").
+.decl c14_three(m: node)
+c14_three(m) :- c14_at(m, a), c14_at(m, b), a < b, c14_at(m, c), b < c.
+.decl c14_pair(e: node)
+c14_pair(e) :- c14_two(e), unparen(e, m), !c14_splat(m).
+.decl c14_splat(m: node)
+c14_splat(m) :- kind(m, "tuple"), child(m, s, _), kind(s, "list_splat").

@@ -10,16 +10,17 @@
 //   set(f(x) for x in y)       ← C401: {f(x) for x in y}
 //   set(x for x in y)          ← C401: set(y)
 //   set(x for x in y if x)     ← C401: {x for x in y if x}
-#include "python/comprehensions.rerail"
-//   c4_call(c, x), c4_only(c, a), c4_comp(e, k), c4_passthrough(e)
+//   a: "set(x for x in y)"     ← C401: a string type definition is code, reported at the string
+#include "python/python-14.rerail"
+//   c14_bname(c, x), c14_only(c, a), c4_comp(e, k), c14_passthrough(e)
 
 .violation C401(at: node, id: symbol, msg: symbol) code "C401" "{msg}"
     suppress ruff "C401"
 C401(c, "generator-set-identity",
     "Replace with `set(<iterable>)`; the generator passes each item through unchanged. Keep it if the target unpacks or assigns to an attribute or subscript, where the rewrite changes behavior.") :-
-    gen_set(c, g), c4_passthrough(g).
+    gen_set(c, g), c14_passthrough(g).
 C401(c, "generator-set",
     "Rewrite `set(<generator>)` as a set comprehension: `{expr for ...}` instead of `set(expr for ...)`.") :-
-    gen_set(c, g), !c4_passthrough(g).
+    gen_set(c, g), !c14_passthrough(g).
 .decl gen_set(c: node, g: node)
-gen_set(c, g) :- c4_call(c, "set"), c4_only(c, g), c4_comp(g, "generator").
+gen_set(c, g) :- c14_bname(c, "set"), c14_only(c, g), c4_comp(g, "generator").
