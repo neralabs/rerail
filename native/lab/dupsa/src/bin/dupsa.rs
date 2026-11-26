@@ -127,7 +127,13 @@ fn lines_command(o: Opts) -> Result<(), String> {
 fn nodes_command(o: Opts) -> Result<(), String> {
     let [cap] = &o.pos[..] else { return Err("usage: dupsa nodes <capture> [--min 200] [--min-lines 0] [--cells row|code-slot]".into()) };
     let min = o.min.unwrap_or(200);
-    let capture = Capture::load(Path::new(cap))?;
+    let mut capture = Capture::load(Path::new(cap))?;
+    // Jeff's scope: the include prefixes, his excludes, and the extensions asked for.
+    capture.files.retain(|f| {
+        (o.include.is_empty() || o.include.iter().any(|i| f.path.starts_with(i.as_str())))
+            && !lines::excluded(&f.path)
+            && (o.ext.is_empty() || f.path.rsplit_once('.').is_some_and(|(_, e)| o.ext.iter().any(|x| x == e)))
+    });
     let mut tags: Vec<u8> = capture.files.iter().map(|f| f.tag).collect();
     tags.sort_unstable();
     tags.dedup();
