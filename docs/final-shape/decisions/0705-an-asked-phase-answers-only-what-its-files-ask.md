@@ -33,12 +33,13 @@ one run, and asks keyed per file.
 
 - `.rounds R, S`: the phase runs again while any of them changes. Each round reads the last round's rows of each as
   `<phase>__R`, declared with `R`'s columns. Each is an export declared `by_path`.
-- `by_path`, `by_path C`, `by_key` after an export: how a reader's memo entry is keyed by it. `by_path`: the rows at
-  the file's own path (column 0). `by_path C`: those rows, and every row of a `by_key` export under each key named in
-  their column `C`. `by_key`: rows keyed by column 0, read where a `by_path` row names the key. Key columns are
-  symbols. An export with a key is a setting to the split (0665): placeless, read per file.
-- `R as E` hands on relation `R` as export `E` (`asked_exports as exports by_key`): an asked phase answers under the
-  name its readers already read, where an included library makes a relation of that name eagerly.
+- `by_path`, `by_path C`, `by_key`, `by_key C` after an export: how a reader's memo entry is keyed by it.
+  `by_path`: the rows at the file's own path (column 0). `by_path C`: those rows, and every row of a `by_key` export
+  under each key named in their column `C`. `by_key`: rows keyed by column 0, read where a `by_path` row names the
+  key. `by_key C`: those rows, and in turn every `by_key` row under each key named in their column `C`, to the
+  closure. Key columns are symbols. An export with a key is a setting to the split (0665): placeless, read per file.
+- `R as E` hands on relation `R` as export `E` (`asks_at as asked_at by_path 1`): a phase hands a relation on under
+  the name its readers read, where its program makes another of that name, as an included library's.
 - The project's settings are declared the same way, beside their declarations in the library's `core.rerail`:
   `.keyed package_for by_path 1, tsconfig_for by_path 1, package by_key, package_field by_key, tsconfig by_key,
   tsconfig_path by_key, package_export, env` (an item with no key is read whole by every file).
@@ -89,16 +90,16 @@ In `tests_corpus/…/corpus/phases/tests.rs`, on a small phase `q` and its reade
 
 `typing/programs/py_names.asked.rerail` runs in place of `py_names.rerail` while the switch is on
 (`phased::builtin_phase_file`, `phases::candidates`). It hands on the same exports, which the same rules read
-(python/names, python/django, python/upgrade), but `exports` holds only what is asked:
+(python/names, python/django, python/upgrade), but answers only what is asked:
 
-- `asked_at(p, k)`: each qualified name the file at `p` spells through an import (`qn`, "m.x").
+- `spelled_at(p, k)`: each qualified name the file at `p` spells through an import (`qn`, "m.x").
 - `asked(m, x)` and `ask_in(p, x)`: the cross part sends each ask to the file of module `m`, and forwards it through
   that module's re-exports and star imports.
 - In the next round, the asked file answers at its own path: a top-level definition (`ans_def`), a re-export
   (`fwd`), a star import (`fwd_star`), and whether the name is public there (`ans_pub`). These are python/imports'
   three rules of `exports` and `exported`, for the asked names alone.
-- `asked_exports`, handed on as `exports`, follows the answers through the forwards, as `exports` and
-  `resolve_export` do. The phase's own lookups (bases, members' calls and references, Django's receivers and
+- `asked_exports` follows the answers through the forwards, as `exports` and `resolve_export` do, and is handed on
+  as each ask's `resolved` row. The phase's own lookups (bases, members' calls and references, Django's receivers and
   managers) read it in place of `exports`, and `reads_at`'s second rule takes the modules the file's own asks
   resolve to, not every export of every module it names.
 
@@ -110,13 +111,13 @@ In `tests_corpus/…/corpus/phases/tests.rs`, on a small phase `q` and its reade
 - `res(k, q)`: what the symbol denotes, as the readers resolve it: itself, an import through the asked exports (rule
   1), a definition `c.a` of the run where `c` is what its prefix denotes (rule 3; bounded by a split of a `defined`
   row, since a made `@dot` is refused as an unbounded value).
-- `asked_class`, `asked_defined` and `asked_named`, handed on as `class`, `defined` and `class_named`: the classes an
-  object may denote, the definitions an attribute may, and the classes any node may (python/django's
+- `class`, `defined` and `class_named` are handed on for the classes an object may denote (`handed_obj`), the
+  definitions an attribute may (`handed_attr`), and the classes any node may (`handed_sym`, python/django's
   `dj_model_ref`). They are read in the cross part, where the phase's own rules (`reads_at`, the bases, the members)
   read every file's `class` and `defined` already, so no round asks a file for them. `.rounds` takes several
   relations (`.rounds R, S`), but `py_names` needs only `ask_in`.
-- `dj_model_ref`'s second rule, a class of the reading file itself, reads the file's own module, not a `class` row:
-  so a file asks nothing of its own classes. `py_names.rerail` hands on `class_named` as `class`.
+- A file's own definitions are asks of their own (`own_at`), for their ancestry, members and public names, never
+  for `class` or `defined`.
 
 python/django's `dj_model_at` asks whether a class is a model of a class it knows by name alone, a proven type
 among them, which no file names and so none can ask of `py_names`. The phase applies the same tests to each class
@@ -134,42 +135,92 @@ missed now takes that partial hit too (`corpus.rs`, `Unbuilt::partial`): it was 
 `asked` makes a row only for a module of the workspace: a name of an outside package, or an attribute chain past a
 module, is asked of no file.
 
-The other exports (`reads_at`'s first rule, ancestors, members, the Django facts) are made as `py_names.rerail`
-makes them.
+## Every export keyed by the file's asks
+
+`py_names` hands on every fact by its symbol, and a reader's memo entry is keyed by the answers to its own asks. Both
+programs include python/py-names-handed, one definition of what is handed on; each names the symbols it hands facts on
+of (every one of the run's, eagerly; those the files' asks reach, asked):
+
+- `asked_at(p, k) by_path 1`: the file's asks: each symbol a node of it may denote (`sym_at`), and its own
+  definitions and module-level names (`own_at`).
+- `denotes(k, q) by_key 1`: what each ask denotes (`res`): itself, a definition through an import's exports, an
+  attribute's definition of a class of the run.
+- `resolved(k, q) by_key`: `m.x`, as a file spells it through an import, is module m's export x, which denotes q.
+  It replaces `exports(m, x, q)`, read through `reads_at`: python/names' `export_at` and python/upgrade's `up_export`
+  read it under the file's own ask.
+- Each fact by its symbol in column 0, with the module that defines it: `class(q, m)`, `defined(q, m)`,
+  `public(q, m)`, `ancestor(q, m, b)`, `library_ancestor`, the `anc_*` and `member_*` facts, `plain_def`, and the
+  Django facts (`dj_group`, `dj_hook`, `dj_receiver_fn`, `dj_task_def`, `dj_view_model`, …), each `by_key`.
+- `dj_number_fields(q, m, x)`: class q's number fields, its own and its ancestors' (django-practice-bulk-not-loop's
+  `bnl_number_field`, which read every member's call of every module the file reads, now reads those of the classes
+  it names or defines).
+- By the module, which `reads_at` names: `dj_model_class(m, q)`, what a rule asks of a class it knows by a proven
+  type alone, which no file names. `dj_app_defers(b)`, a fact of the whole run, is handed on whole, not once under
+  every module.
+
+So a reader's entry is keyed by its asks at its path, each ask's symbols, and the facts of those symbols: the
+engine's `by_key C` hop (`phased::Keyed::ByKey(Some(C))`, `file_local::setting_key_hop`) closes `SettingsDigests`'
+keys through the `denotes` rows, and `settings_scopes` anchors a read keyed by a symbol a `denotes` row names. A def
+nobody imports changes no ask's answer but its own file's, so it reruns no other reader; a changed answer reruns the
+files whose asks reach it.
+
+The readers read each fact under one of their asks: python/names (`export_at`, rule 3, `site_exported`, the
+`class_anc*` rules), python/django (`dj_model_ref`, the `dj_model_*` rules, `dj_receiver_def`, `dj_plain_at`,
+`dj_task_waits_for_commit`, `dj_app_defers`), python/upgrade, and the Django pack (`bwh_in_hook`, `cfr_helper`,
+`dco_field`, `ghw_view_model`, `tam_task_call`, `bnl_number_field`). `dj_number_field` moved to
+python/django-shared.
+
+`a_reader_is_keyed_by_the_answers_to_its_asks` locks the hop on a small phase: an edit to a fact no ask resolves to
+builds its own file alone; one to a fact asks resolve to, through a re-export and directly, builds those files and
+not a file that asks the same module for another name.
 
 ## Measured
 
-The CLI at O0 with `test-hooks`, on this Mac with other runs going (load 24 to 44); user CPU and peak compared, not
-wall time; each pair run back to back.
+The CLI at O0 with `test-hooks`, on this Mac with other runs going (load 14 to 53); user CPU and peak compared, not
+wall time; each set run back to back. A reader's files "built" are those not read from its memo.
 
-Findings, the switch off against on, over the data layer's 224-file sample: the same in each of the 18 data-layer
-policies, with no crossing. The Django pack's 27 cases and the Python pack's 3 pass, with the switch off and on.
-
-`bandit-b113-request-without-timeout` over the 224 files (`RERAIL_PROFILE=1`), a cold run and then one after a
-one-file edit (a new top-level name in `data_layer/batching.py`), on the same stores, at load 27:
+**The data layer's 224-file sample**, `bandit-b113-request-without-timeout` (python-main's, which reads python/names),
+a cold run and then two edits on the same stores: A, a def nobody imports added to `_internal/native.py`; B,
+`native_module` renamed there, which 25 files import.
 
 | | Off | On |
 |---|---|---|
-| Rows handed on (the profile's "phase py_names: handed on") | 23,330 | 967 |
-| `exports` | 15,628 | 276 |
-| `reads_at` | 779 | 646 |
+| Rows handed on, cold | 31,374 | 21,601 |
+| `asked_at` | 17,570 | 17,570 |
+| `denotes` | 3,114 | 3,064 |
+| `resolved` | 2,988 | 276 |
 | `defined` | 6,091 | 8 |
 | `class` | 832 | 37 |
+| `reads_at` | 779 | 646 |
 | The phase's rounds, cold | 1 | 2: 300 asks each; 224 files built, then 60 as partial hits |
-| After the edit | 1 round | 1 round: 1 file built |
-| The phase's work (its heads), cold | 13,609,444 | 13,324,438 |
-| The phase's CPU (its heads), cold | 3.34 s | 3.18 s |
-| Cold run, user CPU | 15.3 s | 13.6 s |
-| After the edit, user CPU | 0.78 s | 0.62 s |
-| Cold run, peak | 657 MB | 669 MB |
+| Edit A: the reader's files built | 1 | 1 |
+| Edit B: the reader's files built | 29 | 25 |
+| Cold run, user CPU | 11.8 s | 12.4 s |
+| Edit A, user CPU | 0.79 s | 0.77 s |
+| Edit B, user CPU | 3.80 s | 3.42 s |
+
+`asked_at` is each file's own: what it may ask of a symbol, its own definitions among them. It is the price of keying
+an entry by its asks' answers, and is read by its own file alone.
+
+**The PostHog sample's 291 files**, the Django pack's 27 policies in one run: HEAD's rules (module-keyed exports),
+the switch off, and on; then edits on the same stores: A, a def nobody imports added to `posthog/models/user.py`; B,
+a field added to `User`, which 76 files import. Each edit's findings equal a cold run's of the same tree.
+
+| | HEAD's rules | Off | On |
+|---|---|---|---|
+| Findings, cold | 76 | 76, the same | 76, the same |
+| Rows handed on, cold | 18,925 | 30,074 | 23,128 |
+| Cold run, user CPU | 63.2 s | 64.0 s | 75.0 s |
+| Edit A: files built, of the readers | | 1 | 1 |
+| Edit B: files built, of the readers | | 76 | 76 |
+
+Before `dj_number_fields` was keyed by the class (it was keyed by the module, which `reads_at` names), edit B built
+198 files off and 92 on: every file that reads posthog.models.user.
+
+Findings, the switch off against on, over the data layer's 224-file sample: the same in each of the 18 data-layer
+policies, with no crossing. The Django pack's 27 cases and the Python pack's 3 pass, with the switch off and on.
 
 Round 2 builds the 60 asked files as partial hits: a chunk of them derives 5 of its 16 memoised relations, with 41
 of the program's 238 rules (before `fwd` read `qn`, 206 of 225, and before a kept-route miss took a partial hit,
 the files were built whole). The binding analysis is not built again: `wstart`'s work is 1.23 M, as with the
 switch off, where the asked phase's was 1.81 M before.
-
-## Not yet done
-
-- The other exports of `py_names` are not asked: a class's members by an attribute chain, its ancestors by its
-  bases, a Django model's options by the model a file names, and `reads_at`'s first rule (the modules a file names,
-  and those above and below them).

@@ -1,19 +1,21 @@
 // The asked phase `py_names` (decision 0705), run in place of py_names.rerail while asked phases run
 // (`RERAIL_ASKED_PHASES`): the same exports, read by the same rules (python/names, python/django, python/upgrade),
 // but a module's exports are answered only where a file asks for them. Each file asks for each qualified name it
-// spells through an import (`qn`, "m.x": `asked_at`), the cross part sends each ask to the file of the module it names
+// spells through an import (`qn`, "m.x": `spelled_at`), the cross part sends each ask to the file of the module it names
 // (`ask_in`), and that file answers it in the next round at its own path (`ans_def`, `fwd`, `fwd_star`, `ans_pub`): a
 // re-export or a star import asks the module it names in the round after, until no round asks anything new. The rest
 // of what this file says of py_names.rerail holds here.
 //
 // The phase `py_names` (decisions 0083, 0677): Python module resolution across the workspace's modules, run over the same
-// files as the program that reads it, in its language. It hands on symbols alone, keyed by a module, or by a file's path,
-// so a per-file rule reading them stays per-file, and no node crosses into the cross-file part (0677). As `tsx_names`,
-// it reads the modules' definitions and import statements alone, never a name's use: each file resolves its own names
-// against these rows.
+// files as the program that reads it, in its language. It hands on symbols alone, so a per-file rule reading them stays
+// per-file, and no node crosses into the cross-file part (0677). As `tsx_names`, it reads the modules' definitions and
+// import statements alone, never a name's use: each file resolves its own names against these rows. Its own relations
+// below are keyed by the module; python/py-names-handed hands each on by its symbol (`ancestor(q, m, b)`), with a
+// file's asks (`asked_at(p, k)`), what each denotes (`denotes(k, q)`) and what each resolves to through an import
+// (`resolved(k, q)`), so a reader's memo entry is keyed by the answers to its own asks (decision 0705).
 //   reads_at(p, m)    the file at path p can name something of workspace module m: its own module, each module its
 //                     imports name, each module above or below one in the package tree, and the module of each
-//                     definition one of those exports
+//                     definition one of those exports (handed on as it is)
 //   exports(m, x, q)  module m exposes x, which denotes q: re-exports and star imports followed (python/imports)
 //   class(m, c)       module m defines class c (class_named: the same, as python/django names it)
 //   defined(m, q)     module m defines q: a def or a class, nested ones too (its qualname)
@@ -50,47 +52,52 @@
 //   dj_deferred_task(m, f)    function f of module m is a Celery task whose decorator names a task class `base=X`
 //                             whose delay or apply_async (its own, else an ancestor's of the run) calls
 //                             transaction.on_commit (pretix's TransactionAwareTask): its .delay() waits for the commit
-//   dj_app_defers(m)          the run's Celery app makes such a class every task's class (`Celery(..., task_cls=X)`):
-//                             a fact of the whole run, handed on under every module m, so a file's memo entry, keyed by
-//                             the rows of the modules it reads, is keyed by it too
+//   dj_app_defers(b)          the run's Celery app makes such a class every task's class (`Celery(..., task_cls=X)`):
+//                             a fact of the whole run, handed on whole: every file's memo entry is keyed by it
 //   dj_task_def(m, f)         function f of module m is decorated as a Celery task (`@shared_task`, `@app.task(...)`,
 //                             `@task`)
 //   dj_view_model(m, q, s)    class q, or an ancestor of the run, says `model = S` or `queryset = S.objects…` in its
 //                             body (S as the file binds it): a view over S
 //   dj_anc_clean_call(m, q, x)  a class of the run among class q's ancestors calls `self.x()`, x a `clean_…` method
 //                             (a form's clean_<field> it calls itself is a helper, not the field's hook)
-//   dj_model_class(m, q)      class q of module m is a model by python/django's tests on a symbol (dj_model_at)
-// An ancestor's members are handed on under the class's own module, not the ancestor's: a file need not read the
-// module an ancestor is defined in (`use.py`'s `Leaf(Mid)`, Mid's base in a module use.py never imports).
-// python/names reads them as `py_names__reads_at`, `py_names__exports`, … . This program includes python/scopes, not
+//   dj_model_class(m, q)      class q of module m is a model by python/django's tests on a symbol (dj_model_at):
+//                             handed on by the module: what a rule asks of a class it knows by a proven type alone
+// An ancestor's members are handed on under the class's own symbol, not the ancestor's: a file need not ask for an
+// ancestor (`use.py`'s `Leaf(Mid)`, Mid's base in a module use.py never imports).
+// python/names reads them as `py_names__asked_at`, `py_names__ancestor`, … . This program includes python/scopes, not
 // python/names, so it never reads its own exports.
 
 #include "core.rerail"
 #include "python/scopes.rerail"
 #include "python/django-shared.rerail"
+#include "python/py-names-handed.rerail"
 
 .phase py_names
-// Keyed in a reader's memo (decision 0705): a file's modules read at its path, naming each module in column 1, and
-// every other export by the module (or `m.x` key) in its column 0.
+// Keyed in a reader's memo (decision 0705): a file's modules and its asks at its path, each naming a key in column 1;
+// each ask's symbols by the ask, naming each symbol in column 1; every fact by the symbol (or module) in column 0.
 .rounds ask_in
-.export reads_at by_path 1, asked_exports as exports by_key, ask_in by_path, asked_class as class by_key,
-    asked_named as class_named by_key,
-    asked_defined as defined by_key, public by_key, ancestor by_key,
-    library_ancestor by_key, anc_call by_key, anc_kw by_key, anc_ref by_key, anc_method by_key, member_call by_key,
-    member_kw by_key, member_method by_key, plain_def by_key, dj_group by_key, dj_cond_group by_key,
-    dj_opaque by_key, dj_unmanaged by_key, dj_abstract by_key, dj_manager_method by_key, dj_hook by_key,
-    dj_receiver_fn by_key, dj_deferred_task by_key, dj_app_defers by_key, dj_task_def by_key, dj_view_model by_key,
-    dj_anc_clean_call by_key, dj_model_class by_key
+.export ask_in by_path, reads_at by_path 1, asks_at as asked_at by_path 1, denotes_k as denotes by_key 1, resolved_k as resolved by_key,
+    h_class as class by_key, h_class_named as class_named by_key, h_defined as defined by_key, h_public as public by_key,
+    h_ancestor as ancestor by_key, h_library_ancestor as library_ancestor by_key, h_anc_call as anc_call by_key,
+    h_anc_kw as anc_kw by_key, h_anc_ref as anc_ref by_key, h_anc_method as anc_method by_key,
+    h_member_call as member_call by_key, h_member_kw as member_kw by_key, h_member_method as member_method by_key,
+    h_plain_def as plain_def by_key, h_dj_group as dj_group by_key, h_dj_cond_group as dj_cond_group by_key,
+    h_dj_opaque as dj_opaque by_key, h_dj_unmanaged as dj_unmanaged by_key, h_dj_abstract as dj_abstract by_key,
+    h_dj_manager_method as dj_manager_method by_key, h_dj_hook as dj_hook by_key,
+    h_dj_receiver_fn as dj_receiver_fn by_key, h_dj_deferred_task as dj_deferred_task by_key,
+    h_dj_task_def as dj_task_def by_key, h_dj_view_model as dj_view_model by_key,
+    h_dj_anc_clean_call as dj_anc_clean_call by_key, dj_model_class by_key, dj_app_defers,
+    h_dj_number_fields as dj_number_fields by_key
 
 // ---- the asks (decision 0705) ---------------------------------------------------------------------------------------
-// asked_at(p, k): the file at path p spells the qualified name k ("m.x") through an import: its own rows, no node.
-.decl asked_at(p: symbol, k: symbol)
-asked_at(p, k) :- qn(n, k), docof(n, d), doc(d, p, _).
+// spelled_at(p, k): the file at path p spells the qualified name k ("m.x") through an import: its own rows, no node.
+.decl spelled_at(p: symbol, k: symbol)
+spelled_at(p, k) :- qn(n, k), docof(n, d), doc(d, p, _).
 // asked(m, x): some file asks module m, a workspace file's, for x, directly or through a re-export or star import
 // that forwards it. A name of a module no file is (an outside package's, or an attribute chain past a module) is
 // asked of no file, so it makes no row.
 .decl asked(m: symbol, x: symbol) cross_file
-asked(m, x) :- asked_at(_, k), split_dot(k, m, x), doc(_, _, m).
+asked(m, x) :- spelled_at(_, k), split_dot(k, m, x), doc(_, _, m).
 asked(m2, x) :- asked(m, l), fwd(m, l, m2, x), doc(_, _, m2).
 asked(m2, x) :- asked(m, x), fwd_star(m, x, m2), doc(_, _, m2).
 // ask_in(p, x): the file at path p, module m's, is asked for x. The rounds hand it back as py_names__ask_in.
@@ -139,41 +146,12 @@ asked_exports(m, l, q) :- fwd(m, l, m2, x), asked_exports(m2, x, q).
 asked_exports(m, l, q) :- fwd(m, l, m2, x), !asked_exported(m2, x), q = @dot(m2, x).
 asked_exports(m, x, q) :- fwd_star(m, x, m2), asked_exports(m2, x, q), ans_pub(m2, x).
 
-// ---- the asks of a symbol (decision 0705): whether q is a class or a definition of the run --------------------------
-// python/names' sym_of rule 3 asks `class(m, c)` and `defined(m, c.a)` of the symbol c an attribute's object denotes,
-// and python/django's dj_model_ref asks `class(m, q)` of the symbol q a node denotes (a class of its own file it
-// reads by its own module, no row of this phase).
-// lsym(n, q): a symbol node n may denote, from its own file: what python/scopes gives it (its file's definitions,
-// builtins), what it spells through an import (qn), and an attribute of either, at any depth (`c.a`, rule 3's).
-.decl lsym(n: node, q: symbol)
-lsym(n, q) :- sym_of(n, q).
-lsym(n, q) :- qn(n, q).
-lsym(n, @dot(c, a)) :- attr_of(n, o, a), lsym(o, c).
-// sym_at(p, q): the file at path p may ask of symbol q: its own rows.
-.decl sym_at(p: symbol, q: symbol)
-sym_at(p, q) :- lsym(n, q), docof(n, d), doc(d, p, _).
-// obj_at(p, q), attr_at(p, q): the same, of an attribute's object, and of an attribute: what rule 3 reads `class` and
-// `defined` of.
-.decl obj_at(p: symbol, q: symbol)
-obj_at(p, q) :- attr_of(_, o, _), lsym(o, q), docof(o, d), doc(d, p, _).
-.decl attr_at(p: symbol, q: symbol)
-attr_at(p, q) :- attr_of(n, _, _), lsym(n, q), docof(n, d), doc(d, p, _).
-// res(k, q): what k, a symbol as a file has it, denotes: itself; through an import, the definition the asked exports
-// follow it to (python/names' rule 1, export_at); a definition `c.a` of the run, c what k's prefix denotes (rule 3).
-.decl res(k: symbol, q: symbol) cross_file
-res(k, k) :- sym_at(_, k).
-res(k, r) :- sym_at(_, k), split_dot(k, m, x), asked_exports(m, x, r).
-res(k, q) :- sym_at(_, k), split_dot(k, k0, a), res(k0, c), c != k0, defined(_, q), split_dot(q, c, a).
-// Handed on as class, defined and class_named: the classes an attribute's object may denote, the definitions an
-// attribute may, and the classes any node may (python/django's dj_model_ref), where py_names.rerail hands on every
-// one. Read in the cross part, where the phase's own rules (reads_at, the bases, the members) read every file's
-// `class` and `defined` already: no round asks a file for them.
-.decl asked_class(m: symbol, c: symbol)
-asked_class(m, c) :- obj_at(_, k), res(k, c), class(m, c).
-.decl asked_defined(m: symbol, q: symbol)
-asked_defined(m, q) :- attr_at(_, k), res(k, q), defined(m, q).
-.decl asked_named(m: symbol, c: symbol)
-asked_named(m, c) :- res(_, c), class(m, c).
+// ---- what is handed on (python/py-names-handed) ---------------------------------------------------------------------
+// The exports the asks resolve through, and the symbols whose facts are handed on: those some file's asks denote.
+exports_of(m, x, q) :- asked_exports(m, x, q).
+handed_sym(q) :- res(_, q), defined(_, q).
+handed_obj(q) :- obj_at(_, k), res(k, q).
+handed_attr(q) :- attr_at(_, k), res(k, q).
 
 // imported(p, q): an import statement of the file at path p names q: a module (`import a.b`, `from .m import x`'s
 // "pkg.m"), or a name of one ("pkg.m.x").
@@ -196,7 +174,7 @@ named_module(p, m) :- imported(p, q), pkg_above(m, q).
 reads_at(p, m) :- named_module(p, m).
 // The module of each definition the file's own asks resolve to (where py_names.rerail takes every export of every
 // module the file names).
-reads_at(p, m) :- asked_at(p, k), split_dot(k, m0, x), asked_exports(m0, x, r), defined(m, r).
+reads_at(p, m) :- spelled_at(p, k), split_dot(k, m0, x), asked_exports(m0, x, r), defined(m, r).
 
 .decl defined(m: symbol, q: symbol)
 defined(m, q) :- qualname(f, q), module_of(f, m).
@@ -503,8 +481,8 @@ dj_task_def(m, fq) :- defined(m, fq), dj_task_here(fq).
 .decl dj_app_cls_here(b: symbol)
 dj_app_cls_here(bq) :- kind(k, "call"), field(k, "function", f), (sym_of(f, c) ; qn(f, c)), c = "celery.Celery",
     call_arg(k, _, "task_cls", v), (sym_of(v, bq) ; qn(v, bq)).
-.decl dj_app_defers(m: symbol)
-dj_app_defers(m) :- reads_at(_, m), dj_app_cls_here(bq), dj_defer_q(bq).
+.decl dj_app_defers(b: symbol)
+dj_app_defers(bq) :- dj_app_cls_here(bq), dj_defer_q(bq).
 // dj_own_view_model(o, s): class o's own body says `model = S` or `queryset = S.objects…`.
 .decl dj_own_view_model(o: symbol, s: symbol)
 dj_own_view_model(o, s) :- own_asg(o, x, r), (x = "model" ; x = "queryset"), unparen(r, e),

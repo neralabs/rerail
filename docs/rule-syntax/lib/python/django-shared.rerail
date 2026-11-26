@@ -61,3 +61,8 @@ dj_expression_base("django.db.models.Aggregate"). dj_expression_base("django.db.
 dj_expression_base("django.db.models.Lookup"). dj_expression_base("django.db.models.Subquery").
 dj_expression_base("django.db.models.ExpressionWrapper"). dj_expression_base("django.db.models.Value").
 dj_expression_base("django.db.models.Window").
+// dj_number_field(t): the field classes whose values are numbers a counter is kept in (DurationField aside).
+.decl dj_number_field(t: symbol)
+dj_number_field("IntegerField"). dj_number_field("SmallIntegerField"). dj_number_field("BigIntegerField").
+dj_number_field("PositiveIntegerField"). dj_number_field("PositiveSmallIntegerField").
+dj_number_field("PositiveBigIntegerField"). dj_number_field("DecimalField"). dj_number_field("FloatField").

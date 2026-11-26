@@ -1,11 +1,13 @@
 // The phase `py_names` (decisions 0083, 0677): Python module resolution across the workspace's modules, run over the same
-// files as the program that reads it, in its language. It hands on symbols alone, keyed by a module, or by a file's path,
-// so a per-file rule reading them stays per-file, and no node crosses into the cross-file part (0677). As `tsx_names`,
-// it reads the modules' definitions and import statements alone, never a name's use: each file resolves its own names
-// against these rows.
+// files as the program that reads it, in its language. It hands on symbols alone, so a per-file rule reading them stays
+// per-file, and no node crosses into the cross-file part (0677). As `tsx_names`, it reads the modules' definitions and
+// import statements alone, never a name's use: each file resolves its own names against these rows. Its own relations
+// below are keyed by the module; python/py-names-handed hands each on by its symbol (`ancestor(q, m, b)`), with a
+// file's asks (`asked_at(p, k)`), what each denotes (`denotes(k, q)`) and what each resolves to through an import
+// (`resolved(k, q)`), so a reader's memo entry is keyed by the answers to its own asks (decision 0705).
 //   reads_at(p, m)    the file at path p can name something of workspace module m: its own module, each module its
 //                     imports name, each module above or below one in the package tree, and the module of each
-//                     definition one of those exports
+//                     definition one of those exports (handed on as it is)
 //   exports(m, x, q)  module m exposes x, which denotes q: re-exports and star imports followed (python/imports)
 //   class(m, c)       module m defines class c (class_named: the same, as python/django names it)
 //   defined(m, q)     module m defines q: a def or a class, nested ones too (its qualname)
@@ -42,34 +44,41 @@
 //   dj_deferred_task(m, f)    function f of module m is a Celery task whose decorator names a task class `base=X`
 //                             whose delay or apply_async (its own, else an ancestor's of the run) calls
 //                             transaction.on_commit (pretix's TransactionAwareTask): its .delay() waits for the commit
-//   dj_app_defers(m)          the run's Celery app makes such a class every task's class (`Celery(..., task_cls=X)`):
-//                             a fact of the whole run, handed on under every module m, so a file's memo entry, keyed by
-//                             the rows of the modules it reads, is keyed by it too
+//   dj_app_defers(b)          the run's Celery app makes such a class every task's class (`Celery(..., task_cls=X)`):
+//                             a fact of the whole run, handed on whole: every file's memo entry is keyed by it
 //   dj_task_def(m, f)         function f of module m is decorated as a Celery task (`@shared_task`, `@app.task(...)`,
 //                             `@task`)
 //   dj_view_model(m, q, s)    class q, or an ancestor of the run, says `model = S` or `queryset = S.objects…` in its
 //                             body (S as the file binds it): a view over S
 //   dj_anc_clean_call(m, q, x)  a class of the run among class q's ancestors calls `self.x()`, x a `clean_…` method
 //                             (a form's clean_<field> it calls itself is a helper, not the field's hook)
-//   dj_model_class(m, q)      class q of module m is a model by python/django's tests on a symbol (dj_model_at)
-// An ancestor's members are handed on under the class's own module, not the ancestor's: a file need not read the
-// module an ancestor is defined in (`use.py`'s `Leaf(Mid)`, Mid's base in a module use.py never imports).
-// python/names reads them as `py_names__reads_at`, `py_names__exports`, … . This program includes python/scopes, not
+//   dj_model_class(m, q)      class q of module m is a model by python/django's tests on a symbol (dj_model_at):
+//                             handed on by the module: what a rule asks of a class it knows by a proven type alone
+// An ancestor's members are handed on under the class's own symbol, not the ancestor's: a file need not ask for an
+// ancestor (`use.py`'s `Leaf(Mid)`, Mid's base in a module use.py never imports).
+// python/names reads them as `py_names__asked_at`, `py_names__ancestor`, … . This program includes python/scopes, not
 // python/names, so it never reads its own exports.
 
 #include "core.rerail"
 #include "python/scopes.rerail"
 #include "python/django-shared.rerail"
+#include "python/py-names-handed.rerail"
 
 .phase py_names
-// Keyed in a reader's memo (decision 0705): a file's modules read at its path, naming each module in column 1, and
-// every other export by the module (or `m.x` key) in its column 0.
-.export reads_at by_path 1, exports by_key, class by_key, defined by_key, public by_key, ancestor by_key,
-    library_ancestor by_key, anc_call by_key, anc_kw by_key, anc_ref by_key, anc_method by_key, member_call by_key,
-    member_kw by_key, member_method by_key, plain_def by_key, dj_group by_key, dj_cond_group by_key,
-    dj_opaque by_key, dj_unmanaged by_key, dj_abstract by_key, dj_manager_method by_key, dj_hook by_key,
-    dj_receiver_fn by_key, dj_deferred_task by_key, dj_app_defers by_key, dj_task_def by_key, dj_view_model by_key,
-    dj_anc_clean_call by_key, dj_model_class by_key, class_named by_key
+// Keyed in a reader's memo (decision 0705): a file's modules and its asks at its path, each naming a key in column 1;
+// each ask's symbols by the ask, naming each symbol in column 1; every fact by the symbol (or module) in column 0.
+.export reads_at by_path 1, asks_at as asked_at by_path 1, denotes_k as denotes by_key 1, resolved_k as resolved by_key,
+    h_class as class by_key, h_class_named as class_named by_key, h_defined as defined by_key, h_public as public by_key,
+    h_ancestor as ancestor by_key, h_library_ancestor as library_ancestor by_key, h_anc_call as anc_call by_key,
+    h_anc_kw as anc_kw by_key, h_anc_ref as anc_ref by_key, h_anc_method as anc_method by_key,
+    h_member_call as member_call by_key, h_member_kw as member_kw by_key, h_member_method as member_method by_key,
+    h_plain_def as plain_def by_key, h_dj_group as dj_group by_key, h_dj_cond_group as dj_cond_group by_key,
+    h_dj_opaque as dj_opaque by_key, h_dj_unmanaged as dj_unmanaged by_key, h_dj_abstract as dj_abstract by_key,
+    h_dj_manager_method as dj_manager_method by_key, h_dj_hook as dj_hook by_key,
+    h_dj_receiver_fn as dj_receiver_fn by_key, h_dj_deferred_task as dj_deferred_task by_key,
+    h_dj_task_def as dj_task_def by_key, h_dj_view_model as dj_view_model by_key,
+    h_dj_anc_clean_call as dj_anc_clean_call by_key, dj_model_class by_key, dj_app_defers,
+    h_dj_number_fields as dj_number_fields by_key
 
 // imported(p, q): an import statement of the file at path p names q: a module (`import a.b`, `from .m import x`'s
 // "pkg.m"), or a name of one ("pkg.m.x").
@@ -97,9 +106,6 @@ defined(m, q) :- qualname(f, q), module_of(f, m).
 
 .decl class(m: symbol, c: symbol)
 class(m, c) :- class_def(n, c), module_of(n, m).
-// class_named(m, c): the same, as python/django's dj_model_ref reads it (py_names.asked.rerail asks it apart).
-.decl class_named(m: symbol, c: symbol)
-class_named(m, c) :- class(m, c).
 
 .decl public(m: symbol, x: symbol)
 public(m, x) :- public_name(m, x).
@@ -400,8 +406,8 @@ dj_task_def(m, fq) :- defined(m, fq), dj_task_here(fq).
 .decl dj_app_cls_here(b: symbol)
 dj_app_cls_here(bq) :- kind(k, "call"), field(k, "function", f), (sym_of(f, c) ; qn(f, c)), c = "celery.Celery",
     call_arg(k, _, "task_cls", v), (sym_of(v, bq) ; qn(v, bq)).
-.decl dj_app_defers(m: symbol)
-dj_app_defers(m) :- reads_at(_, m), dj_app_cls_here(bq), dj_defer_q(bq).
+.decl dj_app_defers(b: symbol)
+dj_app_defers(bq) :- dj_app_cls_here(bq), dj_defer_q(bq).
 // dj_own_view_model(o, s): class o's own body says `model = S` or `queryset = S.objects…`.
 .decl dj_own_view_model(o: symbol, s: symbol)
 dj_own_view_model(o, s) :- own_asg(o, x, r), (x = "model" ; x = "queryset"), unparen(r, e),
@@ -430,3 +436,12 @@ dj_model_class(m, q) :- member_call(m, q, x, f), x != "output_field", split_dot(
 dj_expression_class(m, q) :- ancestor(m, q, b), (prefix("django.db.models.expressions.", b) ;
     prefix("django.db.models.functions.", b) ; prefix("django.db.models.aggregates.", b) ;
     prefix("django.db.models.lookups.", b) ; dj_expression_base(b)).
+
+// ---- what is handed on (python/py-names-handed) ---------------------------------------------------------------------
+// Every export and every symbol of the run's facts: the phase asks nothing (py_names.asked.rerail asks).
+exports_of(m, x, q) :- exports(m, x, q).
+handed_sym(q) :- class(_, q).
+handed_sym(q) :- defined(_, q).
+handed_sym(q) :- public(m, x), q = @dot(m, x).
+handed_obj(q) :- class(_, q).
+handed_attr(q) :- defined(_, q).

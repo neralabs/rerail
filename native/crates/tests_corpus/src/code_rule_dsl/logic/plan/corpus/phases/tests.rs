@@ -484,6 +484,54 @@ ask_in(p, y) :- doc(_, p, _), g__ask_in(p, x), y = @cat(x, "x").
         assert_eq!(["r", "unresolved", "answered", "asks"].iter().map(|r| t.rows(r)).collect::<Vec<_>>(), after, "the same rows as a fresh run's");
     }
 
+    /// A reader keyed through two hops (decision 0705, `by_key C`): its asks at its own path (`asked_at by_path 1`),
+    /// each ask's answer by the ask (`resolved by_key 1`), the facts about the answer by it (`params by_key`). An edit
+    /// to a fact no file's ask resolves to builds no reader but its own file's; one to a fact an ask resolves to,
+    /// through a re-export or directly, builds the files asking it alone.
+    #[test]
+    fn a_reader_is_keyed_by_the_answers_to_its_asks() {
+        const PHASE: &str = r#"
+#include "core.rerail"
+.phase s
+.export asked_at by_path 1, resolved by_key 1, params by_key
+.decl imp(p: symbol, m: symbol, x: symbol)
+imp(p, m, x) :- kind(s, "import_from_statement"), field(s, "module_name", mn), text(mn, m), field(s, "name", nn), text(nn, x), docof(s, d), doc(d, p, _).
+.decl asked_at(p: symbol, k: symbol)
+asked_at(p, @cat(m, x)) :- imp(p, m, x).
+.decl defn(m: symbol, x: symbol, t: symbol)
+defn(m, x, t) :- kind(f, "function_definition"), field(f, "name", i), text(i, x), field(f, "parameters", ps), text(ps, t), docof(f, d), doc(d, _, m).
+.decl resolved(k: symbol, q: symbol)
+resolved(k, q) :- asked_at(_, k), split_dot(k, m, x), imp(p2, m2, x), doc(_, p2, m), q = @cat(m2, x).
+resolved(k, k) :- asked_at(_, k), split_dot(k, m, x), defn(m, x, _).
+.decl params(q: symbol, t: symbol)
+params(@cat(m, x), t) :- defn(m, x, t).
+"#;
+        const READER: &str = r#"
+#include "core.rerail"
+.decl s__asked_at(p: symbol, k: symbol)
+.decl s__resolved(k: symbol, q: symbol)
+.decl s__params(q: symbol, t: symbol)
+.decl r(p: symbol, t: symbol)
+r(p, t) :- doc(_, p, _), s__asked_at(p, k), s__resolved(k, q), s__params(q, t).
+.output r
+"#;
+        let impl_ = "def x(a):\n    return a\n\ndef z():\n    return 3\n";
+        let t = AskedTree::new("keyed-hops", &[("s", PHASE)], &[("a.py", "from m import x\n"), ("b.py", "from m import y\n"), ("m.py", "from impl import x\n\ndef y():\n    return 2\n"), ("impl.py", impl_)]);
+        t.run(READER, false).unwrap();
+        assert_eq!(t.rows("r"), [["a.py", "(a)"], ["b.py", "()"], ["m.py", "(a)"]]);
+        let report = t.run(READER, false).unwrap();
+        let s = report.phase_runs.iter().find(|r| r.name == "s").unwrap();
+        assert!(s.keys.contains(&("s__resolved".to_owned(), crate::code_rule_dsl::logic::plan::phased::Keyed::ByKey(Some(1)))), "{:?}", s.keys);
+        // impl.z, which no ask resolves to: impl.py alone (its own content).
+        t.write(&[("impl.py", &impl_.replace("def z()", "def z(b)"))]);
+        assert_eq!(built(&t.run(READER, false).unwrap()), 1, "impl.py alone");
+        // impl.x, which a.py's m.x resolves to through m's re-export, and m.py's own import: impl.py, a.py and m.py,
+        // not b.py, which reads m.py's own y.
+        t.write(&[("impl.py", &impl_.replace("def z()", "def z(b)").replace("def x(a)", "def x(a, c)"))]);
+        assert_eq!(built(&t.run(READER, false).unwrap()), 3, "impl.py, a.py and m.py");
+        assert_eq!(t.rows("r"), [["a.py", "(a, c)"], ["b.py", "()"], ["m.py", "(a, c)"]]);
+    }
+
     /// An export's key in its readers' memo is the phase's to declare (`.export asked_at by_path 1, resolved
     /// by_key`), its name in neither of `file_local`'s lists (decision 0705): the reader's run reports it.
     #[test]
@@ -497,7 +545,7 @@ ask_in(p, y) :- doc(_, p, _), g__ask_in(p, x), y = @cat(x, "x").
         let q = report.phase_runs.iter().find(|r| r.name == "q").unwrap();
         assert_eq!(
             q.keys,
-            [("q__ask_in".to_owned(), Keyed::ByPath(None)), ("q__asked_at".to_owned(), Keyed::ByPath(Some(1))), ("q__answer".to_owned(), Keyed::ByKey), ("q__resolved".to_owned(), Keyed::ByKey)]
+            [("q__ask_in".to_owned(), Keyed::ByPath(None)), ("q__asked_at".to_owned(), Keyed::ByPath(Some(1))), ("q__answer".to_owned(), Keyed::ByKey(None)), ("q__resolved".to_owned(), Keyed::ByKey(None))]
                 .into_iter()
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
@@ -524,8 +572,8 @@ ask_in(p, y) :- doc(_, p, _), g__ask_in(p, x), y = @cat(x, "x").
     }
 
     /// The asked `py_names` (decision 0705), run in place of the eager one while asked phases run, resolves the names
-    /// a file uses as the eager one does, through a re-export and a star import, and hands on fewer `exports` rows:
-    /// those the files ask for, not every module's whole interface.
+    /// a file uses as the eager one does, through a re-export and a star import, and hands on fewer `class` and
+    /// `defined` rows: those of the symbols the files' attributes and their objects denote, not every definition's.
     #[test]
     fn the_asked_py_names_resolves_the_names_the_eager_one_does() {
         let files = [
@@ -553,7 +601,7 @@ ask_in(p, y) :- doc(_, p, _), g__ask_in(p, x), y = @cat(x, "x").
         for want in ["pkg.core.App.run", "pkg.core.App.Inner.go", "use.Here.mine"] {
             assert!(eager_syms.iter().any(|r| r[0] == want), "{want} by rule 3, in {eager_syms:?}");
         }
-        for export in ["exports", "class", "defined"] {
+        for export in ["class", "defined"] {
             assert!(handed(&asked, export) < handed(&eager, export), "the asked phase hands on fewer {export}: {} against {}", handed(&asked, export), handed(&eager, export));
         }
         assert!(!asked.phase_runs.iter().find(|r| r.name == "py_names").unwrap().rounds.is_empty(), "it ran in rounds");

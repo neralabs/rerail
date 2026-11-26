@@ -2658,10 +2658,11 @@ fn python_names_through_the_phase_are_the_cross_file_rules_answers() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Decision 0677, fix 2: an edit misses the files whose `py_names` rows changed. A body edit in pkg/core.py misses that
-/// file alone. A method added to `App` adds a row to pkg.core's `defined`: the files that read pkg.core (core.py,
-/// pkg/__init__.py and chain.py, which re-export App, and use.py, which reads it) miss, and more.py and nall.py are
-/// read from the memo. The rows are a fresh run's.
+/// Decision 0677, fix 2, and 0705's keying by a file's asks: an edit misses the files whose asks' answers changed. A
+/// body edit in pkg/core.py misses that file alone. A method added to `App`, which no file asks for, misses it alone
+/// too. `App.run` renamed `App.go` changes the answer to use.py's ask `App.run`: core.py and use.py miss, and
+/// pkg/__init__.py and chain.py, which re-export App but ask nothing of its members, are read from the memo. The rows
+/// are a fresh run's.
 #[test]
 fn a_python_files_entry_is_kept_under_its_own_names_resolution() {
     let body = ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        return 1\n");
@@ -2674,8 +2675,16 @@ fn a_python_files_entry_is_kept_under_its_own_names_resolution() {
     assert_eq!(edited.memo.0, edited.files - 1, "a body edit misses its own file alone: {:?} of {}", edited.memo, edited.files);
     std::fs::write(dir.join("ws").join(method.0), method.1).unwrap();
     let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
-    assert_eq!(edited.memo.0, edited.files - 4, "pkg.core's readers alone miss: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(edited.memo.0, edited.files - 1, "a method no file asks for misses its own file alone: {:?} of {}", edited.memo, edited.files);
     let fresh = py_names_workspace("py-names-memo-fresh", &[method]);
+    assert_eq!(rows, py_names_run(&fresh, PY_NAMES_PROGRAM).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let renamed = ("pkg/core.py", method.1.replace("def run(self)", "def go(self)"));
+    std::fs::write(dir.join("ws").join(renamed.0), &renamed.1).unwrap();
+    let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    assert_eq!(edited.memo.0, edited.files - 2, "core.py and use.py, whose ask App.run changed, alone miss: {:?} of {}", edited.memo, edited.files);
+    assert!(!rows["used"].contains(&vec!["use.py".to_owned(), "5".to_owned(), "pkg.core.App.run".to_owned()]), "App.run is gone: {rows:?}");
+    let fresh = py_names_workspace("py-names-memo-fresh", &[(renamed.0, &renamed.1)]);
     assert_eq!(rows, py_names_run(&fresh, PY_NAMES_PROGRAM).1, "the rows are a fresh run's");
     let _ = std::fs::remove_dir_all(&fresh);
     let _ = std::fs::remove_dir_all(&dir);
@@ -3443,7 +3452,7 @@ fn a_finding_no_file_holds_is_refused_naming_its_clause() {
     let shown = v.show();
     // The nodes of no file's document, and the finding's rule refusing one of them by its clause.
     let unplaced = crate::code_rule_dsl::logic::rr::UNPLACED_NODE;
-    assert!(shown.contains(&format!("rr_unplaced(\"Assert\") :- ")) && shown.contains(&format!("{unplaced}($rr_n) :- ")) && shown.contains("!doc("), "the lowering writes R9's rules:\n{shown}");
+    assert!(shown.contains("rr_unplaced(\"Assert\") :- ") && shown.contains(&format!("{unplaced}($rr_n) :- ")) && shown.contains("!doc("), "the lowering writes R9's rules:\n{shown}");
     assert!(v.output_names().iter().any(|o| o == crate::code_rule_dsl::logic::rr::UNPLACED));
     let out = dir.join("out");
     let run = |text: &str, out: &std::path::Path| super::run(text, &dir.join("ws"), None, out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);

@@ -243,9 +243,18 @@ pub fn setting_by_path(rel: &str) -> Option<Option<usize>> {
 }
 
 /// Whether `rel` is a setting keyed by a folder, target, module or key in column 0 (declared `by_key`), read where a
-/// row of the file's own path names it.
+/// row of the file's own path names it, or a row of such a setting it reads (`setting_key_hop`).
 pub fn setting_by_folder(rel: &str) -> bool {
-    crate::code_rule_dsl::logic::plan::phased::declared_key(rel) == Some(crate::code_rule_dsl::logic::plan::phased::Keyed::ByKey)
+    matches!(crate::code_rule_dsl::logic::plan::phased::declared_key(rel), Some(crate::code_rule_dsl::logic::plan::phased::Keyed::ByKey(_)))
+}
+
+/// The column of a setting keyed in column 0 (declared `by_key C`) that names further keys: a file that reads one of
+/// its rows reads the rows of every `by_key` setting under the key in column `C` too.
+pub fn setting_key_hop(rel: &str) -> Option<usize> {
+    match crate::code_rule_dsl::logic::plan::phased::declared_key(rel) {
+        Some(crate::code_rule_dsl::logic::plan::phased::Keyed::ByKey(c)) => c,
+        _ => None,
+    }
 }
 
 /// The column of a base relation that holds a file's path (decision 0665): `doc`'s. A path names one document (a guest

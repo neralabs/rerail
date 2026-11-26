@@ -38,7 +38,7 @@ dco_field(f, t) :- dj_field_call(f, t).
 // A call of a field class of the run: a class whose ancestors, through the run's classes in any file, include Django's
 // field class t. The phase py_names hands on each class's library ancestors under its module (decision 0677).
 dco_field(f, t) :- kind(f, "call"), field(f, "function", e), sym_of(e, q), docof(f, d), doc(d, p, _),
-    py_names__reads_at(p, m), py_names__library_ancestor(m, q, b), split_dot(b, bm, t), dj_field_module(bm),
+    py_names__asked_at(p, k), py_names__denotes(k, q), py_names__library_ancestor(q, _, b), split_dot(b, bm, t), dj_field_module(bm),
     (suffix("Field", t) ; dj_relation_class(t)).
 // dco_stop: code in a lambda or def runs when it is called, not at import.
 .decl dco_stop(k: symbol)

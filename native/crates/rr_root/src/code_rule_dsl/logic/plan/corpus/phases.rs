@@ -116,7 +116,7 @@ pub struct Declared {
     pub(crate) name: String,
     /// The exports' names, as their readers read them (`<phase>__<export>`).
     pub exports: Vec<String>,
-    /// Each export's relation in the program, where it is not the export's name (`asked_exports as exports`).
+    /// Each export's relation in the program, where it is not the export's name (`asks_at as asked_at`).
     pub relations: BTreeMap<String, String>,
     /// The exports each round is handed back as the last round left them: none for a phase run once.
     pub rounds: Vec<String>,
@@ -149,7 +149,7 @@ pub use crate::code_rule_dsl::logic::plan::phased::{ASKED_PHASES, asked_phases_o
 /// from itself, and a run stopped short would hand on a partial answer, so it fails.
 pub const MAX_ROUNDS: usize = 16;
 
-/// How `program`'s exports are keyed (`.export R by_path [C]`, `.export R by_key`, `phased::key_of`): `R` a symbol in
+/// How `program`'s exports are keyed (`.export R by_path [C]`, `.export R by_key [C]`, `phased::key_of`): `R` a symbol in
 /// column 0, `C` another symbol column of it. Read off the program as lowered; `phased::declared_key` reads the same
 /// line off the engine's phase programs' files, for a check outside a run.
 fn keyed(name: &str, program: &(impl ProgramFields + ?Sized), declared: &Declared) -> Result<Vec<(String, crate::code_rule_dsl::logic::plan::phased::Keyed)>> {
@@ -161,7 +161,7 @@ fn keyed(name: &str, program: &(impl ProgramFields + ?Sized), declared: &Declare
             let line = format!("{rel} {}", words.join(" "));
             let keyed = key_of(words).map_err(|e| Error::Plan(format!("{name}.rerail: `.export {line}`: {e}")))?;
             let cols = program.columns_of(declared.relation(rel)).unwrap_or_default();
-            if let Keyed::ByPath(Some(c)) = keyed
+            if let Keyed::ByPath(Some(c)) | Keyed::ByKey(Some(c)) = keyed
                 && (c == 0 || cols.get(c).is_none_or(|(_, t)| t != "symbol" && t != "sym"))
             {
                 return Err(Error::Plan(format!("{name}.rerail: `.export {line}`: {rel}'s column {c} is not a symbol, which a key is")));
@@ -980,7 +980,7 @@ fn read_exports(name: &str, program: &(impl ProgramFields + ?Sized), declared: &
     let outputs = output::Outputs::of(bytes).map_err(|e| Error::Plan(format!("phase {name}: {e}")))?;
     let mut rows: BTreeMap<String, Vec<Vec<Value>>> = BTreeMap::new();
     for export in exports {
-        // Its relation's rows (`asked_exports as exports`), under the export's name.
+        // Its relation's rows (`asks_at as asked_at`), under the export's name.
         let relation = declared.relation(export);
         let rel = outputs.get(relation).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: {relation} is not in its outputs ({:?})", outputs.names())))?;
         let declared_types = program.columns_of(relation).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: {relation} is not declared")))?;

@@ -58,8 +58,10 @@ pub fn is_phased(rel: &str) -> bool {
 pub enum Keyed {
     /// Keyed by a file's path in column 0; `Some(c)`: column `c` names keys whose `ByKey` rows the file reads too.
     ByPath(Option<usize>),
-    /// Keyed by column 0, a key a `ByPath` row of the reading file names.
-    ByKey,
+    /// Keyed by column 0, a key a `ByPath` row of the reading file names, or a `ByKey` row it reads; `Some(c)`: column
+    /// `c` names keys whose `ByKey` rows the file reads too (`resolved(k, q) by_key 1`: an ask's answer, the key of
+    /// the facts about it).
+    ByKey(Option<usize>),
     /// Read whole by every file (`env`, `package_export`).
     Whole,
 }
@@ -78,9 +80,9 @@ pub fn key_items(texts: &[String]) -> Vec<(String, Vec<String>)> {
 }
 
 /// A phase's `.export` items (`key_items`), each the relation its program makes, the export's name its readers read
-/// (`<phase>__<export>`), and its key's words: `asked_exports as exports by_key` hands on relation `asked_exports` as
-/// export `exports` (decision 0705: an asked phase answers under the name its readers already read, where an
-/// included library makes a relation of that name eagerly).
+/// (`<phase>__<export>`), and its key's words: `asks_at as asked_at by_path 1` hands on relation `asks_at` as
+/// export `asked_at` (decision 0705: a phase hands a relation on under the name its readers read, where its program
+/// makes another of that name, as an included library's).
 pub fn export_items(texts: &[String]) -> Vec<(String, String, Vec<String>)> {
     key_items(texts)
         .into_iter()
@@ -95,10 +97,11 @@ pub fn export_items(texts: &[String]) -> Vec<(String, String, Vec<String>)> {
 pub fn key_of(words: &[String]) -> Result<Keyed, String> {
     match words.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         [] => Ok(Keyed::Whole),
-        ["by_key"] => Ok(Keyed::ByKey),
+        ["by_key"] => Ok(Keyed::ByKey(None)),
+        ["by_key", c] => c.parse().map(|c| Keyed::ByKey(Some(c))).map_err(|_| format!("{c} is no column")),
         ["by_path"] => Ok(Keyed::ByPath(None)),
         ["by_path", c] => c.parse().map(|c| Keyed::ByPath(Some(c))).map_err(|_| format!("{c} is no column")),
-        _ => Err(format!("`{}`: write `by_path`, `by_path C` or `by_key`", words.join(" "))),
+        _ => Err(format!("`{}`: write `by_path`, `by_path C`, `by_key` or `by_key C`", words.join(" "))),
     }
 }
 
