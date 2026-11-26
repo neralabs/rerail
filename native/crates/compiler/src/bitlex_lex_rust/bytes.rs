@@ -119,6 +119,27 @@ impl<'a> Bytes<'a> {
         out
     }
 
+    /// The bytes `e` can hold at its first byte: `byte_set`'s, a test of other bytes (`next`, `prev`) in an `&` dropped,
+    /// so the set holds every byte `e` holds at (and more where a test was dropped).
+    pub(super) fn first_bytes(&self, e: &Expr, depth: usize) -> Option<[bool; 256]> {
+        if depth > 64 {
+            return None;
+        }
+        match e {
+            Expr::Name(n) if !self.classes.contains_key(n.as_str()) => self.first_bytes(self.defs.get(n)?, depth + 1),
+            Expr::And(a, b) => match (self.first_bytes(a, depth + 1), self.first_bytes(b, depth + 1)) {
+                (Some(x), Some(y)) => Some(std::array::from_fn(|c| x[c] && y[c])),
+                (Some(x), None) | (None, Some(x)) => Some(x),
+                (None, None) => None,
+            },
+            Expr::Or(a, b) => {
+                let (a, b) = (self.first_bytes(a, depth + 1)?, self.first_bytes(b, depth + 1)?);
+                Some(std::array::from_fn(|c| a[c] || b[c]))
+            }
+            _ => self.byte_set(e, depth),
+        }
+    }
+
     /// The bytes `e` holds at a byte, where it reads that byte alone (its classes, `~`, `&`, `|`).
     fn byte_set(&self, e: &Expr, depth: usize) -> Option<[bool; 256]> {
         if depth > 64 {
@@ -417,7 +438,7 @@ impl<'a> Bytes<'a> {
     /// Lean's micro-lexer for the first byte from `from` that mask `e` holds, where `e` is one: a byte (`micro::find`),
     /// two bytes (`find_pair`), more (`find_fence`), a quote no backslash escapes (`string_end`, as the lean lexer reads
     /// a string's body). A mask's byte after the first of its bytes (`prev`) is found by the first, from as far before.
-    fn micro_first(&mut self, e: &Expr, from: &str) -> Option<String> {
+    pub(super) fn micro_first(&mut self, e: &Expr, from: &str) -> Option<String> {
         let e = self.resolved(e, 0)?;
         if let Expr::And(a, b) = &e
             && self.byte(a) == Some(b'"')
@@ -937,7 +958,7 @@ impl<'a> Bytes<'a> {
         let k = used.len();
         let _ = write!(
             self.code,
-            "/// The classes the block's words read ({}), each's bits in the block at `base`, a byte of the file: one load, and one\n/// classify a pair of nibble tables, as the lean lexer's `Window`. None past the file.\n#[inline(always)]\nunsafe fn block_classes(src: &[u8], n: usize, base: usize) -> [u64; {k}] {{\n    let block: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let lv = valid(n, base as isize);\n    // SAFETY: the caller's.\n    unsafe {{\n        let v = s::load(block);\n{tables}        [{}]\n    }}\n}}\n\n",
+            "/// The classes the block's words read ({}), each's bits in the block at `base`, a byte of the file: one load, and one\n/// classify a pair of nibble tables, as the lean lexer's `Window`. None past the file.\n#[inline(always)]\nunsafe fn block_classes(src: &[u8], n: usize, base: usize) -> [u64; {k}] {{\n    let block: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let lv = valid(n, base as isize);\n    // The block's load and its tables (safe: `std::simd`'s operations).\n    {{\n        let v = s::load(block);\n{tables}        [{}]\n    }}\n}}\n\n",
             used.iter().map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", "),
             bits.iter().map(|b| format!("{b} & lv")).collect::<Vec<_>>().join(", ")
         );

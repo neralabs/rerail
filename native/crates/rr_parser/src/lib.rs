@@ -336,6 +336,8 @@ pub fn compile_error() -> Option<String> {
 }
 
 #[cfg(test)]
+mod chunked_tests;
+#[cfg(test)]
 mod gating_tests;
 #[cfg(test)]
 mod rust_tests;

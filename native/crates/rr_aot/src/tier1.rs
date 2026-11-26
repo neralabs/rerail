@@ -377,8 +377,8 @@ static PAIR_6_0_SECOND: ([u8; 16], [u8; 16]) = ([0x00, 0x00, 0x00, 0x00, 0x00, 0
 unsafe fn block_classes(src: &[u8], n: usize, base: usize) -> [u64; 4] {
     let block: &[u8; 64] = src[base..base + 64].try_into().expect("the padded source");
     let lv = valid(n, base as isize);
-    // SAFETY: the caller's.
-    unsafe {
+    // The block's load and its tables (safe: `std::simd`'s operations).
+    {
         let v = s::load(block);
         let d = s::shift_in(v, src[base + 64]);
         let c = s::classify(v, &LO, &HI);
@@ -578,4 +578,673 @@ pub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {
         11 => src[from..to].contains(&0x0c),
         _ => false,
     }
+}
+
+/// The token loop's block `b` (`lex_on`'s), its classes `cur`, from `at`: its records written where `WRITE` (pass 2),
+/// none where not (pass 1's chunk end, which reads only where the next token starts after it).
+#[inline(always)]
+unsafe fn lex_block<const WRITE: bool>(src: &[u8], n: usize, b: usize, cur: [u64; 4], at_io: &mut usize, refused_io: &mut bool, out: *mut Rec, len_io: &mut usize, extras: &mut Vec<Rec>) {
+    let nw = n.div_ceil(64);
+    let (mut at, mut len, mut refused, mut b) = (*at_io, *len_io, *refused_io, b);
+    'blk: loop {
+        let base = b * 64;
+        // The block's masks, from its classes (the lean lexer's `Window`): what its tokens read of it.
+        // SAFETY: `base` is in the file.
+        let k_m_ws = cur[0];
+        let k_m_word = cur[1];
+        let k_pair_6 = cur[2];
+        let k_rare = cur[3];
+        // The block's starts from its byte `k` on, as the lean lexer's: a byte `skip` does not hold, not a word's after its
+        // first, not a pair's second (the pairs read left to right); and byte `k`, the byte after a token.
+        let lv = valid(n, base as isize);
+        let starts_from = |k: usize| {
+            let s = !k_m_ws & lv & (!(k_m_word & k_m_word << 1) & (!0u64 << k) | 1u64 << k);
+            s & !(left_to_right(k_pair_6 & s) << 1)
+        };
+        let mut starts = starts_from(at.saturating_sub(base));
+        loop {
+            let rare = starts & k_rare;
+            // The run: the starts before the next rare one, each a word or an operator, by one load (the lean lexer's
+            // `TOKEN`): its kind, its word alone; a word's last byte by its run, an operator's by its pair.
+            let mut run = starts & (rare.wrapping_sub(1) & !rare);
+            // Pass 1 writes no record: of the run, only its last token, which may run past the block.
+            if !WRITE && run != 0 {
+                run = 1u64 << (63 - run.leading_zeros());
+            }
+            while run != 0 {
+                let q = run.trailing_zeros() as usize;
+                run &= run - 1;
+                let s = base + q;
+                let (l, kind1, word) = if k_m_word >> q & 1 == 1 {
+                    // A word: its run, its code by its hash (a word of one byte's by the load).
+                    let (_, kind1, word1) = TOKEN[usize::from(src[s])];
+                    let l = word_last(n, base, k_m_word, s, |i: usize| (i < n && CLASS[usize::from(src[i])] & C_WORD != 0));
+                    (l, kind1, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
+                } else {
+                    // An operator, one byte or a pair (`p`): its kind and code by one load, as the lean lexer's
+                    // `TOKEN[c + 256]`.
+                    let p = (k_pair_6 >> q & 1) as usize;
+                    let (_, kind1, word1) = TOKEN[usize::from(src[s]) | p << 8 | (p & usize::from(src[s + 1] == b':')) << 9];
+                    (s + p, kind1, u32::from(word1))
+                };
+                debug_assert!(len < n, "a token a byte at most");
+                // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.
+                if WRITE {
+                    unsafe { out.add(len).write(Rec { start: s as u32, last: l as u32, code: u32::from(kind1) | word << 8 }) };
+                }
+                if WRITE {
+                    len += 1;
+                }
+                if l + 1 >= base + 64 {
+                    // A token on past the block: the blocks from its end.
+                    at = l + 1;
+                    b = at / 64;
+                    break 'blk;
+                }
+            }
+            if rare == 0 {
+                break;
+            }
+            // A rare token, read by its row: the lean lexer's `match` on its first byte.
+            let s = base + rare.trailing_zeros() as usize;
+            // The token's row (or its first byte's group's tests) and its record kind, by one load (the lean lexer's `TOKEN`).
+            let (pick, kind1, word1) = TOKEN[usize::from(src[s])];
+            let (l, kind, extra, word): (usize, u32, bool, u32) = match pick {
+                // `/`
+                13 if s + 1 < n && (src[s + 1] == b'/') => {
+                    // `comment`: read line | block
+                    let l = micro::find(&src[..n], s + 1, b'\n').unwrap_or(n) - 1;
+                    let l = l.max(s);
+                    (l, 1, true, 0)
+                },
+                13 if s + 1 < n && (src[s + 1] == b'*') => {
+                    // `comment`: read line | block
+                    let mut open_bad = false;
+                    let l = match micro::find_pair(&src[..n], s, b'*', b'/').map(|a| a + 1) {
+                        Some(c) => c,
+                        None => {
+                            open_bad = true;
+                            n - 1
+                        }
+                    };
+                    let l = l.max(s);
+                    (l, if open_bad { 0 } else { 1 }, !open_bad, 0)
+                },
+                // ```
+                16 => {
+                    // Its run of b'`' counted once, read by its count (the lean lexer's `k`).
+                    let mut k = 1;
+                    while s + k < n && src[s + k] == b'`' {
+                        k += 1;
+                    }
+                    match k {
+                        1 => {
+                            // `code_literal`: read t1 | t2 | t3
+                            let mut open_bad = false;
+                            let l = match micro::find(&src[..n], s + 1, b'`') {
+                                Some(c) => c,
+                                None => {
+                                    open_bad = true;
+                                    n - 1
+                                }
+                            };
+                            let l = l.max(s);
+                            (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
+                        }
+                        2 => {
+                            // `code_literal`: read t1 | t2 | t3
+                            let l = match micro::find_pair(&src[..n], s + 1, b'`', b'`') {
+                                Some(c) => c + 1,
+                                None => {
+                                    s + 1
+                                }
+                            };
+                            let l = l.max(s);
+                            (l, u32::from(kind1), false, 0)
+                        }
+                        3 => {
+                            // `code_literal`: read t1 | t2 | t3
+                            let mut open_bad = false;
+                            let l = match find_fence(&src[..n], s + 1, &[b'`', b'`', b'`']) {
+                                Some(c) => c + 2,
+                                None => {
+                                    open_bad = true;
+                                    n - 1
+                                }
+                            };
+                            let l = l.max(s);
+                            (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
+                        }
+                        _ => {
+                            // A run no arm reads.
+                            refused = true;
+                            break 'blk;
+                        }
+                    }
+                },
+                0 => {
+                    // `string`: read str
+                    let mut open_bad = false;
+                    let l = match micro::string_end(&src[..n], s + 1).0 {
+                        Some(c) => c,
+                        None => {
+                            open_bad = true;
+                            n - 1
+                        }
+                    };
+                    let l = l.max(s);
+                    (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
+                },
+                3 => {
+                    // `hash_word`: run word
+                    let l = { let mut l = s; while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_WORD != 0) { l += 1; } l };
+                    let l = l.max(s);
+                    (l, u32::from(kind1), false, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
+                },
+                5 => {
+                    // `number`: run num_run once dot
+                    let (l, once) = { let mut l = s; while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_DIGIT != 0) { l += 1; } let once = (l + 1 < n && (src[l + 1] == b'.')) && (l + 2 < n && CLASS[usize::from(src[l + 2])] & C_DIGIT != 0); if once { l += 2; while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_DIGIT != 0) { l += 1; } } (l, once) };
+                    let l = l.max(s);
+                    // `float_at`: the run's one byte read (`once`), its record's bit, as the lean lexer writes its kind.
+                    (l, u32::from(kind1) | u32::from(once) << 16, false, 0)
+                },
+                6 | 13 => {
+                    // `punct`: pair
+                    let l = s + (k_pair_6 >> (s - base) & 1) as usize;
+                    let l = l.max(s);
+                    (l, u32::from(kind1), false, u32::from(TOKEN[usize::from(src[s]) | (l - s) << 8 | ((l - s) & usize::from(src[s + 1] == b':')) << 9].2))
+                },
+                8 => {
+                    // `bad_char`: run cont
+                    let l = { let mut l = s; while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_CONT != 0) { l += 1; } l };
+                    let l = l.max(s);
+                    (l, u32::from(kind1), false, 0)
+                },
+                _ => {
+                    // A byte no row takes: its group's tests, none of which holds.
+                    refused = true;
+                    break 'blk;
+                }
+            };
+            let rec = Rec { start: s as u32, last: l as u32, code: kind | word << 8 };
+            if extra {
+                if WRITE {
+                    extras.push(rec);
+                }
+            } else {
+                debug_assert!(len < n && l >= s, "a token a byte at most");
+                // SAFETY: as the run's.
+                if WRITE {
+                    unsafe { out.add(len).write(rec) };
+                }
+                if WRITE {
+                    len += 1;
+                }
+            }
+            at = l + 1;
+            if at >= base + 64 {
+                b = at / 64;
+                break 'blk;
+            }
+            starts = starts_from(at - base);
+        }
+        b += 1;
+        break 'blk;
+    }
+    (*at_io, *len_io, *refused_io) = (at, len, refused);
+}
+
+/// The token loop from `at` to block `to` (pass 2, `WRITE`; a chunk's last token in pass 1): where the next token
+/// starts after it.
+#[inline(always)]
+unsafe fn lex_range<const WRITE: bool>(src: &[u8], n: usize, mut at: usize, to: usize, refused: &mut bool, out: *mut Rec, len: &mut usize, extras: &mut Vec<Rec>) -> usize {
+    let nw = n.div_ceil(64).min(to);
+    let mut b = at / 64;
+    while b < nw && !*refused {
+        // SAFETY: `b` is a block of the padded file.
+        let cur = unsafe { block_classes(src, n, b * 64) };
+        // SAFETY: `out` has room for a record a byte where `WRITE`.
+        unsafe { lex_block::<WRITE>(src, n, b, cur, &mut at, refused, out, len, extras) };
+        b = (b + 1).max(at / 64);
+    }
+    at.max(64 * to)
+}
+
+/// A lane of a chunk's summary (lexing from the middle): the `at` it enters at (the chunk's first byte, in code, or
+/// past the end of a region the chunk starts inside), and where the next token starts after the chunk, or the file
+/// refused on the way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lane {
+    pub at0: u32,
+    pub exit: u32,
+    pub refused: bool,
+}
+
+/// A chunk's lanes: code, then one for each region.
+pub const LANES: usize = 7;
+
+/// A region lane's entry where its closer is not in its chunk: the next chunk's (`fill_far`).
+const NONE: usize = usize::MAX;
+
+/// Each region lane whose closer is not in its chunk: entered and left where the next chunk's lane of the region is
+/// entered, as the region runs through the chunk (a suffix scan, from the last chunk).
+pub fn fill_far(ends: &mut [[Lane; LANES]]) {
+    for c in (0..ends.len().saturating_sub(1)).rev() {
+        for k in 1..LANES {
+            if ends[c][k].at0 == NONE as u32 {
+                let at = ends[c + 1][k].at0;
+                ends[c][k] = Lane { at0: at, exit: at, refused: false };
+            }
+        }
+    }
+}
+
+/// The backslashes before byte `start`.
+#[inline]
+fn run_before(src: &[u8], start: usize, b: u8) -> usize {
+    let mut k = 0;
+    while k < start && src[start - 1 - k] == b {
+        k += 1;
+    }
+    k
+}
+
+/// Pass 1 reads only the tokens at opener bytes, so it sees each refusal the token loop makes: every rare byte's pick has
+/// an arm (`_` refuses none), and an arm that can refuse is an opener byte's.
+const _: () = {
+    let mut c = 0;
+    while c < 256 {
+        let pick = TOKEN[c].0;
+        assert!(!(LO[c & 15] & HI[c >> 4] & RARE != 0 || c >= 0x80) || matches!(pick, 16 | 0 | 3 | 5 | 6 | 13 | 8), "a rare byte no arm takes");
+        assert!(!matches!(pick, 16) || matches!(c, 0x22 | 0x2f | 0x60), "an arm that refuses at a byte no region opens at");
+        c += 1;
+    }
+};
+
+/// The bytes of the block at `base` a region's opener can start at: pass 1 reads only the tokens that start at one, and
+/// the block's last. One load, a compare a byte, for every lane.
+#[inline(always)]
+fn open_mask(src: &[u8], base: usize) -> u64 {
+    let v = s::load(src[base..base + 64].try_into().expect("the padded source"));
+    s::eq_mask(v, 0x22) | s::eq_mask(v, 0x2f) | s::eq_mask(v, 0x60)
+}
+
+/// Where a `str` the chunk `start..end` is inside at its first byte ends: the byte after its closer's next in
+/// the chunk (`NONE` where none is: the next chunk's, by `fill_far`; the file's end where it is the last).
+#[inline]
+fn enter_str(src: &[u8], n: usize, start: usize, end: usize) -> usize {
+    // The closer's bytes past the chunk's end too, where one starts in it.
+    let lim = n.min(end + 3);
+    let from = start - run_before(src, start, b'\\');
+    match micro::string_end(&src[..lim], from).0 {
+        Some(p) if p < end => (p + 1).min(n),
+        _ if end >= n => n,
+        _ => NONE,
+    }
+}
+
+/// Where a `line` the chunk `start..end` is inside at its first byte ends: the byte after its closer's next in
+/// the chunk (`NONE` where none is: the next chunk's, by `fill_far`; the file's end where it is the last).
+#[inline]
+fn enter_line(src: &[u8], n: usize, start: usize, end: usize) -> usize {
+    // The closer's bytes past the chunk's end too, where one starts in it.
+    let lim = n.min(end + 3);
+    let from = start;
+    match micro::find(&src[..lim], from, b'\n') {
+        Some(p) if p < end => (p).min(n),
+        _ if end >= n => n,
+        _ => NONE,
+    }
+}
+
+/// Where a `block` the chunk `start..end` is inside at its first byte ends: the byte after its closer's next in
+/// the chunk (`NONE` where none is: the next chunk's, by `fill_far`; the file's end where it is the last).
+#[inline]
+fn enter_block(src: &[u8], n: usize, start: usize, end: usize) -> usize {
+    // The closer's bytes past the chunk's end too, where one starts in it.
+    let lim = n.min(end + 3);
+    let from = start;
+    match micro::find_pair(&src[..lim], from - 1, b'*', b'/').map(|a| a + 1) {
+        Some(p) if p < end => (p + 1).min(n),
+        _ if end >= n => n,
+        _ => NONE,
+    }
+}
+
+/// Where a `t1` the chunk `start..end` is inside at its first byte ends: the byte after its closer's next in
+/// the chunk (`NONE` where none is: the next chunk's, by `fill_far`; the file's end where it is the last).
+#[inline]
+fn enter_t1(src: &[u8], n: usize, start: usize, end: usize) -> usize {
+    // The closer's bytes past the chunk's end too, where one starts in it.
+    let lim = n.min(end + 3);
+    let from = start;
+    match micro::find(&src[..lim], from, b'`') {
+        Some(p) if p < end => (p + 1).min(n),
+        _ if end >= n => n,
+        _ => NONE,
+    }
+}
+
+/// Where a `t2` the chunk `start..end` is inside at its first byte ends: the byte after its closer's next in
+/// the chunk (`NONE` where none is: the next chunk's, by `fill_far`; the file's end where it is the last).
+#[inline]
+fn enter_t2(src: &[u8], n: usize, start: usize, end: usize) -> usize {
+    // The closer's bytes past the chunk's end too, where one starts in it.
+    let lim = n.min(end + 3);
+    let from = start;
+    match micro::find_pair(&src[..lim], from, b'`', b'`') {
+        Some(p) if p < end => (p + 2).min(n),
+        _ if end >= n => n,
+        _ => NONE,
+    }
+}
+
+/// Where a `t3` the chunk `start..end` is inside at its first byte ends: the byte after its closer's next in
+/// the chunk (`NONE` where none is: the next chunk's, by `fill_far`; the file's end where it is the last).
+#[inline]
+fn enter_t3(src: &[u8], n: usize, start: usize, end: usize) -> usize {
+    // The closer's bytes past the chunk's end too, where one starts in it.
+    let lim = n.min(end + 3);
+    let from = start;
+    match find_fence(&src[..lim], from, &[b'`', b'`', b'`']) {
+        Some(p) if p < end => (p + 3).min(n),
+        _ if end >= n => n,
+        _ => NONE,
+    }
+}
+
+/// Pass 1's block `b` from `at` (a token's start), the block's opener bytes `open`: only the tokens that start at one, each
+/// read as the token loop reads it (a region's to its end): `at` the start after the last read (on past the block where a
+/// region runs on), or a refusal. The
+/// regions are the grammar's by their bytes (`regions`): one opens at each opener byte outside them, and no token
+/// other than a region's holds an opener byte past its first, so the token loop's starts are not read.
+#[inline(always)]
+#[allow(unused_variables, unused_assignments)]
+fn walk_block(src: &[u8], n: usize, b: usize, open: u64, at: &mut usize, refused: &mut bool) {
+    let base = 64 * b;
+    let k_pair_6 = 0u64;
+    let mut open = if *at > base { open & (!0u64 << (*at - base)) } else { open };
+    let mut refused_now = false;
+    while open != 0 {
+        let s = base + open.trailing_zeros() as usize;
+        let l = 'blk: loop {
+            let (pick, kind1, word1) = TOKEN[usize::from(src[s])];
+            let (l, kind, extra, word): (usize, u32, bool, u32) = match pick {
+                // `/`
+                13 if s + 1 < n && (src[s + 1] == b'/') => {
+                    // `comment`: read line | block
+                    let l = micro::find(&src[..n], s + 1, b'\n').unwrap_or(n) - 1;
+                    let l = l.max(s);
+                    (l, 1, true, 0)
+                },
+                13 if s + 1 < n && (src[s + 1] == b'*') => {
+                    // `comment`: read line | block
+                    let mut open_bad = false;
+                    let l = match micro::find_pair(&src[..n], s, b'*', b'/').map(|a| a + 1) {
+                        Some(c) => c,
+                        None => {
+                            open_bad = true;
+                            n - 1
+                        }
+                    };
+                    let l = l.max(s);
+                    (l, if open_bad { 0 } else { 1 }, !open_bad, 0)
+                },
+                // ```
+                16 => {
+                    // Its run of b'`' counted once, read by its count (the lean lexer's `k`).
+                    let mut k = 1;
+                    while s + k < n && src[s + k] == b'`' {
+                        k += 1;
+                    }
+                    match k {
+                        1 => {
+                            // `code_literal`: read t1 | t2 | t3
+                            let mut open_bad = false;
+                            let l = match micro::find(&src[..n], s + 1, b'`') {
+                                Some(c) => c,
+                                None => {
+                                    open_bad = true;
+                                    n - 1
+                                }
+                            };
+                            let l = l.max(s);
+                            (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
+                        }
+                        2 => {
+                            // `code_literal`: read t1 | t2 | t3
+                            let l = match micro::find_pair(&src[..n], s + 1, b'`', b'`') {
+                                Some(c) => c + 1,
+                                None => {
+                                    s + 1
+                                }
+                            };
+                            let l = l.max(s);
+                            (l, u32::from(kind1), false, 0)
+                        }
+                        3 => {
+                            // `code_literal`: read t1 | t2 | t3
+                            let mut open_bad = false;
+                            let l = match find_fence(&src[..n], s + 1, &[b'`', b'`', b'`']) {
+                                Some(c) => c + 2,
+                                None => {
+                                    open_bad = true;
+                                    n - 1
+                                }
+                            };
+                            let l = l.max(s);
+                            (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
+                        }
+                        _ => {
+                            // A run no arm reads.
+                            refused_now = true;
+                            break 'blk usize::MAX;
+                        }
+                    }
+                },
+                0 => {
+                    // `string`: read str
+                    let mut open_bad = false;
+                    let l = match micro::string_end(&src[..n], s + 1).0 {
+                        Some(c) => c,
+                        None => {
+                            open_bad = true;
+                            n - 1
+                        }
+                    };
+                    let l = l.max(s);
+                    (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
+                },
+                3 => {
+                    // `hash_word`: run word
+                    let l = { let mut l = s; while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_WORD != 0) { l += 1; } l };
+                    let l = l.max(s);
+                    (l, u32::from(kind1), false, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
+                },
+                5 => {
+                    // `number`: run num_run once dot
+                    let (l, once) = { let mut l = s; while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_DIGIT != 0) { l += 1; } let once = (l + 1 < n && (src[l + 1] == b'.')) && (l + 2 < n && CLASS[usize::from(src[l + 2])] & C_DIGIT != 0); if once { l += 2; while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_DIGIT != 0) { l += 1; } } (l, once) };
+                    let l = l.max(s);
+                    // `float_at`: the run's one byte read (`once`), its record's bit, as the lean lexer writes its kind.
+                    (l, u32::from(kind1) | u32::from(once) << 16, false, 0)
+                },
+                6 | 13 => {
+                    // `punct`: pair
+                    let l = s + (k_pair_6 >> (s - base) & 1) as usize;
+                    let l = l.max(s);
+                    (l, u32::from(kind1), false, u32::from(TOKEN[usize::from(src[s]) | (l - s) << 8 | ((l - s) & usize::from(src[s + 1] == b':')) << 9].2))
+                },
+                8 => {
+                    // `bad_char`: run cont
+                    let l = { let mut l = s; while (l + 1 < n && CLASS[usize::from(src[l + 1])] & C_CONT != 0) { l += 1; } l };
+                    let l = l.max(s);
+                    (l, u32::from(kind1), false, 0)
+                },
+                _ => {
+                    // A byte no row takes: its group's tests, none of which holds.
+                    refused_now = true;
+                    break 'blk usize::MAX;
+                }
+            };
+            break 'blk l;
+        };
+        if refused_now {
+            *refused = true;
+            return;
+        }
+        *at = l + 1;
+        if *at >= base + 64 {
+            return;
+        }
+        open &= !0u64 << (*at - base);
+    }
+}
+
+/// Where the next token starts after block `to`, a lane in code at `at` with no opener byte after it in the chunk: the
+/// token loop from the byte after the chunk's last byte `skip` holds (no token's outside the regions), or from `at`.
+#[inline]
+fn tail(src: &[u8], n: usize, at: usize, to: usize, refused: &mut bool) -> usize {
+    let end = (64 * to).min(n);
+    let mut lo = at;
+    if at < end {
+        let mut b = (end - 1) / 64;
+        loop {
+            let base = 64 * b;
+            // SAFETY: `base` is a block of the padded file.
+            let skip = unsafe { block_classes(src, n, base) }[0];
+            let below = if end - base >= 64 { !0u64 } else { (1u64 << (end - base)) - 1 };
+            let from = if at > base { !0u64 << (at - base) } else { !0u64 };
+            let m = skip & below & from;
+            if m != 0 {
+                lo = base + 64 - m.leading_zeros() as usize;
+                break;
+            }
+            if base <= at {
+                break;
+            }
+            b -= 1;
+        }
+    }
+    let (mut len, mut extras) = (0usize, Vec::new());
+    // SAFETY: no record written (`WRITE` false).
+    unsafe { lex_range::<false>(src, n, lo, to, refused, core::ptr::null_mut(), &mut len, &mut extras) }
+}
+
+/// Pass 1: chunk `from..to` (blocks) walked from each lane's entry (`walk_block`), writing nothing: each lane's exit.
+/// Each lane walks alone, and keeps where it is after each block it reads (the first `SEEN`): a later lane at a place an
+/// earlier one was after the same block is that lane from there on.
+pub fn chunk_ends(src: &[u8], n: usize, from: usize, to: usize) -> [Lane; LANES] {
+    const SEEN: usize = 32;
+    let start = 64 * from;
+    // The file's first chunk starts in code.
+    let at0: [usize; LANES] = if start == 0 { [0; LANES] } else { [start, enter_str(src, n, start, 64 * to), enter_line(src, n, start, 64 * to), enter_block(src, n, start, 64 * to), enter_t1(src, n, start, 64 * to), enter_t2(src, n, start, 64 * to), enter_t3(src, n, start, 64 * to)] };
+    let end = n.div_ceil(64).min(to);
+    let mut seen = [[0u32; SEEN]; LANES];
+    let mut seen_len = [0usize; LANES];
+    let mut lanes = [Lane { at0: 0, exit: 0, refused: false }; LANES];
+    for k in 0..LANES {
+        let (mut at, mut refused) = (at0[k], false);
+        let mut b = at / 64;
+        // Each earlier lane's place to compare with next, and the one this lane is.
+        let mut ptr = [0usize; LANES];
+        let mut same = (0..k).find(|&j| at0[j] == at);
+        while same.is_none() && b < end && !refused {
+            walk_block(src, n, b, open_mask(src, 64 * b), &mut at, &mut refused);
+            if seen_len[k] < SEEN {
+                seen[k][seen_len[k]] = at as u32;
+                seen_len[k] += 1;
+            }
+            for j in 0..k {
+                while ptr[j] < seen_len[j] && (seen[j][ptr[j]] as usize) < at {
+                    ptr[j] += 1;
+                }
+                if ptr[j] < seen_len[j] && seen[j][ptr[j]] as usize == at && !lanes[j].refused {
+                    same = Some(j);
+                    break;
+                }
+            }
+            b = (b + 1).max(at / 64);
+        }
+        lanes[k] = match same {
+            Some(j) => Lane { at0: at0[k] as u32, ..lanes[j] },
+            None => {
+                // In code at the chunk's end: its last token, which may run past it.
+                let exit = if !refused && at < (64 * to).min(n) { tail(src, n, at, to, &mut refused) } else { at };
+                Lane { at0: at0[k] as u32, exit: exit.max(64 * to) as u32, refused }
+            }
+        };
+    }
+    lanes
+}
+
+/// Where the next token starts after a range of chunks entered at `p`, and whether the file is refused on the way: the
+/// lane that enters at `p`, else the code's (a token from before the range ends in its code).
+#[inline]
+fn apply(s: &[Lane; LANES], p: u32) -> (u32, bool) {
+    let l = s.iter().find(|l| l.at0 == p).unwrap_or(&s[0]);
+    (l.exit, l.refused)
+}
+
+/// Two ranges' summaries, one after the other: each lane of the first, on through the second. Associative, so a prefix
+/// sum composes them in any tree.
+#[inline]
+pub fn compose(a: &[Lane; LANES], b: &[Lane; LANES]) -> [Lane; LANES] {
+    a.map(|l| {
+        let (exit, refused) = apply(b, l.exit);
+        Lane { at0: l.at0, exit, refused: l.refused || refused }
+    })
+}
+
+/// Pass 3: the region lanes with no closer in their chunk filled from the chunks after (`fill_far`), then each chunk's
+/// entry, the file's start (`at` 0) composed through the chunks before it, by a prefix sum of the summaries (Hillis and
+/// Steele's, in log2 rounds).
+pub fn entries(ends: &[[Lane; LANES]]) -> Vec<(u32, bool)> {
+    let mut scan = ends.to_vec();
+    fill_far(&mut scan);
+    let mut next = scan.clone();
+    let mut d = 1;
+    while d < scan.len() {
+        for c in 0..scan.len() {
+            next[c] = if c >= d { compose(&scan[c - d], &scan[c]) } else { scan[c] };
+        }
+        core::mem::swap(&mut scan, &mut next);
+        d *= 2;
+    }
+    (0..ends.len()).map(|c| if c == 0 { (0, false) } else { apply(&scan[c - 1], 0) }).collect()
+}
+
+/// Pass 2 of one chunk: the token loop from its entry `at` to block `to`, its records appended to `recs` and `extras`.
+/// Where the next token starts after it, and whether the file is refused.
+pub fn lex_chunk(buf: &[u8], n: usize, at: usize, to: usize, recs: &mut Vec<Rec>, extras: &mut Vec<Rec>) -> (usize, bool) {
+    // A record a byte of the chunk from `at` at most: each starts in it.
+    recs.reserve((64 * to).min(n).saturating_sub(at) + 1);
+    let (mut len, mut refused) = (recs.len(), false);
+    // SAFETY: room for a record a byte of the chunk past `len`.
+    let exit = unsafe { lex_range::<true>(buf, n, at, to, &mut refused, recs.as_mut_ptr(), &mut len, extras) };
+    // SAFETY: `len` records written.
+    unsafe { recs.set_len(len) };
+    (exit, refused)
+}
+
+/// `buf[..n]` lexed in chunks of `blocks` blocks: pass 1, the prefix sum, then each chunk from its entry, which checks
+/// its exit is the next chunk's entry. The records, and the chunks entered again where a lane's guess was wrong.
+pub fn lex_chunked(buf: &[u8], n: usize, blocks: usize) -> (Lexed, usize) {
+    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b"        "), "the source padded with spaces");
+    let starts: Vec<usize> = (0..n.div_ceil(64)).step_by(blocks.max(1)).collect();
+    let ends: Vec<[Lane; LANES]> = starts.iter().map(|&q| chunk_ends(buf, n, q, q + blocks)).collect();
+    let mut entry = entries(&ends);
+    let (mut recs, mut extras) = (Vec::with_capacity(n + 1), Vec::new());
+    let (mut refused, mut again) = (false, 0);
+    for c in 0..starts.len() {
+        let (exit, r) = lex_chunk(buf, n, entry[c].0 as usize, starts[c] + blocks, &mut recs, &mut extras);
+        if r {
+            refused = true;
+            break;
+        }
+        if c + 1 < starts.len() && entry[c + 1].0 as usize != exit {
+            again += 1;
+            entry[c + 1].0 = exit as u32;
+        }
+    }
+    (Lexed { recs, extras, refused }, again)
 }

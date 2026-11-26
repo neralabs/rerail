@@ -7243,6 +7243,8 @@ impl Gen<'_> {
         } else {
             once_asks.clear();
         }
+        // Each region's end from inside it, for lexing from the middle (`chunked_lean`): its name and its function.
+        let mut enter_fns: Option<(Vec<(String, String)>, [bool; 256])> = None;
         let from_bytes = if fused && self.stage1_parts(true).finals.trim().is_empty() && !self.body.lines().any(|l| l.trim_start().starts_with("refused |=")) {
             let locals: HashMap<String, Expr> = self.nodes.iter().filter_map(|n| n.expr.clone().map(|e| (n.name.clone(), e))).collect();
             // Each class stage 1 writes, by the nibble tables the file holds (`stage1_codes`).
@@ -7319,7 +7321,33 @@ impl Gen<'_> {
                 let head = if pieces[7].is_empty() { format!("{words}        let mut firsts = {starts}") } else { words };
                 Ok((pieces, head, decl))
             };
-            go().ok().map(|(p, st, decl)| (p, st, by.code(), decl))
+            let made = go().ok();
+            // A region the chunk's first byte is inside: its end is its closer's next from there, as the region's reader
+            // finds it (`micro_first`). None where a region has a second closer or follows another (a template's).
+            let opens = self.kinds.iter().try_fold([false; 256], |acc, r| by.first_bytes(&r.opener, 0).map(|b| std::array::from_fn(|c| acc[c] || b[c])));
+            if let Some(opens) = opens
+                && self.kinds.iter().all(|r| r.or.is_none() && r.after.is_empty())
+            {
+                enter_fns = self
+                    .kinds
+                    .iter()
+                    .map(|r| {
+                        let read = by.micro_first(&r.closer, "from")?;
+                        // A quote no backslash escapes: from the run of backslashes before the chunk, which says whether
+                        // its first byte is escaped.
+                        let from = if read.starts_with("micro::string_end") { "start - run_before(src, start, b'\\\\')" } else { "start" };
+                        let end = if r.outside { "p".to_owned() } else { format!("p + {}", r.bytes) };
+                        let name = format!("enter_{}", ident(&r.kind));
+                        let read = read.replace("&src[..n]", "&src[..lim]");
+                        Some((
+                            name.clone(),
+                            format!("/// Where a `{k}` the chunk `start..end` is inside at its first byte ends: the byte after its closer's next in\n/// the chunk (`NONE` where none is: the next chunk's, by `fill_far`; the file's end where it is the last).\n#[inline]\nfn {name}(src: &[u8], n: usize, start: usize, end: usize) -> usize {{\n    // The closer's bytes past the chunk's end too, where one starts in it.\n    let lim = n.min(end + 3);\n    let from = {from};\n    match {read} {{\n        Some(p) if p < end => ({end_e}).min(n),\n        _ if end >= n => n,\n        _ => NONE,\n    }}\n}}\n\n", k = r.kind, end_e = end),
+                        ))
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .map(|e| (e, opens));
+            }
+            made.map(|(p, st, decl)| (p, st, by.code(), decl))
         } else {
             None
         };
@@ -7601,6 +7629,12 @@ impl Gen<'_> {
         // One `match` of the rare tokens' first byte, a group's tests its guards (decision 0655 step 7).
         if let Some(o) = one_pick(&out) {
             out = tidy_lean(&o);
+        }
+        // Lexing from the middle: the token loop a block at a time, its lanes from each region a chunk may start in.
+        if let Some((enters, opens)) = &enter_fns
+            && let Some(t) = chunked_lean(&out, enters, opens)
+        {
+            out.push_str(&t);
         }
         // The lean lexer's micro-lexers, where a read is one (decision 0655 step 7).
         if out.contains("micro::")
@@ -8554,6 +8588,390 @@ fn bytes_in(cubes: &Cubes, d: i64) -> Bytes {
 /// comment that says why, and a block left holding its value alone (`if {\n    E\n} {`) as that value (`if E {`), as
 /// the lean lexer holds no checker.
 /// The lean lexer's `left_to_right`: a run of pairs' first bytes (`=>=`) read left to right.
+/// Lexing from the middle for a token loop that reads its blocks' bytes (rr's): `lex_on`'s block as a function
+/// (`lex_block`, its writes on in pass 2 alone), each region's end from inside it (`enters`), and the three passes.
+/// What crosses a chunk's end is where the next token starts (`at`), so a chunk's summary maps its entry `at` to its
+/// exit: a lane from the chunk's first byte (code) and one from inside each region. Lanes share each block's classes,
+/// and lanes at the same `at` are one. None where `lex_on` is not that loop.
+fn chunked_lean(out: &str, enters: &[(String, String)], opens: &[bool; 256]) -> Option<String> {
+    let head = "unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {\n";
+    let f = out.find(head)?;
+    let open = "    'tokens: while b < nw {\n";
+    let a = f + out[f..].find(open)? + open.len();
+    let close = "    }\n    // SAFETY: `len` records written.";
+    let z = a + out[a..].find(close)?;
+    let k: usize = {
+        let sig = "unsafe fn block_classes(src: &[u8], n: usize, base: usize) -> [u64; ";
+        let at = out.find(sig)? + sig.len();
+        out[at..].split(']').next()?.parse().ok()?
+    };
+    let cur = "        let cur = unsafe { block_classes(src, n, base) };\n";
+    let body = &out[a..z];
+    if !body.contains(cur) {
+        return None;
+    }
+    let mut lines = String::new();
+    for l in body.replace(cur, "").lines() {
+        let t = l.trim_start();
+        let pad = &l[..l.len() - t.len()];
+        let l = l.replace("continue 'tokens;", "break 'blk;").replace("break 'tokens;", "break 'blk;");
+        if t.starts_with("unsafe { out.add(len).write(") || t == "len += 1;" || t == "extras.push(rec);" {
+            let _ = writeln!(lines, "{pad}if WRITE {{\n    {l}\n{pad}}}");
+        } else if t == "while run != 0 {" {
+            let _ = writeln!(lines, "{pad}// Pass 1 writes no record: of the run, only its last token, which may run past the block.\n{pad}if !WRITE && run != 0 {{\n{pad}    run = 1u64 << (63 - run.leading_zeros());\n{pad}}}\n{l}");
+        } else {
+            let _ = writeln!(lines, "{l}");
+        }
+    }
+    // Pass 1: the regions' tokens alone (`walk_block`).
+    let serial = body.replace(cur, "");
+    let (walk, skip, picks, refusing) = walk_block(&serial)?;
+    // The bytes a block's rare mask holds, from its classes (`block_classes`).
+    let rare_of = if out.contains("s::or(s::test(c, s::splat(RARE)), s::ge(v, 0x80))") {
+        "LO[c & 15] & HI[c >> 4] & RARE != 0 || c >= 0x80"
+    } else if out.contains("s::test(c, s::splat(RARE))") {
+        "LO[c & 15] & HI[c >> 4] & RARE != 0"
+    } else {
+        return None;
+    };
+    let refusing = if refusing.is_empty() { "u8::MAX".to_owned() } else { refusing };
+    let open_bytes: Vec<usize> = (0..256).filter(|&c| opens[c]).collect();
+    if open_bytes.is_empty() || open_bytes.len() > 8 {
+        return None;
+    }
+    let opens_table = format!("/// The bytes of the block at `base` a region's opener can start at: pass 1 reads only the tokens that start at one, and\n/// the block's last. One load, a compare a byte, for every lane.\n#[inline(always)]\nfn open_mask(src: &[u8], base: usize) -> u64 {{\n    let v = s::load(src[base..base + 64].try_into().expect(\"the padded source\"));\n    {}\n}}\n\n", open_bytes.iter().map(|c| format!("s::eq_mask(v, {c:#04x})")).collect::<Vec<_>>().join(" | "));
+    let lanes = 1 + enters.len();
+    let entries: Vec<String> = std::iter::once("start".to_owned()).chain(enters.iter().map(|(name, _)| format!("{name}(src, n, start, 64 * to)"))).collect();
+    let entries = entries.join(", ");
+    let checks = format!("/// Pass 1 reads only the tokens at opener bytes, so it sees each refusal the token loop makes: every rare byte's pick has\n/// an arm (`_` refuses none), and an arm that can refuse is an opener byte's.\nconst _: () = {{\n    let mut c = 0;\n    while c < 256 {{\n        let pick = TOKEN[c].0;\n        assert!(!({rare_of}) || matches!(pick, {picks}), \"a rare byte no arm takes\");\n        assert!(!matches!(pick, {refusing}) || matches!(c, {}), \"an arm that refuses at a byte no region opens at\");\n        c += 1;\n    }}\n}};\n\n", open_bytes.iter().map(|c| format!("{c:#04x}")).collect::<Vec<_>>().join(" | "));
+    let fns: String = checks + &opens_table + &enters.iter().map(|(_, f)| f.as_str()).collect::<String>();
+    let mut t = String::new();
+    let _ = write!(
+        t,
+        r#"
+/// The token loop's block `b` (`lex_on`'s), its classes `cur`, from `at`: its records written where `WRITE` (pass 2),
+/// none where not (pass 1's chunk end, which reads only where the next token starts after it).
+#[inline(always)]
+unsafe fn lex_block<const WRITE: bool>(src: &[u8], n: usize, b: usize, cur: [u64; {k}], at_io: &mut usize, refused_io: &mut bool, out: *mut Rec, len_io: &mut usize, extras: &mut Vec<Rec>) {{
+    let nw = n.div_ceil(64);
+    let (mut at, mut len, mut refused, mut b) = (*at_io, *len_io, *refused_io, b);
+    'blk: loop {{
+{lines}        break 'blk;
+    }}
+    (*at_io, *len_io, *refused_io) = (at, len, refused);
+}}
+
+/// The token loop from `at` to block `to` (pass 2, `WRITE`; a chunk's last token in pass 1): where the next token
+/// starts after it.
+#[inline(always)]
+unsafe fn lex_range<const WRITE: bool>(src: &[u8], n: usize, mut at: usize, to: usize, refused: &mut bool, out: *mut Rec, len: &mut usize, extras: &mut Vec<Rec>) -> usize {{
+    let nw = n.div_ceil(64).min(to);
+    let mut b = at / 64;
+    while b < nw && !*refused {{
+        // SAFETY: `b` is a block of the padded file.
+        let cur = unsafe {{ block_classes(src, n, b * 64) }};
+        // SAFETY: `out` has room for a record a byte where `WRITE`.
+        unsafe {{ lex_block::<WRITE>(src, n, b, cur, &mut at, refused, out, len, extras) }};
+        b = (b + 1).max(at / 64);
+    }}
+    at.max(64 * to)
+}}
+
+/// A lane of a chunk's summary (lexing from the middle): the `at` it enters at (the chunk's first byte, in code, or
+/// past the end of a region the chunk starts inside), and where the next token starts after the chunk, or the file
+/// refused on the way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lane {{
+    pub at0: u32,
+    pub exit: u32,
+    pub refused: bool,
+}}
+
+/// A chunk's lanes: code, then one for each region.
+pub const LANES: usize = {lanes};
+
+/// A region lane's entry where its closer is not in its chunk: the next chunk's (`fill_far`).
+const NONE: usize = usize::MAX;
+
+/// Each region lane whose closer is not in its chunk: entered and left where the next chunk's lane of the region is
+/// entered, as the region runs through the chunk (a suffix scan, from the last chunk).
+pub fn fill_far(ends: &mut [[Lane; LANES]]) {{
+    for c in (0..ends.len().saturating_sub(1)).rev() {{
+        for k in 1..LANES {{
+            if ends[c][k].at0 == NONE as u32 {{
+                let at = ends[c + 1][k].at0;
+                ends[c][k] = Lane {{ at0: at, exit: at, refused: false }};
+            }}
+        }}
+    }}
+}}
+
+/// The backslashes before byte `start`.
+#[inline]
+fn run_before(src: &[u8], start: usize, b: u8) -> usize {{
+    let mut k = 0;
+    while k < start && src[start - 1 - k] == b {{
+        k += 1;
+    }}
+    k
+}}
+
+{fns}/// Pass 1's block `b` from `at` (a token's start), the block's opener bytes `open`: only the tokens that start at one, each
+/// read as the token loop reads it (a region's to its end): `at` the start after the last read (on past the block where a
+/// region runs on), or a refusal. The
+/// regions are the grammar's by their bytes (`regions`): one opens at each opener byte outside them, and no token
+/// other than a region's holds an opener byte past its first, so the token loop's starts are not read.
+#[inline(always)]
+#[allow(unused_variables, unused_assignments)]
+fn walk_block(src: &[u8], n: usize, b: usize, open: u64, at: &mut usize, refused: &mut bool) {{
+    let base = 64 * b;
+{walk}}}
+
+/// Where the next token starts after block `to`, a lane in code at `at` with no opener byte after it in the chunk: the
+/// token loop from the byte after the chunk's last byte `skip` holds (no token's outside the regions), or from `at`.
+#[inline]
+fn tail(src: &[u8], n: usize, at: usize, to: usize, refused: &mut bool) -> usize {{
+    let end = (64 * to).min(n);
+    let mut lo = at;
+    if at < end {{
+        let mut b = (end - 1) / 64;
+        loop {{
+            let base = 64 * b;
+            // SAFETY: `base` is a block of the padded file.
+            let skip = unsafe {{ block_classes(src, n, base) }}[{skip}];
+            let below = if end - base >= 64 {{ !0u64 }} else {{ (1u64 << (end - base)) - 1 }};
+            let from = if at > base {{ !0u64 << (at - base) }} else {{ !0u64 }};
+            let m = skip & below & from;
+            if m != 0 {{
+                lo = base + 64 - m.leading_zeros() as usize;
+                break;
+            }}
+            if base <= at {{
+                break;
+            }}
+            b -= 1;
+        }}
+    }}
+    let (mut len, mut extras) = (0usize, Vec::new());
+    // SAFETY: no record written (`WRITE` false).
+    unsafe {{ lex_range::<false>(src, n, lo, to, refused, core::ptr::null_mut(), &mut len, &mut extras) }}
+}}
+
+/// Pass 1: chunk `from..to` (blocks) walked from each lane's entry (`walk_block`), writing nothing: each lane's exit.
+/// Each lane walks alone, and keeps where it is after each block it reads (the first `SEEN`): a later lane at a place an
+/// earlier one was after the same block is that lane from there on.
+pub fn chunk_ends(src: &[u8], n: usize, from: usize, to: usize) -> [Lane; LANES] {{
+    const SEEN: usize = 32;
+    let start = 64 * from;
+    // The file's first chunk starts in code.
+    let at0: [usize; LANES] = if start == 0 {{ [0; LANES] }} else {{ [{entries}] }};
+    let end = n.div_ceil(64).min(to);
+    let mut seen = [[0u32; SEEN]; LANES];
+    let mut seen_len = [0usize; LANES];
+    let mut lanes = [Lane {{ at0: 0, exit: 0, refused: false }}; LANES];
+    for k in 0..LANES {{
+        let (mut at, mut refused) = (at0[k], false);
+        let mut b = at / 64;
+        // Each earlier lane's place to compare with next, and the one this lane is.
+        let mut ptr = [0usize; LANES];
+        let mut same = (0..k).find(|&j| at0[j] == at);
+        while same.is_none() && b < end && !refused {{
+            walk_block(src, n, b, open_mask(src, 64 * b), &mut at, &mut refused);
+            if seen_len[k] < SEEN {{
+                seen[k][seen_len[k]] = at as u32;
+                seen_len[k] += 1;
+            }}
+            for j in 0..k {{
+                while ptr[j] < seen_len[j] && (seen[j][ptr[j]] as usize) < at {{
+                    ptr[j] += 1;
+                }}
+                if ptr[j] < seen_len[j] && seen[j][ptr[j]] as usize == at && !lanes[j].refused {{
+                    same = Some(j);
+                    break;
+                }}
+            }}
+            b = (b + 1).max(at / 64);
+        }}
+        lanes[k] = match same {{
+            Some(j) => Lane {{ at0: at0[k] as u32, ..lanes[j] }},
+            None => {{
+                // In code at the chunk's end: its last token, which may run past it.
+                let exit = if !refused && at < (64 * to).min(n) {{ tail(src, n, at, to, &mut refused) }} else {{ at }};
+                Lane {{ at0: at0[k] as u32, exit: exit.max(64 * to) as u32, refused }}
+            }}
+        }};
+    }}
+    lanes
+}}
+
+/// Where the next token starts after a range of chunks entered at `p`, and whether the file is refused on the way: the
+/// lane that enters at `p`, else the code's (a token from before the range ends in its code).
+#[inline]
+fn apply(s: &[Lane; LANES], p: u32) -> (u32, bool) {{
+    let l = s.iter().find(|l| l.at0 == p).unwrap_or(&s[0]);
+    (l.exit, l.refused)
+}}
+
+/// Two ranges' summaries, one after the other: each lane of the first, on through the second. Associative, so a prefix
+/// sum composes them in any tree.
+#[inline]
+pub fn compose(a: &[Lane; LANES], b: &[Lane; LANES]) -> [Lane; LANES] {{
+    a.map(|l| {{
+        let (exit, refused) = apply(b, l.exit);
+        Lane {{ at0: l.at0, exit, refused: l.refused || refused }}
+    }})
+}}
+
+/// Pass 3: the region lanes with no closer in their chunk filled from the chunks after (`fill_far`), then each chunk's
+/// entry, the file's start (`at` 0) composed through the chunks before it, by a prefix sum of the summaries (Hillis and
+/// Steele's, in log2 rounds).
+pub fn entries(ends: &[[Lane; LANES]]) -> Vec<(u32, bool)> {{
+    let mut scan = ends.to_vec();
+    fill_far(&mut scan);
+    let mut next = scan.clone();
+    let mut d = 1;
+    while d < scan.len() {{
+        for c in 0..scan.len() {{
+            next[c] = if c >= d {{ compose(&scan[c - d], &scan[c]) }} else {{ scan[c] }};
+        }}
+        core::mem::swap(&mut scan, &mut next);
+        d *= 2;
+    }}
+    (0..ends.len()).map(|c| if c == 0 {{ (0, false) }} else {{ apply(&scan[c - 1], 0) }}).collect()
+}}
+
+/// Pass 2 of one chunk: the token loop from its entry `at` to block `to`, its records appended to `recs` and `extras`.
+/// Where the next token starts after it, and whether the file is refused.
+pub fn lex_chunk(buf: &[u8], n: usize, at: usize, to: usize, recs: &mut Vec<Rec>, extras: &mut Vec<Rec>) -> (usize, bool) {{
+    // A record a byte of the chunk from `at` at most: each starts in it.
+    recs.reserve((64 * to).min(n).saturating_sub(at) + 1);
+    let (mut len, mut refused) = (recs.len(), false);
+    // SAFETY: room for a record a byte of the chunk past `len`.
+    let exit = unsafe {{ lex_range::<true>(buf, n, at, to, &mut refused, recs.as_mut_ptr(), &mut len, extras) }};
+    // SAFETY: `len` records written.
+    unsafe {{ recs.set_len(len) }};
+    (exit, refused)
+}}
+
+/// `buf[..n]` lexed in chunks of `blocks` blocks: pass 1, the prefix sum, then each chunk from its entry, which checks
+/// its exit is the next chunk's entry. The records, and the chunks entered again where a lane's guess was wrong.
+pub fn lex_chunked(buf: &[u8], n: usize, blocks: usize) -> (Lexed, usize) {{
+    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b"        "), "the source padded with spaces");
+    let starts: Vec<usize> = (0..n.div_ceil(64)).step_by(blocks.max(1)).collect();
+    let ends: Vec<[Lane; LANES]> = starts.iter().map(|&q| chunk_ends(buf, n, q, q + blocks)).collect();
+    let mut entry = entries(&ends);
+    let (mut recs, mut extras) = (Vec::with_capacity(n + 1), Vec::new());
+    let (mut refused, mut again) = (false, 0);
+    for c in 0..starts.len() {{
+        let (exit, r) = lex_chunk(buf, n, entry[c].0 as usize, starts[c] + blocks, &mut recs, &mut extras);
+        if r {{
+            refused = true;
+            break;
+        }}
+        if c + 1 < starts.len() && entry[c + 1].0 as usize != exit {{
+            again += 1;
+            entry[c + 1].0 = exit as u32;
+        }}
+    }}
+    (Lexed {{ recs, extras, refused }}, again)
+}}
+"#
+    );
+    Some(t)
+}
+
+/// The statement of `text` that starts at the line starting with `start` (trimmed), to the `;` its braces close at.
+fn statement_at(text: &str, start: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let i = lines.iter().position(|l| l.trim_start().starts_with(start))?;
+    let mut depth = 0i32;
+    let mut out = String::new();
+    for l in &lines[i..] {
+        out.push_str(l);
+        out.push('\n');
+        // Braces outside character and string literals.
+        let (mut in_chr, mut in_str, mut prev) = (false, false, ' ');
+        for c in l.chars() {
+            match c {
+                '"' if !in_chr && prev != '\\' => in_str = !in_str,
+                '\'' if !in_str && prev != '\\' => in_chr = !in_chr,
+                '{' if !in_chr && !in_str => depth += 1,
+                '}' if !in_chr && !in_str => depth -= 1,
+                _ => {}
+            }
+            prev = if prev == '\\' && c == '\\' { ' ' } else { c };
+        }
+        if depth == 0 && l.trim_end().ends_with(';') {
+            return Some(out);
+        }
+    }
+    None
+}
+
+/// Pass 1's block (`walk_block`'s body) from the token loop `serial` (`lex_on`'s): at each opener byte from `at` on, the
+/// token there read as the loop reads a rare token (its `pick`'s arm), the block masks it reads none (an operator of one
+/// byte: no opener byte is a pair's). And the index of `skip`'s mask in the block's classes, the picks an arm takes, and
+/// those whose arm can refuse. None where the loop is not of that shape.
+fn walk_block(serial: &str) -> Option<(String, String, String, String)> {
+    let skip_mask = serial.lines().find_map(|l| l.trim().strip_prefix("let s = !").and_then(|r| r.split(' ').next()))?.to_owned();
+    let skip = serial.lines().find_map(|l| l.trim().strip_prefix(&format!("let {skip_mask} = cur[")).and_then(|r| r.strip_suffix("];")))?.to_owned();
+    let rare = statement_at(serial, "let (pick, kind1, word1) = TOKEN[")?;
+    let arms = statement_at(serial, "let (l, kind, extra, word): (usize, u32, bool, u32) = match pick {")?;
+    // The picks an arm takes whatever its byte's tests: each rare byte's must be one, or `_` refuses where the serial
+    // loop's run of the block would.
+    let arms_d = dedent(&arms);
+    let picks: Vec<String> = arms_d
+        .lines()
+        .filter(|l| l.starts_with("    ") && !l.starts_with("     ") && l.ends_with("=> {") && !l.contains(" if "))
+        .filter_map(|l| l.trim().strip_suffix(" => {").filter(|p| p.chars().all(|c| c.is_ascii_digit() || c == ' ' || c == '|')).map(str::to_owned))
+        .collect();
+    if picks.is_empty() {
+        return None;
+    }
+    // The picks whose arm can refuse: each must be an opener byte's alone, where pass 1 reads it.
+    let mut refusing: Vec<String> = Vec::new();
+    let mut arm: Option<String> = None;
+    for l in arms_d.lines() {
+        if l.starts_with("    ") && !l.starts_with("     ") && l.contains("=> {") {
+            arm = l.trim().split(" if ").next().and_then(|p| p.split(" =>").next()).map(str::to_owned);
+        }
+        if l.contains("refused = true;")
+            && let Some(a) = &arm
+            && a != "_"
+            && !refusing.contains(a)
+        {
+            refusing.push(a.clone());
+        }
+    }
+    let snippet = (rare + &arms).replace("break 'tokens;", "break 'blk usize::MAX;");
+    // The block masks the arms read, none: the token at an opener byte that opens no region is one byte (`at` past it).
+    let mut masks: Vec<String> = Vec::new();
+    for (i, _) in snippet.match_indices("k_") {
+        let name: String = snippet[i..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+        let before = snippet[..i].chars().last().unwrap_or(' ');
+        if !(before.is_ascii_alphanumeric() || before == '_') && !masks.contains(&name) {
+            masks.push(name);
+        }
+    }
+    let zeros: String = masks.iter().map(|m| format!("    let {m} = 0u64;\n")).collect();
+    let re = |t: &str, k: usize| indent(&dedent(t), &" ".repeat(k));
+    Some((
+        format!(
+            "{zeros}    let mut open = if *at > base {{ open & (!0u64 << (*at - base)) }} else {{ open }};\n    let mut refused_now = false;\n    while open != 0 {{\n        let s = base + open.trailing_zeros() as usize;\n        let l = 'blk: loop {{\n{}            break 'blk l;\n        }};\n        if refused_now {{\n            *refused = true;\n            return;\n        }}\n        *at = l + 1;\n        if *at >= base + 64 {{\n            return;\n        }}\n        open &= !0u64 << (*at - base);\n    }}\n",
+            re(&snippet.replace("refused = true;", "refused_now = true;"), 12),
+        ),
+        skip,
+        picks.join(" | "),
+        refusing.join(" | "),
+    ))
+}
+
+/// `t` with its lines' common leading spaces removed.
+fn dedent(t: &str) -> String {
+    let k = t.lines().filter(|l| !l.trim().is_empty()).map(|l| l.len() - l.trim_start().len()).min().unwrap_or(0);
+    t.lines().map(|l| format!("{}\n", l.get(k..).unwrap_or(""))).collect()
+}
+
 const LEFT_TO_RIGHT: &str = "\n/// A run of pairs' first bytes (`=>=`), read left to right, as the lean lexer's: one whose first byte is the second of\n/// the one before is none.\n#[inline(always)]\nfn left_to_right(mut m: u64) -> u64 {\n    if m & m << 1 == 0 {\n        return m;\n    }\n    let mut kept = 0;\n    while m != 0 {\n        let i = m.trailing_zeros();\n        kept |= 1 << i;\n        m &= !(1 << i);\n        if i < 63 {\n            m &= !(1 << (i + 1));\n        }\n    }\n    kept\n}\n";
 
 /// The token loop's block in the lean lexer's shape (decision 0655 steps 4, 5): the block's starts at once from its four
