@@ -389,17 +389,17 @@ mod tests {
         let template = decode_png(include_bytes!("../assets/icon-template.png"));
         assert_eq!(
             (template.width, template.height, template.pixels.len()),
-            (40, 44, 40 * 44 * 4)
+            (30, 44, 30 * 44 * 4)
         );
-        // The Rerail mark is 32 px tall, 16 pt at 2x like the menu bar's other icons, centred in the 22 pt bar: what
-        // is more than faintly drawn runs from row 6 to row 37.
+        // The Rerail mark is 24 px tall, 12 pt at 2x like the menu bar's solid icons (Wi-Fi, Docker's), centred in the
+        // 22 pt bar: what is more than faintly drawn runs from row 10 to row 33.
         let drawn: Vec<u32> = (0..template.height)
             .filter(|&y| {
                 (0..template.width)
                     .any(|x| template.pixels[((y * template.width + x) * 4 + 3) as usize] > 32)
             })
             .collect();
-        assert_eq!((drawn.first(), drawn.last()), (Some(&6), Some(&37)));
+        assert_eq!((drawn.first(), drawn.last()), (Some(&10), Some(&33)));
         assert!(template.pixels.chunks(4).all(|p| p[..3] == [0, 0, 0]));
         assert!(template.pixels.chunks(4).any(|p| p[3] == 255));
         let colour = decode_png(include_bytes!("../assets/icon.png"));

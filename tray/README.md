@@ -17,5 +17,5 @@ calls; what it shows, repository names included, comes from the daemon.
 | `src/desktop.rs` | the macOS menu bar item and the Windows notification-area icon |
 | `src/linux.rs` | the Linux icon, a StatusNotifierItem over D-Bus |
 | `src/main.rs` | the program's entry point |
-| `assets/icon-template.png` | the Rerail mark alone, black on transparent, 40×44 (16 pt tall in the 22 pt menu bar at 2×): the macOS template icon |
+| `assets/icon-template.png` | the Rerail mark alone, black on transparent, 30×44 (12 pt tall in the 22 pt menu bar at 2×, as tall as the system's solid icons): the macOS template icon |
 | `assets/icon.png` | the full-colour Rerail square, the blue mark on its light ground, 32×32: the Windows and Linux icon |
