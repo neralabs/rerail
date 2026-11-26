@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 /// How long a test waits for the OS to report a change.
 const DEADLINE: Duration = Duration::from_secs(20);
 /// How long a test waits before it holds that nothing was reported.
-const QUIET: Duration = Duration::from_millis(500);
+pub(super) const QUIET: Duration = Duration::from_millis(500);
 
 /// A folder of its own under the temporary folder, removed when dropped.
 pub(super) struct Scratch {

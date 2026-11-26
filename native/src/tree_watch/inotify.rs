@@ -239,9 +239,9 @@ impl Watches {
 /// What the reading thread and the host's thread share.
 struct Shared {
     instance: OwnedFd,
-    /// The buffer events are read into, held for one read and the reports of what it read, so the
-    /// thread and a take's flush report events in the kernel's order, and a take waits for the
-    /// thread's read in progress and not for the reads after it.
+    /// The buffer events are read into, held by the thread for one read and the reports of what it
+    /// read, and by a take's flush from its count to its last read, so events are reported in the
+    /// kernel's order, and a take waits for the thread's read in flight and for no read after it.
     reading: Mutex<Vec<u8>>,
     notices: Arc<Notices>,
     watches: Mutex<Watches>,
@@ -593,8 +593,9 @@ impl Backend for Inotify {
         self.shared.watches().root_count()
     }
 
-    /// Reads what the kernel held when the take began and the thread has not read yet: a change is
-    /// queued as its syscall returns, and the thread may not have woken by the take.
+    /// Waits for the thread's read in flight, then reads what the kernel still holds: a change is
+    /// queued as its syscall returns, and by the take the thread may not have woken, or may be
+    /// reporting what it read.
     fn flush(&mut self) {
         let shared = &self.shared;
         flush_queued(shared, |descriptor, mask, name| {
@@ -638,17 +639,20 @@ fn read_events(shared: &Shared, wake: RawFd) {
     }
 }
 
-/// Reads at most what the kernel held for the instance as it began (`FIONREAD`), and reports it
-/// with `event`: what is queued later is the thread's or the next take's, so a flush ends however
-/// fast files change. Nothing once the reading failed.
+/// Takes the buffer, whatever the kernel holds, so the thread's read in flight and its reports end
+/// first; then reads at most what the kernel holds for the instance (`FIONREAD`) and reports it
+/// with `event`, the buffer held throughout. An event the thread has read is reported before the
+/// count, one it has not is counted, and what is queued later is the thread's or the next take's,
+/// so a flush ends however fast files change. Nothing once the reading failed.
 fn flush_queued(shared: &Shared, mut event: impl FnMut(i32, u32, Option<&str>)) {
     if shared.failed.load(Ordering::Acquire) {
         return;
     }
     contained(shared, || {
+        let mut buffer = shared.reading();
         let mut left = queued(shared.instance.as_raw_fd());
         while left > 0 {
-            let Some(read) = read_once(shared, left, &mut event) else {
+            let Some(read) = read_into(shared, &mut buffer, left, &mut event) else {
                 return;
             };
             left = left.saturating_sub(read);
@@ -686,18 +690,28 @@ fn wait_readable(instance: RawFd, wake: RawFd) -> bool {
     ready > 0 && fds[0].revents & libc::POLLIN != 0
 }
 
-/// One read of at most `at_most` bytes and the report of each event it read, the buffer held for
-/// both: the bytes read, none when it read nothing. Each failure but `EINTR` ends the read with
-/// none: `EAGAIN` is the empty queue; `EINVAL` an event longer than `at_most`, which only a flush
-/// meets (the buffer, 64 KiB, holds any event), and only once every event queued at its start has
-/// been read, by it or the thread; `EBADF` and `EFAULT` cannot come, the instance and the buffer
-/// being this backend's.
+/// The thread's read: one read of at most `at_most` bytes and the report of each event it read,
+/// the buffer held for both.
 fn read_once(
     shared: &Shared,
     at_most: usize,
     event: &mut impl FnMut(i32, u32, Option<&str>),
 ) -> Option<usize> {
-    let mut buffer = shared.reading();
+    read_into(shared, &mut shared.reading(), at_most, event)
+}
+
+/// One read of at most `at_most` bytes into `buffer`, which the caller holds, and the report of
+/// each event it read: the bytes read, none when it read nothing. Each failure but `EINTR` ends the
+/// read with none: `EAGAIN` is the empty queue; `EINVAL`, an event longer than `at_most`, never
+/// comes, since the thread asks for the whole buffer, 64 KiB, which holds any event, and a flush
+/// for the whole events it counted and has not read yet; `EBADF` and `EFAULT` cannot come, the
+/// instance and the buffer being this backend's.
+fn read_into(
+    shared: &Shared,
+    buffer: &mut [u8],
+    at_most: usize,
+    event: &mut impl FnMut(i32, u32, Option<&str>),
+) -> Option<usize> {
     let asked = at_most.min(buffer.len());
     let instance = shared.instance.as_raw_fd();
     let read = uninterrupted(|| {
@@ -754,9 +768,11 @@ fn name_of(bytes: &[u8]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Inotify, flush_queued, local_filesystem, parse, queued, read_once, uninterrupted};
+    use super::{
+        Inotify, Shared, flush_queued, local_filesystem, parse, queued, read_once, uninterrupted,
+    };
     use crate::tree_watch::notices::Notices;
-    use crate::tree_watch::tests::{Scratch, wait_for};
+    use crate::tree_watch::tests::{QUIET, Scratch, wait_for};
     use crate::tree_watch::{Backend, TreeNotice, TreeWatcher};
     use std::os::fd::AsRawFd;
     use std::sync::atomic::Ordering;
@@ -1137,6 +1153,50 @@ mod tests {
         let order = order.lock().expect("order").clone();
         assert_eq!(order, [libc::IN_MOVED_FROM, libc::IN_MOVED_TO]);
         backend.close();
+    }
+
+    /// A watcher over a paused adapter, watching `scratch`'s root, and the adapter's shared state,
+    /// for a test that reads as its thread does.
+    fn watched_paused(scratch: &Scratch) -> (TreeWatcher, Arc<Shared>, String) {
+        let notices = Arc::new(Notices::default());
+        let backend = paused(&notices);
+        let shared = Arc::clone(&backend.shared);
+        let mut watcher = TreeWatcher::over(notices, Box::new(backend));
+        let root = scratch.root();
+        let watched = watcher.watch(root.clone(), vec![String::new()]);
+        assert!(watched.expect("watch"));
+        (watcher, shared, root)
+    }
+
+    #[test]
+    fn a_take_waits_for_the_report_of_an_event_the_thread_has_read() {
+        let scratch = Scratch::new("take-waits");
+        let (mut watcher, shared, root) = watched_paused(&scratch);
+        std::fs::create_dir(scratch.path("first")).expect("make a folder");
+        let (read, has_read) = mpsc::channel();
+        let (open, gate) = mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || {
+            read_once(&shared, usize::MAX, &mut |descriptor, mask, name| {
+                read.send(()).expect("send");
+                let _ = gate.recv();
+                shared.dispatch(descriptor, mask, name);
+            })
+        });
+        has_read.recv().expect("the thread read the event");
+        // The gate opens a while after the take begins: a take that does not wait answers first.
+        let opener = std::thread::spawn(move || {
+            std::thread::sleep(QUIET);
+            open.send(()).expect("open the gate");
+        });
+        let taken = watcher.take().expect("take");
+        opener.join().expect("the gate opened");
+        assert!(thread.join().expect("the thread reported").is_some());
+        let notice = taken.iter().find(|notice| notice.root == root);
+        assert!(
+            notice.is_some_and(|notice| names(notice, "first")),
+            "{taken:?}"
+        );
+        watcher.close().expect("close");
     }
 
     #[test]
