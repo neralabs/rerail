@@ -59,11 +59,12 @@ risky_link(o) :- jsx_prop(o, "href", h), child(h, v, 1), kind(v, "jsx_expression
 // (case ignored). rel_value(o, r, s, j) is one possible value as text, j = 1 for a JSX attribute string (entities
 // decoded) and 0 for a JavaScript string; rel_unknown(r) a possible value that is no string.
 .decl secure_rel(o: node)
-secure_rel(o) :- last_prop(o, "rel", r), !rel_unknown(o, r), count : { rel_value(o, r, s, j), !noreferrer(s, j) } = 0.
-// split(' ') keeps a newline inside a word: "noopener\n  noreferrer" has the word noreferrer, hence (?s).
-.decl noreferrer(s: symbol, j: number)
-noreferrer(s, 0) :- rel_value(_, _, s, 0), match("(?s)(.* )?noreferrer( .*)?", @lower(s)).
-noreferrer(s, 1) :- rel_value(_, _, s, 1), jsx_re("noreferrer", w), jsx_re(" ", sp),
+secure_rel(o) :- last_prop(o, "rel", r), !rel_unknown(o, r), count : { rel_value(o, r, s, j), !noreferrer(r, s, j) } = 0.
+// split(' ') keeps a newline inside a word: "noopener\n  noreferrer" has the word noreferrer, hence (?s). Keyed by the
+// prop r, in its own file (decision 0677).
+.decl noreferrer(r: node, s: symbol, j: number)
+noreferrer(r, s, 0) :- rel_value(_, r, s, 0), match("(?s)(.* )?noreferrer( .*)?", @lower(s)).
+noreferrer(r, s, 1) :- rel_value(_, r, s, 1), jsx_re("noreferrer", w), jsx_re(" ", sp),
     match(cat("(?s)(.*", sp, ")?", w, "(", sp, ".*)?"), s).
 .decl rel_value(o: node, r: node, s: symbol, j: number)
 rel_value(o, r, s, 1) :- last_prop(o, "rel", r), child(r, v, 1), jsx_string(v, s).

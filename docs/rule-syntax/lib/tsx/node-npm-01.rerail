@@ -88,11 +88,10 @@ npm01_installed(d, m) :- npm01_dir(d), dir_entry(d, "node_modules", 1), x = @joi
 npm01_installed(d, cat(s, "/", m)) :- npm01_dir(d), dir_entry(d, "node_modules", 1), x = @join(d, "node_modules"),
     dir_entry(x, s, 1), prefix("@", s), y = @join(x, s), dir_entry(y, m, _).
 
-// npm01_fdir(d): a folder on disk: one the walk enters, or one above a file the repository walk reads.
+// npm01_fdir(d): a folder on disk, one the walk enters. The walk takes every folder the repository walk (`file`)
+// does, so `file` adds nothing; read across files, it would carry each node into the cross-file part (decision 0677).
 .decl npm01_fdir(d: symbol)
 npm01_fdir(d) :- npm01_dir(d).
-npm01_fdir(@dir(f)) :- file(f).
-npm01_fdir(@dir(d)) :- npm01_fdir(d), d != "".
 
 // ---- the importing file's options -----------------------------------------------------------------------------
 // npm01_req(n, x, style, p): string n names x in that style, in the document at path p.
@@ -150,11 +149,9 @@ npm01_raw(n, @join(@dir(p), x), s) :- npm01_req(n, x, _, p), spec_kind(n, "relat
     (suffix("/", x), s = 1 ; !suffix("/", x), s = 0).
 npm01_raw(n, q, s) :- npm01_alias_rw(n, q, s).
 .decl npm01_escapes(n: node)
-npm01_escapes(n) :- npm01_req(n, x, _, p), spec_kind(n, "relative"), d = @dir(p), npm01_depth(d, k),
+npm01_escapes(n) :- npm01_req(n, x, _, p), spec_kind(n, "relative"), d = @dir(p),
+    (d = "", k = 0 ; d != "", k = strlen(d) - strlen(@replace_all(d, "/", "")) + 1),
     u = @replace_all(cat(x, "/"), "^(\\./)?((\\.\\./)*).*$", "${2}"), strlen(u) / 3 > k.
-.decl npm01_depth(d: symbol, k: number)  // how many folders deep d is
-npm01_depth(d, strlen(d) - strlen(@replace_all(d, "/", "")) + 1) :- npm01_req(_, _, _, p), d = @dir(p), d != "".
-npm01_depth("", 0).
 // npm01_alias_rw(n, q, slash): in a TypeScript file, a `paths` key (its trailing `/*` trimmed) is n's name or the start
 // of it before a `/`: the name is that key's target, from the tsconfig's folder, and the rest. A matched alias is the
 // only way such a name resolves (npm01_alias_hit): node_modules is not tried.
@@ -195,7 +192,7 @@ npm01_cand(n, cat(@join(q, "index"), e), 41 + i) :- npm01_folder(n, q), npm01_re
     npm01_ext(s, e, i).
 
 .decl npm01_hit(n: node, f: symbol, r: number)
-npm01_hit(n, f, r) :- npm01_cand(n, f, r), (file(f) ; npm01_disk(f)).
+npm01_hit(n, f, r) :- npm01_cand(n, f, r), npm01_disk(f).
 .decl npm01_resolved(n: node, f: symbol)
 npm01_resolved(n, f) :- npm01_hit(n, f, r), r = min r2 : { npm01_hit(n, _, r2) }.
 
@@ -213,11 +210,14 @@ npm01_installed_for(n) :- npm01_req(n, _, _, p), spec_kind(n, "npm"), !npm01_ali
 npm01_pkg_ext_stop(n) :- npm01_req(n, x, _, p), spec_kind(n, "npm"), npm01_map(p, m), npm01_ext_alias(m, e, _, _), suffix(e, x).
 // `#name`: the nearest package.json's imports maps it to a built-in or to a file of the package.
 .decl npm01_imports_for(n: node)
-npm01_imports_for(n) :- npm01_req(n, x, st, p), prefix("#", x), package_for(p, pd), package_field(pd, k, to),
-    (k = cat("imports/", x) ; npm01_cond(st, c), k = cat("imports/", x, "/", c)),
-    (builtin_spec(to) ; prefix("./", to), f = @join(pd, to), (file(f) ; npm01_disk(f))).
+npm01_imports_for(n) :- npm01_imports_to(n, to, _), builtin_spec(to).
+npm01_imports_for(n) :- npm01_imports_to(n, to, pd), prefix("./", to), f = @join(pd, to), npm01_disk(f).
+// npm01_imports_to(n, to, pd): the imports map of pd/package.json, n's nearest, takes n's `#name` to `to`, under the
+// conditions of n's style (node and default always).
+.decl npm01_imports_to(n: node, to: symbol, pd: symbol)
+npm01_imports_to(n, to, pd) :- npm01_req(n, x, st, p), prefix("#", x), package_for(p, pd), package_field(pd, k, to),
+    (k = cat("imports/", x) ; (c = "node" ; c = "default" ; npm01_cond(st, c)), k = cat("imports/", x, "/", c)).
 .decl npm01_cond(style: symbol, c: symbol)
-npm01_cond(st, "node") :- npm01_req(_, _, st, _). npm01_cond(st, "default") :- npm01_req(_, _, st, _).
 npm01_cond("require", "require"). npm01_cond("import", "import"). npm01_cond("type", "import"). npm01_cond("type", "types").
 // The resolver's fallback: a Node built-in's name, or a path inside one (`fs/x`), resolves to nothing, not to an error.
 .decl npm01_builtin_path(n: node)
@@ -261,8 +261,10 @@ npm01_ask(d, dir, rel) :- npm01_trel(d, dir, _, rel).
 npm01_part(d, dir, rel, rel, 0) :- npm01_ask(d, dir, rel).
 npm01_part(d, dir, rel, a, 1) :- npm01_part(d, dir, rel, p, _), match("(?<a>.+)/[^/]+", p).
 
+// npm01_pkg(dir): dir holds a package.json (a folder the walk enters), read from the file system: a table of every
+// document's packages would be read across files (decision 0677).
 .decl npm01_pkg(dir: symbol)
-npm01_pkg(dir) :- pkg_file(_, dir, _).
+npm01_pkg(dir) :- npm01_dir(dir), dir_entry(dir, "package.json", 0).
 // npm01_files(dir, neg, body, but): an entry of the `files` list: `!` for neg, one leading `!` or `/` and `./` dropped,
 // no trailing `/`, as a glob: a numeric brace sequence `{1..3}` expanded (the plugin's expandSequenceBraces, one per
 // entry), `@(a|b)` read as `{a,b}`, the extglobs `*(…)`, `+(…)`, `?(…)` as `*`, and `!(p)` as `*` but the paths

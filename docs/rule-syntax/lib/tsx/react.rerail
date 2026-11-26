@@ -190,7 +190,7 @@ create_dom(c) :- create_tag(c, x), glob("[a-z]**", x).
 //   class Hello extends React.Component { render() { … } }
 .decl class_component(k: node)
 class_component(k) :- superclass(k, s), component_base(s).
-class_component(k) :- class_target(k, t), next_sibling(c, t), kind(c, "comment"), text(c, s), jsdoc_extends(s),
+class_component(k) :- class_target(k, t), next_sibling(c, t), kind(c, "comment"), jsdoc_extends(c),
     end_line(c, ce), line(t, ts), ts - ce <= 1.
 // superclass(k, s): the expression after `extends`, parentheses skipped. TypeScript wraps it in an extends_clause:
 // class A extends React.Component<P> { … }.
@@ -227,8 +227,10 @@ estree_up(x, p) :- kind(x, "class"), (estree_parent(x, p), !kind(p, "arguments")
     estree_parent(x, a), kind(a, "arguments"), child(p, a, _)).
 estree_up(p, g) :- estree_up(x, p), kind(x, "class"), (estree_parent(p, g), !kind(g, "arguments") ;
     estree_parent(p, a), kind(a, "arguments"), child(g, a, _)).
-.decl jsdoc_extends(s: symbol)
-jsdoc_extends(s) :- text(c, s), kind(c, "comment"),
+// jsdoc_extends(c): comment c is a JSDoc block naming React.Component or React.PureComponent with @extends or
+// @augments. Keyed by the comment, in its own file (decision 0677).
+.decl jsdoc_extends(c: node)
+jsdoc_extends(c) :- kind(c, "comment"), text(c, s),
     match("(?s)/\\*\\*(?:.*\\n)?[ \\t]*\\*?[ \\t]*@(?:extends|augments)\\s+React\\.(?:Pure)?Component[ \\t]*(?:\\*/|(?:\\n[ \\t]*\\*?[ \\t]*)+(?:\\*/|@.*))",
     s).
 // isES5Component: an object passed to createReactClass or the pragma's React.createReactClass, called or with `new`.

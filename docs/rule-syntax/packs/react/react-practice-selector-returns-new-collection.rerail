@@ -26,11 +26,11 @@ fresh(c, h) :- kind(c, "call_expression"), field(c, "function", f), snc_callee(f
 
 // The store hook.
 .decl snc_callee(f: node)
-snc_callee(f) :- kind(f, "identifier"), text(f, x), snc_hook_name(x), !snc_redux(f).
-snc_callee(f) :- kind(f, "member_expression"), field(f, "property", p), kind(p, "property_identifier"), text(p, x),
-    snc_hook_name(x).
-.decl snc_hook_name(x: symbol)
-snc_hook_name(x) :- (kind(n, "identifier") ; kind(n, "property_identifier")), text(n, x),
+snc_callee(f) :- kind(f, "identifier"), snc_hook_name(f), !snc_redux(f).
+snc_callee(f) :- kind(f, "member_expression"), field(f, "property", p), kind(p, "property_identifier"), snc_hook_name(p).
+// snc_hook_name(n): name n is a store hook's. Keyed by the name, in its own file (decision 0677).
+.decl snc_hook_name(n: node)
+snc_hook_name(n) :- (kind(n, "identifier") ; kind(n, "property_identifier")), text(n, x),
     match("use[A-Za-z0-9_$]*(Store|Selector|StoreContext)", x),
     !match(".*(Shallow|Equal)([A-Z].*)?", x).
 // A hook imported from react-redux, or a name bound to one: `const useAppSelector = useSelector`.

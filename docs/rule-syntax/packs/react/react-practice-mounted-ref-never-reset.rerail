@@ -18,7 +18,7 @@
 
 .violation never_reset(at: node, x: symbol) code "MOUNTED_REF_NEVER_RESET"
     "This cleanup sets {x} false and nothing in this component sets it true, so a Strict Mode re-run or Activity re-show leaves it false. Set it true in the effect's setup, or drop the ref and its checks."
-never_reset(a, x) :- mrn_current_write(a, o, x), field(a, "right", v), kind(v, "false"), mrn_mount_name(x), ref_site(o, site),
+never_reset(a, x) :- mrn_current_write(a, o, x), field(a, "right", v), kind(v, "false"), mrn_mount_name(a), ref_site(o, site),
     binding_value(site, init), mrn_ref_true(init), nearest(a, f, function_kind), mrn_cleanup(f), !mrn_kept_true(a, x),
     docof(a, d), react_doc(d).
 
@@ -26,8 +26,9 @@ never_reset(a, x) :- mrn_current_write(a, o, x), field(a, "right", v), kind(v, "
 .decl mrn_current_write(a: node, o: node, x: symbol)
 mrn_current_write(a, o, x) :- kind(a, "assignment_expression"), field(a, "left", l), kind(l, "member_expression"),
     field(l, "property", p), text(p, "current"), field(l, "object", o), kind(o, "identifier"), text(o, x).
-.decl mrn_mount_name(x: symbol)
-mrn_mount_name(x) :- mrn_current_write(_, _, x), match("(?i)(mount|.*[^a]mount).*", x), !match("(?i).*(first|initial).*", x).
+// mrn_mount_name(a): write a's ref has a mounted-flag name. Keyed by the write, in its own file (decision 0677).
+.decl mrn_mount_name(a: node)
+mrn_mount_name(a) :- mrn_current_write(a, _, x), match("(?i)(mount|.*[^a]mount).*", x), !match("(?i).*(first|initial).*", x).
 
 // useRef(true), its one argument `true`; parentheses, `as` and `satisfies` around it are looked through.
 rp_hook_ask("useRef"). rp_hook_ask("useEffect"). rp_hook_ask("useLayoutEffect").
@@ -58,7 +59,7 @@ mrn_returned(n) :- kind(t, "ternary_expression"), (field(t, "consequence", n) ; 
 mrn_kept_true(a, x) :- mrn_candidate(a, x), within(a, g), function_node(g), has(g, d, "variable_declarator"),
     field(d, "name", n), text(n, x), (mrn_set_other(g, x) ; mrn_passed(g, x)).
 .decl mrn_candidate(a: node, x: symbol)
-mrn_candidate(a, x) :- mrn_current_write(a, _, x), field(a, "right", v), kind(v, "false"), mrn_mount_name(x).
+mrn_candidate(a, x) :- mrn_current_write(a, _, x), field(a, "right", v), kind(v, "false"), mrn_mount_name(a).
 .decl mrn_set_other(g: node, x: symbol)
 mrn_set_other(g, x) :- mrn_candidate(a, x), within(a, g), function_node(g), has(g, b, "assignment_expression"),
     mrn_current_write(b, _, x), field(b, "right", v), !kind(v, "false").

@@ -74,10 +74,12 @@ tws_dep_kind("identifier"). tws_dep_kind("member_expression"). tws_dep_kind("sho
 // white space between tokens aside (`session.user\n  .id` is `session.user.id`), comments and strings as written
 // (`session.user/* c */.id` is not).
 .decl tws_dep_ref(n: node)
-tws_dep_ref(n) :- tws_deps(l, a), child(a, e, _), text(e, r), !tws_stable_dep(r), tws_flat(e, x), within(n, l),
+tws_dep_ref(n) :- tws_deps(l, a), child(a, e, _), !tws_stable_dep(e), tws_flat(e, x), within(n, l),
     tws_flat(n, x), !tws_differ(e, n).
-.decl tws_stable_dep(x: symbol)
-tws_stable_dep(x) :- tws_deps(_, a), child(a, e, _), text(e, x),
+// tws_stable_dep(e): dependency e is a setter, dispatch, a ref, `.current` or an API client, by its text. Keyed by the
+// element, in its own file (decision 0677).
+.decl tws_stable_dep(e: node)
+tws_stable_dep(e) :- tws_deps(_, a), child(a, e, _), text(e, x),
     match("set[A-Z][A-Za-z0-9_$]*|dispatch|[\\s\\S]*Ref|[\\s\\S]*\\.current|api|client|storage|supabase|sdk|db|http|[\\s\\S]*(Api|Client|Manager|Service|Storage|Sdk)", x).
 // tws_flat(n, x): n, a dependency's kind inside an effect's arguments, as text with each run of white space left out,
 // or one space where it parts two word characters (`await x`, `a in b`).
@@ -87,7 +89,7 @@ tws_flat(n, x) :- tws_effect_args(l), within(n, l), kind(n, k), tws_dep_kind(k),
 // tws_differ(e, n): equal once flat but written differently, e and n still differ as trees: a kind, a child count or
 // a leaf's text (a string's or a comment's white space: `a["x  y"]` is not `a["x y"]`). Asked of those pairs only.
 .decl tws_ask(a: node, b: node)
-tws_ask(e, n) :- tws_deps(_, a), child(a, e, _), tws_flat(e, x), tws_flat(n, x), text(e, r), !text(n, r).
+tws_ask(e, n) :- tws_deps(l, a), child(a, e, _), tws_flat(e, x), within(n, l), tws_flat(n, x), text(e, r), !text(n, r).
 tws_ask(a, b) :- tws_ask(p, q), child(p, a, i), child(q, b, i).
 .decl tws_differ(a: node, b: node)
 tws_differ(a, b) :- tws_ask(a, b), kind(a, k), !kind(b, k).

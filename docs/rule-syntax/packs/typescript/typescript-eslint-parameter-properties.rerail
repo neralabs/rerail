@@ -82,8 +82,8 @@ broken_before(b, s) :- child(b, s, _), this_assign(s, _), child(b, o, _), preced
 // 0652: without the class, every field of the corpus met every parameter).
 .decl same_type(f: node, q: node)
 same_type(f, q) :- bare_field(b, f, _), name_param(k, q, _), child(b, k, _), !field(f, "type", _), !field(q, "type", _).
-same_type(f, q) :- bare_field(b, f, _), name_param(k, q, _), child(b, k, _), field(f, "type", a), field(q, "type", b), text(a, t),
-    text(b, t).
+same_type(f, q) :- bare_field(b, f, _), name_param(k, q, _), child(b, k, _), field(f, "type", a), field(q, "type", u),
+    text(a, t), text(u, t).
 
 // Tests (decision 0130): the review's counterexamples (review/typescript-03.review.md), against typescript-eslint
 // 8.74.0, each with prefer "parameter-property" (a test sets no options: prefer_params is given instead). `abstract x`

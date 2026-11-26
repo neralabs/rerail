@@ -167,9 +167,14 @@ allowed(f, y, "last") :- (f = "test" ; f = "describe"), (y = "each" ; y = "for")
 allowed("x", "each", "last").
 allowed("test", y, "alone") :- y = "extend" ; y = "scoped".
 .decl member_off(c: node, f: symbol)  // a member family f does not take where it stands
-member_off(c, f) :- family(x, f), vroot(c, h), text(h, x), vsteps(c, n), vmember(c, _, y, i),
-    !(allowed(f, y, "first"), i = 0), !allowed(f, y, "any"), !(allowed(f, y, "last"), i = n - 1),
-    !(allowed(f, y, "alone"), n = 1).
+member_off(c, f) :- family(x, f), vroot(c, h), text(h, x), vmember(c, _, _, i), !member_ok(c, f, i).
+// member_ok(c, f, i): chain c's i-th member is one family f takes there. Each test is at the chain: negated
+// conjunctions over (family, name, place) would be a table of every file's chains (decision 0677).
+.decl member_ok(c: node, f: symbol, i: number)
+member_ok(c, f, 0) :- vmember(c, _, y, 0), allowed(f, y, "first").
+member_ok(c, f, i) :- vmember(c, _, y, i), allowed(f, y, "any").
+member_ok(c, f, i) :- vmember(c, _, y, i), vsteps(c, n), i = n - 1, allowed(f, y, "last").
+member_ok(c, f, 0) :- vmember(c, _, y, 0), vsteps(c, 1), allowed(f, y, "alone").
 member_off(c, f) :- family(_, f), vmember(c, _, y, i), vmember(c, _, y, j), i < j.
 .decl valid_chain(c: node, x: symbol)
 valid_chain(c, x) :- vhead(h, x, "vitest"), vroot(c, h), family(x, f), vsteps(c, n), n <= 3, !member_off(c, f).

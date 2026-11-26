@@ -78,7 +78,7 @@ ser_component_slot(t) :- kind(t, "export_statement"), text(t, s), match("export\
 // memo and forwardRef, React's: imported from it, React.memo, or taken off React.
 .decl ser_memo_callee(g: node)
 ser_memo_callee(g) :- kind(g, "identifier"), ref_site(g, sp), kind(sp, "import_specifier"), import_binding(sp, _, m, x),
-    rp_react_module(m), (x = "memo" ; x = "forwardRef").
+    l = @lower(m), rp_react_name(l), (x = "memo" ; x = "forwardRef").
 ser_memo_callee(g) :- kind(g, "member_expression"), field(g, "object", o), rp_react_object(o, h), h != "require",
     field(g, "property", p), kind(p, "property_identifier"), (text(p, "memo") ; text(p, "forwardRef")).
 ser_memo_callee(g) :- kind(g, "identifier"), (text(g, "memo") ; text(g, "forwardRef")), ser_decl(g, d), field(d, "value", v),
@@ -154,12 +154,10 @@ ser_param(r) :- ref_site(r, s), inside(s, _, "formal_parameters").
 // ---- analytics -------------------------------------------------------------------------------------------------------
 // track(…), trackEvent(…), analytics.track(…); not react-tracked's or proxy-compare's.
 .decl ser_track_callee(f: node)
-ser_track_callee(f) :- kind(f, "identifier"), text(f, x), ser_track_name(x), !ser_tracked(f).
-ser_track_callee(f) :- kind(f, "member_expression"), field(f, "property", p), text(p, x), ser_track_name(x),
-    field(f, "object", o), !ser_tracked(o).
-.decl ser_track_name(x: symbol)
-ser_track_name(x) :- (kind(n, "identifier") ; kind(n, "property_identifier")), text(n, x),
-    match("track([A-Z0-9_][A-Za-z0-9_$]*)?", x).
+// The callee's own name is tested: a table of every file's names would be read across files (decision 0677).
+ser_track_callee(f) :- kind(f, "identifier"), text(f, x), match("track([A-Z0-9_][A-Za-z0-9_$]*)?", x), !ser_tracked(f).
+ser_track_callee(f) :- kind(f, "member_expression"), field(f, "property", p), text(p, x),
+    match("track([A-Z0-9_][A-Za-z0-9_$]*)?", x), field(f, "object", o), !ser_tracked(o).
 .decl ser_tracked(r: node)
 ser_tracked(r) :- kind(r, "identifier"), ref_site(r, s), inside(s, i, "import_statement"), field(i, "source", src),
     str(src, m), (m = "react-tracked" ; m = "proxy-compare").
