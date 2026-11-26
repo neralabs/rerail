@@ -6,12 +6,14 @@
 .scope include "**/*.vue"
 #include "vue/vue-02.rerail"
 #include "vue/compare.rerail"
-//   vv_module_name(k), vv_marker(m, k), vv_site(r, d), cmp_unquoted(n, x), str(n, v)
+//   vv_module_name(k), vv_marker(m, k), vv_marked(o), vv_site(r, d), cmp_unquoted(n, x), str(n, v)
 
 // eslint-plugin-vue's no-unused-refs: a template `ref="name"` that nothing in the component's view (vue/view) reads.
 // A ref is read, in the template or a script, by
 //   $refs.name, this.$refs.name, $refs["name"], const { name } = this.$refs, ({ name } = this.$refs)
-//   useTemplateRef("name"); a key of the object setup() returns; in a file with <script setup>, a top-level binding
+// and in a script by useTemplateRef("name") (its first argument, through comments and parentheses); a key of the
+// object setup() returns (`name`, `'name'`, `['name']`, ``[`name`]``); in a file with <script setup>, a top-level
+// binding (an enum's and a class's too)
 // When $refs escapes whole (`const r = this.$refs`, `f($refs)`, `return $refs`, `$refs[key]`, `for (k in $refs)`,
 // `const { ...rest } = $refs`) every ref of the file is read. No options.
 //   <div ref="box" />  with nothing reading it          reported at "box"
@@ -51,7 +53,7 @@ refs_pattern(l) :- kind(l, "object_pattern"), (field(p, "left", l), kind(p, "ass
     field(p, "right", r) ; field(p, "name", l), kind(p, "variable_declarator"), field(p, "value", r)), refs(r).
 
 // ref_name(n): n names a ref it reads: `$refs.a`, `$refs["a"]`, `{ a, b: c, ["d"]: e } = $refs`, a key of the object
-// setup() returns, useTemplateRef("a").
+// setup() returns, useTemplateRef("a") in a script (the plugin's CallExpression visitor is a script visitor).
 .decl ref_name(n: node)
 ref_name(n) :- kind(n, "property_identifier"), field(m, "property", n), kind(m, "member_expression"),
     field(m, "object", o), refs(o).
@@ -65,9 +67,17 @@ ref_name(n) :- static_index(n), child(k, n, _), kind(k, "computed_property_name"
 ref_name(n) :- kind(n, "shorthand_property_identifier"), child(o, n, _), setup_returned(o).
 ref_name(n) :- plain_key(n), (field(p, "key", n), kind(p, "pair") ; field(p, "name", n), kind(p, "method_definition")),
     child(o, p, _), setup_returned(o).
-ref_name(n) :- (kind(n, "string") ; plain_template(n)), first_arg(n), child(as, n, _), kind(as, "arguments"),
+ref_name(n) :- static_index(n), child(k, n, _), kind(k, "computed_property_name"),
+    (field(p, "key", k), kind(p, "pair") ; field(p, "name", k), kind(p, "method_definition")), child(o, p, _),
+    setup_returned(o).
+ref_name(n) :- (kind(n, "string") ; plain_template(n)), template_ref_arg(n), !in_template(n).
+// template_ref_arg(n): n is useTemplateRef's first argument (comments are no arguments), through parentheses.
+.decl template_ref_arg(n: node)
+template_ref_arg(n) :- kind(as, "arguments"), child(as, n, _), !kind(n, "comment"),
+    count : { child(as, b, _), !kind(b, "comment"), precedes(b, n) } = 0,
     child(c, as, _), kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"),
     text(f, "useTemplateRef").
+template_ref_arg(n) :- child(p, n, _), kind(p, "parenthesized_expression"), template_ref_arg(p).
 .decl plain_key(n: node)
 plain_key(n) :- kind(n, "property_identifier") ; kind(n, "string") ; kind(n, "number").
 .decl static_index(n: node)
@@ -106,9 +116,11 @@ setup_fn(f) :- (kind(f, "function_expression") ; kind(f, "arrow_function")), fie
     field(p, "key", k), setup_key(k), child(o, p, _), vue_object(o).
 .decl setup_key(k: node)
 setup_key(k) :- (field(_, "name", k) ; field(_, "key", k)), match("setup|\"setup\"|'setup'", k).
-// vue_object(o): `export default { … }`, the last argument of defineComponent(…) and the like, `new Vue({ … })`.
+// vue_object(o): `export default { … }`, the last argument of defineComponent(…) and the like, `new Vue({ … })`, or an
+// object under a `// @vue/component` line.
 .decl vue_object(o: node)
 vue_object(o) :- kind(o, "object"), field(e, "value", o), kind(e, "export_statement"), op(e, "default").
+vue_object(o) :- vv_marked(o).
 vue_object(o) :- kind(o, "object"), child(as, o, _), kind(as, "arguments"), child(c, as, _), kind(c, "call_expression"),
     field(c, "function", f), definer(f), last_arg(o).
 vue_object(o) :- kind(o, "object"), first_arg(o), child(as, o, _), kind(as, "arguments"), child(c, as, _),
@@ -133,3 +145,96 @@ shadowing_site(d) :- kind(d, "variable_declarator"), field(d, "name", l), kind(l
     count : { field(c, "arguments", as), child(as, m, _), vue_package(m) } = 0.
 .decl vue_package(m: node)
 vue_package(m) :- kind(m, "string"), str(m, v), match("vue|@vue/composition-api|@nuxtjs/composition-api|#imports", v).
+
+// Tests (decision 0130): run by `rerail-engine test-rr`, left out of the rule otherwise. The review's counterexamples
+// (review/vue-02.review.md) and the cases its fixes raised, each expecting exactly the lines ESLint 9.39.5 with
+// eslint-plugin-vue 10.11.1 reports.
+// Every module-scope variable reads a ref of its name, an enum's and a TypeScript class's too.
+.test enum_and_class_names_in_script_setup exactly
+    .fixture "r01-class-enum.vue" ```
+        <script setup lang="ts">
+        class box {}
+        enum panel { A }
+        </script>
+        <template>
+          <div ref="box"></div>
+          <div ref="panel"></div>
+        </template>
+        ```
+.end
+
+// `['box']` and ``[`panel`]`` are keys getStaticPropertyName names.
+.test computed_keys_of_setups_returned_object exactly
+    .fixture "r03-setup-keys.vue" ```
+        <script>
+        export default {
+          setup() {
+            return { ['box']: 1, [`panel`]: 2 }
+          }
+        }
+        </script>
+        <template>
+          <div ref="box"></div>
+          <div ref="panel"></div>
+        </template>
+        ```
+.end
+
+// getVueObjectType's "mark".
+.test setup_of_an_object_under_vue_component exactly
+    .fixture "r04-vue-component-comment.vue" ```
+        <script>
+        // @vue/component
+        const Comp = {
+          setup() { return { box: 1 } }
+        }
+        export default Comp
+        </script>
+        <template>
+          <div ref="box"></div>
+        </template>
+        ```
+.end
+
+// The plugin's CallExpression visitor is a script visitor; `this.$refs.box` in the template is no read either.
+.test use_template_ref_in_the_template_reads_nothing exactly
+    .fixture "r05-template-this.vue" ```
+        <template>
+          <div ref="box" @click="this.$refs.box.focus()"></div>
+          <div ref="panel" @click="useTemplateRef('panel')"></div>
+        </template>
+        ```
+    .expect "vue/no-unused-refs" at "r05-template-this.vue":2
+    .expect "vue/no-unused-refs" at "r05-template-this.vue":3
+.end
+
+// arguments[0] is the string either way.
+.test use_template_ref_argument_after_a_comment_or_in_parentheses exactly
+    .fixture "r13-paren-arg.vue" ```
+        <script setup>
+        import { useTemplateRef } from 'vue'
+        useTemplateRef(/* el */ 'box')
+        useTemplateRef(('panel'))
+        </script>
+        <template>
+          <div ref="box"></div>
+          <div ref="panel"></div>
+        </template>
+        ```
+.end
+
+// A template literal is a string; `useTemplateRef(other, 'panel')` reads nothing.
+.test use_template_ref_takes_only_its_first_argument exactly
+    .fixture "x04-refs.vue" ```
+        <script setup>
+        import { useTemplateRef } from 'vue'
+        useTemplateRef(`box`)
+        useTemplateRef(other, 'panel')
+        </script>
+        <template>
+          <div ref="box"></div>
+          <div ref="panel"></div>
+        </template>
+        ```
+    .expect "vue/no-unused-refs" at "x04-refs.vue":8
+.end

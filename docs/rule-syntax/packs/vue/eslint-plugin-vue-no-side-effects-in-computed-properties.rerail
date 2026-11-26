@@ -5,7 +5,7 @@
 .mode steer
 .scope include "**/*.vue"
 #include "vue/vue-02.rerail"
-//   vv_site(r, d), vv_site_only(d), vv_marker(m, k), str(n, v)
+//   vv_site(r, d), vv_site_only(d), vv_marker(m, k), vv_marked(o), str(n, v)
 
 // eslint-plugin-vue's no-side-effects-in-computed-properties over the component's view (vue/view). No options.
 // Options API, in a computed getter's own code (not a nested function's), in a file without <script setup>: a
@@ -47,11 +47,13 @@ mutation(n, t, "call") :- kind(n, "call_expression"), field(n, "function", f), m
 mutation(n, t, "set") :- kind(n, "call_expression"), field(n, "function", f), kind(f, "member_expression"),
     field(f, "object", o), kind(o, "identifier"), text(o, "Object"), field(f, "property", p), text(p, "assign"),
     field(n, "arguments", as), child(as, t, 0).
-.decl mutator_callee(f: node, t: node)  // `t.push`, `t["sort"]`, `(t.push)`
+.decl mutator_callee(f: node, t: node)  // `t.push`, `t["sort"]`, ``t[`sort`]``, `(t.push)`
 mutator_callee(f, t) :- kind(f, "parenthesized_expression"), child(f, c, _), mutator_callee(c, t).
 mutator_callee(f, t) :- kind(f, "member_expression"), field(f, "object", t), field(f, "property", p), mutator(p).
 mutator_callee(f, t) :- kind(f, "subscript_expression"), field(f, "object", t), field(f, "index", i), kind(i, "string"),
     child(i, s, _), kind(s, "string_fragment"), mutator(s).
+mutator_callee(f, t) :- kind(f, "subscript_expression"), field(f, "object", t), field(f, "index", i),
+    kind(i, "template_string"), match("`(?:push|pop|shift|unshift|reverse|splice|sort|copyWithin|fill)`", i).
 .decl mutator(p: node)
 mutator(p) :- (field(_, "property", p) ; kind(p, "string_fragment")),
     match("push|pop|shift|unshift|reverse|splice|sort|copyWithin|fill", p).
@@ -87,10 +89,12 @@ opt_getter(f, k) :- fn_expr(f), nearest(f, gp, not_paren), kind(gp, "pair"), fie
 .decl computed_object(o: node)  // the object of `computed: { … }` in the component's definition
 computed_object(o) :- kind(o, "object"), field(p, "value", o), kind(p, "pair"), field(p, "key", k),
     key_named(k, "computed"), child(v, p, _), vue_object(v).
-// computed_name(k, x): the name a message gives computed key k: `a`, `'a'` and `['a']` are a; `[x]` is Unknown.
+// computed_name(k, x): the name a message gives computed key k (getStaticPropertyName): `a`, `'a'`, `['a']` and
+// ``[`a`]`` are a; `[x]` is Unknown.
 .decl computed_name(k: node, x: symbol)
 computed_name(k, x) :- text(k, t),
-    y = @replace_all(t, "^(?:\\[\\s*(?:'([^']*)'|\"([^\"]*)\")\\s*\\]|'([^']*)'|\"([^\"]*)\")$", "${1}${2}${3}${4}"),
+    y = @replace_all(t, "^(?:\\[\\s*(?:'([^']*)'|\"([^\"]*)\"|`([^`$]*)`)\\s*\\]|'([^']*)'|\"([^\"]*)\")$",
+        "${1}${2}${3}${4}${5}"),
     x = @replace_all(y, "^\\[.*\\]$", "Unknown").
 
 // ---- computed() ----------------------------------------------------------------------------------------------------
@@ -147,9 +151,7 @@ vue_object(o) :- kind(o, "object"), last_arg(o, as), child(c, as, _), kind(c, "c
     field(c, "function", f), definer(f).
 vue_object(o) :- kind(o, "object"), first_arg(o, as), child(c, as, _), kind(c, "new_expression"),
     field(c, "constructor", v), kind(v, "identifier"), text(v, "Vue").
-vue_object(o) :- kind(o, "object"), inside(o, p, "program"), has(p, c, "comment"), text(c, t),
-    contains("@vue/component", t), node(_, c, _, _, e), node(_, o, _, s, _), s >= e, end_line(c, l), line(o, lo),
-    lo = l + 1.
+vue_object(o) :- vv_marked(o).
 // first_arg(a, as), last_arg(a, as): a is the first or last argument of as, through parentheses and `as`;
 // first_child and last_child: without them. Comments do not count.
 .decl first_arg(a: node, as: node)
@@ -209,3 +211,38 @@ paren_as(n) :- kind(n, "parenthesized_expression") ; kind(n, "as_expression").
 not_paren(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
 .decl not_paren_as(n: node)
 not_paren_as(n) :- node(_, n, _, _, _), !paren_as(n).
+
+// Tests (decision 0130): run by `rerail-engine test-rr`, left out of the rule otherwise. The review's counterexamples
+// (review/vue-02.review.md) and the cases its fixes raised, each expecting exactly the lines ESLint 9.39.5 with
+// eslint-plugin-vue 10.11.1 reports.
+// getStaticPropertyName reads ``[`push`]`` as push.
+.test a_mutator_named_by_a_template_literal exactly
+    .fixture "e07-template-literal-mutator.vue" ```
+        <script setup>
+        import { computed, ref } from 'vue'
+        const list = ref([])
+        const c = computed(() => list.value[`push`](1))
+        const d = computed(() => list.value['reverse']())
+        </script>
+        ```
+    .expect "vue/no-side-effects-in-computed-properties" at "e07-template-literal-mutator.vue":4
+    .expect "vue/no-side-effects-in-computed-properties" at "e07-template-literal-mutator.vue":5
+.end
+
+// ``[`d`]() {}`` is the computed d in the message.
+.test a_template_literal_computed_key_names_the_computed exactly
+    .fixture "e11-template-key.vue" ```
+        <script>
+        export default {
+          computed: {
+            [`d`]() {
+              this.x = 1
+              return 1
+            }
+          }
+        }
+        </script>
+        ```
+    .expect "vue/no-side-effects-in-computed-properties" at "e11-template-key.vue":5
+    .expect side_effect(_, "d", "mutation")
+.end
