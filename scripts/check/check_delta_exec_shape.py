@@ -235,21 +235,59 @@ def b2(failures: list) -> None:
     # The B2 checks the plan asks for, kept as tests: a restriction reads only its partition's rows, counted where the
     # reads are made; is_identity reads a layer's counts only.
     tests = (CRATE / "src/trace_tests.rs").read_text()
-    for name in ("fn a_restriction_reads_only_its_partitions_rows", "fn is_identity_reads_a_layers_counts_only"):
+    for name in ("fn a_restriction_reads_only_its_partitions_rows", "fn is_identity_reads_a_layers_counts_only", "fn a_kill_search_reads_a_search_a_layer"):
         if name not in tests:
             failures.append(f"delta_exec's trace tests lack {name}")
+    # P§: restrict is "a range of the block, by the partition's index": a partition's rows and kills are read from
+    # parts, not found by a search of the layer's rows.
+    layer = crates / "blocks/src/layer.rs"
+    lcode = strip_rust(layer.read_text())
+    if "vec![crate::rows::I32, 8, 4, 4, 4, 4]" not in lcode:
+        failures.append(f"{layer.relative_to(ROOT)}: parts is (part, digest, added, gone, first, kills_at), the partition index")
+    hits(layer, lcode, r"leading\(self\.(rows|gone)", "a partition found by a search of the layer's rows or kills, not its index", failures)
+
+
+def e1(failures: list) -> None:
+    """E1 on a device (Operations §2): a launch's pins are handed to its fence, each a GPU use until it completes,
+    nothing open between; a discrete domain reads the directory's replicas."""
+    crates = ROOT / "native/crates"
+    region = crates / "blocks/src/region.rs"
+    rcode = strip_rust(region.read_text())
+    for want, why in (
+        ("pub fn to_fence(mut self, fence: &Arc<Fence>, op: &'static str, domain: u32)", "a slot's pin handed to a fence"),
+        ("handoff: Option<(bool, u64)>", "the CPU use ending as the GPU's begins, under one lock"),
+        ("fn device_address(&self) -> Option<u64>", "a replica's address, for a device's table"),
+    ):
+        if want not in rcode:
+            failures.append(f"{region.relative_to(ROOT)}: {why}")
+    dir_rs = CRATE / "src/dir.rs"
+    dcode = strip_rust(dir_rs.read_text())
+    for want, why in (
+        ("pub fn to_fence(self, fence: &Arc<Fence>, op: &'static str, domain: u32)", "a launch handed to its fence"),
+        ("pub fn replicate(&mut self, id: BlockId, domain: u32", "replicas by the directory (0440 §7.2)"),
+    ):
+        if want not in dcode:
+            failures.append(f"{dir_rs.relative_to(ROOT)}: {why}")
+    if "pub fn device_rows_in(" not in strip_rust((crates / "blocks/src/gens.rs").read_text()):
+        failures.append("blocks/src/gens.rs: a launch's table rows in a discrete domain, by its replicas")
+    tests = strip_rust((CRATE / "src/op_tests.rs").read_text())
+    if "fn a_launch_on_a_device_holds_its_blocks_until_its_fence_completes" not in tests:
+        failures.append("delta_exec's op tests lack a_launch_on_a_device_holds_its_blocks_until_its_fence_completes")
+    dev = re.search(r"fn a_kernel_follows_references_through_the_device_table\(\) \{(.*?)\n\}", tests, flags=re.S)
+    if not dev or "l.to_fence(&fence" not in dev.group(1) or "dt.to_fence(&fence" not in dev.group(1):
+        failures.append("delta_exec's device test does not hand its launch to its fence")
 
 
 def main() -> int:
     failures: list = []
-    for check in (m0, b1, b2):
+    for check in (m0, b1, b2, e1):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1, B2)")
+    print("delta_exec shape: every check holds (M0, B1, B2, E1)")
     return 0
 
 

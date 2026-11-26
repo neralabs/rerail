@@ -507,24 +507,101 @@ DEFINE_KERNEL2(delta_exec_tests, desc_probe, ROBUFFER, uint8_t, t, "[table]", RO
     let probe = program.function("desc_probe").unwrap();
     let qb = buffer_of(&q).unwrap();
     let out = alloc::<u64>(n * 3).unwrap();
-    let mut cq = ComputeQueue::new(&shared.queue);
-    let mut run = launch(&cq, probe).buffer_at("t", &dt.buffer, dt.at).buffer("q", &qb).value("p", &ProbeP { n: n as u32, pad: 0 }).buffer("out", &out);
-    for r in &dt.reached {
-        run = run.uses_read(r);
-    }
-    run.run(&[(n as u64).div_ceil(64)], &[64]).unwrap_or_else(|e| panic!("{e}"));
-    cq.flush().await_().unwrap();
-    let got: Vec<u64> = read(&out, n * 3);
-    for (k, &(id, off)) in queries.iter().enumerate() {
-        let want = match (t.row(id), dt.rows().iter().find(|d| d.id == id)) {
+    // What each query must read, from the CPU's table, before the launch is the device's.
+    let want: Vec<[u64; 3]> = queries
+        .iter()
+        .map(|&(id, off)| match (t.row(id), dt.rows().iter().find(|d| d.id == id)) {
             (Some(d), Some(dd)) => {
                 let bytes = t.block(id).unwrap();
                 [u64::from(d.kind) + 1, dd.len, u64::from_le_bytes(bytes[off as usize..][..8].try_into().unwrap())]
             }
             _ => [0, 0, 0],
-        };
-        assert_eq!(&got[k * 3..][..3], &want, "block #{id}, byte {off}: read through the device's table as in place");
+        })
+        .collect();
+    // E1: the launch's pins are the device's until its work completes (the engine's watched queue completes the fence
+    // with the command buffer; here, after it).
+    // The kernel binds the table's buffer and reaches the blocks' (device handles, which the fence's uses keep).
+    let (table_buffer, table_at, reached) = (dt.buffer.clone(), dt.at, dt.reached.clone());
+    let fence = rerail_blocks::ledger::Fence::new();
+    dt.to_fence(&fence, "device probe").unwrap();
+    l.to_fence(&fence, "device probe", 0).map_err(|(_, e)| e).unwrap();
+    assert!(dir.launch("rival", &[(top, true)]).is_err(), "a block the device reads is not written meanwhile");
+    let mut cq = ComputeQueue::new(&shared.queue);
+    let mut run = launch(&cq, probe).buffer_at("t", &table_buffer, table_at).buffer("q", &qb).value("p", &ProbeP { n: n as u32, pad: 0 }).buffer("out", &out);
+    for r in &reached {
+        run = run.uses_read(r);
     }
-    drop(dt);
+    run.run(&[(n as u64).div_ceil(64)], &[64]).unwrap_or_else(|e| panic!("{e}"));
+    cq.flush().await_().unwrap();
+    fence.mark_committed();
+    fence.complete();
+    assert!(dir.launch("next", &[(top, true)]).is_ok(), "the device's pins end with its fence");
+    let got: Vec<u64> = read(&out, n * 3);
+    for (k, &(id, off)) in queries.iter().enumerate() {
+        assert_eq!(&got[k * 3..][..3], &want[k], "block #{id}, byte {off}: read through the device's table as in place");
+    }
+}
+
+/// E1 on a device: a launch handed to its fence (`Launch::to_fence`) holds every slot by its mode and every block it
+/// reaches to read until the fence completes: another launch that writes a slot it reads, or reads the slot it writes,
+/// is refused until then. On a discrete GPU's domain each block reached is the directory's replica there
+/// (`Directory::replicate`): a launch with a block not placed there is refused and given back as it was, and the
+/// device's table rows name each replica's address (`gens::device_rows_in`).
+#[test]
+fn a_launch_on_a_device_holds_its_blocks_until_its_fence_completes() {
+    use rerail_blocks::ledger::Fence;
+    use rerail_blocks::region::Mirror;
+    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
+    let mut dir = Directory::default();
+    let a = values_block(&mut dir, &(0..100).collect::<Vec<_>>());
+    let out = dir.make(kind::FACTS, 64);
+    dir.refer(out, a, BODY_AT).unwrap();
+    let l = dir.launch("k", &[(out, true), (a, false)]).unwrap();
+    let f = Fence::new();
+    assert!(l.to_fence(&f, "k", 0).is_ok());
+    let e = dir.launch("rival", &[(out, false)]).err().expect("a reader of the slot the device writes is refused");
+    assert!(e.contains("rival could not start") && e.contains("a GPU write by k"), "{e}");
+    assert!(dir.launch("probe", &[(a, false)]).is_ok(), "a reader beside the device's read");
+    f.mark_committed();
+    f.complete();
+    assert!(dir.launch("next", &[(out, true)]).is_ok(), "the device's pins end with its fence");
+
+    /// A discrete GPU's copy of a block, at an address of its own.
+    struct Copy(Mutex<Vec<u8>>, u64, Arc<AtomicU64>);
+    impl Mirror for Copy {
+        fn upload(&self, host: &[u8], _: &Fence) {
+            *self.0.lock().unwrap() = host.to_vec();
+            self.2.fetch_add(1, SeqCst);
+        }
+        fn download(&self, host: &mut [u8]) {
+            host.copy_from_slice(&self.0.lock().unwrap());
+        }
+        fn device_address(&self) -> Option<u64> {
+            Some(self.1)
+        }
+    }
+    let ups = Arc::new(AtomicU64::new(0));
+    let copy = |addr: u64| Box::new(Copy(Mutex::new(Vec::new()), addr, ups.clone()));
+    dir.replicate(out, 1, copy(0x1_0000_0000)).unwrap();
+    assert!(dir.replicate(out, 1, copy(0x1_1000_0000)).is_err(), "one replica a domain");
+    let l = dir.launch("k", &[(out, true)]).unwrap();
+    let (l, e) = l.to_fence(&Fence::new(), "k", 1).err().expect("a block reached has no replica in domain 1");
+    assert!(e.contains("no replica"), "{e}");
+    let rows = l.table().rows().to_vec();
+    assert!(rerail_blocks::gens::device_rows_in(&rows, &l.pins(), 1).is_err(), "nor a table row there");
     drop(l);
+    dir.replicate(a, 1, copy(0x2_0000_0000)).unwrap();
+    let l = dir.launch("k", &[(out, true)]).unwrap();
+    let rows = l.table().rows().to_vec();
+    let dev = rerail_blocks::gens::device_rows_in(&rows, &l.pins(), 1).unwrap();
+    let at = |id: BlockId| dev.iter().find(|d| d.id == id.0).map(|d| d.addr);
+    assert_eq!((at(out), at(a)), (Some(0x1_0000_0000), Some(0x2_0000_0000)), "each row names its replica");
+    assert!(dev.iter().zip(&rows).all(|(d, r)| (d.id, d.kind, d.version, d.len) == (r.id, r.kind, r.version, r.len)));
+    let g = Fence::new();
+    assert!(l.to_fence(&g, "k", 1).is_ok());
+    assert_eq!(ups.load(SeqCst), 2, "each replica brought to the latest version once");
+    assert!(dir.launch("rival", &[(out, false)]).is_err(), "held until the fence completes");
+    g.mark_committed();
+    g.complete();
 }

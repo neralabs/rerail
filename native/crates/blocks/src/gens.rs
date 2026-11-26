@@ -174,6 +174,23 @@ pub fn device_rows(rows: &[Desc], pins: &[&BlockPin], device: &rerail_device::de
     Ok((out, buffers))
 }
 
+/// A launch's table rows in memory domain `domain` (a discrete GPU's, 1 and up: decision 0440 §7.2): each block's
+/// address its replica's there (`Directory::replicate`, `BlockPin::copy_address`), its length the block's. Refused
+/// when a block the launch reaches has no replica there, or one with no address.
+pub fn device_rows_in(rows: &[Desc], pins: &[&BlockPin], domain: u32) -> Result<Vec<Desc>, String> {
+    assert_ne!(domain, 0, "the host's memory: the rows as they are (`device_rows` wraps them in place)");
+    rows.iter()
+        .map(|d| {
+            let pin = pins.iter().find(|p| p.addr() as u64 == d.addr).ok_or_else(|| format!("descriptor table row #{} names memory the launch did not pin", d.id))?;
+            if !pin.has_copy_in(domain) {
+                return Err(format!("block #{} has no replica in domain {domain}", d.id));
+            }
+            let addr = pin.copy_address(domain).ok_or_else(|| format!("block #{}: its replica in domain {domain} has no address", d.id))?;
+            Ok(Desc { addr, ..*d })
+        })
+        .collect()
+}
+
 /// A launch's descriptor table on a device (E2: a kernel follows a reference through its own device's table): the same
 /// rows as its CPU table, each block's address the device's (`device_rows`), in a block of its own that the kernel
 /// binds, and the buffers the kernel reaches through it. It reads the launch's blocks, so it lives no longer than the
@@ -192,6 +209,12 @@ pub struct DeviceTable<'l> {
 
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl DeviceTable<'_> {
+    /// Hands the table's block to the device (E1): read by `op` until `fence` completes, as the launch's slots are
+    /// (`Launch::to_fence`, after this: the table reads the launch's pins).
+    pub fn to_fence(self, fence: &std::sync::Arc<crate::ledger::Fence>, op: &'static str) -> Result<(), String> {
+        self.pin.to_fence(fence, op, 0).map_err(|(_, e)| e)
+    }
+
     /// Its rows, by id ascending, as the device reads them.
     pub fn rows(&self) -> &[Desc] {
         let b = self.pin.bytes();

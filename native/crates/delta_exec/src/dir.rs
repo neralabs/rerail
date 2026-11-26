@@ -12,11 +12,16 @@
 //! Any conflict refuses the start, naming the operation, and nothing stays pinned.
 //!
 //! A launch's table on a device (`gens::device_table`, over `Launch::pins`) is the same rows, each block's address the
-//! device's: its memory wrapped in place, nothing uploaded. The caller makes it on the device it launches on: this
+//! device's: its memory wrapped in place, nothing uploaded; on a discrete GPU's memory domain, each block's replica's
+//! there (`Directory::replicate`, `gens::device_rows_in`). The caller makes it on the device it launches on: this
 //! crate names no device (B§7: blocks and rr_syntax alone). A kernel finds a row by id through `gens::DESC_READS`.
+//!
+//! On a device (E1), the launch's pins are handed to the device's fence (`Launch::to_fence`): each a GPU use until the
+//! fence completes, with the same checks, nothing open between the CPU's pin and the GPU's.
 
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::{self, BODY_AT, Desc, Table};
+use rerail_blocks::ledger::Fence;
 use rerail_blocks::region::{BlockPin, pin_block};
 use rerail_blocks::{Block, Frozen};
 use std::sync::{Arc, Weak};
@@ -40,6 +45,8 @@ enum Own {
 
 struct Entry {
     own: Own,
+    /// Its whole-block region's handle, kept while it has a replica (`replicate`): the region holds the replica.
+    placed: Option<rerail_blocks::region::Shared<u8>>,
     /// The blocks it refers to, each held while it does.
     held: Vec<(BlockId, Frozen)>,
     weak: Weak<Block>,
@@ -74,7 +81,7 @@ impl Directory {
             gens::init_refs(w.bytes_mut().expect("a write pin"));
         }
         let weak = Arc::downgrade(&b);
-        self.entries.push(Entry { own: Own::Open(b), held: Vec::new(), weak, body: body.max(8) });
+        self.entries.push(Entry { own: Own::Open(b), placed: None, held: Vec::new(), weak, body: body.max(8) });
         BlockId(self.entries.len() as u32 - 1)
     }
 
@@ -133,6 +140,8 @@ impl Directory {
     pub fn freeze(&mut self, id: BlockId) -> Result<(), String> {
         let body = self.entry(id)?.body;
         let e = &mut self.entries[id.0 as usize];
+        // Its replicas are the open block's: they go with its region (the frozen block is placed again as it is read).
+        e.placed = None;
         let Own::Open(b) = std::mem::replace(&mut e.own, Own::Released) else {
             return Err(format!("{id} is not open"));
         };
@@ -151,10 +160,26 @@ impl Directory {
         Ok(())
     }
 
+    /// Places block `id` in memory domain `domain` (a discrete GPU's, 1 and up; decision 0440 §7.2: "replicas by the
+    /// directory"): `mirror` holds its copy there, brought to the latest version before a kernel there reads it, and
+    /// back to the host after one writes it (`Region::sync_host`). The directory keeps the block's region, and so
+    /// the replica, until the block is frozen or let go. Refused when the block has one there already.
+    pub fn replicate(&mut self, id: BlockId, domain: u32, mirror: Box<dyn rerail_blocks::region::Mirror>) -> Result<(), String> {
+        let b = self.block(id).ok_or_else(|| format!("a replica of {id}, which nothing holds"))?;
+        let w = rerail_blocks::region::whole(&b);
+        if domain == 0 || w.region().has_copy_in(domain) {
+            return Err(format!("a replica of {id} in domain {domain}: the host's, or one it has"));
+        }
+        w.region().mirror_in(domain, mirror);
+        self.entries[id.0 as usize].placed = Some(w);
+        Ok(())
+    }
+
     /// Lets the directory's own handle of `id` go: it lives on while a block refers to it, or a launch reads it.
     pub fn release(&mut self, id: BlockId) {
         if let Some(e) = self.entries.get_mut(id.0 as usize) {
             e.own = Own::Released;
+            e.placed = None;
         }
         self.sweep();
     }
@@ -248,6 +273,26 @@ impl Launch {
     /// its table on a device (`gens::device_table`, E2), which the caller makes on the device it launches on.
     pub fn pins(&self) -> Vec<&BlockPin> {
         self.slots.iter().chain(&self.reach).collect()
+    }
+
+    /// Hands the launch to the device (E1, Operations §2: "every slot pinned from the operation's signature when it
+    /// starts"; a GPU use pinned until its fence completes): each slot by its mode and each block it reaches to read
+    /// become GPU uses by `op` on `fence`, in memory domain `domain` (0: the host's, read in place; 1 and up, a
+    /// discrete GPU's, each block's replica there, `Directory::replicate`). Until `fence` completes no CPU use and no
+    /// conflicting GPU use of them can begin, and they are not freed. Refused, the launch given back as it was, when
+    /// a block has no copy in `domain`. The CPU's descriptor table goes: the device reads its own (`DeviceTable`,
+    /// handed to the fence first).
+    pub fn to_fence(self, fence: &Arc<Fence>, op: &'static str, domain: u32) -> Result<(), (Launch, String)> {
+        if let Some(p) = self.slots.iter().chain(&self.reach).find(|p| !p.has_copy_in(domain)) {
+            let e = format!("{op} on domain {domain}: a block at {:#x} it reaches has no replica there (Directory::replicate)", p.addr());
+            return Err((self, e));
+        }
+        // The launch's pins exclude every conflicting use since it started (a CPU write, a GPU write of another
+        // domain), and each has its copy in `domain`: no handoff can be refused now.
+        for p in self.slots.into_iter().chain(self.reach) {
+            p.to_fence(fence, op, domain).unwrap_or_else(|(_, e)| panic!("a launch's handoff refused after its checks: {e}"));
+        }
+        Ok(())
     }
 }
 

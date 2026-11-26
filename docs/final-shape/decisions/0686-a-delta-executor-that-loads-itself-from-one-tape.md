@@ -655,4 +655,36 @@ checks the index's ranges against the rows and kills of every partition of every
 `rerail-delta-exec --lib` 27 of 27; `rerail-blocks --lib -- bistate:: relation:: table:: change:: layer:: gens::` 26
 of 26.
 
-Still not built: E1 on a device, and clippy (each as above).
+And **E1 on a device** (Operations §2: "every slot pinned from the operation's signature when it starts", the GPU's
+uses held until its fence completes; E2: "replicas by the directory (0440 §7.2)"):
+
+- A slot's CPU pin is handed to a fence (`BlockPin::to_fence`). Under the region's one lock its CPU use ends and a
+  GPU use by the operation begins, with the region's own GPU checks. Nothing can begin between the two. A refused
+  handoff gives the pin back as it was.
+- A launch is handed whole (`Launch::to_fence(fence, op, domain)`): every slot by its mode, and every block it reaches,
+  to read. Its device table's block goes the same way (`DeviceTable::to_fence`). Until the fence completes, a launch
+  that would write a block the device reads, or read one it writes, is refused, and no block is freed. A launch on a
+  domain where a block it reaches has no copy is refused and given back.
+- Replicas are the directory's (`Directory::replicate(id, domain, mirror)`). The directory keeps the block's region,
+  and with it the replica, until the block is frozen or let go. The region brings the replica to the latest version
+  before a kernel there reads it (`Region::sync_host` brings it back after one writes). A device's table rows in that
+  domain name each replica's address (`gens::device_rows_in`, from `Mirror::device_address`).
+- The device test (`a_kernel_follows_references_through_the_device_table`) now hands its launch to a fence before the
+  kernel runs, and completes the fence after the command buffer does, as the engine's watched queue would.
+  `check_delta_exec_shape.py` checks each of these (its E1 checks).
+
+Checks (Relax, local): `rerail-delta-exec --lib` 28 of 28, with
+`op::tests::a_launch_on_a_device_holds_its_blocks_until_its_fence_completes` (the handoff, refusals until the fence
+completes, the replicas and their rows, on fences completed by hand); `rerail-blocks --lib -- region:: gens::` 17 of
+17, with `region::tests::a_slot_handed_to_a_fence_is_the_gpus_until_it_completes`.
+
+Not built or not run:
+
+- The device test compiles here but was not run (no Metal runs here).
+- No backend implements `Mirror` yet, so a replica is only the tests' simulated device memory. The table's own block
+  in a discrete domain, made and bound there, is not built: `device_table` makes it in the host's memory, read in
+  place, as before.
+- The executor's `execute` runs twins only. A device version launched by the executor through this handoff is
+  registered versions' work (E3), not yet built.
+
+Still not built: clippy (as above).
