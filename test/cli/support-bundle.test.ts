@@ -623,7 +623,9 @@ describe("rerail support-bundle", () => {
     writeLedger(world, SESSION);
     const ledger = join(world.repo, ".rerail", "sessions", createHash("sha256").update(SESSION).digest("hex"), "events.jsonl");
     const delivery = { sessionId: SESSION, requested: "steer", mechanism: "message", content: STEER, ruleIds: ["eslint-eqeqeq"], rules: [] };
-    const misshapen = [{ content: null }, { content: 7 }, { ruleIds: "eslint-eqeqeq" }].map(field => ({ type: "delivery", delivery: { ...delivery, ...field } }));
+    // `requested: undefined` leaves the field out of the line, as JSON has no undefined.
+    const fields = [{ content: null }, { content: 7 }, { ruleIds: "eslint-eqeqeq" }, { ruleIds: [7] }, { mechanism: 7 }, { requested: undefined }];
+    const misshapen = fields.map(field => ({ type: "delivery", delivery: { ...delivery, ...field } }));
     const entries = [...misshapen, { type: "delivery", delivery: null }, null, { type: "delivery", delivery }];
     writeFileSync(ledger, entries.map(entry => `${JSON.stringify(entry)}\n`).join(""), { flag: "a" });
     const { bundle } = await run(world);

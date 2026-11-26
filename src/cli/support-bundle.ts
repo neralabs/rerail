@@ -542,14 +542,35 @@ function deliveredSteer(line: string): SupportBundleSteer | undefined {
   return { mechanism, requested, ruleIds, text: content.length > MAX_STEER_CHARACTERS ? `${content.slice(0, MAX_STEER_CHARACTERS)}…` : content };
 }
 
+/** A ledger delivery's fields as its line holds them, any JSON value until `steerFields` checks each. */
+interface LedgerDeliveryFields {
+  readonly mechanism?: unknown;
+  readonly requested?: unknown;
+  readonly ruleIds?: unknown;
+  readonly content?: unknown;
+}
+
+/** The fields of a delivery a steer keeps. */
+interface SteerFields {
+  mechanism: string;
+  requested: string;
+  ruleIds: string[];
+  content: string;
+}
+
 /**
- * The `delivery` of a ledger entry that records a steer; undefined for any other entry, and for one whose `content` is no
- * text or whose `ruleIds` is no list, which is skipped as a line that is no JSON is.
+ * The `delivery` of a ledger entry that records a steer (`steerFields`); undefined for any other entry, which is skipped
+ * as a line that is no JSON is.
  */
-function steerDelivery(entry: unknown): { mechanism: string; requested: string; ruleIds: string[]; content: string } | undefined {
-  const { type, delivery } = (entry ?? {}) as { type?: unknown; delivery?: { mechanism: string; requested: string; ruleIds: unknown; content: unknown } | null };
-  if (type !== "delivery" || typeof delivery?.content !== "string" || !Array.isArray(delivery.ruleIds)) return undefined;
-  return { mechanism: delivery.mechanism, requested: delivery.requested, ruleIds: delivery.ruleIds, content: delivery.content };
+function steerDelivery(entry: unknown): SteerFields | undefined {
+  const { type, delivery } = (entry ?? {}) as { type?: unknown; delivery?: LedgerDeliveryFields | null };
+  return type === "delivery" ? steerFields(delivery ?? {}) : undefined;
+}
+
+/** The fields of `delivery` a steer keeps; undefined unless `mechanism`, `requested` and `content` are text and `ruleIds` a list of text. */
+function steerFields({ mechanism, requested, ruleIds, content }: LedgerDeliveryFields): SteerFields | undefined {
+  if (typeof mechanism !== "string" || typeof requested !== "string" || typeof content !== "string") return undefined;
+  return Array.isArray(ruleIds) && ruleIds.every((id): id is string => typeof id === "string") ? { mechanism, requested, ruleIds, content } : undefined;
 }
 
 function reportedPath(path: string | undefined): string | null {
