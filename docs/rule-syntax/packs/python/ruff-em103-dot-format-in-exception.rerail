@@ -10,10 +10,10 @@
 //   raise RuntimeError("This is an {example} exception".format(example="example"))   ← EM103
 //   raise RuntimeError(("a " "{b}").format(b=1))                                    ← EM103
 //   raise RuntimeError(template.format(x))                                          not reported
-#include "python/misc2-messages.rerail"
+#include "python/python-30.rerail"
 
 .violation EM103(at: node) code "EM103"
     "Assign the result of this `.format()` call to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead."
     suppress ruff "EM103"
-EM103(a) :- msg_raised_call(_, c), field(c, "function", f), !msg_typing_cast(f), msg_arg(c, 0, a),
-    msg_form(a, "format"), field(a, "function", g), attr_of(g, o, "format"), msg_literal(o).
+EM103(a) :- py30_msg_raised_call(_, c), field(c, "function", f), !msg_typing_cast(f), msg_arg(c, 0, a),
+    field(a, "function", f0), unparen(f0, g), attr_of(g, o, "format"), msg_literal(o).

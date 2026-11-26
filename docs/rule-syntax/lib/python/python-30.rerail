@@ -1,0 +1,43 @@
+// python/python-30: shared vocabulary for the python-30 PERF and EM translations.
+//
+// Interface
+//   py30_perf_for(f, t, it)      f is a for statement with target t and iterable it, opening any number of
+//                                 redundant parentheses around a plain-name target
+//   py30_perf_list_receiver(o)    identifier o has Ruff's one binding, and that binding is list-valued even when
+//                                 it comes from `with list() as o` or a function with a list return annotation
+//   py30_msg_raised_call(r, c)     raise statement r raises call c, including after a backslash continuation
+//
+//   for ((x)) in xs: result.append(x)              py30_perf_for(<for>, <x>, <xs>)
+//   with list() as result: result.append(x)         py30_perf_list_receiver(<result>)
+//   def made() -> list[int]: ...; made.append(x)    py30_perf_list_receiver(<made>)
+//   raise \
+//       ValueError(f"bad {x}")                      py30_msg_raised_call(<raise>, <ValueError(...)>)
+#include "python/misc2-perf.rerail"
+#include "python/misc2-messages.rerail"
+
+.decl py30_perf_list_receiver(o: node)
+.decl py30_perf_for(f: node, t: node, it: node)
+py30_perf_for(f, t, it) :- perf_for(f, t, it).
+py30_perf_for(f, t, it) :- kind(f, "for_statement"), field(f, "left", l), py30_perf_target(l, t),
+    field(f, "right", r), unparen(r, it).
+.stored py30_perf_target "a one-element tuple_pattern's comma is its trailing comma, which the tape stores"
+.decl py30_perf_target(l: node, t: node)
+py30_perf_target(l, t) :- unparen(l, t), kind(t, "identifier").
+py30_perf_target(l, t) :- kind(l, "tuple_pattern"), !op(l, ","),
+    count : { child(l, c, _), !kind(c, "comment") } = 1,
+    child(l, c, _), !kind(c, "comment"), py30_perf_target(c, t).
+
+py30_perf_list_receiver(o) :- perf_only_binding(o, site), perf_list_site(site).
+// A with binding's site is the identifier inside the as_pattern_target.
+py30_perf_list_receiver(o) :- perf_only_binding(o, site), kind(site, "identifier"),
+    child(pt, site, _), kind(pt, "as_pattern_target"), field(ap, "alias", pt), kind(ap, "as_pattern"),
+    child(ap, v0, 0), unparen(v0, v), kind(v, "call"), field(v, "function", f),
+    ruff_qual(f, "builtins.list").
+py30_perf_list_receiver(o) :- perf_only_binding(o, site), kind(site, "function_definition"),
+    field(site, "return_type", t), perf_ann_head(t, h),
+    (ruff_qual(h, "builtins.list") ; perf_typing_name(h, "List")).
+
+.decl py30_msg_raised_call(r: node, c: node)
+py30_msg_raised_call(r, c) :- msg_raised_call(r, c).
+py30_msg_raised_call(r, c) :- kind(r, "raise_statement"), child(r, lc, i), kind(lc, "line_continuation"),
+    child(r, e0, j), i < j, !field(r, "cause", e0), unparen(e0, c), kind(c, "call").

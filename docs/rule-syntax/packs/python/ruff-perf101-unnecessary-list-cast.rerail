@@ -38,6 +38,16 @@ mutated(f, x) :- field(f, "body", b), has(b, a, "augmented_assignment"), field(a
 // `del x[i]`: a subscript of the bare name as one of the del's own targets (not `del y[x[0]]` or `del x[0][1]`).
 mutated(f, x) :- field(f, "body", b), has(b, d, "delete_statement"), del_target(d, l), kind(l, "subscript"),
     field(l, "value", o), kind(o, "identifier"), text(o, x).
+// A later binding in the loop's own scope changes which object the name denotes. Rebinding it to another known
+// list, tuple or set is harmless: the loop still does not need the copy it started with.
+mutated(f, x) :- field(f, "body", b), scope_node(f, s), binding(s, x, site, _), within(site, b),
+    !collection_rebind(site).
+// A loop in a nested function can iterate a nonlocal list even though that function has no local binding for it.
+mutated(f, x) :- scope_node(f, s), kind(s, "function_definition"), has(s, n, "nonlocal_statement"),
+    has(n, name, "identifier"), text(name, x).
+.decl collection_rebind(site: node)
+collection_rebind(site) :- perf_site_value(site, v),
+    (kind(v, "tuple") ; kind(v, "list") ; kind(v, "set") ; kind(v, "expression_list")).
 .decl del_target(d: node, t: node)
 del_target(d, t) :- kind(d, "delete_statement"), child(d, e, _), !kind(e, "expression_list"), unparen(e, t).
 del_target(d, t) :- kind(d, "delete_statement"), child(d, l, _), kind(l, "expression_list"), child(l, e, _),
