@@ -1009,7 +1009,10 @@ mod tests {
     fn a_panic_reporting_a_flush_ends_every_watch_and_the_flush_returns() {
         let notices = Arc::new(Notices::default());
         let mut backend = paused(&notices);
-        let (one, two) = (Scratch::new("flush-panic-one"), Scratch::new("flush-panic-two"));
+        let (one, two) = (
+            Scratch::new("flush-panic-one"),
+            Scratch::new("flush-panic-two"),
+        );
         for root in [one.root(), two.root()] {
             notices.start(&root);
             assert!(backend.watch(&root, &[String::new()]));
