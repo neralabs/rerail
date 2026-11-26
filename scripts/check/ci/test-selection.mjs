@@ -4,9 +4,9 @@
 //
 // How many shards a job runs for a selection: its shards for every test file times the selection's share, rounded up,
 // with the larger of two shares: of the test files, and of the job's recorded test time, each file weighed as the
-// time-balanced sequencer weighs it (test/support/shards/shard-split.ts, with the times beside it). By time, a shard
-// of the selection holds no more test time than a shard of every file does; by count, no more of what the times leave
-// out (each file's import and collection).
+// time-balanced sequencer weighs it (test/support/shards/shard-split.ts, with the times beside it). By time, the
+// selection's shards hold on average no more test time than a shard of every file does, and the sequencer's split
+// keeps each within one file of that; by count, no more of what the times leave out (each file's import and collection).
 //
 // A test file is selected when a changed file is in what it runs or reads:
 //   - its import closure (esbuild's metafile from the file, with vitest's setup files, node_modules left out), and the
