@@ -2689,3 +2689,37 @@ failed(p, x) :- spec_failed(n), node_target(n, x, _), docof(n, d), doc(d, p, _).
     assert!(failed.is_empty(), "{failed:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A per-file relation reading a setting that is one value for the run (`file`, decision 0710) is memoised under that
+/// setting's rows: a file added or removed elsewhere changes what an unedited file finds (review B70). `under(d)`
+/// holds of a file with a `__init__.py` beside it, as Python's module privacy reads it.
+#[test]
+fn a_file_added_beside_an_unedited_file_changes_what_it_finds() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("file-setting");
+    let _ = std::fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    std::fs::create_dir_all(src.join("pkg")).unwrap();
+    std::fs::write(src.join("pkg/m.py"), "def f():\n    return 1\n").unwrap();
+    std::fs::write(src.join("other.py"), "def g():\n    return 2\n").unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = crate::code_rule_dsl::logic::rr::print(
+        &crate::code_rule_dsl::logic::rr::parse(
+            "#include \"core.rerail\"\n.decl under(p: symbol)\nunder(p) :- doc(_, p, _), contains(\"/\", p), d = @replace_all(p, \"/[^/]*$\", \"\"), file(cat(d, \"/__init__.py\")).\n.output under\n",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let run = || crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
+    let under = || crate::code_rule_dsl::logic::plan::output::shown(&out, "under").unwrap();
+    run();
+    assert_eq!(under(), Vec::<Vec<String>>::new(), "no __init__.py: nothing");
+    std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
+    run();
+    assert!(under().contains(&vec!["pkg/m.py".to_owned()]), "pkg/m.py is unedited, and its folder now has a __init__.py: {:?}", under());
+    std::fs::remove_file(src.join("pkg/__init__.py")).unwrap();
+    run();
+    assert_eq!(under(), Vec::<Vec<String>>::new(), "the __init__.py removed again: nothing");
+    let _ = std::fs::remove_dir_all(&dir);
+}

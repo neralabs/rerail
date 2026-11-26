@@ -243,7 +243,9 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
         match setting(rel)? {
             Setting::Keyed => Some(Reach { folder: [0].into(), ..Reach::default() }),
             Setting::ByPath(_) => Some(Reach { path: [0].into(), ..Reach::default() }),
-            Setting::Whole => None,
+            // One value for the run (`file`, `env`): its rows are every file's (review B70: a file added beside an
+            // unedited one changes what that one finds).
+            Setting::Whole => Some(Reach { all: true, ..Reach::default() }),
         }
     };
     // A rule's own paths (its document's, `doc(d, p, _)`), and the folders or targets its own file's rows name: read
