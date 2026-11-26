@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignShards, defaultWeight, platformTimes, type PlatformTimes } from "./time-balanced-sequencer.js";
+import { assignShards, defaultWeight, platformTimes, runMs, shardsByTime, type PlatformTimes } from "./shard-split.js";
 
 /** Each shard's paths, in the order assignShards placed them, and each shard's total weight. */
 function split(paths: readonly string[], times: PlatformTimes, count: number) {
@@ -50,6 +50,31 @@ describe("assignShards", () => {
     const files = { "a.test.ts": 1000, "b.test.ts": 1, "c.test.ts": 1 };
     const { members } = split(Object.keys(files), { firstShardExtraMs: 5000, files }, 3);
     expect(members).toEqual([["c.test.ts"], ["a.test.ts"], ["b.test.ts"]]);
+  });
+});
+
+describe("shardsByTime", () => {
+  // Every file named: 400 ms of files and 100 ms of the first shard's step, 500 ms in all, 100 ms a shard of five.
+  const files = { "a.test.ts": 200, "b.test.ts": 100, "c.test.ts": 50, "d.test.ts": 50 };
+  const times = { firstShardExtraMs: 100, files };
+
+  it("weighs a run by its files' times, the median for a file the times do not name, and the first shard's step", () => {
+    expect(runMs(["a.test.ts", "new.test.ts"], times)).toBe(200 + 75 + 100);
+    expect(runMs([], times)).toBe(100);
+  });
+
+  it("gives a run as many shards as its share of the whole run's time needs, at least one and at most all", () => {
+    expect(shardsByTime(["a.test.ts"], times, 5)).toBe(3);
+    expect(shardsByTime(["b.test.ts"], times, 5)).toBe(2);
+    expect(shardsByTime(["c.test.ts", "new.test.ts"], times, 5)).toBe(3);
+    expect(shardsByTime(Object.keys(files), times, 5)).toBe(5);
+    expect(shardsByTime([...Object.keys(files), "new.test.ts"], times, 5)).toBe(5);
+    expect(shardsByTime([], { firstShardExtraMs: 0, files }, 5)).toBe(1);
+  });
+
+  it("gives every shard when the times name no file", () => {
+    expect(shardsByTime(["a.test.ts"], { firstShardExtraMs: 0, files: {} }, 5)).toBe(5);
+    expect(shardsByTime([], { firstShardExtraMs: 0, files: {} }, 5)).toBe(5);
   });
 });
 
