@@ -91,10 +91,13 @@ export function copyText(text, { field = null, message = "Copied. Paste it into 
 /*
  * The Copy that copied reads "✓ Copied" for COPIED_MS, where the person is already looking; the toast is at the foot of
  * the window. A render may rebuild or relabel that button meanwhile, so each render marks the buttons with its
- * `data-act` and `data-i` again, and the label the render gave comes back when the moment is over.
+ * `data-act` and `data-i` in its region again, and the label the render gave comes back when the moment is over. The
+ * region keeps the mark off a twin elsewhere: the update popover's Copy and Overview's banner copy the same command.
  */
 const COPIED_MS = 1600;
-/** The copy shown as done: `{ act, i, timer }`, or `null`. */
+/** The page's regions, which a render fills but never replaces. */
+const REGIONS = "#content, #panel, #updatelayer, #repolayer";
+/** The copy shown as done: `{ act, i, region, timer }`, or `null`. */
 let copied = null;
 /** Each marked button's own content, put back when the moment is over. */
 const labels = new WeakMap();
@@ -102,7 +105,10 @@ const labels = new WeakMap();
 function showCopied(button) {
   if (button === null) return;
   if (copied !== null) { clearTimeout(copied.timer); unmarkCopied(); }
-  copied = { act: button.dataset.act, i: button.dataset.i ?? null, timer: setTimeout(endCopied, COPIED_MS) };
+  copied = {
+    act: button.dataset.act, i: button.dataset.i ?? null,
+    region: button.closest(REGIONS) ?? document, timer: setTimeout(endCopied, COPIED_MS),
+  };
   markCopied();
 }
 
@@ -113,7 +119,7 @@ function endCopied() {
 }
 
 const copiedButtons = () => (copied === null ? []
-  : [...document.querySelectorAll("[data-act]")].filter(b => b.dataset.act === copied.act && (b.dataset.i ?? null) === copied.i));
+  : [...copied.region.querySelectorAll("[data-act]")].filter(b => b.dataset.act === copied.act && (b.dataset.i ?? null) === copied.i));
 
 function markCopied() {
   for (const b of copiedButtons()) {

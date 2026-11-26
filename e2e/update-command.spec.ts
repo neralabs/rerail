@@ -24,6 +24,9 @@ test("Update available: Copy copies /rerail-update, reads Copied, and leaves the
   await copy.click();
 
   await expect(copy).toHaveText("Copied");
+  // Overview's banner copies the same command, but only the Copy that was clicked reads Copied. Read once, not retried:
+  // a retrying check would pass after the moment ends.
+  expect(await page.locator('#content .welcome [data-act="cmdcopy"]').textContent()).toBe("Copy update command");
   expect(await clipboard(page)).toBe("/rerail-update");
   await expect(copy).toHaveText("Copy");
   await expect(page.locator(".updpop")).toBeVisible();
