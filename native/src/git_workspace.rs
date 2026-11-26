@@ -1400,12 +1400,14 @@ impl<'index> gix::status::plumbing::index_as_worktree_with_renames::VisitEntry<'
 }
 
 /// What status finds staged under `patterns`: the index against HEAD's tree, the one the walk
-/// read, with renames as the repository configures them.
+/// read, with renames as the repository configures them. It stops at the next change once
+/// `interrupt` is set.
 fn staged_items(
     repository: &gix::Repository,
     index: &gix::index::State,
     head_tree: gix::ObjectId,
     patterns: &[gix::bstr::BString],
+    interrupt: &std::sync::atomic::AtomicBool,
 ) -> Result<Vec<gix::status::Item>, DiscoveryError> {
     let mut pathspec = repository
         .pathspec(
@@ -1425,7 +1427,11 @@ fn staged_items(
             gix::status::tree_index::TrackRenames::AsConfigured,
             |change, _, _| {
                 items.push(gix::status::Item::TreeIndex(change.into_owned()));
-                Ok(std::ops::ControlFlow::Continue(()))
+                Ok(if interrupt.load(Ordering::Acquire) {
+                    std::ops::ControlFlow::Break(())
+                } else {
+                    std::ops::ControlFlow::Continue(())
+                })
             },
         )
         .map_err(|error| discovery_error("cannot read Git status item", error))?;
@@ -1434,11 +1440,12 @@ fn staged_items(
 
 /// What status finds changed in the worktree under `patterns`: each tracked file against its index
 /// entry, compared by [`ChangedWhenRewritten`]. No walk for untracked files, no rename tracking,
-/// and no look inside a submodule.
+/// and no look inside a submodule. It stops once `interrupt` is set.
 fn worktree_items(
     repository: &gix::Repository,
     index: &gix::index::State,
     patterns: &[gix::bstr::BString],
+    interrupt: &std::sync::atomic::AtomicBool,
 ) -> Result<Vec<gix::status::Item>, DiscoveryError> {
     let submodules = gix::status::index_worktree::BuiltinSubmoduleStatus::new(
         repository.clone().into_sync(),
@@ -1457,7 +1464,7 @@ fn worktree_items(
             ChangedWhenRewritten,
             submodules,
             &mut gix::progress::Discard,
-            &std::sync::atomic::AtomicBool::new(false),
+            interrupt,
             gix::status::index_worktree::Options::default(),
         )
         .map_err(|error| discovery_error("cannot read Git status item", error))?;
@@ -1474,8 +1481,8 @@ fn joined<T>(thread: std::thread::ScopedJoinHandle<'_, T>) -> T {
 }
 
 /// Each path Git status finds staged or changed in the worktree, with how: the two comparisons of
-/// gix's own status ([`staged_items`] on a thread beside [`worktree_items`], as it runs them). Its
-/// walk for untracked files is [`untracked_entries`]'s.
+/// gix's own status ([`staged_items`] on a thread beside [`worktree_items`], as it runs them, the
+/// first to fail stopping the other). Its walk for untracked files is [`untracked_entries`]'s.
 fn changed_items(
     found: &Discovery,
     index: &gix::worktree::Index,
@@ -1483,10 +1490,26 @@ fn changed_items(
     patterns: &[gix::bstr::BString],
 ) -> Result<BTreeMap<String, OverlayFlags>, DiscoveryError> {
     let reader = found.repository.clone().into_sync();
+    let interrupt = std::sync::atomic::AtomicBool::new(false);
+    let interrupt_on_error = |result: &Result<_, _>| {
+        if result.is_err() {
+            interrupt.store(true, Ordering::Release);
+        }
+    };
     let (staged, changed) = rerail_accel::exec::scoped(|scope| {
-        let staged =
-            scope.spawn(|| staged_items(&reader.to_thread_local(), index, head_tree, patterns));
-        let changed = worktree_items(&found.repository, index, patterns);
+        let staged = scope.spawn(|| {
+            let staged = staged_items(
+                &reader.to_thread_local(),
+                index,
+                head_tree,
+                patterns,
+                &interrupt,
+            );
+            interrupt_on_error(&staged);
+            staged
+        });
+        let changed = worktree_items(&found.repository, index, patterns, &interrupt);
+        interrupt_on_error(&changed);
         (joined(staged), changed)
     });
     let mut flags = BTreeMap::new();
