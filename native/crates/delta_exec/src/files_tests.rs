@@ -159,7 +159,9 @@ fn an_unchanged_file_gives_the_identity_with_no_read_past_its_stat() {
     // bytes read past the stat are that check's, and it finds them unchanged.
     assert_eq!(c.hashed, c.validated, "no byte read but the observer's sampled check: {c:?}");
     assert_eq!((c.reused + c.validated, c.mismatched), (1, 0), "the answer trusted on its stat: {c:?}");
-    assert_eq!(w.world.asked, asked, "nothing read, loaded or parsed");
+    // The sampled check falls on this path in one second of 64: its bytes are then read (and found the same).
+    let read = Asked { reads: asked.reads + c.validated, ..asked };
+    assert_eq!(w.world.asked, read, "nothing read but the sampled check's, nothing loaded or parsed: {c:?}");
     assert_eq!(w.blobs.len(&w.dir).unwrap(), 2, "its source and its tape");
 }
 
