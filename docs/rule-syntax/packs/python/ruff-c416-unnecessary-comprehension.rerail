@@ -1,19 +1,22 @@
-.policy "ruff-c416-unnecessary-comprehension" revision 2
+.policy "ruff-c416-unnecessary-comprehension" revision 3
 .description "Pass the iterable to list, set or dict directly instead of a comprehension that rebuilds it unchanged."
 .language python
 .mode steer
 .scope include "**/*"
 
 // Ruff C416 (flake8-comprehensions): a comprehension with one plain `for` and no `if` that yields its items
-// unchanged, while list, set or dict is the builtin there:
+// unchanged, while list, set or dict is the builtin there; in the file and in string type definitions:
 //   [x for x in y]    {x for x in y}         ← C416: list(y), set(y)
 //   {k: v for k, v in y}                     ← C416: dict(y)
 //   [(k, v) for k, v in d.items()]           ← C416 when d is a dict (Ruff's typing::is_dict): list(d.items())
+//   [(k, v) for ((k, v)) in d.items()]       ← C416: Ruff's tree has no parentheses
+//   a: "set([x for x in xs])"                ← C416: a string type definition is code
 //   [(k, v) for k, v in y]                   not reported: y's items may not be pairs
 //   [x for x in y if x]    [x for x, in y]   not reported
 // Only plain names are compared, as Ruff does. Its fix is unsafe; none here.
-#include "python/comprehensions.rerail"
-//   c4_comp(e, k), c4_simple(e, fc), c4_elt(e, x), dict_ref(n), c4_builtin_here(n, x)
+#include "python/python-15.rerail"
+//   p15_comp_at(e), p15_simple(e, fc), p15_ask/p15_builtin(n, x); c4_comp_kind(t, k), dict_ref(n)
+//   (python/comprehensions)
 
 .violation C416(at: node, kind: symbol, id: symbol, msg: symbol) code "C416" "{msg}"
     suppress ruff "C416"
@@ -29,27 +32,47 @@ C416(e, "dict", "dict-comprehension",
 
 // unchanged(e, k): e rebuilds its iterable, and k is the builtin at e.
 .decl unchanged(e: node, k: symbol)
-unchanged(e, k) :- same_items(e, k), c4_builtin_here(e, k).
-c4_builtin_ask(e, k) :- same_items(e, k).
+unchanged(e, k) :- same_items(e, k), p15_builtin(e, k).
+p15_ask(e, k) :- same_items(e, k).
 .decl same_items(e: node, k: symbol)
 // `[x for x in y]`: the element is the target, both plain names.
 same_items(e, k) :- comp(e, k, t, x), (k = "list" ; k = "set"), kind(t, "identifier"), kind(x, "identifier"),
     text(t, n), text(x, n).
 // `[(k, v) for k, v in d.items()]`, `[(k, v) for [k, v] in d.items()]`: only over a dict's items.
-same_items(e, k) :- comp(e, k, t, x), (k = "list" ; k = "set"), c4_simple(e, fc), field(fc, "right", i),
+same_items(e, k) :- comp(e, k, t, x), (k = "list" ; k = "set"), p15_simple(e, fc), field(fc, "right", i),
     dict_items(i), (kind(t, "pattern_list") ; kind(t, "tuple_pattern") ; kind(t, "list_pattern")), kind(x, "tuple"),
-    name_at(t, 0, a), name_at(t, 1, b), name_at(x, 0, a), name_at(x, 1, b), two(t), two(x).
+    names2(t, a, b), names2(x, a, b).
 // `{k: v for k, v in y}`.
-same_items(e, "dict") :- comp(e, "dict", t, p), (kind(t, "pattern_list") ; kind(t, "tuple_pattern")), two(t),
-    name_at(t, 0, a), name_at(t, 1, b), field(p, "key", kn), text(kn, a), kind(kn, "identifier"),
-    field(p, "value", vn), text(vn, b), kind(vn, "identifier").
-.decl comp(e: node, k: symbol, t: node, x: node)  // a one-`for` comprehension, its target t and element x
-comp(e, k, t, x) :- c4_comp(e, k), k != "generator", c4_simple(e, fc), field(fc, "left", t), c4_elt(e, x).
-.decl name_at(t: node, i: number, x: symbol)  // the i-th element of tuple t is the plain name x
-name_at(t, i, x) :- child(t, n, j), kind(n, "identifier"), text(n, x),
-    i = count : { child(t, o, j2), j2 < j, !kind(o, "comment") }.
-.decl two(t: node)
-two(t) :- kind(t, _), count : { child(t, o, _), !kind(o, "comment") } = 2.
+same_items(e, "dict") :- comp(e, "dict", t, p), (kind(t, "pattern_list") ; kind(t, "tuple_pattern")), names2(t, a, b),
+    field(p, "key", kn), kind(kn, "identifier"), text(kn, a), field(p, "value", vn), kind(vn, "identifier"),
+    text(vn, b).
+// comp(e, k, t, x): a one-`for` comprehension, its target t and element x, parentheses off.
+.decl comp(e: node, k: symbol, t: node, x: node)
+comp(e, k, t, x) :- p15_comp_at(e), kind(e, ek), c4_comp_kind(ek, k), k != "generator", p15_simple(e, fc),
+    field(fc, "left", t0), untarget(t0, t), field(e, "body", b), unparen(b, x).
+// untarget(t0, t): a target without its parentheses. tree-sitter reads `((k, v))` as a tuple pattern holding the
+// pattern `(k, v)`; Ruff's tree has the tuple k, v.
+.decl untarget(t0: node, t: node)
+untarget(t0, t0) :- target_at(t0), !paren_target(t0, _).
+untarget(t0, t) :- paren_target(t0, u), untarget(u, t).
+.decl target_at(t: node)
+target_at(t0) :- p15_comp_at(e), p15_simple(e, fc), field(fc, "left", t0).
+target_at(u) :- paren_target(_, u).
+.decl paren_target(t0: node, u: node)  // `(u)`: a tuple pattern of one element and no trailing comma
+paren_target(t0, u) :- target_at(t0), kind(t0, "tuple_pattern"), child(t0, u, i), !kind(u, "comment"),
+    !other_child(t0, i), text(t0, s), !match("[\\s\\S]*,(\\s|#[^\\n]*)*\\)", s).
+.decl other_child(t0: node, i: number)
+other_child(t0, i) :- kind(t0, "tuple_pattern"), child(t0, _, i), child(t0, z, j), j != i, !kind(z, "comment").
+// names2(t, a, b): t has two children (comments aside), the plain names a and b, in that order. No count: a count
+// does not see a parsed string's nodes.
+.decl names2(t: node, a: symbol, b: symbol)
+names2(t, a, b) :- pair_at(t), child(t, x, i), kind(x, "identifier"), text(x, a), child(t, y, j), j > i,
+    kind(y, "identifier"), text(y, b), !third(t, i, j).
+.decl pair_at(t: node)
+pair_at(t) :- comp(_, _, t, _).
+pair_at(x) :- comp(_, _, _, x).
+.decl third(t: node, i: number, j: number)  // t has another child than those at i and j, comments aside
+third(t, i, j) :- pair_at(t), child(t, _, i), child(t, _, j), i < j, child(t, z, k), k != i, k != j, !kind(z, "comment").
 // dict_items(i): `d.items()`, d a name bound to a dict.
 .decl dict_items(i: node)
 dict_items(i) :- unparen(i, c), kind(c, "call"), call_nargs(c, 0), call_nkwargs(c, 0), field(c, "function", f),
