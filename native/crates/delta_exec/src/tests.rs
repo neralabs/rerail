@@ -5,9 +5,9 @@ use crate::dir::{BlockId, Directory};
 use crate::files::{DocBlob, doc_of};
 use crate::intern::{InternOps, intern};
 use crate::cache::CacheOps;
-use crate::contract::{Cx, apply, push_layer};
+use crate::contract::{Cx, Global, apply, push_layer};
 use crate::k0::K0Ops;
-use crate::l1::{L1, syms_row, tape_row, tape_shape, syms_shape};
+use crate::l1::{L1, tape_row, tape_shape};
 use crate::op::Registry;
 use crate::trace::{RollUp, Trace, TraceOps};
 use crate::sym::{Atoms, Names};
@@ -44,7 +44,7 @@ impl Fx {
     }
 
     pub fn l1(&self) -> L1 {
-        L1 { ops: self.k0, atoms: self.atoms }
+        L1 { ops: self.k0 }
     }
 
     /// A document of `src` answered at `path`, interned: its blob and its symbols block.
@@ -63,12 +63,11 @@ impl Fx {
     /// L1's rows of `doc` as module `d`, by relation: its plain function over a tape port of the one document.
     pub fn rows(&mut self, doc: &DocBlob, syms: BlockId, d: i64) -> Result<[Rows; 8], String> {
         let mut t = Trace::new(&tape_shape())?.with_roll_up(RollUp::Never);
-        let mut s = Trace::new(&syms_shape())?.with_roll_up(RollUp::Never);
-        let ht = push_layer(&self.reg, &self.traces, &mut self.dir, &mut t, &[(tape_row(d, doc), 1)])?;
-        let hs = push_layer(&self.reg, &self.traces, &mut self.dir, &mut s, &[(syms_row(d, syms), 1)])?;
+        let ht = push_layer(&self.reg, &self.traces, &mut self.dir, &mut t, &[(tape_row(d, doc, syms), 1)])?;
+        let atoms = Global { block: self.atoms.0, count: u64::from(self.atoms.count(&self.dir)) };
         let l1 = self.l1();
         let mut cx = Cx { reg: &self.reg, dir: &mut self.dir, traces: &self.traces, caches: &self.caches };
-        let rows = apply(&l1, &mut cx, &[(&t, Some(ht)), (&s, Some(hs))])?;
+        let rows = apply(&l1, &mut cx, &[(&t, Some(ht))], &[atoms])?;
         Ok(rows.try_into().expect("eight relations"))
     }
 }

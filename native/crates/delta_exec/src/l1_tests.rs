@@ -8,6 +8,7 @@ use crate::dir::Directory;
 use crate::files::Doc;
 use crate::files::tests::{past_racy_window, racy_window, root, write};
 use crate::intern::InternOps;
+use crate::sym::Atoms;
 use rerail_blocks::maps::hash_bytes;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -27,12 +28,12 @@ impl Disk {
         let iops = InternOps::declare(&mut bench.reg).unwrap();
         let ops = K0Ops::declare(&mut bench.reg).unwrap();
         let atoms = Atoms::new(&mut bench.dir);
-        Disk { root, tape: Tape::new(files, iops).unwrap(), l1: L1 { ops, atoms } }
+        Disk { root, tape: Tape::new(files, iops, atoms).unwrap(), l1: L1 { ops } }
     }
 
     /// l0 read by the world (B§8's run, its first line).
     fn answer(&mut self, bench: &mut Bench) -> Doc {
-        self.tape.read(&bench.reg, &bench.traces, &mut bench.dir, &self.l1, PATH).unwrap()
+        self.tape.read(&bench.reg, &bench.traces, &mut bench.dir, PATH).unwrap()
     }
 
     /// B§8's run, its first two lines.
@@ -70,9 +71,9 @@ fn the_harness_passes_l1_over_edits_of_l0_on_disk() {
         disk.answer(&mut bench);
     }
     assert_eq!(disk.tape.heads[1], disk.tape.heads[2], "an unchanged file is the identity");
-    let Disk { l1, tape: Tape { mut ins, heads, .. }, .. } = disk;
+    let Disk { l1, tape: Tape { mut ins, heads, globals, .. }, .. } = disk;
     for drop_at in [1, 3, 5] {
-        harness_on(&l1, &mut bench, &mut ins, &heads, drop_at).unwrap_or_else(|b| panic!("{b:?}"));
+        harness_on(&l1, &mut bench, &mut ins, &heads, &globals, drop_at).unwrap_or_else(|b| panic!("{b:?}"));
     }
 }
 
@@ -112,7 +113,7 @@ fn an_edited_files_delta_is_the_diff_of_two_cold_runs() {
     let (doc, work) = disk.run(&mut bench, &mut l1).unwrap();
     assert!(!doc.is_identity());
     assert_eq!(work.rows_read, 2, "the old tape and the new one, each read whole: {work:?}");
-    let want = reference(&disk.l1, &mut bench.cx(), &disk.tape.since(2)).unwrap();
+    let want = reference(&disk.l1, &mut bench.cx(), &disk.tape.since(2), &disk.tape.globals_since(2)).unwrap();
     let mut changes = 0;
     for (k, t) in l1.outs.iter().enumerate() {
         let (b, a) = (&before[k], rows_at(&bench.dir, t, t.head()).unwrap());
@@ -131,7 +132,7 @@ fn l1_cold_on_l0_gives_its_14_rules() {
     disk.run(&mut bench, &mut l1).unwrap();
     let rules = rows_at(&bench.dir, &l1.outs[0], l1.outs[0].head()).unwrap();
     assert_eq!(rules.len(), 14);
-    let heads: BTreeSet<String> = rules.iter().map(|r| disk.l1.atoms.name(&bench.dir, r[2])).collect();
+    let heads: BTreeSet<String> = rules.iter().map(|r| disk.tape.atoms.name(&bench.dir, r[2])).collect();
     assert!(heads.iter().all(|h| RELATIONS.iter().any(|(n, _)| n == h)), "{heads:?}");
 }
 

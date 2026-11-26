@@ -56,10 +56,39 @@ pub struct Port {
     pub shape: Shape,
 }
 
-/// An operator's ports (P§12's `type Ports`): the traces it reads, and those it writes.
+/// An operator's ports (P§12's `type Ports`): the traces it reads, the program globals it reads as facts in (B§4),
+/// and the traces it writes.
 pub struct Ports {
     pub ins: Vec<Port>,
+    pub globals: Vec<&'static str>,
     pub outs: Vec<Port>,
+}
+
+/// A program global at one state (B§4's facts in: "only facts in which are program globals"): a block every level
+/// shares, append-only (P§13: the atoms, a trace with no kills), read in place by the operator's operations; its
+/// state is the count it holds, its content up to that count fixed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Global {
+    pub block: BlockId,
+    pub count: u64,
+}
+
+/// A global port between two states (`None`: a cold run).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GlobalIn {
+    pub block: BlockId,
+    pub before: Option<u64>,
+    pub after: u64,
+}
+
+impl GlobalIn {
+    pub fn is_identity(&self) -> bool {
+        self.before == Some(self.after)
+    }
+
+    fn side(&self, after: bool) -> Global {
+        Global { block: self.block, count: if after { self.after } else { self.before.unwrap_or(0) } }
+    }
 }
 
 /// What an operator's run reaches: the registry its operations are declared in, the directory of their blocks, and
@@ -75,19 +104,21 @@ pub struct Cx<'c> {
 pub struct In<'t> {
     pub ports: Vec<Bistate<View<'t>>>,
     pub heads: Vec<(Option<BlockId>, Option<BlockId>)>,
+    pub globals: Vec<GlobalIn>,
 }
 
 impl In<'_> {
-    /// Whether every input is the identity, by the layers' counts (L4's check).
+    /// Whether every input is the identity, by the layers' counts and the globals' (L4's check).
     pub fn is_identity(&self) -> bool {
-        self.ports.iter().all(|b| b.is_identity())
+        self.ports.iter().all(|b| b.is_identity()) && self.globals.iter().all(GlobalIn::is_identity)
     }
 }
 
-/// A state per input port: the plain function's inputs.
+/// A state per input port and per global: the plain function's inputs.
 pub struct At<'t> {
     pub ports: Vec<View<'t>>,
     pub heads: Vec<Option<BlockId>>,
+    pub globals: Vec<Global>,
 }
 
 /// A δ runs block a port (P§12's `LayerW` a port): the run's `(row, ±1)` pushed there, by host writers or by the
@@ -179,11 +210,15 @@ pub trait DeltaOp {
 /// An input port's trace and the heads of the run's two states.
 pub type InPort<'a> = (&'a Trace, Option<BlockId>, Option<BlockId>);
 
-/// The digest a cache names: its operator's inputs' states, by content, port by port.
-fn inputs_digest(dir: &Directory, ports: &[(&Trace, Option<BlockId>)]) -> Result<u64, String> {
+/// The digest a cache names: its operator's inputs' states, by content, port by port, then each global's count (an
+/// append-only block's content to its count is fixed).
+fn inputs_digest(dir: &Directory, ports: &[(&Trace, Option<BlockId>)], globals: &[Global]) -> Result<u64, String> {
     let mut d = 0u64;
     for (i, (t, h)) in ports.iter().enumerate() {
         d = rerail_blocks::layer::mix(d ^ t.digest(dir, *h)?.wrapping_add(i as u64));
+    }
+    for (i, g) in globals.iter().enumerate() {
+        d = rerail_blocks::layer::mix(d ^ g.count.wrapping_add((ports.len() + i) as u64));
     }
     Ok(d)
 }
@@ -219,10 +254,11 @@ impl Instance {
     /// port, then committed (an empty one is not: the output stays where it was), and the cache committed with the
     /// state the run made when the run wrote it. A run whose outputs outgrew their runs runs again at the size they
     /// needed, from a cache read as ∅ (its first attempt's writes may be half done).
-    pub fn step<O: DeltaOp>(&mut self, op: &O, cx: &mut Cx<'_>, ins: &[InPort<'_>]) -> Result<Work, String> {
+    pub fn step<O: DeltaOp>(&mut self, op: &O, cx: &mut Cx<'_>, ins: &[InPort<'_>], globals: &[GlobalIn]) -> Result<Work, String> {
         let befores: Vec<(&Trace, Option<BlockId>)> = ins.iter().map(|p| (p.0, p.1)).collect();
         let afters: Vec<(&Trace, Option<BlockId>)> = ins.iter().map(|p| (p.0, p.2)).collect();
-        let (from, to) = (inputs_digest(cx.dir, &befores)?, inputs_digest(cx.dir, &afters)?);
+        let (gb, ga): (Vec<Global>, Vec<Global>) = (globals.iter().map(|g| g.side(false)).collect(), globals.iter().map(|g| g.side(true)).collect());
+        let (from, to) = (inputs_digest(cx.dir, &befores, &gb)?, inputs_digest(cx.dir, &afters, &ga)?);
         let mut cap = vec![FIRST_RUNS; self.outs.len()];
         loop {
             let runs: Vec<BlockId> = self.outs.iter().zip(&cap).map(|(t, &c)| t.open(cx.dir, c)).collect();
@@ -242,7 +278,7 @@ impl Instance {
                         Some(_) => Bistate::new(t.state(&table, *b)?, after),
                     });
                 }
-                let input = In { ports, heads: ins.iter().map(|p| (p.1, p.2)).collect() };
+                let input = In { ports, heads: ins.iter().map(|p| (p.1, p.2)).collect(), globals: globals.to_vec() };
                 op.delta(cx, &input, None, &mut cache, &mut out, &mut Out::none())
             };
             let work = match work {
@@ -302,7 +338,7 @@ pub struct Change {
 }
 
 /// The plain function's output on the inputs' states `heads`: `run` into fresh output traces, committed, read.
-pub fn apply<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId>)]) -> Result<Vec<BTreeSet<Vec<i64>>>, String> {
+pub fn apply<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId>)], globals: &[Global]) -> Result<Vec<BTreeSet<Vec<i64>>>, String> {
     let ports = op.ports();
     let mut outs: Vec<Trace> = ports.outs.iter().map(|p| Trace::new(&p.shape).map(|t| t.with_roll_up(RollUp::Never))).collect::<Result<_, _>>()?;
     let mut cap = vec![FIRST_RUNS; outs.len()];
@@ -314,7 +350,7 @@ pub fn apply<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId
             let l = cx.dir.read("the reference's inputs", &heads)?;
             let table = l.table();
             let views = ins.iter().map(|(t, h)| t.state(&table, *h)).collect::<Result<Vec<_>, _>>()?;
-            op.run(cx, &At { ports: views, heads: ins.iter().map(|p| p.1).collect() }, &mut out)?;
+            op.run(cx, &At { ports: views, heads: ins.iter().map(|p| p.1).collect(), globals: globals.to_vec() }, &mut out)?;
         }
         let mut over = false;
         for (k, &r) in out.runs.iter().enumerate() {
@@ -340,10 +376,11 @@ pub fn apply<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId
 
 /// The generic reference (P§2, Figure 4): the plain function run on the inputs' before side and on their after side,
 /// and the two diffed, port by port.
-pub fn reference<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[InPort<'_>]) -> Result<Vec<Change>, String> {
+pub fn reference<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[InPort<'_>], globals: &[GlobalIn]) -> Result<Vec<Change>, String> {
     let befores: Vec<(&Trace, Option<BlockId>)> = ins.iter().map(|p| (p.0, p.1)).collect();
     let afters: Vec<(&Trace, Option<BlockId>)> = ins.iter().map(|p| (p.0, p.2)).collect();
-    let (b, a) = (apply(op, cx, &befores)?, apply(op, cx, &afters)?);
+    let (gb, ga): (Vec<Global>, Vec<Global>) = (globals.iter().map(|g| g.side(false)).collect(), globals.iter().map(|g| g.side(true)).collect());
+    let (b, a) = (apply(op, cx, &befores, &gb)?, apply(op, cx, &afters, &ga)?);
     Ok(b.iter().zip(&a).map(|(b, a)| Change { added: a.difference(b).cloned().collect(), gone: b.difference(a).cloned().collect() }).collect())
 }
 
@@ -369,7 +406,8 @@ pub fn harness<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize) -> Result<(), 
     let setup = |e: String| Broken { law: "setup", step: 0, what: e };
     let mut bench = Bench::new().map_err(setup)?;
     let (mut ins, heads) = inputs(op, &mut bench, chain).map_err(setup)?;
-    harness_on(op, &mut bench, &mut ins, &heads, drop_at)
+    let globals = vec![Vec::new(); heads.len()];
+    harness_on(op, &mut bench, &mut ins, &heads, &globals, drop_at)
 }
 
 /// What a harness runs in: a registry with the trace's and the cache's operations (and any its operator's own), and a
@@ -429,24 +467,29 @@ pub fn push_layer(reg: &Registry, traces: &TraceOps, dir: &mut Directory, t: &mu
 }
 
 /// `harness`'s laws over input traces `ins` made already, at `heads`, a step's heads each (the first, every port's
-/// state before the chain): the traces an operator's world read writes, as L1's tape port is (B6).
-pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], heads: &[Vec<Option<BlockId>>], drop_at: usize) -> Result<(), Broken> {
+/// state before the chain), and its globals' states at each step, `globals`: the traces and the globals an
+/// operator's world read writes, as L1's tape port and its atoms are (B6).
+pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], heads: &[Vec<Option<BlockId>>], globals: &[Vec<Global>], drop_at: usize) -> Result<(), Broken> {
     let fail = |law, step, what: String| Broken { law, step, what };
     let setup = |e: String| fail("setup", 0, e);
     let ports = op.ports();
     let ins: &[Trace] = ins;
     let mut cx = bench.cx();
     let at = |k: usize| -> Vec<(&Trace, Option<BlockId>)> { ins.iter().zip(&heads[k]).map(|(t, &h)| (t, h)).collect() };
-    let mut want = vec![apply(op, &mut cx, &at(0)).map_err(setup)?];
+    let between = |a: Option<usize>, b: usize| -> Vec<GlobalIn> {
+        globals[b].iter().enumerate().map(|(i, g)| GlobalIn { block: g.block, before: a.map(|a| globals[a][i].count), after: g.count }).collect()
+    };
+    let mut want = vec![apply(op, &mut cx, &at(0), &globals[0]).map_err(setup)?];
     let mut threaded = Instance::new(op, cx.dir).map_err(setup)?;
     let mut dropped = Instance::new(op, cx.dir).map_err(setup)?;
     for k in 1..heads.len() {
         let step: Vec<InPort<'_>> = ins.iter().enumerate().map(|(p, t)| (t, heads[k - 1][p], heads[k][p])).collect();
         let cold: Vec<InPort<'_>> = ins.iter().enumerate().map(|(p, t)| (t, None, heads[k][p])).collect();
-        want.push(apply(op, &mut cx, &at(k)).map_err(|e| fail("reference", k, e))?);
+        let (gstep, gcold) = (between(Some(k - 1), k), between(None, k));
+        want.push(apply(op, &mut cx, &at(k), &globals[k]).map_err(|e| fail("reference", k, e))?);
         // L2: a null start, from ∅ and an empty cache, is ∅ → op(X).
         let mut fresh = Instance::new(op, cx.dir).map_err(setup)?;
-        fresh.step(op, &mut cx, &cold).map_err(|e| fail("L2", k, e))?;
+        fresh.step(op, &mut cx, &cold, &gcold).map_err(|e| fail("L2", k, e))?;
         let cold_rows: Vec<_> = fresh.outs.iter().map(|t| rows_at(cx.dir, t, t.head())).collect::<Result<_, _>>().map_err(|e| fail("L2", k, e))?;
         if cold_rows != want[k] {
             return Err(fail("L2", k, format!("from ∅, the output is not op(X): {cold_rows:?}, want {:?}", want[k])));
@@ -458,8 +501,8 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
             let l = cx.dir.read("the harness", &[threaded.cache.0]).map_err(setup)?;
             cache_facts(&l.table(), 0, l.block(0))
         };
-        let work = threaded.step(op, &mut cx, &step).map_err(|e| fail("L1", k, e))?;
-        let reference = reference(op, &mut cx, &step).map_err(|e| fail("reference", k, e))?;
+        let work = threaded.step(op, &mut cx, &step, &gstep).map_err(|e| fail("L1", k, e))?;
+        let reference = reference(op, &mut cx, &step, &gstep).map_err(|e| fail("reference", k, e))?;
         for (p, t) in threaded.outs.iter().enumerate() {
             let after = rows_at(cx.dir, t, t.head()).map_err(|e| fail("L1", k, e))?;
             let got = Change { added: after.difference(&rows_before[p]).cloned().collect(), gone: rows_before[p].difference(&after).cloned().collect() };
@@ -468,7 +511,7 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
             }
         }
         // L4: identity is free.
-        if (0..ins.len()).all(|p| heads[k][p] == heads[k - 1][p]) {
+        if (0..ins.len()).all(|p| heads[k][p] == heads[k - 1][p]) && gstep.iter().all(GlobalIn::is_identity) {
             if !work.is_checks_only() {
                 return Err(fail("L4", k, format!("every input the identity, and its work is {work:?}")));
             }
@@ -487,7 +530,7 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
         if k == drop_at {
             dropped.drop_cache(cx.dir);
         }
-        dropped.step(op, &mut cx, &step).map_err(|e| fail("L5", k, e))?;
+        dropped.step(op, &mut cx, &step, &gstep).map_err(|e| fail("L5", k, e))?;
         for p in 0..threaded.outs.len() {
             let (a, b) = (rows_at(cx.dir, &threaded.outs[p], threaded.outs[p].head()), rows_at(cx.dir, &dropped.outs[p], dropped.outs[p].head()));
             let (a, b) = (a.map_err(|e| fail("L5", k, e))?, b.map_err(|e| fail("L5", k, e))?);

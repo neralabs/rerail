@@ -451,9 +451,11 @@ def b6(failures: list) -> None:
         (r"\bwalk\(|\bstatement\(|\bReads\b|\.children\(", "a tape walked on the host (k0_pass's twin walks it)"),
     ]:
         hits(l1, code, pattern, why, failures)
-    for name in ("tape", "symbols"):
-        if f'name: "{name}"' not in l1.read_text():
-            failures.append(f"l1.rs: no {name} port (B§4)")
+    if 'name: "tape"' not in l1.read_text():
+        failures.append("l1.rs: no tape port (B§4)")
+    if 'globals: vec!["atoms"]' not in l1.read_text():
+        failures.append("l1.rs: the atoms are not its facts in, a global port (B§4: facts in are program globals)")
+    hits(l1, code, r"\bAtoms\b", "the atoms held beside L1's ports (they are its facts in)", failures)
     for path in sorted((CRATE / "src").rglob("*.rs")):
         if path.name.endswith("_tests.rs") or path.name == "tests.rs":
             continue

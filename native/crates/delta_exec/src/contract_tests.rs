@@ -43,7 +43,7 @@ fn live_ids(s: &impl Read) -> impl Iterator<Item = RowId> + '_ {
 
 impl DeltaOp for Toy {
     fn ports(&self) -> Ports {
-        Ports { ins: vec![Port { name: "in", shape: in_shape() }], outs: vec![Port { name: "out", shape: out_shape() }] }
+        Ports { ins: vec![Port { name: "in", shape: in_shape() }], globals: Vec::new(), outs: vec![Port { name: "out", shape: out_shape() }] }
     }
 
     fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_>, _: Option<&Bistate<View<'_>>>, cache: &mut CacheW, out: &mut Out, _: &mut Out) -> Result<Work, String> {
@@ -202,7 +202,7 @@ fn the_reference_is_both_sides_run_and_diffed() {
     let h1 = commit(&mut dir, &mut t, &[(vec![1, 10], 1), (vec![2, 20], 1), (vec![3, 30], 1)]);
     let h2 = commit(&mut dir, &mut t, &[(vec![1, 10], -1), (vec![4, 40], 1), (vec![6, 60], 1)]);
     let mut cx = Cx { reg: &reg, dir: &mut dir, traces: &traces, caches: &caches };
-    let r = reference(&Toy(Flaw::None), &mut cx, &[(&t, Some(h1), Some(h2))]).unwrap();
+    let r = reference(&Toy(Flaw::None), &mut cx, &[(&t, Some(h1), Some(h2))], &[]).unwrap();
     assert_eq!(r[0].added, [vec![40, 4]].into_iter().collect());
     assert_eq!(r[0].gone, [vec![10, 1]].into_iter().collect());
 }
@@ -224,9 +224,9 @@ fn an_identity_run_is_its_checks_alone() {
     let h = t.commit(&reg, &traces, &mut dir, id, Tiling::WHOLE).unwrap();
     let mut cx = Cx { reg: &reg, dir: &mut dir, traces: &traces, caches: &caches };
     let mut inst = Instance::new(&Toy(Flaw::None), cx.dir).unwrap();
-    inst.step(&Toy(Flaw::None), &mut cx, &[(&t, None, Some(h))]).unwrap();
+    inst.step(&Toy(Flaw::None), &mut cx, &[(&t, None, Some(h))], &[]).unwrap();
     let (heads, cache) = (inst.heads(), cache_facts(&cx.dir.read("t", &[inst.cache.0]).unwrap().table(), 0, cx.dir.read("t", &[inst.cache.0]).unwrap().block(0)));
-    let w = inst.step(&Toy(Flaw::None), &mut cx, &[(&t, Some(h), Some(h))]).unwrap();
+    let w = inst.step(&Toy(Flaw::None), &mut cx, &[(&t, Some(h), Some(h))], &[]).unwrap();
     assert!(w.is_checks_only(), "{w:?}");
     assert_eq!(inst.heads(), heads);
     assert_eq!(cache_facts(&cx.dir.read("t", &[inst.cache.0]).unwrap().table(), 0, cx.dir.read("t", &[inst.cache.0]).unwrap().block(0)), cache);
