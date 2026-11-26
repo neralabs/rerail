@@ -68,6 +68,11 @@ impl File {
     pub fn count(&self) -> usize {
         self.blocks.len()
     }
+
+    /// Block `i`'s bytes before (`block::before_blocks`): the byte before each of its bytes.
+    pub fn before_of(&self, i: usize) -> &[u8; 64] {
+        &self.before[i]
+    }
 }
 
 /// A `prev`'s carry as a start holds it: the `k` bits it shifts in.

@@ -9,8 +9,13 @@
 //! - [`chunk`]: the block program over a range of blocks from an explicit start (its carries),
 //!   giving its values and its end. The foundation: a chunk run from the serial run's state at
 //!   its edge is the serial run there.
+//! - [`derive`]: a 1-bit carry's other start, from the base run's words by word operations.
+//! - [`starts`]: a start's components, and which of them a chunk reads in place from the bytes
+//!   before it rather than solves for.
 
 pub mod chunk;
+pub mod derive;
+pub mod starts;
 
 #[cfg(test)]
 mod tests;
