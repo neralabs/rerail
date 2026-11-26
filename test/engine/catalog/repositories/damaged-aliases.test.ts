@@ -53,7 +53,6 @@ describe("the repository list with a repository whose stored aliases do not read
   it.each([
     ["does not parse", '{"x":', "Unexpected end of JSON input"],
     ["is another JSON value", '{"x":1}', "it parses to another JSON value"],
-    ["holds an item that is no string", '["remote:github.com/acme/old-api", 3]', "an item of it is another JSON value"],
   ])("lists every repository, in order, when one's aliases_json %s: that one with no aliases, each other as stored, and the log names it once", async (_, text, why) => {
     const database = await threeRepositories();
     const undamaged = listRepositories(database, lines().log);
@@ -69,6 +68,19 @@ describe("the repository list with a repository whose stored aliases do not read
       + `of its row is not a JSON array of strings (${why}), which only a damaged file or a hand edit leaves.\n`]);
     // Nothing is written back: the text stays where a person can read and mend it.
     expect(database.$client.prepare("SELECT aliases_json FROM repositories WHERE repository_key = ?").pluck().get("remote:github.com/acme/api")).toBe(text);
+  });
+
+  it("lists a repository whose aliases_json holds an item that is no string with its other aliases, and the log names it once without the item", async () => {
+    const database = await threeRepositories();
+    const undamaged = listRepositories(database, lines().log);
+    const text = '["remote:github.com/acme/old-web", 3, "clone:git:web"]';
+    damage(database, "remote:github.com/acme/web", text);
+    const { log, written } = lines();
+    expect(listRepositories(database, log)).toEqual(undamaged);
+    expect(listRepositories(database, log)).toEqual(undamaged);
+    expect(written).toEqual([`rerail: ${database.$client.name}: repository remote:github.com/acme/web reads without 1 of the 3 items of its `
+      + "aliases: the aliases_json of its row holds no string there, which only a damaged file or a hand edit leaves.\n"]);
+    expect(database.$client.prepare("SELECT aliases_json FROM repositories WHERE repository_key = ?").pluck().get("remote:github.com/acme/web")).toBe(text);
   });
 
   it("reads a repository whose aliases are cut short with none, and each of its other fields as stored", async () => {
@@ -105,11 +117,11 @@ function newCloneOfAnAlias(database: RerailDatabase): [string, string] {
   return [clone, worktree];
 }
 
-/** Spies on this thread's stderr, where a lookup writes the line that names a damaged row: the lines naming `api`. */
-function spyOnStderr(): { named: () => string[]; restore: () => void } {
+/** Spies on this thread's stderr, where a lookup writes the line that names a damaged row: the lines naming `repositoryKey`. */
+function spyOnStderr(repositoryKey = "remote:github.com/acme/api"): { named: () => string[]; restore: () => void } {
   const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
   return {
-    named: () => stderr.mock.calls.map(([chunk]) => String(chunk)).filter(line => line.includes("repository remote:github.com/acme/api reads with no aliases")),
+    named: () => stderr.mock.calls.map(([chunk]) => String(chunk)).filter(line => line.includes(`repository ${repositoryKey} reads `)),
     restore: () => stderr.mockRestore(),
   };
 }
@@ -160,6 +172,42 @@ describe("a checkout not recorded yet, while another repository's stored aliases
       expect(exportRulesDump(database).repositories.map(repository => [repository.displayName, repository.aliases])).toEqual([
         ["api", []], ["cli", []], ["web", ["remote:github.com/acme/old-web", "clone:git:web"]],
       ]);
+      expect(stderr.named()).toHaveLength(1);
+    } finally {
+      stderr.restore();
+    }
+  });
+});
+
+describe("a repository whose aliases_json holds an item that is no string between two aliases", () => {
+  /** `cli`'s aliases with a number between `older-cli` and `old-cli`, the alias a new clone's remote names. */
+  function itemThatIsNoString(database: RerailDatabase): [string, string] {
+    const paths = newCloneOfAnAlias(database);
+    damage(database, CLI, '["remote:github.com/acme/older-cli", 5, "remote:github.com/acme/old-cli"]');
+    return paths;
+  }
+
+  it("still finds and records a new clone and worktree of the alias after the item", async () => {
+    const database = await threeRepositories();
+    const [clone, worktree] = itemThatIsNoString(database);
+    const stderr = spyOnStderr(CLI);
+    try {
+      expect([clone, worktree].map(path => lookupCheckout(database, path)?.repositoryKey)).toEqual([CLI, CLI]);
+      expect(recordCheckout(database, worktree).repositoryKey).toBe(CLI);
+    } finally {
+      stderr.restore();
+    }
+  });
+
+  it("lists and exports its two aliases, and the lookup, the list and the export name it in one line", async () => {
+    const database = await threeRepositories();
+    const [clone] = itemThatIsNoString(database);
+    const stderr = spyOnStderr(CLI);
+    try {
+      expect(lookupCheckout(database, clone)?.repositoryKey).toBe(CLI);
+      const aliases = ["remote:github.com/acme/older-cli", "remote:github.com/acme/old-cli"];
+      expect(listRepositories(database).find(repository => repository.repositoryKey === CLI)?.aliases).toEqual(aliases);
+      expect(exportRulesDump(database).repositories.find(repository => repository.repositoryKey === CLI)?.aliases).toEqual(aliases);
       expect(stderr.named()).toHaveLength(1);
     } finally {
       stderr.restore();

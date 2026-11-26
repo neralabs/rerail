@@ -25,7 +25,7 @@ import {
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
 import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
-import { nameOnce, storedList, type StoredListLog } from "../storage/stored-list.js";
+import { nameOnce, storedItems, type StoredListLog } from "../storage/stored-list.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -571,18 +571,24 @@ const LISTED_COLUMNS = { ...getTableColumns(repositories), aliases: sql<string>`
 type ListedRow = Omit<RepositoryRow, "aliases"> & { aliases: string };
 
 /**
- * `row` with its aliases parsed. Text that is no JSON array of strings, which only a damaged file or a hand edit leaves
- * (a CHECK refuses text that is no JSON array, not one whose items are not strings), reads as no aliases, rather than
- * failing every page that lists repositories, and the line that names the repository goes to `log` once.
+ * `row` with its aliases parsed, rather than failing every page that lists repositories. Text that is no JSON array,
+ * which only a damaged file or a hand edit leaves, reads as no aliases; an array reads without its items that are not
+ * strings (a CHECK refuses text that is no JSON array, not such an item), so each costs itself, never the aliases
+ * beside it. Either way the line that names the repository goes to `log` once, and never holds an item's text.
  */
 function listedRow(row: ListedRow, file: string, log: StoredListLog): RepositoryRow {
-  const aliases = storedList(row.aliases, "text");
-  if (Array.isArray(aliases)) return { ...row, aliases: aliases as RepositoryKey[] }; // each item is a string: `storedList` tested it
+  const aliases = storedItems(row.aliases, "text");
   // The column name the schema gives, so the line names the place a person mends.
   const column = repositories.aliases.name;
-  nameOnce(log, { file, place: `repository ${row.repositoryKey} ${column}` }, `rerail: ${file}: repository ${row.repositoryKey} `
-    + `reads with no aliases: the ${column} of its row is not a JSON array of strings (${aliases}), which only a damaged file or a hand edit leaves.\n`);
-  return { ...row, aliases: [] };
+  const place = { file, place: `repository ${row.repositoryKey} ${column}` };
+  if (typeof aliases === "string") {
+    nameOnce(log, place, `rerail: ${file}: repository ${row.repositoryKey} reads with no aliases: the ${column} of its row is not `
+      + `a JSON array of strings (${aliases}), which only a damaged file or a hand edit leaves.\n`);
+    return { ...row, aliases: [] };
+  }
+  if (aliases.left > 0) nameOnce(log, place, `rerail: ${file}: repository ${row.repositoryKey} reads without ${aliases.left} of the `
+    + `${aliases.items.length + aliases.left} items of its aliases: the ${column} of its row holds no string there, which only a damaged file or a hand edit leaves.\n`);
+  return { ...row, aliases: aliases.items as RepositoryKey[] }; // each item is a string: `storedItems` kept only those
 }
 
 /**
