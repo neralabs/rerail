@@ -467,13 +467,14 @@ impl Stratum {
     }
 
     /// It, with its algorithm found from the facts `of` gives the relations it reads (0361 item 4): `Along` where its
-    /// rules are a linear recursion along a relation declared a tree.
-    pub fn with_facts(mut self, of: &impl Fn(i64) -> Option<Facts>) -> Stratum {
-        self.along = self.along_of(of);
+    /// rules are a linear recursion along a relation declared a tree, or along any relation where its head names the
+    /// wave (`named`, the override).
+    pub fn with_facts(mut self, of: &impl Fn(i64) -> Option<Facts>, named: bool) -> Stratum {
+        self.along = self.along_of(of, named);
         self
     }
 
-    fn along_of(&self, of: &impl Fn(i64) -> Option<Facts>) -> Option<Along> {
+    fn along_of(&self, of: &impl Fn(i64) -> Option<Facts>, named: bool) -> Option<Along> {
         let [head] = &self.heads[..] else { return None };
         if !self.recursive {
             return None;
@@ -505,8 +506,8 @@ impl Stratum {
             [a, b] if (a, b) == (y, x) => (1, 0),
             _ => return None,
         };
-        let f = of(e.rel)?;
-        f.trees.iter().any(|&(p, c)| (p, c) == (cx, cy) || (p, c) == (cy, cx)).then_some(Along { j, e: e.rel, x: cx, y: cy })
+        let tree = of(e.rel).is_some_and(|f| f.trees.iter().any(|&(p, c)| (p, c) == (cx, cy) || (p, c) == (cy, cx)));
+        (tree || named).then_some(Along { j, e: e.rel, x: cx, y: cy })
     }
 
     /// The recursion along a tree in one wave (Operations, class 30), from ∅: from the base rows `seeds`, each level's
@@ -618,8 +619,9 @@ impl Stratum {
         if let Some(m) = fresh {
             cx.dir.release(m);
         }
-        let (probes, planned) = ran?;
+        let (probes, planned, broken) = ran?;
         work.planned += planned;
+        *work += Work { broken, ..Work::default() };
         Ok(probes)
     }
 
@@ -1304,15 +1306,18 @@ impl Level {
     /// The facts the level's relations declare now (0361): its `key` and `fanout` rows, a relation of the level's or a
     /// fact in.
     fn declared(&self, dir: &Directory, known: &Known, facts: &[FactIn<'_>]) -> Result<Shapes, String> {
-        let rows = |rel: Option<i64>| -> Result<BTreeSet<Vec<i64>>, String> {
-            let Some(rel) = rel else { return Ok(BTreeSet::new()) };
-            match self.rels.get(&rel).map(|r| &r.head).or_else(|| facts.iter().find(|f| f.rel == rel).map(|f| f.trace)) {
-                Some(t) => rows_at(dir, t, t.head()),
-                None => Ok(BTreeSet::new()),
-            }
-        };
+        let rows = |rel: Option<i64>| self.rows_of(dir, rel, facts);
         let [a, b, c, d] = known.decls;
         Ok(crate::shapes::declared(&[rows(a)?, rows(b)?, rows(c)?, rows(d)?], known.one, known.few))
+    }
+
+    /// Relation `rel`'s rows now: the level's, or a fact in's (none: ∅).
+    fn rows_of(&self, dir: &Directory, rel: Option<i64>, facts: &[FactIn<'_>]) -> Result<BTreeSet<Vec<i64>>, String> {
+        let Some(rel) = rel else { return Ok(BTreeSet::new()) };
+        match self.rels.get(&rel).map(|r| &r.head).or_else(|| facts.iter().find(|f| f.rel == rel).map(|f| f.trace)) {
+            Some(t) => rows_at(dir, t, t.head()),
+            None => Ok(BTreeSet::new()),
+        }
     }
 
     /// The level's documents moved to the `load` rows of its facts in and of its program's facts: each path read
@@ -1364,10 +1369,13 @@ impl Level {
             Stratum::new(ops, m, before, after, known.clone(), &shapes, l.block(0)).map_err(|e| format!("rule {}: {}", e.rule, e.why))?.with_inferred(inferred)
         };
         let declared = self.declared(&bench.dir, known, facts)?;
-        let st = st.with_facts(&|r: i64| match (declared.get(&r), inferred.get(&r)) {
+        let by = self.rows_of(&bench.dir, known.by, facts)?;
+        let named = known.wave.is_some_and(|wv| st.heads.iter().any(|h| by.contains(&vec![h.rel, wv])));
+        let of = |r: i64| match (declared.get(&r), inferred.get(&r)) {
             (Some(a), Some(b)) => Some(a.and(b)),
             (a, b) => a.or(b).cloned(),
-        });
+        };
+        let st = st.with_facts(&of, named);
         for h in &st.heads {
             if !self.rels.contains_key(&h.rel) {
                 let head = Trace::new(&h.shape)?.with_roll_up(RollUp::Never).resumed(self.place, None);

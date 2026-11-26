@@ -895,6 +895,10 @@ def declared(failures: list) -> None:
     if "pub fn infer(" not in shapes or "fn closure(" not in shapes:
         failures.append("shapes.rs: no inference of derived relations' facts through their rules (0361)")
     phase = strip_rust((CRATE / "src" / "phase.rs").read_text())
+    if "Work { broken" not in phase or "pub broken: Vec<(i64, u64)>" not in strip_rust((CRATE / "src" / "contract.rs").read_text()):
+        failures.append("a broken declared fact is not named in the run's work (0361 item 3)")
+    if "named: bool" not in phase or "known.wave" not in phase:
+        failures.append("phase.rs: no named algorithm, by(rel, wave) (0361 item 4's override)")
     if "fn along_of(" not in phase or "return self.wave_along(" not in phase or ".with_facts(" not in phase:
         failures.append("phase.rs: no algorithm found from the facts: a recursion along a declared tree in one wave (0361 item 4; Operations, class 30)")
     if "crate::shapes::infer(" not in phase or ".with_inferred(inferred)" not in phase:

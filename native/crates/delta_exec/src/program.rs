@@ -102,13 +102,16 @@ pub struct Known {
     pub decls: [Option<i64>; 4],
     pub one: Option<i64>,
     pub few: Option<i64>,
+    /// A named algorithm (0361 item 4's override): `by(rel, wave)` runs `rel`'s recursion in one wave.
+    pub by: Option<i64>,
+    pub wave: Option<i64>,
 }
 
 impl Known {
     /// The views' and `load`'s symbols in the atoms block `atoms`, where they have one.
     pub fn new(atoms: &[u8]) -> Known {
         let views = View::ALL.iter().filter_map(|(v, name, _)| find(atoms, name).map(|s| (s, *v))).collect();
-        Known { views, load: find(atoms, "load"), decls: crate::shapes::DECLS.map(|d| find(atoms, d)), one: find(atoms, "one"), few: find(atoms, "few") }
+        Known { views, load: find(atoms, "load"), decls: crate::shapes::DECLS.map(|d| find(atoms, d)), by: find(atoms, "by"), wave: find(atoms, "wave"), one: find(atoms, "one"), few: find(atoms, "few") }
     }
 
     pub fn view(&self, rel: i64) -> Option<View> {

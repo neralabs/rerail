@@ -731,6 +731,9 @@ fn a_levels_declared_keys_give_its_lines_default_plans() {
     r.write("base.rerail", &format!("{base}f(1, 99).\nf(1, 98).\ng(99, 7).\ng(98, 8).\ne(50, 1).\n"), 40);
     let edit = r.run();
     assert!(edit.planned.broken >= 1, "{:?}", edit.planned);
+    // e(50, 1) breaks e's key at y too (e(0, 1)): each fact named is one the rows broke.
+    let truly = [(r.s("f"), 0b01), (r.s("e"), 0b10)];
+    assert!(!edit.broken.is_empty() && edit.broken.iter().all(|b| truly.contains(b)), "{:?}", edit.broken);
     let p = r.rows(1, "p");
     assert_eq!(p.len(), 45);
     assert!([[0, 7], [0, 8], [50, 0], [50, 7], [50, 8]].iter().all(|x| p.contains(x.as_slice())), "{p:?}");
@@ -798,19 +801,22 @@ fn a_declared_tree_and_order_give_their_keys_and_are_checked() {
     r.write("base.rerail", &format!("{base}f(3, 77).\ng(77, 5).\ne(3, 1).\n"), 30);
     let edit = r.run();
     assert!(edit.planned.broken >= 1, "{:?}", edit.planned);
+    assert_eq!(edit.broken, vec![(r.s("f"), 0b01)], "f's tree, probed by the child, named");
     assert_eq!(r.rows(1, "p").len(), 41, "e(3, 1) derives what e(3, 0) does");
 }
 
 /// 0361's algorithms from the facts: a recursion along a relation declared a tree runs cold in one wave, unplanned
 /// (Operations, class 30). Its rows and their levels are those of Δfix's rounds over the same facts undeclared, and an
-/// edit moving a subtree runs Δfix by levels from them to the rows a cold run gives.
+/// edit moving a subtree runs Δfix by levels from them to the rows a cold run gives. A head naming the wave
+/// (`by(anc, wave)`) takes it with no tree declared.
 #[test]
 fn a_recursion_along_a_declared_tree_runs_in_one_wave_with_the_rounds_levels() {
     let par = |moved: bool| (1..40).map(|i| format!("par({i}, {}).\n", if moved && i == 5 { 3 } else { i / 2 })).collect::<String>();
     let run = |rel: &str| {
         let mut r = Run::new(&format!("phase-along-{rel}"));
         r.write("base.rerail", &par(false), 50);
-        r.write("decl.rerail", &format!("{rel}(\"par\", 1, 0).\n"), 50);
+        let decl = if rel == "by" { "by(\"anc\", \"wave\").\n".to_string() } else { format!("{rel}(\"par\", 1, 0).\n") };
+        r.write("decl.rerail", &decl, 50);
         r.write("rule.rerail", "anc(x, z) :- par(x, z).\nanc(x, z) :- par(x, y), anc(y, z).\n", 50);
         r.names(&["base.rerail", "base", "decl.rerail", "decl", "rule.rerail", "rule", "rr"]);
         let rr = r.s("rr");
@@ -834,6 +840,10 @@ fn a_recursion_along_a_declared_tree_runs_in_one_wave_with_the_rounds_levels() {
     assert_eq!((plain.planned.waves, along.planned.waves), (0, 1), "{:?} {:?}", plain.planned, along.planned);
     assert!(along.planned.lines < plain.planned.lines, "the rounds' lines unplanned: {:?} {:?}", plain.planned, along.planned);
     assert_eq!(by_wave, by_rounds, "the rows and their levels");
+    // Named (the override): no tree declared, `by(anc, wave)`.
+    let (_, named, by_name) = run("by");
+    assert_eq!(named.planned.waves, 1, "{:?}", named.planned);
+    assert_eq!(by_name, by_rounds);
     // anc(i, 0) for every i, and 1 + 2 + … per depth: a heap of 40 nodes.
     assert!(wave.rows(1, "anc").contains(&vec![39, 0]));
     // 5 moves from under 2 to under 3: both by Δfix from what each run kept, the rows of a cold run.

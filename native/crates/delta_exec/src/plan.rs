@@ -1856,12 +1856,17 @@ fn room(p: &Plan) -> usize {
     p.words().len() + 4 * p.terms.len() + steps * (RUNNERS_UP + 8) * 4 + steps * 24 + masks + 64
 }
 
+/// A round's run: the probes made, what the planning did, and the declared facts the rows broke (each relation and
+/// the columns its broken probe bound, a mask).
+pub type Ran = (u64, Planned, Vec<(i64, u64)>);
+
 impl Round<'_> {
     /// Plans `plan`'s chains (their steps in their rules' order, each chain's line key in `keys`) and runs them into
-    /// the heads' runs `runs`, checking each depth: the probes made, and what the planning did.
-    pub fn run(&self, dir: &mut Directory, plan: &Plan, keys: &[i64], runs: &[BlockId]) -> Result<(u64, Planned), String> {
+    /// the heads' runs `runs`, checking each depth: the probes made, what the planning did, and the declared facts
+    /// the rows broke (each relation, and the columns its broken probe bound).
+    pub fn run(&self, dir: &mut Directory, plan: &Plan, keys: &[i64], runs: &[BlockId]) -> Result<Ran, String> {
         if plan.terms.is_empty() {
-            return Ok((0, Planned::default()));
+            return Ok((0, Planned::default(), Vec::new()));
         }
         let mut made: Vec<BlockId> = Vec::new();
         let ran = self.run_in(dir, plan, keys, runs, &mut made);
@@ -1883,7 +1888,7 @@ impl Round<'_> {
         Ok(out)
     }
 
-    fn run_in(&self, dir: &mut Directory, plan: &Plan, keys: &[i64], runs: &[BlockId], made: &mut Vec<BlockId>) -> Result<(u64, Planned), String> {
+    fn run_in(&self, dir: &mut Directory, plan: &Plan, keys: &[i64], runs: &[BlockId], made: &mut Vec<BlockId>) -> Result<Ran, String> {
         let n = room(plan);
         let mut pd = Planned { lines: plan.terms.len() as u64, ..Planned::default() };
         let rule = body::plan_block_keyed(dir, plan, keys)?;
@@ -1950,9 +1955,20 @@ impl Round<'_> {
             body::run_block(self.reg, self.body, dir, atoms, &planned, planned_b, runs, &mut between)?
         };
         // What each line measured, into the memo.
-        pd.broken += read_block(dir, running, |b| running_of_words(&words_of(b)[1..]).iter().filter(|r| r.broken).count() as u64)?;
+        // The facts broken: a line's step at its cut, the prefix a handoff keeps, its relation and its bound columns.
+        let rs = read_block(dir, running, |b| running_of_words(&words_of(b)[1..]))?;
+        let mut broken = Vec::new();
+        for (ti, r) in rs.iter().enumerate().filter(|(_, r)| r.broken) {
+            pd.broken += 1;
+            let st = &planned.terms[ti].steps[r.cut];
+            let rel = planned.decls.rels.get(st.src).copied().unwrap_or(0);
+            let mask = st.args.iter().enumerate().filter(|(_, a)| matches!(a, Arg::Eq(..) | Arg::Const(_))).fold(0u64, |m, (i, _)| m | 1 << i.min(63));
+            if !broken.contains(&(rel, mask)) {
+                broken.push((rel, mask));
+            }
+        }
         self.launch(dir, self.ops.note, &[rule, choice, running, memo])?;
-        Ok((probes, pd))
+        Ok((probes, pd, broken))
     }
 
     /// `emit_plan` into a new plan block, which then refers to every block its chains read and is frozen.

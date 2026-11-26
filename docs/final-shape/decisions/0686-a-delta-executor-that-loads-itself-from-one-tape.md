@@ -2106,3 +2106,20 @@ Checks (Relax, local, 129 of 129):
   fewer lines than the rounds, and the levelled trace equal to the rounds' over the same facts undeclared. An edit
   moving node 5 from under 2 to under 3 runs Δfix from each, and both give the rows of a cold run.
 - Mutations: off by one in the wave's level, and the form never found. A test fails each time.
+
+### A broken fact named; an algorithm named (0361 items 3 and 4; 2026-11-26)
+
+- **Named when broken** (item 3: "the profile names the relation and the fact"). A round names each declared fact
+  its rows broke: the broken line's step at its cut, which is the prefix a handoff keeps, gives its relation and the
+  columns its probe bound. It returns them with its probes and planning (`plan::Ran`), and `Work::broken` carries
+  them to the level's run, each once.
+- **Named algorithms** (item 4's override, `.layout r by reach`). A fact `by(rel, wave)` runs `rel`'s linear
+  recursion in one wave with no tree declared, where the form alone does not show the choice. The level reads the
+  `by` rows, and the stratum takes `Along` for the head they name.
+
+Checks (Relax, local, 129 of 129):
+- `a_levels_declared_keys_give_its_lines_default_plans` names each fact the edit broke: `f`'s key probed by its
+  first column, and `e`'s probed by its second (`e(50, 1)` beside `e(0, 1)`).
+- `a_declared_tree_and_order_give_their_keys_and_are_checked` names `f`'s tree, probed by the child.
+- `a_recursion_along_a_declared_tree_runs_in_one_wave_with_the_rounds_levels`: `by("anc", "wave")` takes the wave,
+  and its trace equals the rounds'. With the override ignored, it fails.

@@ -51,6 +51,9 @@ pub struct Work {
     pub excess: Vec<(&'static str, u64)>,
     /// What its planning did (*0686: Operations* §8): none in an identity run.
     pub planned: crate::plan::Planned,
+    /// The declared facts its rows broke (0361 item 3: "the profile names the relation and the fact"): each
+    /// relation, and the columns whose probe returned past what the facts bound it to (a mask).
+    pub broken: Vec<(i64, u64)>,
 }
 
 impl std::ops::AddAssign for Work {
@@ -59,6 +62,11 @@ impl std::ops::AddAssign for Work {
         self.probes += w.probes;
         self.rows_written += w.rows_written;
         self.planned += w.planned;
+        for b in w.broken {
+            if !self.broken.contains(&b) {
+                self.broken.push(b);
+            }
+        }
         for (name, n) in w.excess {
             match self.excess.iter_mut().find(|e| e.0 == name) {
                 Some(e) => e.1 += n,
