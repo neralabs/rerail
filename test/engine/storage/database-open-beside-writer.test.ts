@@ -16,11 +16,16 @@ afterEach(async () => {
   await Promise.all(folders.splice(0).map(folder => removeFolder(folder)));
 });
 
-/** A file in this build's shape, made by a writable open. */
-async function currentFile(): Promise<string> {
+/** The path of a database file not made yet, in a folder of its own. */
+async function newPath(): Promise<string> {
   const folder = await mkdtemp(join(tmpdir(), "rerail-open-beside-writer-"));
   folders.push(folder);
-  const path = join(folder, "rerail.sqlite");
+  return join(folder, "rerail.sqlite");
+}
+
+/** A file in this build's shape, made by a writable open. */
+async function currentFile(): Promise<string> {
+  const path = await newPath();
   openRerailDatabase(path).$client.close();
   return path;
 }
@@ -48,6 +53,23 @@ function opened(path: string, migrations?: readonly Migration[]): Database.Datab
   const client = openRerailDatabase(path, migrations === undefined ? {} : { migrations }).$client;
   closers.push(() => client.close());
   return client;
+}
+
+/**
+ * Makes this process's next `BEGIN IMMEDIATE` first open `path` writable on a connection of its own, so that open
+ * runs and commits between the first opener's read of the file and its lock. Reads whether it ran.
+ */
+function openAgainBeforeTheLock(path: string, migrations?: readonly Migration[]): () => boolean {
+  const prepare = Database.prototype.prepare;
+  let other = false;
+  vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, source: string) {
+    if (source === "BEGIN IMMEDIATE" && !other) {
+      other = true;
+      opened(path, migrations);
+    }
+    return prepare.call(this, source);
+  });
+  return () => other;
 }
 
 function thrown(act: () => unknown): unknown {
@@ -117,18 +139,28 @@ describe("two openers that both find a step due", () => {
     const path = await currentFile();
     const runs = { count: 0 };
     const migrations = [...RERAIL_MIGRATIONS, noteStep(runs)];
-    const prepare = Database.prototype.prepare;
-    let other = false;
-    vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, source: string) {
-      if (source === "BEGIN IMMEDIATE" && !other) {
-        other = true;
-        opened(path, migrations);
-      }
-      return prepare.call(this, source);
-    });
+    const other = openAgainBeforeTheLock(path, migrations);
 
     opened(path, migrations);
 
-    expect({ other, runs: runs.count, note: hasNote(path) }).toEqual({ other: true, runs: 1, note: true });
+    expect({ other: other(), runs: runs.count, note: hasNote(path) }).toEqual({ other: true, runs: 1, note: true });
+  });
+});
+
+describe("two openers that both find the file new", () => {
+  // Both read stamp 0 before either takes the lock. The first to take it makes the file and records every step; the
+  // other must read the stamp again under the lock, or it records every step again and fails on the key.
+  it("both open it and record each step once", async () => {
+    const path = await newPath();
+    const other = openAgainBeforeTheLock(path);
+
+    opened(path);
+
+    const reader = new Database(path, { readonly: true });
+    closers.push(() => reader.close());
+    expect({
+      other: other(),
+      ids: reader.prepare("SELECT id FROM schema_migrations ORDER BY rowid").pluck().all(),
+    }).toEqual({ other: true, ids: RERAIL_MIGRATIONS.map(migration => migration.id) });
   });
 });
