@@ -7,9 +7,13 @@
  */
 import { spawnSync } from "node:child_process";
 
-/** How many lines of each stream a failure's message shows, and how much of each line. */
+/**
+ * How many lines of each stream a failure's message shows, and how much of each line. A line longer than that shows
+ * its first SHOWN_LINE_LENGTH characters and then CUT_MARK, so a reader tells a cut line from a whole one.
+ */
 const SHOWN_LINES = 20;
 const SHOWN_LINE_LENGTH = 500;
+const CUT_MARK = "…";
 
 /** The folder and environment a program runs in; Node's defaults when left out. */
 export interface ProgramPlace {
@@ -69,5 +73,10 @@ function shown(stream: string, text: string): string[] {
   const lines = text.replace(/\r?\n$/u, "").split(/\r?\n/u);
   if (text.length === 0) return [`${stream}: nothing`];
   const heading = lines.length > SHOWN_LINES ? `${stream}, the first ${SHOWN_LINES} of ${lines.length} lines:` : `${stream}, ${lines.length} line${lines.length === 1 ? "" : "s"}:`;
-  return [heading, ...lines.slice(0, SHOWN_LINES).map(line => `  ${line.slice(0, SHOWN_LINE_LENGTH)}`)];
+  return [heading, ...lines.slice(0, SHOWN_LINES).map(line => `  ${shownLine(line)}`)];
+}
+
+/** `line` whole, or its first SHOWN_LINE_LENGTH characters and CUT_MARK when it is longer. */
+function shownLine(line: string): string {
+  return line.length > SHOWN_LINE_LENGTH ? `${line.slice(0, SHOWN_LINE_LENGTH)}${CUT_MARK}` : line;
 }

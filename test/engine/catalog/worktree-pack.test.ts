@@ -1,4 +1,3 @@
-import { runProgram } from "../../support/processes/run-program.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -25,6 +24,7 @@ import {
   testBundle,
 } from "../../support/rule-configuration-builders.js";
 import { symlinkOrSkip } from "../../support/platform/links.js";
+import { runProgram } from "../../support/processes/run-program.js";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {

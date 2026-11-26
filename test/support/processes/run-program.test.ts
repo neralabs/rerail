@@ -52,6 +52,12 @@ describe("a program a case's set-up starts", () => {
     ]);
   });
 
+  it("marks a line over 500 characters as cut with a trailing …, and shows a line of exactly 500 whole", () => {
+    const { message } = failedScript("console.log('a'.repeat(501)); console.log('b'.repeat(500)); process.exit(1)");
+
+    expect(message.split("\n").slice(1)).toEqual(["stderr: nothing", "stdout, 2 lines:", `  ${"a".repeat(500)}…`, `  ${"b".repeat(500)}`]);
+  });
+
   // Windows has no signals: a process that kills itself there exits with status 1.
   it.skipIf(process.platform === "win32")("fails with the signal that ended it, and no status", () => {
     const { run, message } = failedScript("process.kill(process.pid, 'SIGKILL')");
