@@ -3,10 +3,11 @@
  * menu it shows ({@link trayMenuState}), and the child process the daemon runs it in ({@link startTray}).
  *
  * The tray is a child of the daemon with three pipes. The daemon writes a menu state, one JSON line, at once and again
- * whenever it changes; the tray writes back one JSON line per click (`open`, `settings`, `docs`, `update`, `restart`
- * or `stop`) and its diagnostics on stderr, which go to daemon.log. The tray exits when its stdin closes, so it never
- * outlives the daemon, however the daemon ends. The tray is an extra: nothing it does or fails to do may stop the
- * daemon, so a failure is logged once, and the tray is never started again in that daemon.
+ * whenever it changes; the tray writes back one JSON line per click (`open`, `settings`, `docs`, `repository` with the
+ * key of the repository clicked, `repositories`, `update`, `restart` or `stop`) and its diagnostics on stderr, which
+ * go to daemon.log. The tray exits when its stdin closes, so it never outlives the daemon, however the daemon ends.
+ * The tray is an extra: nothing it does or fails to do may stop the daemon, so a failure is logged once, and the tray
+ * is never started again in that daemon.
  */
 import type { ChildProcess } from "node:child_process";
 import { accessSync, chmodSync, constants, existsSync } from "node:fs";
@@ -89,7 +90,76 @@ export interface TrayMenuState {
   dashboard: string;
   update: { label: string; enabled: boolean } | null;
   attention: boolean;
+  /**
+   * The Repositories section ({@link repositorySection}); null while the daemon has not read its repositories, and
+   * the tray then leaves the section out, as a tray from before the section ignores the key.
+   */
+  repositories: TrayRepositorySection | null;
 }
+
+/** A repository the daemon knows, as the menu's Repositories section names it. */
+export interface TrayRepository {
+  /** The repository's key, which a click on its row sends back. */
+  key: string;
+  name: string;
+  setUp: boolean;
+  started: boolean;
+  /** How many rules it has, one per rule id, and how many of them run (`repositoryRuleCounts`). */
+  total: number;
+  on: number;
+}
+
+/** The menu's Repositories section: a row per repository, and a last line under them, or none. */
+export interface TrayRepositorySection {
+  /** `running` draws the row's circle green, else grey. */
+  rows: { key: string; label: string; running: boolean }[];
+  /** "3 more…", which opens the dashboard's Settings, where every repository is listed; "No repositories yet", dimmed. */
+  more: { label: string; enabled: boolean } | null;
+}
+
+/** How many repositories the menu lists before its "N more…" line. */
+export const MENU_REPOSITORIES = 8;
+/** How long a repository's name runs in the menu before it is cut with "…". */
+const NAME_LENGTH = 40;
+
+/**
+ * The menu's Repositories section for `repositories`, in the order given (the dashboard's, by name): each row says
+ * the repository's name and what its rules do, in the words of the dashboard's repository list ({@link repositoryTag}),
+ * with a green circle where its rules run. Past {@link MENU_REPOSITORIES} rows, a last line says how many more there are.
+ */
+export function repositorySection(repositories: readonly TrayRepository[]): TrayRepositorySection {
+  const shown = repositories.slice(0, MENU_REPOSITORIES);
+  const rest = repositories.length - shown.length;
+  return {
+    rows: shown.map(repository => ({
+      key: repository.key,
+      label: `${cut(repository.name)} · ${repositoryTag(repository)}`,
+      running: repository.setUp && repository.started && repository.on > 0,
+    })),
+    more: repositories.length === 0
+      ? { label: "No repositories yet", enabled: false }
+      : rest > 0 ? { label: `${count(rest)} more…`, enabled: true } : null,
+  };
+}
+
+/**
+ * What a repository's rules do, as the dashboard's repository list says it (`repoLine` in ui/repo-rules.js): "12 rules
+ * on" ("0 rules on" when each is off), "Off · 12 rules" while the repository is off, "No rules added", "Not set up".
+ */
+export function repositoryTag(repository: TrayRepository): string {
+  if (!repository.setUp) return "Not set up";
+  if (repository.total === 0) return "No rules added";
+  if (!repository.started) return `Off · ${count(repository.total)} ${plural(repository.total, "rule")}`;
+  return `${count(repository.on)} ${plural(repository.on, "rule")} on`;
+}
+
+const count = (n: number): string => n.toLocaleString("en-US");
+const plural = (n: number, one: string): string => (n === 1 ? one : `${one}s`);
+/** `name`, cut to {@link NAME_LENGTH} characters with "…" where it runs longer. */
+const cut = (name: string): string => {
+  const characters = [...name];
+  return characters.length <= NAME_LENGTH ? name : `${characters.slice(0, NAME_LENGTH - 1).join("")}…`;
+};
 
 /**
  * The menu for a daemon whose health is `health`, in the Rerail home `homePath` names ({@link displayHomePath}).
@@ -107,6 +177,8 @@ export function trayMenuState(input: {
   newer: string | null;
   update: TrayUpdateRun;
   isNewer(latest: string, running: string): boolean;
+  /** The repositories the daemon knows, or null before it read them. */
+  repositories: readonly TrayRepository[] | null;
 }): TrayMenuState {
   const { health, newer, update: run, isNewer } = input;
   const update = updateItem(newer, run, isNewer);
@@ -117,6 +189,7 @@ export function trayMenuState(input: {
     dashboard: `Home path: ${input.homePath}`,
     update,
     attention: !health.healthy || updateOffered(newer, run, isNewer) !== null,
+    repositories: input.repositories === null ? null : repositorySection(input.repositories),
   };
 }
 
@@ -168,11 +241,13 @@ function updateItem(
 /** What the tray needs of the running daemon. */
 export interface TrayDaemon {
   health(): DaemonHealth;
+  /** Every repository the daemon knows, as the dashboard lists them; read every few seconds, so cheap while none change. */
+  repositories(): readonly TrayRepository[];
   /**
    * The dashboard link with the access token, for this user's browser (`dashboardLink`): at the dashboard's `view`
-   * (`settings` opens `#settings`), its main page without one.
+   * (`settings` opens `#settings`), its main page without one; on `repository`, by its key, where one is named.
    */
-  dashboardLink(view?: string): string;
+  dashboardLink(view?: string, repository?: string): string;
   /** Whether the daemon binds only a loopback host. */
   loopback: boolean;
   /** Closes the daemon and starts it again with the same arguments, as at its heap ceiling. Its new tray is its own. */
@@ -266,15 +341,33 @@ export function startTray(options: TrayOptions): TrayHandle {
     const latest = health.update?.latest;
     return latest !== undefined && isNewer(latest, health.version) ? latest : null;
   };
+  /** The repositories last read, kept while a read fails so the section never empties for an outage. */
+  let repositories: readonly TrayRepository[] | null = null;
+  /** Set while repositories cannot be read, so an outage is logged once, as {@link menuFailed} is. */
+  let repositoriesFailed = false;
+  /** The keys of the rows the last state listed: a click names one of them, or does nothing. */
+  let listed = new Set<string>();
+  const readRepositories = (): void => {
+    try {
+      repositories = daemon.repositories();
+      repositoriesFailed = false;
+    } catch (error) {
+      if (!repositoriesFailed) log(`rerail tray: could not read the repositories for the menu: ${(error as Error).message}`);
+      repositoriesFailed = true;
+    }
+  };
   const menu = (): TrayMenuState => {
     const health = daemon.health();
-    return trayMenuState({ health, homePath: options.homePath, newer: newer(health), update: run, isNewer });
+    readRepositories();
+    return trayMenuState({ health, homePath: options.homePath, newer: newer(health), update: run, isNewer, repositories });
   };
   const send = (): void => {
     if (ended) return;
+    let state: TrayMenuState;
     let line: string;
     try {
-      line = JSON.stringify(menu());
+      state = menu();
+      line = JSON.stringify(state);
     } catch (error) {
       // The menu keeps its last state, and the next tick tries again.
       if (!menuFailed) log(`rerail tray: could not read the daemon's state for the menu: ${(error as Error).message}`);
@@ -284,6 +377,7 @@ export function startTray(options: TrayOptions): TrayHandle {
     menuFailed = false;
     if (line === sent) return;
     sent = line;
+    listed = new Set(state.repositories?.rows.map(row => row.key) ?? []);
     stdin.write(`${line}\n`);
   };
 
@@ -315,9 +409,17 @@ export function startTray(options: TrayOptions): TrayHandle {
     });
   };
 
-  const actions: Readonly<Record<string, () => void>> = {
+  /** A click on a repository's row: the dashboard at that repository, when the menu lists it. */
+  const openRepository = (message: TrayMessage): void => {
+    if (message.repository === undefined || !listed.has(message.repository)) return;
+    options.openUrl(daemon.dashboardLink(undefined, message.repository));
+  };
+  const actions: Readonly<Record<string, (message: TrayMessage) => void>> = {
     open: () => options.openUrl(daemon.dashboardLink()),
     settings: () => options.openUrl(daemon.dashboardLink("settings")),
+    repository: openRepository,
+    // Settings lists every repository, the menu only the first few.
+    repositories: () => options.openUrl(daemon.dashboardLink("settings")),
     docs: () => options.openUrl(DOCUMENTATION_URL),
     update,
     // daemon.log says why the daemon went: its own close says nothing of who asked.
@@ -332,12 +434,12 @@ export function startTray(options: TrayOptions): TrayHandle {
   };
 
   eachLine(stdout, line => {
-    const action = actionOf(line);
-    if (action === undefined || !Object.hasOwn(actions, action)) return;
+    const message = messageOf(line);
+    if (message === undefined || !Object.hasOwn(actions, message.action)) return;
     try {
-      actions[action]!();
+      actions[message.action]!(message);
     } catch (error) {
-      log(`rerail tray: could not ${action}: ${(error as Error).message}`);
+      log(`rerail tray: could not ${message.action}: ${(error as Error).message}`);
     }
   });
   eachLine(stderr, line => log(`rerail tray: ${line.startsWith(TRAY_PREFIX) ? line.slice(TRAY_PREFIX.length) : line}`));
@@ -379,8 +481,17 @@ function makeExecutable(trayPath: string, platform: NodeJS.Platform = process.pl
   }
 }
 
-/** The action a line from the tray names, `{"action":"open"}` naming `open`; undefined for a line that names none. */
-function actionOf(line: string): string | undefined {
+/** A click the tray tells of: its action, and for a repository's row the key the row was sent with. */
+interface TrayMessage {
+  action: string;
+  repository?: string;
+}
+
+/**
+ * The click a line from the tray tells of, `{"action":"open"}` or `{"action":"repository","repository":"<key>"}`;
+ * undefined for a line that names no action. A `repository` that is not a string is left out.
+ */
+function messageOf(line: string): TrayMessage | undefined {
   let message: unknown;
   try {
     message = JSON.parse(line);
@@ -388,8 +499,9 @@ function actionOf(line: string): string | undefined {
     return undefined;
   }
   if (typeof message !== "object" || message === null) return undefined;
-  const { action } = message as { action?: unknown };
-  return typeof action === "string" ? action : undefined;
+  const { action, repository } = message as { action?: unknown; repository?: unknown };
+  if (typeof action !== "string") return undefined;
+  return typeof repository === "string" ? { action, repository } : { action };
 }
 
 /** Calls `take` with each line `stream` carries, without its newline, however the lines are split across reads. */

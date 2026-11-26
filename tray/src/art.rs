@@ -1,4 +1,4 @@
-//! The tray's pictures: the status circle on the menu's first line, and the badge drawn onto the icon.
+//! The tray's pictures: the circles on the menu's status line and repository rows, and the badge drawn onto the icon.
 
 use std::io::Cursor;
 
@@ -13,6 +13,8 @@ pub struct Rgba {
 const GREEN: [u8; 3] = [0x34, 0xC7, 0x59];
 const RED: [u8; 3] = [0xFF, 0x3B, 0x30];
 const AMBER: [u8; 3] = [0xFF, 0x9F, 0x0A];
+/// macOS's system grey, which reads as "not running" in light and dark menus alike.
+const GREY: [u8; 3] = [0x8E, 0x8E, 0x93];
 const WHITE: [u8; 3] = [0xFF, 0xFF, 0xFF];
 const BLACK: [u8; 3] = [0, 0, 0];
 
@@ -29,12 +31,21 @@ const KNOCK_OUT: f32 = 1.0;
 
 /// The status line's icon: a filled circle, green when the daemon is healthy and red when not, on transparency.
 pub fn status_circle(healthy: bool, size: u32) -> Rgba {
+    circle(if healthy { GREEN } else { RED }, size)
+}
+
+/// A repository row's icon: the status line's circle, green where the repository's rules run and grey where not.
+pub fn repository_circle(running: bool, size: u32) -> Rgba {
+    circle(if running { GREEN } else { GREY }, size)
+}
+
+/// A filled circle of `colour`, [`CIRCLE`] of its image's edge across, on transparency.
+fn circle(colour: [u8; 3], size: u32) -> Rgba {
     let mut image = Rgba {
         width: size,
         height: size,
         pixels: vec![0; (size * size * 4) as usize],
     };
-    let colour = if healthy { GREEN } else { RED };
     let (centre, radius) = (size as f32 / 2.0, size as f32 * CIRCLE / 2.0);
     image.each_pixel(|x, y, pixel| paint(pixel, colour, disc(centre, centre, radius, x, y)));
     image
@@ -214,6 +225,7 @@ mod tests {
 
     const GREEN: [u8; 4] = [0x34, 0xC7, 0x59, 255];
     const RED: [u8; 4] = [0xFF, 0x3B, 0x30, 255];
+    const GREY: [u8; 4] = [0x8E, 0x8E, 0x93, 255];
     const AMBER: [u8; 3] = [0xFF, 0x9F, 0x0A];
     const WHITE: [u8; 3] = [0xFF, 0xFF, 0xFF];
 
@@ -249,6 +261,12 @@ mod tests {
     fn status_circle_is_green_or_red_in_the_centre() {
         assert_eq!(pixel(&status_circle(true, 32), 16, 16), GREEN);
         assert_eq!(pixel(&status_circle(false, 32), 16, 16), RED);
+    }
+
+    #[test]
+    fn repository_circle_is_green_or_grey_in_the_centre() {
+        assert_eq!(pixel(&repository_circle(true, 32), 16, 16), GREEN);
+        assert_eq!(pixel(&repository_circle(false, 32), 16, 16), GREY);
     }
 
     #[test]

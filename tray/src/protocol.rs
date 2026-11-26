@@ -14,18 +14,38 @@ pub struct MenuState {
     /// address, so a tray and a daemon from either side of that change still read each other's lines.
     #[serde(rename = "dashboard")]
     pub home_path: String,
-    pub update: Option<UpdateItem>,
+    pub update: Option<Item>,
     pub attention: bool,
+    /// The Repositories section; None leaves it out, as from a daemon that sends none or has not read them yet.
+    #[serde(default)]
+    pub repositories: Option<Repositories>,
 }
 
+/// A line whose text the daemon gives, and whether it can be clicked.
 #[derive(Deserialize, Clone, PartialEq, Debug)]
-pub struct UpdateItem {
+pub struct Item {
     pub label: String,
     pub enabled: bool,
 }
 
+/// The menu's Repositories section: a row per repository, and a last line under them, or none.
+#[derive(Deserialize, Clone, PartialEq, Debug)]
+pub struct Repositories {
+    pub rows: Vec<RepositoryRow>,
+    /// "3 more…", which opens the dashboard's list, or "No repositories yet", dimmed.
+    pub more: Option<Item>,
+}
+
+/// A repository's row: a click sends its `key` back. `running` draws its circle green, else grey.
+#[derive(Deserialize, Clone, PartialEq, Debug)]
+pub struct RepositoryRow {
+    pub key: String,
+    pub label: String,
+    pub running: bool,
+}
+
 /// A menu click the daemon acts on.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Action {
     /// Go to the Dashboard: the dashboard's main page.
     Open,
@@ -33,17 +53,27 @@ pub enum Action {
     Settings,
     /// Documentation: Rerail's documentation site.
     Docs,
+    /// A repository's row: the dashboard at the repository with this key.
+    Repository(String),
+    /// The line under the rows: the dashboard's list of every repository.
+    Repositories,
     Update,
     Restart,
     Stop,
 }
 
 /// One JSON line, newline included, ready to write to stdout.
-pub fn encode_action(action: Action) -> String {
+pub fn encode_action(action: &Action) -> String {
     let name = match action {
         Action::Open => "open",
         Action::Settings => "settings",
         Action::Docs => "docs",
+        Action::Repository(key) => {
+            // A JSON string as serde writes it, quotes and escapes included; a `String` always serializes.
+            let key = serde_json::to_string(key).unwrap_or_default();
+            return format!("{{\"action\":\"repository\",\"repository\":{key}}}\n");
+        }
+        Action::Repositories => "repositories",
         Action::Update => "update",
         Action::Restart => "restart",
         Action::Stop => "stop",
@@ -52,7 +82,7 @@ pub fn encode_action(action: Action) -> String {
 }
 
 /// Tells the daemon about a click. A failure is noted on stderr: the daemon is gone, or the click is lost.
-pub fn write_action(action: Action) {
+pub fn write_action(action: &Action) {
     let mut stdout = std::io::stdout().lock();
     let written = stdout
         .write_all(encode_action(action).as_bytes())
@@ -142,11 +172,12 @@ mod tests {
                 status: "Rerail is running".into(),
                 version: "Version 0.2.2".into(),
                 home_path: "Home path: ~/.rerail".into(),
-                update: Some(UpdateItem {
+                update: Some(Item {
                     label: "Update to 0.2.3".into(),
                     enabled: true
                 }),
                 attention: true,
+                repositories: None,
             }
         );
     }
@@ -201,6 +232,51 @@ mod tests {
     }
 
     #[test]
+    fn parses_the_repositories_section() {
+        let line = FULL.replacen(
+            r#""attention":true"#,
+            r#""attention":true,"repositories":{"rows":[{"key":"remote:github.com/acme/web","label":"web · 3 rules on","running":true}],"more":{"label":"3 more…","enabled":true}}"#,
+            1,
+        );
+        let state: MenuState = serde_json::from_str(&line).unwrap();
+        assert_eq!(
+            state.repositories,
+            Some(Repositories {
+                rows: vec![RepositoryRow {
+                    key: "remote:github.com/acme/web".into(),
+                    label: "web · 3 rules on".into(),
+                    running: true,
+                }],
+                more: Some(Item {
+                    label: "3 more…".into(),
+                    enabled: true
+                }),
+            })
+        );
+        let unread = FULL.replacen(
+            r#""attention":true"#,
+            r#""attention":true,"repositories":null"#,
+            1,
+        );
+        assert_eq!(
+            serde_json::from_str::<MenuState>(&unread)
+                .unwrap()
+                .repositories,
+            None
+        );
+    }
+
+    #[test]
+    fn reads_a_state_from_a_daemon_that_sends_no_repositories() {
+        assert_eq!(
+            serde_json::from_str::<MenuState>(FULL)
+                .unwrap()
+                .repositories,
+            None
+        );
+    }
+
+    #[test]
     fn ignores_unknown_fields() {
         let line = FULL.replacen('{', r#"{"x":1,"#, 1);
         assert!(serde_json::from_str::<MenuState>(&line).is_ok());
@@ -208,15 +284,33 @@ mod tests {
 
     #[test]
     fn encodes_actions() {
-        assert_eq!(encode_action(Action::Open), "{\"action\":\"open\"}\n");
+        assert_eq!(encode_action(&Action::Open), "{\"action\":\"open\"}\n");
         assert_eq!(
-            encode_action(Action::Settings),
+            encode_action(&Action::Settings),
             "{\"action\":\"settings\"}\n"
         );
-        assert_eq!(encode_action(Action::Docs), "{\"action\":\"docs\"}\n");
-        assert_eq!(encode_action(Action::Restart), "{\"action\":\"restart\"}\n");
-        assert_eq!(encode_action(Action::Update), "{\"action\":\"update\"}\n");
-        assert_eq!(encode_action(Action::Stop), "{\"action\":\"stop\"}\n");
+        assert_eq!(encode_action(&Action::Docs), "{\"action\":\"docs\"}\n");
+        assert_eq!(
+            encode_action(&Action::Repositories),
+            "{\"action\":\"repositories\"}\n"
+        );
+        assert_eq!(
+            encode_action(&Action::Restart),
+            "{\"action\":\"restart\"}\n"
+        );
+        assert_eq!(encode_action(&Action::Update), "{\"action\":\"update\"}\n");
+        assert_eq!(encode_action(&Action::Stop), "{\"action\":\"stop\"}\n");
+    }
+
+    #[test]
+    fn encodes_a_repository_click_with_its_key_as_a_json_string() {
+        let line = encode_action(&Action::Repository("local:/Users/a \"b\"\\c".into()));
+        assert_eq!(
+            line,
+            "{\"action\":\"repository\",\"repository\":\"local:/Users/a \\\"b\\\"\\\\c\"}\n"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed["repository"], "local:/Users/a \"b\"\\c");
     }
 
     #[test]

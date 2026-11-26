@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
 use muda::accelerator::{Accelerator, Code, Modifiers};
-use muda::{IconMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use muda::{IconMenuItem, IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tao::event::Event;
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 #[cfg(target_os = "macos")]
@@ -12,7 +12,7 @@ use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::art::{self, Rgba};
-use crate::protocol::{self, Action, Incoming, MenuState};
+use crate::protocol::{self, Action, Incoming, MenuState, Repositories};
 
 /// The base icon: the "n" alone as a template on macOS, which the system tints for the menu bar; the full-colour
 /// square on Windows.
@@ -28,6 +28,12 @@ const CIRCLE_SIZE: u32 = 36;
 
 /// The item the update line goes in just before, while there is one.
 const UPDATE_BEFORE: &str = "restart";
+
+/// The item the Repositories section goes under, past the separator below it.
+const REPOSITORIES_AFTER: &str = "open";
+
+/// How a repository row's id starts; the repository's key follows.
+const REPOSITORY_ID: &str = "repository:";
 
 /// Runs the tray until stdin closes. The icon appears with the first menu state.
 pub fn run() -> ! {
@@ -47,7 +53,7 @@ pub fn run() -> ! {
     // Called on the thread that runs the menu, as soon as an item is clicked.
     MenuEvent::set_event_handler(Some(Arc::new(|event: MenuEvent| {
         if let Some(action) = action_for(event.id.as_ref()) {
-            protocol::write_action(action);
+            protocol::write_action(&action);
         }
     })));
 
@@ -84,7 +90,11 @@ pub fn run() -> ! {
 
 /// The action a menu item's id stands for. The status line has an id but no action.
 fn action_for(id: &str) -> Option<Action> {
+    if let Some(key) = id.strip_prefix(REPOSITORY_ID) {
+        return Some(Action::Repository(key.into()));
+    }
     match id {
+        "repositories" => Some(Action::Repositories),
         "open" => Some(Action::Open),
         "settings" => Some(Action::Settings),
         "docs" => Some(Action::Docs),
@@ -108,6 +118,9 @@ struct Tray {
     home_path: MenuItem,
     update: MenuItem,
     update_shown: bool,
+    /// The Repositories section the menu shows, and how many items it takes there, separator included.
+    repositories: Option<Repositories>,
+    repository_items: usize,
     /// Whether the icon shows the attention badge; none until the first state sets it.
     attention: Option<bool>,
 }
@@ -160,6 +173,8 @@ impl Tray {
             home_path,
             update,
             update_shown: false,
+            repositories: None,
+            repository_items: 0,
             attention: None,
         };
         tray.show(state, base);
@@ -183,6 +198,9 @@ impl Tray {
             state.update.is_some(),
             UPDATE_BEFORE,
         );
+        if self.repositories != state.repositories {
+            self.show_repositories(state.repositories.clone());
+        }
         if let Err(error) = self.icon.set_tooltip(Some(&state.status)) {
             eprintln!("rerail-tray: could not set the tooltip: {error}");
         }
@@ -212,6 +230,35 @@ impl Tray {
         }
     }
 
+    /// Puts `section` in place of the Repositories section the menu shows, or takes it away for None. Its items go in
+    /// one at a time just under Go to the Dashboard's separator; one that cannot is left out, with a note.
+    fn show_repositories(&mut self, section: Option<Repositories>) {
+        let Some(after) = position(&self.menu, REPOSITORIES_AFTER) else {
+            return;
+        };
+        let start = after + 2;
+        for _ in 0..self.repository_items {
+            self.menu.remove_at(start);
+        }
+        self.repository_items = 0;
+        if let Some(section) = &section {
+            for item in repository_items(section) {
+                match self
+                    .menu
+                    .insert(item.as_ref(), start + self.repository_items)
+                {
+                    Ok(()) => self.repository_items += 1,
+                    Err(error) => eprintln!("rerail-tray: could not change the menu: {error}"),
+                }
+            }
+            #[cfg(target_os = "macos")]
+            for row in &section.rows {
+                show_item_image(&self.menu, &format!("{REPOSITORY_ID}{}", row.key), None);
+            }
+        }
+        self.repositories = section;
+    }
+
     fn set_icon(&self, image: Rgba) {
         let icon = match tray_icon::Icon::from_rgba(image.pixels, image.width, image.height) {
             Ok(icon) => icon,
@@ -225,6 +272,33 @@ impl Tray {
             eprintln!("rerail-tray: could not set the icon: {error}");
         }
     }
+}
+
+/// The Repositories section's items, top to bottom: its heading, a row per repository with its circle, the line under
+/// the rows where there is one, and the separator that closes it.
+fn repository_items(section: &Repositories) -> Vec<Box<dyn IsMenuItem>> {
+    let mut items: Vec<Box<dyn IsMenuItem>> =
+        vec![Box::new(MenuItem::new("Repositories", false, None))];
+    for row in &section.rows {
+        // Enabled, as the status line is, so the circle is not drawn dimmed; a click opens the repository.
+        items.push(Box::new(IconMenuItem::with_id(
+            format!("{REPOSITORY_ID}{}", row.key),
+            label(&row.label),
+            true,
+            menu_icon(art::repository_circle(row.running, CIRCLE_SIZE)),
+            None,
+        )));
+    }
+    if let Some(more) = &section.more {
+        items.push(Box::new(MenuItem::with_id(
+            "repositories",
+            label(&more.label),
+            more.enabled,
+            None,
+        )));
+    }
+    items.push(Box::new(PredefinedMenuItem::separator()));
+    items
 }
 
 /// Gives the menu's item with id `id` the SF Symbol `symbol`, as a template so it takes the menu's colour, and asks
@@ -285,7 +359,7 @@ fn position(menu: &Menu, id: &str) -> Option<usize> {
 
 fn menu_icon(image: Rgba) -> Option<muda::Icon> {
     muda::Icon::from_rgba(image.pixels, image.width, image.height)
-        .inspect_err(|error| eprintln!("rerail-tray: could not make the status circle: {error}"))
+        .inspect_err(|error| eprintln!("rerail-tray: could not make a menu circle: {error}"))
         .ok()
 }
 
@@ -301,6 +375,11 @@ mod tests {
         assert_eq!(action_for("restart"), Some(Action::Restart));
         assert_eq!(action_for("update"), Some(Action::Update));
         assert_eq!(action_for("stop"), Some(Action::Stop));
+        assert_eq!(action_for("repositories"), Some(Action::Repositories));
+        assert_eq!(
+            action_for("repository:remote:github.com/acme/web"),
+            Some(Action::Repository("remote:github.com/acme/web".into()))
+        );
         assert_eq!(action_for("status"), None);
     }
 

@@ -345,6 +345,46 @@ function effectiveRuleRecord(rule: EffectiveRule, dates: RuleDates): z.infer<typ
   return { ...ruleDocumentRecord(rule.document, rule.notRun), ...shared };
 }
 
+/** How many rules a repository has, one per rule id however many folders add it, and how many of them run. */
+export interface RepositoryRuleCounts {
+  readonly total: number;
+  readonly on: number;
+}
+
+/**
+ * {@link RepositoryRuleCounts} of repository `repositoryKey`'s own rules (`GET /api/repository/rules` with no checkout),
+ * counted as the dashboard's repository list counts that answer (`ruleCountsOf` in ui/repo-rules.js): a rule runs
+ * where it is on at every folder that adds it, its options apply at each, and Rerail evaluates its document. A
+ * session's count can differ: it reads one checkout's own settings and rules too.
+ */
+export function repositoryRuleCounts(stores: RerailApiStores, repositoryKey: string): RepositoryRuleCounts {
+  const byId = new Map<string, { folders: Set<string>; runs: boolean }>();
+  for (const rule of listRepositoryRules(stores.database(), stores.ruleCatalog(), repositoryKey).rules) {
+    const known = byId.get(rule.document.rule.id) ?? { folders: new Set<string>(), runs: true };
+    byId.set(rule.document.rule.id, known);
+    // A folder already counted for the rule is not counted again, as the dashboard reads only its first entry there.
+    if (known.folders.has(rule.attachmentFolder)) continue;
+    known.folders.add(rule.attachmentFolder);
+    known.runs &&= runsAtFolder(rule);
+  }
+  return { total: byId.size, on: [...byId.values()].filter(rule => rule.runs).length };
+}
+
+/** Whether `rule` runs at the folder that adds it: on, its options apply, and Rerail evaluates its document. */
+function runsAtFolder(rule: EffectiveRule): boolean {
+  if (!rule.on || rule.configError !== null) return false;
+  const record = ruleDocumentRecord(rule.document, rule.notRun);
+  return !("inactive" in record) || record.inactive === undefined;
+}
+
+/** Every repository Rerail knows, as `GET /api/repositories` lists them to a person, each with its {@link repositoryRuleCounts}. */
+export function repositoriesWithRuleCounts(stores: RerailApiStores): { repository: z.infer<typeof repositorySummarySchema>; counts: RepositoryRuleCounts }[] {
+  return listRepositories(stores.database()).map(repository => ({
+    repository: repositorySummary(repository),
+    counts: repositoryRuleCounts(stores, repository.repositoryKey),
+  }));
+}
+
 function libraryRecord(rule: LibraryRule): z.infer<typeof libraryRuleRecordSchema> {
   const shared = {
     revision: rule.revision,

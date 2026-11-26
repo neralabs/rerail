@@ -5,7 +5,7 @@ use ksni::menu::StandardItem;
 use ksni::{Error, Icon, MenuItem, ToolTip, Tray};
 
 use crate::art::{self, Rgba};
-use crate::protocol::{self, Action, Incoming, MenuState};
+use crate::protocol::{self, Action, Incoming, MenuState, Repositories};
 
 /// The full-colour square, as on Windows.
 const ICON: &[u8] = include_bytes!("../assets/icon.png");
@@ -82,6 +82,9 @@ struct RerailTray {
     icon: Icon,
     /// The status line's circle as a PNG, which a dbusmenu item takes.
     circle: Vec<u8>,
+    /// A repository row's circle as a PNG: green where its rules run, grey where not.
+    running: Vec<u8>,
+    idle: Vec<u8>,
 }
 
 impl RerailTray {
@@ -94,6 +97,8 @@ impl RerailTray {
                 data: Vec::new(),
             },
             circle: Vec::new(),
+            running: art::repository_circle(true, CIRCLE_SIZE).to_png(),
+            idle: art::repository_circle(false, CIRCLE_SIZE).to_png(),
         };
         tray.show(state, base);
         tray
@@ -127,7 +132,7 @@ fn button(text: &str, enabled: bool, action: Action) -> MenuItem<RerailTray> {
     StandardItem {
         label: label(text),
         enabled,
-        activate: Box::new(move |_| protocol::write_action(action)),
+        activate: Box::new(move |_| protocol::write_action(&action)),
         ..Default::default()
     }
     .into()
@@ -169,16 +174,52 @@ impl Tray for RerailTray {
             MenuItem::Separator,
             button("Go to the Dashboard", true, Action::Open),
             MenuItem::Separator,
+        ];
+        if let Some(section) = &state.repositories {
+            menu.extend(self.repository_items(section));
+        }
+        menu.extend([
             button("Settings…", true, Action::Settings),
             button("Documentation", true, Action::Docs),
             MenuItem::Separator,
-        ];
+        ]);
         if let Some(update) = &state.update {
             menu.push(button(&update.label, update.enabled, Action::Update));
         }
         menu.push(button("Restart", true, Action::Restart));
         menu.push(button("Stop Rerail", true, Action::Stop));
         menu
+    }
+}
+
+impl RerailTray {
+    /// The Repositories section's items, as on macOS and Windows: its heading, a row per repository with its circle,
+    /// the line under the rows where there is one, and the separator that closes it.
+    fn repository_items(&self, section: &Repositories) -> Vec<MenuItem<Self>> {
+        let mut items = vec![line("Repositories")];
+        for row in &section.rows {
+            let key = row.key.clone();
+            items.push(
+                StandardItem {
+                    label: label(&row.label),
+                    icon_data: if row.running {
+                        self.running.clone()
+                    } else {
+                        self.idle.clone()
+                    },
+                    activate: Box::new(move |_| {
+                        protocol::write_action(&Action::Repository(key.clone()))
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+        if let Some(more) = &section.more {
+            items.push(button(&more.label, more.enabled, Action::Repositories));
+        }
+        items.push(MenuItem::Separator);
+        items
     }
 }
 

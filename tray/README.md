@@ -4,8 +4,10 @@
 linked into the engine addon.
 
 The daemon writes the menu's state to the tray's stdin as JSON lines, and the tray writes clicks back on stdout as JSON
-lines: `{"action":"open"}`, and `settings`, `docs`, `update`, `restart` or `stop` in the same shape. The tray exits
-when stdin closes, so it never outlives the daemon. It reads nothing from the Rerail home and makes no network calls.
+lines: `{"action":"open"}`, and `settings`, `docs`, `repositories`, `update`, `restart` or `stop` in the same shape; a
+repository's row sends `{"action":"repository","repository":"<key>"}` with the key the daemon gave the row. The tray
+exits when stdin closes, so it never outlives the daemon. It reads nothing from the Rerail home and makes no network
+calls; what it shows, repository names included, comes from the daemon.
 
 | Path | What it holds |
 |---|---|

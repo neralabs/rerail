@@ -38,6 +38,7 @@ import type { PublishedRulePackReader } from "../engine/catalog/rule-packs.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
 import { eventAnswerFacts } from "../api/event-answer.js";
+import { repositoriesWithRuleCounts } from "../api/repository-operations.js";
 import type { ChangeFeedOptions } from "../api/change-feed.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
 import { modelStatus } from "../engine/native/model-status.js";
@@ -70,6 +71,14 @@ const API_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
  * stays below the size V8 can hold as one string to parse.
  */
 const NATIVE_BODY_LIMIT_BYTES = 256 * 1024 * 1024;
+
+/** {@link RerailDaemon.repositories}' last answer, with the database version and rule catalog it was read at. */
+interface RepositoriesRead {
+  readonly version: string;
+  readonly catalog: ReturnType<RerailApiStores["ruleCatalog"]>;
+  readonly list: ReturnType<typeof repositoriesWithRuleCounts>;
+}
+
 /**
  * How long a client has to send its headers, then its whole request. Both bound receiving the request only, never how
  * long a handler takes to answer, so no response is cut short: `/mcp` answers each POST with one JSON body (no SSE
@@ -571,6 +580,8 @@ export class RerailDaemon {
   #untakenFolder: string | undefined;
   /** What `RerailDaemonOptions.statusLines` started: stopped first on close, while the stores it reads are open. */
   #statusLines: { stop(): Promise<void> } | undefined;
+  /** What {@link repositories} last read, and the database version and rule catalog it read them at. */
+  #repositoriesRead: RepositoriesRead | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
@@ -876,6 +887,21 @@ export class RerailDaemon {
       experiments: enabledExperiments(),
       update: this.#updateChecks?.newest() ?? null,
     };
+  }
+
+  /**
+   * Every repository Rerail knows on this machine, as the dashboard lists them, with how many of its rules run. The
+   * answer is read again only once the database has a commit since (`dataVersion`) or the installed packs changed (the
+   * cached catalog is another object), so a caller that asks every few seconds costs a version read while nothing moves.
+   */
+  repositories(): RepositoriesRead["list"] {
+    const version = this.#stores.dataVersion();
+    const catalog = this.#stores.ruleCatalog();
+    const read = this.#repositoriesRead;
+    if (read !== undefined && read.version === version && read.catalog === catalog) return read.list;
+    const list = repositoriesWithRuleCounts(this.#stores);
+    this.#repositoriesRead = { version, catalog, list };
+    return list;
   }
 
   /**
@@ -1673,9 +1699,18 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
   try {
     trayHandle = tray?.({
       health: () => daemon.health(),
-      dashboardLink: view => {
+      repositories: () => daemon.repositories().map(({ repository, counts }) => ({
+        key: repository.repositoryKey,
+        name: repository.name,
+        setUp: repository.setUp,
+        started: repository.started,
+        total: counts.total,
+        on: counts.on,
+      })),
+      dashboardLink: (view, repository) => {
         const state = daemon.state();
         const page = new URL(state.url);
+        if (repository !== undefined) page.searchParams.set("repository", repository);
         if (view !== undefined) page.hash = view;
         return dashboardLink(state, page.href);
       },

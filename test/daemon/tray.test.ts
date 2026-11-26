@@ -8,7 +8,8 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE, probeDaemon, readDaemonState, type DaemonHealth } from "../../src/runtime/index.js";
 import { serveRerailDaemon } from "../../src/daemon/daemon.js";
-import { accountHome, displayHomePath, openTrayPage, runRerailUpdate, startDaemonTray, startTray, trayGate, trayMenuState, type TrayDaemon, type TrayGateFacts, type TrayHandle, type TrayOptions, type TrayUpdateRun, type UpdateExit } from "../../src/daemon/tray.js";
+import { openRerailDatabase, repositories } from "../../src/engine/index.js";
+import { accountHome, displayHomePath, MENU_REPOSITORIES, openTrayPage, runRerailUpdate, startDaemonTray, startTray, trayGate, trayMenuState, type TrayDaemon, type TrayRepository, type TrayGateFacts, type TrayHandle, type TrayOptions, type TrayUpdateRun, type UpdateExit } from "../../src/daemon/tray.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { until } from "../support/processes/daemon-home.js";
@@ -51,6 +52,11 @@ function health(overrides: Partial<DaemonHealth> = {}): DaemonHealth {
     update: null,
     ...overrides,
   };
+}
+
+/** A repository the daemon knows, named `name`, set up and on unless `overrides` say otherwise. */
+function repository(name: string, overrides: Partial<TrayRepository> = {}): TrayRepository {
+  return { key: `key:${name}`, name, setUp: true, started: true, total: 0, on: 0, ...overrides };
 }
 
 describe("trayGate", () => {
@@ -126,7 +132,7 @@ describe("startDaemonTray", () => {
 
   it("starts nothing when a gate fails", () => {
     vi.stubEnv("RERAIL_TRAY", "0");
-    const daemon: TrayDaemon = { health: () => health(), dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined };
+    const daemon: TrayDaemon = { health: () => health(), repositories: () => [], dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined };
     expect(startDaemonTray(daemon, { isNewer: () => false })).toBeUndefined();
   });
 });
@@ -170,20 +176,61 @@ describe("trayMenuState", () => {
     const at = a!.findIndex((part, index) => part !== b![index]);
     return at !== -1 && a![at]! > b![at]!;
   };
-  const menu = (input: { health?: DaemonHealth; newer?: string | null; update?: TrayUpdateRun } = {}) =>
+  const menu = (input: { health?: DaemonHealth; newer?: string | null; update?: TrayUpdateRun; repositories?: TrayRepository[] | null } = {}) =>
     trayMenuState({
       health: input.health ?? health(),
       homePath: "~/.rerail",
       newer: input.newer ?? null,
       update: input.update ?? { state: "idle" },
       isNewer,
+      repositories: input.repositories === undefined ? null : input.repositories,
     });
 
   it("healthy with no update", () => {
     expect(JSON.stringify(menu())).toBe(
       '{"healthy":true,"status":"Rerail is running","version":"Version 0.2.2","dashboard":"Home path: ~/.rerail",'
-      + '"update":null,"attention":false}',
+      + '"update":null,"attention":false,"repositories":null}',
     );
+  });
+
+  it("lists each repository with what its rules do, in the dashboard's words, green where they run", () => {
+    const section = menu({ repositories: [
+      repository("rerail", { on: 44, total: 47 }),
+      repository("nerling", { on: 1, total: 1 }),
+      repository("website", { started: false, on: 0, total: 9 }),
+      repository("empty", { on: 0, total: 0 }),
+      repository("quiet", { on: 0, total: 3 }),
+      repository("scratch", { setUp: false, on: 0, total: 0 }),
+      repository("big", { on: 1234, total: 1234 }),
+    ] }).repositories;
+    expect(section).toEqual({
+      rows: [
+        { key: "key:rerail", label: "rerail · 44 rules on", running: true },
+        { key: "key:nerling", label: "nerling · 1 rule on", running: true },
+        { key: "key:website", label: "website · Off · 9 rules", running: false },
+        { key: "key:empty", label: "empty · No rules added", running: false },
+        { key: "key:quiet", label: "quiet · 0 rules on", running: false },
+        { key: "key:scratch", label: "scratch · Not set up", running: false },
+        { key: "key:big", label: "big · 1,234 rules on", running: true },
+      ],
+      more: null,
+    });
+  });
+
+  it("lists the first eight repositories and says how many more there are", () => {
+    const many = Array.from({ length: 11 }, (_, index) => repository(`repo-${index}`, { on: 1, total: 1 }));
+    const section = menu({ repositories: many }).repositories!;
+    expect(section.rows.map(row => row.key)).toEqual(many.slice(0, MENU_REPOSITORIES).map(entry => entry.key));
+    expect(section.more).toEqual({ label: "3 more…", enabled: true });
+  });
+
+  it("says there are no repositories yet when Rerail knows none, in a line that does nothing", () => {
+    expect(menu({ repositories: [] }).repositories).toEqual({ rows: [], more: { label: "No repositories yet", enabled: false } });
+  });
+
+  it("cuts a long repository name", () => {
+    const [row] = menu({ repositories: [repository("a".repeat(60), { on: 2, total: 2 })] }).repositories!.rows;
+    expect(row!.label).toBe(`${"a".repeat(39)}… · 2 rules on`);
   });
 
   it("unhealthy says why, the native kernel first", () => {
@@ -294,7 +341,13 @@ describe("startTray", () => {
    * and records what the tray asks of it.
    */
   function start(
-    options: { replies?: unknown[]; current?: () => DaemonHealth; runUpdate?: () => Promise<number | UpdateExit>; intervalMs?: number } = {},
+    options: {
+      replies?: unknown[];
+      current?: () => DaemonHealth;
+      repositories?: () => TrayRepository[];
+      runUpdate?: () => Promise<number | UpdateExit>;
+      intervalMs?: number;
+    } = {},
   ) {
     vi.stubEnv("FAKE_TRAY_LINES", join(folder, "lines"));
     vi.stubEnv("FAKE_TRAY_PID", join(folder, "pid"));
@@ -305,7 +358,8 @@ describe("startTray", () => {
         calls.health += 1;
         return (options.current ?? (() => health()))();
       },
-      dashboardLink: view => `http://127.0.0.1:4737/?access=secret${view === undefined ? "" : `#${view}`}`,
+      repositories: options.repositories ?? (() => []),
+      dashboardLink: (view, repository) => `http://127.0.0.1:4737/?access=secret${repository === undefined ? "" : `&repository=${encodeURIComponent(repository)}`}${view === undefined ? "" : `#${view}`}`,
       loopback: true,
       restart: () => void (calls.restarted += 1),
       stop: () => void (calls.stopped += 1),
@@ -358,6 +412,53 @@ describe("startTray", () => {
     const calls = start({ replies: ['{"action":"settings"}\n'] });
     await until(() => calls.opened.length === 1, 10_000, "the settings");
     expect(calls.opened).toEqual(["http://127.0.0.1:4737/?access=secret#settings"]);
+  });
+
+  it("a repository's row opens the dashboard at that repository, and a key the menu does not list opens nothing", async () => {
+    const calls = start({
+      repositories: () => [repository("web", { on: 3, total: 3 })],
+      replies: [['{"action":"repository","repository":"key:other"}\n', '{"action":"repository"}\n', '{"action":"repository","repository":"key:web"}\n']],
+    });
+    await until(() => calls.opened.length === 1, 10_000, "the repository's page");
+    await delay(100);
+    expect(calls.opened).toEqual(["http://127.0.0.1:4737/?access=secret&repository=key%3Aweb"]);
+    expect(JSON.parse(received()[0]!)).toMatchObject({ repositories: { rows: [{ key: "key:web", label: "web · 3 rules on", running: true }], more: null } });
+  });
+
+  it("the more line opens the dashboard's Settings, which lists every repository", async () => {
+    const calls = start({ replies: ['{"action":"repositories"}\n'] });
+    await until(() => calls.opened.length === 1, 10_000, "the settings");
+    expect(calls.opened).toEqual(["http://127.0.0.1:4737/?access=secret#settings"]);
+  });
+
+  it("repositories that cannot be read are logged once, keep the rows last read, and leave the status line current", async () => {
+    let fails = false;
+    let current = health();
+    const calls = start({
+      current: () => current,
+      repositories: () => {
+        if (fails) throw new Error("database busy");
+        return [repository("web", { on: 3, total: 3 })];
+      },
+      intervalMs: 20,
+    });
+    await until(() => received().length === 1, 10_000, "the first state");
+    fails = true;
+    await until(() => calls.logs.length === 1, 10_000, "the failed read");
+    current = health({ healthy: false, native: { ok: false, error: "no binding" } });
+    await until(() => received().length === 2, 10_000, "the changed status");
+    await delay(100);
+    expect(calls.logs).toEqual(["rerail tray: could not read the repositories for the menu: database busy"]);
+    expect(JSON.parse(received()[1]!)).toMatchObject({
+      healthy: false,
+      repositories: { rows: [{ key: "key:web", label: "web · 3 rules on", running: true }] },
+    });
+  });
+
+  it("leaves the section out while the repositories were never read", async () => {
+    const calls = start({ repositories: () => { throw new Error("database busy"); } });
+    await until(() => received().length === 1 && calls.logs.length === 1, 10_000, "the first state");
+    expect(JSON.parse(received()[0]!)).toMatchObject({ status: "Rerail is running", repositories: null });
   });
 
   it("docs opens the documentation site", async () => {
@@ -552,7 +653,7 @@ describe("startTray", () => {
   it("a tray whose pipes could not be opened is logged once", async () => {
     const options = (logs: string[]): TrayOptions => ({
       trayPath: process.execPath,
-      daemon: { health: () => health(), dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined },
+      daemon: { health: () => health(), repositories: () => [], dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined },
       homePath: "~/.rerail",
       isNewer: () => false,
       openUrl: () => undefined,
@@ -583,7 +684,7 @@ describe("startTray", () => {
     const logs: string[] = [];
     tray = startTray({
       trayPath: join(folder, process.platform === "win32" ? "missing.exe" : "missing"),
-      daemon: { health: () => health(), dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined },
+      daemon: { health: () => health(), repositories: () => [], dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined },
       homePath: "~/.rerail",
       isNewer: () => false,
       openUrl: () => undefined,
@@ -606,7 +707,7 @@ describe("startTray", () => {
     const logs: string[] = [];
     tray = startTray({
       trayPath: program,
-      daemon: { health: () => health(), dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined },
+      daemon: { health: () => health(), repositories: () => [], dashboardLink: () => "", loopback: true, restart: () => undefined, stop: () => undefined },
       homePath: "~/.rerail",
       isNewer: () => false,
       openUrl: () => undefined,
@@ -765,7 +866,20 @@ describe("the daemon's tray service", () => {
     expect(settings.origin).toBe(link.origin);
     expect(settings.hash).toBe("#settings");
     expect([...settings.searchParams.values()]).toContain(state.accessToken);
+    // A repository's row opens the dashboard at that repository.
+    const atRepository = new URL(given.dashboardLink(undefined, "remote:github.com/acme/web"));
+    expect(atRepository.searchParams.get("repository")).toBe("remote:github.com/acme/web");
+    expect([...atRepository.searchParams.values()]).toContain(state.accessToken);
     expect(given.health().pid).toBe(process.pid);
+    // The repositories the menu lists, read again once another connection records one.
+    expect(given.repositories()).toEqual([]);
+    const database = openRerailDatabase(state.databasePath);
+    try {
+      database.insert(repositories).values({ repositoryKey: "remote:github.com/acme/web", displayName: "web", configuredAt: 5, started: true, createdAt: 1, updatedAt: 1 }).run();
+    } finally {
+      database.$client.close();
+    }
+    expect(given.repositories()).toEqual([{ key: "remote:github.com/acme/web", name: "web", setUp: true, started: true, total: 0, on: 0 }]);
     expect(close).not.toHaveBeenCalled();
 
     given.stop();
