@@ -267,23 +267,29 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
         }
         (own, folders)
     };
-    // `named` first, to its fixed point: a read is decided by its key's anchor, which must be known when it is.
+    // `named` first, to its fixed point: a read is decided by its key's anchor, which must be known when it is. A
+    // column is a derived relation's anchor when every rule of it fills the column from one (review F3: a rule filling
+    // it from anything else makes it any file's key), so the fixed point is the greatest: every column at first, each
+    // round keeping the columns all of a head's rules fill so, and a recursive rule carrying its own anchor keeps it.
     let mut named: HashMap<String, BTreeSet<usize>> = HashMap::new();
+    for rule in v.rules() {
+        named.entry(v.rel_name(rule.head().rel()).to_owned()).or_insert_with(|| (0..rule.head().args().count()).collect());
+    }
     loop {
-        let mut changed = false;
+        let mut kept: HashMap<String, BTreeSet<usize>> = HashMap::new();
         for rule in v.rules() {
             let (_, folders) = anchors(&rule, &named);
             let cols: BTreeSet<usize> = rule.head().args().enumerate().filter(|(_, t)| t.var().is_some_and(|x| folders.contains(&x))).map(|(j, _)| j).collect();
-            let head = v.rel_name(rule.head().rel());
-            if !cols.is_empty() && !named.get(head).is_some_and(|had| had.is_superset(&cols)) {
-                named.entry(head.to_owned()).or_default().extend(cols);
-                changed = true;
-            }
+            let head = v.rel_name(rule.head().rel()).to_owned();
+            let both = kept.get(&head).map_or(cols.clone(), |had| had.intersection(&cols).copied().collect());
+            kept.insert(head, both);
         }
-        if !changed {
+        if kept == named {
             break;
         }
+        named = kept;
     }
+    named.retain(|_, cols| !cols.is_empty());
     let mut reach: HashMap<String, Reach> = HashMap::new();
     loop {
         let mut changed = false;

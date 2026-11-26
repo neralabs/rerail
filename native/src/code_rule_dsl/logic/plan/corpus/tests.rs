@@ -2501,10 +2501,16 @@ resolved(n, q) :- kind(n, "identifier"), text(n, x), docof(n, d), tgt(d, s, t), 
 .decl other(n: node, q: symbol)
 other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
 .output other
+.decl mixed_tgt(d: number, s: symbol, t: symbol)
+mixed_tgt(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
+mixed_tgt(d, s, t) :- kind(n, "string"), text(n, s), docof(n, d), t = s.
+.decl mixed(n: node, q: symbol)
+mixed(n, q) :- kind(n, "identifier"), text(n, x), docof(n, d), mixed_tgt(d, s, t), tsx_names__exports(t, x, q).
+.output mixed
 "#).unwrap();
     let v = crate::code_rule_dsl::logic::program_image::Builder::of_program(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap().finish().unwrap().0;
     let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(v);
-    let rels = ["own", "any", "root", "none", "resolved", "other"].map(str::to_owned).into_iter().collect();
+    let rels = ["own", "any", "root", "none", "resolved", "other", "mixed"].map(str::to_owned).into_iter().collect();
     let scopes = settings_scopes(&placed, &rels);
     assert_eq!(scopes.get("own"), Some(&SettingsScope::OwnFile), "{scopes:?}");
     assert_eq!(scopes.get("any"), Some(&SettingsScope::All), "{scopes:?}");
@@ -2513,6 +2519,9 @@ other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
     // A target its own path's row names, carried by a derived relation (`tgt`), keys its exports' read as its own.
     assert_eq!(scopes.get("resolved"), Some(&SettingsScope::OwnFile), "{scopes:?}");
     assert_eq!(scopes.get("other"), Some(&SettingsScope::All), "{scopes:?}");
+    // A column one rule fills from the file's own row and another from its text (any string, another file's target
+    // too) is not the file's own key: its readers read every file's exports (review F3).
+    assert_eq!(scopes.get("mixed"), Some(&SettingsScope::All), "{scopes:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
