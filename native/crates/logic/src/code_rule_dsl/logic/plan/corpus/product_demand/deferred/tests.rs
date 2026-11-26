@@ -224,6 +224,40 @@ noted(c, x) :- comment(c, x).
         assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(d, x), field(d, \"body\", c), line(c, l), col(c, k)."), (true, Vec::new()), "within one document");
     }
 
+    /// A file's join asked for only at columns that hold none of its locations (RUF057's `call_q(c, q)` by `q`, from
+    /// `param_slot`) is left as written: its requests name no document, so the split makes them once over every file,
+    /// and the join they guard with them, its nodes in the cross-file part (decision 0677). Asked for at its node, it
+    /// is driven by its readers.
+    #[test]
+    fn a_files_join_asked_at_no_location_is_left_as_written() {
+        let deferred = |readers: &str| {
+            let v = parse(&format!(r#"
+.decl kind(n: node, k: symbol)
+.decl field(n: node, f: symbol, c: node)
+.decl qual(n: node, q: symbol)
+.decl arg(c: node, i: number, v: node)
+.decl mark(c: node)
+.input kind, field, qual, arg, mark
+.decl slot(q: symbol, i: number)
+slot("round", 0). slot("abs", 0).
+.decl called(c: node, q: symbol)
+called(c, q) :- kind(c, "call"), field(c, "function", f), qual(f, q).
+.decl hit(c: node)
+.decl arg_of(c: node, v: node)
+{readers}
+.output hit, arg_of
+"#));
+            let (made, plan) = rewritten(&v);
+            (F::declared_names(&*made).into_iter().any(|r| r.starts_with(DEFERRED_PAIRS)), plan.unlocated)
+        };
+        assert_eq!(
+            deferred("hit(c) :- called(c, \"round\").\narg_of(c, v) :- slot(q, i), called(c, q), arg(c, i, v)."),
+            (false, vec!["called".to_owned()]),
+            "asked by the name alone"
+        );
+        assert_eq!(deferred("hit(c) :- mark(c), called(c, _).\narg_of(c, v) :- mark(c), called(c, _), arg(c, 0, v)."), (true, Vec::new()), "asked at the node");
+    }
+
     /// A constant's join (decision 0665: of facts and settings alone, React's `deps_on`) is left as written: a file's
     /// request would make the constant read every file's rows, while it is the same for every file and made once. The
     /// same join over a file's rows is driven by its readers.
