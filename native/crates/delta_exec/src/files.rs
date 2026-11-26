@@ -37,44 +37,17 @@ use rerail_observe::content_store::observe::{self, DigestRead, DigestStep};
 use rerail_blocks::maps::Placed as _;
 use rerail_blocks::region::{Frozen, Mutable};
 use rerail_rr_syntax::tape_format::home;
-use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// A blob's name: its bytes' sha256 (P§12 item 1).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
-pub struct BlobId(pub [u8; 32]);
+pub use rerail_blocks::blob::{BlobId, Placed};
 
-impl BlobId {
-    /// Its 32 bytes as four words: how a row names it (P§11: "a relation refers to a blob by its id").
-    pub fn words(&self) -> [i64; 4] {
-        std::array::from_fn(|i| i64::from_le_bytes(self.0[8 * i..8 * i + 8].try_into().expect("eight bytes")))
-    }
-
-    /// The blob a row's four words name.
-    pub fn of_words(w: &[i64]) -> BlobId {
-        let mut b = [0u8; 32];
-        for (i, x) in w.iter().take(4).enumerate() {
-            b[8 * i..8 * i + 8].copy_from_slice(&x.to_le_bytes()); // copy: not block data (a name's bytes)
-        }
-        BlobId(b)
-    }
-}
-
-/// Where bytes lie: a frozen block of the directory, an offset in it and a length (P§12's `Placed`).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Placed {
-    pub block: BlockId,
-    pub at: usize,
-    pub len: usize,
-}
-
-/// The blobs (P§12 item 1's `Blobs`), housed as the store houses objects: a row a blob, named by its bytes' sha256,
+/// A home of blobs (P§12 item 1's `Blobs`, the trait in the blocks crate), housed as the store houses objects: a row a blob, named by its bytes' sha256,
 /// that says where they lie (as an object's row names its segment, offset and length: `object_segments`), and the
 /// bytes read in place there, in a frozen block. The rows are a trace, `(name's four words, block, at, len)`, a layer
 /// a housing; a blob is found by a probe of its name at the trace's head.
-pub struct Blobs {
+pub struct BlobRows {
     ops: TraceOps,
     rows: Trace,
 }
@@ -85,10 +58,10 @@ pub fn blobs_shape() -> Shape {
     Shape::run(c, (0..7).collect(), None)
 }
 
-impl Blobs {
+impl BlobRows {
     /// No blob, its rows housed by the trace's operations `ops`.
-    pub fn new(ops: &TraceOps) -> Blobs {
-        Blobs { ops: *ops, rows: Trace::new(&blobs_shape()).expect("a storable shape") }
+    pub fn new(ops: &TraceOps) -> BlobRows {
+        BlobRows { ops: *ops, rows: Trace::new(&blobs_shape()).expect("a storable shape") }
     }
 
     /// Where blob `id`'s bytes lie: its row, probed by its name at the rows' head.
@@ -110,7 +83,7 @@ impl Blobs {
         }
         let id = {
             let l = dir.read("house", &[p.block])?;
-            BlobId(Sha256::digest(&l.block(0)[p.at..p.at + p.len]).into())
+            BlobId::of(&l.block(0)[p.at..p.at + p.len])
         };
         if self.get(dir, &id)?.is_some() {
             return Ok((id, false));
@@ -219,7 +192,7 @@ impl Files {
 
     /// Document `path` (relative to the root): its tape port, the tape housed in `blobs`, a tape block made in `dir`
     /// for a tape the parser writes.
-    pub fn answer(&mut self, path: &str, reg: &Registry, blobs: &mut Blobs, dir: &mut Directory) -> Result<Doc, String> {
+    pub fn answer(&mut self, path: &str, reg: &Registry, blobs: &mut BlobRows, dir: &mut Directory) -> Result<Doc, String> {
         let abs = self.root.join(path);
         let kept = self.kept.get(path).copied();
         let doc = |before: Option<DocIds>, after| Doc { path: path.to_string(), module: module_of(path), before, after };
@@ -267,7 +240,7 @@ impl Files {
 }
 
 /// A document of a source in hand (a test's, the bootstrap's own), in a slab's rooms, as a read places one.
-pub fn doc_of(reg: &Registry, dir: &mut Directory, blobs: &mut Blobs, src: &str) -> Result<DocIds, String> {
+pub fn doc_of(reg: &Registry, dir: &mut Directory, blobs: &mut BlobRows, src: &str) -> Result<DocIds, String> {
     let (block, b) = dir.slab_room(kind::TAPE, room(src.len()))?;
     let home = place_in(&b, src.len(), &mut |out| {
         out.copy_from_slice(src.as_bytes()); // copy: load (a source in hand, written into its room)
@@ -279,7 +252,7 @@ pub fn doc_of(reg: &Registry, dir: &mut Directory, blobs: &mut Blobs, src: &str)
 
 /// A document's source in its slab's room: the tape parsed from it into a room of the same slab, the rooms sealed, and
 /// the two housed as blobs. Rooms whose bytes were housed already, or a parse refused, stay in the slab until it goes.
-fn house(reg: &Registry, dir: &mut Directory, blobs: &mut Blobs, block: BlockId, b: Arc<rerail_blocks::block::Block>, source: home::Home) -> Result<DocIds, String> {
+fn house(reg: &Registry, dir: &mut Directory, blobs: &mut BlobRows, block: BlockId, b: Arc<rerail_blocks::block::Block>, source: home::Home) -> Result<DocIds, String> {
     let parsed = parse(block, b, source);
     dir.seal(block)?;
     let (s, t) = parsed?;
@@ -339,6 +312,19 @@ fn place_in(b: &Arc<rerail_blocks::block::Block>, len: usize, fill: &mut dyn FnM
 /// tape at its bound (80 times the source). It is address space; what is resident is what the two write.
 fn room(len: usize) -> usize {
     81 * len + (64 << 10)
+}
+
+impl rerail_blocks::blob::Blobs for BlobRows {
+    type Dir = Directory;
+    type Reg = Registry;
+
+    fn get(&self, dir: &Directory, id: &BlobId) -> Result<Option<Placed>, String> {
+        BlobRows::get(self, dir, id)
+    }
+
+    fn house(&mut self, reg: &Registry, dir: &mut Directory, bytes: Placed) -> Result<(BlobId, bool), String> {
+        BlobRows::house(self, reg, dir, bytes)
+    }
 }
 
 #[cfg(test)]

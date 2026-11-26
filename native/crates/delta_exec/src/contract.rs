@@ -25,7 +25,7 @@
 use crate::cache::{CacheOps, OpCache, cache_facts};
 use std::marker::PhantomData;
 use crate::dir::{BlockId, Directory};
-use crate::files::Blobs;
+use crate::files::BlobRows;
 use crate::op::{Registry, Tiling};
 use crate::trace::{RollUp, Trace, TraceOps};
 use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
@@ -165,7 +165,7 @@ impl GlobalIn {
 pub struct Cx<'c> {
     pub reg: &'c Registry,
     pub dir: &'c mut Directory,
-    pub blobs: &'c Blobs,
+    pub blobs: &'c BlobRows,
     pub traces: &'c TraceOps,
     pub caches: &'c CacheOps,
 }
@@ -589,7 +589,7 @@ pub fn harness<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize) -> Result<(), 
 pub struct Bench {
     pub reg: Registry,
     pub dir: Directory,
-    pub blobs: Blobs,
+    pub blobs: BlobRows,
     pub traces: TraceOps,
     pub caches: CacheOps,
 }
@@ -599,7 +599,7 @@ impl Bench {
         let mut reg = Registry::default();
         let traces = TraceOps::declare(&mut reg)?;
         let caches = CacheOps::declare(&mut reg)?;
-        Ok(Bench { reg, dir: Directory::default(), blobs: Blobs::new(&traces), traces, caches })
+        Ok(Bench { reg, dir: Directory::default(), blobs: BlobRows::new(&traces), traces, caches })
     }
 
     pub fn cx(&mut self) -> Cx<'_> {

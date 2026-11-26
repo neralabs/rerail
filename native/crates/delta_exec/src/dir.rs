@@ -28,15 +28,8 @@ use std::path::{Path, PathBuf};
 use std::cell::{Cell, RefCell};
 use std::sync::{Arc, Weak};
 
-/// A block's id: the directory's handle, the same on every device.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct BlockId(pub u32);
-
-impl std::fmt::Display for BlockId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#{}", self.0)
-    }
-}
+/// A block's id: the directory's handle, the same on every device (P§12 item 1's, in the blocks crate).
+pub use rerail_blocks::blob::BlockId;
 
 /// A referenced block, held: a frozen one, or a slab, whose sealed rooms are fixed while the slab takes more.
 #[derive(Clone)]

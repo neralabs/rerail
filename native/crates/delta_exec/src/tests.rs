@@ -2,7 +2,7 @@
 //! the first build comes back at the milestone the rebuild plan names for it.
 
 use crate::dir::Directory;
-use crate::files::{BlobId, Blobs, DocIds, Placed, doc_of, reads};
+use crate::files::{BlobId, BlobRows, DocIds, Placed, doc_of, reads};
 use crate::intern::{InternOps, intern};
 use crate::cache::CacheOps;
 use crate::contract::{Cx, Global, apply, push_layer};
@@ -29,7 +29,7 @@ pub(crate) struct Fx {
     pub traces: TraceOps,
     pub caches: CacheOps,
     pub dir: Directory,
-    pub blobs: Blobs,
+    pub blobs: BlobRows,
     pub atoms: Atoms,
 }
 
@@ -49,7 +49,7 @@ impl Fx {
         let caches = CacheOps::declare(&mut reg).unwrap();
         let mut dir = Directory::default();
         let atoms = Atoms::new(&mut dir);
-        Fx { reg, ops, k0, drops, traces, caches, dir, blobs: Blobs::new(&traces), atoms }
+        Fx { reg, ops, k0, drops, traces, caches, dir, blobs: BlobRows::new(&traces), atoms }
     }
 
     pub fn l1(&self) -> L1 {
@@ -355,7 +355,7 @@ fn a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape() {
     let kept: usize = inst.outs.iter().map(|o| rows_at(&fx.dir, o, o.head()).unwrap().len()).sum();
     assert!(kept > 0);
     // The new document's blobs alone.
-    let mut only_b = Blobs::new(&fx.traces);
+    let mut only_b = BlobRows::new(&fx.traces);
     for id in [b.ids.source, b.ids.tape, b.syms] {
         let p = fx.place(&id);
         only_b.house(&fx.reg, &mut fx.dir, p).unwrap();

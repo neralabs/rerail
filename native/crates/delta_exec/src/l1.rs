@@ -29,7 +29,7 @@ use crate::cache::Sizes;
 use crate::contract::{Asks, At, CacheW, Cx, DeltaOp, In, Out, Port, PortGlobal, PortIn, PortOut, PortSet, Ports, Work, outs};
 use crate::dir::{BlockId, Directory};
 use crate::drop::{DropOps, drop_parts};
-use crate::files::{BlobId, Blobs, DocIds};
+use crate::files::{BlobId, BlobRows, DocIds};
 use crate::k0::{K0Doc, K0Ops, k0_pass};
 use crate::kform::{self, RELATIONS};
 use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
@@ -88,7 +88,7 @@ fn cell(v: &View<'_>, id: RowId, c: u16) -> i64 {
 }
 
 /// The document of tape row `id` of `tape`, its blobs where `blobs` has them.
-fn doc_at(blobs: &Blobs, dir: &Directory, tape: &View<'_>, id: RowId) -> Result<K0Doc, String> {
+fn doc_at(blobs: &BlobRows, dir: &Directory, tape: &View<'_>, id: RowId) -> Result<K0Doc, String> {
     let blob = |at: u16| {
         let w: Vec<i64> = (at..at + 4).map(|c| cell(tape, id, c)).collect();
         blobs.get(dir, &BlobId::of_words(&w))?.ok_or_else(|| "a blob the tape port names, which nothing holds".to_string())

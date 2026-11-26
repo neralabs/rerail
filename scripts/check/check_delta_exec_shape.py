@@ -403,6 +403,12 @@ def b4(failures: list) -> None:
     """B4: a document through the engine's file layer. The observer's digest step answers a path; a changed file is read
     once by the placed read, into the slabs' placer's home; the rr parser writes the tape into a tape block's room; the
     document is a blob named by its content; `Text` holds no String."""
+    blob = ROOT / "native/crates/blocks/src/blob.rs"
+    if not blob.exists() or not re.search(r"pub trait Blobs \{", blob.read_text()) or not all(f"pub struct {n}" in blob.read_text() for n in ("BlockId", "BlobId", "Placed")):
+        failures.append("blocks/src/blob.rs: P§12 item 1's Blobs (BlockId, BlobId, Placed, the trait) not in the blocks crate")
+    for f in sorted((CRATE / "src").glob("*.rs")):
+        if re.search(r"pub struct (BlockId|BlobId|Placed)\b", f.read_text()):
+            failures.append(f"{f.name}: a second definition of the blocks crate's blob names")
     p = CRATE / "src/files.rs"
     if not p.exists():
         failures.append("native/crates/delta_exec/src/files.rs is missing (B4)")
@@ -471,7 +477,7 @@ def b6(failures: list) -> None:
     if len(re.findall(r"\brun_cpu\(", strip_rust(k0))) != 1:
         failures.append("k0.rs: k0_pass launched at more than one place")
     files = (CRATE / "src/files.rs").read_text()
-    if not re.search(r"pub struct Blobs \{[^}]*\brows: Trace\b[^}]*\}", files) or re.search(r"pub struct Blobs \{[^}]*HashMap", files):
+    if not re.search(r"pub struct BlobRows \{[^}]*\brows: Trace\b[^}]*\}", files) or re.search(r"pub struct BlobRows \{[^}]*HashMap", files):
         failures.append("files.rs: the blobs are not rows in a trace, as the store's objects are (P§12 item 1)")
     l1 = (CRATE / "src/l1.rs").read_text()
     k0h = (CRATE / "src/k0.rs").read_text()

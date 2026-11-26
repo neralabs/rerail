@@ -1427,3 +1427,9 @@ four tests pass.
 They were built on 2026-11-25 (`996f410a59`, `View::chain_stats`: the bounds over the layers, and the sketch of the
 state's head), and `a_random_trace_reads_as_its_set` checks rows, distinct values and bounds at every state. The
 comparison that listed them as open was wrong.
+
+**Blobs in the blocks crate** (P§12: the interfaces "live in the blocks crate, beside the layer implementation they
+wrap"). `rerail_blocks::blob` holds `BlockId`, `BlobId` (with `of`, the sha256 of bytes), `Placed` and the `Blobs`
+trait (`get`, `house`, through a home's directory and registry). `delta_exec`'s home of them is `BlobRows`, the rows
+in a trace, and implements the trait. The directory's `BlockId` is the blocks crate's. The shape script refuses a
+second definition of any of these names in `delta_exec`. Relax, local: 79 of 79.

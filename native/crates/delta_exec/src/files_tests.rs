@@ -21,10 +21,10 @@ pub(crate) fn racy_window() -> rerail_context::Bound {
 }
 
 /// A registry with the trace's operations, no blob, and a directory.
-fn fresh() -> (crate::op::Registry, Blobs, Directory) {
+fn fresh() -> (crate::op::Registry, BlobRows, Directory) {
     let mut reg = crate::op::Registry::default();
     let traces = crate::trace::TraceOps::declare(&mut reg).unwrap();
-    (reg, Blobs::new(&traces), Directory::default())
+    (reg, BlobRows::new(&traces), Directory::default())
 }
 
 pub(crate) fn past_racy_window() {
@@ -146,7 +146,7 @@ fn documents_share_a_slab_their_rooms_sealed_as_written() {
     let (reg, mut blobs, mut dir) = fresh();
     let a = doc_of(&reg, &mut dir, &mut blobs, "e(1, 2).\n").unwrap();
     let b = doc_of(&reg, &mut dir, &mut blobs, "p(x) :- e(x, _).\n").unwrap();
-    let place = |dir: &Directory, blobs: &Blobs, id| blobs.get(dir, id).unwrap().unwrap();
+    let place = |dir: &Directory, blobs: &BlobRows, id| blobs.get(dir, id).unwrap().unwrap();
     let (at, bt) = (place(&dir, &blobs, &a.tape), place(&dir, &blobs, &b.tape));
     assert_eq!(at.block, bt.block, "one slab");
     let slab = dir.block(at.block).unwrap();
