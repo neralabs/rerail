@@ -15,7 +15,7 @@ mod tier1;
 #[allow(clippy::all, unused_parens, unused_mut, dead_code, unreachable_code, unused_variables)]
 mod tier2;
 
-pub use tier1::{DERIVED, Lexed, Rec, carried, derived, lex};
+pub use tier1::{DERIVED, Lexed, Rec, SPANNED, carried, derived, lex, spanned};
 
 /// `src`'s tape, written to `finish`'s target and finished by it (decision 0434), or the byte the parser refused it at
 /// (0: tier 1 sends it to tree-sitter).

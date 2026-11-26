@@ -78,9 +78,21 @@ them.
    lexer's `Blocks::of`. The test build's walk of the regions reads a stage 1 of its own, made whole. Kotlin's is the
    only tier 1 of the two-pass form; rr's and JSON's are unchanged. A check's reason with a carriage return in it is
    written with `\r`.
+7. **The gap marks of the bytes before a token are asked by tier 2** (`SPANNED`, `spanned`). A gap mark that is a set
+   of the skipped bytes since the record before, with a test of the bytes at the start (written from the bytes,
+   `Bytes::at`, `text` now among them), or that holds at every skipped byte and every extra since the grammar token
+   before (its `here` the extras' regions, which no grammar token reads), is written by no record. Tier 2 asks it
+   where a rule reads one (`bit_at`, `marks_hold`, `open_mark`), as the lean parser asks `adjacent` and its scanner
+   reads a gap back from a token. Read from the token back over the skipped bytes, and from the record before (the
+   grammar token before, or the extra before) forward: a string's part between two grammar tokens is no record and
+   carries the gap over, and a part is never ended by a skipped byte. Within a template of the grammar token before,
+   only back. Tier 1's accumulators no mark it writes reads are gone. Kotlin's `own_line`, `nl_end` and `apart` are
+   asked so, and `apart`'s accumulator is gone. Kotlin's test of the records asks them as tier 2 does, and a test reads
+   the gaps around parts and comments. rr and JSON have no such mark (`SPANNED` 0).
 
-What stays: stage 1 keeps the 144 masks the token loop reads, each a vector of the file's words, where the lean
-lexer keeps 5 in one, and tier 1 computes seven marks into the token's code. Its
-strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or t_dollar resumes str`),
-a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in parts, from tier 1's
-masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state (`next_*`).
+What stays: stage 1 keeps the 144 masks the token loop reads, each a vector of the file's words, where the lean lexer
+keeps 5 in one, and tier 1 computes four marks into the token's code: `head_ctor`'s line break (the lean lexer's
+`nl`), `semi_close` and `as_open` (each of a fill tier 1 keeps over the gap), and `real` (a count of a number's
+bytes). Its strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or t_dollar
+resumes str`), a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in parts, from
+tier 1's masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state (`next_*`).

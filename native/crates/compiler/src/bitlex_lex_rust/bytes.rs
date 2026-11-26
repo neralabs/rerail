@@ -227,7 +227,7 @@ impl<'a> Bytes<'a> {
 
     /// `e` at byte `at` (Rust, a `usize`), a test of the bytes there: none past the file or before it. At a token's
     /// first byte (`s`) the byte is in the file.
-    fn at(&self, e: &Expr, at: &str, depth: usize) -> Result<String, String> {
+    pub(super) fn at(&self, e: &Expr, at: &str, depth: usize) -> Result<String, String> {
         if depth > 64 {
             return Err("a mask's definition reads itself".into());
         }
@@ -253,6 +253,13 @@ impl<'a> Bytes<'a> {
             Expr::And(a, b) => format!("({} && {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
             Expr::Or(a, b) => format!("({} || {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
             Expr::Xor(a, b) => format!("({} != {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
+            // `text(T)`: the bytes from here are `T`'s.
+            Expr::Call(f, args) if f == "text" && let [Arg::S(t)] = args.as_slice() && !t.is_empty() => {
+                let i = if at == "s" { "s".to_owned() } else { at.to_owned() };
+                let tests: Vec<String> = t.iter().enumerate().map(|(k, c)| if k == 0 { format!("src[{i}] == {c:#04x}") } else { format!("src[{i} + {k}] == {c:#04x}") }).collect();
+                // At a token's first byte the byte is in the file.
+                if i == "s" && t.len() == 1 { tests.join("") } else { format!("({i} + {} <= n && {})", t.len(), tests.join(" && ")) }
+            }
             Expr::Call(f, args) => match Self::shift(f, args) {
                 Some((a, k)) if k < 0 => format!("({at} >= {} && {})", -k, self.at(&a, &format!("({at} - {})", -k), depth + 1)?),
                 Some((a, k)) => self.at(&a, &format!("({at} + {k})"), depth + 1)?,
@@ -1062,7 +1069,7 @@ fn in_unsafe(call: &str) -> &str {
 }
 
 /// A byte's test of a class's ranges.
-fn pattern_test(b: &str, rs: &[(u32, u32)]) -> String {
+pub(super) fn pattern_test(b: &str, rs: &[(u32, u32)]) -> String {
     if rs.is_empty() {
         return "false".to_owned();
     }

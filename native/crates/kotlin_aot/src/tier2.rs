@@ -869,7 +869,23 @@ impl<'a, L: Layout> P<'a, L> {
     /// for a mark whose token tests it leaves (`tier1::TESTED`, decision 0655 step 6), the tokens.
     #[inline(always)]
     fn bit_at(&self, j: usize, b: u32) -> bool {
-        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::DERIVED >> b & 1 == 1 && self.derived(j, b) || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b) || crate::tier1::TESTED >> b & 1 == 1 && crate::tier1::tested(self.src, self.recs, self.xs, j, b))
+        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::DERIVED >> b & 1 == 1 && self.derived(j, b) || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b) || crate::tier1::TESTED >> b & 1 == 1 && crate::tier1::tested(self.src, self.recs, self.xs, j, b) || crate::tier1::SPANNED >> b & 1 == 1 && self.spanned(j, b))
+    }
+
+    /// Spanned mark `b` at token `j` (`tier1::SPANNED`, decision 0703): asked of the bytes before it, back to the grammar
+    /// token before or the extra before, as the lean parser asks whether two tokens touch (`adjacent`). None at a
+    /// piece after its record's first.
+    fn spanned(&self, j: usize, b: u32) -> bool {
+        let s = self.recs[j].start as usize;
+        if j == self.i && self.k < self.sub.len() && self.sub[self.k].0 as usize != s {
+            return false;
+        }
+        let p = self.prev_tok(j);
+        let (ps, pe, before) = if p < self.n { (self.recs[p].start as usize, self.recs[p].last as usize + 1, self.word_at(p)) } else { (0, 0, 0) };
+        // The extra before the token, where it ends.
+        let q = self.xs.partition_point(|x| (x.start as usize) < s);
+        let xend = if q > 0 { self.xs[q - 1].last as usize + 1 } else { 0 };
+        crate::tier1::spanned(self.src, ps, pe, xend, s, before, b)
     }
 
     /// Derived mark `b` at token `j` (`tier1::DERIVED`): its carrier's bit there, and the word of the grammar token before.
@@ -893,7 +909,7 @@ impl<'a, L: Layout> P<'a, L> {
         if self.recs[j].code >> 16 & bits != 0 {
             return true;
         }
-        let mut ask = (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED) & bits;
+        let mut ask = (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED | crate::tier1::SPANNED) & bits;
         while ask != 0 {
             if self.bit_at(j, ask.trailing_zeros()) {
                 return true;
@@ -30188,9 +30204,9 @@ impl<L: Layout> P<'_, L> {
     /// A mark no rule takes holds at the token (a mark not hidden).
     fn open_mark(&mut self) -> bool {
         match self.word() {
-            w::LPAREN_35 => (((self.code_at(self.i) >> 16) as u64 & 0x20 != 0 || (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED) as u64 & 0x20 != 0) && ((self.taken >> 5 & 1 == 0 && self.h_as_open()))) || ((self.taken >> 46 & 1 == 0 && self.h_paren_amp())) || (((self.kind() == t::BACKTICK_NAME)) && ((self.taken >> 10 & 1 == 0 && self.h_bt_cref()))) || (((self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()))) && ((self.taken >> 13 & 1 == 0 && self.h_lab_lam()) || (self.taken >> 12 & 1 == 0 && self.h_lab_loop()) || (self.taken >> 11 & 1 == 0 && self.h_label_at()))),
-            w::LT_38 => (((self.code_at(self.i) >> 16) as u64 & 0x20 != 0 || (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED) as u64 & 0x20 != 0) && ((self.taken >> 5 & 1 == 0 && self.h_as_open()))) || ((self.taken >> 44 & 1 == 0 && self.h_gen_nav())) || ((self.taken >> 43 & 1 == 0 && self.h_generic())) || (((self.kind() == t::BACKTICK_NAME)) && ((self.taken >> 10 & 1 == 0 && self.h_bt_cref()))) || (((self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()))) && ((self.taken >> 13 & 1 == 0 && self.h_lab_lam()) || (self.taken >> 12 & 1 == 0 && self.h_lab_loop()) || (self.taken >> 11 & 1 == 0 && self.h_label_at()))),
-            _ => (((self.code_at(self.i) >> 16) as u64 & 0x20 != 0 || (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED) as u64 & 0x20 != 0) && ((self.taken >> 5 & 1 == 0 && self.h_as_open()))) || (((self.kind() == t::BACKTICK_NAME)) && ((self.taken >> 10 & 1 == 0 && self.h_bt_cref()))) || (((self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()))) && ((self.taken >> 13 & 1 == 0 && self.h_lab_lam()) || (self.taken >> 12 & 1 == 0 && self.h_lab_loop()) || (self.taken >> 11 & 1 == 0 && self.h_label_at()))),
+            w::LPAREN_35 => (((self.code_at(self.i) >> 16) as u64 & 0x20 != 0 || (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED | crate::tier1::SPANNED) as u64 & 0x20 != 0) && ((self.taken >> 5 & 1 == 0 && self.h_as_open()))) || ((self.taken >> 46 & 1 == 0 && self.h_paren_amp())) || (((self.kind() == t::BACKTICK_NAME)) && ((self.taken >> 10 & 1 == 0 && self.h_bt_cref()))) || (((self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()))) && ((self.taken >> 13 & 1 == 0 && self.h_lab_lam()) || (self.taken >> 12 & 1 == 0 && self.h_lab_loop()) || (self.taken >> 11 & 1 == 0 && self.h_label_at()))),
+            w::LT_38 => (((self.code_at(self.i) >> 16) as u64 & 0x20 != 0 || (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED | crate::tier1::SPANNED) as u64 & 0x20 != 0) && ((self.taken >> 5 & 1 == 0 && self.h_as_open()))) || ((self.taken >> 44 & 1 == 0 && self.h_gen_nav())) || ((self.taken >> 43 & 1 == 0 && self.h_generic())) || (((self.kind() == t::BACKTICK_NAME)) && ((self.taken >> 10 & 1 == 0 && self.h_bt_cref()))) || (((self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()))) && ((self.taken >> 13 & 1 == 0 && self.h_lab_lam()) || (self.taken >> 12 & 1 == 0 && self.h_lab_loop()) || (self.taken >> 11 & 1 == 0 && self.h_label_at()))),
+            _ => (((self.code_at(self.i) >> 16) as u64 & 0x20 != 0 || (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED | crate::tier1::SPANNED) as u64 & 0x20 != 0) && ((self.taken >> 5 & 1 == 0 && self.h_as_open()))) || (((self.kind() == t::BACKTICK_NAME)) && ((self.taken >> 10 & 1 == 0 && self.h_bt_cref()))) || (((self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()))) && ((self.taken >> 13 & 1 == 0 && self.h_lab_lam()) || (self.taken >> 12 & 1 == 0 && self.h_lab_loop()) || (self.taken >> 11 & 1 == 0 && self.h_label_at()))),
         }
     }
 

@@ -579,6 +579,19 @@ pub const fn carried(bits: u32) -> u32 {
     r
 }
 
+/// The gap marks tier 2 asks of the spans between the records where a rule reads one (decision 0703), as the lean
+/// parser asks whether two tokens touch and whether a line breaks since the token before: tier 1 writes no bit of them.
+pub const SPANNED: u32 = 0x0;
+
+/// Whether spanned mark `b` holds at a grammar token starting at `s`: `ps` and `pe` the first byte and the byte after the
+/// grammar token before (0: none), `xend` the byte after the extra before (0: none), `before` the grammar token before's
+/// word.
+#[inline]
+pub fn spanned(src: &[u8], ps: usize, pe: usize, xend: usize, s: usize, before: u32, b: u32) -> bool {
+    let _ = (src, ps, pe, xend, s, before, b);
+    false
+}
+
 /// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's
 /// records hold only its token tests' hits of them.
 pub const ASKED: u32 = 0x806;

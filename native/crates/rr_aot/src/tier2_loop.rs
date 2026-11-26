@@ -470,7 +470,19 @@ impl<'a, L: Layout> P<'a, L> {
     /// for a mark whose token tests it leaves (`tier1::TESTED`, decision 0655 step 6), the tokens.
     #[inline(always)]
     fn bit_at(&self, j: usize, b: u32) -> bool {
-        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::DERIVED >> b & 1 == 1 && self.derived(j, b) || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b) || crate::tier1::TESTED >> b & 1 == 1 && crate::tier1::tested(self.src, self.recs, self.xs, j, b))
+        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::DERIVED >> b & 1 == 1 && self.derived(j, b) || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b) || crate::tier1::TESTED >> b & 1 == 1 && crate::tier1::tested(self.src, self.recs, self.xs, j, b) || crate::tier1::SPANNED >> b & 1 == 1 && self.spanned(j, b))
+    }
+
+    /// Spanned mark `b` at token `j` (`tier1::SPANNED`, decision 0703): asked of the bytes before it, back to the grammar
+    /// token before or the extra before, as the lean parser asks whether two tokens touch (`adjacent`).
+    fn spanned(&self, j: usize, b: u32) -> bool {
+        let s = self.recs[j].start as usize;
+        let p = self.prev_tok(j);
+        let (ps, pe, before) = if p < self.n { (self.recs[p].start as usize, self.recs[p].last as usize + 1, self.word_at(p)) } else { (0, 0, 0) };
+        // The extra before the token, where it ends.
+        let q = self.xs.partition_point(|x| (x.start as usize) < s);
+        let xend = if q > 0 { self.xs[q - 1].last as usize + 1 } else { 0 };
+        crate::tier1::spanned(self.src, ps, pe, xend, s, before, b)
     }
 
     /// Derived mark `b` at token `j` (`tier1::DERIVED`): its carrier's bit there, and the word of the grammar token before.
@@ -494,7 +506,7 @@ impl<'a, L: Layout> P<'a, L> {
         if self.recs[j].code >> 16 & bits != 0 {
             return true;
         }
-        let mut ask = (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED) & bits;
+        let mut ask = (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED | crate::tier1::SPANNED) & bits;
         while ask != 0 {
             if self.bit_at(j, ask.trailing_zeros()) {
                 return true;

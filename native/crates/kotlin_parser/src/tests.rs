@@ -172,7 +172,22 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
         let d = (0..32).filter(|&b| DERIVED >> b & 1 == 1).fold(0u32, |m, b| m | u32::from(if *extra { carried(1 << b) & !(1 << b) & marks != 0 } else { derived(b, marks, *before) }) << b);
         r.code | d << 16
     };
-    let recs: Vec<rerail_kotlin_aot::Rec> = recs.iter().map(|x| rerail_kotlin_aot::Rec { code: asked(x), ..x.0 }).collect();
+    let extra: Vec<bool> = recs.iter().map(|x| x.1).collect();
+    let mut recs: Vec<rerail_kotlin_aot::Rec> = recs.iter().map(|x| rerail_kotlin_aot::Rec { code: asked(x), ..x.0 }).collect();
+    // A spanned mark (`tier1::SPANNED`, decision 0703) is in no record either: its bit at a grammar token is what tier 2
+    // asks of the bytes before it, back to the grammar token before or the extra before.
+    use rerail_kotlin_aot::{SPANNED, spanned};
+    let (mut ps, mut pe, mut x_end, mut before) = (0usize, 0usize, 0usize, 0u32);
+    for (r, &x) in recs.iter_mut().zip(&extra) {
+        if x {
+            x_end = r.last as usize + 1;
+            continue;
+        }
+        let s = r.start as usize;
+        let d = (0..32).filter(|&b| SPANNED >> b & 1 == 1).fold(0u32, |m, b| m | u32::from(spanned(text.as_bytes(), ps, pe, x_end, s, before, b)) << b);
+        r.code |= d << 16;
+        (ps, pe, before) = (s, r.last as usize + 1, r.code >> 8 & 0xff);
+    }
     let n = starts.len().max(recs.len());
     for k in 0..n {
         let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
@@ -2659,4 +2674,23 @@ fn texts_across_many_blocks_are_the_lean_parsers() {
     let raw = format!("val r = \"\"\"{}${{a}}\"\"\"\n", "y\n".repeat(1500));
     let lines: String = (0..300).map(|i| format!("val v{i} = f(a, \"s{i}\") + {i} // c\n")).collect();
     same(&[&string, &comment, &name, &raw, &lines]);
+}
+
+/// The marks tier 2 asks of the bytes before a token (`tier1::SPANNED`, decision 0703 step 7), where a string's part
+/// lies between two grammar tokens (it carries the gap over), a token is in a template of the token before, and
+/// comments touch the tokens or not.
+#[test]
+fn marks_asked_of_the_gaps_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    g(\"a ${\n        b\n    }\")\n    h()\n}\n",
+        "val b = \"${f(1)} and ${a.b}\"\n",
+        "val c = \"${ a}${b }\"\n",
+        "val d = \"\"\"${a}\n  y ${b}\n\"\"\"\n",
+        "val e = a /*c*/+b\n",
+        "val g = a/*c*/ +b\n",
+        "val h = a/*c*//*d*/+b\n",
+        "val i = a\n/*c*/\n.b\n",
+        "val j = \"${/*c*/a}\" + \"${a/*c*/}\"\n",
+        "fun f() {\n    a\n    // c\n    b()\n}\n",
+    ]);
 }

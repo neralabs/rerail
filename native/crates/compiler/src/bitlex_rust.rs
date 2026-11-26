@@ -3215,7 +3215,7 @@ impl<'a> G<'a> {
             if !bit.is_empty() {
                 let bits = bit.iter().fold(0u64, |a, n| a | bits_of[*n].expect("bits"));
                 let chain: Vec<String> = bit.iter().map(|n| call(n)).collect();
-                parts.push(format!("((self.code_at(self.i) >> 16) as u64 & {bits:#x} != 0 || (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED) as u64 & {bits:#x} != 0) && ({})", chain.join(" || ")));
+                parts.push(format!("((self.code_at(self.i) >> 16) as u64 & {bits:#x} != 0 || (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED | crate::tier1::SPANNED) as u64 & {bits:#x} != 0) && ({})", chain.join(" || ")));
             }
             let mut by_kind: Vec<(Vec<String>, Vec<String>)> = Vec::new();
             for n in ns.iter().copied().filter(|n| !bit.contains(n)) {
@@ -3646,6 +3646,8 @@ impl<'a> G<'a> {
             for (a, b) in [
                 ("    /// The pieces of record `i` where tier 2 splits it (a string, decision 0323's lowering B), as\n    /// the lean parser's string arm reads its pieces: each one's first and last byte and code;\n    /// the token is piece `k`.\n    sub: Vec<(u32, u32, u32)>,\n    k: usize,\n", ""),
                 ("sub: Vec::new(), k: 0, ", ""),
+                ("        if j == self.i && self.k < self.sub.len() && self.sub[self.k].0 as usize != s {\n            return false;\n        }\n", ""),
+                (" None at a\n    /// piece after its record's first.\n", "\n"),
                 ("    /// A piece of the record split, `s..=l`, of record kind `kind` and the word its bytes are.\n    fn piece(&mut self, s: usize, l: usize, kind: u32) {\n        let word = word_in(kind, &self.src[s..=l]);\n        self.sub.push((s as u32, l as u32, kind | word << 8));\n    }\n\n", ""),
                 ("    /// Record `j`'s code, its first and its last byte: the piece's at the token.\n    #[inline(always)]\n    fn code_at(&self, j: usize) -> u32 {\n        if j == self.i && self.k < self.sub.len() { self.sub[self.k].2 } else { self.recs[j].code }\n    }\n", "    /// Record `j`'s code.\n    #[inline(always)]\n    fn code_at(&self, j: usize) -> u32 {\n        self.recs[j].code\n    }\n"),
                 ("        } else if self.k < self.sub.len() {\n            self.sub[self.k].0\n", ""),
@@ -4207,7 +4209,23 @@ impl<'a, L: Layout> P<'a, L> {
     /// for a mark whose token tests it leaves (`tier1::TESTED`, decision 0655 step 6), the tokens.
     #[inline(always)]
     fn bit_at(&self, j: usize, b: u32) -> bool {
-        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::DERIVED >> b & 1 == 1 && self.derived(j, b) || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b) || crate::tier1::TESTED >> b & 1 == 1 && crate::tier1::tested(self.src, self.recs, self.xs, j, b))
+        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::DERIVED >> b & 1 == 1 && self.derived(j, b) || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b) || crate::tier1::TESTED >> b & 1 == 1 && crate::tier1::tested(self.src, self.recs, self.xs, j, b) || crate::tier1::SPANNED >> b & 1 == 1 && self.spanned(j, b))
+    }
+
+    /// Spanned mark `b` at token `j` (`tier1::SPANNED`, decision 0703): asked of the bytes before it, back to the grammar
+    /// token before or the extra before, as the lean parser asks whether two tokens touch (`adjacent`). None at a
+    /// piece after its record's first.
+    fn spanned(&self, j: usize, b: u32) -> bool {
+        let s = self.recs[j].start as usize;
+        if j == self.i && self.k < self.sub.len() && self.sub[self.k].0 as usize != s {
+            return false;
+        }
+        let p = self.prev_tok(j);
+        let (ps, pe, before) = if p < self.n { (self.recs[p].start as usize, self.recs[p].last as usize + 1, self.word_at(p)) } else { (0, 0, 0) };
+        // The extra before the token, where it ends.
+        let q = self.xs.partition_point(|x| (x.start as usize) < s);
+        let xend = if q > 0 { self.xs[q - 1].last as usize + 1 } else { 0 };
+        crate::tier1::spanned(self.src, ps, pe, xend, s, before, b)
     }
 
     /// Derived mark `b` at token `j` (`tier1::DERIVED`): its carrier's bit there, and the word of the grammar token before.
@@ -4231,7 +4249,7 @@ impl<'a, L: Layout> P<'a, L> {
         if self.recs[j].code >> 16 & bits != 0 {
             return true;
         }
-        let mut ask = (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED) & bits;
+        let mut ask = (crate::tier1::ASKED | crate::tier1::TESTED | crate::tier1::DERIVED | crate::tier1::SPANNED) & bits;
         while ask != 0 {
             if self.bit_at(j, ask.trailing_zeros()) {
                 return true;

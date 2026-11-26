@@ -2760,8 +2760,6 @@ pub fn lex(src: &[u8]) -> Lexed {
     let mut rec_1 = false;
     // Whether a gap mask (`((lf & code) & prev(as_lt)) & prev(gt)`) held since the grammar token before.
     let mut acc_2 = false;
-    // Whether a gap mask (`((ws & code) | o_line) | o_block`) held since the grammar token before.
-    let mut acc_3 = false;
     // The closer the region token read ends at, where a fill the loop keeps opens after it, or a read resumes a string's.
     let mut close: usize;
     // `fill(prev(code & semicolon), solid)` at the last byte of the token before, and its `X`.
@@ -2919,11 +2917,6 @@ pub fn lex(src: &[u8]) -> Lexed {
         if (s > at && at > 0 && fill_6 && bit(&s1.m_gt, at - 1) && bit(&s1.m_lf, at)) {
             acc_2 = true;
         }
-        // The skipped bytes before the token, for the gap masks (none where there are none).
-        if s > at {
-            acc_3 = true;
-        }
-        let here_3 = (open == 0 || open == 1);
         let mut hits = 0u32;
         let (l, kind, extra, mut marks, word): (usize, u32, bool, u32, u32) = {
             // The row: the first whose start holds, of those whose start may be the byte's.
@@ -4532,18 +4525,9 @@ pub fn lex(src: &[u8]) -> Lexed {
                 if (tested >> 5 & 1 == 1 || acc_2) {
                     marks |= 1 << 5;
                 }
-                // `own_line`
-                if (tested >> 6 & 1 == 1 || rec_0) {
-                    marks |= 1 << 6;
-                }
-                // `nl_end`
-                if (tested >> 7 & 1 == 1 || rec_0 && bit(&s1.t143, s)) {
-                    marks |= 1 << 7;
-                }
-                // `apart`
-                if (tested >> 8 & 1 == 1 || acc_3 || here_3) {
-                    marks |= 1 << 8;
-                }
+                // `own_line`: tier 2 asks it of the spans between the records (`SPANNED`)
+                // `nl_end`: tier 2 asks it of the spans between the records (`SPANNED`)
+                // `apart`: tier 2 asks it of the spans between the records (`SPANNED`)
                 // `real`
                 if (tested >> 9 & 1 == 1) {
                     marks |= 1 << 9;
@@ -4561,8 +4545,6 @@ pub fn lex(src: &[u8]) -> Lexed {
         rec_1 = false;
         // The gap mask `((lf & code) & prev(as_lt)) & prev(gt)`: on after a token the grammar skips; else from this token's bytes after its start.
         acc_2 = extra && acc_2;
-        // The gap mask `((ws & code) | o_line) | o_block`: on after a token the grammar skips; else from this token's bytes after its start.
-        acc_3 = extra && (acc_3 || here_3);
         if open != usize::MAX {
             clear(&mut code_l, s, l);
         }
@@ -4864,7 +4846,7 @@ fn load8_at_end(src: &[u8], i: usize) -> u64 {
 
 /// The marks tier 1's records leave to tier 2 (decisions 0623, 0655): those it asks of the bytes (`ASKED`), those whose
 /// token tests it asks (`TESTED`), and the token marks its code reads no bit of (it asks them of the tokens).
-pub const UNRECORDED: u32 = 0xe;
+pub const UNRECORDED: u32 = 0x1ce;
 
 /// The marks whose token tests tier 2 asks (decision 0655 step 6): none, the records hold them.
 pub const TESTED: u32 = 0;
@@ -4904,6 +4886,44 @@ pub const fn carried(bits: u32) -> u32 {
         r |= 1 << 0;
     }
     r
+}
+
+/// The gap marks tier 2 asks of the spans between the records where a rule reads one (decision 0703), as the lean
+/// parser asks whether two tokens touch and whether a line breaks since the token before: tier 1 writes no bit of them.
+pub const SPANNED: u32 = 0x1c0;
+
+/// Whether spanned mark `b` holds at a grammar token starting at `s`: `ps` and `pe` the first byte and the byte after the
+/// grammar token before (0: none), `xend` the byte after the extra before (0: none), `before` the grammar token before's
+/// word.
+#[inline]
+pub fn spanned(src: &[u8], ps: usize, pe: usize, xend: usize, s: usize, before: u32, b: u32) -> bool {
+    let _ = before;
+    let n = src.len();
+    // The gap's skipped bytes, as the lean lexer reads a gap back from a token: from the record before's end (the
+    // grammar token before's, or the extra before's) to `s`, but a string's part read between, which is no record and
+    // carries the gap over (at most one: a grammar token follows each), from its first byte to its last, neither
+    // skipped. A token in a template of the grammar token before (`held`) has none since that string's part.
+    let held = pe > s;
+    let x = if held { xend > ps } else { xend > pe };
+    let lo = if x { xend } else if held { ps + 1 } else { pe };
+    let mut back = s;
+    while back > lo && matches!(src[back - 1], 0x09..=b'\n' | 0x0c..=0x0d | b' ') {
+        back -= 1;
+    }
+    let mut fwd = lo;
+    while !held && fwd < back && matches!(src[fwd], 0x09..=b'\n' | 0x0c..=0x0d | b' ') {
+        fwd += 1;
+    }
+    let _ = x;
+    match b {
+        // `own_line`
+        6 => (src[lo..fwd].contains(&0x0a) || src[back..s].contains(&0x0a)),
+        // `nl_end`
+        7 => (src[lo..fwd].contains(&0x0a) || src[back..s].contains(&0x0a)) && !(((((((((((((((((src[s] == 0x2e || src[s] == 0x3f) || src[s] == 0x3a) || src[s] == 0x2a) || src[s] == 0x25) || src[s] == 0x2f) || src[s] == 0x28) || src[s] == 0x5b) || src[s] == 0x7b) || src[s] == 0x3c) || src[s] == 0x3e) || src[s] == 0x3d) || (src[s] == 0x21 && ((s + 1) + 1 <= n && src[(s + 1)] == 0x3d))) || src[s] == 0x7c) || src[s] == 0x26) || src[s] == 0x2c) || src[s] == 0x3b) || (!(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff)))) && ((((((s + 2 <= n && src[s] == 0x61 && src[s + 1] == 0x73) && !((s + 2 < n && matches!(src[s + 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s + 2 < n && matches!(src[s + 2], 0x80..=0xff)))) || ((s + 5 <= n && src[s] == 0x77 && src[s + 1] == 0x68 && src[s + 2] == 0x65 && src[s + 3] == 0x72 && src[s + 4] == 0x65) && !((s + 5 < n && matches!(src[s + 5], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s + 5 < n && matches!(src[s + 5], 0x80..=0xff))))) || ((s + 5 <= n && src[s] == 0x63 && src[s + 1] == 0x61 && src[s + 2] == 0x74 && src[s + 3] == 0x63 && src[s + 4] == 0x68) && !((s + 5 < n && matches!(src[s + 5], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s + 5 < n && matches!(src[s + 5], 0x80..=0xff))))) || ((s + 7 <= n && src[s] == 0x66 && src[s + 1] == 0x69 && src[s + 2] == 0x6e && src[s + 3] == 0x61 && src[s + 4] == 0x6c && src[s + 5] == 0x6c && src[s + 6] == 0x79) && !((s + 7 < n && matches!(src[s + 7], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s + 7 < n && matches!(src[s + 7], 0x80..=0xff))))) || ((s + 4 <= n && src[s] == 0x65 && src[s + 1] == 0x6c && src[s + 2] == 0x73 && src[s + 3] == 0x65) && !((s + 4 < n && matches!(src[s + 4], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s + 4 < n && matches!(src[s + 4], 0x80..=0xff))))))),
+        // `apart`
+        8 => back < s || fwd > lo || x,
+        _ => false,
+    }
 }
 
 /// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's
