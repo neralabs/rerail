@@ -651,6 +651,34 @@ impl Run {
         }
     }
 
+    /// Runs of rows in place that meet in order (`Index::joined_in_place`) as one: rows `lo..hi`, their tags and prints
+    /// joined (prints where each has them), its fences made once; the run `merge` makes of them two at a time.
+    fn rows_joined<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], runs: &[Arc<Run>]) -> Run {
+        let lo = match runs[0].ids { Ids::Rows(lo, _) => lo, Ids::List(_) => unreachable!("runs of rows in place") };
+        let hi = match runs[runs.len() - 1].ids { Ids::Rows(_, hi) => hi, Ids::List(_) => unreachable!("runs of rows in place") };
+        let home = data.home();
+        let prints = if runs.iter().all(|r| !r.prints.is_empty()) {
+            let mut v = crate::code_rule_dsl::facts::rows::vector_in(home.as_ref(), runs.iter().map(|r| r.prints.len()).sum());
+            for r in runs {
+                // copy: derived: the runs' prints joined into the joined run's (an index written where it is computed)
+                v.extend_from_slice(&r.prints);
+            }
+            v
+        } else {
+            crate::code_rule_dsl::facts::rows::vector_in(None, 0)
+        };
+        let ids = Ids::Rows(lo, hi);
+        if tagged(cols, k) {
+            let mut tags = crate::code_rule_dsl::facts::rows::vector_in(home.as_ref(), runs.iter().map(|r| r.tags.len()).sum());
+            for r in runs {
+                // copy: derived: the runs' tags joined into the joined run's
+                tags.extend_from_slice(&r.tags);
+            }
+            return Run { ids, fences: crate::code_rule_dsl::facts::rows::vector_in(None, 0), tags, prints };
+        }
+        Run { prints, ..Run::fenced(data, k, cols, ids) }
+    }
+
     /// Two runs as one. Two runs of rows in place that meet, the first's last row not past the second's first, are
     /// one run of rows in place (decision 0180): their tags and prints joined, no ids listed.
     fn merge<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: &Run, b: &Run) -> Run {
@@ -1504,23 +1532,36 @@ impl Index {
         Self::merged(data, k, &self.cols, self.runs[..n].iter().map(|(r, _)| Arc::clone(r)).collect())
     }
 
+    /// `parts` (in row order) with each chain of runs of rows in place that meet in order joined into one run of rows
+    /// in place, as `Run::merge` joins two (the first's last row not past the second's first), built once: its tags
+    /// and prints joined once and its fences made once over its rows. Joined two at a time, a run a round of a device
+    /// fixpoint was built again at each join, its rows' every round over.
+    fn joined_in_place<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], parts: Vec<Arc<Run>>) -> Vec<Arc<Run>> {
+        let meets = |a: &Run, b: &Run| match (&a.ids, &b.ids) {
+            (Ids::Rows(lo, mid), Ids::Rows(mid2, hi)) => mid == mid2 && (lo == mid || mid2 == hi || cmp_ids(data, k, cols, tagged(cols, k), mid - 1, *mid).is_le()),
+            _ => false,
+        };
+        let mut out: Vec<Arc<Run>> = Vec::with_capacity(parts.len());
+        let mut i = 0;
+        while i < parts.len() {
+            let mut j = i + 1;
+            while j < parts.len() && meets(&parts[j - 1], &parts[j]) {
+                j += 1;
+            }
+            if j == i + 1 {
+                out.push(Arc::clone(&parts[i]));
+            } else {
+                out.push(Arc::new(Run::rows_joined(data, k, cols, &parts[i..j])));
+            }
+            i = j;
+        }
+        out
+    }
+
     /// `parts` merged into one: pairwise, smallest first (each id is copied about log(n) times); runs of rows in
     /// place that meet in order are joined first, as they merge without listing ids.
-    fn merged<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], mut parts: Vec<Arc<Run>>) -> Run {
-        let mut joined: Vec<Arc<Run>> = Vec::with_capacity(parts.len());
-        for p in parts.drain(..) {
-            if let Some(last) = joined.last()
-                && matches!((&last.ids, &p.ids), (Ids::Rows(_, a), Ids::Rows(b, _)) if a == b)
-            {
-                let m = Run::merge(data, k, cols, last, &p);
-                if matches!(m.ids, Ids::Rows(..)) {
-                    *joined.last_mut().expect("a run") = Arc::new(m);
-                    continue;
-                }
-            }
-            joined.push(p);
-        }
-        parts = joined;
+    fn merged<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], parts: Vec<Arc<Run>>) -> Run {
+        let mut parts = Self::joined_in_place(data, k, cols, parts);
         while parts.len() > 1 {
             parts.sort_by_key(|r| std::cmp::Reverse(r.ids.len()));
             let a = parts.pop().expect("a run");
@@ -1534,19 +1575,7 @@ impl Index {
     /// order on `cols`, then id), each id's key read once: its tag where the order is tagged and its values on `cols`,
     /// into arrays the merges compare, smallest runs first. No row is read while they merge.
     fn merged_keyed<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], parts: Vec<Arc<Run>>) -> Run {
-        let mut joined: Vec<Arc<Run>> = Vec::with_capacity(parts.len());
-        for p in parts {
-            if let Some(last) = joined.last()
-                && matches!((&last.ids, &p.ids), (Ids::Rows(_, a), Ids::Rows(b, _)) if a == b)
-            {
-                let m = Run::merge(data, k, cols, last, &p);
-                if matches!(m.ids, Ids::Rows(..)) {
-                    *joined.last_mut().expect("a run") = Arc::new(m);
-                    continue;
-                }
-            }
-            joined.push(p);
-        }
+        let mut joined = Self::joined_in_place(data, k, cols, parts);
         if joined.len() == 1 {
             return Arc::try_unwrap(joined.pop().expect("a run")).unwrap_or_else(|r| (*r).clone());
         }
@@ -2055,6 +2084,43 @@ pub mod tests {
                 let galloped = if x.ids.len() > y.ids.len() { Run::galloped(&rows[..], k, &cols, x, y) } else { Run::galloped(&rows[..], k, &cols, y, x) };
                 assert_eq!(walked.ids.to_vec(), galloped.ids.to_vec(), "{cols:?}");
                 assert_eq!((&walked.tags, &walked.prints, &walked.fences), (&galloped.tags, &galloped.prints, &galloped.fences), "{cols:?}");
+            }
+        }
+    }
+
+    /// A chain of runs of rows in place that meet in order, joined at once (`Index::joined_in_place`), is the run
+    /// `Run::merge` makes of them two at a time: rows, tags, prints and fences, for full-row (tagged), prefix and
+    /// printed orders; a run whose first row orders before the last one's ends the chain there.
+    #[test]
+    fn runs_in_place_joined_at_once_are_the_pairwise_joins() {
+        let k = 3;
+        // Sorted on every column, but for one step down at row 1500 (two chains).
+        let rows: Vector<i64> = (0..3000u32).flat_map(|i| { let j = if i < 1500 { i } else { i - 1500 }; [i64::from(j / 50), i64::from((j / 5) % 10), i64::from(j % 5)] }).collect();
+        for (cols, printed) in [(rerail_blocks::vector![0, 1, 2], false), (rerail_blocks::vector![0], false), (rerail_blocks::vector![0, 1], true)] {
+            let mut ix = if printed { Index::printed(cols.clone()) } else { Index::new(cols.clone()) };
+            let mut at = 0u32;
+            for len in [1u32, 300, 2, 777, 50, 1, 369, 9, 400, 3, 1000, 88] {
+                ix.add_run_in(&rows[..], k, at as usize, (at + len) as usize, 1, &[(at, at + len)]);
+                at += len;
+            }
+            let parts: Vec<Arc<Run>> = ix.runs.iter().map(|(r, _)| Arc::clone(r)).collect();
+            let mut pairwise: Vec<Run> = Vec::new();
+            for p in &parts {
+                if let Some(last) = pairwise.last() {
+                    let m = Run::merge(&rows[..], k, &cols, last, p);
+                    if matches!(m.ids, Ids::Rows(..)) {
+                        *pairwise.last_mut().expect("a run") = m;
+                        continue;
+                    }
+                }
+                pairwise.push((**p).clone());
+            }
+            let once = Index::joined_in_place(&rows[..], k, &cols, parts);
+            assert_eq!(once.len(), pairwise.len(), "{cols:?}: the chains");
+            assert!(once.len() >= 2, "{cols:?}: the step down ends a chain");
+            for (a, b) in once.iter().zip(&pairwise) {
+                assert_eq!(a.ids.to_vec(), b.ids.to_vec(), "{cols:?}");
+                assert_eq!((&a.tags, &a.prints, &a.fences), (&b.tags, &b.prints, &b.fences), "{cols:?}");
             }
         }
     }
