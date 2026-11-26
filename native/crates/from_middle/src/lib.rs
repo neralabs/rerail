@@ -10,6 +10,8 @@
 //!   giving its values and its end. The foundation: a chunk run from the serial run's state at
 //!   its edge is the serial run there.
 //! - [`derive`]: a 1-bit carry's other start, from the base run's words by word operations.
+//! - [`join`]: the chunks' leaves checked against their neighbours' from the file's start;
+//!   a chunk whose kept leaves leave an output bit unknown is run again.
 //! - [`solve`]: a chunk run from an unknown start, in three values a bit; its bytes refute
 //!   starts and make the rest known again; what is left is split, only where it matters.
 //! - [`starts`]: a start's components, and which of them a chunk reads in place from the bytes
@@ -17,6 +19,7 @@
 
 pub mod chunk;
 pub mod derive;
+pub mod join;
 pub mod solve;
 pub mod starts;
 
