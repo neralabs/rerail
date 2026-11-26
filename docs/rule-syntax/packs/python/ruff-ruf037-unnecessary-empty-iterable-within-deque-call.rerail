@@ -12,17 +12,36 @@
 //   deque(iterable=())         ← RUF037
 //   deque([1, 2])              not reported
 //   deque(frozenset())         not reported: Ruff takes only set, list, dict and tuple calls
-#include "python/ruff.rerail"
+//   a: "deque([], 3)"          ← RUF037: Ruff checks the expressions of string type definitions too
+#include "python/python-03.rerail"
 param_slot("collections.deque", "iterable", 0). param_slot("collections.deque", "maxlen", 1).
 
 .violation RUF037(at: node, msg: symbol) code "RUF037" "{msg}"
     suppress ruff "RUF037"
-RUF037(c, m) :- call_param(c, "iterable", a), empty_literal(a, t), !empty_ctor_call(a, "str"), !empty_ctor_call(a, "bytes"),
-    !empty_ctor_call(a, "frozenset"), call_nargs(c, n), call_nkwargs(c, k), n + k <= 2, says(c, m).
+RUF037(c, m) :- deque_param(c, "iterable", a), empty_iterable(a), deque_size(c, n), n <= 2, says(c, m).
+// The call's parameters and argument count: python/ruff's in the file, python/python-03's in a type string.
+.decl deque_param(c: node, x: symbol, a: node)
+deque_param(c, x, a) :- call_param(c, x, a).
+deque_param(c, x, a) :- type_str_node(c), call_q(c, "collections.deque"), param_slot("collections.deque", x, i),
+    (type_arg(c, i, a) ; type_kwarg(c, x, a)).
+.decl deque_size(c: node, n: number)
+deque_size(c, n + k) :- call_param(c, "iterable", _), call_nargs(c, n), call_nkwargs(c, k).
+deque_size(c, n + k) :- deque_param(c, "iterable", _), type_nargs(c, n), type_nkwargs(c, k).
+// empty_iterable(a): a display, a str or bytes literal, or a list, tuple, set or dict call, that is empty.
+.decl empty_iterable(a: node)
+empty_iterable(a) :- deque_param(_, "iterable", a), !type_str_node(a), empty_literal(a, _), !empty_ctor_call(a, "str"),
+    !empty_ctor_call(a, "bytes"), !empty_ctor_call(a, "frozenset").
+empty_iterable(a) :- deque_param(_, "iterable", a), type_str_node(a), unparen(a, m),
+    (list_like(m, _), !type_has_child(m) ;
+     kind(m, "call"), type_nargs(m, 0), type_nkwargs(m, 0), call_q(m, q), empty_ctor(q, t),
+     (t = "list" ; t = "tuple" ; t = "set" ; t = "dict") ;
+     kind(m, "string"), !string_body(m)).
 .decl empty_ctor_call(a: node, t: symbol)
 empty_ctor_call(a, t) :- unparen(a, m), kind(m, "call"), empty_literal(m, t).
+.decl string_body(m: node)  // a string in a type string with a character between its quotes
+string_body(m) :- type_str_node(m), kind(m, "string"), child(m, x, _), !kind(x, "string_start"), !kind(x, "string_end").
 .decl says(c: node, m: symbol)
 says(c, "Drop the empty iterable and pass the bound by keyword: `deque(maxlen=...)`; a deque already starts empty.") :-
-    call_param(c, "iterable", _), call_param(c, "maxlen", _).
+    deque_param(c, "iterable", _), deque_param(c, "maxlen", _).
 says(c, "Remove the empty iterable argument; `deque()` already starts empty.") :-
-    call_param(c, "iterable", _), !call_param(c, "maxlen", _).
+    deque_param(c, "iterable", _), !deque_param(c, "maxlen", _).

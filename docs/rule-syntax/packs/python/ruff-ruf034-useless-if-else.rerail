@@ -5,15 +5,45 @@
 .scope include "**/*"
 
 // Ruff RUF034: `a if cond else a`, whose branches are the same expression (Ruff's ComparableExpr: parentheses,
-// quotes and spacing aside, literals by value: `0x10` and `16`).
-//   x = 1 if flag else 1      ← RUF034
-//   x = 1 if flag else 2      not reported
+// quotes and spacing aside, literals by value: `0x10` and `16`; but str, bytes and numbers of different types
+// differ, and `(a and b) and c` is not `a and b and c`, which Ruff's tree flattens into one BoolOp).
+//   x = 1 if flag else 1                    ← RUF034
+//   x: "list['a if b else a']"              ← RUF034: Ruff checks the expressions of string type definitions too
+//   x = 1 if flag else 2                    not reported
+//   x = "\r" if flag else b"\r"             not reported: a str and a bytes
+//   x = (a and b and c) if t else ((a and b) and c)    not reported
 #include "python/compare.rerail"
+#include "python/python-03.rerail"
 
 .violation RUF034(at: node) code "RUF034"
     "Both branches are identical, so the condition changes nothing: use the branch value alone, or fix the branch that should differ. Keep the test only if evaluating it has side effects."
     suppress ruff "RUF034"
-RUF034(e) :- branches(e, a, b), cmp_same(a, b).
+RUF034(e) :- branches(e, a, b), cmp_same(a, b), !differs(a, b).
+// In a type string, the same text (python/compare does not read a guest's nodes: it counts their children).
+RUF034(e) :- type_str_node(e), kind(e, "conditional_expression"), child(e, a, 0), child(e, b, 2), text(a, t), text(b, t).
+// branches(e, a, b): body a and orelse b, the first and third children that are not a comment or a `\` line end.
 .decl branches(e: node, a: node, b: node)
-branches(e, a, b) :- kind(e, "conditional_expression"), child(e, a, 0), child(e, b, 2).
+branches(e, a, b) :- branch(e, 0, a), branch(e, 2, b).
+.decl branch(e: node, i: number, x: node)
+branch(e, i, x) :- kind(e, "conditional_expression"), child(e, x, j), !kind(x, "comment"), !kind(x, "line_continuation"),
+    i = count : { child(e, y, k), k < j, !kind(y, "comment"), !kind(y, "line_continuation") }.
 cmp_same_ask(a, b) :- branches(_, a, b).
+
+// differs(a, b): python/compare calls them the same, but a pair of nodes at the same place in both is not
+// (NOTES-python-03): literals of different types, whose values compare equal there, or `and`/`or` operations of
+// which one continues its left operand's chain and the other has it in parentheses.
+.decl differs(a: node, b: node)
+differs(a, b) :- branches(_, a, b), unparen(a, x0), unparen(b, y0), same_pair(x, y), (x = x0 ; within(x, x0)),
+    (y = y0 ; within(y, y0)), (pair_differs(x, y) ; pair_differs(y, x)).
+.decl pair_differs(x: node, y: node)
+pair_differs(x, y) :- (same_pair(x, y) ; same_pair(y, x)), lit_type(x, t), !lit_type(y, t).
+pair_differs(x, y) :- (same_pair(x, y) ; same_pair(y, x)), flat(x), !flat(y).
+.decl lit_type(x: node, t: symbol)
+lit_type(x, f) :- same_some(x), kind(x, "string"), string_form(x, f).
+lit_type(x, f) :- same_some(x), kind(x, "concatenated_string"), child(x, s, _), string_form(s, f), f != "str".
+lit_type(x, "str") :- same_some(x), kind(x, "concatenated_string"), plain_str_node(x).
+lit_type(x, "int") :- same_some(x), kind(x, "integer"), !same_imaginary(x).
+lit_type(x, "float") :- same_some(x), kind(x, "float"), !same_imaginary(x).
+lit_type(x, "complex") :- same_imaginary(x).
+.decl flat(x: node)
+flat(x) :- same_some(x), kind(x, "boolean_operator"), field(x, "left", l), kind(l, "boolean_operator"), op(x, o), op(l, o).

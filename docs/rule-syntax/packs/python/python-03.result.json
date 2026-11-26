@@ -1,0 +1,34 @@
+[
+  {
+    "id": "ruff-ruf032-decimal-from-float-literal",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ruf033-post-init-default",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ruf034-useless-if-else",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ruf037-unnecessary-empty-iterable-within-deque-call",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ruf040-invalid-assert-message-literal-argument",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ruf046-unnecessary-cast-to-int",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ruf048-map-int-version-parsing",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ruf049-dataclass-enum",
+    "status": "same"
+  }
+]

@@ -1,0 +1,78 @@
+// python/python-03: two things batch python-03's Ruff rules share: the expressions Ruff reads inside string type
+// definitions (RUF032, RUF034, RUF037, RUF046), and a dataclass decorator read where Ruff reads it (RUF033, RUF049).
+//
+// What a rule gets from this library:
+//   1. Type strings:  type_str_node(e)     e is in the tree Ruff parses from a string it reads as a type (core's
+//                                          string_annotation: an annotation's `"Decimal(1.5)"`, `cast("deque([])", x)`,
+//                                          a TypeVar bound), or from a string nested in one (`"list['a if b else a']"`).
+//                                          Not a `Literal[…]` string, not `Annotated` metadata: Ruff reads those as values
+//                     type_arg(c, i, a)    python/ruff's ruff_arg, for a call c in such a tree
+//                     type_kwarg(c, x, v)  call_kwarg, likewise
+//                     type_nargs(c, n), type_nkwargs(c, n)   call_nargs, call_nkwargs, likewise
+//                     type_has_child(m)    m, in such a tree, has a child that is not a comment (a display that is
+//                                          not empty)
+//   2. Dataclasses:   ruff_dataclass(c, e) class c is a stdlib dataclass by decorator e (python/ruff-classes'
+//                                          dataclass_of), and e's name reads `dataclasses.dataclass` at e, in Ruff's
+//                                          order (python/upgrade's sym_at)
+//
+// Ruff background
+//   - Ruff's checker visits the expressions it parses from string type definitions like any other, so an
+//     expression rule reports inside them: `x: "Decimal(1.5)"` is RUF032. A guest tree is reached only through
+//     `parsed`, so a rule adds a clause over type_str_node for the expression it checks; tree relations (kind,
+//     field, call_q, unparen, …) then hold on the guest's nodes, at the string's line.
+//   - An aggregate's base atoms do not see a guest's nodes (decision 0058 §1: "an aggregate's atom is its own
+//     scope"), so python/ruff's argument relations, which count children, give no rows or a count of 0 there
+//     (`call_nargs` is 0 for `"int(1)"`). Section 1's relations count derived rows, which do see them. A rule must
+//     not read call_nargs, call_only, call_param or empty_literal on a type string's node.
+//   - Names in those trees resolve from where the string stands. python/names does that for strings in
+//     annotations (parsed_in); the clause below adds the other strings Ruff reads as types (`cast("T", x)`), so
+//     `Decimal` in `cast("Decimal(3.5)", 1)` resolves to decimal.Decimal too.
+//   - Ruff resolves a decorator while it walks the module: a module-level class decorated with `@dataclass` above
+//     `from dataclasses import dataclass` is no dataclass; one in a function body (walked after the module) is.
+//
+//   from decimal import Decimal
+//   x: "Decimal(1.5)" = 1                 type_str_node(<Decimal(1.5)>), call_q(<Decimal(1.5)>, "decimal.Decimal"),
+//                                         type_arg(<Decimal(1.5)>, 0, <1.5>), type_nargs(<Decimal(1.5)>, 1)
+//   y: Literal["Decimal(1.5)"] = 1        none: a Literal's string is a value
+//   @dataclass                            no ruff_dataclass: `dataclass` is not bound yet here
+//   class A: ...
+//   from dataclasses import dataclass
+#include "python/ruff-classes.rerail"
+#include "python/upgrade.rerail"
+
+// ---- type strings ------------------------------------------------------------------------------------------------
+.decl type_str_node(e: node)
+type_str_node(e) :- !guest_policy("library", "off"), string_annotation(s), parsed(s, "annotation", r),
+    (e = r ; within(e, r)).
+type_str_node(e) :- type_str_node(s), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+// Resolution from the string's place (names' wstart) for the type strings outside annotations. To move into
+// python/names' parsed_in (NOTES-python-03).
+parsed_in(e, s) :- !guest_policy("library", "off"), string_annotation(s), parsed(s, "annotation", r),
+    (e = r ; within(e, r)).
+// Arguments, as python/ruff's: positional ones (and `*xs`) in order, keywords, no counting past a `*xs`.
+.decl type_item(c: node, a: node, j: number)
+type_item(c, a, j) :- type_str_node(c), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, j),
+    !kind(a, "comment").
+.decl type_pos(c: node, a: node, j: number)
+type_pos(c, a, j) :- type_item(c, a, j), !kind(a, "keyword_argument"), !kind(a, "dictionary_splat").
+.decl type_star(c: node, j: number)
+type_star(c, j) :- type_pos(c, a, j), kind(a, "list_splat").
+.decl type_arg(c: node, i: number, a: node)
+type_arg(c, i, a) :- type_pos(c, a, j), !kind(a, "list_splat"), count : { type_star(c, j2), j2 < j } = 0,
+    i = count : { type_pos(c, _, j3), j3 < j }.
+.decl type_kwarg(c: node, x: symbol, v: node)
+type_kwarg(c, x, v) :- type_item(c, a, _), kind(a, "keyword_argument"), field(a, "name", n), text(n, x),
+    field(a, "value", v).
+.decl type_nargs(c: node, n: number)
+type_nargs(c, n) :- type_str_node(c), kind(c, "call"), n = count : { type_pos(c, _, _) }.
+.decl type_nkwargs(c: node, n: number)
+type_nkwargs(c, n) :- type_str_node(c), kind(c, "call"), n = count : { type_item(c, a, _), !type_pos(c, a, _) }.
+.decl type_has_child(m: node)
+type_has_child(m) :- type_str_node(m), child(m, x, _), !kind(x, "comment").
+
+// ---- dataclasses -------------------------------------------------------------------------------------------------
+// The decorator's name: `@dataclass`, `@dataclasses.dataclass`, or the callee of `@dataclass(…)`.
+.decl ruff_dataclass(c: node, e: node)
+ruff_dataclass(c, e) :- dataclass_of(c, "stdlib", e), unparen(e, m), !kind(m, "call"), sym_at(m, "dataclasses.dataclass").
+ruff_dataclass(c, e) :- dataclass_of(c, "stdlib", e), unparen(e, m), kind(m, "call"), field(m, "function", f),
+    unparen(f, g), sym_at(g, "dataclasses.dataclass").
