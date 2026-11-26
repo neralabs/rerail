@@ -11,8 +11,11 @@
 //     floats too; `round(x, n)` with an int expression n only when x is itself an int.
 //   int(len(xs))          ← RUF046  `len(xs)`
 //   int(round(f))         ← RUF046
+//   a = b = 1; c, d = 1, 2
+//   int(round(a, 2))      ← RUF046: a, b, c and d are each bound once, to an int
+//   x: "int(1)"           ← RUF046: Ruff checks the expressions of string type definitions too
 //   int(round(1., 0))     not reported: a float
-#include "python/ruff.rerail"
+#include "python/python-03.rerail"
 
 param_slot("builtins.round", "number", 0).
 param_slot("builtins.round", "ndigits", 1).
@@ -20,12 +23,13 @@ param_slot("builtins.round", "ndigits", 1).
 .violation RUF046(at: node, msg: symbol) code "RUF046" "{msg}"
     suppress ruff "RUF046"
 RUF046(c, "Drop the `int(...)` wrapper and use its argument directly; the argument is already an integer.") :-
-    int_cast(c, x), (int_expr(x) ; unparen(x, m), call_q(m, q), int_fn(q) ; int_round(x)).
+    int_cast(c, x), (int_form(x) ; unparen(x, m), call_q(m, q), int_fn(q) ; int_round(x)).
 RUF046(c, "Drop the `int(...)` wrapper; this call already returns an int. Keep it if the operand's type overrides `__round__`, `__ceil__`, `__floor__` or `__trunc__` to return a non-int.") :-
     int_cast(c, x), (unparen(x, m), call_q(m, q), (q = "math.ceil" ; q = "math.floor" ; q = "math.trunc") ;
     any_round(x), !int_round(x)).
 .decl int_cast(c: node, x: node)
 int_cast(c, x) :- call_q(c, "builtins.int"), call_only(c, x).
+int_cast(c, x) :- type_str_node(c), call_q(c, "builtins.int"), type_arg(c, 0, x), type_nargs(c, 1), type_nkwargs(c, 0).
 .decl int_fn(q: symbol)
 int_fn("builtins.len"). int_fn("builtins.id"). int_fn("builtins.ord"). int_fn("builtins.hash"). int_fn("builtins.int").
 int_fn(cat("math.", f)) :- (f = "comb" ; f = "factorial" ; f = "gcd" ; f = "lcm" ; f = "isqrt" ; f = "perm").
@@ -33,11 +37,70 @@ int_fn(cat("math.", f)) :- (f = "comb" ; f = "factorial" ; f = "gcd" ; f = "lcm"
 // any_round(x): `round(n)` or `round(n, None)`, an int whatever n is. int_round(x): an int n (an int expression,
 // or a name bound to an int), and no ndigits, None, or an int expression: `round(5, -1)` is an int too.
 .decl round_call(x: node, m: node)
-round_call(x, m) :- int_cast(_, x), unparen(x, m), call_q(m, "builtins.round"), !call_splat(m), call_nargs(m, a),
-    call_nkwargs(m, k), a + k <= 2, call_param(m, "number", _).
+round_call(x, m) :- int_cast(_, x), unparen(x, m), call_q(m, "builtins.round"), !round_splat(m), round_size(m, n), n <= 2,
+    round_param(m, "number", _).
 .decl any_round(x: node)
-any_round(x) :- round_call(x, m), !call_param(m, "ndigits", _).
-any_round(x) :- round_call(x, m), call_param(m, "ndigits", d), unparen(d, n), kind(n, "none").
+any_round(x) :- round_call(x, m), !round_param(m, "ndigits", _).
+any_round(x) :- round_call(x, m), round_param(m, "ndigits", d), unparen(d, n), kind(n, "none").
 .decl int_round(x: node)
-int_round(x) :- round_call(x, m), call_param(m, "number", v), int_typed(v),
-    (any_round(x) ; call_param(m, "ndigits", d), int_expr(d)).
+int_round(x) :- round_call(x, m), round_param(m, "number", v), (int_typed(v) ; int_name(v) ; type_int(v)),
+    (any_round(x) ; round_param(m, "ndigits", d), int_form(d)).
+// round's arguments: python/ruff's in the file, python/python-03's in a type string.
+.decl round_param(m: node, x: symbol, v: node)
+round_param(m, x, v) :- call_param(m, x, v).
+round_param(m, x, v) :- type_str_node(m), call_q(m, "builtins.round"), param_slot("builtins.round", x, i),
+    (type_arg(m, i, v) ; type_kwarg(m, x, v)).
+.decl round_size(m: node, n: number)
+round_size(m, a + k) :- call_q(m, "builtins.round"), !type_str_node(m), call_nargs(m, a), call_nkwargs(m, k).
+round_size(m, a + k) :- type_str_node(m), call_q(m, "builtins.round"), type_nargs(m, a), type_nkwargs(m, k).
+.decl round_splat(m: node)
+round_splat(m) :- call_splat(m).
+round_splat(m) :- type_item(m, a, _), (kind(a, "list_splat") ; kind(a, "dictionary_splat")).
+// int_form(e): python/ruff's int_expr, which reads an int literal's `value`; a type string's literals have no
+// `value` rows (NOTES-python-03), so type_int follows the same forms by the literal's text.
+.decl int_form(e: node)
+int_form(e) :- int_expr(e).
+int_form(e) :- type_int(e).
+.decl type_int(e: node)
+type_int(e) :- type_str_node(e), unparen(e, m), kind(m, "integer"), text(m, t), !match("[\\s\\S]*[jJ]", t).
+type_int(e) :- type_str_node(e), unparen(e, m), kind(m, "unary_operator"), op(m, o), (o = "+" ; o = "-" ; o = "~"),
+    field(m, "argument", a), type_int(a).
+type_int(e) :- type_str_node(e), unparen(e, m), kind(m, "binary_operator"), op(m, o), int_op(o), field(m, "left", l),
+    type_int(l), field(m, "right", r), type_int(r).
+type_int(e) :- type_str_node(e), unparen(e, m), kind(m, "conditional_expression"), child(m, a, 0), type_int(a),
+    child(m, b, 2), type_int(b).
+type_int(e) :- type_str_node(e), unparen(e, m), kind(m, "boolean_operator"), field(m, "left", l), type_int(l),
+    field(m, "right", r), type_int(r).
+type_int(e) :- type_str_node(e), unparen(e, m), kind(m, "named_expression"), field(m, "value", v), type_int(v).
+
+// int_name(e): name e is bound once, by an assignment that python/ruff's typed_as does not follow, to an int, as
+// Ruff's find_binding_value pairs them: the first target of a chain (`a = b = 1`), or a name in a tuple or list
+// target, by position with a tuple, list or set value (`c, (d, e) = 1, (2, 3)`; extra or `*` elements are skipped).
+// An annotated assignment is typed by its annotation (typed_as), not its value.
+.decl int_name(e: node)
+int_name(e) :- one_binding(e, _, _, b, "assign"), bound_name(b, t), bound_value(t, v), init_type(v, "int").
+.decl bound_name(b: node, t: node)
+bound_name(b, t) :- kind(b, "assignment"), field(b, "left", l), target(l, t), kind(t, "identifier").
+bound_name(b, b) :- kind(b, "identifier").
+// bound_value(t, v): target t (a name or a pattern) of an assignment is given v. A chain `a = b = v` is
+// assignment(a, assignment(b, v)): each left side is given the innermost right side.
+.decl bound_value(t: node, v: node)
+bound_value(t, v) :- kind(a, "assignment"), !field(a, "type", _), field(a, "left", l), target(l, t), chain_value(a, v).
+bound_value(t, v) :- bound_value(p, w), unparen(w, wl), seq_value(wl), seq_elem(p, i, t0), target(t0, t),
+    seq_elem(wl, i, v0), unparen(v0, v).
+.decl chain_value(a: node, v: node)
+chain_value(a, v) :- kind(a, "assignment"), field(a, "right", v), !kind(v, "assignment").
+chain_value(a, v) :- kind(a, "assignment"), field(a, "right", r), kind(r, "assignment"), chain_value(r, v).
+// target(l, t): l without parentheses; tree-sitter reads the target `(x)` as a tuple_pattern without a comma.
+.decl target(l: node, t: node)
+target(l, t) :- unparen(l, t), !paren_pattern(t).
+target(l, t) :- unparen(l, p), paren_pattern(p), seq_elem(p, 0, x), target(x, t).
+.decl paren_pattern(p: node)
+paren_pattern(p) :- kind(p, "tuple_pattern"), seq_elem(p, 0, _), !seq_elem(p, 1, _), text(p, t),
+    !match("[\\s\\S]*,\\s*\\)", t).
+.decl seq_value(w: node)
+seq_value(w) :- kind(w, k), (k = "expression_list" ; k = "tuple" ; k = "list" ; k = "set").
+.decl seq_elem(p: node, i: number, x: node)  // the i-th element of a tuple or list, pattern or value
+seq_elem(p, i, x) :- kind(p, k), (k = "pattern_list" ; k = "tuple_pattern" ; k = "list_pattern" ; k = "expression_list" ;
+    k = "tuple" ; k = "list" ; k = "set"), child(p, x, j), !kind(x, "comment"), !kind(x, "line_continuation"),
+    i = count : { child(p, y, j2), j2 < j, !kind(y, "comment"), !kind(y, "line_continuation") }.
