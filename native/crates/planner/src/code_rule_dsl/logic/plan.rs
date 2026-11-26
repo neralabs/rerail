@@ -341,6 +341,9 @@ pub struct Run<'a, 'b> {
     keyless: HashSet<String>,
     /// Relations held only by the native set engine (`program`) until `materialize`.
     native_rels: BTreeSet<String>,
+    /// SPIKE: the session's tree where it holds no syntax batch (`spike_strata::Tree::bare`): the relations
+    /// `spike_eval` holds for its strata, its strands' too.
+    spike_bare: Arc<std::sync::OnceLock<Arc<spike_strata::Tree>>>,
     /// The inputs this run's strata placed on the device read (decision 0325 step 6): the views the device made of
     /// them stay resident on this thread for the run's later strata, which placement then prices as found, not made.
     /// A strand's run is on another thread, with residency of its own: it starts with none.
@@ -1352,7 +1355,7 @@ impl<'a> Run<'a, '_> {
     fn spike_rows(&self, scc: &super::front::CompAt) -> Option<Vec<(String, spike_strata::Flat)>> {
         let _span = super::profile::span(|| "spike executor".into());
         let (batch, tree) = self.spike_tree()?;
-        let chunk = spike_strata::Chunk::new(&tree, &batch);
+        let chunk = spike_strata::Chunk::new(&tree, Some(&batch));
         Some(spike_strata::run(&scc.iter().collect::<Vec<_>>(), &chunk, self))
     }
 
@@ -1411,9 +1414,9 @@ impl<'a> Run<'a, '_> {
             spike_eval::declined(&names, "a lattice, gate, request or native relation");
             return Ok(None);
         }
-        let Some((batch, tree)) = self.spike_tree() else {
-            spike_eval::declined(&names, "no syntax batch");
-            return Ok(None);
+        let (batch, tree) = match self.spike_tree() {
+            Some((b, t)) => (Some(b), t),
+            None => (None, self.spike_holder()),
         };
         let pairs: Vec<(&Version, super::program_image::RuleRef<'_>)> = rules.iter().map(|&k| vs.rule_at(k)).collect();
         let inputs = Arc::clone(&self.inputs);
@@ -1428,19 +1431,19 @@ impl<'a> Run<'a, '_> {
         };
         // A projection of one tree atom (`kind(n, k) :- node(_, n, k, _, _)`) is read off the tree by the strata here
         // after it; its rows, which those the engine runs read, are the engine's to make (no join, a view's rows).
+        if batch.is_none() && spike_eval::reads_tree(&prog) {
+            spike_eval::declined(&names, "reads the tree, no syntax batch");
+            return Ok(None);
+        }
         if let Some(al) = prog.alias() {
             tree.aliases.lock().unwrap().insert((key, prog.rels[0].clone()), al);
             spike_eval::declined(&names, "a projection of the tree, read off it here");
             return Ok(None);
         }
-        // Relations a request may fill while the program runs are not complete when read.
-        let fillable: BTreeSet<&str> = f.answers().iter().map(|&(_, p)| f.rel_name(p)).flat_map(|p| [Some(p), f.request_of(p)]).flatten().collect();
+        // A relation a request fills (its answers') is whole once its stratum has run: answers fill the produced
+        // relations of the stratum that asks or of one after it, never one that has run.
         let mut read: Vec<Option<Arc<spike_eval::HRel>>> = vec![None; prog.rels.len()];
         for (i, rel) in spike_eval::reads(&prog) {
-            if fillable.contains(rel) {
-                spike_eval::declined(&names, &format!("{rel} may be filled by a request"));
-                return Ok(None);
-            }
             let held = tree.held.lock().unwrap().get(&(key, rel.to_owned())).cloned();
             let h = match held {
                 Some(h) => h,
@@ -1453,6 +1456,10 @@ impl<'a> Run<'a, '_> {
                     // The engine's relation read where it lies; another source's rows copied flat.
                     let width = f.width(rel);
                     let h = Arc::new(spike_eval::HRel::of_engine(&src, width, src.len()).unwrap_or_else(|| {
+                        if std::env::var_os("RERAIL_SPIKE_WHY").is_some() {
+                            let held = super::native::component::held_rows(&*src).map(|(_, n, dead, _)| (n, dead.iter().any(|&w| w != 0)));
+                            eprintln!("SPIKE COPY {rel}: {} rows copied flat: engine's (rows, dead) {held:?}", src.len());
+                        }
                         let flat = spike_strata::rows(&*src);
                         spike_eval::HRel::of_rows(flat.k, flat.v, src.len())
                     }));
@@ -1466,7 +1473,7 @@ impl<'a> Run<'a, '_> {
             }
             read[i] = Some(h);
         }
-        let chunk = spike_strata::Chunk::new(&tree, &batch);
+        let chunk = spike_strata::Chunk::new(&tree, batch.as_deref());
         let atoms = Arc::clone(super::native::setfix::symbols(self.db)?.atoms());
         let calls = SpikeCalls { db: self.db, atoms, long: std::sync::OnceLock::new() };
         let own = match spike_eval::run(&prog, &chunk, read, &calls) {
@@ -1495,7 +1502,7 @@ impl<'a> Run<'a, '_> {
 
     /// SPIKE: a relation `spike_eval` made, held by the chunk for the strata after it.
     fn spike_hold(&self, rel: &str, h: spike_eval::HRel) -> Option<Arc<spike_eval::HRel>> {
-        let (_, tree) = self.spike_tree()?;
+        let tree = self.spike_holder();
         let h = Arc::new(h);
         tree.held.lock().unwrap().insert((self.spike_key(), rel.to_owned()), Arc::clone(&h));
         Some(h)
@@ -1507,11 +1514,19 @@ impl<'a> Run<'a, '_> {
         if !spike_eval::enabled() || rels.is_empty() {
             return;
         }
-        let Some((_, tree)) = self.spike_tree() else { return };
+        let tree = self.spike_holder();
         let key = self.spike_key();
         let mut held = tree.held.lock().unwrap();
         for r in rels {
             held.remove(&(key, r.clone()));
+        }
+    }
+
+    /// SPIKE: the tree that holds the session's relations for `spike_eval`: its batch's, else its own bare one.
+    fn spike_holder(&self) -> Arc<spike_strata::Tree> {
+        match self.spike_tree() {
+            Some((_, t)) => t,
+            None => Arc::clone(self.spike_bare.get_or_init(|| Arc::new(spike_strata::Tree::bare()))),
         }
     }
 
@@ -1716,6 +1731,10 @@ impl spike_eval::Calls for SpikeCalls<'_> {
 
     fn intern(&self, text: &str) -> i64 {
         self.atoms.intern(text).map_or(-1, i64::from)
+    }
+
+    fn atom(&self, text: &str) -> i64 {
+        self.atoms.existing(text).map_or_else(|| self.intern(text), i64::from)
     }
 
     /// `a.b`; `"" . b` is `b`.
@@ -2227,6 +2246,7 @@ impl<'a> Run<'a, '_> {
             orders: HashMap::new(),
             keyless: HashSet::new(),
             native_rels: reads.iter().filter(|r| self.native_rels.contains(*r)).cloned().collect(),
+            spike_bare: Arc::clone(&self.spike_bare),
             demands: Default::default(),
             pending: HashMap::new(),
             why_not: None,
@@ -3429,7 +3449,7 @@ impl<'a> Run<'a, '_> {
         let out = self.lent(solving, sources, |this, native_rels| this.native_stratum_(scc, rules, native_rels));
         if let (Some(made), Ok(Native::Ran)) = (&evaluated, &out) {
             let tree = self.spike_tree();
-            let chunk = tree.as_ref().map(|(b, t)| spike_strata::Chunk::new(t, b));
+            let chunk = tree.as_ref().map(|(b, t)| spike_strata::Chunk::new(t, Some(b)));
             for (rel, h) in made {
                 let generic = super::native::component::derived(self.db, rel).map(|s| spike_strata::rows(&*s)).unwrap_or_default();
                 spike_strata::compare(rel, &spike_strata::Flat { k: h.k, v: h.own().to_vec() }, &generic, chunk.as_ref());
@@ -3453,7 +3473,7 @@ impl<'a> Run<'a, '_> {
         }
         if let (Some(made), Ok(Native::Ran)) = (&spiked, &out) {
             let tree = self.spike_tree();
-            let chunk = tree.as_ref().map(|(b, t)| spike_strata::Chunk::new(t, b));
+            let chunk = tree.as_ref().map(|(b, t)| spike_strata::Chunk::new(t, Some(b)));
             for (rel, rows) in made {
                 let generic = super::native::component::derived(self.db, rel).map(|s| spike_strata::rows(&*s)).unwrap_or_default();
                 spike_strata::compare(rel, rows, &generic, chunk.as_ref());
@@ -7144,7 +7164,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let mut unread: BTreeSet<String> = BTreeSet::new();
     let mut prepared_to = 0usize;
     let projections0: HashMap<String, Vec<(usize, i64)>> = super::program_image::analyses::projections(&p0.v).into_iter().map(|(r, eqs)| (p0.v.rel_name(r).to_owned(), eqs)).collect();
-    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, device_views: HashSet::new(), proofs: Default::default(), mode_reads: Default::default(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
+    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, spike_bare: Default::default(), device_views: HashSet::new(), proofs: Default::default(), mode_reads: Default::default(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
     if let Some(p) = maintaining.as_deref().and_then(|m| m.proofs()) {
         let _ = run.proofs.set(p);
     }

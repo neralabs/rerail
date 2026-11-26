@@ -5896,15 +5896,19 @@ impl Batch {
     /// and document (its place in the batch); each document's first row and file (the `node` view's `d`).
     pub fn tree_core(&self) -> TreeCore {
         let n = self.nodes().total();
-        let mut t = TreeCore { ids: Vec::with_capacity(n), kind: Vec::with_capacity(n), doc: Vec::with_capacity(n), base: Vec::with_capacity(self.docs.len()), file: Vec::with_capacity(self.docs.len()) };
+        let docs = self.docs.len();
+        let mut t = TreeCore { low: Vec::with_capacity(n), kind: Vec::with_capacity(n), doc: Vec::with_capacity(n), base: Vec::with_capacity(docs), file: Vec::with_capacity(docs), key: Vec::with_capacity(docs) };
         for (doc, p) in self.docs.iter().enumerate() {
             let d = &self.dialects[p.tag()];
             t.base.push(self.nodes().at(doc) as u32);
             t.file.push(i64::from(p.file()));
+            t.key.push(p.key());
             for l in 0..p.len() {
                 let x = p.node(l);
                 t.doc.push(doc as u32);
-                t.ids.push(p.global(l));
+                let id = p.global(l);
+                debug_assert_eq!(id >> 32, i64::from(p.key()));
+                t.low.push(id as u32);
                 t.kind.push(u32::try_from(d.kind(p.f(), x)).expect("a kind atom is 32 bits"));
             }
         }
@@ -5948,11 +5952,13 @@ impl Batch {
 
 /// SPIKE: `Batch::tree_core`'s arrays, one value a node row (each document's, one a document).
 pub struct TreeCore {
-    pub ids: Vec<i64>,
+    /// Each node's id's low 32 bits: its id is its document's `key` above them (`DocTape::global`).
+    pub low: Vec<u32>,
     pub kind: Vec<u32>,
     pub doc: Vec<u32>,
     pub base: Vec<u32>,
     pub file: Vec<i64>,
+    pub key: Vec<u32>,
 }
 
 /// SPIKE: `Batch::tree_shape`'s arrays, one value a node row.

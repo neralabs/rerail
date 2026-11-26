@@ -77,7 +77,9 @@ impl Flat {
 /// its first spiked stratum, held in its slot (`Batch::spike`). Each node row's id, kind and document always; the
 /// rest at its first reader: its shape (`Shape`: parents, children, fields), spans and texts.
 pub struct Tree {
-    pub(super) ids: Vec<i64>,
+    /// Each row's id's low 32 bits, and each document's key above them (`TreeCore`): `id`.
+    low: Vec<u32>,
+    key: Vec<u32>,
     /// Each row's kind atom (`kind`; 32 bits, `core::kind_atom`).
     pub(super) kinds: Vec<u32>,
     /// Each row's document (its place in the batch), and each document's first row and file (`node`'s `d`).
@@ -95,7 +97,7 @@ pub struct Tree {
     /// The same, by the set's kind atoms (`spike_eval`).
     pub(super) near_by: Mutex<HashMap<Vec<i64>, Arc<Vec<u32>>>>,
     /// The rows of each kind (`spike_eval`), made at the first enumeration by kind.
-    pub(super) by_kind: std::sync::OnceLock<HashMap<i64, Vec<u32>>>,
+    pub(super) by_kind: std::sync::OnceLock<super::spike_eval::KindRows>,
     /// Each row's `text`, read at its first use (`Chunk::text`): `TEXT_UNREAD` until then, `NIL` for none.
     texts: std::sync::OnceLock<Vec<std::sync::atomic::AtomicI64>>,
     /// The tape values admitted into the chunk (decision 0431 §8), each a batch of its own: their rows follow the
@@ -241,24 +243,31 @@ pub(super) const TEXT_UNREAD: i64 = i64::MIN + 1;
 /// The tree of a batch's stratum, and its batch, which finds a node id's row (`Batch::row_of`).
 pub struct Chunk<'a> {
     pub t: &'a Tree,
-    pub b: &'a Batch,
+    /// The chunk's syntax batch; none for a session with none (the cross session's: `Tree::bare`), whose strata read
+    /// no tree relation (declined otherwise).
+    b: Option<&'a Batch>,
     memo: Cell<u32>,
 }
 
 impl<'a> Chunk<'a> {
-    pub fn new(t: &'a Tree, b: &'a Batch) -> Self {
+    pub fn new(t: &'a Tree, b: Option<&'a Batch>) -> Self {
         Chunk { t, b, memo: Cell::new(crate::code_rule_dsl::facts::vtab::NO_MEMO) }
+    }
+
+    /// The chunk's syntax batch, which every reader of a tree relation has.
+    fn b(&self) -> &'a Batch {
+        self.b.expect("a tree relation read in a session with no syntax batch (declined when compiled)")
     }
 
     /// The tree's shape, made at its first reader.
     pub(super) fn shape(&self) -> &'a Shape {
-        self.t.shape.get_or_init(|| Shape::of(self.b, &self.t.values, &self.t.value_rows))
+        self.t.shape.get_or_init(|| Shape::of(self.b(), &self.t.values, &self.t.value_rows))
     }
 
     /// Each row's span (`node`'s `start` and `end`), read at its first reader.
     pub(super) fn spans(&self) -> &'a (Vec<u32>, Vec<u32>) {
         self.t.spans.get_or_init(|| {
-            let (mut start, mut end) = self.b.tree_spans();
+            let (mut start, mut end) = self.b().tree_spans();
             for v in &self.t.values {
                 let (s, e) = v.upgrade().expect("a value's batch lives while its chunk runs").tree_spans();
                 start.extend(s);
@@ -272,7 +281,7 @@ impl<'a> Chunk<'a> {
     pub(super) fn text(&self, r: u32) -> i64 {
         use std::sync::atomic::{AtomicI64, Ordering::Relaxed};
         let t = self.t;
-        let texts = t.texts.get_or_init(|| (0..t.ids.len()).map(|_| AtomicI64::new(TEXT_UNREAD)).collect());
+        let texts = t.texts.get_or_init(|| (0..t.len()).map(|_| AtomicI64::new(TEXT_UNREAD)).collect());
         let at = &texts[r as usize];
         let x = at.load(Relaxed);
         if x != TEXT_UNREAD {
@@ -281,7 +290,7 @@ impl<'a> Chunk<'a> {
         let doc = t.doc[r as usize];
         let local = r - t.base[doc as usize];
         let x = match t.value_docs.partition_point(|&d| d <= doc) {
-            0 => self.b.text_at(doc as usize, local),
+            0 => self.b().text_at(doc as usize, local),
             i => t.values[i - 1].upgrade().and_then(|v| v.text_at((doc - t.value_docs[i - 1]) as usize, local)),
         };
         let x = x.unwrap_or(NIL);
@@ -292,7 +301,7 @@ impl<'a> Chunk<'a> {
     /// Node `n`'s row, `NONE` where the batch holds none.
     pub(super) fn row_of(&self, n: i64) -> u32 {
         let mut memo = self.memo.get();
-        let r = self.b.row_of(n, &mut memo);
+        let r = self.b().row_of(n, &mut memo);
         self.memo.set(memo);
         if let Some(r) = r {
             return r;
@@ -309,7 +318,7 @@ impl<'a> Chunk<'a> {
 
     /// The rows of `rel`'s rows' column `col`, as a mark by row.
     fn mark(&self, rows: &Flat, col: usize) -> Vec<bool> {
-        let mut m = vec![false; self.t.ids.len()];
+        let mut m = vec![false; self.t.len()];
         for r in rows.rows() {
             let at = self.row_of(r[col]);
             if at != NONE {
@@ -327,20 +336,26 @@ impl Drop for Tree {
         if std::env::var_os("RERAIL_SPIKE_WHY").is_none() || Arc::strong_count(&self.held) > 1 {
             return;
         }
-        let arrays = 8 * (self.ids.capacity() + self.file.capacity() + self.texts.get().map_or(0, Vec::capacity))
-            + 4 * (self.kinds.capacity() + self.doc.capacity() + self.base.capacity())
+        let arrays = 8 * (self.file.capacity() + self.texts.get().map_or(0, Vec::capacity))
+            + 4 * (self.low.capacity() + self.key.capacity() + self.kinds.capacity() + self.doc.capacity() + self.base.capacity())
             + self.shape.get().map_or(0, Shape::bytes)
             + self.spans.get().map_or(0, |(a, b)| 4 * (a.capacity() + b.capacity()));
         let near = self.near_by.lock().unwrap().values().map(|v| v.capacity() * 4).sum::<usize>() + self.nearest.lock().unwrap().values().map(|v| v.capacity() * 4).sum::<usize>();
-        let kinds = self.by_kind.get().map_or(0, |m| m.values().map(|v| v.capacity() * 4).sum());
+        let kinds = self.by_kind.get().map_or(0, |m| m.order.capacity() * 4);
         let held = self.held.lock().unwrap();
-        let mut rels: Vec<(usize, &str)> = held.iter().map(|((_, r), h)| (h.bytes(), r.as_str())).collect();
+        let mut rels: Vec<(usize, &str, usize, usize, usize)> = held
+            .iter()
+            .map(|((_, r), h)| {
+                let (own, idx) = h.bytes_split();
+                (own + idx, r.as_str(), own, idx, h.n)
+            })
+            .collect();
         rels.sort_unstable_by(|a, b| b.cmp(a));
         let total: usize = rels.iter().map(|r| r.0).sum();
-        let top: Vec<String> = rels.iter().take(6).map(|(b, r)| format!("{r} {}k", b / 1024)).collect();
+        let top: Vec<String> = rels.iter().take(6).map(|(_, r, own, idx, n)| format!("{r} {n} rows own {}k index {}k", own / 1024, idx / 1024)).collect();
         eprintln!(
             "SPIKE MEM {} rows: tree {}k, nearest {}k, by kind {}k, held {} relations {}k ({})",
-            self.ids.len(),
+            self.len(),
             arrays / 1024,
             near / 1024,
             kinds / 1024,
@@ -352,6 +367,32 @@ impl Drop for Tree {
 }
 
 impl Tree {
+    /// A session's tree where it holds no syntax batch (the cross session's): no rows, only the relations
+    /// `spike_eval` holds for its strata.
+    pub fn bare() -> Tree {
+        Tree {
+            low: Vec::new(),
+            key: Vec::new(),
+            kinds: Vec::new(),
+            doc: Vec::new(),
+            base: Vec::new(),
+            file: Vec::new(),
+            shape: std::sync::OnceLock::new(),
+            spans: std::sync::OnceLock::new(),
+            atoms: HashMap::default(),
+            fields: std::sync::OnceLock::new(),
+            nearest: Mutex::default(),
+            near_by: Mutex::default(),
+            by_kind: std::sync::OnceLock::new(),
+            texts: std::sync::OnceLock::new(),
+            values: Vec::new(),
+            value_rows: Vec::new(),
+            value_docs: Vec::new(),
+            held: Arc::default(),
+            aliases: Arc::default(),
+        }
+    }
+
     /// The batch's tree, read off its projections: each node's id, kind and document (its shape, spans and texts
     /// are read at their first readers).
     pub fn of(b: &Batch, values: Vec<Arc<Batch>>, before: Option<&Tree>) -> Tree {
@@ -359,11 +400,12 @@ impl Tree {
         let mut a = b.tree_core();
         let (mut value_rows, mut value_docs) = (Vec::new(), Vec::new());
         for v in &values {
-            let (rows, docs) = (a.ids.len() as u32, a.base.len() as u32);
+            let (rows, docs) = (a.low.len() as u32, a.base.len() as u32);
             value_rows.push(rows);
             value_docs.push(docs);
             let more = v.tree_core();
-            a.ids.extend(more.ids);
+            a.low.extend(more.low);
+            a.key.extend(more.key);
             a.kind.extend(more.kind);
             a.doc.extend(more.doc.iter().map(|&d| d + docs));
             a.base.extend(more.base.iter().map(|&r| r + rows));
@@ -378,7 +420,8 @@ impl Tree {
         };
         let atoms = by_name(a.kind.iter().map(|&k| i64::from(k)), kind_name);
         Tree {
-            ids: a.ids,
+            low: a.low,
+            key: a.key,
             kinds: a.kind,
             doc: a.doc,
             base: a.base,
@@ -426,11 +469,20 @@ impl Tree {
     }
 
     fn rows(&self) -> std::ops::Range<u32> {
-        0..self.ids.len() as u32
+        0..self.len() as u32
     }
 
-    fn id(&self, r: u32) -> i64 {
-        self.ids[r as usize]
+    /// Its node rows' count.
+    #[inline]
+    pub(super) fn len(&self) -> usize {
+        self.low.len()
+    }
+
+    /// Row `r`'s node id.
+    #[inline]
+    pub(super) fn id(&self, r: u32) -> i64 {
+        let r = r as usize;
+        i64::from(self.key[self.doc[r] as usize]) << 32 | i64::from(self.low[r])
     }
 
     #[inline]
@@ -469,7 +521,7 @@ impl Tree {
             return Arc::clone(n);
         }
         let set = self.set(kinds);
-        let n = self.ids.len();
+        let n = self.len();
         let mut near = vec![NONE; n];
         let mut done = vec![false; n];
         let mut chain = Vec::new();
@@ -499,8 +551,8 @@ impl Tree {
         let mut out = Vec::new();
         let mut at = c.row_of(n);
         if at == NONE {
-            let total = c.b.nodes().total();
-            return format!("not the batch's (tree {} rows, batch {total})", self.ids.len());
+            let total = c.b().nodes().total();
+            return format!("not the batch's (tree {} rows, batch {total})", self.len());
         }
         let sh = c.shape();
         while at != NONE && out.len() < 5 {
@@ -750,7 +802,7 @@ fn bind_only(c: &Chunk<'_>, inp: &dyn Inputs) -> Flat {
     let t = c.t;
     let id = t.atom("identifier");
     let is_id = |r: u32| t.kind(r) == id;
-    let mut out = vec![false; t.ids.len()];
+    let mut out = vec![false; t.len()];
     let aug = c.mark(&inp.read("aug_target"), 0);
     for r in inp.read("tgt").rows() {
         let at = c.row_of(r[0]);

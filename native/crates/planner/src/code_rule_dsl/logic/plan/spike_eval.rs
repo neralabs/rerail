@@ -20,6 +20,7 @@ use hashbrown::HashTable;
 use rustc_hash::{FxHashMap as HashMap, FxHasher};
 
 use super::spike_strata::{Chunk, NIL, NONE, Tree};
+use crate::code_rule_dsl::facts::rows::RangeRead;
 use crate::code_rule_dsl::logic::program_image::{AggRef, CmpOp, Lit, RuleRef, TermRef, Version};
 use crate::code_rule_dsl::logic::strings::functions::Kind;
 
@@ -41,11 +42,20 @@ fn hash_vals(vals: impl Iterator<Item = i64>) -> u64 {
 }
 
 /// A relation's values: its own, flat (`k` a row: made here, or read off a source the engine holds otherwise), or
-/// the engine's relation of the same rows in the same order, read where they lie (`Rows::range_reader`, a column at a
-/// time, one load a value), kept alive by its source: then the chunk holds only its indexes.
+/// the engine's relation of the same rows, read where they lie (`Rows::range_reader`, a column at a time, one load a
+/// value), kept alive by its source: then the chunk holds only its indexes. One part of live rows reads by id
+/// (`Lent`); rows over many parts (`Runs`) find their part's readers, and past dead rows (`live`) their row first.
 enum Vals {
     Own(Vec<i64>),
-    Lent { cols: Vec<crate::code_rule_dsl::facts::rows::RangeRead<'static>>, _keep: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> },
+    Lent { cols: Vec<RangeRead<'static>>, _keep: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> },
+    Runs {
+        /// Each part's first row (by the relation's ids), and its `k` readers, a part after another.
+        starts: Vec<u32>,
+        cols: Vec<RangeRead<'static>>,
+        /// Each live row's id, where the relation has dead rows.
+        live: Option<Vec<u32>>,
+        _keep: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>,
+    },
 }
 
 // SAFETY: a lent relation's readers only read its rows, in a block its source (`Send + Sync`) keeps alive and that
@@ -60,25 +70,57 @@ impl Vals {
         match self {
             Vals::Own(v) => v[id as usize * k + c],
             Vals::Lent { cols, .. } => cols[c].get(id),
+            Vals::Runs { starts, cols, live, .. } => {
+                let at = live.as_ref().map_or(id, |l| l[id as usize]);
+                let part = starts.partition_point(|&s| s <= at) - 1;
+                cols[part * k + c].get(at)
+            }
         }
     }
 
-    /// The engine's relation `src` of `n` rows read where they lie: one part (a relation made flat, `from_flat`) of
-    /// live rows. `None` otherwise.
+    /// The engine's relation `src` of `n` live rows read where they lie. `None` where it holds none.
     fn lent(src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, k: usize, n: usize) -> Option<Vals> {
         let (rows, held, dead, _) = super::super::native::component::held_rows(&**src)?;
-        if held != n || !dead.is_empty() || n == 0 {
+        if n == 0 || k == 0 {
             return None;
         }
-        let cols = (0..k)
-            .map(|c| {
-                let r = rows.range_reader(0, n as u32, c)?;
-                // SAFETY: the reader reads the relation's rows where they lie, in its block, which `_keep` (the
-                // source that holds the relation) keeps alive and unchanged while these values are held.
-                Some(unsafe { std::mem::transmute::<crate::code_rule_dsl::facts::rows::RangeRead<'_>, crate::code_rule_dsl::facts::rows::RangeRead<'static>>(r) })
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Some(Vals::Lent { cols, _keep: Arc::clone(src) })
+        // SAFETY: a reader reads the relation's rows where they lie, in its block, which `_keep` (the source that
+        // holds the relation) keeps alive and unchanged while these values are held.
+        let keep = |r: RangeRead<'_>| unsafe { std::mem::transmute::<RangeRead<'_>, RangeRead<'static>>(r) };
+        if held == n && dead.is_empty()
+            && let Some(cols) = (0..k).map(|c| rows.range_reader(0, n as u32, c).map(keep)).collect::<Option<Vec<_>>>()
+        {
+            return Some(Vals::Lent { cols, _keep: Arc::clone(src) });
+        }
+        let mut starts = Vec::new();
+        let mut cols = Vec::new();
+        let mut whole = true;
+        rows.each_run(0, held as u32, |_, i, j, id| {
+            starts.push(id);
+            for c in 0..k {
+                match rows.range_reader(id, id + (j - i), c) {
+                    Some(r) => cols.push(keep(r)),
+                    None => whole = false,
+                }
+            }
+        });
+        if !whole {
+            return None;
+        }
+        let live = (!dead.is_empty()).then(|| (0..held as u32).filter(|&id| dead.get(id as usize / 64).is_none_or(|w| w >> (id % 64) & 1 == 0)).collect::<Vec<u32>>());
+        if live.as_ref().map_or(held, Vec::len) != n {
+            return None;
+        }
+        Some(Vals::Runs { starts, cols, live, _keep: Arc::clone(src) })
+    }
+
+    /// The bytes it holds itself: an own relation's rows, a lent one's map past its dead rows.
+    fn bytes(&self) -> usize {
+        match self {
+            Vals::Own(v) => v.capacity() * 8,
+            Vals::Lent { .. } => 0,
+            Vals::Runs { starts, live, .. } => starts.capacity() * 4 + live.as_ref().map_or(0, |l| l.capacity() * 4),
+        }
     }
 }
 
@@ -124,6 +166,89 @@ impl Idx {
     }
 }
 
+/// An index of a relation the chunk holds for the strata after it, whole once made (nothing is added to it): its rows
+/// in the order of their key's hash (then the key), so each key's rows lie together, each with its hash's high 32
+/// bits (`fp`), and where each of `2^bits` buckets of hashes starts. About 9 bytes a row, read in order, with no
+/// table: a probe finds its key's bucket, then its rows by a binary search of their hashes' bits, reading a row's
+/// columns only to confirm its key.
+pub struct Sorted {
+    cols: Vec<usize>,
+    order: Vec<u32>,
+    fp: Vec<u32>,
+    dir: Vec<u32>,
+    bits: u32,
+    keys: usize,
+}
+
+impl Sorted {
+    #[inline]
+    fn bucket(h: u64, bits: u32) -> usize {
+        let m = (h ^ h >> 29).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        m.checked_shr(64 - bits).unwrap_or(0) as usize
+    }
+
+    /// The index of `n` rows of `v` on `cols`: buckets about four rows each, counted, then filled, then each sorted.
+    fn new(cols: Vec<usize>, v: &Vals, k: usize, n: usize) -> Sorted {
+        let hash = |id: u32| hash_vals(cols.iter().map(|&c| v.get(k, id, c)));
+        let bits = (n / 4).max(1).next_power_of_two().trailing_zeros();
+        let mut dir = vec![0u32; (1 << bits) + 1];
+        let mut fp = vec![0u32; n];
+        for id in 0..n as u32 {
+            let h = hash(id);
+            fp[id as usize] = (h >> 32) as u32;
+            dir[Self::bucket(h, bits) + 1] += 1;
+        }
+        for b in 1..dir.len() {
+            dir[b] += dir[b - 1];
+        }
+        let mut order = vec![0u32; n];
+        let mut fill = dir.clone();
+        for id in 0..n as u32 {
+            let b = Self::bucket(hash(id), bits);
+            order[fill[b] as usize] = id;
+            fill[b] += 1;
+        }
+        drop(fill);
+        let vals = |id: u32| cols.iter().map(move |&c| v.get(k, id, c));
+        let mut keys = 0;
+        for b in 0..1 << bits {
+            let rows = &mut order[dir[b] as usize..dir[b + 1] as usize];
+            if rows.len() > 1 {
+                rows.sort_unstable_by(|&x, &y| fp[x as usize].cmp(&fp[y as usize]).then_with(|| vals(x).cmp(vals(y))));
+            }
+            keys += rows.len().min(1) + rows.windows(2).filter(|w| fp[w[0] as usize] != fp[w[1] as usize] || vals(w[0]).ne(vals(w[1]))).count();
+        }
+        // Each row's bits in the index's order, read beside it.
+        let fp: Vec<u32> = order.iter().map(|&id| fp[id as usize]).collect();
+        Sorted { cols, order, fp, dir, bits, keys }
+    }
+
+    /// The rows whose columns are `key`.
+    #[inline]
+    fn find(&self, v: &Vals, k: usize, key: &[i64]) -> &[u32] {
+        let h = hash_vals(key.iter().copied());
+        let f = (h >> 32) as u32;
+        let b = Self::bucket(h, self.bits);
+        let (lo, hi) = (self.dir[b] as usize, self.dir[b + 1] as usize);
+        let fps = &self.fp[lo..hi];
+        let mut at = lo + fps.partition_point(|&x| x < f);
+        let same = |id: u32| self.cols.iter().zip(key).all(|(&c, &x)| v.get(k, id, c) == x);
+        // Past keys of the same bits (rare): sorted by their columns, so a scan reaches this one's run.
+        while at < hi && self.fp[at] == f && !same(self.order[at]) {
+            at += 1;
+        }
+        let mut end = at;
+        while end < hi && self.fp[end] == f && same(self.order[end]) {
+            end += 1;
+        }
+        &self.order[at..end]
+    }
+
+    fn bytes(&self) -> usize {
+        (self.order.capacity() + self.fp.capacity() + self.dir.capacity()) * 4
+    }
+}
+
 /// A relation the chunk holds: `n` rows of `k` values (`Vals`); for one made here, its dedup table; its indexes, by
 /// the columns they key.
 pub struct HRel {
@@ -134,7 +259,7 @@ pub struct HRel {
     /// A relation made here: its indexes, brought up to date at each wave's end.
     idx: Vec<Idx>,
     /// A relation the chunk holds for the strata after it: its indexes, each made whole at its first probe.
-    shared: std::sync::Mutex<Vec<Arc<Idx>>>,
+    shared: std::sync::Mutex<Vec<Arc<Sorted>>>,
     /// Its keys' counts by columns, estimated off a sample for a plan's costs (`keys`): no index made to price one.
     est: std::sync::Mutex<Vec<(Vec<usize>, usize)>>,
 }
@@ -159,7 +284,7 @@ impl HRel {
     pub fn own(&self) -> &[i64] {
         match &self.vals {
             Vals::Own(v) => v,
-            Vals::Lent { .. } => panic!("a relation the engine lends has no rows of its own"),
+            Vals::Lent { .. } | Vals::Runs { .. } => panic!("a relation the engine lends has no rows of its own"),
         }
     }
 
@@ -176,14 +301,12 @@ impl HRel {
     }
 
     /// The index on `cols` of a relation the chunk holds, made whole at its first use.
-    fn shared_index(&self, cols: &[usize]) -> Arc<Idx> {
+    fn shared_index(&self, cols: &[usize]) -> Arc<Sorted> {
         let mut shared = self.shared.lock().unwrap();
         if let Some(i) = shared.iter().find(|i| i.cols == cols) {
             return Arc::clone(i);
         }
-        let mut i = Idx::new(cols.to_vec());
-        i.extend(&self.vals, self.k, self.n);
-        let i = Arc::new(i);
+        let i = Arc::new(Sorted::new(cols.to_vec(), &self.vals, self.k, self.n));
         shared.push(Arc::clone(&i));
         i
     }
@@ -271,14 +394,17 @@ impl HRel {
         }
     }
 
+    /// The bytes it holds: its own rows' (none where the engine lends them), and its indexes'.
+    pub fn bytes_split(&self) -> (usize, usize) {
+        let own = self.vals.bytes();
+        (own, self.bytes() - own)
+    }
+
     /// The bytes it holds.
     pub fn bytes(&self) -> usize {
         let idx = |i: &Idx| i.next.capacity() * 4 + i.heads.capacity() * 5;
-        let own = match &self.vals {
-            Vals::Own(v) => v.capacity() * 8,
-            Vals::Lent { .. } => 0,
-        };
-        own + self.set.capacity() * 5 + self.idx.iter().map(idx).sum::<usize>() + self.shared.lock().unwrap().iter().map(|i| idx(i)).sum::<usize>()
+        let own = self.vals.bytes();
+        own + self.set.capacity() * 5 + self.idx.iter().map(idx).sum::<usize>() + self.shared.lock().unwrap().iter().map(|i| i.bytes()).sum::<usize>()
     }
 }
 
@@ -657,7 +783,7 @@ struct Step {
 /// A step's index: an own relation's, by place, or a held one's.
 enum IxRef {
     Own(usize),
-    Shared(Arc<Idx>),
+    Shared(Arc<Sorted>),
 }
 
 fn is_bound(bound: u64, a: Arg) -> bool {
@@ -712,10 +838,29 @@ fn binding<'e>(bound: u64, l: &'e Expr, r: &'e Expr) -> Option<(usize, &'e Expr)
     }
 }
 
+/// `whole = @cat(a, b)` with `whole` known and `a`, `b` unbound variables: `(whole, a, b)`, which a split of
+/// `whole`'s text binds (`Eval::go`).
+fn split<'e>(bound: u64, l: &'e Expr, r: &'e Expr) -> Option<(&'e Expr, usize, usize)> {
+    let parts = |e: &Expr| match e {
+        Expr::Call(Fun::Cat, args) => match args[..] {
+            [Expr::A(Arg::Var(a)), Expr::A(Arg::Var(b))] if a != b && bound >> a & 1 == 0 && bound >> b & 1 == 0 => Some((a, b)),
+            _ => None,
+        },
+        _ => None,
+    };
+    match (parts(l), parts(r)) {
+        (None, Some((a, b))) if known(bound, l) => Some((l, a, b)),
+        (Some((a, b)), None) if known(bound, r) => Some((r, a, b)),
+        _ => None,
+    }
+}
+
 /// What a call reads of the run: its symbols' texts, new symbols, `@cat`, node reads.
 pub trait Calls {
     fn name(&self, sym: i64) -> Option<String>;
     fn intern(&self, text: &str) -> i64;
+    /// The symbol of `text`: the one held, else a new one (`intern`).
+    fn atom(&self, text: &str) -> i64;
     fn cat(&self, a: i64, b: i64) -> i64;
     fn node_read(&self, name: &str, n: i64) -> Option<String>;
 }
@@ -772,7 +917,7 @@ impl<'a> Eval<'a> {
             }
         }
         let t = self.c.t;
-        let n = t.ids.len().max(1) as f64;
+        let n = t.len().max(1) as f64;
         match lit {
             LitP::Cmp { l, op, r } => {
                 if known(bound, l) && known(bound, r) {
@@ -781,6 +926,9 @@ impl<'a> Eval<'a> {
                     && let Some((_, from)) = binding(bound, l, r)
                 {
                     Some((1.0, 0.05 + call_cost(from)))
+                } else if *op == CmpOp::Eq && split(bound, l, r).is_some() {
+                    // A name's splits at its dots: a few.
+                    Some((2.0, 10.0))
                 } else {
                     None
                 }
@@ -807,8 +955,8 @@ impl<'a> Eval<'a> {
                     Src::Tree(tr) => {
                         let kinds = by_kind(t);
                         let of_kind = |k: usize| match a.args[k] {
-                            Arg::Const(c) => kinds.get(&c).map_or(0, Vec::len) as f64 / n,
-                            _ if b[k] => 1.0 / kinds.len().max(1) as f64,
+                            Arg::Const(c) => kinds.of(c).len() as f64 / n,
+                            _ if b[k] => 1.0 / kinds.at.len().max(1) as f64,
                             _ => 1.0,
                         };
                         let fan = match tr {
@@ -1014,14 +1162,6 @@ impl<'a> Eval<'a> {
     }
 
     #[inline]
-    fn ix<'b>(h: &'b HRel, ix: &'b IxRef) -> &'b Idx {
-        match ix {
-            IxRef::Own(at) => &h.idx[*at],
-            IxRef::Shared(i) => i,
-        }
-    }
-
-    #[inline]
     fn row_of(&self, env: &Env, a: Arg) -> u32 {
         match a {
             Arg::Var(s) if env.r[s] != NONE => env.r[s],
@@ -1134,7 +1274,7 @@ impl<'a> Eval<'a> {
             return;
         };
         let t: &Tree = self.c.t;
-        let id = |r: u32| (t.ids[r as usize], r);
+        let id = |r: u32| (t.id(r), r);
         match &rule.lits[step.lit] {
             LitP::Cmp { l, op, r } => {
                 if let Some((s, from)) = binding(step.bound, l, r) {
@@ -1142,6 +1282,24 @@ impl<'a> Eval<'a> {
                     env.v[s] = x;
                     env.r[s] = if let Expr::A(Arg::Var(f)) = from { env.r[*f] } else { NONE };
                     self.go(rule, steps, i + 1, env, out);
+                    return;
+                }
+                // `q = @cat(a, b)`, `q` known: each way `@cat` makes `q`: `"" . q`, and `q`'s text split at each dot.
+                if *op == CmpOp::Eq
+                    && let Some((whole, a, b)) = split(step.bound, l, r)
+                {
+                    let Some(q) = self.value(env, whole) else { return };
+                    let Some(text) = self.calls.name(q) else { return };
+                    env.r[a] = NONE;
+                    env.r[b] = NONE;
+                    env.v[a] = self.calls.atom("");
+                    env.v[b] = q;
+                    self.go(rule, steps, i + 1, env, out);
+                    for (at, _) in text.match_indices('.') {
+                        env.v[a] = self.calls.atom(&text[..at]);
+                        env.v[b] = self.calls.atom(&text[at + 1..]);
+                        self.go(rule, steps, i + 1, env, out);
+                    }
                     return;
                 }
                 {
@@ -1164,7 +1322,11 @@ impl<'a> Eval<'a> {
             LitP::Agg { var, op, over, atom } => {
                 let Src::Rel(r) = atom.src else { unreachable!() };
                 let h = self.rel(r);
-                let key: Vec<i64> = step.key.iter().map(|&c| Self::val(env, atom.args[c])).collect();
+                let mut key = [0i64; 16];
+                for (x, &c) in key.iter_mut().zip(&step.key) {
+                    *x = Self::val(env, atom.args[c]);
+                }
+                let key = &key[..step.key.len()];
                 let (mut count, mut acc): (i64, Option<i64>) = (0, None);
                 let mut take = |id: u32| {
                     count += 1;
@@ -1180,14 +1342,15 @@ impl<'a> Eval<'a> {
                     }
                 };
                 match &step.ix {
-                    Some(ix) => {
-                        let ix = Self::ix(h, ix);
-                        let mut at = ix.find(&h.vals, h.k, &key);
+                    Some(IxRef::Own(at)) => {
+                        let ix = &h.idx[*at];
+                        let mut at = ix.find(&h.vals, h.k, key);
                         while at != NONE {
                             take(at);
                             at = ix.next[at as usize];
                         }
                     }
+                    Some(IxRef::Shared(ix)) => ix.find(&h.vals, h.k, key).iter().for_each(|&id| take(id)),
                     None => (0..h.n as u32).for_each(&mut take),
                 }
                 let value = match op {
@@ -1234,10 +1397,22 @@ impl<'a> Eval<'a> {
                             self.accept(rule, steps, i, &cols[..k], env, out);
                         };
                         match &step.ix {
-                            Some(ix) => {
-                                let key: Vec<i64> = step.key.iter().map(|&c| Self::val(env, a.args[c])).collect();
-                                let ix = Self::ix(h, ix);
-                                let mut at = ix.find(&h.vals, k, &key);
+                            Some(IxRef::Shared(ix)) => {
+                                let mut key = [0i64; 16];
+                                for (x, &c) in key.iter_mut().zip(&step.key) {
+                                    *x = Self::val(env, a.args[c]);
+                                }
+                                for &id in ix.find(&h.vals, k, &key[..step.key.len()]) {
+                                    visit(id, env, out);
+                                }
+                            }
+                            Some(IxRef::Own(at)) => {
+                                let mut key = [0i64; 16];
+                                for (x, &c) in key.iter_mut().zip(&step.key) {
+                                    *x = Self::val(env, a.args[c]);
+                                }
+                                let ix = &h.idx[*at];
+                                let mut at = ix.find(&h.vals, k, &key[..step.key.len()]);
                                 while at != NONE {
                                     let id = at as usize;
                                     if id < lo {
@@ -1266,11 +1441,11 @@ impl<'a> Eval<'a> {
                                 }
                             } else if b(1) {
                                 let k = Self::val(env, a.args[1]);
-                                for &r in by_kind(t).get(&k).map(Vec::as_slice).unwrap_or(&[]) {
+                                for &r in by_kind(t).of(k) {
                                     self.accept(rule, steps, i, &[id(r), (k, NONE)], env, out);
                                 }
                             } else {
-                                for r in 0..t.ids.len() as u32 {
+                                for r in 0..t.len() as u32 {
                                     self.accept(rule, steps, i, &[id(r), (t.kind(r), NONE)], env, out);
                                 }
                             }
@@ -1287,11 +1462,11 @@ impl<'a> Eval<'a> {
                                 }
                             } else if b(2) {
                                 let k = Self::val(env, a.args[2]);
-                                for &r in by_kind(t).get(&k).map(Vec::as_slice).unwrap_or(&[]) {
+                                for &r in by_kind(t).of(k) {
                                     self.accept(rule, steps, i, &tuple(r), env, out);
                                 }
                             } else {
-                                for r in 0..t.ids.len() as u32 {
+                                for r in 0..t.len() as u32 {
                                     self.accept(rule, steps, i, &tuple(r), env, out);
                                 }
                             }
@@ -1311,7 +1486,7 @@ impl<'a> Eval<'a> {
                                     }
                                 }
                             } else {
-                                for c in 0..t.ids.len() as u32 {
+                                for c in 0..t.len() as u32 {
                                     if t.sh().parent[c as usize] != NONE {
                                         self.accept(rule, steps, i, &tuple(c), env, out);
                                     }
@@ -1336,7 +1511,7 @@ impl<'a> Eval<'a> {
                                     }
                                 }
                             } else {
-                                for c in 0..t.ids.len() as u32 {
+                                for c in 0..t.len() as u32 {
                                     if fielded(c) {
                                         self.accept(rule, steps, i, &tuple(c), env, out);
                                     }
@@ -1397,7 +1572,7 @@ impl<'a> Eval<'a> {
                                     }
                                 }
                             } else {
-                                for n in 0..t.ids.len() as u32 {
+                                for n in 0..t.len() as u32 {
                                     if near[n as usize] != NONE {
                                         self.accept(rule, steps, i, &[id(n), id(near[n as usize])], env, out);
                                     }
@@ -1432,7 +1607,7 @@ impl<'a> Eval<'a> {
                                     }
                                 }
                             } else {
-                                for n in 0..t.ids.len() as u32 {
+                                for n in 0..t.len() as u32 {
                                     ups(n, env, out);
                                 }
                             }
@@ -1453,8 +1628,15 @@ impl<'a> Eval<'a> {
                 let h = self.rel(*r);
                 match &step.ix {
                     Some(ix) => {
-                        let key: Vec<i64> = step.key.iter().map(|&c| val(c)).collect();
-                        Self::ix(h, ix).find(&h.vals, h.k, &key) != NONE
+                        let mut key = [0i64; 16];
+                        for (x, &c) in key.iter_mut().zip(&step.key) {
+                            *x = val(c);
+                        }
+                        let key = &key[..step.key.len()];
+                        match ix {
+                            IxRef::Own(at) => h.idx[*at].find(&h.vals, h.k, key) != NONE,
+                            IxRef::Shared(ix) => !ix.find(&h.vals, h.k, key).is_empty(),
+                        }
                     }
                     None => h.n > 0,
                 }
@@ -1481,7 +1663,7 @@ impl<'a> Eval<'a> {
                             return p != NONE && t.kids(p).iter().any(|&c| wild(2) || i64::from(t.sh().idx[c as usize]) == val(2));
                         }
                         let c = row(1);
-                        c != NONE && t.sh().parent[c as usize] != NONE && (wild(0) || t.ids[t.sh().parent[c as usize] as usize] == val(0)) && (wild(2) || i64::from(t.sh().idx[c as usize]) == val(2))
+                        c != NONE && t.sh().parent[c as usize] != NONE && (wild(0) || t.id(t.sh().parent[c as usize]) == val(0)) && (wild(2) || i64::from(t.sh().idx[c as usize]) == val(2))
                     }
                     TreeRel::Field => {
                         if wild(2) {
@@ -1489,7 +1671,7 @@ impl<'a> Eval<'a> {
                             return p != NONE && t.kids(p).iter().any(|&c| t.sh().field[c as usize] != NIL && (wild(1) || t.sh().field[c as usize] == val(1)));
                         }
                         let c = row(2);
-                        c != NONE && t.sh().parent[c as usize] != NONE && t.sh().field[c as usize] != NIL && (wild(0) || t.ids[t.sh().parent[c as usize] as usize] == val(0)) && (wild(1) || t.sh().field[c as usize] == val(1))
+                        c != NONE && t.sh().parent[c as usize] != NONE && t.sh().field[c as usize] != NIL && (wild(0) || t.id(t.sh().parent[c as usize]) == val(0)) && (wild(1) || t.sh().field[c as usize] == val(1))
                     }
                     TreeRel::Text => {
                         let r = row(0);
@@ -1510,7 +1692,7 @@ impl<'a> Eval<'a> {
                     TreeRel::Nearest(set) => {
                         let near = nearest(t, set);
                         let n = row(0);
-                        n != NONE && near[n as usize] != NONE && (wild(1) || t.ids[near[n as usize] as usize] == val(1))
+                        n != NONE && near[n as usize] != NONE && (wild(1) || t.id(near[n as usize]) == val(1))
                     }
                     TreeRel::Inside(set) | TreeRel::Has(set) => {
                         let has = matches!(tr, TreeRel::Has(_));
@@ -1521,7 +1703,7 @@ impl<'a> Eval<'a> {
                         let target = (!wild(1)).then(|| val(1));
                         let mut up = t.sh().parent[n as usize];
                         while up != NONE {
-                            if set.contains(&t.kind(if has { n } else { up })) && target.is_none_or(|x| t.ids[up as usize] == x) {
+                            if set.contains(&t.kind(if has { n } else { up })) && target.is_none_or(|x| t.id(up) == x) {
                                 return true;
                             }
                             up = t.sh().parent[up as usize];
@@ -1547,14 +1729,41 @@ impl<'a> Eval<'a> {
     }
 }
 
+/// The rows of each kind, in one array (a counting sort of the rows by kind, each kind's in row order), and each
+/// kind's place in it.
+pub struct KindRows {
+    pub(super) order: Vec<u32>,
+    at: HashMap<i64, (u32, u32)>,
+}
+
+impl KindRows {
+    /// The rows of kind `k`.
+    #[inline]
+    fn of(&self, k: i64) -> &[u32] {
+        self.at.get(&k).map_or(&[], |&(lo, hi)| &self.order[lo as usize..hi as usize])
+    }
+}
+
 /// The rows of each kind, made once for the chunk (`Tree::by_kind`).
-fn by_kind(t: &Tree) -> &HashMap<i64, Vec<u32>> {
+fn by_kind(t: &Tree) -> &KindRows {
     t.by_kind.get_or_init(|| {
-        let mut m: HashMap<i64, Vec<u32>> = HashMap::default();
-        for (r, &k) in t.kinds.iter().enumerate() {
-            m.entry(i64::from(k)).or_default().push(r as u32);
+        let mut at: HashMap<i64, (u32, u32)> = HashMap::default();
+        for &k in &t.kinds {
+            at.entry(i64::from(k)).or_default().1 += 1;
         }
-        m
+        let mut next = 0;
+        for (lo, hi) in at.values_mut() {
+            *lo = next;
+            next += *hi;
+            *hi = *lo;
+        }
+        let mut order = vec![0u32; t.len()];
+        for (r, &k) in t.kinds.iter().enumerate() {
+            let fill = &mut at.get_mut(&i64::from(k)).expect("counted").1;
+            order[*fill as usize] = r as u32;
+            *fill += 1;
+        }
+        KindRows { order, at }
     })
 }
 
@@ -1563,7 +1772,7 @@ fn nearest(t: &Tree, set: &[i64]) -> Arc<Vec<u32>> {
     if let Some(n) = t.near_by.lock().unwrap().get(set) {
         return Arc::clone(n);
     }
-    let n = t.ids.len();
+    let n = t.len();
     let mut near = vec![NONE; n];
     // Preorder rows: a parent's row is before its children's.
     for r in 0..n {
@@ -1580,6 +1789,14 @@ fn nearest(t: &Tree, set: &[i64]) -> Arc<Vec<u32>> {
 /// The relations a stratum reads that it does not make, by place in `prog.rels`.
 pub fn reads(prog: &Prog) -> impl Iterator<Item = (usize, &str)> {
     prog.rels.iter().enumerate().skip(prog.nscc).map(|(i, r)| (i, r.as_str()))
+}
+
+/// Whether `prog` reads a tree relation (which a session with no syntax batch has none of).
+pub fn reads_tree(prog: &Prog) -> bool {
+    prog.rules.iter().flat_map(|r| &r.lits).any(|l| match l {
+        LitP::Atom(a) | LitP::Agg { atom: a, .. } => matches!(a.src, Src::Tree(_)),
+        LitP::Cmp { .. } => false,
+    })
 }
 
 /// Evaluates `prog` over chunk `c`, the relations it reads given (`read`, by place; `None` for the stratum's own):
@@ -1601,10 +1818,16 @@ pub fn run(prog: &Prog, c: &Chunk<'_>, read: Vec<Option<Arc<HRel>>>, calls: &dyn
     for rule in &prog.rules {
         plans.push(ev.plan(rule, None)?);
     }
+    let t0 = std::time::Instant::now();
+    // Each rule's time and runs, for a slow stratum's report (`RERAIL_SPIKE_WHY`).
+    let mut spent = vec![(0f64, 0u32); prog.rules.len()];
     let mut pending: Vec<Vec<i64>> = (0..prog.nscc).map(|_| Vec::new()).collect();
-    for (rule, steps) in prog.rules.iter().zip(&plans) {
+    for (ri, (rule, steps)) in prog.rules.iter().zip(&plans).enumerate() {
         if rule.rec.is_empty() {
+            let t = std::time::Instant::now();
             ev.run_rule(rule, steps, &mut pending[rule.head]);
+            spent[ri].0 += t.elapsed().as_secs_f64();
+            spent[ri].1 += 1;
         }
     }
     let recursive: Vec<&RuleP> = prog.rules.iter().filter(|r| !r.rec.is_empty()).collect();
@@ -1645,8 +1868,33 @@ pub fn run(prog: &Prog, c: &Chunk<'_>, read: Vec<Option<Arc<HRel>>>, calls: &dyn
                     std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                     std::collections::hash_map::Entry::Vacant(e) => e.insert(ev.plan(rule, Some(d))?),
                 };
+                let t = std::time::Instant::now();
                 ev.run_rule(rule, steps, &mut pending[rule.head]);
+                spent[ri].0 += t.elapsed().as_secs_f64();
+                spent[ri].1 += 1;
             }
+        }
+    }
+    if verbose() && t0.elapsed().as_secs_f64() > 1.0 {
+        let plan = |steps: &[Step]| {
+            steps
+                .iter()
+                .map(|s| {
+                    let how = match &s.ix {
+                        None => "scan",
+                        Some(IxRef::Own(_)) => "own",
+                        Some(IxRef::Shared(_)) => "held",
+                    };
+                    format!("{}{how}{:?}{}", s.lit, s.key, if s.part == Part::Delta { "Δ" } else { "" })
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let sizes: Vec<String> = prog.rels.iter().enumerate().map(|(r, n)| format!("{n} {}", ev.rel(r).n)).collect();
+        eprintln!("SPIKE SLOW {} {:.2} s; sizes {}", prog.rels[..prog.nscc].join(","), t0.elapsed().as_secs_f64(), sizes.join(", "));
+        for (ri, rule) in prog.rules.iter().enumerate() {
+            let deltas: Vec<String> = delta_plans.iter().filter(|((r, _), _)| *r == ri).map(|((_, d), st)| format!("Δ{d}: {}", plan(st))).collect();
+            eprintln!("SPIKE SLOW   {:.2} s {} runs: {} | wave 0: {} | {}", spent[ri].0, spent[ri].1, rule.text, plan(&plans[ri]), deltas.join(" | "));
         }
     }
     let mut own = ev.own;
