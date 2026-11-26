@@ -14,6 +14,9 @@ import { assignShards, platformTimes, runMs } from "../../support/shards/shard-s
 import { UNIT_TEST_TIMES } from "../../support/shards/unit-test-times.generated.ts";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
+// On this repository: its tracked files and engine sources, vitest's list and every test file's import closure, which
+// take seconds, and up to 51 s in a Windows checkout's first run on a busy machine.
+const ON_THE_REPOSITORY = { timeout: 120_000 };
 
 const literals = (text) => stringLiterals(ts, "x.ts", text);
 const named = (file, text, top = ["packs", "native", "src", "test", ".rerail"]) => namedPaths(file, literals(text), new Set(top));
@@ -64,7 +67,7 @@ describe("what the tests see of a change", () => {
     expect(seen(["docs/rule-syntax/README.md"], SOURCES)).not.toContain("native/rerail_engine.node");
   });
 
-  it("takes the engine's inputs from engine-inputs.mjs", () => {
+  it("takes the engine's inputs from engine-inputs.mjs", ON_THE_REPOSITORY, () => {
     const sources = engineSources(ROOT);
     expect(isEngineInput("tools/bitlex/Cargo.toml", sources)).toBe(true);
     expect(isEngineInput("docs/rule-syntax/lib/core.rerail", sources)).toBe(true);
@@ -171,9 +174,6 @@ describe("shards and outputs", () => {
     expect(outputs({ unit: "some", tests: ["test/a.test.ts"], all: 449, windowsExtra: true, prose: true })).toEqual({ unit: "some", "unit-tests": "test/a.test.ts", "unit-shards": "[1]", "windows-shards": "[]" });
     expect(outputs({ unit: "none", tests: [], all: 449, windowsExtra: true, prose: true })["windows-shards"]).toBe("[]");
   });
-
-  // On this repository: vitest's list and every test file's import closure, which take seconds.
-  const ON_THE_REPOSITORY = { timeout: 120_000 };
 
   it("give a change of prose alone no Windows shard, and one that also changes code its Windows shards", ON_THE_REPOSITORY, async () => {
     const prose = await select(ROOT, [".changeset/x.md", "docs/release.md"]);
