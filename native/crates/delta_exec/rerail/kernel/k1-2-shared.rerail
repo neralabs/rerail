@@ -8,6 +8,10 @@
 ctx(d, x, l) :- up(d, x, b), kind(d, b, "conjunction"), field(d, b, "literal", l), !scope(d, l).
 ctx(d, x, y) :- up(d, x, b), kind(d, b, "conjunction"), field(d, b, "literal", y), scope(d, y), y < x, !up(d, x, y).
 onesplit(d, c) :- alt(d, c, _), !several(d, c).
+// An aggregate's one atom, and the variables under it that occur in its clause outside it: its keys.
+agg_atom(d, g, a) :- agg_lit(d, g, a), kind(d, a, "atom"), !agg_multi(d, g).
+agg_one(d, g) :- agg_atom(d, g, _).
+agg_outer(d, g, v) :- agg_under(d, g, t), read_var(d, t, v), in_clause(d, c, g), in_clause(d, c, u), read_var(d, u, v), !agg_under(d, g, u).
 shared(d, x, v) :- scope(d, x), in_clause(d, c, x), under(d, x, t), read_var(d, t, v), in_clause(d, c, u), read_var(d, u, v), !under(d, x, u).
 rep(d, x, v, t) :- shared(d, x, v), under(d, x, t), read_var(d, t, v), !later(d, x, v, t).
 gt(d, x, v, w) :- shared(d, x, v), shared(d, x, w), v < w.

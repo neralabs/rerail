@@ -213,6 +213,9 @@ struct Planner<'s> {
     keys: Vec<i64>,
     /// Each own head's working state: its heads before and after (a recursive stratum's).
     own: Vec<(Option<BlockId>, Option<BlockId>)>,
+    /// The side a delta term's aggregate folds its changed groups on: after (its answer added), then before (taken
+    /// away).
+    fold: Option<Side>,
 }
 
 /// Which documents a view step reads.
@@ -226,7 +229,7 @@ enum Docs<'a> {
 impl<'s> Planner<'s> {
     fn new(st: &'s Stratum, s: &'s Sides) -> Planner<'s> {
         let docs = s.docs.clone(); // copy: derived (the documents' places, the plan's)
-        let mut p = Planner { st, s, plan: Plan { srcs: Vec::new(), docs, decls: Decls::default(), terms: Vec::new() }, keys: Vec::new(), own: Vec::new() };
+        let mut p = Planner { st, s, plan: Plan { srcs: Vec::new(), docs, decls: Decls::default(), terms: Vec::new() }, keys: Vec::new(), own: Vec::new(), fold: None };
         // The declarations (0361): their relations as sources, read where they lie by the planning operations.
         p.plan.decls.inferred = st.inferred.clone(); // copy: derived (the facts inferred for its reads, its plan's words)
         p.plan.decls.one = st.known.one.unwrap_or(0);
@@ -286,6 +289,19 @@ impl<'s> Planner<'s> {
 
     /// A chain of rule `c.rule`, its views over `docs`, its first steps restricted to `parts`.
     fn chain(&mut self, c: Walk<'_>, docs: Docs<'_>, changed: Docs<'_>, parts: &[i64]) {
+        // A delta term led by an aggregate (P§10: only the changed groups): two chains, each from the changed groups'
+        // keys, the group folded on the after side and its answer added, then on the before side and taken away.
+        if self.fold.is_none()
+            && let Some(&(i, Side::Delta)) = c.order.first()
+            && matches!(c.rule.steps[i].kind, Kind::Agg(_))
+        {
+            for (side, sign) in [(Side::After, 1), (Side::Before, -1)] {
+                self.fold = Some(side);
+                self.chain(Walk { sign: c.sign * sign, ..c }, docs, changed, parts);
+            }
+            self.fold = None;
+            return;
+        }
         let mut steps = Vec::new();
         let mut bound: BTreeMap<i64, (usize, usize)> = BTreeMap::new();
         let bind = |args: &[Term], j: usize, bound: &mut BTreeMap<i64, (usize, usize)>| -> Vec<Arg> {
@@ -332,6 +348,52 @@ impl<'s> Planner<'s> {
                     });
                     steps.push(StepPlan { op: Op::Cmp(cmp), src: 0, side, args: args.collect() });
                 }
+                // An aggregate: its keys bound before it, its own variables only its, its answer bound. Led by its
+                // change, the changed groups' keys first (bound from the changed rows, once a key), then the fold.
+                Kind::Agg(op) => {
+                    let d = if side == Side::Delta { changed } else { docs };
+                    let n = st.arity();
+                    let src = self.source(st.rel, n, d);
+                    let pattern = &st.args[..n];
+                    let vcol = pattern.iter().position(|t| *t == st.args[n]).unwrap_or(0) as u16;
+                    let elsewhere: BTreeSet<i64> = c.rule.steps.iter().enumerate().filter(|(k, _)| *k != si).flat_map(|(_, s)| &s.args).chain(&c.rule.args).filter_map(|t| if let Term::Var(v) = *t { Some(v) } else { None }).collect();
+                    let mut fold_side = side;
+                    if side == Side::Delta {
+                        let keys: Vec<Term> = pattern.iter().map(|t| match *t {
+                            Term::Var(v) if !elsewhere.contains(&v) => Term::Wild,
+                            t => t,
+                        }).collect();
+                        let args = bind(&keys, steps.len(), &mut bound);
+                        steps.push(StepPlan { op: Op::AggKeys, src, side, args });
+                        fold_side = self.fold.expect("an aggregate's delta term, folded on a side");
+                    }
+                    let j = steps.len();
+                    let mut here: BTreeMap<i64, usize> = BTreeMap::new();
+                    let mut args: Vec<Arg> = pattern.iter().enumerate().map(|(i, t)| match *t {
+                        Term::Wild => Arg::Wild,
+                        Term::Const(v) => Arg::Const(v),
+                        Term::Var(v) => match (bound.get(&v), here.get(&v)) {
+                            (Some(&(bj, bc)), _) => Arg::Eq(bj, bc),
+                            (None, Some(&c0)) => Arg::Same(c0),
+                            (None, None) => {
+                                here.insert(v, i);
+                                Arg::Bind
+                            }
+                        },
+                    }).collect();
+                    args.push(match st.args[n + 1] {
+                        Term::Var(v) => match bound.get(&v) {
+                            Some(&(bj, bc)) => Arg::Eq(bj, bc),
+                            None => {
+                                bound.insert(v, (j, n));
+                                Arg::Bind
+                            }
+                        },
+                        Term::Const(v) => Arg::Const(v),
+                        Term::Wild => Arg::Wild,
+                    });
+                    steps.push(StepPlan { op: Op::Agg(op, vcol), src, side: fold_side, args });
+                }
                 // An operator: its operands bound before it (B§7), its answer a variable it binds, or a value it
                 // holds. It reads no source.
                 Kind::Fn(op) => {
@@ -340,7 +402,7 @@ impl<'s> Planner<'s> {
                 }
                 Kind::Atom | Kind::Not => {
                     let d = if side == Side::Delta { changed } else { docs };
-                    let src = self.source(st.rel, st.args.len(), d);
+                    let src = self.source(st.rel, st.arity(), d);
                     let args = bind(&st.args, j, &mut bound);
                     let op = if st.kind == Kind::Atom { Op::Atom } else { Op::Not };
                     steps.push(StepPlan { op, src, side, args });
@@ -441,9 +503,9 @@ impl Stratum {
         for r in &all {
             for st in r.steps.iter().filter(|s| s.kind.reads()) {
                 if let Some(v) = known.view(st.rel)
-                    && v.arity() != st.args.len()
+                    && v.arity() != st.arity()
                 {
-                    return Err(Refused { module, rule: r.id, why: format!("step {:?} reads view {} of {} columns with {}", st.key, crate::sym::name_of(atoms, st.rel), v.arity(), st.args.len()) });
+                    return Err(Refused { module, rule: r.id, why: format!("step {:?} reads view {} of {} columns with {}", st.key, crate::sym::name_of(atoms, st.rel), v.arity(), st.arity()) });
                 }
             }
         }

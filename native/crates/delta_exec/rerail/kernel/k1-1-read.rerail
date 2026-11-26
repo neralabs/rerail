@@ -40,6 +40,7 @@ read_var(d, t, v) :- kind(d, t, "variable"), text(d, t, v).
 // are the term inside them.
 expr(d, e) :- kind(d, e, "binary_expression").
 expr(d, e) :- kind(d, e, "unary_expression").
+expr(d, g) :- kind(d, g, "aggregate").
 read_var(d, e, s) :- expr(d, e), name(d, e, s).
 paren(d, p, e) :- kind(d, p, "parenthesized_expression"), field(d, p, "expression", e).
 read_var(d, p, v) :- paren(d, p, e), read_var(d, e, v), kind(d, p, _).
@@ -59,7 +60,19 @@ term_root(d, l) :- kind(d, l, "negation").
 term_root(d, l) :- kind(d, l, "comparison").
 term_root(d, h) :- head_of(d, _, h), kind(d, h, _).
 in_term(d, l, y) :- term_root(d, l), field(d, l, _, y).
-in_term(d, l, z) :- in_term(d, l, y), field(d, y, _, z).
+in_term(d, l, z) :- in_term(d, l, y), !kind(d, y, "aggregate"), field(d, y, _, z).
+// An aggregate (step 9, L4-f): a step of its operator, tagged so no relation is named it (`count` implied where no
+// operator is written), the nodes under it, and its body's literals.
+op_step(d, g, "count:") :- kind(d, g, "aggregate"), !field(d, g, "operator", _).
+op_step(d, g, "count:") :- kind(d, g, "aggregate"), field(d, g, "operator", o), kind(d, o, "count").
+op_step(d, g, "sum:") :- kind(d, g, "aggregate"), field(d, g, "operator", o), kind(d, o, "sum").
+op_step(d, g, "min:") :- kind(d, g, "aggregate"), field(d, g, "operator", o), kind(d, o, "min").
+op_step(d, g, "max:") :- kind(d, g, "aggregate"), field(d, g, "operator", o), kind(d, o, "max").
+op_step(d, g, "mean:") :- kind(d, g, "aggregate"), field(d, g, "operator", o), kind(d, o, "mean").
+agg_under(d, g, t) :- kind(d, g, "aggregate"), field(d, g, _, t).
+agg_under(d, g, u) :- agg_under(d, g, t), field(d, t, _, u).
+agg_lit(d, g, l) :- kind(d, g, "aggregate"), field(d, g, "body", b), field(d, b, "literal", l).
+agg_multi(d, g) :- agg_lit(d, g, a), agg_lit(d, g, b), a < b.
 read_str(d, t, s) :- kind(d, t, "string"), value(d, t, s).
 read_num(d, t, n) :- kind(d, t, "number"), value(d, t, n).
 read_wild(d, t) :- kind(d, t, "wildcard").

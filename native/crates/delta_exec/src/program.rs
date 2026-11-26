@@ -117,19 +117,81 @@ impl Arith {
     }
 }
 
-/// What a step does: an atom of a relation, its negation, a comparison, or an atom of an arithmetic operator (`Fn`).
+/// An aggregate (step 9, L4-f): a delta operator the executor knows by its symbol, `count:` and the like, which no
+/// relation can be named (B§3, sentence 3: an answer). A step of one folds the rows of one relation that match the
+/// keys bound before it (P§10: maintained by changed groups), and binds its answer. `count` and `sum` of no rows are 0;
+/// `min`, `max` and `mean` (a truncated quotient) of none have no row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AggOp {
+    Count,
+    Sum,
+    Min,
+    Max,
+    Mean,
+}
+
+impl AggOp {
+    pub const ALL: [(AggOp, &'static str); 5] = [(AggOp::Count, "count:"), (AggOp::Sum, "sum:"), (AggOp::Min, "min:"), (AggOp::Max, "max:"), (AggOp::Mean, "mean:")];
+
+    pub fn code(self) -> i64 {
+        AggOp::ALL.iter().position(|c| c.0 == self).expect("an aggregate") as i64
+    }
+
+    pub fn of_code(c: i64) -> Option<AggOp> {
+        AggOp::ALL.get(usize::try_from(c).ok()?).map(|c| c.0)
+    }
+
+    /// Its answer over a group's folded values, `None` where it has no row.
+    pub fn answer(self, f: &Fold) -> Option<i64> {
+        match self {
+            AggOp::Count => Some(f.n),
+            AggOp::Sum => Some(f.sum),
+            AggOp::Min => (f.n > 0).then_some(f.lo),
+            AggOp::Max => (f.n > 0).then_some(f.hi),
+            AggOp::Mean => (f.n > 0).then(|| f.sum / f.n),
+        }
+    }
+}
+
+/// A group's values folded as they are read: their count, sum, least and greatest.
+#[derive(Clone, Copy, Debug)]
+pub struct Fold {
+    n: i64,
+    sum: i64,
+    lo: i64,
+    hi: i64,
+}
+
+impl Default for Fold {
+    fn default() -> Fold {
+        Fold { n: 0, sum: 0, lo: i64::MAX, hi: i64::MIN }
+    }
+}
+
+impl Fold {
+    pub fn add(&mut self, v: i64) {
+        self.n += 1;
+        self.sum = self.sum.wrapping_add(v);
+        self.lo = self.lo.min(v);
+        self.hi = self.hi.max(v);
+    }
+}
+
+/// What a step does: an atom of a relation, its negation, a comparison, an atom of an arithmetic operator (`Fn`), or
+/// an aggregate (`Agg`) of a relation: its arguments the relation's pattern, then its value's term and its answer's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     Atom,
     Not,
     Cmp(Cmp),
     Fn(Arith),
+    Agg(AggOp),
 }
 
 impl Kind {
     /// Whether it reads a relation's rows: a comparison and an operator read none.
     pub fn reads(self) -> bool {
-        matches!(self, Kind::Atom | Kind::Not)
+        matches!(self, Kind::Atom | Kind::Not | Kind::Agg(_))
     }
 }
 
@@ -140,6 +202,13 @@ pub struct Step {
     pub kind: Kind,
     pub rel: i64,
     pub args: Vec<Term>,
+}
+
+impl Step {
+    /// The columns of the relation it reads: an aggregate's pattern, its arguments but its value and its answer.
+    pub fn arity(&self) -> usize {
+        if matches!(self.kind, Kind::Agg(_)) { self.args.len() - 2 } else { self.args.len() }
+    }
 }
 
 /// A rule: its module, its node, its head's relation and arguments, and its steps in key order.
@@ -204,7 +273,7 @@ impl Rule {
             }
             match s.kind {
                 Kind::Atom => bound.extend(s.args.iter().filter_map(var)),
-                Kind::Fn(_) => bound.extend(s.args.last().and_then(var)),
+                Kind::Fn(_) | Kind::Agg(_) => bound.extend(s.args.last().and_then(var)),
                 _ => {}
             }
         }
@@ -272,6 +341,7 @@ impl Program {
         let (atom, not, cmp) = (sym("atom"), sym("not"), sym("cmp"));
         let ops: BTreeMap<i64, Cmp> = Cmp::ALL.iter().filter_map(|(c, s)| sym(s).map(|i| (i, *c))).collect();
         let ariths: BTreeMap<i64, Arith> = Arith::ALL.iter().filter_map(|(c, s)| sym(s).map(|i| (i, *c))).collect();
+        let aggs: BTreeMap<i64, AggOp> = AggOp::ALL.iter().filter_map(|(c, s)| sym(s).map(|i| (i, *c))).collect();
         // What each term is, by (module, term).
         let mut terms: BTreeMap<(i64, i64), Term> = BTreeMap::new();
         for r in &rows[at("k_var")] {
@@ -314,7 +384,11 @@ impl Program {
             let (m, id, key) = (r[0], r[1], (r[2], r[3]));
             let refuse = |why: String| Refused { module: m, rule: id, why };
             let kind = match Some(r[4]) {
-                k if k == atom => ariths.get(&r[5]).map_or(Kind::Atom, |&op| Kind::Fn(op)),
+                k if k == atom => match (ariths.get(&r[5]), aggs.get(&r[5])) {
+                    (Some(&op), _) => Kind::Fn(op),
+                    (_, Some(&op)) => Kind::Agg(op),
+                    _ => Kind::Atom,
+                },
                 k if k == not => Kind::Not,
                 k if k == cmp => Kind::Cmp(*ops.get(&r[5]).ok_or_else(|| refuse(format!("step {key:?}: an unknown comparison")))?),
                 _ => return Err(refuse(format!("step {key:?}: a kind that is not atom, not or cmp"))),
@@ -328,6 +402,21 @@ impl Program {
                 for k in 0..rule.steps.len() {
                     let key = rule.steps[k].key;
                     rule.steps[k].args = term_list(rule.module, rule.id, key)?;
+                    // An aggregate as K1 writes it: the relation it folds, its answer, its value, then the pattern. As
+                    // the executor reads it: the relation the step's, the pattern, the value and the answer.
+                    if let Kind::Agg(op) = rule.steps[k].kind {
+                        let s = &mut rule.steps[k];
+                        let refuse = |why: String| Refused { module: rule.module, rule: rule.id, why };
+                        let (Some(&Term::Const(rel)), true) = (s.args.first(), s.args.len() >= 3) else {
+                            return Err(refuse(format!("step {key:?}: an aggregate {op:?} that names no relation")));
+                        };
+                        if rel < 0 {
+                            return Err(refuse(format!("step {key:?}: aggregate {op:?} of a body that is not one atom: write the body as a relation of an earlier file, and aggregate that")));
+                        }
+                        let (answer, value) = (s.args[1], s.args[2]);
+                        s.rel = rel;
+                        s.args = s.args[3..].iter().copied().chain([value, answer]).collect();
+                    }
                 }
                 rule.operators();
             }
@@ -415,6 +504,21 @@ impl Program {
                             }
                             bound.extend(vars);
                         }
+                        // An aggregate: its pattern's bound variables are its keys, the rest its own; its value one
+                        // of the pattern's (any for `count`); it binds its answer only.
+                        Kind::Agg(op) => {
+                            let n = s.arity();
+                            let var = |t: &Term| if let Term::Var(v) = *t { Some(v) } else { None };
+                            // A variable of its pattern found elsewhere in the rule is a key: bound before it.
+                            let elsewhere = rule.steps.iter().filter(|o| o.key != s.key).flat_map(|o| &o.args).chain(&rule.args).filter_map(var).collect::<BTreeSet<i64>>();
+                            if let Some(v) = s.args[..n].iter().filter_map(var).find(|v| elsewhere.contains(v) && !bound.contains(v)) {
+                                return Err(rule.refuse(format!("step {:?}: aggregate {op:?}'s key {} is not bound by an earlier step", s.key, crate::sym::name_of(atoms, v))));
+                            }
+                            if op != AggOp::Count && !matches!(s.args[n], Term::Var(v) if s.args[..n].contains(&Term::Var(v))) {
+                                return Err(rule.refuse(format!("step {:?}: aggregate {op:?}'s value is not a variable of its body's atom", s.key)));
+                            }
+                            bound.extend(var(&s.args[n + 1]));
+                        }
                         Kind::Not | Kind::Cmp(_) => {
                             if let Some(v) = vars.clone().find(|v| !bound.contains(v)) {
                                 return Err(rule.refuse(format!("step {:?}: variable {} is not bound by an earlier step", s.key, n(v))));
@@ -430,6 +534,9 @@ impl Program {
                         let neg = s.kind == Kind::Not;
                         if w == m && neg {
                             return Err(rule.refuse(format!("step {:?} negates relation {}, its own stratum's head", s.key, n(s.rel))));
+                        }
+                        if w == m && matches!(s.kind, Kind::Agg(_)) {
+                            return Err(rule.refuse(format!("step {:?} aggregates relation {}, its own stratum's head: an aggregate reads an earlier stratum", s.key, n(s.rel))));
                         }
                         if w != m && order[&w] > order[&m] {
                             return Err(rule.refuse(format!("step {:?} reads relation {}, the head of module {}, a later stratum", s.key, n(s.rel), n(w))));
@@ -448,7 +555,7 @@ impl Program {
                 };
                 arity(rule.head, rule.args.len(), "head")?;
                 for s in rule.steps.iter().filter(|s| s.kind.reads()) {
-                    arity(s.rel, s.args.len(), &format!("step {:?} reads", s.key))?;
+                    arity(s.rel, s.arity(), &format!("step {:?} reads", s.key))?;
                 }
                 for t in &rule.args {
                     match t {

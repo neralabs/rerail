@@ -8,6 +8,7 @@ k_arg(d, r, p, n, i, t) :- at(d, r, f, p), turn(d, r, f, n), read_arg(d, r, f, -
 k_arg(d, r, k, j, i, t) :- read_arg(d, r, k, j, i, t), !placed(d, r, k).
 k_var(d, t, v) :- read_var(d, t, v).
 k_str(d, t, s) :- read_str(d, t, s).
+k_str(d, t, s) :- agg_rel(d, t, s).
 k_num(d, t, n) :- read_num(d, t, n).
 k_wild(d, t) :- read_wild(d, t).
 k_decl(d, r, i, t) :- read_decl(d, r, i, t).

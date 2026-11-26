@@ -315,7 +315,14 @@ impl ChainVars {
             let vars: u64 = n.args.iter().filter_map(|a| if let V::Var(x) = a { Some(1u64 << x) } else { None }).fold(0, |m, b| m | b);
             n.after = n.args.iter().filter_map(|a| if let V::Row(sj, _) = a { Some(1u64 << sj) } else { None }).fold(0, |m, b| m | b);
             match n.op {
-                Op::Atom => n.binds = vars,
+                Op::Atom | Op::AggKeys => n.binds = vars,
+                // An aggregate: its own variables (found nowhere else) and its answer it binds; its keys it needs.
+                Op::Agg(..) => {
+                    let own = (0..occ.len()).filter(|&x| vars >> x & 1 == 1 && occ[x] == 1 << j && in_out >> x & 1 == 0).fold(0u64, |m, x| m | 1 << x);
+                    let answer = if let Some(V::Var(x)) = n.args.last() { 1u64 << x } else { 0 };
+                    n.binds = own | answer;
+                    n.needs = vars & !own & !answer;
+                }
                 Op::Not => {
                     let own = (0..occ.len()).filter(|&x| vars >> x & 1 == 1 && occ[x] == 1 << j && in_out >> x & 1 == 0).fold(0u64, |m, x| m | 1 << x);
                     n.binds = own;
@@ -338,9 +345,13 @@ impl ChainVars {
         self.nodes.len()
     }
 
-    /// The variables the atoms and operators of `placed` bind.
+    /// The variables the atoms and operators of `placed` bind (an aggregate's answer, not its own variables).
     fn bound(&self, placed: u64) -> u64 {
-        self.nodes.iter().enumerate().filter(|(j, n)| placed >> j & 1 == 1 && matches!(n.op, Op::Atom | Op::Fn(_))).fold(0, |m, (_, n)| m | n.binds)
+        self.nodes.iter().enumerate().filter(|(j, _)| placed >> j & 1 == 1).fold(0, |m, (_, n)| match n.op {
+            Op::Atom | Op::Fn(_) | Op::AggKeys => m | n.binds,
+            Op::Agg(..) => m | (n.binds & if let Some(V::Var(x)) = n.args.last() { 1u64 << x } else { 0 }),
+            _ => m,
+        })
     }
 
     /// Whether step `j` may run after the steps of `placed`.
@@ -500,7 +511,7 @@ fn fan(c: &ChainVars, lp: &LinePrice, placed: u64, j: usize) -> f64 {
     let corr = sp.corr.get(mask).copied().unwrap_or(1.0);
     let sel: f64 = (0..n.args.len()).filter(|i| mask >> i & 1 == 1).map(|i| 1.0 / sp.ndv.get(i).copied().unwrap_or(1.0).max(1.0)).product();
     match n.op {
-        Op::Atom => {
+        Op::Atom | Op::AggKeys => {
             // An exact pair: b's bound variables all from one step a before it.
             let need: u64 = n.args.iter().filter_map(|a| if let V::Var(x) = a { (bound >> x & 1 == 1).then_some(1u64 << x) } else { None }).fold(0, |m, b| m | b);
             if need != 0
@@ -517,7 +528,7 @@ fn fan(c: &ChainVars, lp: &LinePrice, placed: u64, j: usize) -> f64 {
             _ => 1.0 / 3.0,
         },
         // One answer a tuple, or a test of the answer where it is bound.
-        Op::Fn(_) => {
+        Op::Fn(_) | Op::Agg(..) => {
             if n.binds == 0 {
                 0.1
             } else {
@@ -530,7 +541,7 @@ fn fan(c: &ChainVars, lp: &LinePrice, placed: u64, j: usize) -> f64 {
 /// The rows a chain's first step makes: an atom's rows under its constants; a filter's one tuple, kept or not.
 fn start_rows(c: &ChainVars, lp: &LinePrice, j: usize) -> f64 {
     match c.nodes[j].op {
-        Op::Atom => fan(c, lp, 0, j),
+        Op::Atom | Op::AggKeys => fan(c, lp, 0, j),
         _ => fan(c, lp, 0, j).min(1.0),
     }
 }

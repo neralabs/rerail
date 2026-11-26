@@ -2330,3 +2330,42 @@ programs:
 Each one is lowered by P3 and run, against its hand-written rows and its hand-lowered K0 form's, warm and cold.
 Together with the K1-a to K1-e tests above, this is step 8's K1: several heads, constants and arithmetic in heads,
 disjunctions, `.decl` and strata computed.
+
+### L4: aggregates (B§10 step 9, L4-f; 2026-11-26)
+
+Built to the open-points page's option 2. Aggregates are delta operators the executor knows by symbol, and K-form
+keeps its relations.
+
+- **The operators** (`program::AggOp`): `count:`, `sum:`, `min:`, `max:` and `mean:` (a truncated quotient).
+  - The kernel writes each one as an atom step of that symbol. A relation's name is an identifier, so no relation
+    can have one of these symbols.
+  - Its terms are the relation it folds, its answer, its value, then its atom's pattern.
+  - `Program::read` makes the step `Kind::Agg`: the relation is the step's, and its arguments are the pattern, the
+    value and the answer.
+- **The step** (`body::Op::Agg`). It folds the rows of its relation that match its keys and constants, where its own
+  variables repeat. Its frame word is its answer, as an operator's is.
+  - Its keys are the pattern's variables found elsewhere in the rule, and they are bound before it. Its other
+    variables are its own.
+  - `count` and `sum` of no rows are 0. `min`, `max` and `mean` of none have no row.
+- **Maintenance by changed groups** (P§10). A delta term led by an aggregate is two chains.
+  - Each starts from the changed groups' keys, read once a key from the changed rows (`Op::AggKeys`, bound from them).
+  - It then folds the group on the after side with its answer added, or on the before side with it taken away
+    (`Planner::fold`).
+- **Strata.** An aggregate reads an earlier stratum, as a negation does. An aggregate of its own stratum's head is
+  refused, and the module graph (`k1-11-graph`) counts an aggregate's relation as a read.
+  - Strata are modules (O4), so an aggregate's body is one atom of a relation of an earlier module. A body of several
+    literals is refused, naming the step, with the remedy: write the body as a relation of an earlier file and
+    aggregate that. The kernel marks such a body's relation -1.
+- **Lowering** (`k1-1` to `k1-5`).
+  - An aggregate is an expression: a term, a mover, its answer a variable named by its node.
+  - `in_term` stops at it, so nothing under it is a step of the rule.
+  - Its own variables (`agg_own`: under it, and nowhere else in its clause) are not among the variables its placement
+    waits for.
+  - `count` is implied where no operator is written.
+
+Checks (Relax, local, 138 of 138): `aggregates_fold_their_groups_and_are_maintained_by_changed_groups`.
+- Eight programs against hand-written rows: `count` keyed and of all rows, `sum`, `min`, `max`, `count` of an empty
+  group (0), an aggregate in a head, and `mean`.
+- An edit of the facts maintained across five aggregates, equal to the rows written by hand and to a cold run. With
+  the before side's fold given +1, the edit's rows are wrong.
+- The two refusals.

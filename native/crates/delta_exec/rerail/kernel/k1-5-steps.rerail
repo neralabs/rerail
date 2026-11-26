@@ -8,6 +8,6 @@ mover(d, r, e) :- read_step(d, r, e, -1, "atom", _), expr(d, e).
 // The nodes under a step that moves, and the variables written there.
 below(d, m, t) :- mover(d, _, m), field(d, m, _, t).
 below(d, m, u) :- below(d, m, t), field(d, t, _, u).
-in_filter(d, r, f, v) :- mover(d, r, f), below(d, f, t), kind(d, t, "variable"), text(d, t, v).
+in_filter(d, r, f, v) :- mover(d, r, f), below(d, f, t), kind(d, t, "variable"), text(d, t, v), !agg_own(d, t).
 uses_var(d, r, f) :- in_filter(d, r, f, _).
 bound_before(d, r, v, k) :- in_atom(d, r, v, k), in_atom(d, r, v, j), j < k.

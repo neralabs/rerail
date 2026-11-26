@@ -26,7 +26,7 @@
 use crate::dir::{BlockId, Directory};
 use crate::files::Placed;
 use crate::op::{Across, Bound, Found, Independence, Inside, Mode, OpId, Output, Over, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
-use crate::program::{Arith, Cmp};
+use crate::program::{AggOp, Arith, Cmp, Fold};
 use crate::shapes::Facts;
 use crate::sym::Names;
 use crate::tape::{Reads, TapeView, View};
@@ -93,7 +93,17 @@ pub enum Op {
     Not,
     Cmp(Cmp),
     Fn(Arith),
+    /// An aggregate of its source, its value the column given: its arguments the pattern, then its answer; its frame
+    /// word its answer.
+    Agg(AggOp, u16),
+    /// The changed groups of an aggregate's source, once a key (a delta term's first step): its frame word a changed
+    /// row, its keys bound from it.
+    AggKeys,
 }
+
+/// Op codes past the comparisons and the operators.
+const AGG_KEYS: i64 = 2 + Cmp::ALL.len() as i64 + 7;
+const AGG_AT: i64 = AGG_KEYS + 1;
 
 /// A step of a chain: what it does, its source and side, its arguments.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -221,6 +231,8 @@ impl Plan {
                     Op::Not => 1,
                     Op::Cmp(c) => 2 + c.code(),
                     Op::Fn(a) => 2 + Cmp::ALL.len() as i64 + a.code(),
+                    Op::AggKeys => AGG_KEYS,
+                    Op::Agg(a, v) => AGG_AT + (a.code() << 16) + i64::from(v),
                 };
                 w.extend([op, s.src as i64, s.side as i64, s.args.len() as i64]);
                 s.args.iter().for_each(|a| put_arg(&mut w, a));
@@ -303,6 +315,8 @@ impl Plan {
                     0 => Op::Atom,
                     1 => Op::Not,
                     c if c < 2 + Cmp::ALL.len() as i64 => Op::Cmp(Cmp::of_code(c - 2).expect("a comparison")),
+                    AGG_KEYS => Op::AggKeys,
+                    c if c >= AGG_AT => Op::Agg(AggOp::of_code((c - AGG_AT) >> 16).expect("an aggregate"), ((c - AGG_AT) & 0xffff) as u16),
                     c => Op::Fn(Arith::of_code(c - 2 - Cmp::ALL.len() as i64).expect("an operator")),
                 };
                 let (src, side) = (next() as usize, [Side::Before, Side::After, Side::Delta][next() as usize]);
@@ -548,6 +562,10 @@ impl<'t> Env<'t> {
                     debug_assert_eq!(c, op.operands(), "an operator binds its answer only");
                     refs[j] as i64
                 }
+                Op::Agg(..) => {
+                    debug_assert_eq!(c, t.steps[j].args.len() - 1, "an aggregate binds its answer only");
+                    refs[j] as i64
+                }
                 _ => self.get(t.steps[j].src, refs[j], c),
             },
             a => unreachable!("a value is a constant or a bound variable, not {a:?}"),
@@ -605,6 +623,19 @@ impl<'t> Env<'t> {
                         f(ti, sign * t.sign, r);
                     }
                 }),
+                // An aggregate's changed groups: each changed row's key, once a key.
+                (Op::AggKeys, _) => {
+                    let mut seen: BTreeSet<Vec<i64>> = BTreeSet::new();
+                    self.change(s.src, &mut |r, _| {
+                        if !fits(r) {
+                            return;
+                        }
+                        let key: Vec<i64> = s.args.iter().enumerate().filter(|(_, a)| matches!(a, Arg::Bind | Arg::Same(_))).map(|(i, _)| self.get(s.src, r, i)).collect(); // copy: derived (a changed group's key, once)
+                        if seen.insert(key) {
+                            f(ti, t.sign, r);
+                        }
+                    });
+                }
                 (Op::Not, Side::Delta) => {
                     // A key whose absence changed: "none after" − "none before", once a key.
                     let mut seen: BTreeSet<Vec<i64>> = BTreeSet::new();
@@ -633,7 +664,7 @@ impl<'t> Env<'t> {
                 }
                 // A filter first (a `not` or a `cmp` of constants: B§7 refuses an unbound variable in either): the
                 // empty tuple, kept when it passes. An operator of constants: its answer.
-                (Op::Not | Op::Cmp(_) | Op::Fn(_), _) => {
+                (Op::Not | Op::Cmp(_) | Op::Fn(_) | Op::Agg(..), _) => {
                     let mut probes = 0;
                     self.step(ti, 0, &[NO_ROW], &mut probes, &mut |r| f(ti, t.sign, r.unwrap_or(NO_ROW)));
                 }
@@ -651,6 +682,33 @@ impl<'t> Env<'t> {
                     f(None);
                 }
             }
+            // The aggregate's answer over the rows of its group: those matching its keys and its constants, and
+            // agreeing with themselves where an own variable repeats; kept as an operator's is.
+            Op::Agg(op, vcol) => {
+                let n = s.args.len() - 1;
+                let (mut cols, mut key) = (Vec::new(), Vec::new());
+                for (i, &a) in s.args[..n].iter().enumerate() {
+                    if matches!(a, Arg::Const(_) | Arg::Eq(..)) {
+                        cols.push(ColumnIndex::new(i as u16));
+                        key.push(self.val(t, refs, a));
+                    }
+                }
+                *probes += 1;
+                let mut fold = Fold::default();
+                self.each(s.src, s.side == Side::Before, &cols, &key, &mut |r| {
+                    if self.same(s, r) {
+                        fold.add(self.get(s.src, r, usize::from(vcol)));
+                    }
+                    true
+                });
+                let Some(v) = op.answer(&fold) else { return };
+                match s.args[n] {
+                    Arg::Bind | Arg::Wild => f(Some(v as u64)),
+                    a if self.val(t, refs, a) == v => f(Some(v as u64)),
+                    _ => {}
+                }
+            }
+            Op::AggKeys => unreachable!("an aggregate's changed groups lead its chain"),
             // The operator's answer: none where it has none (a division by zero, an overflow), else the step's frame
             // word, where its last column is a variable it binds, or kept where that column holds the answer.
             Op::Fn(op) => {

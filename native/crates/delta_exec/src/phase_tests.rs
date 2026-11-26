@@ -697,6 +697,61 @@ fn a_dozen_plain_datalog_programs_lowered_by_k1_give_their_hand_lowered_rows() {
     }
 }
 
+/// L4's aggregates (B§10 step 9; L4-f): `count`, `sum`, `min`, `max` and `mean` as delta operators the executor knows
+/// by symbol, each a step folding the rows of its body's atom that match its keys (the variables it shares with its
+/// clause, bound before it), its own variables only its, in a head or bound by `=`. `count` of none is 0. An edit is
+/// maintained by changed groups and gives what a cold run gives. A body of several literals, and an aggregate of its
+/// own stratum's head, are refused.
+#[test]
+fn aggregates_fold_their_groups_and_are_maintained_by_changed_groups() {
+    type Want = &'static [&'static [i64]];
+    let cases: [(&str, &str, &str, Want); 8] = [
+        ("count", "deg(x, n) :- e(x, _), n = count : { e(x, _) }.\n", "deg", &[&[1, 1], &[2, 2], &[3, 1]]),
+        ("all", "total(n) :- n = count : { e(_, _) }.\n", "total", &[&[4]]),
+        ("sum", "s(x, n) :- e(x, _), n = sum y : { e(x, y) }.\n", "s", &[&[1, 2], &[2, 7], &[3, 1]]),
+        ("min", "lo(x, n) :- e(x, _), n = min y : { e(x, y) }.\n", "lo", &[&[1, 2], &[2, 3], &[3, 1]]),
+        ("max", "hi(x, n) :- e(x, _), n = max y : { e(x, y) }.\n", "hi", &[&[1, 2], &[2, 4], &[3, 1]]),
+        ("none", "ind(x, n) :- e(x, _), n = count : { b(x) }.\n", "ind", &[&[1, 0], &[2, 0], &[3, 1]]),
+        ("head", "h(x, count : { e(_, x) }) :- e(x, _).\n", "h", &[&[1, 1], &[2, 1], &[3, 1]]),
+        ("mean", "m(n) :- n = mean y : { e(_, y) }.\n", "m", &[&[2]]),
+    ];
+    for (name, text, rel, want) in cases {
+        let mut r = kernel_run(&format!("phase-agg-{name}"), text);
+        r.run();
+        let want: BTreeSet<Vec<i64>> = want.iter().map(|x| x.to_vec()).collect();
+        assert_eq!(r.rows(2, rel), want, "{name}");
+    }
+    // An edit of the facts: each aggregate's changed groups only, as a cold run of the edited facts gives.
+    let all = "deg(x, n) :- e(x, _), n = count : { e(x, _) }.\ns(x, n) :- e(x, _), n = sum y : { e(x, y) }.\nhi(x, n) :- e(x, _), n = max y : { e(x, y) }.\nind(x, n) :- e(x, _), n = count : { b(x) }.\ntotal(n) :- n = count : { e(_, _) }.\n";
+    let mut r = kernel_run("phase-agg-edit", all);
+    r.run();
+    r.write("u-facts.rerail", "e(1, 2).\ne(2, 4).\ne(3, 1).\ne(3, 4).\ne(1, 5).\nb(1).\n", 40);
+    r.run();
+    let want: [(&str, &[&[i64]]); 5] = [
+        ("deg", &[&[1, 2], &[2, 1], &[3, 2]]),
+        ("s", &[&[1, 7], &[2, 4], &[3, 5]]),
+        ("hi", &[&[1, 5], &[2, 4], &[3, 4]]),
+        ("ind", &[&[1, 1], &[2, 0], &[3, 0]]),
+        ("total", &[&[5]]),
+    ];
+    for (rel, rows) in want {
+        assert_eq!(r.rows(2, rel), rows.iter().map(|x| x.to_vec()).collect::<BTreeSet<_>>(), "{rel}, after the edit");
+    }
+    r.last = None;
+    r.run();
+    for (rel, rows) in want {
+        assert_eq!(r.rows(2, rel), rows.iter().map(|x| x.to_vec()).collect::<BTreeSet<_>>(), "{rel}, cold");
+    }
+    for (name, text, why) in [
+        ("several", "bad(n) :- n = count : { e(x, y), b(y) }.\n", "not one atom"),
+        ("own", "p(x) :- e(x, _).\nq(n) :- n = count : { p(_) }.\n", "aggregates relation p, its own stratum's head"),
+    ] {
+        let mut r = kernel_run(&format!("phase-agg-{name}"), text);
+        let e = r.try_run().expect_err(name);
+        assert!(e.contains(why), "{name}: {e}");
+    }
+}
+
 /// K1's arithmetic (B§6, L3; B§10 step 8; K1-a): each expression a step of an operator (a Pure answer, B§3 sentence 3),
 /// its answer a variable named by its node, placed after the atom that binds the last variable under it and run in
 /// postorder there (an operand before its operator, an operator before its filter), one of constants alone first. Each

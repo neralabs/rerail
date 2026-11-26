@@ -23,5 +23,9 @@ read_step(d, r, e, -1, "atom", op) :- in_rule(d, r, l), in_term(d, l, e), op_ste
 read_arg(d, r, e, -1, i, a) :- in_rule(d, r, l), in_term(d, l, e), op_arg(d, e, i, a), kind(d, a, _).
 read_step(d, r, e, -1, "atom", op) :- inst(d, _, r, h), in_term(d, h, e), op_step(d, e, op).
 read_arg(d, r, e, -1, i, a) :- inst(d, _, r, h), in_term(d, h, e), op_arg(d, e, i, a), kind(d, a, _).
+read_arg(d, r, e, -1, i, a) :- in_rule(d, r, l), in_term(d, l, e), agg_arg(d, e, i, a), kind(d, a, _).
+read_arg(d, r, e, -1, i, a) :- inst(d, _, r, h), in_term(d, h, e), agg_arg(d, e, i, a), kind(d, a, _).
+read_arg(d, r, e, -1, i, a) :- in_rule(d, r, l), in_term(d, l, e), agg_pat(d, e, i, a), kind(d, a, _).
+read_arg(d, r, e, -1, i, a) :- inst(d, _, r, h), in_term(d, h, e), agg_pat(d, e, i, a), kind(d, a, _).
 read_arg(d, r, l, -1, i, a) :- in_rule(d, r, l), lit_arg(d, l, i, a), kind(d, a, _).
 read_arg(d, r, x, -1, i, t) :- in_rule(d, r, x), scope(d, x), rank(d, x, v, i), rep(d, x, v, t), kind(d, t, _).
