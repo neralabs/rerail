@@ -1,7 +1,8 @@
 # 0361. Relations declare their shapes, and plans come from them
 
-Status: partly built (audited 2026-11-23). Left: derived relations' estimates switched off (Q290); 'plans nothing at
-run time' done-criterion not shown met. Decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built
+Status: in the delta executor (decision 0686), built (2026-11-26): see "In the delta executor" at the end. In the old
+engine, partly built (audited 2026-11-23). Left there: derived relations' estimates switched off (Q290); the 'plans
+nothing at run time' done-criterion, a cold 300-file run, not shown met. Decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built
 (2026-11-18), step 6 at the probes (2026-11-19; at the writes: Q330). The user: "a directive which allows us to add
 enough data to the relations in the .rr files that we can provide good default shapes for them (or at least name an
 algorithm or something) so that we don't need to pay for planning, or only in exceptional circumstances."
@@ -563,3 +564,20 @@ even from the same corpus's own run, the run costs more: 1,203 G instructions ag
 because more lines take a plan priced by the facts' distributions, not by the run's statistics. So derived relations
 are sized by an estimate only under `RERAIL_DERIVED_ESTIMATES=on`, a measurement aid. A rule over a derived relation
 that facts do not size is planned at run time. Rules over relations whose facts size them are prepared as before.
+
+## In the delta executor (decision 0686, 2026-11-26)
+
+The agreed Operations page restates this decision for the new executor: "Declared shapes first (0361): keys, fanout
+classes, locality, order, trees and named algorithms give default plans with no statistics and no search; run time
+checks the facts still hold." Built in `native/crates/delta_exec`, each with its tests (Relax, 130 of 130); 0686's
+sections from "Relations declare their shapes, and lines plan from them" on hold the detail.
+
+| This decision | In the delta executor |
+|---|---|
+| `.layout` facts | Ordinary K0 facts, in any module: `key(rel, k, col)`, `fanout(rel, col, one / few)`, `tree(rel, p, c)` (a key on `c`), `order(rel, col, group)` (a key on `(group, col)`); `by(rel, wave)` names an algorithm |
+| Inferred for derived relations | `shapes::infer`: a projection keeping a key, a join along a key, a filter and an equality give the head a key; an atom whose row determines the head's, its fanouts; a union or a recursion its declared facts alone (step 3's soundness) |
+| Plans from shapes, no statistics, no search | A line its facts cover takes its default order (`DECLARED`): neither priced nor searched; probes' estimates capped by the facts elsewhere |
+| A broken fact replans and is reported | `check` at every depth; a broken line is planned from statistics from then on, and the run's work names the relation and the probed columns |
+| Algorithms found from the facts | A linear recursion along a declared tree runs cold in one wave, its levels the rounds'; `by(rel, wave)` is the override |
+| Local | The form: a single-file rule holds the document at column 0 of every literal |
+| Order: running aggregates | K0 has no aggregates and no arithmetic (B§3), so the form cannot arise; an order's key is what it gives |
