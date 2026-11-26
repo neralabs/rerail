@@ -353,7 +353,7 @@ describe("rerail packs calibrate", () => {
 describe("calibrationText", () => {
   const change = (kind: CalibrationChange["kind"], ruleId: string, fields: Partial<CalibrationChange> = {}): CalibrationChange =>
     ({ kind, ruleId, folder: "", config: null, explicit: true, because: `${ruleId} in config`, ...fields });
-  const DEFAULTS = ".eslintrc.json does not turn it on";
+  const DEFAULTS = "not turned on in .eslintrc.json";
   const text = (changes: readonly CalibrationChange[], options: { dryRun?: boolean; notes?: string[] } = {}): string =>
     calibrationText({ repositoryName: "acme-api", dryRun: options.dryRun ?? false, changes, notes: options.notes ?? [] });
 

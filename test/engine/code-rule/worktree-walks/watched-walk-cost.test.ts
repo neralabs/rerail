@@ -125,7 +125,7 @@ describe("the engine service's walk of the other worktrees, with the engine's tr
         // Editors and agents run `git status` all the time, and it writes the index again whenever it refreshes the files'
         // stat data. `git read-tree HEAD` writes it again with the same entries and no stat data, so the `git status`
         // after it writes it again too, whatever the clock; nothing in the worktree changes.
-        const index = (): string => { const { ino, mtimeMs } = statSync(join(main, ".git", "index")); return `${ino}:${mtimeMs}`; };
+        const index = (): string => { const { ino, mtimeNs } = statSync(join(main, ".git", "index"), { bigint: true }); return `${ino}:${mtimeNs}`; };
         const indexBefore = index();
         const status = await after(() => {
           for (const checkout of [w1, main]) {

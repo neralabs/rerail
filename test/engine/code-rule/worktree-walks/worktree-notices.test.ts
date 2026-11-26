@@ -638,6 +638,26 @@ describe("SharedTreeWatch", () => {
     expect(watch.closed).toBe(true);
   });
 
+  it("queues a user that reads only whether notices were lost or a watch ended no paths, and nothing for a root whose notices only name entries", () => {
+    const watch = new ScriptedWatch();
+    const shared = new SharedTreeWatch(watch);
+    const [walk, flags] = [shared.user(), shared.user({ flagsOnly: true })];
+    walk.watch("/r", [""]);
+    flags.watch("/r", [""]);
+    flags.watch("/s", [""]);
+    watch.notice("/r", { changed: ["a.py"], renamed: ["b.py"] });
+    expect(walk.take()).toEqual([{ root: "/r", changed: ["a.py"], renamed: ["b.py"], lost: false, ended: false }]);
+    expect(flags.take()).toEqual([]);
+    watch.notice("/r", { changed: ["c.py"], lost: true });
+    watch.notice("/s", { renamed: ["d.py"], ended: true });
+    expect(flags.take()).toEqual([
+      { root: "/r", changed: [], renamed: [], lost: true, ended: false },
+      { root: "/s", changed: [], renamed: [], lost: false, ended: true },
+    ]);
+    expect(walk.take()).toEqual([{ root: "/r", changed: ["c.py"], renamed: [], lost: true, ended: false }]);
+  });
+
+
   it("watches a root spare while each walk on it watches it spare, also once one of them lets go", () => {
     const watch = new ScriptedWatch();
     const shared = new SharedTreeWatch(watch);
