@@ -169,9 +169,10 @@ export function exportRulesDump(db: RerailDatabase, now = new Date()): RulesDump
  * Import a rules dump, all or nothing: every code rule must compile first. Library rules are upserted, including one
  * that takes a By Rerail rule's id (the library rule wins). Each listed repository's attachments and repository settings
  * are replaced and its set-up time kept, while this machine's start state is left alone; a repository this machine
- * knows under another key or an alias receives them, and keeps every key as an alias. Approvals are this machine's
- * (`rule-approval.ts`): an imported rule whose content was not approved here runs in Log until a person approves it, or
- * is approved by the import itself with `approve`.
+ * knows under another key or an alias receives them, and keeps every key as an alias, unless its stored aliases hold
+ * no JSON array (a damaged file or a hand edit): the import leaves that text as it is, so the dump's keys are not
+ * stored for it. Approvals are this machine's (`rule-approval.ts`): an imported rule whose content was not approved
+ * here runs in Log until a person approves it, or is approved by the import itself with `approve`.
  */
 export function importRulesDump(db: RerailDatabase, ruleCatalog: RuleCatalog, value: unknown, options: RulesDumpImportOptions = {}): RulesDumpImportReport {
   const now = options.now ?? Date.now();

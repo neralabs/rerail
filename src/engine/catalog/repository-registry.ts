@@ -394,8 +394,9 @@ function eitherStarted(left: boolean | null, right: boolean | null): boolean | n
 /**
  * Move the repository `fromKey` to `toKey`, as when a clone-keyed repository's checkout gains a remote. When `toKey`
  * is new or not set up, `fromKey` becomes it: its configuration, settings and checkouts move, it is started when
- * either was, and `fromKey` stays as an alias. When `toKey` is set up, only the checkouts move and `fromKey` is left
- * unused. A repository another process already adopted is left as it is.
+ * either was, and `fromKey` stays as an alias; while either row's stored aliases hold no JSON array, nothing moves and
+ * the repository stays under `fromKey`. When `toKey` is set up, only the checkouts move and `fromKey` is left unused.
+ * A repository another process already adopted is left as it is.
  */
 export function adoptRemote(db: RerailDatabase, fromKey: RepositoryKey, toKey: RepositoryKey, now = Date.now()): void {
   if (fromKey === toKey) return;
@@ -435,7 +436,7 @@ export function adoptRemote(db: RerailDatabase, fromKey: RepositoryKey, toKey: R
 /**
  * Make the remote `address` resolve to the repository `key` (a rename, an ssh host alias, a mirror). A repository
  * already known by that address that is not set up gives its checkouts to `key` and is removed; one that is set up
- * is refused.
+ * is refused, as is the link while the stored aliases of `key` or of that repository hold no JSON array.
  */
 export function linkAlias(db: RerailDatabase, key: RepositoryKey, address: string, now = Date.now()): RepositoryKey {
   const alias = normalizeRemoteAddress(address);
