@@ -309,6 +309,13 @@ pub fn semi_naive_here(on: bool) {
     SEMI_NAIVE_HERE.set(on);
 }
 
+impl Closure {
+    /// Whether it is the keyed form (decision 0570), run as a worklist of rows, not as a reach over nodes.
+    pub(super) fn is_keyed(&self) -> bool {
+        !self.keyed.is_empty()
+    }
+}
+
 /// The component's closure, when it has the shape (see the module's comment). `RERAIL_CLOSURE_FORM=off` turns it off.
 pub(super) fn recognize(c: &Component) -> Option<Closure> {
     if std::env::var("RERAIL_CLOSURE_FORM").is_ok_and(|v| v == "off") || SEMI_NAIVE_HERE.get() {
@@ -388,11 +395,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
 }
 
 /// What the closure did, for the run's report: nodes reached, rows made, and which way.
-pub(super) struct Ran {
-    pub(super) nodes: usize,
-    pub(super) rows: usize,
-    pub(super) how: String,
-}
+pub(super) use super::forms::Ran;
 
 /// Where a node's reach comes from: row `local` of piece `piece`'s bit rows, or its component walked as a chain
 /// (`CHAIN`) or searched on the host, past the limits (`HOST`). Plain words, a node's in its block.

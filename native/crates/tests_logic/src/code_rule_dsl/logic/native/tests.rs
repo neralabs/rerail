@@ -777,3 +777,22 @@ fn a_split_looks_its_parts_up_and_skips_those_that_are_no_atom() {
     let want: Vec<(String, String)> = [("", "q"), ("a", "b.c"), ("a.b", "c"), ("x", "y")].iter().map(|&(a, b)| (a.to_owned(), b.to_owned())).collect();
     assert_eq!(rows, want);
 }
+
+/// Each specialized executor (setfix's `forms::EXECUTORS`) and each shape the planner groups for one
+/// (`plan::join_shapes::SHAPES`), with its oracle cases: the tests that run it against the generic evaluation of the
+/// same rules (its switch off, or semi-naive) and compare the rows. An entry without a case fails
+/// `every_executor_and_shape_has_an_oracle_case`.
+const ORACLE_CASES: &[(&str, &[&str])] = &[
+    ("closure", &["a_walk_along_an_edge_runs_as_its_closure", "a_closure_over_many_components_runs_in_pieces_like_semi_naive", "a_keyed_walk_along_an_edge_runs_as_a_closure_in_one_wave", "a_walks_readers_are_answered_in_its_climb"]),
+    ("climb ends", &["a_walks_readers_are_answered_in_its_climb", "plan::climb_tests::a_reader_that_joins_out_from_the_walks_row_is_not_a_climb_end"]),
+];
+
+/// The registry's rule (the design "Registering an executor for a join shape"): no executor or shape runs without a
+/// test of its rows against the generic route's.
+#[test]
+fn every_executor_and_shape_has_an_oracle_case() {
+    let names = super::setfix::executor_names().into_iter().chain(crate::code_rule_dsl::logic::plan::shape_names());
+    for name in names {
+        assert!(ORACLE_CASES.iter().any(|(n, cases)| *n == name && !cases.is_empty()), "{name} has no oracle case in ORACLE_CASES");
+    }
+}

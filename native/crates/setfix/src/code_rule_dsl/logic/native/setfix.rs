@@ -106,6 +106,9 @@ mod verdict_tests;
 mod block_index_tests;
 use spec::{ArchivedArg as Arg, ArchivedJoinItem as JoinItem, ArchivedJoinSpec, ArchivedLine as Line, ArchivedSource as Source, ArchivedStart as Start, ArchivedTok as Tok, ComponentSpec, Join, JoinSpec, Reprobe, Spec};
 pub mod closure;
+mod forms;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use forms::executor_names;
 mod cands;
 mod sorted_hash;
 pub mod table;
@@ -1970,14 +1973,14 @@ pub struct Store { pub rels: Vec<Rel>, syms: Arc<Symbols> }
 /// (`device::compile`); `seed_specs`, their specs, to parse them again with the CPU's indexes when the device refuses
 /// one at run time.
 struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool, done: bool,
-                   requests: Vec<(usize, usize)>, produced: Vector<usize>, closure: Option<closure::Closure>,
+                   requests: Vec<(usize, usize)>, produced: Vector<usize>, form: Option<Box<dyn forms::Form>>,
                    /// Request rows the caller held back (`defer`): asked again once the run is otherwise quiet. Until
                    /// then they are as rows not yet asked (they keep no gate shut).
                    deferred: Vec<(usize, Vec<Vector<i64>>)>,
                    /// The run paused quiet with rows held back: `pending` gives them again.
                    presenting: bool,
                    /// A closure whose launches wait in this thread's device wave (`lanes::wave`), with their tickets.
-                   waiting: Option<(closure::Closure, closure::Prepared, Vector<u64>)>,
+                   waiting: Option<(Box<dyn forms::Form>, Vector<u64>)>,
                    device: Option<Vec<(usize, JoinPlan)>>,
                    /// Device joins waiting in this thread's wave (`submit`): their ticket.
                    device_wait: Option<u64>,
@@ -2924,7 +2927,7 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     let on = on(conn);
     let mut reg = on.components.lock();
     let key = name.clone();
-    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, waiting: None, device_wait: None,
+    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, form: None, waiting: None, device_wait: None,
                                device: device_plans, seed_specs, deferred: Vec::new(), presenting: false, cut: None, last_cut: None, trial_rows: None, maint };
     // A stratum placed on the device runs there whole: a recursive one as the device's rounds (`fixpoint`), not as
     // a closure (decision 0098 §1's form, for a stratum on the CPU).
@@ -2934,9 +2937,9 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     };
     // The maintain mode's component neither: its first wave's delta is the rows its removals put back.
     if !on_device_rounds && comp.maint.drivers.is_empty() {
-        comp.closure = {
+        comp.form = {
             let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "plan: recognize the form");
-            closure::recognize(&comp)
+            forms::open(&comp)
         };
     }
     reg.insert(key, Arc::new(Mutex::new(comp)));
@@ -3026,7 +3029,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     // its launches. When the caller can wait (`lanes::wave::can_wait`: the stratum driver, which runs a level's
     // strata to their launches first), the launches join this thread's device wave and the run returns `3`; the run
     // after the wave ran finishes it. Otherwise they run here, as a batch of their own.
-    let mut closure_ran: Option<Option<closure::Ran>> = None;
+    let mut closure_ran: Option<Option<forms::Ran>> = None;
+    let mut form_name = "";
+    let (mut form_rows, mut form_visits) = (0u64, 0u64);
     // The maintain mode's removals and checked adds (decision 0364 stage 3), before the seeds add the rest.
     if !seeded && comp.cut.is_none() && !comp.maint.done && !(comp.maint.removes.is_empty() && comp.maint.adds.is_empty()) {
         let _m = crate::code_rule_dsl::logic::profile::span(|| "maintain mode: removals and rechecks".into());
@@ -3040,13 +3045,14 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         ran?;
     }
     let tp = Instant::now();
-    if let Some((cl, prep, tickets)) = comp.waiting.take() {
-        let outs = crate::code_rule_dsl::logic::lanes::wave::take(&tickets).map_err(|e| err(format!("{name}: {e}")))?;
+    if let Some((mut cl, tickets)) = comp.waiting.take() {
+        let mut outs = Some(crate::code_rule_dsl::logic::lanes::wave::take(&tickets).map_err(|e| err(format!("{name}: {e}")))?);
         let mut guard = comp.store.write().unwrap();
-        closure_ran = Some(closure::finish(&cl, prep, outs, &mut guard));
+        form_name = cl.name();
+        closure_ran = Some(forms::framed(form_name, &name, &mut || cl.finish(outs.take().expect("one finish"), &mut guard)));
         drop(guard);
-        comp.closure = Some(cl);
-    } else if !seeded && let Some(cl) = comp.closure.take() {
+        comp.form = Some(cl);
+    } else if !seeded && let Some(mut cl) = comp.form.take() {
         // Its seeds first, each under its budget as any seed is (decision 0206): one that spends it is cut, and the
         // run returns `5`; the next goes on from the rows it left, then runs the closure. Run unlimited, a seed that
         // read 41 M rows a stratum (corpus0's `open_tuple`, 2026-11-21) was never checked against its price.
@@ -3077,7 +3083,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             comp.cut = Some(Cut { fresh, next, left, step: Some(0), on_device: false, whole: false });
             comp.last_cut = Some(report);
             comp.trial_rows = None;
-            comp.closure = Some(cl);
+            comp.form = Some(cl);
             let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
             let ms = t0.elapsed().as_secs_f64() * 1e3;
             return Ok(format!("0 0 {visits} {runs} {skips} {ms:.1} {ms:.1} {} 5", per.join(",")));
@@ -3087,32 +3093,32 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         for (r, f) in fresh.iter_mut().enumerate() {
             store.rels[r].push_fresh(std::mem::take(f), true);
         }
-        let prep = closure::prepare(&cl, store, syms);
+        form_name = cl.name();
+        let prep = forms::framed(form_name, &name, &mut || cl.prepare(store, syms));
         match prep {
             None => closure_ran = Some(None),
-            Some(mut prep) if !prep.launches.is_empty() && crate::code_rule_dsl::logic::lanes::wave::can_wait() => {
-                let tickets = crate::code_rule_dsl::logic::lanes::wave::queue("closure", std::mem::take(&mut prep.launches));
+            Some(launches) if !launches.is_empty() && crate::code_rule_dsl::logic::lanes::wave::can_wait() => {
+                let tickets = crate::code_rule_dsl::logic::lanes::wave::queue("closure", launches);
                 drop(guard);
-                comp.waiting = Some((cl, prep, tickets));
+                comp.waiting = Some((cl, tickets));
                 comp.seeded = true;
                 let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
                 let ms = t0.elapsed().as_secs_f64() * 1e3;
                 return Ok(format!("0 1 {visits} {runs} {skips} {ms:.1} {ms:.1} {} 3", per.join(",")));
             }
-            Some(mut prep) => {
-                let launches = std::mem::take(&mut prep.launches);
-                let outs = if launches.is_empty() {
+            Some(launches) => {
+                let mut outs = Some(if launches.is_empty() {
                     Vec::new()
                 } else {
                     let batch = rerail_accel::Batch(launches.into_iter().map(rerail_accel::Launch::new).collect());
                     let (done, _) = crate::code_rule_dsl::logic::lanes::prof::run("closure", batch).map_err(|e| err(format!("{name}: {e}")))?;
                     done.into_iter().map(|d| d.out).collect()
-                };
-                closure_ran = Some(closure::finish(&cl, prep, outs, store));
+                });
+                closure_ran = Some(forms::framed(form_name, &name, &mut || cl.finish(outs.take().expect("one finish"), store)));
             }
         }
         drop(guard);
-        comp.closure = Some(cl);
+        comp.form = Some(cl);
     }
     if let Some(ran) = closure_ran {
         seeded = true;
@@ -3123,6 +3129,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         match ran {
             Some(r) => {
                 visits += r.nodes as u64 + r.rows as u64;
+                form_visits += r.nodes as u64 + r.rows as u64;
+                form_rows += r.rows as u64;
                 crate::code_rule_dsl::logic::profile::decision("closure (decision 0098 §1)", || format!("a walk along an edge run as its closure, by {}", r.how));
                 if wave_trace { eprintln!("      {name}: closure over {} nodes by {}, {} rows, {:.1} ms", r.nodes, r.how, r.rows, tp.elapsed().as_secs_f64() * 1e3); }
                 for (rel, &n) in store.rels.iter_mut().zip(&ns) {
@@ -3520,6 +3528,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     if !done {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 0", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
     }
+    forms::account(form_name, &name, form_rows, form_visits, visits - form_visits);
     comp.done = true;
     let mut new_rows = 0usize;
     if comp.write {
@@ -8700,12 +8709,12 @@ pub fn reads_empty_input(j: &JoinRule) -> bool {
 
 /// Measurement: whether each join runs under frames that name it (`RERAIL_JOIN_FRAMES`, a file), so a profiler's
 /// samples split by rule: `framed`, and the `join-frame` lines `open_spec_within` writes to that file.
-fn join_frames() -> bool {
+pub(crate) fn join_frames() -> bool {
     env_set!("RERAIL_JOIN_FRAMES")
 }
 
 /// Appends a `join-frame` line to the file `RERAIL_JOIN_FRAMES` names (a profiler's launch may drop the run's stderr).
-fn join_frame_line(line: String) {
+pub(crate) fn join_frame_line(line: String) {
     use std::io::Write;
     let Some(path) = std::env::var_os("RERAIL_JOIN_FRAMES") else { return };
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) { let _ = f.write_all(format!("{line}\n").as_bytes()); }
@@ -8714,7 +8723,7 @@ fn join_frame_line(line: String) {
 /// Runs `f` under four frames, `frame_z::<Z>`, `frame_a::<A>`, `frame_b::<B>` and `frame_c::<C>`, whose numbers are
 /// `spec`'s low 20 bits, 5 apiece: a profiler's stacks then show which join a sample is in (the `join-frame` lines map a digest to
 /// its component, probe and head). Measurement only.
-fn framed<K: FrameKind, R>(spec: u64, f: &mut dyn FnMut() -> R) -> R {
+pub(crate) fn framed<K: FrameKind, R>(spec: u64, f: &mut dyn FnMut() -> R) -> R {
     macro_rules! pick {
         ($k:expr, $g:ident, $($a:expr),*) => { match $k {
             0 => $g::<0, K, R>($($a),*), 1 => $g::<1, K, R>($($a),*), 2 => $g::<2, K, R>($($a),*), 3 => $g::<3, K, R>($($a),*),
@@ -8745,6 +8754,9 @@ pub struct JoinFrames;
 impl FrameKind for JoinFrames { const ID: u8 = 0; }
 pub struct StratumFrames;
 impl FrameKind for StratumFrames { const ID: u8 = 1; }
+/// A specialized executor's form (`forms::framed`).
+pub struct FormFrames;
+impl FrameKind for FormFrames { const ID: u8 = 2; }
 
 /// Measurement (`RERAIL_JOIN_FRAMES`): runs stratum `key`'s `f` under frames that name it, as `framed` does a join's,
 /// and writes a `stratum-frame` line mapping the frames' number to the key.
