@@ -17,9 +17,10 @@ import { join } from "node:path";
 import { z } from "zod";
 import { ACTIVE_PROFILE_FILE } from "../activation/customer-profile.js";
 import { replaceFileSync } from "../engine/file-replace.js";
-import { UPDATE_CHECK_FILE, UPDATE_STATE_FILE } from "../engine/storage/rerail-home.js";
+import { UPDATE_CHECK_FILE } from "../engine/storage/rerail-home.js";
 import { type NpmRunner, runNpm } from "../runtime/npm.js";
-import { DEFAULT_UPDATE_CHANNEL, NpmPackageRegistry, type PackageRegistry } from "./updater.js";
+import { updateChannel as recordedChannel } from "./rule-pack-store.js";
+import { NpmPackageRegistry, type PackageRegistry } from "./updater.js";
 
 export { UPDATE_CHECK_FILE };
 
@@ -94,7 +95,7 @@ function profileActive(home: string): boolean {
  * to `beta`, which never reaches the version named.
  */
 function checkedChannel(home: string): string | undefined {
-  return updateChannel(home) === CHECKED_CHANNEL ? CHECKED_CHANNEL : undefined;
+  return reportedUpdateChannel(home) === CHECKED_CHANNEL ? CHECKED_CHANNEL : undefined;
 }
 
 /**
@@ -102,18 +103,8 @@ function checkedChannel(home: string): string | undefined {
  * marks a channel other than `latest` Pre-release); undefined while a signed customer profile is active, whose channel
  * the daemon cannot read without the device's keychain.
  */
-export function updateChannel(home: string): string | undefined {
+export function reportedUpdateChannel(home: string): string | undefined {
   return profileActive(home) ? undefined : recordedChannel(home);
-}
-
-/** The channel a bare `rerail update` installs from: the one `update-state.json` records, else `latest`. */
-function recordedChannel(home: string): string {
-  try {
-    const { channel } = JSON.parse(readFileSync(join(home, UPDATE_STATE_FILE), "utf8")) as { channel?: unknown };
-    return typeof channel === "string" ? channel : DEFAULT_UPDATE_CHANNEL;
-  } catch {
-    return DEFAULT_UPDATE_CHANNEL;
-  }
 }
 
 function readRecord(path: string): UpdateCheckRecord | undefined {

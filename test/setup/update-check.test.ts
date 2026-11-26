@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACTIVE_PROFILE_FILE } from "../../src/activation/index.js";
-import { startUpdateChecks, UPDATE_CHECK_FILE, updateChannel, updateCheckApplies, type UpdateChecks } from "../../src/setup/update-check.js";
+import { reportedUpdateChannel, startUpdateChecks, UPDATE_CHECK_FILE, updateCheckApplies, type UpdateChecks } from "../../src/setup/update-check.js";
 import { UPDATE_STATE_FILE, type PackageRegistry } from "../../src/setup/updater.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -182,10 +182,19 @@ describe("whether the daemon checks at all", () => {
 describe("the channel rerail update installs from", () => {
   it("is the one update-state.json records, else latest, and unknown while a signed customer profile is active", () => {
     const folder = home();
-    expect(updateChannel(folder)).toBe("latest");
+    expect(reportedUpdateChannel(folder)).toBe("latest");
     writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: "next", current: { version: "0.2.2", packageRoot: folder } }));
-    expect(updateChannel(folder)).toBe("next");
+    expect(reportedUpdateChannel(folder)).toBe("next");
     writeFileSync(join(folder, ACTIVE_PROFILE_FILE), "acme\n");
-    expect(updateChannel(folder)).toBeUndefined();
+    expect(reportedUpdateChannel(folder)).toBeUndefined();
   });
+
+  it.each([["unparseable", "{"], ["no string channel", JSON.stringify({ schemaVersion: 1, channel: 7 })]])(
+    "is latest when update-state.json is %s, as when it is missing",
+    (_case, contents) => {
+      const folder = home();
+      writeFileSync(join(folder, UPDATE_STATE_FILE), contents);
+      expect(reportedUpdateChannel(folder)).toBe("latest");
+    },
+  );
 });
