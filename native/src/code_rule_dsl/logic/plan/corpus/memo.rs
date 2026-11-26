@@ -340,7 +340,7 @@ pub struct SettingsDigests {
     all: [u8; 32],
     /// Each setting keyed by a path, its rows by that path; keyed by a folder, by that folder: (relation, row).
     by_path: HashMap<i64, Vec<(usize, Vec<i64>)>>,
-    /// The folder or target column of each relation keyed by a path (`file_local::setting_by_path`), by its index.
+    /// The folder or target column of each relation keyed by a path (its `.decl`'s `by_path c`, decision 0710), by its index.
     hop: HashMap<usize, usize>,
     by_folder: HashMap<i64, Vec<(usize, Vec<i64>)>>,
 }

@@ -3,7 +3,7 @@
 // this program names what it hands on. It reads struct.'s and types.'s exports, so those phases run first.
 //
 // Each export is keyed by the path of the file whose node a row is about (column 0) and that node's term (column 1,
-// `pt_tm`). A rule reads its own file's rows (python/points-to; `file_local::SETTINGS_BY_PATH`), so an edit misses
+// `pt_tm`). A rule reads its own file's rows (python/points-to; each export is declared `by_path`, decision 0710), so an edit misses
 // the files whose rows changed: an edit of a definition's body, its own file and the callers whose answers it changed.
 //
 // ```text

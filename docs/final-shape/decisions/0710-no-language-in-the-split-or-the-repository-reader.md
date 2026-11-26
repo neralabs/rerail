@@ -60,9 +60,6 @@ family's Engine Adapter branches on a language.
      Demanding the lookup (`.pragma "magic-transform"` over `sym_of`, `qn`, `walk` and their readers, each reader
      anchored at a syntax node so the sideways order binds the reference first) made it 214–217 G: the demand rules
      over `unparen` and `builtin_ref` cost more than the walk they save. It is not kept.
-     Demanding the lookup (`.pragma "magic-transform"` over `sym_of`, `qn`, `walk` and their readers, each reader
-     anchored at a syntax node so the sideways order binds the reference first) made it 214–217 G: the demand rules
-     over `unparen` and `builtin_ref` cost more than the walk they save. It is not kept.
 5. **An input nothing produces is an error**, naming the input and its library. An `extensible` relation nothing
    states is still stated empty: that is an extension with no members, not a missing producer.
 

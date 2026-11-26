@@ -167,8 +167,8 @@ fn strings(prefix: &str, v: &Value, out: &mut Vec<(String, String)>) {
     }
 }
 
-/// `file`, `package`, `package_field`, `package_for` and the `tsconfig*` rows of the tree under `root`, for documents
-/// `docs` (paths relative to it).
+/// `file`, `package`, `package_field` and `package_for` rows of the tree under `root`, for documents `docs` (paths
+/// relative to it). A language's own project files are its registered reader's (`project_rows`, decision 0710).
 pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) -> BTreeMap<String, Option<Value>> {
     let mut packages: BTreeMap<String, Option<Value>> = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];

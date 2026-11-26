@@ -208,7 +208,6 @@ dj_rcv_site(k, v, x, fname, a) :- kind(k, "call"), field(k, "function", fn), att
 // dj_rcv(k, x, fname): call k connects a receiver fname of signal x.
 .decl dj_rcv(k: node, x: symbol, fname: symbol)
 dj_rcv(k, x, fname) :- dj_rcv_site(k, _, x, fname, _).
-// The sender and the receiver function at place p, resolved by the three rules py_names resolves a base by.
 // The sender and the receiver function of the connecting call k, resolved by the three rules py_names resolves a base
 // by. Keyed by the call, a node of its file, so each is the file's: a place names no document.
 .decl dj_rcv_sender_here(k: node, q: symbol)

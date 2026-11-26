@@ -1632,8 +1632,8 @@ mod tests {
     /// an error, not an overflow.
     #[test]
     fn a_surrogate_pair_is_joined_and_a_high_surrogate_before_another_escape_is_an_error() {
-        assert_eq!(super::unescape(r"😀").as_deref(), Ok("\u{1F600}"));
-        assert_eq!(super::unescape(r"é").as_deref(), Ok("é"));
+        assert_eq!(super::unescape(r"\uD83D\uDE00").as_deref(), Ok("\u{1F600}"));
+        assert_eq!(super::unescape(r"\u00e9").as_deref(), Ok("\u{e9}"));
         for text in [r"\uD83DA", r"\uD83D\uD83D", r"\uD83D"] {
             assert!(super::unescape(text).is_err(), "{text}");
         }

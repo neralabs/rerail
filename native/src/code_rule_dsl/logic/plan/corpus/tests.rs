@@ -2595,7 +2595,7 @@ fn an_input_nothing_produces_is_an_error_and_an_unstated_extension_is_empty() {
 
 /// `npm_ignored`, the repository input (`facts::repository`), as `package_manifest` reads a package: its `files` list
 /// decides where it has one (package.json always published); else its `.npmignore`; and a file under no package.json
-/// has no row. Read at each file's own path, it is a per-file setting (`SETTINGS_BY_PATH`).
+/// has no row. Read at each file's own path, it is a per-file setting (`by_path`, decision 0710).
 #[test]
 fn a_files_npm_leaves_out_are_npm_ignored() {
     crate::install_store_functions();
