@@ -288,7 +288,7 @@ function excludedBy(exclude: Resolved<Selection>, names: readonly string[]): Por
 function selectedBy(rules: Selection | undefined, names: readonly string[], labels: string): Extract<PortDecision, { on: boolean }> {
   if (rules === undefined || rules.references.length === 0) return { on: true, explicit: false, because: `${rules?.label ?? labels}: no rules set, so SQLFluff runs every rule` };
   const reference = selecting(rules, names);
-  if (reference === undefined) return { on: false, explicit: false, because: `${rules.label}: rules does not select it` };
+  if (reference === undefined) return { on: false, explicit: false, because: `not selected by ${rules.label}: rules` };
   return { on: true, explicit: reference !== EVERY_RULE, because: `${rules.label}: ${JSON.stringify(reference)} in rules` };
 }
 

@@ -59,11 +59,29 @@ pub struct Capabilities {
 
 #[derive(Clone)]
 pub struct CodeRuleScope {
-    pub(super) include: GlobSet,
-    pub(super) exclude: GlobSet,
+    /// Shared by the scope's copies, as a placed code rule's copy takes them unchanged.
+    pub(super) include: Arc<GlobSet>,
+    pub(super) exclude: Arc<GlobSet>,
     /// Where a workspace places its resident copy of the code rule, per folder of the checkout;
     /// `None` places it everywhere its globs match, at its rule mode.
     pub(super) placement: Option<Placement>,
+}
+
+/// What the engine's own tests read of a scope (`workspace/placement_tests.rs`, which `rerail-engine` mounts while this
+/// file builds in `rerail-w`): its globs, which a placed copy shares, and whether it is placed.
+#[cfg(any(test, feature = "test-hooks"))]
+impl CodeRuleScope {
+    pub fn include_globs(&self) -> &GlobSet {
+        &self.include
+    }
+
+    pub fn exclude_globs(&self) -> &GlobSet {
+        &self.exclude
+    }
+
+    pub fn is_placed(&self) -> bool {
+        self.placement.is_some()
+    }
 }
 
 impl CodeRuleScope {
@@ -826,18 +844,63 @@ impl RuleMode {
     }
 }
 
+/// A copy of a code rule shares its canonical text, its clauses, its scope's globs and its
+/// capabilities with the code rule it was copied from: a workspace copies a compiled code rule to
+/// place it (`scope.placement`), and only a code rule with a global or call clause compiles clauses
+/// of its own into its copy (`Clauses::push`).
 #[derive(Clone)]
 pub struct CompiledCodeRule {
     pub id: String,
     /// Report the rule's combined findings only when their count exceeds this ceiling.
     pub report_count_gt: Option<usize>,
     pub rule_mode: RuleMode,
-    pub canonical: String,
+    pub canonical: Arc<str>,
     pub digest: String,
     pub required_capabilities: String,
     pub scope: CodeRuleScope,
-    pub clauses: Vec<CompiledClause>,
-    pub capabilities: Capabilities,
+    pub clauses: Clauses,
+    pub capabilities: Arc<Capabilities>,
+}
+
+/// A code rule's clauses, shared by its copies until one of them adds or changes a clause.
+#[derive(Clone)]
+pub struct Clauses(Arc<Vec<CompiledClause>>);
+
+impl Clauses {
+    /// Adds `clause` to this copy alone: the copies that shared the clauses keep them as they were.
+    pub fn push(&mut self, clause: CompiledClause) {
+        Arc::make_mut(&mut self.0).push(clause);
+    }
+}
+
+impl From<Vec<CompiledClause>> for Clauses {
+    fn from(clauses: Vec<CompiledClause>) -> Self {
+        Self(Arc::new(clauses))
+    }
+}
+
+impl std::ops::Deref for Clauses {
+    type Target = Vec<CompiledClause>;
+
+    fn deref(&self) -> &Vec<CompiledClause> {
+        &self.0
+    }
+}
+
+/// A change to a clause of this copy changes this copy alone, as `push` does.
+impl std::ops::DerefMut for Clauses {
+    fn deref_mut(&mut self) -> &mut Vec<CompiledClause> {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl<'a> IntoIterator for &'a Clauses {
+    type Item = &'a CompiledClause;
+    type IntoIter = std::slice::Iter<'a, CompiledClause>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
 }
 
 impl CompiledCodeRule {
