@@ -3,6 +3,9 @@ const routing = vi.hoisted(() => ({
   isMainRerailBuild: vi.fn<() => boolean>(),
   daemonEngineEndpoint: vi.fn<(replaceOtherPackage: boolean, deadline?: number) => Promise<{ socketPath: string; accessToken?: string }>>(),
   engineEndpointAt: vi.fn<(socketPath: string, deadline?: number) => Promise<{ socketPath: string; accessToken?: string }>>(),
+  runningDaemonEngineEndpoint: vi.fn<(deadline?: number, machine?: unknown, replaceOtherPackage?: boolean) => Promise<unknown>>(),
+  // A start launched in the background would be a real `rerail daemon start`: the cases count the launches instead.
+  launchAutostart: vi.fn<() => boolean>(() => true),
 }));
 vi.mock("../../src/engine/native/rerail-build.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../../src/engine/native/rerail-build.js"),
@@ -11,17 +14,27 @@ vi.mock("../../src/engine/native/rerail-build.js", async () => ({
 vi.mock("../../src/runtime/daemon-control.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
   routing.engineEndpointAt.mockImplementation((socketPath, deadline) => actual.engineEndpointAt(socketPath, deadline));
-  return { ...actual, daemonEngineEndpoint: routing.daemonEngineEndpoint, engineEndpointAt: routing.engineEndpointAt };
+  routing.runningDaemonEngineEndpoint.mockImplementation(async (deadline, _machine, replaceOtherPackage) => await actual.runningDaemonEngineEndpoint(deadline, undefined, replaceOtherPackage));
+  return {
+    ...actual,
+    daemonEngineEndpoint: routing.daemonEngineEndpoint,
+    engineEndpointAt: routing.engineEndpointAt,
+    runningDaemonEngineEndpoint: routing.runningDaemonEngineEndpoint,
+    launchAutostart: routing.launchAutostart,
+  };
 });
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
+import { setTimeout as delay } from "node:timers/promises";
 import type { AdapterDelivery, AdapterEvent, RerailEventLoop } from "../../src/engine/index.js";
 import { editSteer } from "../support/steers.js";
 import { encodeRerailEventResult, InactiveSessionError, RERAIL_EVENT_PROTOCOL_PREFACE } from "../../src/runtime/index.js";
 import { runRerailEventStream, serveRerailEventStream } from "../../src/harness/event-stream.js";
+import { HOOK_FAILURES_FILE, readHookFailures } from "../../src/harness/hook-failures.js";
 import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { startTestRepository } from "../support/started-repository.js";
 import { countingDaemon } from "../support/hook-events.js";
@@ -33,6 +46,8 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   routing.isMainRerailBuild.mockReset();
   routing.daemonEngineEndpoint.mockReset();
+  routing.runningDaemonEngineEndpoint.mockClear();
+  routing.launchAutostart.mockClear();
 });
 
 async function runStream(lines: readonly string[], eventLoop: RerailEventLoop, workspaceRoot?: string): Promise<readonly Record<string, unknown>[]> {
@@ -209,6 +224,145 @@ describe("rerail events in a main build", () => {
     }
   });
 
+  /** A session's start and nine prompts, as a coding agent's stream sends them. */
+  function sessionOfTen(cwd: string): Array<Record<string, unknown> & { eventId: string }> {
+    const session = { host: "claude-code", sessionId: "s", cwd };
+    return [
+      { kind: "session-start", eventId: "s:start", session },
+      ...Array.from({ length: 9 }, (_, index) => ({ kind: "user-prompt", eventId: `s:prompt:${index + 1}`, sessionId: "s", session, text: `Prompt ${index + 1}` })),
+    ];
+  }
+
+  // Beside another process's write lock on the database every daemon start fails, after the wait a start takes. Only
+  // the session's start waits for one, as a hook's does: each later event reads the daemon's record, finds no daemon
+  // running, and is answered at once, while a start for the next event is launched in the background.
+  it("waits for a daemon start only at a session's start, answers each later event at once while none runs, and records each event lost", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-events-no-daemon-"));
+    cleanups.push(async () => await removeFolder(root));
+    const home = join(root, "home");
+    vi.stubEnv("RERAIL_HOME", home);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    // A person's shell, where an event may start the daemon; the test run turns that off everywhere else.
+    vi.stubEnv("RERAIL_AUTOSTART", "1");
+    cleanups.push(async () => { vi.unstubAllEnvs(); });
+    routing.isMainRerailBuild.mockReturnValue(true);
+    const failedStart = "Rerail daemon exited with code 1 before it was ready: rerail daemon: Failed to run the query 'BEGIN IMMEDIATE'";
+    routing.daemonEngineEndpoint.mockImplementation(async () => {
+      await delay(2_000);
+      throw new Error(failedStart);
+    });
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const events = sessionOfTen(root);
+    const output = new PassThrough();
+    let written = "";
+    const answeredAt: number[] = [];
+    output.setEncoding("utf8").on("data", (chunk: string) => {
+      written += chunk;
+      answeredAt.push(...Array.from(chunk.matchAll(/\n/gu), () => Date.now()));
+    });
+
+    await runRerailEventStream({
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      input: Readable.from([RERAIL_EVENT_PROTOCOL_PREFACE, ...events.map(event => JSON.stringify({ event }))].map(line => `${line}\n`)),
+      output,
+    });
+
+    // The stream reads each frame once the one before is answered, so an answer's distance from the one before is how
+    // long its event waited.
+    const waits = answeredAt.slice(1).map((at, index) => at - answeredAt[index]!);
+    expect.soft(waits).toHaveLength(9);
+    expect.soft(Math.max(...waits)).toBeLessThan(1_000);
+    const lost = "no Rerail daemon answered, so this event was not recorded";
+    // Sound events no daemon took: the code tells them apart from a frame the stream could not read.
+    expect.soft(written.trim().split("\n").map(line => JSON.parse(line) as unknown)).toEqual([
+      { eventId: "s:start", error: { code: "internal-error", message: failedStart } },
+      ...events.slice(1).map(({ eventId }) => ({ eventId, error: { code: "internal-error", message: lost } })),
+    ]);
+    // Where `rerail status` looks, as for a hook's event: the start whose daemon failed, then each prompt.
+    expect.soft(readHookFailures(home, 0).failures.map(({ host, event, reason }) => ({ host, event, reason }))).toEqual([
+      { host: "claude-code", event: "session-start", reason: failedStart },
+      ...Array.from({ length: 9 }, () => ({ host: "claude-code", event: "user-prompt", reason: lost })),
+    ]);
+    expect.soft(routing.daemonEngineEndpoint).toHaveBeenCalledOnce();
+    // Each prompt that found none asks for a start for the next event; the home's claim keeps it to one launch at a time.
+    expect(routing.launchAutostart).toHaveBeenCalledTimes(9);
+  }, 60_000);
+
+  it("sends a later event to the daemon that runs, which it neither starts nor, after the stream's first event, replaces", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-events-running-"));
+    cleanups.push(async () => await removeFolder(root));
+    const socketPath = testEngineEndpoint(root);
+    const received = await fakeEngineService(socketPath);
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", "1");
+    cleanups.push(async () => { vi.unstubAllEnvs(); });
+    routing.isMainRerailBuild.mockReturnValue(true);
+    routing.daemonEngineEndpoint.mockResolvedValue({ socketPath, accessToken: "daemon-capability" });
+    routing.runningDaemonEngineEndpoint.mockResolvedValueOnce({ status: "running", endpoint: { socketPath, accessToken: "daemon-capability" } });
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const [start, prompt] = sessionOfTen(root);
+
+    const before = Date.now();
+    await runRerailEventStream({
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      input: Readable.from([RERAIL_EVENT_PROTOCOL_PREFACE, JSON.stringify({ event: start }), JSON.stringify({ event: prompt })].map(line => `${line}\n`)),
+      output: new PassThrough(),
+    });
+    const after = Date.now();
+
+    expect(received.map(request => request.event.eventId)).toEqual(["s:start", "s:prompt:1"]);
+    expect(routing.daemonEngineEndpoint.mock.calls.map(([replaceOtherPackage]) => replaceOtherPackage)).toEqual([true]);
+    // A stream that outlives `rerail update` keeps the newer daemon: only its first event may replace another package's.
+    expect(routing.runningDaemonEngineEndpoint.mock.calls.map(([, machine, replaceOtherPackage]) => [machine, replaceOtherPackage])).toEqual([[undefined, false]]);
+    const [deadline] = routing.runningDaemonEngineEndpoint.mock.calls[0]!;
+    expect(deadline).toBeGreaterThanOrEqual(before + 12_000);
+    expect(deadline).toBeLessThanOrEqual(after + 12_000);
+    expect(routing.launchAutostart).not.toHaveBeenCalled();
+    expect(existsSync(join(root, "home", HOOK_FAILURES_FILE))).toBe(false);
+  });
+
+  // No event starts a daemon under RERAIL_AUTOSTART=0, so none waits for a start: each asks as on a session's start, and
+  // finding no daemon is what the person asked for, which `rerail status` says itself.
+  it("asks for the daemon at each event under RERAIL_AUTOSTART=0, starts none and records nothing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-events-autostart-off-"));
+    cleanups.push(async () => await removeFolder(root));
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    cleanups.push(async () => { vi.unstubAllEnvs(); });
+    routing.isMainRerailBuild.mockReturnValue(true);
+    const { AutostartOffError } = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
+    const off = new AutostartOffError("RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
+    routing.daemonEngineEndpoint.mockRejectedValue(off);
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const [start, prompt] = sessionOfTen(root);
+    const output = new PassThrough();
+    let written = "";
+    output.setEncoding("utf8").on("data", (chunk: string) => { written += chunk; });
+
+    await runRerailEventStream({
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      input: Readable.from([RERAIL_EVENT_PROTOCOL_PREFACE, JSON.stringify({ event: start }), JSON.stringify({ event: prompt })].map(line => `${line}\n`)),
+      output,
+    });
+
+    expect(written.trim().split("\n").map(line => JSON.parse(line) as unknown)).toEqual([
+      { eventId: "s:start", error: { code: "internal-error", message: off.message } },
+      { eventId: "s:prompt:1", error: { code: "internal-error", message: off.message } },
+    ]);
+    expect(routing.daemonEngineEndpoint).toHaveBeenCalledTimes(2);
+    expect(routing.runningDaemonEngineEndpoint).not.toHaveBeenCalled();
+    expect(routing.launchAutostart).not.toHaveBeenCalled();
+    expect(existsSync(join(root, "home", HOOK_FAILURES_FILE))).toBe(false);
+  });
+
   it("links a steer from the daemon's answer, asking it nothing more, and reads an older daemon's dashboard after it", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-linked-"));
     cleanups.push(async () => await removeFolder(root));
@@ -327,7 +481,7 @@ describe("rerail events in a main build", () => {
 
     // Nothing reached the pipe: no challenge, no capability and no event.
     expect(received).toEqual([]);
-    const notThisHome = { code: "invalid-event", message: expect.stringContaining(`${socketPath} is not this Rerail home's daemon`) };
+    const notThisHome = { code: "internal-error", message: expect.stringContaining(`${socketPath} is not this Rerail home's daemon`) };
     expect(written.trim().split("\n").map(line => JSON.parse(line) as unknown)).toEqual([
       { eventId: "start", error: notThisHome },
       { eventId: "prompt", error: notThisHome },
