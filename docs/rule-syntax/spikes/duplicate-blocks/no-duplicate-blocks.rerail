@@ -1,0 +1,565 @@
+.policy "no-duplicate-blocks" revision 1
+.description "No block of 30 or more consecutive lines appears twice in the repository: across files, or twice in one file."
+.mode steer
+.scope include "src/**/*.ts", "src/**/*.tsx", "src/**/*.mts", "src/**/*.cts", "src/**/*.js", "src/**/*.mjs", "src/**/*.cjs", "src/**/*.jsx", "test/**/*.ts", "test/**/*.tsx", "test/**/*.mts", "test/**/*.js", "test/**/*.mjs", "test/**/*.cjs", "test/**/*.jsx", "packs/**/*.ts", "packs/**/*.mts", "packs/**/*.js", "packs/**/*.mjs", "packs/**/*.cjs"
+.scope text "**/*"
+.scope exclude "**/node_modules/**", "**/*.d.ts", "**/*.min.js"
+// Duplicated code, as jscpd or PMD's CPD find it, by lines: a run of 30 or more consecutive lines that is somewhere
+// else too. Each copy is reported once, at its first line, naming the other copy.
+//
+// The files are read as text (`.scope text`): no tree is needed, so no file is parsed, and any language can be
+// scanned by widening the scope.
+//
+// Normalisation: each line's whitespace runs become one space, and the line is trimmed. A line then counts unless
+// it is blank, or a comment's line: it starts with `//`, `/*` or `*` (a JSDoc block's inner and closing lines). So a
+// copy that was re-indented, or had blank lines or comments added, is still the same block. A line inside a block
+// comment that does not start with `*` counts, as the text alone cannot tell it from code.
+//
+// How it works:
+//   1. Per file. The lines that count, chained: next(d, l, x), x the next line after l that counts. Jumps of 2, 4,
+//      8 and 16 lines are made from it by doubling, and each run of 2^i lines starting at l gets a digest the same
+//      way: h2 of two lines' text, h4 of two h2s, … A window of 30 is 16 + 8 + 4 + 2 lines, so its key is the digest
+//      of four digests. Each digest is a sha256 (core's @sha256): a key is 64 characters, whatever the window holds.
+//   2. Across files: dup_key(k), the only relation declared cross_file for the count, holds a key alone: one that
+//      two places share. A file hands on its keys with how many windows of its own have each (win_n), so a line
+//      edit that moves a block, without changing it, changes nothing the cross-file part reads.
+//   3. The windows whose key is in dup_key are duplicated; consecutive ones (by the chain) are one run, and the run
+//      is the block reported, from its first window's first line to its last window's last line.
+//   4. The other copy is named by the place where its first window's key also occurs, as text ("src/a.ts:12"):
+//      dup_place, declared cross_file, holds only the keys of reported runs.
+
+// ---- 1. per file: lines, chain, digests ----------------------------------------------------------------------
+// norm(d, l, t): line l of document d, normalised, when it counts.
+.decl norm(d: number, l: number, t: symbol)
+norm(d, l, t) :- split_line(d, l, raw), t = @replace_all(@replace_all(raw, "\\s+", " "), "^ | $", ""), t != "",
+    !match("(?://|/\\*|\\*).*", t).
+// skip(d, l): line l exists and does not count.
+.decl skip(d: number, l: number)
+skip(d, l) :- split_line(d, l, _), !norm(d, l, _).
+// after(d, l, x): x is the first counted line after line l (any line l). Each rule binds l from the line after it,
+// so the join is by (d, line): written from l instead, the plan joined every line of a file with every other one.
+.decl after(d: number, l: number, x: number)
+after(d, l, x) :- norm(d, x, _), l = x - 1, l > 0.
+after(d, l, x) :- skip(d, y), l = y - 1, l > 0, after(d, y, x).
+// jN(d, l, x): x is the counted line N counted lines after counted line l.
+.decl j1(d: number, l: number, x: number)
+j1(d, l, x) :- norm(d, l, _), after(d, l, x).
+.decl j2(d: number, l: number, x: number)
+j2(d, l, x) :- j1(d, l, y), j1(d, y, x).
+.decl j4(d: number, l: number, x: number)
+j4(d, l, x) :- j2(d, l, y), j2(d, y, x).
+.decl j8(d: number, l: number, x: number)
+j8(d, l, x) :- j4(d, l, y), j4(d, y, x).
+.decl j16(d: number, l: number, x: number)
+j16(d, l, x) :- j8(d, l, y), j8(d, y, x).
+// hN(d, l, h): the digest of the N counted lines from l.
+.decl h2(d: number, l: number, h: symbol)
+h2(d, l, h) :- norm(d, l, a), j1(d, l, y), norm(d, y, b), h = @sha256(cat(a, "\n", b)).
+.decl h4(d: number, l: number, h: symbol)
+h4(d, l, h) :- h2(d, l, a), j2(d, l, y), h2(d, y, b), h = @sha256(cat(a, b)).
+.decl h8(d: number, l: number, h: symbol)
+h8(d, l, h) :- h4(d, l, a), j4(d, l, y), h4(d, y, b), h = @sha256(cat(a, b)).
+.decl h16(d: number, l: number, h: symbol)
+h16(d, l, h) :- h8(d, l, a), j8(d, l, y), h8(d, y, b), h = @sha256(cat(a, b)).
+// win(d, l, k): the window of 30 counted lines from l (16 + 8 + 4 + 2) has key k.
+.decl win(d: number, l: number, k: symbol)
+win(d, l, k) :- h16(d, l, a), j16(d, l, y1), h8(d, y1, b), j8(d, y1, y2), h4(d, y2, c), j4(d, y2, y3), h2(d, y3, e),
+    k = @sha256(cat(a, b, c, e)).
+// win_n(d, k, n): document d has n windows of key k. What the file hands on: no line.
+.decl win_n(d: number, k: symbol, n: number)
+win_n(d, k, n) :- win(d, _, k), n = count : { win(d, _, k) }.
+
+// ---- 2. across files: the keys two places share ------------------------------------------------------------
+// A key and nothing else: the repository's duplicated windows, as a set.
+.decl dup_key(k: symbol) cross_file
+dup_key(k) :- win_n(_, k, n), n > 1.
+dup_key(k) :- win_n(d, k, _), win_n(e, k, _), d != e.
+
+// ---- 3. per file again: runs of duplicated windows ----------------------------------------------------------
+.decl dup_at(d: number, l: number, k: symbol)
+dup_at(d, l, k) :- win(d, l, k), dup_key(k).
+.decl dup_start(d: number, s: number, k: symbol)
+dup_start(d, s, k) :- dup_at(d, s, k), !dup_after_dup(d, s).
+.decl dup_after_dup(d: number, l: number)
+dup_after_dup(d, l) :- dup_at(d, l, _), j1(d, p, l), dup_at(d, p, _).
+// run(d, s, l): window l is in the run that starts at s.
+.decl run(d: number, s: number, l: number)
+run(d, s, s) :- dup_start(d, s, _).
+run(d, s, x) :- run(d, s, l), j1(d, l, x), dup_at(d, x, _).
+// block(d, s, z, n): the run from s covers lines s to z, n counted lines.
+.decl block(d: number, s: number, z: number, n: number)
+block(d, s, z, n) :- dup_start(d, s, _), e = max l : { run(d, s, l) }, w = count : { run(d, s, _) }, n = w + 29,
+    j16(d, e, a), j8(d, a, b), j4(d, b, c), j1(d, c, z).
+
+// ---- 4. the other copy, named by its place --------------------------------------------------------------------
+// dup_place(k, w): a window of key k starts at w ("path:line"), for the keys a run starts with.
+.decl dup_place(k: symbol, w: symbol) cross_file
+dup_place(k, w) :- dup_start(_, _, k), win(e, l, k), doc(e, p, _), w = cat(p, ":", to_string(l)).
+
+.violation DUPLICATE_BLOCK(at: loc, s: number, z: number, n: number, other: symbol)
+    "Lines {s}-{z} ({n} lines of code) are duplicated at {other}: extract the shared code"
+DUPLICATE_BLOCK(@place(p, s), s, z, n, w) :- dup_start(d, s, k), doc(d, p, _), block(d, s, z, n), dup_place(k, w),
+    w != cat(p, ":", to_string(s)).
+
+// ---- tests (decision 0130): rerail-engine test-rr <this file> --------------------------------------------------
+.test thirty_shared_lines_are_reported_in_both_files exactly
+    .fixture "src/a.ts" ```
+        import { x } from "./x";
+
+        const a01 = compute("a", 1, 7);
+        const a02 = compute("a", 2, 3);
+        const a03 = compute("a", 3, 10);
+        const a04 = compute("a", 4, 6);
+        const a05 = compute("a", 5, 2);
+        const a06 = compute("a", 6, 9);
+        const a07 = compute("a", 7, 5);
+        const a08 = compute("a", 8, 1);
+        const a09 = compute("a", 9, 8);
+        const a10 = compute("a", 10, 4);
+        const a11 = compute("a", 11, 0);
+        const a12 = compute("a", 12, 7);
+        const a13 = compute("a", 13, 3);
+        const a14 = compute("a", 14, 10);
+        const a15 = compute("a", 15, 6);
+        const a16 = compute("a", 16, 2);
+        const a17 = compute("a", 17, 9);
+        const a18 = compute("a", 18, 5);
+        const a19 = compute("a", 19, 1);
+        const a20 = compute("a", 20, 8);
+        const a21 = compute("a", 21, 4);
+        const a22 = compute("a", 22, 0);
+        const a23 = compute("a", 23, 7);
+        const a24 = compute("a", 24, 3);
+        const a25 = compute("a", 25, 10);
+        const a26 = compute("a", 26, 6);
+        const a27 = compute("a", 27, 2);
+        const a28 = compute("a", 28, 9);
+        const a29 = compute("a", 29, 5);
+        const a30 = compute("a", 30, 1);
+        export const onlyA = 1;
+        ```
+    .fixture "src/b.ts" ```
+        export function b() {
+          return 2;
+        }
+        const a01 = compute("a", 1, 7);
+        const a02 = compute("a", 2, 3);
+        const a03 = compute("a", 3, 10);
+        const a04 = compute("a", 4, 6);
+        const a05 = compute("a", 5, 2);
+        const a06 = compute("a", 6, 9);
+        const a07 = compute("a", 7, 5);
+        const a08 = compute("a", 8, 1);
+        const a09 = compute("a", 9, 8);
+        const a10 = compute("a", 10, 4);
+        const a11 = compute("a", 11, 0);
+        const a12 = compute("a", 12, 7);
+        const a13 = compute("a", 13, 3);
+        const a14 = compute("a", 14, 10);
+        const a15 = compute("a", 15, 6);
+        const a16 = compute("a", 16, 2);
+        const a17 = compute("a", 17, 9);
+        const a18 = compute("a", 18, 5);
+        const a19 = compute("a", 19, 1);
+        const a20 = compute("a", 20, 8);
+        const a21 = compute("a", 21, 4);
+        const a22 = compute("a", 22, 0);
+        const a23 = compute("a", 23, 7);
+        const a24 = compute("a", 24, 3);
+        const a25 = compute("a", 25, 10);
+        const a26 = compute("a", 26, 6);
+        const a27 = compute("a", 27, 2);
+        const a28 = compute("a", 28, 9);
+        const a29 = compute("a", 29, 5);
+        const a30 = compute("a", 30, 1);
+        ```
+    .expect DUPLICATE_BLOCK at "src/a.ts":3
+    .expect DUPLICATE_BLOCK at "src/b.ts":4
+.end
+
+.test twenty_nine_shared_lines_are_not
+    .fixture "src/a.ts" ```
+        import { x } from "./x";
+        const a01 = compute("a", 1, 7);
+        const a02 = compute("a", 2, 3);
+        const a03 = compute("a", 3, 10);
+        const a04 = compute("a", 4, 6);
+        const a05 = compute("a", 5, 2);
+        const a06 = compute("a", 6, 9);
+        const a07 = compute("a", 7, 5);
+        const a08 = compute("a", 8, 1);
+        const a09 = compute("a", 9, 8);
+        const a10 = compute("a", 10, 4);
+        const a11 = compute("a", 11, 0);
+        const a12 = compute("a", 12, 7);
+        const a13 = compute("a", 13, 3);
+        const a14 = compute("a", 14, 10);
+        const a15 = compute("a", 15, 6);
+        const a16 = compute("a", 16, 2);
+        const a17 = compute("a", 17, 9);
+        const a18 = compute("a", 18, 5);
+        const a19 = compute("a", 19, 1);
+        const a20 = compute("a", 20, 8);
+        const a21 = compute("a", 21, 4);
+        const a22 = compute("a", 22, 0);
+        const a23 = compute("a", 23, 7);
+        const a24 = compute("a", 24, 3);
+        const a25 = compute("a", 25, 10);
+        const a26 = compute("a", 26, 6);
+        const a27 = compute("a", 27, 2);
+        const a28 = compute("a", 28, 9);
+        const a29 = compute("a", 29, 5);
+        export const onlyA = 1;
+        ```
+    .fixture "src/b.ts" ```
+        export const onlyB = 2;
+        const a01 = compute("a", 1, 7);
+        const a02 = compute("a", 2, 3);
+        const a03 = compute("a", 3, 10);
+        const a04 = compute("a", 4, 6);
+        const a05 = compute("a", 5, 2);
+        const a06 = compute("a", 6, 9);
+        const a07 = compute("a", 7, 5);
+        const a08 = compute("a", 8, 1);
+        const a09 = compute("a", 9, 8);
+        const a10 = compute("a", 10, 4);
+        const a11 = compute("a", 11, 0);
+        const a12 = compute("a", 12, 7);
+        const a13 = compute("a", 13, 3);
+        const a14 = compute("a", 14, 10);
+        const a15 = compute("a", 15, 6);
+        const a16 = compute("a", 16, 2);
+        const a17 = compute("a", 17, 9);
+        const a18 = compute("a", 18, 5);
+        const a19 = compute("a", 19, 1);
+        const a20 = compute("a", 20, 8);
+        const a21 = compute("a", 21, 4);
+        const a22 = compute("a", 22, 0);
+        const a23 = compute("a", 23, 7);
+        const a24 = compute("a", 24, 3);
+        const a25 = compute("a", 25, 10);
+        const a26 = compute("a", 26, 6);
+        const a27 = compute("a", 27, 2);
+        const a28 = compute("a", 28, 9);
+        const a29 = compute("a", 29, 5);
+        export const tailB = 3;
+        ```
+    .expect count DUPLICATE_BLOCK = 0
+.end
+
+.test whitespace_blank_and_comment_lines_do_not_count exactly
+    .fixture "src/a.ts" ```
+        const a01 = compute("a", 1, 7);
+        const a02 = compute("a", 2, 3);
+        const a03 = compute("a", 3, 10);
+        const a04 = compute("a", 4, 6);
+        const a05 = compute("a", 5, 2);
+        const a06 = compute("a", 6, 9);
+        const a07 = compute("a", 7, 5);
+        const a08 = compute("a", 8, 1);
+        const a09 = compute("a", 9, 8);
+        const a10 = compute("a", 10, 4);
+        const a11 = compute("a", 11, 0);
+        const a12 = compute("a", 12, 7);
+        const a13 = compute("a", 13, 3);
+        const a14 = compute("a", 14, 10);
+        const a15 = compute("a", 15, 6);
+        const a16 = compute("a", 16, 2);
+        const a17 = compute("a", 17, 9);
+        const a18 = compute("a", 18, 5);
+        const a19 = compute("a", 19, 1);
+        const a20 = compute("a", 20, 8);
+        const a21 = compute("a", 21, 4);
+        const a22 = compute("a", 22, 0);
+        const a23 = compute("a", 23, 7);
+        const a24 = compute("a", 24, 3);
+        const a25 = compute("a", 25, 10);
+        const a26 = compute("a", 26, 6);
+        const a27 = compute("a", 27, 2);
+        const a28 = compute("a", 28, 9);
+        const a29 = compute("a", 29, 5);
+        const a30 = compute("a", 30, 1);
+        ```
+    .fixture "src/b.ts" ```
+        function wrap() {
+        const a01   =   compute("a",  1,  7);
+            const a02   =   compute("a",  2,  3);
+        const a03   =   compute("a",  3,  10);
+            const a04   =   compute("a",  4,  6);
+        const a05   =   compute("a",  5,  2);
+            const a06   =   compute("a",  6,  9);
+        const a07   =   compute("a",  7,  5);
+            const a08   =   compute("a",  8,  1);
+        const a09   =   compute("a",  9,  8);
+            const a10   =   compute("a",  10,  4);
+
+        const a11   =   compute("a",  11,  0);
+            const a12   =   compute("a",  12,  7);
+        const a13   =   compute("a",  13,  3);
+            const a14   =   compute("a",  14,  10);
+        const a15   =   compute("a",  15,  6);
+            const a16   =   compute("a",  16,  2);
+        const a17   =   compute("a",  17,  9);
+            const a18   =   compute("a",  18,  5);
+        const a19   =   compute("a",  19,  1);
+            const a20   =   compute("a",  20,  8);
+        // a note the copy added
+        /**
+         * and a doc block
+         */
+        const a21   =   compute("a",  21,  4);
+            const a22   =   compute("a",  22,  0);
+        const a23   =   compute("a",  23,  7);
+            const a24   =   compute("a",  24,  3);
+        const a25   =   compute("a",  25,  10);
+            const a26   =   compute("a",  26,  6);
+        const a27   =   compute("a",  27,  2);
+            const a28   =   compute("a",  28,  9);
+        const a29   =   compute("a",  29,  5);
+            const a30   =   compute("a",  30,  1);
+        }
+        ```
+    .expect DUPLICATE_BLOCK at "src/a.ts":1
+    .expect DUPLICATE_BLOCK at "src/b.ts":2
+.end
+
+.test a_forty_five_line_copy_is_one_block exactly
+    .fixture "src/a.ts" ```
+        export const head = 0;
+        const a01 = compute("a", 1, 7);
+        const a02 = compute("a", 2, 3);
+        const a03 = compute("a", 3, 10);
+        const a04 = compute("a", 4, 6);
+        const a05 = compute("a", 5, 2);
+        const a06 = compute("a", 6, 9);
+        const a07 = compute("a", 7, 5);
+        const a08 = compute("a", 8, 1);
+        const a09 = compute("a", 9, 8);
+        const a10 = compute("a", 10, 4);
+        const a11 = compute("a", 11, 0);
+        const a12 = compute("a", 12, 7);
+        const a13 = compute("a", 13, 3);
+        const a14 = compute("a", 14, 10);
+        const a15 = compute("a", 15, 6);
+        const a16 = compute("a", 16, 2);
+        const a17 = compute("a", 17, 9);
+        const a18 = compute("a", 18, 5);
+        const a19 = compute("a", 19, 1);
+        const a20 = compute("a", 20, 8);
+        const a21 = compute("a", 21, 4);
+        const a22 = compute("a", 22, 0);
+        const a23 = compute("a", 23, 7);
+        const a24 = compute("a", 24, 3);
+        const a25 = compute("a", 25, 10);
+        const a26 = compute("a", 26, 6);
+        const a27 = compute("a", 27, 2);
+        const a28 = compute("a", 28, 9);
+        const a29 = compute("a", 29, 5);
+        const a30 = compute("a", 30, 1);
+        const a31 = compute("a", 31, 8);
+        const a32 = compute("a", 32, 4);
+        const a33 = compute("a", 33, 0);
+        const a34 = compute("a", 34, 7);
+        const a35 = compute("a", 35, 3);
+        const a36 = compute("a", 36, 10);
+        const a37 = compute("a", 37, 6);
+        const a38 = compute("a", 38, 2);
+        const a39 = compute("a", 39, 9);
+        const a40 = compute("a", 40, 5);
+        const a41 = compute("a", 41, 1);
+        const a42 = compute("a", 42, 8);
+        const a43 = compute("a", 43, 4);
+        const a44 = compute("a", 44, 0);
+        const a45 = compute("a", 45, 7);
+        ```
+    .fixture "src/b.ts" ```
+        const a01 = compute("a", 1, 7);
+        const a02 = compute("a", 2, 3);
+        const a03 = compute("a", 3, 10);
+        const a04 = compute("a", 4, 6);
+        const a05 = compute("a", 5, 2);
+        const a06 = compute("a", 6, 9);
+        const a07 = compute("a", 7, 5);
+        const a08 = compute("a", 8, 1);
+        const a09 = compute("a", 9, 8);
+        const a10 = compute("a", 10, 4);
+        const a11 = compute("a", 11, 0);
+        const a12 = compute("a", 12, 7);
+        const a13 = compute("a", 13, 3);
+        const a14 = compute("a", 14, 10);
+        const a15 = compute("a", 15, 6);
+        const a16 = compute("a", 16, 2);
+        const a17 = compute("a", 17, 9);
+        const a18 = compute("a", 18, 5);
+        const a19 = compute("a", 19, 1);
+        const a20 = compute("a", 20, 8);
+        const a21 = compute("a", 21, 4);
+        const a22 = compute("a", 22, 0);
+        const a23 = compute("a", 23, 7);
+        const a24 = compute("a", 24, 3);
+        const a25 = compute("a", 25, 10);
+        const a26 = compute("a", 26, 6);
+        const a27 = compute("a", 27, 2);
+        const a28 = compute("a", 28, 9);
+        const a29 = compute("a", 29, 5);
+        const a30 = compute("a", 30, 1);
+        const a31 = compute("a", 31, 8);
+        const a32 = compute("a", 32, 4);
+        const a33 = compute("a", 33, 0);
+        const a34 = compute("a", 34, 7);
+        const a35 = compute("a", 35, 3);
+        const a36 = compute("a", 36, 10);
+        const a37 = compute("a", 37, 6);
+        const a38 = compute("a", 38, 2);
+        const a39 = compute("a", 39, 9);
+        const a40 = compute("a", 40, 5);
+        const a41 = compute("a", 41, 1);
+        const a42 = compute("a", 42, 8);
+        const a43 = compute("a", 43, 4);
+        const a44 = compute("a", 44, 0);
+        const a45 = compute("a", 45, 7);
+        ```
+    .decl reported(p: symbol, s: number, z: number, n: number, other: symbol)
+    reported(p, s, z, n, w) :- block(d, s, z, n), doc(d, p, _), dup_start(d, s, k), dup_place(k, w), w != cat(p, ":", to_string(s)).
+    .expect reported("src/a.ts", 2, 46, 45, "src/b.ts:1")
+    .expect reported("src/b.ts", 1, 45, 45, "src/a.ts:2")
+    .expect DUPLICATE_BLOCK at "src/a.ts":2
+    .expect DUPLICATE_BLOCK at "src/b.ts":1
+.end
+
+.test a_block_twice_in_one_file exactly
+    .fixture "src/a.ts" ```
+        const a01 = compute("a", 1, 7);
+        const a02 = compute("a", 2, 3);
+        const a03 = compute("a", 3, 10);
+        const a04 = compute("a", 4, 6);
+        const a05 = compute("a", 5, 2);
+        const a06 = compute("a", 6, 9);
+        const a07 = compute("a", 7, 5);
+        const a08 = compute("a", 8, 1);
+        const a09 = compute("a", 9, 8);
+        const a10 = compute("a", 10, 4);
+        const a11 = compute("a", 11, 0);
+        const a12 = compute("a", 12, 7);
+        const a13 = compute("a", 13, 3);
+        const a14 = compute("a", 14, 10);
+        const a15 = compute("a", 15, 6);
+        const a16 = compute("a", 16, 2);
+        const a17 = compute("a", 17, 9);
+        const a18 = compute("a", 18, 5);
+        const a19 = compute("a", 19, 1);
+        const a20 = compute("a", 20, 8);
+        const a21 = compute("a", 21, 4);
+        const a22 = compute("a", 22, 0);
+        const a23 = compute("a", 23, 7);
+        const a24 = compute("a", 24, 3);
+        const a25 = compute("a", 25, 10);
+        const a26 = compute("a", 26, 6);
+        const a27 = compute("a", 27, 2);
+        const a28 = compute("a", 28, 9);
+        const a29 = compute("a", 29, 5);
+        const a30 = compute("a", 30, 1);
+        export const between = 1;
+        const a01 = compute("a", 1, 7);
+        const a02 = compute("a", 2, 3);
+        const a03 = compute("a", 3, 10);
+        const a04 = compute("a", 4, 6);
+        const a05 = compute("a", 5, 2);
+        const a06 = compute("a", 6, 9);
+        const a07 = compute("a", 7, 5);
+        const a08 = compute("a", 8, 1);
+        const a09 = compute("a", 9, 8);
+        const a10 = compute("a", 10, 4);
+        const a11 = compute("a", 11, 0);
+        const a12 = compute("a", 12, 7);
+        const a13 = compute("a", 13, 3);
+        const a14 = compute("a", 14, 10);
+        const a15 = compute("a", 15, 6);
+        const a16 = compute("a", 16, 2);
+        const a17 = compute("a", 17, 9);
+        const a18 = compute("a", 18, 5);
+        const a19 = compute("a", 19, 1);
+        const a20 = compute("a", 20, 8);
+        const a21 = compute("a", 21, 4);
+        const a22 = compute("a", 22, 0);
+        const a23 = compute("a", 23, 7);
+        const a24 = compute("a", 24, 3);
+        const a25 = compute("a", 25, 10);
+        const a26 = compute("a", 26, 6);
+        const a27 = compute("a", 27, 2);
+        const a28 = compute("a", 28, 9);
+        const a29 = compute("a", 29, 5);
+        const a30 = compute("a", 30, 1);
+        ```
+    .expect DUPLICATE_BLOCK at "src/a.ts":1
+    .expect DUPLICATE_BLOCK at "src/a.ts":32
+.end
+
+.test declaration_files_are_out_of_scope
+    .fixture "src/a.ts" ```
+        const a01 = compute("a", 1, 7);
+        const a02 = compute("a", 2, 3);
+        const a03 = compute("a", 3, 10);
+        const a04 = compute("a", 4, 6);
+        const a05 = compute("a", 5, 2);
+        const a06 = compute("a", 6, 9);
+        const a07 = compute("a", 7, 5);
+        const a08 = compute("a", 8, 1);
+        const a09 = compute("a", 9, 8);
+        const a10 = compute("a", 10, 4);
+        const a11 = compute("a", 11, 0);
+        const a12 = compute("a", 12, 7);
+        const a13 = compute("a", 13, 3);
+        const a14 = compute("a", 14, 10);
+        const a15 = compute("a", 15, 6);
+        const a16 = compute("a", 16, 2);
+        const a17 = compute("a", 17, 9);
+        const a18 = compute("a", 18, 5);
+        const a19 = compute("a", 19, 1);
+        const a20 = compute("a", 20, 8);
+        const a21 = compute("a", 21, 4);
+        const a22 = compute("a", 22, 0);
+        const a23 = compute("a", 23, 7);
+        const a24 = compute("a", 24, 3);
+        const a25 = compute("a", 25, 10);
+        const a26 = compute("a", 26, 6);
+        const a27 = compute("a", 27, 2);
+        const a28 = compute("a", 28, 9);
+        const a29 = compute("a", 29, 5);
+        const a30 = compute("a", 30, 1);
+        ```
+    .fixture "src/a.d.ts" ```
+        const a01 = compute("a", 1, 7);
+        const a02 = compute("a", 2, 3);
+        const a03 = compute("a", 3, 10);
+        const a04 = compute("a", 4, 6);
+        const a05 = compute("a", 5, 2);
+        const a06 = compute("a", 6, 9);
+        const a07 = compute("a", 7, 5);
+        const a08 = compute("a", 8, 1);
+        const a09 = compute("a", 9, 8);
+        const a10 = compute("a", 10, 4);
+        const a11 = compute("a", 11, 0);
+        const a12 = compute("a", 12, 7);
+        const a13 = compute("a", 13, 3);
+        const a14 = compute("a", 14, 10);
+        const a15 = compute("a", 15, 6);
+        const a16 = compute("a", 16, 2);
+        const a17 = compute("a", 17, 9);
+        const a18 = compute("a", 18, 5);
+        const a19 = compute("a", 19, 1);
+        const a20 = compute("a", 20, 8);
+        const a21 = compute("a", 21, 4);
+        const a22 = compute("a", 22, 0);
+        const a23 = compute("a", 23, 7);
+        const a24 = compute("a", 24, 3);
+        const a25 = compute("a", 25, 10);
+        const a26 = compute("a", 26, 6);
+        const a27 = compute("a", 27, 2);
+        const a28 = compute("a", 28, 9);
+        const a29 = compute("a", 29, 5);
+        const a30 = compute("a", 30, 1);
+        ```
+    .expect count DUPLICATE_BLOCK = 0
+.end
+
