@@ -1,0 +1,1 @@
+A walk of the other worktrees no longer asks the disk about each file a session saw there that no walk reads (in `build/`, an ignored folder, or behind a link) or that went while its shell command ran, so hooks no longer slow as sessions age. Walks record no deletion of a file they do not read.
