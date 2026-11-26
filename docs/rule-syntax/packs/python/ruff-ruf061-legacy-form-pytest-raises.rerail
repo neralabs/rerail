@@ -5,11 +5,12 @@
 .scope include "**/*"
 
 // Ruff RUF061: `pytest.raises(E, func, …)`, `pytest.warns(W, func, …)` or `pytest.deprecated_call(func, …)`:
-// the callable is passed, positionally after the expected type or as `func=`, so pytest calls it.
+// the callable is passed, positionally after the expected type or as `func=`, so pytest calls it. In string
+// annotations too (`x: "pytest.raises(E, f)"`, `cast("pytest.deprecated_call(f)", y)`): Ruff checks them as code.
 //   pytest.raises(ZeroDivisionError, func, 1, b=0)   ← RUF061
 //   with pytest.raises(ZeroDivisionError):           not reported
 //       func(1, b=0)
-#include "python/ruff.rerail"
+#include "python/python-04.rerail"
 
 param_slot("pytest.raises", "func", 1).
 param_slot("pytest.warns", "func", 1).
@@ -18,8 +19,14 @@ param_slot("pytest.deprecated_call", "func", 0).
 .violation RUF061(at: node, msg: symbol) code "RUF061" "{msg}"
     suppress ruff "RUF061"
 RUF061(c, "Use `with pytest.raises(Exc) as excinfo:` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.raises`.") :-
-    call_q(c, "pytest.raises"), call_param(c, "func", _).
+    legacy(c, "pytest.raises").
 RUF061(c, "Use `with pytest.warns(Warn):` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.warns`.") :-
-    call_q(c, "pytest.warns"), call_param(c, "func", _).
+    legacy(c, "pytest.warns").
 RUF061(c, "Use `with pytest.deprecated_call():` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.deprecated_call`.") :-
-    call_q(c, "pytest.deprecated_call"), call_param(c, "func", _).
+    legacy(c, "pytest.deprecated_call").
+// legacy(c, q): call c of q passes the callable. ann_call_q puts the calls of string annotations in the run. A
+// call in a `with` statement's items is the context-manager form already, whatever it passes: Ruff skips it.
+.decl legacy(c: node, q: symbol)
+legacy(c, q) :- ann_call_q(c, q), param_slot(q, "func", _), arg_of(c, "func", _), !inside(c, _, with_clause_kind).
+.decl with_clause_kind(k: symbol)
+with_clause_kind("with_clause").

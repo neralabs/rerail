@@ -1,0 +1,20 @@
+[
+  { "id": "ruff-ruf051-if-key-in-dict-del", "status": "same" },
+  { "id": "ruff-ruf057-unnecessary-round", "status": "same" },
+  { "id": "ruff-ruf058-starmap-zip", "status": "same" },
+  { "id": "ruff-ruf059-unused-unpacked-variable", "status": "same" },
+  { "id": "ruff-ruf060-in-empty-collection", "status": "same" },
+  {
+    "id": "ruff-ruf061-legacy-form-pytest-raises",
+    "status": "different",
+    "reason": "The original reports pytest.raises(E, x) used as a `with` item (`with pytest.raises(Exception, \"hello\"):` at flake8_bugbear/B017_0.py:51, rerail/probes/B017-comment-before-argument.py:3, rerail/probes/RUF043-import-forms-and-other-calls.py:14). Ruff 0.17.6 (--preview, --isolated) reports none of the three: a call in a with statement's items is the context-manager form already. The translation skips calls inside a with_clause and matches ruff on every file of the fixtures and samples-python corpora.",
+    "right": "translation",
+    "counts": {
+      "examples": { "originalOnly": 0, "translationOnly": 0 },
+      "fixtures": { "originalOnly": 3, "translationOnly": 0 },
+      "samples-python": { "originalOnly": 0, "translationOnly": 0 }
+    }
+  },
+  { "id": "ruff-ruf063-access-annotations-from-class-dict", "status": "same" },
+  { "id": "ruff-ruf064-non-octal-permissions", "status": "same" }
+]
