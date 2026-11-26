@@ -43,7 +43,13 @@ unsafe impl Sync for Compiled {}
 /// edit asks anew is proved by one compile, and kept for the next.
 pub fn compile_answered(grammar: &str) -> Result<Compiled, String> {
     rerail_bitlex::answers::answered("python", grammar.as_bytes(), Proofs::default(), |known| {
-        let c = compile_timed(grammar, known, &mut |_, _| {})?;
+        // `RERAIL_PYTHON_LAPS`: each phase's time, as it ends, on stderr.
+        let laps = std::env::var_os("RERAIL_PYTHON_LAPS").is_some();
+        let c = compile_timed(grammar, known, &mut |name, d| {
+            if laps {
+                eprintln!("lap {name}: {d:?}");
+            }
+        })?;
         let made = c.proofs.clone();
         Ok((c, made))
     })
@@ -136,6 +142,13 @@ impl Compiled {
         for i in 0..run.codes.len() {
             let at = |k: usize| run.positions.get(k).and_then(|p| p.get(i)).copied().unwrap_or(0);
             out.push_str(&format!("token {i}: {}..={} code {:#x}\n", at(0), at(1), run.codes[i]));
+        }
+        // What the reference evaluator refuses the file for: the grammar's escapes and errors.
+        if let Ok(stmts) = ::bitlex::syntax::parse(GRAMMAR) {
+            match ::bitlex::eval::Ev::run(&stmts, src.as_bytes(), &Default::default()) {
+                Ok(e) => e.errors.iter().for_each(|e| out.push_str(&format!("tier 1: {e}\n"))),
+                Err(e) => out.push_str(&format!("tier 1's reference: {e:?}\n")),
+            }
         }
         let interp = rerail_compiler::stream::run(&self.program, src.as_bytes(), &run);
         out.push_str(&format!("interpreter: {:?}\n", interp.as_ref().map(|n| n.len())));

@@ -54,8 +54,23 @@ fn blocks_are_the_lean_parsers() {
 }
 
 #[test]
+fn strings_are_the_lean_parsers() {
+    same(&["\"a\"\n", "'a\\nb'\n", "r'a\\d'\n", "b\"x\"\n", "\"\"\"a\nb\"\"\"\n", "'''a'''\n", "''\n", "r''\n", "''''''\n"]);
+    // Escapes: each of lean's, a lone backslash (a leaf), a quote and a line break escaped.
+    same(&["'\\''\n", "'a\\\nb'\n", "\"\\x41\\u1234\\U0001F600\"\n", "'\\d'\n", "'\\1\\12\\123\\1234'\n", "'\\\\'\n", "b'\\x00'\n", "'\\u12'\n"]);
+    // A comment's `#` in a string, quotes of the other kind, a comment after one; bytes past 0x7f;
+    // prefixes; a raw string's escaped quote, and its backslashes before the closer.
+    // An `f'` or a word of prefix letters before a quote, in a string or a comment: no prefix.
+    same(&["\"a f'\"\n", "x  # but's\n", "'(f'\n"]);
+    same(&["\"#\"\n", "'''a'b''c'''\n", "'a'  # c\n", "\"\u{e9}\"\n", "Rb'x'\n", "u'x'\n", "r'a\\''\n", "r'a\\\\'\n"]);
+}
+
+#[test]
 fn what_the_grammar_does_not_read_is_refused() {
-    refused(&["'a'\n", "x.5\n", "0x1f\n", "x\\\n", "\tx\n"]);
+    refused(&["x.5\n", "0x1f\n", "x\\\n", "\tx\n"]);
+    // An f-string, a `\N{…}`, a raw string of backslashes only (its end starts at them), an open
+    // string, a triple closed by four quotes, a three-letter prefix, `\u` in bytes.
+    refused(&["f'{x}'\n", "u\"\\N{DASH}\"\n", "r'\\\\'\n", "r'\\''\n", "'a\n", "'''a''''\n", "rbu'x'\n", "b'\\u1234'\n"]);
 }
 
 /// The corpus: a folder of `.py` files, each read by both. `same`: the compiled grammar's tape is

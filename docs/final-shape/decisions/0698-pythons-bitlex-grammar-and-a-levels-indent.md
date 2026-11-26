@@ -57,3 +57,18 @@ statements and blocks end.
    8; back to 0).
 8. **The Rust tier 2 refuses an `indented` grammar for now** (`bitlex_rust::tier2`). The JIT and the interpreter read
    it; Metal runs the JIT's tier 2 on its records, so it needs nothing of its own.
+9. **Strings: one reader over four regions.** A region per quote kind and length (`s1`, `d1`, `s3`, `d3`). A raw
+   string closes as any string does, at a quote no backslash escapes, so it is no region of its own. `in_raw`, a fill
+   from a raw opener, says which strings' backslashes are text. One reader (`string_start`) reads them all, as
+   Kotlin's reads its strings and raw strings: a triple's two more quotes are a part (`quote2`), and every escape is
+   one part (`escape_sequence`, `last` its last byte). A backslash that starts no escape is a part and a leaf of its
+   own (lean's `Backslash`). The closer is `string_end`. A prefix (one or two prefix letters at a word's start, then a
+   quote) is a token of its own; the tree merges it, the opener and `quote2` into one `string_start` leaf (`merge`).
+   Not read yet, so refused: f-strings, `\N{…}`, `\N`, `\u` and `\U` in bytes strings, carriage returns in strings,
+   a prefix of three letters, a triple opened or closed by four quotes or more, and a raw string of backslashes
+   only, whose end the lean lexer starts at its first backslash.
+10. **The provers evaluate each value once per choice** (`bitlex_prove::Proof::memo`). A block program's ops are a
+    graph: a mask that many others read (a region's fill, `escaped`) was evaluated once for every path to it, at every
+    step of the search. Python's string masks made one question run for minutes. Each value at a lag is kept for the
+    bytes and carried values chosen now, and dropped when a choice changes. Its first evaluation sets the search's
+    open choice where it was unknown, so the answers and the search's steps are the ones it had.

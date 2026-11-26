@@ -3887,7 +3887,13 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         for b in a + 1..rows.len() {
             if shares(a, b) {
                 let both = low.and(token_rows[a].1, token_rows[b].1)?;
-                if !low.either_never(&mut settled, both) {
+                // `RERAIL_BITLEX_PROOFS`: each pair's question and its time, on stderr.
+                let at = std::env::var_os("RERAIL_BITLEX_PROOFS").map(|_| std::time::Instant::now());
+                let never = low.either_never(&mut settled, both);
+                if let Some(t) = at {
+                    eprintln!("rows {} & {}: never {never}, {:?}", token_rows[a].0, token_rows[b].0, t.elapsed());
+                }
+                if !never {
                     low.fallbacks.push(both);
                     pairs.push((a, b));
                 }
