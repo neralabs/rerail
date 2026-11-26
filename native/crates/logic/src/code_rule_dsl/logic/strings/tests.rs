@@ -163,8 +163,13 @@ fn globs_nest_alternatives() {
     assert!(super::test("glob", "a,b", "{{a\\,b,c},d}"));
 }
 
-/// Data-layer text scanners copy complete logical lines through shared candidate relations.
-/// These tests must still use the vocabulary batch, including predicates on those aliases.
+/// Data-layer text scanners read a file's lines (`src_line`, decision 0612) and copy them through relations of their
+/// own (`candidate`, `selected`). A test of a line's own text is batched: its strings are the vocabulary's. A test of
+/// a copy stays per row: each `text(n, t)` has a long-text twin (`t = @rr_node_text(n)` where `rr_long_text_node(n)`),
+/// whose strings are in no vocabulary, so a copy has a writer of computed strings (as
+/// `computed_or_fact_writers_prevent_alias_vocabulary_rewrites`), and a batched test of it would lose a long line's
+/// findings. Batching through the twins was measured (2026-11-25) on the 2,000-line benchmark this test was written
+/// for (`rr-line-vocabulary-profile`) and on the 57 data-layer rules over 50 files: no CPU saved on either.
 #[test]
 fn logical_line_predicates_and_aliases_use_the_vocabulary_batch() {
     let (program, vocabulary) = prepared(r##"
@@ -179,13 +184,16 @@ selected(d,l,t) :- candidate(d,l,t).
 finding(d,l) :- selected(d,l,t), contains("inspect",t).
 .output finding
 "##).unwrap();
-    assert_eq!(vocabulary.tests.len(), 2, "both line predicates must be batched");
+    assert_eq!(vocabulary.tests.len(), 1, "the line's own test is batched, the copy's is not");
     let rendered = rules_of(&program);
-    assert!(!rendered.contains("@prefix") && !rendered.contains("@contains"), "{rendered}");
-    // Numbered by their content: `prefix` and `contains` in either order.
-    let mut rows = vocabulary.rows(&["#inspect".into(), "inspect".into(), "clean".into()], &[11,12,13]);
-    rows.sort();
-    assert_eq!(rows, [vec![11], vec![11,12]]);
+    let rule = |head: &str| rendered.lines().filter(|l| l.starts_with(head)).collect::<Vec<_>>();
+    let candidate = rule("candidate(");
+    assert_eq!(candidate.len(), 2, "the rule and its long-text twin: {rendered}");
+    assert!(candidate.iter().any(|r| r.contains("!strtest_0(") && !r.contains("@prefix")), "the batch's line tested by the vocabulary: {rendered}");
+    assert!(candidate.iter().any(|r| r.contains("rr_long_text_node(") && r.contains("@prefix(")), "a long line tested per row: {rendered}");
+    assert!(rule("finding(").iter().all(|r| r.contains("@contains(")), "the copy's test per row: {rendered}");
+    let rows = vocabulary.rows(&["#inspect".into(), "inspect".into(), "clean".into()], &[11, 12, 13]);
+    assert_eq!(rows, [vec![11]], "`prefix`'s rows: the strings that start with #");
 }
 
 /// A second writer can construct strings that the prepared vocabulary never saw.
