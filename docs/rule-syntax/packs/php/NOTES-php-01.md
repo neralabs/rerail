@@ -5,6 +5,9 @@ Checked with `translations:check` (through `ptcheck`) on the pack's examples, th
 4.0.4, PHPStan 2.2.16) and the tools' sources and tests. PHP, phpcs and PHPStan are not on the boxes, so no
 counterexample was run on a tool; cases were run through `rerail-engine run-policies` on a box.
 
+All six are now `same` on every corpus. `equivalence.json` (not edited here) still lists them under `different`;
+the suite asks for each to be removed from it.
+
 ## phpcs-squiz-php-eval: same
 
 The baseline's 8 translation-only findings on `samples-php` were `eval` under a `// phpcs:ignore` (bare, by sniff
@@ -16,7 +19,7 @@ translation's `suppress phpcs`. The engine installed since does, and the rule is
 As eval: the 5 translation-only findings were blocks under `// phpcs:ignore Generic.CodeAnalysis.EmptyStatement.Detected…`,
 honoured by the current engine. Unchanged.
 
-## phpcs-generic-php-lower-case-constant: follows PHP_CodeSniffer
+## phpcs-generic-php-lower-case-constant: same (translation fixed, follows PHP_CodeSniffer)
 
 `LowerCaseConstantUnitTest.1.inc.php:83`, `['type' => Null::TYPE_STRING]`: tree-sitter-php reads `Null` as the
 keyword `null` inside an ERROR node with the `::`, and the translation reported it. PHP_CodeSniffer tokenizes a
@@ -24,14 +27,14 @@ class name there and reports nothing (the line is not in its recorded findings);
 skips findings in the file's error regions. The translation now leaves a `null`/`boolean` alone when its parent is
 an ERROR holding `::`.
 
-## phpcs-generic-php-no-silenced-errors: translation bug fixed
+## phpcs-generic-php-no-silenced-errors: same (translation fixed)
 
 `fs_call(s, v)` did not require `s` to be an `@` expression, so the second clause ("recheck the outcome") reported
 every statement whose child is a call to `mkdir`, `rmdir` or `unlink`, `@` or not: `unlink($tempFile);` in
 `system/View/View.php:338` and 75 more. `fs_call` now requires `error_suppression_expression`, as the JSON's
 `kind`.
 
-## phpstan-argument-sprintf: follows PHPStan
+## phpstan-argument-sprintf: same (translation fixed, follows PHPStan)
 
 - **Engine gap**: php/format's `printf_needs` computes the largest argnum with `top = max n : { printf_numbered(s,
   n) }`; the engine evaluates that aggregate to 4611686018427387904 (2^62) for every format with an argnum
@@ -48,7 +51,7 @@ every statement whose child is a call to `mkdir`, `rmdir` or `unlink`, `@` or no
   `php_value` reads core's `str`, which has no row for them), parentheses, `.` concatenations of strings and
   ints, and a variable at its last write when that write dominates the use (the JSON's `follow.php` cases).
 
-## phpstan-argument-sscanf: follows PHPStan
+## phpstan-argument-sscanf: same (translation fixed, follows PHPStan)
 
 `bug-14567.php:8,11,20` (`sscanf($s, "%d\0%d", $a)`): scanf.c reads the format as a C string, so placeholders
 after a NUL assign nothing, and PHPStan's fixture expects no error. The rule cuts the format at its first NUL
