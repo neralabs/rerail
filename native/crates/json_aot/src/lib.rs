@@ -13,7 +13,7 @@ mod tier1;
 #[allow(clippy::all, unused_parens, unused_mut, dead_code, unreachable_code, unused_variables, unused_assignments)]
 mod tier2;
 
-pub use tier1::{Carries, LANES, Lexed, PADDING, lane_carries, lane_of, lex, lex_chunked, stage1_ends_best, stage1_from_best};
+pub use tier1::{Carries, LANES, Lexed, PADDING, entries, lane_carries, lane_of, lex, lex_chunked, stage1_ends_best, stage1_from_best};
 /// The code table tier 2's numbers are of: each number's kind, field and supertypes.
 pub use tier2::{ENTRIES, WIDTHS};
 

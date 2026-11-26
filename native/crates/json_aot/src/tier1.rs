@@ -370,15 +370,15 @@ unsafe fn stage1_from<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, from: usi
     let mut prev_incomplete = unsafe { S::splat(0) };
     let max_value = unsafe { S::load(&MAX_VALUE) };
     let mut errors = 0u64;
-    // Room for a record a byte, and the slack of a block's unconditional writes.
-    starts.reserve(64 * (to - from.min(to)) + 64);
+    // Room for a record a byte of the bytes from the chunk on (at most a record a byte before it), and the slack of a
+    // block's unconditional writes: within `lex`'s `n + 67`.
+    starts.reserve((n - (64 * from).min(n)) + 64);
     let si = starts.as_mut_ptr();
     let mut count = starts.len();
     // The block before's records, written at the next block (simdjson's `prev_structurals`).
     let mut prev_structurals = 0u64;
-    for q in from.saturating_sub(1)..to {
-        // The block before the chunk: the words of the bytes alone it leaves the chunk's first block.
-        let warm = q < from;
+    if from > 0 {
+        let q = from - 1;
         let b: &[u8; 64] = src[off + 64 * q..off + 64 * q + 64].try_into().expect("a padded block");
         let v = unsafe { S::load(b) };
         let c0 = unsafe { S::classify(v, &LO_0, &HI_0) };
@@ -397,9 +397,6 @@ unsafe fn stage1_from<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, from: usi
             prev_incomplete = unsafe { S::gt_bits(v, max_value) };
         }
         prev_input = v;
-        if warm {
-            error = unsafe { S::splat(0) };
-        }
         // class quote
         let v_m_quote = unsafe { S::eq_mask(v, 0x22) };
         // class backslash
@@ -417,9 +414,37 @@ unsafe fn stage1_from<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, from: usi
         v_m_nonquote_scalar = v_m_scalar & !v_m_quote;
         // mask follows = prev(nonquote_scalar)
         let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63);
-        if warm {
-            continue;
+        error = unsafe { S::splat(0) };
+    }
+    for q in from..to {
+        let b: &[u8; 64] = src[off + 64 * q..off + 64 * q + 64].try_into().expect("a padded block");
+        let v = unsafe { S::load(b) };
+        let c0 = unsafe { S::classify(v, &LO_0, &HI_0) };
+        // The byte-pair errors, as simdjson's `utf8_checker`: a block of ASCII holds one only where the block before left a
+        // sequence open.
+        if unsafe { S::to_bitmask(v) } == 0 {
+            error = unsafe { S::or(error, prev_incomplete) };
+        } else {
+            // The byte before's nibbles and this byte's high nibble, each rule a bit (`check_special_cases`).
+            let p1 = unsafe { S::prev(v, prev_input, 1) };
+            let sc = unsafe { S::and(S::and(S::lookup_16(S::high_nibbles(p1), &BYTE_1_HIGH), S::lookup_16(S::low_nibbles(p1), &BYTE_1_LOW)), S::lookup_16(S::high_nibbles(v), &BYTE_2_HIGH)) };
+            // A continuation needed 2 or 3 bytes after a lead byte (`must_be_2_3_continuation`), against two in a row (bit 0x80).
+            let must23 = unsafe { S::and(S::or(S::ge(S::prev(v, prev_input, 2), 0xe0), S::ge(S::prev(v, prev_input, 3), 0xf0)), S::splat(0x80)) };
+            error = unsafe { S::or(error, S::xor(sc, must23)) };
+            // A sequence the block's last bytes leave open (`is_incomplete`): the bytes above `MAX_VALUE`'s.
+            prev_incomplete = unsafe { S::gt_bits(v, max_value) };
         }
+        prev_input = v;
+        // class quote
+        let v_m_quote = unsafe { S::eq_mask(v, 0x22) };
+        // class backslash
+        let v_m_backslash = unsafe { S::eq_mask(v, 0x5c) };
+        // class ws
+        let v_m_ws = unsafe { S::to_bitmask(S::test(c0, S::splat(0x03))) };
+        // class control
+        let v_m_control = unsafe { S::to_bitmask(S::test(c0, S::splat(0x04))) };
+        // class op
+        let v_m_op = unsafe { S::to_bitmask(S::test(c0, S::splat(0x38))) };
         // mask escaped = escaped(backslash)
         let v_m_escaped = {
                 const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
@@ -448,13 +473,20 @@ unsafe fn stage1_from<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, from: usi
             };
         // mask string_tail = in_string ^ q
         let v_m_string_tail = (v_m_in_string ^ v_m_q);
+        // mask scalar = ~(op | ws)
+        let v_m_scalar = !(v_m_op | v_m_ws);
+        let p_m_nonquote_scalar = v_m_nonquote_scalar;
+        // mask nonquote_scalar = scalar & ~quote
+        v_m_nonquote_scalar = v_m_scalar & !v_m_quote;
+        // mask follows = prev(nonquote_scalar)
+        let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63);
         // mask structural_start = (op | (scalar & ~follows)) & ~string_tail
         let v_m_structural_start = (v_m_op | v_m_scalar & !v_m_follows) & !v_m_string_tail;
-        // in_string & control
-        let v_t2 = v_m_in_string & v_m_control;
         // The block before's records (simdjson's `indexer.write(idx - 64, prev_structurals)`).
         unsafe { write_indexes(si, &mut count, ((off + 64 * q) as u32).wrapping_sub(64), prev_structurals) };
         prev_structurals = v_m_structural_start;
+        // in_string & control
+        let v_t2 = v_m_in_string & v_m_control;
         // a control byte in a string
         errors |= v_t2;
     }
@@ -478,20 +510,37 @@ rerail_simd8::dispatch! {
     pub fn stage1_from_best(src: &[u8], n: usize, from: usize, to: usize, e: Carries, starts: &mut Vec<u32>) -> (bool, Carries) = stage1_from, on stage1_from_on;
 }
 
+/// Pass 3, across the chunks: each chunk's one entry, from the chunks' maps of entry to end (pass 1), by a prefix scan
+/// of their compositions. Round `r` composes each chunk's map after the map `2^r` chunks before it, so that after
+/// `log2` of the chunks rounds each chunk's map is the file's start's to its end. In a round each chunk is on its own,
+/// as a device's scan; the two buffers a round reads and writes swap.
+pub fn entries(ends: &[[Carries; LANES]]) -> Vec<Carries> {
+    let mut maps: Vec<[u8; LANES]> = ends.iter().map(|e| core::array::from_fn(|l| lane_of(e[l]) as u8)).collect();
+    let mut next = maps.clone();
+    let mut d = 1;
+    while d < maps.len() {
+        next[..d].copy_from_slice(&maps[..d]);
+        for c in d..maps.len() {
+            next[c] = core::array::from_fn(|l| maps[c][usize::from(maps[c - d][l])]);
+        }
+        std::mem::swap(&mut maps, &mut next);
+        d *= 2;
+    }
+    // Chunk `c`'s entry: the file's start, through the chunks before it.
+    let start = lane_of(Carries::default());
+    (0..maps.len()).map(|c| if c == 0 { Carries::default() } else { lane_carries(usize::from(maps[c - 1][start])) }).collect()
+}
+
 /// The records of `buf[..n]` from the middle: its blocks in chunks of `blocks`, each chunk's ends from every entry
-/// (pass 1), each chunk's entry the end of the one before, then each chunk's records from its entry (pass 2). Each
-/// pass's chunks are each on their own. The records are `lex`'s.
+/// (pass 1), each chunk's one entry by a scan of those (pass 3), then each chunk's records from its entry (pass 2).
+/// Each pass's chunks are each on their own. The records are `lex`'s.
 pub fn lex_chunked(buf: &[u8], n: usize, blocks: usize) -> Lexed {
     assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b"        "), "the source padded with spaces");
     let blocks = blocks.max(1);
     let off = if buf.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };
     let nw = (n - off).div_ceil(64);
     let ends: Vec<[Carries; LANES]> = (0..nw).step_by(blocks).map(|b| stage1_ends_best(buf, n, b, b + blocks)).collect();
-    let mut entry = Carries::default();
-    let entries: Vec<Carries> = ends.iter().map(|e| {
-        let next = e[lane_of(entry)];
-        std::mem::replace(&mut entry, next)
-    }).collect();
+    let entries = entries(&ends);
     let mut starts: Vec<u32> = Vec::with_capacity(n + 64 + 3);
     let mut refused = false;
     for (c, b) in (0..nw).step_by(blocks).enumerate() {

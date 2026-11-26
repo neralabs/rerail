@@ -2117,20 +2117,32 @@ impl Gen<'_> {
         if self.lookup.is_some() {
             out.push_str("    let mut prev_input = unsafe { S::splat(0) };\n    let mut error = unsafe { S::splat(0) };\n    let mut prev_incomplete = unsafe { S::splat(0) };\n    let max_value = unsafe { S::load(&MAX_VALUE) };\n");
         }
-        out.push_str("    let mut errors = 0u64;\n    // Room for a record a byte, and the slack of a block's unconditional writes.\n    starts.reserve(64 * (to - from.min(to)) + 64);\n    let si = starts.as_mut_ptr();\n    let mut count = starts.len();\n    // The block before's records, written at the next block (simdjson's `prev_structurals`).\n    let mut prev_structurals = 0u64;\n");
-        load(&mut out);
-        if let Some(l) = &self.lookup {
-            out.extend(lookup_code(l).lines().map(|x| format!("{}\n", x.strip_prefix("    ").unwrap_or(x))));
-            out.push_str("        if warm {\n            error = unsafe { S::splat(0) };\n        }\n");
-        }
+        out.push_str("    let mut errors = 0u64;\n    // Room for a record a byte of the bytes from the chunk on (at most a record a byte before it), and the slack of a\n    // block's unconditional writes: within `lex`'s `n + 67`.\n    starts.reserve((n - (64 * from).min(n)) + 64);\n    let si = starts.as_mut_ptr();\n    let mut count = starts.len();\n    // The block before's records, written at the next block (simdjson's `prev_structurals`).\n    let mut prev_structurals = 0u64;\n");
+        // The block before the chunk, apart from the loop (as `stage1` has no such block): the words of the bytes alone it
+        // leaves the chunk's first block, and the byte-pair check's.
+        let block = |out: &mut String, pad: &str| {
+            let _ = writeln!(out, "{pad}let b: &[u8; 64] = src[{off}..{off} + 64].try_into().expect(\"a padded block\");\n{pad}let v = unsafe {{ S::load(b) }};");
+            for p in 0..pairs.len() {
+                let _ = writeln!(out, "{pad}let c{p} = unsafe {{ S::classify(v, &LO_{p}, &HI_{p}) }};");
+            }
+            if let Some(l) = &self.lookup {
+                out.extend(lookup_code(l).lines().map(|x| format!("{pad}{}\n", x.strip_prefix("            ").unwrap_or(x))));
+            }
+        };
+        out.push_str("    if from > 0 {\n        let q = from - 1;\n");
+        block(&mut out, "        ");
+        // Every line of the bytes alone, those the carried words are made of among them (the rest the compiler drops).
         for i in (0..self.nodes.len()).filter(|&i| live[i] && !lane[i]) {
             line(i, false, &mut out, "        ");
         }
-        out.push_str("        if warm {\n            continue;\n        }\n");
-        for i in (0..self.nodes.len()).filter(|&i| live[i] && lane[i]) {
-            line(i, false, &mut out, "        ");
+        if self.lookup.is_some() {
+            out.push_str("        error = unsafe { S::splat(0) };\n");
         }
+        out.push_str("    }\n    for q in from..to {\n");
+        block(&mut out, "        ");
+        // The lines in `stage1`'s order, each record and error where `stage1` has it.
         for i in (0..self.nodes.len()).filter(|&i| live[i]) {
+            line(i, false, &mut out, "        ");
             let w = format!("v_{}", self.nodes[i].name);
             for (why, _) in self.sinks.iter().filter(|(_, s)| *s == i) {
                 let _ = writeln!(out, "        // {why}\n        errors |= {w};");
@@ -2163,7 +2175,7 @@ impl Gen<'_> {
         };
         let _ = writeln!(
             out,
-            "/// The records of `buf[..n]` from the middle: its blocks in chunks of `blocks`, each chunk's ends from every entry\n/// (pass 1), each chunk's entry the end of the one before, then each chunk's records from its entry (pass 2). Each\n/// pass's chunks are each on their own. The records are `lex`'s.\npub fn lex_chunked(buf: &[u8], n: usize, blocks: usize) -> Lexed {{\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    let blocks = blocks.max(1);\n    let off = {off_of};\n    let nw = (n - off).div_ceil(64);\n    let ends: Vec<[Carries; LANES]> = (0..nw).step_by(blocks).map(|b| stage1_ends_best(buf, n, b, b + blocks)).collect();\n    let mut entry = Carries::default();\n    let entries: Vec<Carries> = ends.iter().map(|e| {{\n        let next = e[lane_of(entry)];\n        std::mem::replace(&mut entry, next)\n    }}).collect();\n    let mut starts: Vec<u32> = Vec::with_capacity(n + 64 + 3);\n    let mut refused = false;\n    for (c, b) in (0..nw).step_by(blocks).enumerate() {{\n        let (r, end) = stage1_from_best(buf, n, b, b + blocks, entries[c], &mut starts);\n        debug_assert_eq!(end, ends[c][lane_of(entries[c])], \"pass 2 ends where pass 1 did\");\n        refused |= r;\n    }}\n    let count = starts.len();\n    starts.extend([n as u32, n as u32, 0]);\n    Lexed {{ starts, count, len: n, refused }}\n}}\n"
+            "/// Pass 3, across the chunks: each chunk's one entry, from the chunks' maps of entry to end (pass 1), by a prefix scan\n/// of their compositions. Round `r` composes each chunk's map after the map `2^r` chunks before it, so that after\n/// `log2` of the chunks rounds each chunk's map is the file's start's to its end. In a round each chunk is on its own,\n/// as a device's scan; the two buffers a round reads and writes swap.\npub fn entries(ends: &[[Carries; LANES]]) -> Vec<Carries> {{\n    let mut maps: Vec<[u8; LANES]> = ends.iter().map(|e| core::array::from_fn(|l| lane_of(e[l]) as u8)).collect();\n    let mut next = maps.clone();\n    let mut d = 1;\n    while d < maps.len() {{\n        next[..d].copy_from_slice(&maps[..d]);\n        for c in d..maps.len() {{\n            next[c] = core::array::from_fn(|l| maps[c][usize::from(maps[c - d][l])]);\n        }}\n        std::mem::swap(&mut maps, &mut next);\n        d *= 2;\n    }}\n    // Chunk `c`'s entry: the file's start, through the chunks before it.\n    let start = lane_of(Carries::default());\n    (0..maps.len()).map(|c| if c == 0 {{ Carries::default() }} else {{ lane_carries(usize::from(maps[c - 1][start])) }}).collect()\n}}\n\n/// The records of `buf[..n]` from the middle: its blocks in chunks of `blocks`, each chunk's ends from every entry\n/// (pass 1), each chunk's one entry by a scan of those (pass 3), then each chunk's records from its entry (pass 2).\n/// Each pass's chunks are each on their own. The records are `lex`'s.\npub fn lex_chunked(buf: &[u8], n: usize, blocks: usize) -> Lexed {{\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    let blocks = blocks.max(1);\n    let off = {off_of};\n    let nw = (n - off).div_ceil(64);\n    let ends: Vec<[Carries; LANES]> = (0..nw).step_by(blocks).map(|b| stage1_ends_best(buf, n, b, b + blocks)).collect();\n    let entries = entries(&ends);\n    let mut starts: Vec<u32> = Vec::with_capacity(n + 64 + 3);\n    let mut refused = false;\n    for (c, b) in (0..nw).step_by(blocks).enumerate() {{\n        let (r, end) = stage1_from_best(buf, n, b, b + blocks, entries[c], &mut starts);\n        debug_assert_eq!(end, ends[c][lane_of(entries[c])], \"pass 2 ends where pass 1 did\");\n        refused |= r;\n    }}\n    let count = starts.len();\n    starts.extend([n as u32, n as u32, 0]);\n    Lexed {{ starts, count, len: n, refused }}\n}}\n"
         );
         out
     }

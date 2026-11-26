@@ -106,16 +106,30 @@ fn report_chunked_speed() {
     };
     let serial = time(&|b, n| lex(b, n).count);
     eprintln!("{} files, {:.1} MB; serial {:.2} GB/s", bufs.len(), bytes as f64 / 1e6, bytes as f64 / serial / 1e9);
-    for blocks in [16, 64, 256] {
+    for blocks in [16, 64, 256, 1 << 30] {
         let chunked = time(&|b, n| lex_chunked(b, n, blocks).count);
         eprintln!("  chunks of {blocks} blocks ({} KB), {} lanes: {:.2} GB/s, {:.2}x the serial time", blocks * 64 / 1024, crate::LANES, bytes as f64 / chunked / 1e9, chunked / serial);
         let off = |b: &[u8]| if b.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };
         let ends = time(&|b, n| (0..(n - off(b)).div_ceil(64)).step_by(blocks).map(|q| crate::stage1_ends_best(b, n, q, q + blocks)[0].m_in_string as usize).sum());
-        let from = time(&|b, n| {
-            let mut s = Vec::with_capacity(n + 67);
-            (0..(n - off(b)).div_ceil(64)).step_by(blocks).for_each(|q| _ = crate::stage1_from_best(b, n, q, q + blocks, crate::Carries::default(), &mut s));
-            s.len()
-        });
-        eprintln!("    pass 1 alone {:.2}x the serial time ({:.2} GB/s), pass 2 alone {:.2}x", ends / serial, bytes as f64 / ends / 1e9, from / serial);
+        // Each chunk's true entry (passes 1 and 3), made before pass 2 is timed from it.
+        let ends_of = |b: &[u8], n: usize| -> Vec<[crate::Carries; crate::LANES]> { (0..(n - off(b)).div_ceil(64)).step_by(blocks).map(|q| crate::stage1_ends_best(b, n, q, q + blocks)).collect() };
+        let entries: Vec<Vec<crate::Carries>> = bufs.iter().map(|(b, n)| crate::entries(&ends_of(b, *n))).collect();
+        let scan = time(&|b, n| crate::entries(&ends_of(b, n)).len()) - ends;
+        let from = {
+            let mut best = f64::MAX;
+            for _ in 0..5 {
+                let t = std::time::Instant::now();
+                for ((b, n), e) in bufs.iter().zip(&entries) {
+                    let mut s = Vec::with_capacity(n + 67);
+                    for (c, q) in (0..(n - off(b)).div_ceil(64)).step_by(blocks).enumerate() {
+                        _ = crate::stage1_from_best(b, *n, q, q + blocks, e[c], &mut s);
+                    }
+                    std::hint::black_box(s.len());
+                }
+                best = best.min(t.elapsed().as_secs_f64());
+            }
+            best
+        };
+        eprintln!("    pass 1 alone {:.2}x the serial time ({:.2} GB/s), pass 3 {:.3}x, pass 2 from the true entries {:.2}x", ends / serial, bytes as f64 / ends / 1e9, scan.max(0.0) / serial, from / serial);
     }
 }
