@@ -2,12 +2,12 @@
 
 Status: being rebuilt to the agreed design, milestone by milestone; M0 (the clean slate), B1 (operations on
 blocks) and B2 (the program trace) done. Design pages: *Bootstrap
-from one tape* (https://claude.ai/artifact/7Sc29B3894aE1PBsbhwbqa, cited B§), *Delta-first engine primitives*
-(https://claude.ai/artifact/2pcYo27YJWcPwM3msKjoAH, P§) and *The program bistate and the bootstrap*
-(https://claude.ai/artifact/28cUPRyFpEhqCnPbj5gKLT). The rebuild plan: *0686: Rebuild Plan*
-(https://claude.ai/artifact/N2rAYMAy7mu46wb31BuAaN), with *0686: Steps, Strata, Roll-up*
-(https://claude.ai/artifact/KaDH6yw6hgNjrxPRcqe3pc) and *0686: Agreed and Built*
-(https://claude.ai/artifact/QUgNHejfZcXaKPxuizrkLK).
+from one tape* (https://claude.ai/artifact/NSPfBgGVZUKH5cUnwSCuyS, cited B§), *Delta-first engine primitives*
+(https://claude.ai/artifact/RVZBY34mTKT7wRSvxf1SEL, P§) and *The program bistate and the bootstrap*
+(https://claude.ai/artifact/4e4bc3s91zMJxbyfCVSN2o). The rebuild plan: *0686: Rebuild Plan*
+(https://claude.ai/artifact/NtLL9EtbriL5t2eSuUsN5V), with *0686: Steps, Strata, Roll-up*
+(https://claude.ai/artifact/CutHzxdeyyj7LbbiBmDAXG) and *0686: Agreed and Built*
+(https://claude.ai/artifact/Be2vhi6jvwJK3E24RJTfww).
 
 ## The user's request (2026-11-25)
 
@@ -304,7 +304,7 @@ Further constraints, in the user's words:
   interpreted/generic operation while we're waiting for the specialization to compile."
 - "All execution requires planning. This will be a major part of the work."
 
-Decided on the proposal's first revision (*0686: Operations*, https://claude.ai/artifact/YcK6jLbuHuF74LftE3TvU9):
+Decided on the proposal's first revision (*0686: Operations*, https://claude.ai/artifact/RWx6nkmdBHmfU3hC3J4fbo):
 
 - D1, agreed: an operation binds at most 30 whole blocks (Metal's 31 argument entries, one of them the params'); a
   relation, layer or segment is a region inside a block.
