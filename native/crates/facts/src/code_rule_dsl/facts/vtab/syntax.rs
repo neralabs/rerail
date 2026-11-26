@@ -573,7 +573,7 @@ impl Source for LongTexts {
     fn node_view(&self) -> Option<(usize, crate::code_rule_dsl::facts::vtab::ViewInPlace)> {
         use device_chunk::{VIEW_NODE, read_kind, views_in_place};
         let v = views_in_place(&self.batch).filter(|v| v.sources)?;
-        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), caches: v.caches.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), fixed: v.fixed.clone(), caches: v.caches.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
         view.failed = view.cache_failed();
         Some((self.batch.nodes().total(), view))
     }

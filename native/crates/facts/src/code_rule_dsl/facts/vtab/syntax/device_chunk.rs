@@ -88,6 +88,9 @@ pub struct ViewsInPlace {
     /// The buffers the device's reads reach by address, which a pass that reads a view makes resident: the batch's
     /// block's (the directory's, its entries' and its cache's), and each slab a tape or its lines lie in.
     pub buffers: Vec<rerail_device::device::Buffer>,
+    /// The binary's own memory the device's reads reach (the codes' directory, decision 0697), made resident with
+    /// `buffers`: it outlives every launch, so no block holds it (`Pass::use_read_fixed`).
+    pub fixed: Vec<rerail_device::device::Buffer>,
     /// Whether the device reads every document's lines in place (each in a slab: `LineTable::placed`), so the `line`
     /// view is read in place too.
     pub lines: bool,
@@ -128,12 +131,12 @@ impl ViewsInPlace {
     /// its host address with no buffer made resident (its cache's included); on the device, at the device's, with
     /// its buffers. `None` where the device has no address for it.
     pub fn read_of(&self, view: u32, keep: Arc<dyn std::any::Any + Send + Sync>) -> Option<crate::code_rule_dsl::facts::vtab::ViewInPlace> {
-        let (dir, buffers, caches) = if Self::read_on_host() {
-            (self.host.dir, Vec::new(), self.caches.iter().map(|c| crate::code_rule_dsl::facts::vtab::ZCache { buffer: None, ..c.clone() }).collect())
+        let (dir, buffers, fixed, caches) = if Self::read_on_host() {
+            (self.host.dir, Vec::new(), Vec::new(), self.caches.iter().map(|c| crate::code_rule_dsl::facts::vtab::ZCache { buffer: None, ..c.clone() }).collect())
         } else {
-            (self.dir?, self.buffers.clone(), self.caches.clone())
+            (self.dir?, self.buffers.clone(), self.fixed.clone(), self.caches.clone())
         };
-        let mut read = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir, kind: read_kind(view), buffers, caches, failed: 0, format: self.format, keep };
+        let mut read = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir, kind: read_kind(view), buffers, fixed, caches, failed: 0, format: self.format, keep };
         read.failed = read.cache_failed();
         Some(read)
     }
@@ -250,16 +253,15 @@ fn build_views(batch: &Batch) -> Option<ViewsInPlace> {
             }
         }
     }
-    // The codes' directory (decision 0697), which every row's `node` and `field` reads read.
-    if let Some(codes) = device.and_then(|_| docs.codes_device()) {
-        slabs.push(codes.clone());
-    }
+    // The codes' directory (decision 0697), which every row's `node` and `field` reads read: the binary's.
+    let codes = device.and_then(|_| docs.codes_device()).cloned();
     let cache = docs.zcache_made().cloned();
     if let Some(c) = &cache {
         on_device &= c.buffer.as_ref().and_then(|b| b.device_address()).is_some();
     }
     let at = docs.dir_at();
     let mut buffers = Vec::new();
+    let mut fixed = Vec::new();
     let mut dir_on_device = None;
     if let Some(device) = device.filter(|_| on_device) {
         // The block's buffer made after its last allocation (the rows' entries), so it covers them; the cache's is
@@ -268,6 +270,7 @@ fn build_views(batch: &Batch) -> Option<ViewsInPlace> {
         dir_on_device = Some(buffer.device_address()? + at as u64);
         buffers.push(buffer);
         buffers.extend(slabs);
+        fixed.extend(codes);
     }
     // The host's: the same directory at its host address, its homes read by theirs (`ViewHome::host`), and each 16z
     // view's cache found from the directory's (`ViewDir::cache`), not the device's offset in the row.
@@ -275,7 +278,7 @@ fn build_views(batch: &Batch) -> Option<ViewsInPlace> {
     let lines = lines && dev_lines && dir_on_device.is_some();
     let locs = locs && dev_locs && dir_on_device.is_some();
     let sources = sources && dir_on_device.is_some();
-    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, sources, host, caches: cache.into_iter().collect(), format: format.unwrap_or(0) })
+    Some(ViewsInPlace { at, dir: dir_on_device, buffers, fixed, lines, locs, sources, host, caches: cache.into_iter().collect(), format: format.unwrap_or(0) })
 }
 
 /// The one format of `so_far` and `next`, or 0 for several (decision 0576).
@@ -360,6 +363,7 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
     // them, and each batch's slabs (a batch's first buffer is its block's, covered by this one).
     let device = crate::code_rule_dsl::tape::placed::device();
     let mut buffers: Vec<rerail_device::device::Buffer> = Vec::new();
+    let mut fixed: Vec<rerail_device::device::Buffer> = Vec::new();
     let mut dir_on_device = None;
     if let Some(device) = device.filter(|_| own.iter().all(|o| o.dir.is_some())) {
         let buffer = b.device_buffer(device).ok()?;
@@ -368,6 +372,11 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
         for slab in own.iter().flat_map(|o| o.buffers.iter().skip(1)) {
             if !buffers.iter().any(|s| s.device_address() == slab.device_address()) {
                 buffers.push(slab.clone());
+            }
+        }
+        for f in own.iter().flat_map(|o| o.fixed.iter()) {
+            if !fixed.iter().any(|s| s.device_address() == f.device_address()) {
+                fixed.push(f.clone());
             }
         }
     }
@@ -379,5 +388,5 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
     let caches = own.iter().flat_map(|o| o.caches.iter().cloned()).collect();
     // The batches' one format, else 0, which the stages read whatever the format (decision 0576).
     let format = own.iter().map(|o| o.format).reduce(|a, b| same_format(Some(a), b)).unwrap_or(0);
-    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, sources, host, caches, format })
+    Some(ViewsInPlace { at, dir: dir_on_device, buffers, fixed, lines, locs, sources, host, caches, format })
 }

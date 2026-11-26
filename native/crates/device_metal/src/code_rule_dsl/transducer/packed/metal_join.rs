@@ -45,7 +45,7 @@
 
 use rerail_blocks::vector::Vector;
 use super::Error;
-use rerail_accel_gpu::gpu::join::{FREE, Held, Pass, Scan, Submitted, Width, groups, pipeline, scratch, simd_group};
+use rerail_accel_gpu::gpu::join::{FREE, Held, Pass, Reach, Scan, Submitted, Width, groups, pipeline, scratch, simd_group};
 use rerail_device::device::Buffer;
 use std::sync::Arc;
 
@@ -477,6 +477,7 @@ pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nod
     let resident = |pass: &Pass| {
         let buffers: Vec<&Buffer> = views.buffers.iter().collect();
         pass.use_read(&buffers);
+        pass.use_read_fixed(&views.fixed.iter().collect::<Vec<&Buffer>>());
         for cache in views.caches.iter().filter_map(|c| c.buffer.as_ref()) {
             pass.use_read_write(cache);
         }
@@ -701,6 +702,7 @@ impl DevRel {
         if let Some(v) = &self.view {
             let buffers: Vec<&Buffer> = v.buffers.iter().collect();
             pass.use_read(&buffers);
+            pass.use_read_fixed(&v.fixed.iter().collect::<Vec<&Buffer>>());
             for cache in v.caches.iter().filter_map(|c| c.buffer.as_ref()) {
                 pass.use_read_write(cache);
             }
@@ -2423,12 +2425,8 @@ impl Batch {
         self.program.continues = true;
         crate::code_rule_dsl::prof::count_named("device.batch cut: a block reached through a grown wrap".into(), 1);
         let pass = self.open()?;
-        for (b, write) in &residents {
-            if *write {
-                pass.use_read_write(b);
-            } else {
-                pass.use_read(&[b]);
-            }
+        for (b, reach) in &residents {
+            pass.use_as(b, *reach);
         }
         Ok(())
     }
@@ -3775,7 +3773,7 @@ impl Batch {
                         end };
         // What its jobs reach, held while the program lives (`Ran::holds`).
         let holds = rerail_blocks::ledger::Fence::new();
-        for (b, _) in kit.uses.iter().chain(&kit.resident) {
+        for b in kit.uses.iter().map(|(b, _)| b).chain(kit.resident.iter().map(|(b, _)| b)) {
             holds.uses_address(b.contents() as usize);
         }
         let ctl = Words::zeroed(10 + 2 * kit.phase_items.len() + 4 * (kit.dispatches as usize + 2))?;
@@ -3881,13 +3879,10 @@ impl Batch {
         let pass = self.open()?;
         // What its jobs reach by address, and its own buffers: resident for the launch.
         let mut seen = std::collections::HashSet::new();
-        for (b, write) in kit.uses.iter().chain(&kit.resident) {
-            if seen.insert((b.contents() as usize, b.length(), *write)) {
-                if *write {
-                    pass.use_read_write(b);
-                } else {
-                    pass.use_read(&[b]);
-                }
+        let uses = kit.uses.iter().map(|(b, write)| (b, if *write { Reach::Write } else { Reach::Read }));
+        for (b, reach) in uses.chain(kit.resident.iter().map(|(b, r)| (b, *r))) {
+            if seen.insert((b.contents() as usize, b.length(), reach)) {
+                pass.use_as(b, reach);
             }
         }
         for h in &kit.hold {
@@ -4506,7 +4501,7 @@ struct Kit {
     /// Whether the last growth grew a lattice head's map (`grow_rooms`): its release goes through the tail.
     maps_grown: bool,
     /// The buffers its levels made resident in the open submission when it was launched (`Pass::resident`).
-    resident: Vec<(Buffer, bool)>,
+    resident: Vec<(Buffer, Reach)>,
     /// The phases its walk takes (`ProgP::end`): those before its tail (`Batch::lattice_tail`).
     end: u32,
 }

@@ -1761,14 +1761,16 @@ use rerail_blocks::vector::Vector;
         if !mj::available() {
             return;
         }
-        // Tapes held in vectors of their own, not where the device reads them (a parse not placed): the batch's views
-        // are not read in place (decision 0353 step 4d).
+        // Tapes held in vectors of their own, not where the device reads them (a parse's, which is placed, held apart
+        // by its bytes): the batch's views are not read in place (decision 0353 step 4d).
         let lang = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let grammar = Arc::new(crate::code_rule_dsl::tape::Grammar::new(lang).unwrap());
         let docs: Vec<Document> = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a):\n        return a\n"].iter().enumerate().map(|(at, source)| {
             let path = format!("r{at}.py");
             let source = Arc::new(crate::code_rule_dsl::tape::Text::from(*source));
-            let image = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+            let parsed = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+            let image = crate::code_rule_dsl::tape::TapeImage::from_bytes(&parsed.to_bytes().unwrap(), &grammar).unwrap();
+            assert!(!image.placed(), "a tape held apart");
             let lines = Arc::new(crate::code_rule_dsl::lines::LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
             let facts = Arc::new(core::from_image(source, &grammar, image, lines).unwrap());
             Document { key: (5 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }

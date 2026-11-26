@@ -76,6 +76,9 @@ pub struct ViewInPlace {
     pub dir: u64,
     pub kind: u32,
     pub buffers: Vec<rerail_device::device::Buffer>,
+    /// The binary's own memory its reads reach (the codes' directory, decision 0697): resident with `buffers`, held
+    /// by nothing, as it outlives every launch (`Pass::use_read_fixed`).
+    pub fixed: Vec<rerail_device::device::Buffer>,
     pub caches: Vec<ZCache>,
     pub failed: u32,
     /// Its batch's tape format (`ViewsInPlace::format`; 0: several), which the stages reading it are compiled for.

@@ -28,6 +28,17 @@ pub fn enabled() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SPIKE_EVAL").is_some())
 }
 
+/// Whether `RERAIL_SPIKE_ABLATE` (comma-separated) names mechanism `m`, which the evaluator then goes without, for
+/// its share of the gain: `shared` (each index made at each use), `lend` (the engine's relations copied flat),
+/// `split` (no `@cat` split: those strata declined), `matcher` (a constant pattern's matcher made each row),
+/// `probe` (a probe-only call's text interned).
+fn ablate(m: &str) -> bool {
+    // The run's ablations (`RERAIL_SPIKE_ABLATE=shared,lend,…`): each named mechanism of the spike is turned off, to
+    // measure what it is worth.
+    let names: Vec<String> = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SPIKE_ABLATE").map(|v| v.split(',').map(str::to_owned).collect()).unwrap_or_default());
+    names.iter().any(|n| n == m)
+}
+
 /// Whether the evaluator logs what it declines (`SPIKE EVAL`).
 fn verbose() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SPIKE_WHY").is_some())
@@ -318,6 +329,9 @@ impl HRel {
 
     /// The engine's relation `src` (`k` columns, `n` rows) read where it lies (`Vals::lent`); `None` where it cannot be.
     pub fn of_engine(src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, k: usize, n: usize) -> Option<HRel> {
+        if ablate("lend") {
+            return None;
+        }
         let vals = Vals::lent(src, k, n)?;
         Some(HRel { k, n, vals, set: HashTable::new(), idx: Vec::new(), shared: std::sync::Mutex::default(), est: std::sync::Mutex::default() })
     }
@@ -333,6 +347,9 @@ impl HRel {
     /// Its rows let go for the engine's relation `src` of the same rows in the same order, read where they lie: its
     /// indexes stay. Whether they were (a relation the engine holds, in its parts, past its dead rows).
     pub fn lend_to(&mut self, src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>) -> bool {
+        if ablate("lend") {
+            return false;
+        }
         match Vals::lent(src, self.k, self.n) {
             Some(vals) => {
                 self.vals = vals;
@@ -349,7 +366,9 @@ impl HRel {
             return Arc::clone(i);
         }
         let i = Arc::new(Sorted::new(cols.to_vec(), &self.vals, self.k, self.n));
-        shared.push(Arc::clone(&i));
+        if !ablate("shared") {
+            shared.push(Arc::clone(&i));
+        }
         i
     }
 
@@ -898,6 +917,9 @@ fn binding<'e>(bound: u64, l: &'e Expr, r: &'e Expr) -> Option<(usize, &'e Expr)
 /// `whole = @cat(a, b)` with `whole` known and `a`, `b` variables, not both bound: `(whole, a, b)`, which a split of
 /// `whole`'s text binds (`Eval::go`), a bound one's text tested.
 fn split<'e>(bound: u64, l: &'e Expr, r: &'e Expr) -> Option<(&'e Expr, usize, usize)> {
+    if ablate("split") {
+        return None;
+    }
     let parts = |e: &Expr| match e {
         Expr::Call(Fun::Cat, args) => match args[..] {
             [Expr::A(Arg::Var(a)), Expr::A(Arg::Var(b))] if a != b && (bound >> a & 1 == 0 || bound >> b & 1 == 0) => Some((a, b)),
@@ -1336,7 +1358,7 @@ impl<'a> Eval<'a> {
             },
             Fun::In(set) => i64::from(set.contains(&arg(0)?)),
             Fun::Set(_) => return None,
-            Fun::Test(op, held) if matches!(&args[1], Expr::Call(Fun::Set(_), _) | Expr::A(Arg::Const(_))) => {
+            Fun::Test(op, held) if !ablate("matcher") && matches!(&args[1], Expr::Call(Fun::Set(_), _) | Expr::A(Arg::Const(_))) => {
                 let x = arg(0)?;
                 let m = held.0.get_or_init(|| {
                     // The patterns as `strings::test` reads them: the set's joined, split at its separator.
@@ -1999,6 +2021,9 @@ fn nearest(t: &Tree, set: &[i64]) -> Arc<Vec<u32>> {
 /// call makes with no symbol matches no row: it is looked up, never interned (the row it would bind is none).
 fn probe_only(prog: &Prog) -> HashSet<usize> {
     let mut out = HashSet::default();
+    if ablate("probe") {
+        return out;
+    }
     for rule in &prog.rules {
         let head = rule.args.iter().fold(0, |m, a| m | vars(a));
         for (i, lit) in rule.lits.iter().enumerate() {

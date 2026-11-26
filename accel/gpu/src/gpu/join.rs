@@ -539,6 +539,15 @@ enum Grid<'a> {
     Indirect { grid: &'a Buffer, offset: u64, most: usize },
 }
 
+/// How a buffer made resident on a pass is reached (`Pass::residents`): read, read and written, or read where no block
+/// or lease holds it (the binary's own memory, `Pass::use_read_fixed`).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Reach {
+    Read,
+    Write,
+    Fixed,
+}
+
 /// The launches of one submission on the process's queue, in order: each sees the last's writes. Committed by
 /// `commit`; dropped without it, nothing it holds runs. Each launch is charged to the evaluation's launch budget
 /// (`launch::attempt`) before it is enqueued, and the commit is the budget's check (`launch::check_submission`): a
@@ -552,7 +561,7 @@ pub struct Pass {
     dispatches: Cell<usize>,
     /// Buffers the launches after reach by address (`use_read`, `use_read_write`), bound by none, each with whether
     /// the launches write it.
-    resident: RefCell<Vec<(Buffer, bool)>>,
+    resident: RefCell<Vec<(Buffer, Reach)>>,
     /// The queue's residency span (`ComputeQueue::residency_span`) its last launch was in, and how many of
     /// `resident` were made resident in it: a chain's thousands of dispatches make them resident once (decision 0641).
     applied: Cell<(u64, usize)>,
@@ -638,8 +647,8 @@ impl Pass {
             let span = self.queue.residency_span();
             let (was, done) = self.applied.get();
             let resident = self.resident.borrow();
-            for (b, write) in &resident[if was == span { done } else { 0 }..] {
-                l = if *write { l.uses(b) } else { l.uses_read(b) };
+            for (b, reach) in &resident[if was == span { done } else { 0 }..] {
+                l = if *reach == Reach::Write { l.uses(b) } else { l.uses_read(b) };
             }
             self.applied.set((span, resident.len()));
             match grid {
@@ -738,19 +747,35 @@ impl Pass {
         for b in buffers {
             self.holds(b, "a resident read", 0, false);
         }
-        self.resident.borrow_mut().extend(buffers.iter().map(|b| ((*b).clone(), false)));
+        self.resident.borrow_mut().extend(buffers.iter().map(|b| ((*b).clone(), Reach::Read)));
+    }
+
+    /// Makes `buffers` resident for the launches after it, read by address: the binary's own memory (the codes'
+    /// directory, decision 0697), which outlives every launch, so no block or lease holds it (`holds`).
+    pub fn use_read_fixed(&self, buffers: &[&Buffer]) {
+        self.resident.borrow_mut().extend(buffers.iter().map(|b| ((*b).clone(), Reach::Fixed)));
+    }
+
+    /// Makes `buffer` resident for the launches after it, reached as `reach` (`residents`: what another pass declares
+    /// again).
+    pub fn use_as(&self, buffer: &Buffer, reach: Reach) {
+        match reach {
+            Reach::Read => self.use_read(&[buffer]),
+            Reach::Write => self.use_read_write(buffer),
+            Reach::Fixed => self.use_read_fixed(&[buffer]),
+        }
     }
 
     /// Makes `buffer` resident for the launches after it, to be read and written: a cache a kernel's reads keep (a
     /// 16z batch's blocks, decision 0353 step 4b), reached by address.
     pub fn use_read_write(&self, buffer: &Buffer) {
         self.holds(buffer, "a resident write", 0, true);
-        self.resident.borrow_mut().push((buffer.clone(), true));
+        self.resident.borrow_mut().push((buffer.clone(), Reach::Write));
     }
 
-    /// The buffers made resident on it (`use_read`, `use_read_write`), each with whether it is written: what a pass
-    /// that goes on with its work declares again.
-    pub fn residents(&self) -> Vec<(Buffer, bool)> {
+    /// The buffers made resident on it (`use_read`, `use_read_write`, `use_read_fixed`), each as it is reached: what a
+    /// pass that goes on with its work declares again (`use_as`).
+    pub fn residents(&self) -> Vec<(Buffer, Reach)> {
         self.resident.borrow().clone()
     }
 
