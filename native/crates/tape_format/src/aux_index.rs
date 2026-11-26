@@ -409,7 +409,7 @@ pub mod sample {
         fn leaf(&mut self, rnd: &mut impl FnMut() -> u32) {
             // A term from 700, the low ones far more often; its code by the term (some codes rare).
             let r = rnd();
-            let term = if r % 4 == 0 { (r >> 8) % 700 } else { (r >> 8) % 40 };
+            let term = if r.is_multiple_of(4) { (r >> 8) % 700 } else { (r >> 8) % 40 };
             let code = if term % 97 == 3 { 40 + term % 7 } else { 10 + term % 20 };
             let start = self.source.len() as u64;
             let name = format!("n{}_{}", term, "x".repeat((term % 13) as usize));
@@ -613,7 +613,9 @@ mod tests {
             w.lay_aux(&aux).unwrap();
             assert!(w.lay_aux(&aux).is_err(), "laid once");
             let home = w.extent().to_vec();
-            let held: Box<dyn Fn(&[u8]) -> Result<(Vec<u8>, Vec<u8>, Option<Vec<u8>>), String>> = if z {
+            // A home's tape, presence and aux bytes, as its format reads them back.
+            type Held = Box<dyn Fn(&[u8]) -> Result<(Vec<u8>, Vec<u8>, Option<Vec<u8>>), String>>;
+            let held: Held = if z {
                 Box::new(|b| Tape16Z::from_bytes(crate::Vector::from(b)).map(|t| (t.as_bytes().to_vec(), t.presence_bytes().unwrap().to_vec(), t.aux_bytes().map(<[u8]>::to_vec))))
             } else {
                 Box::new(|b| Tape16::from_bytes(crate::Vector::from(b)).map(|t| (t.as_bytes().to_vec(), t.presence_bytes().unwrap().to_vec(), t.aux_bytes().map(<[u8]>::to_vec))))

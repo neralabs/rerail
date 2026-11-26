@@ -244,14 +244,17 @@ fn the_scalar_reads_are_the_compiled_reads() {
     let reads = rerail_clif::jit::Reads::new();
     let f = |name: &str| reads.function(name);
     // SAFETY: each read's signature: its descriptor's address, then its parameters.
-    let (get, dead, group, row, mark): (extern "C" fn(*const u8, u32, u32, u64) -> u64, extern "C" fn(*const u8, u32) -> u32, extern "C" fn(*const u8, u32, u64) -> u64, extern "C" fn(*const u8, u32, u32) -> u32, extern "C" fn(*const u8, u32, u32) -> u32) =
-        unsafe { (std::mem::transmute(f("rel_get")), std::mem::transmute(f("rel_dead")), std::mem::transmute(f("rel_group")), std::mem::transmute(f("rel_group_row")), std::mem::transmute(f("rel_group_mark"))) };
-    let (len, put, rows_get): (extern "C" fn(*const u8) -> u32, extern "C" fn(*const u8, u32, u32, u64) -> u32, extern "C" fn(*const u8, u32, u32) -> u64) =
-        unsafe { (std::mem::transmute(f("rows_len")), std::mem::transmute(f("rows_put")), std::mem::transmute(f("rows_get"))) };
-    let (mix, hash, may): (extern "C" fn(*const u8, u64, u64) -> u64, extern "C" fn(*const u8, u64) -> u64, extern "C" fn(*const u8, u64) -> u32) =
-        unsafe { (std::mem::transmute(f("rel_key_mix")), std::mem::transmute(f("bloom_hash")), std::mem::transmute(f("bloom_may"))) };
-    let (atoms_at, atoms_len): (extern "C" fn(*const u8, u32) -> u64, extern "C" fn(*const u8, u32) -> u32) = unsafe { (std::mem::transmute(f("atoms_at")), std::mem::transmute(f("atoms_len"))) };
-    let atoms_find: extern "C" fn(*const u8, u64, u32, u32) -> u32 = unsafe { std::mem::transmute(f("atoms_find")) };
+    macro_rules! jit {
+        ($name:literal: fn($($a:ty),*) -> $r:ty) => {
+            unsafe { std::mem::transmute::<*const u8, extern "C" fn(*const u8, $($a),*) -> $r>(f($name)) }
+        };
+    }
+    let (get, dead, group) = (jit!("rel_get": fn(u32, u32, u64) -> u64), jit!("rel_dead": fn(u32) -> u32), jit!("rel_group": fn(u32, u64) -> u64));
+    let (row, mark) = (jit!("rel_group_row": fn(u32, u32) -> u32), jit!("rel_group_mark": fn(u32, u32) -> u32));
+    let (len, put, rows_get) = (jit!("rows_len": fn() -> u32), jit!("rows_put": fn(u32, u32, u64) -> u32), jit!("rows_get": fn(u32, u32) -> u64));
+    let (mix, hash, may) = (jit!("rel_key_mix": fn(u64, u64) -> u64), jit!("bloom_hash": fn(u64) -> u64), jit!("bloom_may": fn(u64) -> u32));
+    let (atoms_at, atoms_len) = (jit!("atoms_at": fn(u32) -> u64), jit!("atoms_len": fn(u32) -> u32));
+    let atoms_find = jit!("atoms_find": fn(u64, u32, u32) -> u32);
 
     let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![vec![1]], min_log: 4 };
     let lock = Mutex::new(());

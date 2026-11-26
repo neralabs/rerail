@@ -403,9 +403,7 @@ fn cut<'f>(fr: &'f Frame, p: &Projected, dialect: &Dialect, fold: Fold) -> Cut<'
                 is(o, OWNER) && (start[o] != 0 || claimed[o] != 0)
             };
             let in_container = q == 0 || (is(q, BODY) && up[q] != super::NONE && owner(q));
-            if is(l, DEF) && claimed[l] == 0 {
-                start[l] = 1;
-            } else if in_container && fold == Fold::None {
+            if (is(l, DEF) && claimed[l] == 0) || (in_container && fold == Fold::None) {
                 start[l] = 1;
             }
             // A wrapper claims its first definition child, which then starts no granule of its own: wherever it is,
@@ -800,14 +798,14 @@ unsafe impl rerail_blocks::Pod for Kid {}
 
 /// `v`'s `u32`s.
 fn words<T: rerail_blocks::Pod>(v: &[T]) -> &[u32] {
-    const { assert!(size_of::<T>() % 4 == 0 && align_of::<T>() == 4) };
+    const { assert!(size_of::<T>().is_multiple_of(4) && align_of::<T>() == 4) };
     // SAFETY: `T` is plain data of whole `u32`s, aligned as one.
     unsafe { std::slice::from_raw_parts(v.as_ptr().cast(), std::mem::size_of_val(v) / 4) }
 }
 
 /// `w` as `T`s (`words`' inverse).
 fn items<T: rerail_blocks::Pod>(w: &[u32]) -> &[T] {
-    const { assert!(size_of::<T>() % 4 == 0 && align_of::<T>() == 4) };
+    const { assert!(size_of::<T>().is_multiple_of(4) && align_of::<T>() == 4) };
     // SAFETY: `T` is plain data of whole `u32`s, aligned as one: every pattern of them is a `T`.
     unsafe { std::slice::from_raw_parts(w.as_ptr().cast(), w.len() * 4 / size_of::<T>()) }
 }
@@ -1083,7 +1081,7 @@ impl Table {
     /// Bytes the table holds.
     pub fn bytes(&self) -> usize {
         4 * (self.starts().len() * 3 + self.nodes().len() * 2 + self.at().len() + self.slots().len() + 3 * self.by_slot().len() + self.first_kid().len() + self.runs().len() + 2 * self.run_at().len() + 4 * self.starts().len() + self.col(JUMPS).len() + self.col(JUMPS + 1).len())
-            + std::mem::size_of::<Kid>() * self.kids().len()
+            + std::mem::size_of_val(self.kids())
     }
 
     /// The most nodes and tokens of one granule.

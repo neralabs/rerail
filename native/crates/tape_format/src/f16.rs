@@ -1017,7 +1017,7 @@ pub mod presence {
 
     /// The faults the presence `bytes` (`find`'s) lists: each ERROR or MISSING node's index, in preorder.
     pub fn faults(bytes: &[u8]) -> impl Iterator<Item = u32> + '_ {
-        fault_bytes(bytes).chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().expect("4 bytes")))
+        fault_bytes(bytes).as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c))
     }
 
     /// `faults`, read where they lie: u32s at a multiple of 8 bytes into the home (`at`, `HEAD` and the words are),
@@ -3365,20 +3365,20 @@ mod tests {
         let host_misses = counts(&c).misses;
         assert_eq!(host_misses as usize, z.block_count(), "the host decoded each block once: {:?}", counts(&c));
         let view = jit_view(&c);
-        for i in 0..n {
-            assert_eq!(jit(&view, i as u32), want[i], "node {i}, the JIT reading the host's entries");
+        for (i, want) in want.iter().enumerate() {
+            assert_eq!(jit(&view, i as u32), *want, "node {i}, the JIT reading the host's entries");
         }
         assert_eq!(counts(&c).misses, host_misses, "the JIT found every block the host decoded: {:?}", counts(&c));
         // JIT first: every block decoded by the JIT, then read by the host with no miss.
         let c = ZCache::host(z.block_count(), z.entry_size());
         let view = jit_view(&c);
-        for i in 0..n {
-            assert_eq!(jit(&view, i as u32), want[i], "node {i}, the JIT");
+        for (i, want) in want.iter().enumerate() {
+            assert_eq!(jit(&view, i as u32), *want, "node {i}, the JIT");
         }
         let jit_misses = counts(&c).misses;
         let t = z.reader(&lang, Some(&c)).unwrap();
-        for i in 0..n {
-            assert_eq!(answers(&t, i), want[i], "node {i}, the host reading the JIT's entries");
+        for (i, want) in want.iter().enumerate() {
+            assert_eq!(answers(&t, i), *want, "node {i}, the host reading the JIT's entries");
         }
         assert_eq!(counts(&c).misses, jit_misses, "the host found every block the JIT decoded: {:?}", counts(&c));
     }
@@ -3505,7 +3505,7 @@ mod tests {
             for b in 0..nodes.len().div_ceil(Z) {
                 let mut want = vec![0u64; p.kind_words + p.field_words];
                 for &(code, ..) in &nodes[b * Z..nodes.len().min((b + 1) * Z)] {
-                    let e = table.entry(code as u32);
+                    let e = table.entry(code);
                     want[usize::from(e.kind) / 64] |= 1 << (e.kind % 64);
                     want[p.kind_words + usize::from(e.field) / 64] |= 1 << (e.field % 64);
                 }
@@ -3777,7 +3777,7 @@ mod tests {
             let w = match home.borrow_mut().take() {
                 Some(mut w) => {
                     used.set(used.get() + 1);
-                    w.begin(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3);
+                    w.begin(&Document { lang, source, tag: 3, z, blocks, nodes: nodes / 3 }, crate::newlines::Terminators::Lf);
                     w
                 }
                 None => Writer::new(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3),
@@ -3802,7 +3802,7 @@ mod tests {
         let want = first.extent().to_vec();
         let at = first.extent().as_ptr();
         w.recycle(first);
-        w.begin(&lang, &source, crate::newlines::Terminators::Lf, 0, false, true, nodes.len());
+        w.begin(&Document { lang: &lang, source: &source, tag: 0, z: false, blocks: true, nodes: nodes.len() }, crate::newlines::Terminators::Lf);
         by_ops(&mut w, &nodes, 1);
         let again = Writer::finish(&mut w).expect("the second tape").tape;
         assert_eq!(again.extent(), &want[..], "the tape written in the room given back");
@@ -3832,7 +3832,7 @@ mod tests {
     impl crate::home::Rooms for TestRooms {
         fn region(&self, len: usize) -> Option<Box<dyn crate::home::Region>> {
             let k = self.asked.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            if self.refuse != 0 && k % self.refuse == 0 {
+            if self.refuse != 0 && k.is_multiple_of(self.refuse) {
                 return None;
             }
             Some(Box::new(TestRegion(Box::leak(vec![0x5au8; len].into_boxed_slice()))))
@@ -3862,7 +3862,7 @@ mod tests {
         for refuse in [0, 2, 3] {
             writes_the_references_tape(|lang, source, z, blocks, nodes| {
                 let mut w = Writer::placing(test_rooms(refuse));
-                w.begin(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3);
+                w.begin(&Document { lang, source, tag: 3, z, blocks, nodes: nodes / 3 }, crate::newlines::Terminators::Lf);
                 w
             });
         }
@@ -3885,7 +3885,7 @@ mod tests {
             let mut w = Writer::placing(test_rooms(0));
             let mut tapes = Vec::new();
             for _ in 0..2 {
-                w.begin(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
+                w.begin(&Document { lang: &lang, source: &source, tag: 0, z, blocks: true, nodes: nodes.len() }, crate::newlines::Terminators::Lf);
                 by_ops(&mut w, &nodes, 1);
                 tapes.push(Writer::finish(&mut w).expect("the tape").tape);
             }

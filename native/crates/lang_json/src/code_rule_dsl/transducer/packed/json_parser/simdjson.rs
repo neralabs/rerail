@@ -68,7 +68,7 @@ pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, so
     let walk = |jsonc: bool| -> Result<(f16::Writer, Option<[u8; 32]>, Option<String>), Refusal> {
         // About a node for every 8 bytes: the writer grows past it.
         let mut w = f16::Writer::placing(crate::code_rule_dsl::tape::placed::rooms());
-        w.begin(lang, src, crate::code_rule_dsl::lines::terminators(GrammarDialect::Json), tag, z, true, src.len() / 8 + 16);
+        w.begin(&f16::Document { lang, source: src, tag, z, blocks: true, nodes: src.len() / 8 + 16 }, crate::code_rule_dsl::lines::terminators(GrammarDialect::Json));
         let mut numbers: Vector<u32> = rerail_blocks::vector::Vector::new();
         let mut bad: Option<String> = None;
         let on = |codes: &rerail_simdjson::Codes, words: &[u32]| {

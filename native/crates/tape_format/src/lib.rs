@@ -630,7 +630,7 @@ impl<L: Layout> Writer<L> {
             }
         };
         // The thread's writer, used again (t60 step 5), its tape written in the target's rooms (0353 row 17).
-        let w = std::mem::ManuallyDrop::new(f16::Writer::reused_in(t.rooms.clone(), t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap));
+        let w = std::mem::ManuallyDrop::new(f16::Writer::reused_in(t.rooms.clone(), &f16::Document { lang: t.lang, source: src, tag: t.tag, z: t.z, blocks: t.blocks, nodes: self.cap }, t.terminators));
         self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default() }));
         // The columns hold the window: the nodes since the last commit (more grow it).
         if self.cap > WINDOW {
