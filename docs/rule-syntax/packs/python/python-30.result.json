@@ -1,0 +1,30 @@
+[
+  {
+    "id": "ruff-perf101-unnecessary-list-cast",
+    "status": "same"
+  },
+  {
+    "id": "ruff-perf102-incorrect-dict-iterator",
+    "status": "same"
+  },
+  {
+    "id": "ruff-perf401-manual-list-comprehension",
+    "status": "same"
+  },
+  {
+    "id": "ruff-perf402-manual-list-copy",
+    "status": "same"
+  },
+  {
+    "id": "ruff-em101-raw-string-in-exception",
+    "status": "same"
+  },
+  {
+    "id": "ruff-em102-f-string-in-exception",
+    "status": "same"
+  },
+  {
+    "id": "ruff-em103-dot-format-in-exception",
+    "status": "same"
+  }
+]

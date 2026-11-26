@@ -23,8 +23,8 @@ PERF102(f, "The loop never uses the key: iterate `.values()` and bind only the v
 
 // items_loop(at, k, v): a for loop `for k, v in o.items():` (no arguments); at is `o.items`.
 .decl items_loop(at: node, k: node, v: node)
-items_loop(at, k, v) :- perf_for(_, t, it), pair(t, k, v), kind(it, "call"), field(it, "function", at),
-    attr_of(at, _, "items"), call_nargs(it, 0), !call_splat(it).
+items_loop(at, k, v) :- perf_for(_, t, it), pair(t, k, v), kind(it, "call"), field(it, "function", f0),
+    unparen(f0, at), attr_of(at, _, "items"), call_nargs(it, 0), !call_splat(it).
 .decl pair(t: node, k: node, v: node)  // a two-element target, without parentheses
 pair(t, k, v) :- tuple_target(t), count : { child(t, c, _), !kind(c, "comment") } = 2,
     child(t, k0, i), !kind(k0, "comment"), child(t, v0, j), !kind(v0, "comment"), i < j, unparen(k0, k),
@@ -35,7 +35,12 @@ tuple_target(t) :- (kind(t, "pattern_list") ; kind(t, "tuple_pattern") ; kind(t,
 unused(e) :- items_loop(_, e, _), unused_part(e).
 unused(e) :- items_loop(_, _, e), unused_part(e).
 .decl unused_part(e: node)
-unused_part(e) :- kind(e, "identifier"), perf_unused(e).
+unused_part(e) :- kind(e, "identifier"), perf_unused(e), !prior_binding_used(e).
 // A nested tuple: every name in it is unused, and it has no `*rest`, attribute or subscript (never unused).
 unused_part(e) :- tuple_target(e), count : { has(e, n, "identifier"), !perf_unused(n) } = 0,
     !has(e, _, "list_splat_pattern"), !has(e, _, "attribute"), !has(e, _, "subscript").
+// Ruff and the JSON leave an unread loop-target name alone when its previous binding was read and has not been
+// rebound since. An earlier unread loop binding does not suppress a later finding.
+.decl prior_binding_used(e: node)
+prior_binding_used(e) :- kind(e, "identifier"), text(e, x), tscope(e, s), binding(s, x, b, _), b < e,
+    count : { binding(s, x, later, _), b < later, later < e } = 0, ref_site(r, b), r < e.
