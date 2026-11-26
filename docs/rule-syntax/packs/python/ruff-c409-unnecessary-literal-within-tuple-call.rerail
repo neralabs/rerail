@@ -1,22 +1,27 @@
-.policy "ruff-c409-unnecessary-literal-within-tuple-call" revision 2
+.policy "ruff-c409-unnecessary-literal-within-tuple-call" revision 3
 .description "Write a tuple literal instead of passing a list or tuple literal to the tuple constructor; the extra call only adds work."
 .language python
 .mode steer
 .scope include "**/*"
 
-// Ruff C409 (flake8-comprehensions): `tuple(…)` of the builtin tuple, whose one argument is a list or
-// tuple display. Its fix is unsafe; none here.
+// Ruff C409 (flake8-comprehensions): `tuple(…)` of the builtin tuple (by name, not `builtins.tuple`), whose one
+// argument is a list or tuple display; in the file and in string type definitions. Its fix is unsafe; none here.
 //   tuple([1, 2])      ← C409: (1, 2)
 //   tuple((1, 2))      ← C409: (1, 2), the call returns the same tuple
+//   x: "tuple([1])"    ← C409: Ruff checks a string type definition as code
 //   tuple([x for x in y])      not reported
-#include "python/comprehensions.rerail"
-//   c4_call(c, x), c4_only(c, a), list_like(e, k)
+#include "python/python-15.rerail"
+//   p15_call(c, x), p15_str_call(c, x), p15_only(c, a); list_like(e, k) (python/ruff)
 
 .violation C409(at: node, id: symbol, msg: symbol) code "C409" "{msg}"
     suppress ruff "C409"
 C409(c, "list-literal-within-tuple-call",
     "Write the elements as a tuple literal `(...)` instead of `tuple([...])`; a single element needs a trailing comma, as in `(x,)`.") :-
-    c4_call(c, "tuple"), c4_only(c, a), list_like(a, "list").
+    tuple_of(c, "list").
 C409(c, "tuple-literal-within-tuple-call",
     "Remove the outer `tuple()` call and keep the tuple literal it wraps; the call just returns that same tuple.") :-
-    c4_call(c, "tuple"), c4_only(c, a), list_like(a, "tuple").
+    tuple_of(c, "tuple").
+p15_name("tuple").
+.decl tuple_of(c: node, k: symbol)
+tuple_of(c, k) :- (p15_call(c, "tuple") ; p15_str_call(c, "tuple")), p15_only(c, a), list_like(a, k),
+    (k = "list" ; k = "tuple").

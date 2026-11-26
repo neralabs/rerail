@@ -1,18 +1,22 @@
-.policy "ruff-c418-unnecessary-literal-within-dict-call" revision 2
+.policy "ruff-c418-unnecessary-literal-within-dict-call" revision 3
 .description "Remove dict() calls wrapped around a dict literal or dict comprehension; the inner expression already builds a dictionary."
 .language python
 .mode steer
 .scope include "**/*"
 
-// Ruff C418 (flake8-comprehensions): `dict(…)` of the builtin dict, whose one argument is a dict display
-// or a dict comprehension. Its fix is unsafe; none here.
+// Ruff C418 (flake8-comprehensions): `dict(…)` of the builtin dict (by name), whose one argument is a dict
+// display or a dict comprehension; in the file and in string type definitions. Its fix is unsafe; none here.
 //   dict({})    dict({"a": 1})    dict({x: 1 for x in y})     ← C418: drop the call
-//   dict({}, a=1)                                             not reported
-#include "python/comprehensions.rerail"
-//   c4_call(c, x), c4_only(c, a), list_like(e, k), c4_comp(e, k)
+//   a: "dict({})" = 1                                         ← C418: a string type definition is code
+//   dict({}, a=1)    d: Literal["dict({})"]                   not reported
+#include "python/python-15.rerail"
+//   p15_call(c, x), p15_str_call(c, x), p15_only(c, a); list_like(e, k), c4_comp(e, k)
 
 .violation C418(at: node, kind: symbol) code "C418"
     "Drop the outer `dict()` call and keep the inner dict {kind}; it already builds a new dictionary."
     suppress ruff "C418"
-C418(c, "literal") :- c4_call(c, "dict"), c4_only(c, a), list_like(a, "dict").
-C418(c, "comprehension") :- c4_call(c, "dict"), c4_only(c, a), c4_comp(a, "dict").
+C418(c, "literal") :- dict_call(c, a), list_like(a, "dict").
+C418(c, "comprehension") :- dict_call(c, a), c4_comp(a, "dict").
+p15_name("dict").
+.decl dict_call(c: node, a: node)
+dict_call(c, a) :- (p15_call(c, "dict") ; p15_str_call(c, "dict")), p15_only(c, a).

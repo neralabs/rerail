@@ -9,18 +9,20 @@
 //   set(…)  or sorted(…)   of list, tuple, reversed or sorted     set(sorted(x))     ← C414
 //   set(set(…))                                                   set(set(x))        ← C414
 //   list(…) or tuple(…)    of list or tuple                       list(tuple(x))     ← C414
-// `sorted(sorted(x, key=k))` only when both calls pass the same keywords: the inner sort is then redone.
-// `reversed(…)` outside is not reported, nor `sorted(sorted(x), reverse=True)`. Ruff's fix is unsafe;
-// none here.
-#include "python/comprehensions.rerail"
-//   c4_builtin(c, x), c4_first(c, a), cmp_same(a, b) (python/compare), call_kwarg(c, x, v), call_nkwargs(c, n)
+// `sorted(sorted(x, key=k))` only when both calls pass the same keywords, `**kw` included, compared as Ruff's
+// ComparableKeyword does: the inner sort is then redone. `reversed(…)` outside is not reported, nor
+// `sorted(sorted(x), reverse=True)`. Ruff's fix is unsafe; none here.
+//   sorted(sorted(x, **{"key": f}), **{'key': f})    sorted(sorted(x, key=[1, 2]), key=[1, 2,])    ← C414
+#include "python/python-15.rerail"
+//   p15_builtin_call(c, x); c4_first(c, a), cmp_same(a, b) (python/compare), call_item(c, a, j), call_nkwargs(c, n)
 
 .violation C414(at: node, inner: symbol, outer: symbol, id: symbol) code "C414"
     "Remove the inner `{inner}()` call and pass its argument straight to `{outer}()`, which accepts any iterable and gives the same result. For `sorted(reversed(…))`, keep it only if items that sort equal must stay in reversed input order."
     suppress ruff "C414"
 C414(c, i, o, id) :- double(c, s, o, i), redundant(o, i, id), (o != "sorted" ; i != "sorted" ; same_keywords(c, s)).
 .decl double(c: node, s: node, outer: symbol, inner: symbol)
-double(c, s, o, i) :- c4_builtin(c, o), c4_first(c, s), c4_builtin(s, i).
+double(c, s, o, i) :- p15_builtin_call(c, o), c4_first(c, s), p15_builtin_call(s, i).
+p15_name("set"). p15_name("list"). p15_name("tuple"). p15_name("sorted"). p15_name("reversed").
 .decl redundant(outer: symbol, inner: symbol, id: symbol)
 redundant("set", "list", "inside-set"). redundant("set", "tuple", "inside-set"). redundant("set", "set", "inside-set").
 redundant("set", "reversed", "inside-set"). redundant("set", "sorted", "inside-set").
@@ -30,8 +32,34 @@ redundant("sorted", "list", "list-or-tuple-inside"). redundant("sorted", "tuple"
 redundant("sorted", "sorted", "sorted-inside-sorted"). redundant("sorted", "reversed", "reversed-inside-sorted").
 // same_keywords(c, s): as many keywords on each, and each of the inner's is one of the outer's, by name and value.
 .decl same_keywords(c: node, s: node)
-same_keywords(c, s) :- double(c, s, "sorted", "sorted"), call_nkwargs(c, n), call_nkwargs(s, n),
-    count : { call_kwarg(s, x, v), !kw_match(c, s, x, v) } = 0, count : { call_item(s, a, _), kind(a, "dictionary_splat") } = 0.
-.decl kw_match(c: node, s: node, x: symbol, v: node)
-kw_match(c, s, x, v) :- double(c, s, "sorted", "sorted"), call_kwarg(s, x, v), call_kwarg(c, x, w), cmp_same(v, w).
-cmp_same_ask(v, w) :- double(c, s, "sorted", "sorted"), call_kwarg(s, x, v), call_kwarg(c, x, w).
+same_keywords(c, s) :- double(c, s, "sorted", "sorted"), call_nkwargs(c, n), call_nkwargs(s, n), !kw_unmatched(c, s).
+.decl kw_unmatched(c: node, s: node)
+kw_unmatched(c, s) :- double(c, s, "sorted", "sorted"), kw_item(s, _, v), !kw_match(c, v).
+// kw_item(c, x, v): `x=v`, or `**v` (x "**": Ruff's keyword with no name).
+.decl kw_item(c: node, x: symbol, v: node)
+kw_item(c, x, v) :- double(c, _, "sorted", "sorted"), call_kwarg(c, x, v).
+kw_item(s, x, v) :- double(_, s, "sorted", "sorted"), call_kwarg(s, x, v).
+kw_item(c, "**", v) :- double(c, _, "sorted", "sorted"), call_item(c, a, _), kind(a, "dictionary_splat"), child(a, v, _),
+    !kind(v, "comment").
+kw_item(s, "**", v) :- double(_, s, "sorted", "sorted"), call_item(s, a, _), kind(a, "dictionary_splat"), child(a, v, _),
+    !kind(v, "comment").
+.decl kw_match(c: node, v: node)
+kw_match(c, v) :- double(c, s, "sorted", "sorted"), kw_item(s, x, v), kw_item(c, x, w), kw_same(v, w).
+.decl kw_pair(v: node, w: node)
+kw_pair(v, w) :- double(c, s, "sorted", "sorted"), kw_item(s, x, v), kw_item(c, x, w).
+cmp_same_ask(v, w) :- kw_pair(v, w).
+// kw_same(v, w): cmp_same, and list displays element by element: python/compare's cmp_same does not take
+// `[1, 2]` for `[1, 2,]` (NOTES-python-15).
+.decl kw_same(v: node, w: node)
+kw_same(v, w) :- kw_pair(v, w), cmp_same(v, w).
+kw_same(v, w) :- kw_pair(v, w), list_like(v, "list"), list_like(w, "list"), unparen(v, l), unparen(w, m),
+    n1 = count : { child(l, a, _), !kind(a, "comment") }, n2 = count : { child(m, b, _), !kind(b, "comment") }, n1 = n2,
+    !kw_elt_differs(l, m).
+.decl kw_elt(l: node, i: number, a: node)  // the i-th element of list display l, comments out
+kw_elt(l, i, a) :- kw_pair(v, _), unparen(v, l), kind(l, "list"), child(l, a, j), !kind(a, "comment"),
+    i = count : { child(l, b, j2), j2 < j, !kind(b, "comment") }.
+kw_elt(m, i, a) :- kw_pair(_, w), unparen(w, m), kind(m, "list"), child(m, a, j), !kind(a, "comment"),
+    i = count : { child(m, b, j2), j2 < j, !kind(b, "comment") }.
+cmp_same_ask(a, b) :- kw_pair(v, w), unparen(v, l), unparen(w, m), kw_elt(l, i, a), kw_elt(m, i, b).
+.decl kw_elt_differs(l: node, m: node)
+kw_elt_differs(l, m) :- kw_pair(v, w), unparen(v, l), unparen(w, m), kw_elt(l, i, a), kw_elt(m, i, b), !cmp_same(a, b).
