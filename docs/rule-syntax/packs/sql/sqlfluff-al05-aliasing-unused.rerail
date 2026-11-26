@@ -11,13 +11,20 @@
 //   SELECT * FROM t AS a JOIN t AS b USING (id)     fine: a self-join needs both
 // A use is a qualifier (foo.x, foo.*), a whole-row reference (f(foo)) or a later FROM item read from it
 // (foo.arr), anywhere in the query, subqueries included. Names compare as PostgreSQL resolves them (alias_key).
+// A statement tree-sitter-sql could not parse whole is left alone: the use can be in the part it lost, where
+// sqlfluff, which parses it, sees it (`… INNER JOIN ((b JOIN c ON …)) ON a.id = b.id` loses `a.id`).
 
 #include "sql/syntax.rerail"
 
 .violation AL05(at: node, x: node) code "AL05" "Alias '{x}' is never used in SELECT statement."
     suppress sqlfluff "AL05", "L025", "aliasing", "aliasing.unused", "all", "core"
 AL05(a, a) :- block(b, _, f), from_item(f, r), table_alias(r, a), alias_key(a, x), !needs_alias(f, r),
-    count : { within(u, b), use(u), alias_key(u, x) } = 0.
+    !unparsed(a), count : { within(u, b), use(u), alias_key(u, x) } = 0.
+
+// unparsed(a): a statement around a has an ERROR node in it, or right after it.
+.decl unparsed(a: node)
+unparsed(a) :- inside(a, s, "statement"), has(s, _, "ERROR").
+unparsed(a) :- inside(a, s, "statement"), next_sibling(s, e), kind(e, "ERROR").
 
 // alias_key(n, v): names compare as PostgreSQL resolves them, but an alias in '…' only parses in MySQL and
 // SQLite, which match names regardless of case: `FROM t AS 'A'` is used by `a.x`.

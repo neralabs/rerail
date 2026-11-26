@@ -38,6 +38,8 @@ table_ref(r, o, n) :- kind(r, "relation"), child(r, o, _), kind(o, "object_refer
 table_ref(r, o, a) :- kind(r, "relation"), table_alias(r, a), (child(r, o, _), kind(o, "object_reference") ; unset(o)).
 table_ref(o, o, n) :- kind(o, "object_reference"), child(p, o, _), (kind(p, "from") ; kind(p, "create_policy")),
     field(o, "name", n).                                     // DELETE FROM t, CREATE POLICY p ON t
+// CROSS JOIN LATERAL f(…) AS r: the alias is the join's own, with no relation node under it.
+table_ref(j, o, a) :- (kind(j, "lateral_join") ; kind(j, "lateral_cross_join")), field(j, "alias", a), unset(o).
 .decl scope(k: symbol)
 scope("statement"). scope("subquery"). scope("cte").
 // row_field(c): c is `(x).key`, a row value's field: its qualifier starts after the field does, past the `(`.
