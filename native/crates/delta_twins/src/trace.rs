@@ -4,8 +4,9 @@
 //! block, over the trace's newest layer (`below`, reached through the descriptor table): the pairs sorted in the
 //! trace's canonical order, each row's diffs summed, zeros dropped; each row gone given the id of the live row it kills
 //! (a batched search of the state below, by its indexes); the layer written as P§12 has it, a
-//! `blocks::relation::Relation` continuing the one below, and frozen where it lies (`relation::freeze_layer`: its
-//! order, its indexes, its change); its partitions' change (`parts`, `gone`); its orders and Bloom filters; its
+//! `blocks::relation::Relation` continuing the one below, written an item a call and frozen where it lies
+//! (`relation::layer_write`: its ranges, its indexes, its seal); its partitions' change and its kills, kept once
+//! (`parts`, `gone`); its orders and Bloom filters; its
 //! statistics, each column's `blocks::sketch` of the state it ends (the one below's, its rows added and its kills
 //! taken); the header last. A change that is not a set change is refused into control: a row's diffs summing past ±1,
 //! a row gone that is not live below, a row added that already is.

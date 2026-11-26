@@ -16,7 +16,7 @@
 //! for now (the user, 2026-11-25: "using Rust data structures internally is going to be slow but not wrong"). A twin
 //! writes a block's structures with blocks' own code, in place, through its slot's pin: "the twins depend on blocks,
 //! and a slot is the pinned block, so a twin uses blocks' layouts and freeze in place" (the rebuild plan, B1): a
-//! relation made, its rows claimed and written (`Relation::put_own`), frozen (`relation::freeze_layer`), its orders
+//! relation made, its rows claimed and written (`Relation::put_own`), frozen an item a call (`relation::layer_write`, under the twins' rules), its orders
 //! and sketches added; the reads every reader shares (`relation::View`). Nothing may outlive a call or come from outside it: no
 //! `static`, thread-local, `Once`/`Lazy` cell, lock or atomic of the twin's own; no thread's scratch (a call makes its
 //! own, `Scratch::anon`); no file, environment, process, network or time. `unsafe` is forbidden.
