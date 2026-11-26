@@ -890,9 +890,10 @@ describe("the engine service's idle close", () => {
   }, 30_000);
 
   // Before, the open read the session's record only once it had made this process's waiting record writes, waiting on the
-  // daemon's thread until the oldest was 5 s old, then met the lock again where it records the checkout: 10 s, where
-  // `main` waited 5 s. That write still waits for the lock, on the thread, up to 5 s, as `main`'s does.
-  it("waits for another process's write lock once as a session opens, not first for another session's waiting records", async () => {
+  // daemon's thread until the oldest was 5 s old, then met the lock again where it records the checkout, which waited
+  // 5 s more and failed the open. It waits for neither now: the checkout's record, the session's row and its claim wait
+  // in this process's record writer, behind the other session's row, until the lock is given back.
+  it("opens a session at once while another process holds the write lock, behind another session's waiting records", async () => {
     const { start, turnEnd, live, databasePath } = await idleService({ needsRoom: () => false });
     await start("a");
     // The first session's walk and checks, which run on after its start, end before the lock is taken: a write of theirs
@@ -905,12 +906,13 @@ describe("the engine service's idle close", () => {
       // Another session's record waits for the lock in this process.
       sessions.openSession({ sessionId: "other", host: "claude-code", cwd: databasePath }, 1_000);
       const asked = performance.now();
-      await start("b").catch(() => undefined);
-      expect(performance.now() - asked).toBeLessThan(7_500);
-      writer.exec("ROLLBACK");
-      // Once the lock is given back, the session's next event opens it.
       await start("b");
-      expect(live("b")).toBe(true);
+      // This thread holds the lock's holder too: any wait for the lock here would last the 5 s busy timeout.
+      expect(performance.now() - asked).toBeLessThan(5_000);
+      writer.exec("ROLLBACK");
+      // Once the lock is given back the session's record and claim are made, when the writer's lock wait finds it free,
+      // which another connection learns only from the database.
+      await vi.waitFor(() => expect(live("b")).toBe(true), { timeout: 10_000, interval: 20 });
     } finally {
       if (writer.inTransaction) writer.exec("ROLLBACK");
       writer.close();
