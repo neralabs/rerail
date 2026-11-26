@@ -101,16 +101,22 @@ struct Stage1 {
     m_lf: Vec<u64>,
     m_slash: Vec<u64>,
     m_word: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_alpha: Vec<u64>,
     m_digit: Vec<u64>,
     m_dot: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_at_sign: Vec<u64>,
     m_semicolon: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_rbrace: Vec<u64>,
     m_gt: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_dq: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_sq: Vec<u64>,
     m_bt: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_u_letter: Vec<u64>,
     m_zero: Vec<u64>,
     m_x_letter: Vec<u64>,
@@ -118,42 +124,66 @@ struct Stage1 {
     m_e_letter: Vec<u64>,
     m_f_letter: Vec<u64>,
     m_sign: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_hexd: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_bind: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_backslash: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_dollar: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_lbrace: Vec<u64>,
     m_high: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_punct: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t0: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_line_open: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_block_open: Vec<u64>,
     m_block_end: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t1: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t2: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_esc_dollar: Vec<u64>,
     m_dq_close: Vec<u64>,
     m_sq_close: Vec<u64>,
     m_t_dollar: Vec<u64>,
     m_t2_dollar: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_t_lex: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_dq3: Vec<u64>,
     m_rclose: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t3: Vec<u64>,
     t4: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t5: Vec<u64>,
     t6: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t7: Vec<u64>,
     t8: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t9: Vec<u64>,
     t10: Vec<u64>,
     t11: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_pre_at: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t12: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_d_start: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t15: Vec<u64>,
     t18: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t20: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t22: Vec<u64>,
     t24: Vec<u64>,
     t37: Vec<u64>,
@@ -162,18 +192,25 @@ struct Stage1 {
     t42: Vec<u64>,
     t43: Vec<u64>,
     t44: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_two_start: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     m_two_start_three: Vec<u64>,
     t56: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t55: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t57: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t58: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t59: Vec<u64>,
     t60: Vec<u64>,
     t61: Vec<u64>,
     t63: Vec<u64>,
     t64: Vec<u64>,
     t65: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t66: Vec<u64>,
     t67: Vec<u64>,
     t68: Vec<u64>,
@@ -190,10 +227,13 @@ struct Stage1 {
     t82: Vec<u64>,
     t102: Vec<u64>,
     t103: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t121: Vec<u64>,
     t130: Vec<u64>,
     t141: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t142: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t143: Vec<u64>,
     t163: Vec<u64>,
     t164: Vec<u64>,
@@ -228,14 +268,18 @@ struct Stage1 {
     t201: Vec<u64>,
     t202: Vec<u64>,
     t203: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t204: Vec<u64>,
     t205: Vec<u64>,
     t217: Vec<u64>,
     t218: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t219: Vec<u64>,
     t220: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t225: Vec<u64>,
     t226: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t231: Vec<u64>,
     t232: Vec<u64>,
     t233: Vec<u64>,
@@ -602,7 +646,7 @@ impl Stage1Run {
 impl Stage1 {
     /// The masks, no block made yet.
     fn new(nw: usize) -> Self {
-        Stage1 { m_ws: vec![0u64; nw], m_lf: vec![0u64; nw], m_slash: vec![0u64; nw], m_word: vec![0u64; nw], m_alpha: vec![0u64; nw], m_digit: vec![0u64; nw], m_dot: vec![0u64; nw], m_at_sign: vec![0u64; nw], m_semicolon: vec![0u64; nw], m_rbrace: vec![0u64; nw], m_gt: vec![0u64; nw], m_dq: vec![0u64; nw], m_sq: vec![0u64; nw], m_bt: vec![0u64; nw], m_u_letter: vec![0u64; nw], m_zero: vec![0u64; nw], m_x_letter: vec![0u64; nw], m_b_letter: vec![0u64; nw], m_e_letter: vec![0u64; nw], m_f_letter: vec![0u64; nw], m_sign: vec![0u64; nw], m_hexd: vec![0u64; nw], m_bind: vec![0u64; nw], m_backslash: vec![0u64; nw], m_dollar: vec![0u64; nw], m_lbrace: vec![0u64; nw], m_high: vec![0u64; nw], m_punct: vec![0u64; nw], t0: vec![0u64; nw], m_line_open: vec![0u64; nw], m_block_open: vec![0u64; nw], m_block_end: vec![0u64; nw], t1: vec![0u64; nw], t2: vec![0u64; nw], m_esc_dollar: vec![0u64; nw], m_dq_close: vec![0u64; nw], m_sq_close: vec![0u64; nw], m_t_dollar: vec![0u64; nw], m_t2_dollar: vec![0u64; nw], m_t_lex: vec![0u64; nw], m_dq3: vec![0u64; nw], m_rclose: vec![0u64; nw], t3: vec![0u64; nw], t4: vec![0u64; nw], t5: vec![0u64; nw], t6: vec![0u64; nw], t7: vec![0u64; nw], t8: vec![0u64; nw], t9: vec![0u64; nw], t10: vec![0u64; nw], t11: vec![0u64; nw], m_pre_at: vec![0u64; nw], t12: vec![0u64; nw], m_d_start: vec![0u64; nw], t15: vec![0u64; nw], t18: vec![0u64; nw], t20: vec![0u64; nw], t22: vec![0u64; nw], t24: vec![0u64; nw], t37: vec![0u64; nw], t38: vec![0u64; nw], t41: vec![0u64; nw], t42: vec![0u64; nw], t43: vec![0u64; nw], t44: vec![0u64; nw], m_two_start: vec![0u64; nw], m_two_start_three: vec![0u64; nw], t56: vec![0u64; nw], t55: vec![0u64; nw], t57: vec![0u64; nw], t58: vec![0u64; nw], t59: vec![0u64; nw], t60: vec![0u64; nw], t61: vec![0u64; nw], t63: vec![0u64; nw], t64: vec![0u64; nw], t65: vec![0u64; nw], t66: vec![0u64; nw], t67: vec![0u64; nw], t68: vec![0u64; nw], t69: vec![0u64; nw], t71: vec![0u64; nw], t74: vec![0u64; nw], t72: vec![0u64; nw], t75: vec![0u64; nw], t77: vec![0u64; nw], t76: vec![0u64; nw], t78: vec![0u64; nw], t79: vec![0u64; nw], t81: vec![0u64; nw], t82: vec![0u64; nw], t102: vec![0u64; nw], t103: vec![0u64; nw], t121: vec![0u64; nw], t130: vec![0u64; nw], t141: vec![0u64; nw], t142: vec![0u64; nw], t143: vec![0u64; nw], t163: vec![0u64; nw], t164: vec![0u64; nw], t167: vec![0u64; nw], t169: vec![0u64; nw], t165: vec![0u64; nw], t170: vec![0u64; nw], t174: vec![0u64; nw], t172: vec![0u64; nw], t177: vec![0u64; nw], t178: vec![0u64; nw], t179: vec![0u64; nw], t180: vec![0u64; nw], t181: vec![0u64; nw], t182: vec![0u64; nw], t183: vec![0u64; nw], t185: vec![0u64; nw], t184: vec![0u64; nw], t186: vec![0u64; nw], t187: vec![0u64; nw], t188: vec![0u64; nw], t190: vec![0u64; nw], t192: vec![0u64; nw], t193: vec![0u64; nw], t194: vec![0u64; nw], t195: vec![0u64; nw], t197: vec![0u64; nw], t196: vec![0u64; nw], t198: vec![0u64; nw], t199: vec![0u64; nw], t200: vec![0u64; nw], t201: vec![0u64; nw], t202: vec![0u64; nw], t203: vec![0u64; nw], t204: vec![0u64; nw], t205: vec![0u64; nw], t217: vec![0u64; nw], t218: vec![0u64; nw], t219: vec![0u64; nw], t220: vec![0u64; nw], t225: vec![0u64; nw], t226: vec![0u64; nw], t231: vec![0u64; nw], t232: vec![0u64; nw], t233: vec![0u64; nw], fw_rd0_close: vec![0u64; nw], fw_rd1_close: vec![0u64; nw], refused: Default::default() }
+        Stage1 { m_ws: vec![0u64; nw], m_lf: vec![0u64; nw], m_slash: vec![0u64; nw], m_word: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_alpha: vec![0u64; nw], m_digit: vec![0u64; nw], m_dot: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_at_sign: vec![0u64; nw], m_semicolon: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_rbrace: vec![0u64; nw], m_gt: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_sq: vec![0u64; nw], m_bt: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_u_letter: vec![0u64; nw], m_zero: vec![0u64; nw], m_x_letter: vec![0u64; nw], m_b_letter: vec![0u64; nw], m_e_letter: vec![0u64; nw], m_f_letter: vec![0u64; nw], m_sign: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_hexd: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_bind: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_backslash: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_lbrace: vec![0u64; nw], m_high: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_punct: vec![0u64; nw], #[cfg(feature = "test-hooks")] t0: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_line_open: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_block_open: vec![0u64; nw], m_block_end: vec![0u64; nw], #[cfg(feature = "test-hooks")] t1: vec![0u64; nw], #[cfg(feature = "test-hooks")] t2: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_esc_dollar: vec![0u64; nw], m_dq_close: vec![0u64; nw], m_sq_close: vec![0u64; nw], m_t_dollar: vec![0u64; nw], m_t2_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_t_lex: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq3: vec![0u64; nw], m_rclose: vec![0u64; nw], #[cfg(feature = "test-hooks")] t3: vec![0u64; nw], t4: vec![0u64; nw], #[cfg(feature = "test-hooks")] t5: vec![0u64; nw], t6: vec![0u64; nw], #[cfg(feature = "test-hooks")] t7: vec![0u64; nw], t8: vec![0u64; nw], #[cfg(feature = "test-hooks")] t9: vec![0u64; nw], t10: vec![0u64; nw], t11: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_pre_at: vec![0u64; nw], #[cfg(feature = "test-hooks")] t12: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_d_start: vec![0u64; nw], #[cfg(feature = "test-hooks")] t15: vec![0u64; nw], t18: vec![0u64; nw], #[cfg(feature = "test-hooks")] t20: vec![0u64; nw], #[cfg(feature = "test-hooks")] t22: vec![0u64; nw], t24: vec![0u64; nw], t37: vec![0u64; nw], t38: vec![0u64; nw], t41: vec![0u64; nw], t42: vec![0u64; nw], t43: vec![0u64; nw], t44: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_two_start: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_two_start_three: vec![0u64; nw], t56: vec![0u64; nw], #[cfg(feature = "test-hooks")] t55: vec![0u64; nw], #[cfg(feature = "test-hooks")] t57: vec![0u64; nw], #[cfg(feature = "test-hooks")] t58: vec![0u64; nw], #[cfg(feature = "test-hooks")] t59: vec![0u64; nw], t60: vec![0u64; nw], t61: vec![0u64; nw], t63: vec![0u64; nw], t64: vec![0u64; nw], t65: vec![0u64; nw], #[cfg(feature = "test-hooks")] t66: vec![0u64; nw], t67: vec![0u64; nw], t68: vec![0u64; nw], t69: vec![0u64; nw], t71: vec![0u64; nw], t74: vec![0u64; nw], t72: vec![0u64; nw], t75: vec![0u64; nw], t77: vec![0u64; nw], t76: vec![0u64; nw], t78: vec![0u64; nw], t79: vec![0u64; nw], t81: vec![0u64; nw], t82: vec![0u64; nw], t102: vec![0u64; nw], t103: vec![0u64; nw], #[cfg(feature = "test-hooks")] t121: vec![0u64; nw], t130: vec![0u64; nw], t141: vec![0u64; nw], #[cfg(feature = "test-hooks")] t142: vec![0u64; nw], #[cfg(feature = "test-hooks")] t143: vec![0u64; nw], t163: vec![0u64; nw], t164: vec![0u64; nw], t167: vec![0u64; nw], t169: vec![0u64; nw], t165: vec![0u64; nw], t170: vec![0u64; nw], t174: vec![0u64; nw], t172: vec![0u64; nw], t177: vec![0u64; nw], t178: vec![0u64; nw], t179: vec![0u64; nw], t180: vec![0u64; nw], t181: vec![0u64; nw], t182: vec![0u64; nw], t183: vec![0u64; nw], t185: vec![0u64; nw], t184: vec![0u64; nw], t186: vec![0u64; nw], t187: vec![0u64; nw], t188: vec![0u64; nw], t190: vec![0u64; nw], t192: vec![0u64; nw], t193: vec![0u64; nw], t194: vec![0u64; nw], t195: vec![0u64; nw], t197: vec![0u64; nw], t196: vec![0u64; nw], t198: vec![0u64; nw], t199: vec![0u64; nw], t200: vec![0u64; nw], t201: vec![0u64; nw], t202: vec![0u64; nw], t203: vec![0u64; nw], #[cfg(feature = "test-hooks")] t204: vec![0u64; nw], t205: vec![0u64; nw], t217: vec![0u64; nw], t218: vec![0u64; nw], #[cfg(feature = "test-hooks")] t219: vec![0u64; nw], t220: vec![0u64; nw], #[cfg(feature = "test-hooks")] t225: vec![0u64; nw], t226: vec![0u64; nw], #[cfg(feature = "test-hooks")] t231: vec![0u64; nw], t232: vec![0u64; nw], t233: vec![0u64; nw], fw_rd0_close: vec![0u64; nw], fw_rd1_close: vec![0u64; nw], refused: Default::default() }
     }
 }
 
@@ -660,6 +704,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // class alpha
             let v_m_alpha = unsafe { S::to_bitmask(S::test(c0, S::splat(0x38))) & lv };
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_alpha[q] = v_m_alpha;
             }
@@ -679,6 +724,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // class at_sign
             let v_m_at_sign = unsafe { S::eq_mask(v, 0x40) & lv };
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_at_sign[q] = v_m_at_sign;
             }
@@ -689,6 +735,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // class rbrace
             let v_m_rbrace = unsafe { S::eq_mask(v, 0x7d) & lv };
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_rbrace[q] = v_m_rbrace;
             }
@@ -702,11 +749,13 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             // class dq
             st.v_m_dq = unsafe { S::eq_mask(v, 0x22) & lv };
             st.r_m_dq[q % RING] = st.v_m_dq;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_dq[q] = st.v_m_dq;
             }
             // class sq
             let v_m_sq = unsafe { S::eq_mask(v, 0x27) & lv };
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_sq[q] = v_m_sq;
             }
@@ -718,6 +767,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             st.p_m_u_letter = st.v_m_u_letter;
             // class u_letter
             st.v_m_u_letter = unsafe { S::eq_mask(v, 0x75) & lv };
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_u_letter[q] = st.v_m_u_letter;
             }
@@ -768,6 +818,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             st.p_m_hexd = st.v_m_hexd;
             // class hexd
             st.v_m_hexd = unsafe { S::to_bitmask(S::test(c1, S::splat(0x38))) & lv };
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_hexd[q] = st.v_m_hexd;
             }
@@ -777,12 +828,14 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             st.p_m_bind = st.v_m_bind;
             // class bind
             st.v_m_bind = unsafe { S::to_bitmask(S::test(c1, S::splat(0x50))) & lv };
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_bind[q] = st.v_m_bind;
             }
             st.p_m_backslash = st.v_m_backslash;
             // class backslash
             st.v_m_backslash = unsafe { S::eq_mask(v, 0x5c) & lv };
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_backslash[q] = st.v_m_backslash;
             }
@@ -790,6 +843,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             // class dollar
             st.v_m_dollar = unsafe { S::eq_mask(v, 0x24) & lv };
             st.r_m_dollar[q % RING] = st.v_m_dollar;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_dollar[q] = st.v_m_dollar;
             }
@@ -797,6 +851,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             // class lbrace
             st.v_m_lbrace = unsafe { S::eq_mask(v, 0x7b) & lv };
             st.r_m_lbrace[q % RING] = st.v_m_lbrace;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_lbrace[q] = st.v_m_lbrace;
             }
@@ -900,6 +955,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             // class punct
             st.v_m_punct = unsafe { S::to_bitmask(S::test(c5, S::splat(0xf0))) & lv };
             st.r_m_punct[q % RING] = st.v_m_punct;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_punct[q] = st.v_m_punct;
             }
@@ -947,6 +1003,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             st.v_m_pair_byte_2e = unsafe { S::eq_mask(v, 0x2e) & lv };
             // ~empty
             let v_t0 = !0 & lv;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t0[q] = v_t0;
             }
@@ -962,6 +1019,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
                     st.c_t1 = (escape_and_terminal & bs) >> 63;
                     escaped & lv
                 };
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t1[q] = st.v_t1;
             }
@@ -983,6 +1041,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
                     escaped & lv
                 };
             st.r_t2[q % RING] = st.v_t2;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t2[q] = st.v_t2;
             }
@@ -990,6 +1049,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             // mask esc_dollar = dollar & escaped(bs)
             st.v_m_esc_dollar = st.v_m_dollar & st.v_t2;
             st.r_m_esc_dollar[q % RING] = st.v_m_esc_dollar;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_esc_dollar[q] = st.v_m_esc_dollar;
             }
@@ -1011,6 +1071,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             // alpha | high
             st.v_t12 = (v_m_alpha | st.v_m_high);
             st.r_t12[q % RING] = st.v_t12;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t12[q] = st.v_t12;
             }
@@ -1018,6 +1079,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             // mask d_start = (alpha | high) | lbrace
             st.v_m_d_start = ((v_m_alpha | st.v_m_high) | st.v_m_lbrace);
             st.r_m_d_start[q % RING] = st.v_m_d_start;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_d_start[q] = st.v_m_d_start;
             }
@@ -1031,12 +1093,14 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             st.p_t20 = st.v_t20;
             // ~hexd
             st.v_t20 = !st.v_m_hexd & lv;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t20[q] = st.v_t20;
             }
             st.p_t22 = st.v_t22;
             // ~bind
             st.v_t22 = !st.v_m_bind & lv;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t22[q] = st.v_t22;
             }
@@ -1096,22 +1160,26 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // ((word | high) & (alpha | high)) & ~prev(word | high)
             let v_t55 = (st.v_m_word | st.v_m_high) & (v_m_alpha | st.v_m_high) & (!(st.v_t56 << 1 | st.p_t56 >> 63) & lv);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t55[q] = v_t55;
             }
             st.p_t57 = st.v_t57;
             // ~(word | high)
             st.v_t57 = !(st.v_m_word | st.v_m_high) & lv;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t57[q] = st.v_t57;
             }
             // ((word & digit) & ~prev(word | high)) & ~prev(dot & ~prev(dot))
             let v_t58 = st.v_m_word & st.v_m_digit & (!(st.v_t56 << 1 | st.p_t56 >> 63) & lv) & (!(st.v_t18 << 1 | st.p_t18 >> 63) & lv);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t58[q] = v_t58;
             }
             // ~ws
             let v_t59 = !v_m_ws & lv;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t59[q] = v_t59;
             }
@@ -1132,6 +1200,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // prev(lbrace)
             let v_t66 = (st.v_m_lbrace << 1 | st.p_m_lbrace >> 63) & lv;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t66[q] = v_t66;
             }
@@ -1148,6 +1217,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // at_sign & prev(high)
             let v_t121 = v_m_at_sign & (st.v_m_high << 1 | st.p_m_high >> 63) & lv;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t121[q] = v_t121;
             }
@@ -1160,6 +1230,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // prev(gt)
             let v_t142 = (st.v_m_gt << 1 | p_m_gt >> 63) & lv;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t142[q] = v_t142;
             }
@@ -1269,6 +1340,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             st.r_t176[q % RING] = st.v_t176;
             // ~prev(dollar)
             let v_t231 = !(st.v_m_dollar << 1 | st.p_m_dollar >> 63) & lv;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t231[q] = v_t231;
             }
@@ -1287,12 +1359,14 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             let v_m_uni = ((((st.v_m_u_lead2 | (st.v_m_u_lead2 << 1 | p_m_u_lead2 >> 63) & lv) | st.v_m_u_lead3) | (st.v_m_u_lead3 << 1 | p_m_u_lead3 >> 63) & lv) | (st.v_m_u_lead3 << 2 | p_m_u_lead3 >> 62) & lv);
             // mask line_open = slash & next(slash)
             let v_m_line_open = st.p_m_slash & (st.p_m_slash >> 1 | st.v_m_slash << 63);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_line_open[q] = v_m_line_open;
             }
             let p_m_block_open = st.v_m_block_open;
             // mask block_open = slash & next(star)
             st.v_m_block_open = st.p_m_slash & (st.p_m_star >> 1 | st.v_m_star << 63);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_block_open[q] = st.v_m_block_open;
             }
@@ -1316,12 +1390,14 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // mask t_lex = prev(t_dollar) | prev(t2_dollar, 2)
             let v_m_t_lex = ((st.v_m_t_dollar << 1 | p_m_t_dollar >> 63) & lv | (st.v_m_t2_dollar << 2 | st.p_m_t2_dollar >> 62) & lv);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_t_lex[q] = v_m_t_lex;
             }
             st.p_m_dq3 = st.v_m_dq3;
             // mask dq3 = (dq & next(dq)) & next(dq, 2)
             st.v_m_dq3 = st.p_m_dq & (st.p_m_dq >> 1 | st.v_m_dq << 63) & (st.p_m_dq >> 2 | st.v_m_dq << 62);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_dq3[q] = st.v_m_dq3;
             }
@@ -1332,6 +1408,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // dq3 & ~q2
             let v_t3 = st.v_m_dq3 & (!st.p_m_q2 & lv);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t3[q] = v_t3;
             }
@@ -1342,6 +1419,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // (dq & ~dq3) & ~q2
             let v_t5 = st.p_m_dq & (!st.v_m_dq3 & lv) & (!st.p_m_q2 & lv);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t5[q] = v_t5;
             }
@@ -1352,6 +1430,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // dq3 & q2
             let v_t7 = st.v_m_dq3 & st.p_m_q2;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t7[q] = v_t7;
             }
@@ -1362,6 +1441,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // (dq & ~dq3) & q2
             let v_t9 = st.p_m_dq & (!st.v_m_dq3 & lv) & st.p_m_q2;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t9[q] = v_t9;
             }
@@ -1377,12 +1457,14 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // mask pre_at = (dollar & next(dq)) | ((dollar & next(dollar)) & next(dq, 2))
             let v_m_pre_at = (st.p_m_dollar & (st.p_m_dq >> 1 | st.v_m_dq << 63) | st.p_m_dollar & (st.p_m_dollar >> 1 | st.v_m_dollar << 63) & (st.p_m_dq >> 2 | st.v_m_dq << 62));
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_pre_at[q] = v_m_pre_at;
             }
             st.p_t15 = st.v_t15;
             // esc_dollar & next(dq)
             st.v_t15 = st.p_m_esc_dollar & (st.p_m_dq >> 1 | st.v_m_dq << 63);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t15[q] = st.v_t15;
             }
@@ -1414,6 +1496,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             // mask two_start = (((((((((((((((((pair_byte_2d & next(pair_byte_3e)) | (pair_byte_3d & next(pair_byte_3d))) | (pair_byte_21 & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3d))) | (pair_byte_26 & next(pair_byte_26))) | (pair_byte_7c & next(pair_byte_7c))) | (pair_byte_2b & next(pair_byte_2b))) | (pair_byte_2d & next(pair_byte_2d))) | (pair_byte_2b & next(pair_byte_3d))) | (pair_byte_2d & next(pair_byte_3d))) | (pair_byte_2a & next(pair_byte_3d))) | (pair_byte_2f & next(pair_byte_3d))) | (pair_byte_25 & next(pair_byte_3d))) | (pair_byte_3a & next(pair_byte_3a))) | (pair_byte_3f & next(pair_byte_3a))) | (pair_byte_2e & next(pair_byte_2e))) | (pair_byte_21 & next(pair_byte_21))) & ~escaped(((((((((((((((((pair_byte_2d & next(pair_byte_3e)) | (pair_byte_3d & next(pair_byte_3d))) | (pair_byte_21 & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3d))) | (pair_byte_26 & next(pair_byte_26))) | (pair_byte_7c & next(pair_byte_7c))) | (pair_byte_2b & next(pair_byte_2b))) | (pair_byte_2d & next(pair_byte_2d))) | (pair_byte_2b & next(pair_byte_3d))) | (pair_byte_2d & next(pair_byte_3d))) | (pair_byte_2a & next(pair_byte_3d))) | (pair_byte_2f & next(pair_byte_3d))) | (pair_byte_25 & next(pair_byte_3d))) | (pair_byte_3a & next(pair_byte_3a))) | (pair_byte_3f & next(pair_byte_3a))) | (pair_byte_2e & next(pair_byte_2e))) | (pair_byte_21 & next(pair_byte_21)))
             st.v_m_two_start = ((((((((((((((((st.p_m_pair_byte_2d & (st.p_m_pair_byte_3e >> 1 | st.v_m_pair_byte_3e << 63) | st.p_m_pair_byte_3d & (st.p_m_pair_byte_3d >> 1 | st.v_m_pair_byte_3d << 63)) | st.p_m_pair_byte_21 & (st.p_m_pair_byte_3d >> 1 | st.v_m_pair_byte_3d << 63)) | st.p_m_pair_byte_3c & (st.p_m_pair_byte_3d >> 1 | st.v_m_pair_byte_3d << 63)) | st.p_m_pair_byte_26 & (st.p_m_pair_byte_26 >> 1 | st.v_m_pair_byte_26 << 63)) | st.p_m_pair_byte_7c & (st.p_m_pair_byte_7c >> 1 | st.v_m_pair_byte_7c << 63)) | st.p_m_pair_byte_2b & (st.p_m_pair_byte_2b >> 1 | st.v_m_pair_byte_2b << 63)) | st.p_m_pair_byte_2d & (st.p_m_pair_byte_2d >> 1 | st.v_m_pair_byte_2d << 63)) | st.p_m_pair_byte_2b & (st.p_m_pair_byte_3d >> 1 | st.v_m_pair_byte_3d << 63)) | st.p_m_pair_byte_2d & (st.p_m_pair_byte_3d >> 1 | st.v_m_pair_byte_3d << 63)) | st.p_m_pair_byte_2a & (st.p_m_pair_byte_3d >> 1 | st.v_m_pair_byte_3d << 63)) | st.p_m_pair_byte_2f & (st.p_m_pair_byte_3d >> 1 | st.v_m_pair_byte_3d << 63)) | st.p_m_pair_byte_25 & (st.p_m_pair_byte_3d >> 1 | st.v_m_pair_byte_3d << 63)) | st.p_m_pair_byte_3a & (st.p_m_pair_byte_3a >> 1 | st.v_m_pair_byte_3a << 63)) | st.p_m_pair_byte_3f & (st.p_m_pair_byte_3a >> 1 | st.v_m_pair_byte_3a << 63)) | st.p_m_pair_byte_2e & (st.p_m_pair_byte_2e >> 1 | st.v_m_pair_byte_2e << 63)) | st.p_m_pair_byte_21 & (st.p_m_pair_byte_21 >> 1 | st.v_m_pair_byte_21 << 63)) & (!v_t49 & lv);
             st.r_m_two_start[q % RING] = st.v_m_two_start;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_two_start[q] = st.v_m_two_start;
             }
@@ -1421,6 +1504,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             // mask two_start_three = ((((pair_byte_3d & next(pair_byte_3d)) & next(pair_byte_3d, 2)) | ((pair_byte_21 & next(pair_byte_3d)) & next(pair_byte_3d, 2))) | ((pair_byte_2e & next(pair_byte_2e)) & next(pair_byte_3c, 2))) & two_start
             st.v_m_two_start_three = ((st.p_m_pair_byte_3d & (st.p_m_pair_byte_3d >> 1 | st.v_m_pair_byte_3d << 63) & (st.p_m_pair_byte_3d >> 2 | st.v_m_pair_byte_3d << 62) | st.p_m_pair_byte_21 & (st.p_m_pair_byte_3d >> 1 | st.v_m_pair_byte_3d << 63) & (st.p_m_pair_byte_3d >> 2 | st.v_m_pair_byte_3d << 62)) | st.p_m_pair_byte_2e & (st.p_m_pair_byte_2e >> 1 | st.v_m_pair_byte_2e << 63) & (st.p_m_pair_byte_3c >> 2 | st.v_m_pair_byte_3c << 62)) & st.v_m_two_start;
             st.r_m_two_start_three[q % RING] = st.v_m_two_start_three;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.m_two_start_three[q] = st.v_m_two_start_three;
             }
@@ -1602,6 +1686,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             let v_t161 = st.p_b_65 & (st.p_b_6c >> 1 | st.v_b_6c << 63) & (st.p_b_73 >> 2 | st.v_b_73 << 62) & (st.p_b_65 >> 3 | st.v_b_65 << 61) & lv;
             // ~(((((((((((((((((t144 | o.t42) | t145) | t146) | t147) | t148) | t149) | t150) | t151) | o.t43) | o.t44) | t152) | (t153 & next(t152))) | t154) | t155) | t156) | t157) | (~prev(o.t56) & (((((o.t37 & ~next(o.t56, 2)) | (t158 & ~next(o.t56, 5))) | (t159 & ~next(o.t56, 5))) | (t160 & ~next(o.t56, 7))) | (t161 & ~next(o.t56, 4)))))
             let v_t143 = !(((((((((((((((((st.p_t144 | st.p_t42) | st.p_t145) | st.p_t146) | st.p_t147) | st.p_t148) | st.p_t149) | st.p_t150) | st.p_t151) | st.p_t43) | st.p_t44) | st.p_t152) | st.p_t153 & (st.p_t152 >> 1 | st.v_t152 << 63)) | st.p_t154) | st.p_t155) | st.p_t156) | st.p_t157) | (!(st.p_t56 << 1 | st.r_t56[(q + RING - 1) % RING] >> 63) & lv) & ((((v_t37 & (!(st.p_t56 >> 2 | st.v_t56 << 62) & lv) | v_t158 & (!(st.p_t56 >> 5 | st.v_t56 << 59) & lv)) | v_t159 & (!(st.p_t56 >> 5 | st.v_t56 << 59) & lv)) | v_t160 & (!(st.p_t56 >> 7 | st.v_t56 << 57) & lv)) | v_t161 & (!(st.p_t56 >> 4 | st.v_t56 << 60) & lv))) & lv;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t143[q] = v_t143;
             }
@@ -1769,6 +1854,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // (digit & ~(zero & (next(x_letter) | next(b_letter)))) & ~prev(dot & ~prev(dot))
             let v_t204 = st.p_m_digit & (!(st.p_m_zero & ((st.p_m_x_letter >> 1 | st.v_m_x_letter << 63) | (st.p_m_b_letter >> 1 | st.v_m_b_letter << 63))) & lv) & (!(st.p_t18 << 1 | st.r_t18[(q + RING - 1) % RING] >> 63) & lv);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t204[q] = v_t204;
             }
@@ -1838,6 +1924,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // (zero & next(x_letter)) & ~prev(dot & ~prev(dot))
             let v_t219 = st.p_m_zero & (st.p_m_x_letter >> 1 | st.v_m_x_letter << 63) & (!(st.p_t18 << 1 | st.r_t18[(q + RING - 1) % RING] >> 63) & lv);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t219[q] = v_t219;
             }
@@ -1862,6 +1949,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             }
             // (zero & next(b_letter)) & ~prev(dot & ~prev(dot))
             let v_t225 = st.p_m_zero & (st.p_m_b_letter >> 1 | st.v_m_b_letter << 63) & (!(st.p_t18 << 1 | st.r_t18[(q + RING - 1) % RING] >> 63) & lv);
+            #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t225[q] = v_t225;
             }
@@ -2865,13 +2953,13 @@ pub fn lex(src: &[u8]) -> Lexed {
         // The region a token here opens, as the walk opens them: the first declared whose opener holds, a kind after others where the string the template is in (`template`) is one; of those whose opener may be the byte's.
         let open = match group {
             // `"`
-            5 => if bit(&s1.t3, s) {
+            5 => if (((((src[s] == b'"') && (s + 1 < n && (src[s + 1] == b'"'))) && (s + 2 < n && (src[s + 2] == b'"'))) && !((s >= 1 && (s - 1 < n && (src[s - 1] == b'$'))) && (s >= 2 && (s - 2 < n && (src[s - 2] == b'$')))))) {
                 2
-            } else if bit(&s1.t5, s) {
+            } else if ((((src[s] == b'"') && !(((src[s] == b'"') && (s + 1 < n && (src[s + 1] == b'"'))) && (s + 2 < n && (src[s + 2] == b'"')))) && !((s >= 1 && (s - 1 < n && (src[s - 1] == b'$'))) && (s >= 2 && (s - 2 < n && (src[s - 2] == b'$')))))) {
                 3
-            } else if bit(&s1.t7, s) {
+            } else if (((((src[s] == b'"') && (s + 1 < n && (src[s + 1] == b'"'))) && (s + 2 < n && (src[s + 2] == b'"'))) && ((s >= 1 && (s - 1 < n && (src[s - 1] == b'$'))) && (s >= 2 && (s - 2 < n && (src[s - 2] == b'$')))))) {
                 4
-            } else if bit(&s1.t9, s) {
+            } else if ((((src[s] == b'"') && !(((src[s] == b'"') && (s + 1 < n && (src[s + 1] == b'"'))) && (s + 2 < n && (src[s + 2] == b'"')))) && ((s >= 1 && (s - 1 < n && (src[s - 1] == b'$'))) && (s >= 2 && (s - 2 < n && (src[s - 2] == b'$')))))) {
                 5
             } else {
                 usize::MAX
@@ -2879,9 +2967,9 @@ pub fn lex(src: &[u8]) -> Lexed {
             // `'`
             7 => 6,
             // `/`
-            9 => if bit(&s1.m_line_open, s) {
+            9 => if (((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'/')))) {
                 0
-            } else if bit(&s1.m_block_open, s) {
+            } else if (((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'*')))) {
                 1
             } else {
                 usize::MAX
@@ -2912,7 +3000,7 @@ pub fn lex(src: &[u8]) -> Lexed {
             acc_1 = true;
             rec_1 = true;
         }
-        let here_1 = ((open == usize::MAX && bit(&s1.m_rbrace, s)) && (fs_2 || xs_2));
+        let here_1 = ((open == usize::MAX && ((src[s] == b'}'))) && (fs_2 || xs_2));
         // The skipped bytes before the token, for the gap masks (none where there are none).
         if (s > at && at > 0 && fill_6 && bit(&s1.m_gt, at - 1) && bit(&s1.m_lf, at)) {
             acc_2 = true;
@@ -2945,7 +3033,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     usize::MAX
                 },
                 // `$`
-                6 => if ((open == usize::MAX && bit(&s1.m_pre_at, s)) && bit(&s1.t231, s)) {
+                6 => if ((open == usize::MAX && ((((src[s] == b'$') && (s + 1 < n && (src[s + 1] == b'"'))) || (((src[s] == b'$') && (s + 1 < n && (src[s + 1] == b'$'))) && (s + 2 < n && (src[s + 2] == b'"')))))) && (!(s >= 1 && (s - 1 < n && (src[s - 1] == b'$'))))) {
                     15
                 } else if {
                 // `assume … at starts p_start = (punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~(((dot & next(digit)) & ~prev(word)) & ~prev(dot))`, not proved: a test build checks it.
@@ -2988,17 +3076,17 @@ pub fn lex(src: &[u8]) -> Lexed {
                     usize::MAX
                 },
                 // `0`
-                10 => if bit(&s1.t204, s) {
+                10 => if (((matches!(src[s], b'0'..=b'9') && !((src[s] == b'0') && ((s + 1 < n && matches!(src[s + 1], b'x' | b'X')) || (s + 1 < n && matches!(src[s + 1], b'b' | b'B'))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) {
                     3
-                } else if bit(&s1.t219, s) {
+                } else if ((((src[s] == b'0') && (s + 1 < n && matches!(src[s + 1], b'x' | b'X'))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) {
                     5
-                } else if bit(&s1.t225, s) {
+                } else if ((((src[s] == b'0') && (s + 1 < n && matches!(src[s + 1], b'b' | b'B'))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) {
                     6
                 } else {
                     usize::MAX
                 },
                 // `123456789`
-                11 => if bit(&s1.t204, s) {
+                11 => if (((matches!(src[s], b'0'..=b'9') && !((src[s] == b'0') && ((s + 1 < n && matches!(src[s + 1], b'x' | b'X')) || (s + 1 < n && matches!(src[s + 1], b'b' | b'B'))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) {
                     3
                 } else {
                     usize::MAX
@@ -3030,7 +3118,7 @@ pub fn lex(src: &[u8]) -> Lexed {
             };
             // The nest: a bracket opens at a `{` where a level is open; the innermost closes at a `}` (a tail's row reads on past it).
             if depth > 0 {
-                if bit(&s1.m_lbrace, s) {
+                if ((src[s] == b'{')) {
                     if depth == 4 {
                         refused = true;
                         break 'tokens;
@@ -3038,7 +3126,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     nest[depth] = usize::MAX;
                     depth += 1;
                     template = usize::MAX;
-                } else if bit(&s1.m_rbrace, s) {
+                } else if ((src[s] == b'}')) {
                     depth -= 1;
                     template = if depth > 0 { nest[depth - 1] } else { usize::MAX };
                 }
@@ -3848,7 +3936,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             close = c;
                             let last = if bit(&s1.m_dq_close, c) { c + 0 } else if bit(&s1.m_t_dollar, c) { c + 1 } else { c + 0 };
                             // an empty `${}`
-                            if bit(&s1.t66, s) {
+                            if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -3955,7 +4043,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             close = c;
                             let last = if bit(&s1.m_rclose, c) { c + 2 } else if bit(&s1.m_t_dollar, c) { c + 1 } else { if bit(&s1.m_t_dollar, c) { c + 0 } else { c + 2 } };
                             // an empty `${}`
-                            if bit(&s1.t66, s) {
+                            if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -4067,7 +4155,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             close = c;
                             let last = if bit(&s1.m_dq_close, c) { c + 0 } else if bit(&s1.m_t_dollar, c) { c + 1 } else if bit(&s1.m_t2_dollar, c) { c + 2 } else { if bit(&s1.m_t2_dollar, c) { c + 1 } else { c + 0 } };
                             // an empty `${}`
-                            if bit(&s1.t66, s) {
+                            if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -4196,7 +4284,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             close = c;
                             let last = if bit(&s1.m_rclose, c) { c + 2 } else if bit(&s1.m_t_dollar, c) { c + 1 } else if bit(&s1.m_t2_dollar, c) { c + 2 } else { if bit(&s1.m_t2_dollar, c) { c + 1 } else { c + 2 } };
                             // an empty `${}`
-                            if bit(&s1.t66, s) {
+                            if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -4478,7 +4566,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         break 'tokens;
                     }
                     // a name with a letter past ASCII before an `@`
-                    if bit(&s1.t121, s) {
+                    if (((src[s] == b'@') && (s >= 1 && (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) {
                         refused = true;
                         break 'tokens;
                     }

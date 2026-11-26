@@ -7561,6 +7561,11 @@ impl Gen<'_> {
         {
             out.insert_str(at + 2, "use rerail_simd8::micro;\n\n");
         }
+        // The two-pass form: the one-byte tests of masks that read no region, of the bytes (decision 0703).
+        if from_bytes.is_none() {
+            let exprs: Vec<(String, Expr)> = self.nodes.iter().filter_map(|n| n.expr.clone().filter(|e| !self.regional(e)).map(|e| (n.name.clone(), e))).collect();
+            out = interleave::bit_reads(&out, self.x.stmts, &exprs);
+        }
         Ok(out)
     }
 }

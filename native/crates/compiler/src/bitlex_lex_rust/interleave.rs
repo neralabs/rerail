@@ -9,7 +9,7 @@
 //! escapes and the passes that read its masks there. The test build's walk reads a stage 1 made whole, its own.
 //! `None` where the text is not of that form.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 /// Each name of `names` in `text` that is a whole name (not a part of one, nor a field after `.`), with `pre` before it.
@@ -229,5 +229,133 @@ pub(super) fn interleave(text: &str) -> Option<String> {
     if !out.contains(at) {
         return None;
     }
-    Some(out.replacen(at, &format!("{helpers}{at}"), 1))
+    Some(test_only(&out.replacen(at, &format!("{helpers}{at}"), 1), &fields))
+}
+
+/// The masks only the test build's walk of the regions reads (its own stage 1, `s1w`): stage 1 keeps them in a test
+/// build alone, and the product's makes no vector of them.
+fn test_only(text: &str, fields: &[(&str, &str)]) -> String {
+    let Some(lx) = text.find("\npub fn lex(src: &[u8]) -> Lexed {") else { return text.to_owned() };
+    let lex = &text[lx..];
+    let lex = &lex[..lex.find("\n}\n").unwrap_or(lex.len())];
+    let read = |f: &str| {
+        let whole = |pat: &str| lex.match_indices(pat).any(|(i, _)| !lex[i + pat.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'));
+        whole(&format!("s1.{f}")) || whole(&format!("&o.{f}[..]"))
+    };
+    let mut out = text.to_owned();
+    for (f, ty) in fields {
+        if *ty != "Vec<u64>" || read(f) {
+            continue;
+        }
+        // Its store: of its value at the block, or of its carry (a mask made a block late).
+        let store = [format!("            if q < nw {{\n                o.{f}[q] = v_{f};\n            }}\n"), format!("            if q < nw {{\n                o.{f}[q] = st.v_{f};\n            }}\n")].into_iter().find(|st| out.matches(st.as_str()).count() == 1).unwrap_or_default();
+        let field = format!("\n    {f}: Vec<u64>,\n");
+        let init = format!(" {f}: vec![0u64; nw],");
+        if store.is_empty() || out.matches(&field).count() != 1 || out.matches(&init).count() != 1 {
+            continue;
+        }
+        out = out.replacen(&store, &format!("            #[cfg(feature = \"test-hooks\")]\n{store}"), 1);
+        out = out.replacen(&field, &format!("\n    #[cfg(feature = \"test-hooks\")]\n    {f}: Vec<u64>,\n"), 1);
+        out = out.replacen(&init, &format!(" #[cfg(feature = \"test-hooks\")] {f}: vec![0u64; nw],"), 1);
+    }
+    out
+}
+
+/// The one-byte tests of stage 1's masks as tests of the bytes (decision 0703), as the lean lexer tests `c == b'/'`:
+/// a `bit(&M, i)` in `lex` (not the test build's walk of the regions) where `M` reads no region and `lex` reads it only
+/// so. Stage 1 then keeps no vector of it in the product build (`test_only`). `exprs`: each mask's expression.
+pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(String, ::bitlex::syntax::Expr)]) -> String {
+    let Some(lx) = text.find("\npub fn lex(src: &[u8]) -> Lexed {") else { return text.to_owned() };
+    let Some(len) = text[lx..].find("\n}\n") else { return text.to_owned() };
+    let (head, lex, tail) = (&text[..lx], &text[lx..lx + len], &text[lx + len..]);
+    // The product's lines: not the destructuring of stage 1's masks, nor the walk.
+    let mut product = String::new();
+    let mut in_walk = false;
+    let lines: Vec<&str> = lex.split('\n').collect();
+    for (i, l) in lines.iter().enumerate() {
+        if l.starts_with("    let (") && l.ends_with(") = {") && i > 0 && lines[i - 1].trim() == "#[cfg(feature = \"test-hooks\")]" {
+            in_walk = true;
+        }
+        if !in_walk && !l.starts_with("    let Stage1 { ") {
+            product.push_str(l);
+            product.push('\n');
+        }
+        if in_walk && *l == "    };" {
+            in_walk = false;
+        }
+    }
+    let whole = |t: &str, pat: &str| t.match_indices(pat).filter(|(i, _)| !t[..*i].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.') && !t[i + pat.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')).count();
+    let by = super::bytes::Bytes::new(stmts, HashMap::new(), HashMap::new());
+    let mut tests: Vec<(&str, &::bitlex::syntax::Expr)> = Vec::new();
+    for (name, e) in exprs {
+        let reads = whole(&product, name);
+        let bits = product.matches(&format!("bit(&{name}, ")).count();
+        if reads > 0 && reads == bits && by.at(e, "s", 0).is_ok() {
+            tests.push((name, e));
+        }
+    }
+    if tests.is_empty() {
+        return text.to_owned();
+    }
+    // Each `bit(&M, i)` outside the walk and the destructuring, as the test of the bytes at `i`.
+    let mut out = String::new();
+    let mut in_walk = false;
+    for (i, l) in lines.iter().enumerate() {
+        if l.starts_with("    let (") && l.ends_with(") = {") && i > 0 && lines[i - 1].trim() == "#[cfg(feature = \"test-hooks\")]" {
+            in_walk = true;
+        }
+        let mut line = (*l).to_owned();
+        if !in_walk && !l.starts_with("    let Stage1 { ") {
+            for (name, e) in &tests {
+                let pat = format!("bit(&{name}, ");
+                let mut o = String::new();
+                let mut rest = line.as_str();
+                while let Some(p) = rest.find(&pat) {
+                    let ok = !rest[..p].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_');
+                    o.push_str(&rest[..p]);
+                    let after = &rest[p + pat.len()..];
+                    // The position: to the call's close.
+                    let mut depth = 0i32;
+                    let end = after.char_indices().find(|&(_, c)| {
+                        match c {
+                            '(' | '[' => depth += 1,
+                            ')' | ']' if depth > 0 => depth -= 1,
+                            ')' => return true,
+                            _ => {}
+                        }
+                        false
+                    });
+                    match (ok, end) {
+                        (true, Some((k, _))) => {
+                            let at = after[..k].trim();
+                            let at = if at.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') { at.to_owned() } else { format!("({at})") };
+                            match by.at(e, &at, 0) {
+                                Ok(t) => {
+                                    let _ = write!(o, "({t})");
+                                    rest = &after[k + 1..];
+                                }
+                                Err(_) => {
+                                    o.push_str(&pat);
+                                    rest = after;
+                                }
+                            }
+                        }
+                        _ => {
+                            o.push_str(&pat);
+                            rest = after;
+                        }
+                    }
+                }
+                o.push_str(rest);
+                line = o;
+            }
+        }
+        if in_walk && *l == "    };" {
+            in_walk = false;
+        }
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out.pop();
+    format!("{head}{out}{tail}")
 }

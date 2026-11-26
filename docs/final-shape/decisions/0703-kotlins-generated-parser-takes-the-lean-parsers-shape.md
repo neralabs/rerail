@@ -89,8 +89,14 @@ them.
    only back. Tier 1's accumulators no mark it writes reads are gone. Kotlin's `own_line`, `nl_end` and `apart` are
    asked so, and `apart`'s accumulator is gone. Kotlin's test of the records asks them as tier 2 does, and a test reads
    the gaps around parts and comments. rr and JSON have no such mark (`SPANNED` 0).
+8. **Stage 1 keeps only the masks the product reads** (`interleave::test_only`, `interleave::bit_reads`). A mask
+   only the test build's walk of the regions reads is stored in a test build alone. A one-byte test of a mask that
+   reads no region (`bit(&M, i)`), where `lex` reads `M` only so, is a test of the bytes at `i` (`Bytes::at`), as the
+   lean lexer tests `c == b'/'`, and the mask is then one of the first kind. Kotlin's product stage 1 keeps 100 masks
+   of 144: 29 were the walk's alone, and 15 are byte tests. The rest are read over a token's bytes (`any_in`,
+   `last_in`, `count_in`), by the scans to a closer, after the loop, or by tier 2.
 
-What stays: stage 1 keeps the 144 masks the token loop reads, each a vector of the file's words, where the lean lexer
+What stays: stage 1 keeps 100 masks in the product build, each a vector of the file's words, where the lean lexer
 keeps 5 in one, and tier 1 computes four marks into the token's code: `head_ctor`'s line break (the lean lexer's
 `nl`), `semi_close` and `as_open` (each of a fill tier 1 keeps over the gap), and `real` (a count of a number's
 bytes). Its strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or t_dollar
