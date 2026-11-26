@@ -1956,6 +1956,218 @@ impl Gen<'_> {
         Stage1Text { tables, record, indexes, header, decls, steps, most, body, finals, ret: out }
     }
 
+    /// Stage 1 from the middle of a file (the design page "Lexing From the Middle"), in two passes over chunks of blocks,
+    /// each chunk on its own (`lex_chunked`):
+    ///
+    /// 1. `stage1_ends`: a chunk's end from every entry state at once (`LANES`, each value of the carries). A line no
+    ///    carry reaches is the bytes' alone and runs once a block; a line a carry reaches runs once a lane. Nothing but
+    ///    the carries is written, so the compiler keeps only their lines. A lane whose carries are an earlier lane's at
+    ///    a block's end stops: its end is that lane's.
+    /// 2. `stage1_from`: with each chunk's entry known from the ends before it, the chunk's records from that entry, as
+    ///    `stage1`'s, written once.
+    ///
+    /// Empty where stage 1 is not of the shape this writes (a stage behind the classes, a mask kept, a state of more
+    /// than the carries).
+    fn stage1_lanes(&self) -> String {
+        let (live, pairs, codes) = self.stage1_codes();
+        let most = self.nodes.iter().zip(&live).filter(|(_, l)| **l).map(|(n, _)| n.lag).max().unwrap_or(0);
+        let Some(index) = self.index else { return String::new() };
+        if most != 0 || self.nodes.iter().any(|n| n.kept || !n.also.is_empty()) {
+            return String::new();
+        }
+        if !self.outputs.iter().all(|e| false_at(e, b' ', self.x.stmts)) {
+            return String::new();
+        }
+        let by_name: HashMap<&str, usize> = self.nodes.iter().enumerate().map(|(i, n)| (n.name.as_str(), i)).collect();
+        // The lines a carry reaches, in order, and the words read at the next block.
+        let mut lane = vec![false; self.nodes.len()];
+        let mut needs_p = vec![false; self.nodes.len()];
+        for i in (0..self.nodes.len()).filter(|&i| live[i]) {
+            let reads = ring_reads(&codes[i], &by_name);
+            for &(x, off) in &reads {
+                if age(0, 0, off) == Some(1) {
+                    needs_p[x] = true;
+                }
+            }
+            lane[i] = self.nodes[i].carry || reads.iter().any(|(x, _)| lane[*x]);
+        }
+        let carried = |i: usize| self.toggles.get(&i).is_some_and(|op| false_at(op, b' ', self.x.stmts));
+        // A lane's state is its carries alone: no word of a lane's line read at the next block, no test at the end
+        // but a carry's.
+        if (0..self.nodes.len()).any(|i| lane[i] && needs_p[i]) || self.end_sinks.iter().any(|(_, s)| lane[*s] && !carried(*s)) {
+            return String::new();
+        }
+        let carries: Vec<&str> = (0..self.nodes.len()).filter(|&i| live[i] && self.nodes[i].carry).map(|i| self.nodes[i].name.as_str()).collect();
+        if carries.is_empty() || carries.len() > 4 {
+            return String::new();
+        }
+        // The carries each line reads, through the lines before it.
+        let mut reach: Vec<Vec<usize>> = vec![Vec::new(); self.nodes.len()];
+        for i in (0..self.nodes.len()).filter(|&i| live[i]) {
+            let mut r: Vec<usize> = ring_reads(&codes[i], &by_name).iter().flat_map(|(x, _)| reach[*x].clone()).collect();
+            if self.nodes[i].carry {
+                r.push(i);
+            }
+            r.sort_unstable();
+            r.dedup();
+            reach[i] = r;
+        }
+        // A toggle no other carry reads: its end from entry 1 is its end from entry 0, inverted (a toggle is its
+        // operand's prefix xor, then its entry xored in), and nothing else depends on its entry. Pass 1 runs it from 0
+        // alone.
+        let free: Vec<bool> = (0..self.nodes.len()).map(|i| self.nodes[i].carry && self.toggles.contains_key(&i) && (0..self.nodes.len()).all(|j| j == i || !self.nodes[j].carry || !reach[j].contains(&i))).collect();
+        let run: Vec<&str> = (0..self.nodes.len()).filter(|&i| live[i] && self.nodes[i].carry && !free[i]).map(|i| self.nodes[i].name.as_str()).collect();
+        let free_names: Vec<&str> = (0..self.nodes.len()).filter(|&i| live[i] && free[i]).map(|i| self.nodes[i].name.as_str()).collect();
+        // A lane's line in pass 1: each carry its lane's word.
+        let lane_code = |code: &str| -> String {
+            let mut out = String::new();
+            let mut rest = code;
+            while let Some(k) = rest.find("c_") {
+                let before_ok = !rest[..k].chars().next_back().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+                let tail = &rest[k + 2..];
+                let len = tail.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(tail.len());
+                out.push_str(&rest[..k + 2 + len]);
+                if before_ok && carries.contains(&&tail[..len]) {
+                    out.push_str("[l]");
+                }
+                rest = &tail[len..];
+            }
+            out.push_str(rest);
+            out
+        };
+        let line = |i: usize, lanes: bool, out: &mut String, pad: &str| {
+            let n = &self.nodes[i];
+            let code = without_lv(&local_reads(&codes[i], &by_name, &self.nodes, 0).replace(" & lv & lv", " & lv"));
+            let code = if lanes && lane[i] { lane_code(&code) } else { code };
+            let code = indent(&code, pad);
+            let code = code.trim();
+            let code = if codes[i].contains("S::") { format!("unsafe {{ {code} }}") } else { code.to_owned() };
+            let outer = needs_p[i] || (!lane[i] || !lanes) && self.end_sinks.iter().any(|(_, s)| *s == i && !carried(*s));
+            if needs_p[i] {
+                let _ = writeln!(out, "{pad}let p_{0} = v_{0};", n.name);
+            }
+            let _ = writeln!(out, "{pad}// {}\n{pad}{}v_{} = {code};", n.what, if outer { "" } else { "let " }, n.name);
+        };
+        let off = if self.prefix.is_some() { "off + 64 * q" } else { "64 * q" };
+        let head = |out: &mut String| {
+            if let Some(b) = &self.prefix {
+                let bytes = b.iter().map(|x| format!("{x:#04x}")).collect::<Vec<_>>().join(", ");
+                let _ = writeln!(out, "    let off = if src.starts_with(&[{bytes}]) {{ {} }} else {{ 0 }};\n    let nw = (n - off).div_ceil(64);", b.len());
+            } else {
+                out.push_str("    let nw = n.div_ceil(64);\n");
+            }
+            out.push_str("    let to = to.min(nw);\n");
+            for (i, n) in self.nodes.iter().enumerate().filter(|(i, _)| live[*i]) {
+                if needs_p[i] || !lane[i] && self.end_sinks.iter().any(|(_, s)| *s == i) {
+                    let _ = writeln!(out, "    let mut v_{} = 0u64;", n.name);
+                }
+            }
+        };
+        let load = |out: &mut String| {
+            out.push_str("    for q in from.saturating_sub(1)..to {\n        // The block before the chunk: the words of the bytes alone it leaves the chunk's first block.\n        let warm = q < from;\n");
+            let _ = writeln!(out, "        let b: &[u8; 64] = src[{off}..{off} + 64].try_into().expect(\"a padded block\");\n        let v = unsafe {{ S::load(b) }};");
+            for p in 0..pairs.len() {
+                let _ = writeln!(out, "        let c{p} = unsafe {{ S::classify(v, &LO_{p}, &HI_{p}) }};");
+            }
+        };
+        let mut out = String::new();
+        let fields: String = carries.iter().map(|c| format!("    pub {c}: u64,\n")).collect();
+        let _ = write!(
+            out,
+            "/// A chunk's entry or end state: each carry stage 1 holds from block to block, 0 or 1.\n#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]\npub struct Carries {{\n{fields}}}\n\n/// The lanes `stage1_ends` runs at once: one for each value of the carries.\npub const LANES: usize = {};\n\n/// Lane `l`'s entry: carry `k` is bit `k` of `l`.\npub fn lane_carries(l: usize) -> Carries {{\n    Carries {{\n{}    }}\n}}\n\n/// The lane whose entry is `c`.\npub fn lane_of(c: Carries) -> usize {{\n    {}\n}}\n\n",
+            1usize << carries.len(),
+            carries.iter().enumerate().map(|(k, c)| format!("        {c}: (l >> {k} & 1) as u64,\n")).collect::<String>(),
+            carries.iter().enumerate().map(|(k, c)| format!("(c.{c} as usize) << {k}")).collect::<Vec<_>>().join(" | ")
+        );
+        // Pass 1.
+        let _ = writeln!(
+            out,
+            "/// Pass 1 over blocks `from..to`: each entry's end (entry `l` is `lane_carries(l)`). The block before is read for the\n/// words of the bytes alone it leaves the chunk; each block's lines of the bytes run once, its lines of the carries once\n/// a lane, and a lane whose carries are an earlier lane's at a block's end stops there, its end that lane's. A lane a\n/// value of the carries other than the toggles no other carry reads ({}): those run from 0, and an entry of 1 ends\n/// inverted.\n#[inline(always)]\nunsafe fn stage1_ends<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, from: usize, to: usize) -> [Carries; LANES] {{\n    const RUN: usize = {};",
+            if free_names.is_empty() { "none".to_owned() } else { free_names.iter().map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", ") },
+            1usize << run.len()
+        );
+        head(&mut out);
+        for c in &carries {
+            let _ = writeln!(out, "    let mut c_{c} = [0u64; RUN];");
+        }
+        let _ = writeln!(out, "    for l in 0..RUN {{\n{}    }}\n    let mut met: [Option<usize>; RUN] = [None; RUN];", run.iter().enumerate().map(|(k, c)| format!("        c_{c}[l] = (l >> {k} & 1) as u64;\n")).collect::<String>());
+        load(&mut out);
+        for i in (0..self.nodes.len()).filter(|&i| live[i] && !lane[i]) {
+            line(i, true, &mut out, "        ");
+        }
+        out.push_str("        if warm {\n            continue;\n        }\n        for l in 0..RUN {\n            if met[l].is_some() {\n                continue;\n            }\n");
+        for i in (0..self.nodes.len()).filter(|&i| live[i] && lane[i]) {
+            line(i, true, &mut out, "            ");
+        }
+        let same: Vec<String> = carries.iter().map(|c| format!("c_{c}[k] == c_{c}[l]")).collect();
+        let lane_bits: Vec<String> = carries.iter().enumerate().filter(|(_, c)| run.contains(c)).map(|(k, _)| k).enumerate().map(|(r, k)| format!("(l >> {k} & 1) << {r}")).collect();
+        let _ = writeln!(
+            out,
+            "        }}\n        // A lane whose carries are an earlier lane's: its end is that lane's.\n        for l in 1..RUN {{\n            if met[l].is_none() {{\n                met[l] = (0..l).find(|&k| met[k].is_none() && {});\n            }}\n        }}\n    }}\n    core::array::from_fn(|l| {{\n        let e = lane_carries(l);\n        let mut k = {};\n        while let Some(j) = met[k] {{\n            k = j;\n        }}\n        Carries {{\n{}        }}\n    }})\n}}\n\nrerail_simd8::dispatch! {{\n    pub fn stage1_ends_best(src: &[u8], n: usize, from: usize, to: usize) -> [Carries; LANES] = stage1_ends, on stage1_ends_on;\n}}\n",
+            same.join(" && "),
+            if lane_bits.is_empty() { "0".to_owned() } else { lane_bits.join(" | ") },
+            carries.iter().map(|c| if free_names.contains(c) { format!("            {c}: c_{c}[k] ^ e.{c},\n") } else { format!("            {c}: c_{c}[k],\n") }).collect::<String>()
+        );
+        // Pass 2.
+        out.push_str("/// Pass 2 over blocks `from..to`, from entry `e`: the records into `starts` (as `stage1`'s), whether the chunk refuses,\n/// and its end.\n#[inline(always)]\nunsafe fn stage1_from<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, from: usize, to: usize, e: Carries, starts: &mut Vec<u32>) -> (bool, Carries) {\n");
+        head(&mut out);
+        for c in &carries {
+            let _ = writeln!(out, "    let mut c_{c} = e.{c};");
+        }
+        if self.lookup.is_some() {
+            out.push_str("    let mut prev_input = unsafe { S::splat(0) };\n    let mut error = unsafe { S::splat(0) };\n    let mut prev_incomplete = unsafe { S::splat(0) };\n    let max_value = unsafe { S::load(&MAX_VALUE) };\n");
+        }
+        out.push_str("    let mut errors = 0u64;\n    // Room for a record a byte, and the slack of a block's unconditional writes.\n    starts.reserve(64 * (to - from.min(to)) + 64);\n    let si = starts.as_mut_ptr();\n    let mut count = starts.len();\n    // The block before's records, written at the next block (simdjson's `prev_structurals`).\n    let mut prev_structurals = 0u64;\n");
+        load(&mut out);
+        if let Some(l) = &self.lookup {
+            out.extend(lookup_code(l).lines().map(|x| format!("{}\n", x.strip_prefix("    ").unwrap_or(x))));
+            out.push_str("        if warm {\n            error = unsafe { S::splat(0) };\n        }\n");
+        }
+        for i in (0..self.nodes.len()).filter(|&i| live[i] && !lane[i]) {
+            line(i, false, &mut out, "        ");
+        }
+        out.push_str("        if warm {\n            continue;\n        }\n");
+        for i in (0..self.nodes.len()).filter(|&i| live[i] && lane[i]) {
+            line(i, false, &mut out, "        ");
+        }
+        for i in (0..self.nodes.len()).filter(|&i| live[i]) {
+            let w = format!("v_{}", self.nodes[i].name);
+            for (why, _) in self.sinks.iter().filter(|(_, s)| *s == i) {
+                let _ = writeln!(out, "        // {why}\n        errors |= {w};");
+            }
+            if i == index {
+                let _ = writeln!(out, "        // The block before's records (simdjson's `indexer.write(idx - 64, prev_structurals)`).\n        unsafe {{ write_indexes(si, &mut count, (({off}) as u32).wrapping_sub(64), prev_structurals) }};\n        prev_structurals = {w};");
+            }
+        }
+        let _ = writeln!(out, "    }}\n    // The last block's records.\n    let q = to;\n    unsafe {{ write_indexes(si, &mut count, (({off}) as u32).wrapping_sub(64), prev_structurals) }};\n    // SAFETY: `count` records written, within the room reserved.\n    unsafe {{ starts.set_len(count) }};\n    let mut refused = errors != 0;");
+        for (why, id) in &self.end_sinks {
+            let name = &self.nodes[*id].name;
+            if carried(*id) {
+                let _ = writeln!(out, "    // {why}: the carry out of the file's last block.\n    refused |= to == nw && c_{name} != 0;");
+            } else {
+                let o = if self.prefix.is_some() { "off" } else { "0" };
+                let _ = writeln!(out, "    // {why}: at the file's last byte.\n    refused |= to == nw && n > {o} && v_{name} >> ((n - 1 - {o}) % 64) & 1 != 0;");
+            }
+        }
+        if self.lookup.is_some() {
+            out.push_str("    // The byte-pair errors, and at the file's end a sequence left open.\n    refused |= unsafe { S::nonzero(error) } != 0 || to == nw && unsafe { S::nonzero(prev_incomplete) } != 0;\n");
+        }
+        let _ = writeln!(
+            out,
+            "    (refused, Carries {{\n{}    }})\n}}\n\nrerail_simd8::dispatch! {{\n    pub fn stage1_from_best(src: &[u8], n: usize, from: usize, to: usize, e: Carries, starts: &mut Vec<u32>) -> (bool, Carries) = stage1_from, on stage1_from_on;\n}}\n",
+            carries.iter().map(|c| format!("        {c}: c_{c},\n")).collect::<String>()
+        );
+        let off_of = match &self.prefix {
+            Some(b) => format!("if buf.starts_with(&[{}]) {{ {} }} else {{ 0 }}", b.iter().map(|x| format!("{x:#04x}")).collect::<Vec<_>>().join(", "), b.len()),
+            None => "0".to_owned(),
+        };
+        let _ = writeln!(
+            out,
+            "/// The records of `buf[..n]` from the middle: its blocks in chunks of `blocks`, each chunk's ends from every entry\n/// (pass 1), each chunk's entry the end of the one before, then each chunk's records from its entry (pass 2). Each\n/// pass's chunks are each on their own. The records are `lex`'s.\npub fn lex_chunked(buf: &[u8], n: usize, blocks: usize) -> Lexed {{\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    let blocks = blocks.max(1);\n    let off = {off_of};\n    let nw = (n - off).div_ceil(64);\n    let ends: Vec<[Carries; LANES]> = (0..nw).step_by(blocks).map(|b| stage1_ends_best(buf, n, b, b + blocks)).collect();\n    let mut entry = Carries::default();\n    let entries: Vec<Carries> = ends.iter().map(|e| {{\n        let next = e[lane_of(entry)];\n        std::mem::replace(&mut entry, next)\n    }}).collect();\n    let mut starts: Vec<u32> = Vec::with_capacity(n + 64 + 3);\n    let mut refused = false;\n    for (c, b) in (0..nw).step_by(blocks).enumerate() {{\n        let (r, end) = stage1_from_best(buf, n, b, b + blocks, entries[c], &mut starts);\n        debug_assert_eq!(end, ends[c][lane_of(entries[c])], \"pass 2 ends where pass 1 did\");\n        refused |= r;\n    }}\n    let count = starts.len();\n    starts.extend([n as u32, n as u32, 0]);\n    Lexed {{ starts, count, len: n, refused }}\n}}\n"
+        );
+        out
+    }
+
     /// A local holding `e`'s words: stage 1's (kept), or, made of the regions, its own after them.
     fn val(&mut self, e: &Expr) -> Result<String, String> {
         if !self.regional(e) {
@@ -5428,6 +5640,7 @@ impl Gen<'_> {
             out.push_str("/// The bytes the source has past its end, spaces (simdjson's padding): tier 1 loads each block where it is, and\n/// tier 2 reads the byte at the index's last entries.\npub const PADDING: usize = 64;\n\n");
             out.push_str("/// Tier 1's records, simdjson's stage 1: each token's first byte (its structural index), then `len`, `len` and 0;\n/// their count; the file's length; and whether the file goes to tree-sitter. Tier 2 reads the rest from the bytes.\npub struct Lexed {\n    pub starts: Vec<u32>,\n    pub count: usize,\n    pub len: usize,\n    pub refused: bool,\n}\n\n");
             out.push_str(&self.stage1());
+            out.push_str(&self.stage1_lanes());
             let kept: Vec<&str> = self.nodes.iter().filter(|n| n.kept).map(|n| n.name.as_str()).collect();
             let _ = write!(
                 out,

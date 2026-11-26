@@ -227,6 +227,283 @@ rerail_simd8::dispatch! {
     fn stage1_best(src: &[u8], n: usize) -> Stage1 = stage1, on stage1_on;
 }
 
+/// A chunk's entry or end state: each carry stage 1 holds from block to block, 0 or 1.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Carries {
+    pub m_escaped: u64,
+    pub m_in_string: u64,
+}
+
+/// The lanes `stage1_ends` runs at once: one for each value of the carries.
+pub const LANES: usize = 4;
+
+/// Lane `l`'s entry: carry `k` is bit `k` of `l`.
+pub fn lane_carries(l: usize) -> Carries {
+    Carries {
+        m_escaped: (l >> 0 & 1) as u64,
+        m_in_string: (l >> 1 & 1) as u64,
+    }
+}
+
+/// The lane whose entry is `c`.
+pub fn lane_of(c: Carries) -> usize {
+    (c.m_escaped as usize) << 0 | (c.m_in_string as usize) << 1
+}
+
+/// Pass 1 over blocks `from..to`: each entry's end (entry `l` is `lane_carries(l)`). The block before is read for the
+/// words of the bytes alone it leaves the chunk; each block's lines of the bytes run once, its lines of the carries once
+/// a lane, and a lane whose carries are an earlier lane's at a block's end stops there, its end that lane's. A lane a
+/// value of the carries other than the toggles no other carry reads (`m_in_string`): those run from 0, and an entry of 1 ends
+/// inverted.
+#[inline(always)]
+unsafe fn stage1_ends<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, from: usize, to: usize) -> [Carries; LANES] {
+    const RUN: usize = 2;
+    let off = if src.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };
+    let nw = (n - off).div_ceil(64);
+    let to = to.min(nw);
+    let mut v_m_nonquote_scalar = 0u64;
+    let mut c_m_escaped = [0u64; RUN];
+    let mut c_m_in_string = [0u64; RUN];
+    for l in 0..RUN {
+        c_m_escaped[l] = (l >> 0 & 1) as u64;
+    }
+    let mut met: [Option<usize>; RUN] = [None; RUN];
+    for q in from.saturating_sub(1)..to {
+        // The block before the chunk: the words of the bytes alone it leaves the chunk's first block.
+        let warm = q < from;
+        let b: &[u8; 64] = src[off + 64 * q..off + 64 * q + 64].try_into().expect("a padded block");
+        let v = unsafe { S::load(b) };
+        let c0 = unsafe { S::classify(v, &LO_0, &HI_0) };
+        // class quote
+        let v_m_quote = unsafe { S::eq_mask(v, 0x22) };
+        // class backslash
+        let v_m_backslash = unsafe { S::eq_mask(v, 0x5c) };
+        // class ws
+        let v_m_ws = unsafe { S::to_bitmask(S::test(c0, S::splat(0x03))) };
+        // class control
+        let v_m_control = unsafe { S::to_bitmask(S::test(c0, S::splat(0x04))) };
+        // class op
+        let v_m_op = unsafe { S::to_bitmask(S::test(c0, S::splat(0x38))) };
+        // mask scalar = ~(op | ws)
+        let v_m_scalar = !(v_m_op | v_m_ws);
+        let p_m_nonquote_scalar = v_m_nonquote_scalar;
+        // mask nonquote_scalar = scalar & ~quote
+        v_m_nonquote_scalar = v_m_scalar & !v_m_quote;
+        // mask follows = prev(nonquote_scalar)
+        let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63);
+        if warm {
+            continue;
+        }
+        for l in 0..RUN {
+            if met[l].is_some() {
+                continue;
+            }
+            // mask escaped = escaped(backslash)
+            let v_m_escaped = {
+                    const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
+                    let bs = v_m_backslash;
+                    let potential = bs & !c_m_escaped[l];
+                    let series = ((potential << 1) | ODD).wrapping_sub(potential);
+                    let escape_and_terminal = series ^ ODD;
+                    let escaped = escape_and_terminal ^ (bs | c_m_escaped[l]);
+                    c_m_escaped[l] = (escape_and_terminal & bs) >> 63;
+                    escaped
+                };
+            // mask q = quote & ~escaped
+            let v_m_q = v_m_quote & !v_m_escaped;
+            // in_string: the region `str`'s opener to its closer, `toggle(q)`
+            let v_m_in_string = {
+                    let mut x = v_m_q;
+                    x ^= x << 1;
+                    x ^= x << 2;
+                    x ^= x << 4;
+                    x ^= x << 8;
+                    x ^= x << 16;
+                    x ^= x << 32;
+                    let x = x ^ 0u64.wrapping_sub(c_m_in_string[l]);
+                    c_m_in_string[l] = x >> 63;
+                    x
+                };
+            // mask string_tail = in_string ^ q
+            let v_m_string_tail = (v_m_in_string ^ v_m_q);
+            // mask structural_start = (op | (scalar & ~follows)) & ~string_tail
+            let v_m_structural_start = (v_m_op | v_m_scalar & !v_m_follows) & !v_m_string_tail;
+            // in_string & control
+            let v_t2 = v_m_in_string & v_m_control;
+        }
+        // A lane whose carries are an earlier lane's: its end is that lane's.
+        for l in 1..RUN {
+            if met[l].is_none() {
+                met[l] = (0..l).find(|&k| met[k].is_none() && c_m_escaped[k] == c_m_escaped[l] && c_m_in_string[k] == c_m_in_string[l]);
+            }
+        }
+    }
+    core::array::from_fn(|l| {
+        let e = lane_carries(l);
+        let mut k = (l >> 0 & 1) << 0;
+        while let Some(j) = met[k] {
+            k = j;
+        }
+        Carries {
+            m_escaped: c_m_escaped[k],
+            m_in_string: c_m_in_string[k] ^ e.m_in_string,
+        }
+    })
+}
+
+rerail_simd8::dispatch! {
+    pub fn stage1_ends_best(src: &[u8], n: usize, from: usize, to: usize) -> [Carries; LANES] = stage1_ends, on stage1_ends_on;
+}
+
+/// Pass 2 over blocks `from..to`, from entry `e`: the records into `starts` (as `stage1`'s), whether the chunk refuses,
+/// and its end.
+#[inline(always)]
+unsafe fn stage1_from<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, from: usize, to: usize, e: Carries, starts: &mut Vec<u32>) -> (bool, Carries) {
+    let off = if src.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };
+    let nw = (n - off).div_ceil(64);
+    let to = to.min(nw);
+    let mut v_m_nonquote_scalar = 0u64;
+    let mut c_m_escaped = e.m_escaped;
+    let mut c_m_in_string = e.m_in_string;
+    let mut prev_input = unsafe { S::splat(0) };
+    let mut error = unsafe { S::splat(0) };
+    let mut prev_incomplete = unsafe { S::splat(0) };
+    let max_value = unsafe { S::load(&MAX_VALUE) };
+    let mut errors = 0u64;
+    // Room for a record a byte, and the slack of a block's unconditional writes.
+    starts.reserve(64 * (to - from.min(to)) + 64);
+    let si = starts.as_mut_ptr();
+    let mut count = starts.len();
+    // The block before's records, written at the next block (simdjson's `prev_structurals`).
+    let mut prev_structurals = 0u64;
+    for q in from.saturating_sub(1)..to {
+        // The block before the chunk: the words of the bytes alone it leaves the chunk's first block.
+        let warm = q < from;
+        let b: &[u8; 64] = src[off + 64 * q..off + 64 * q + 64].try_into().expect("a padded block");
+        let v = unsafe { S::load(b) };
+        let c0 = unsafe { S::classify(v, &LO_0, &HI_0) };
+        // The byte-pair errors, as simdjson's `utf8_checker`: a block of ASCII holds one only where the block before left a
+        // sequence open.
+        if unsafe { S::to_bitmask(v) } == 0 {
+            error = unsafe { S::or(error, prev_incomplete) };
+        } else {
+            // The byte before's nibbles and this byte's high nibble, each rule a bit (`check_special_cases`).
+            let p1 = unsafe { S::prev(v, prev_input, 1) };
+            let sc = unsafe { S::and(S::and(S::lookup_16(S::high_nibbles(p1), &BYTE_1_HIGH), S::lookup_16(S::low_nibbles(p1), &BYTE_1_LOW)), S::lookup_16(S::high_nibbles(v), &BYTE_2_HIGH)) };
+            // A continuation needed 2 or 3 bytes after a lead byte (`must_be_2_3_continuation`), against two in a row (bit 0x80).
+            let must23 = unsafe { S::and(S::or(S::ge(S::prev(v, prev_input, 2), 0xe0), S::ge(S::prev(v, prev_input, 3), 0xf0)), S::splat(0x80)) };
+            error = unsafe { S::or(error, S::xor(sc, must23)) };
+            // A sequence the block's last bytes leave open (`is_incomplete`): the bytes above `MAX_VALUE`'s.
+            prev_incomplete = unsafe { S::gt_bits(v, max_value) };
+        }
+        prev_input = v;
+        if warm {
+            error = unsafe { S::splat(0) };
+        }
+        // class quote
+        let v_m_quote = unsafe { S::eq_mask(v, 0x22) };
+        // class backslash
+        let v_m_backslash = unsafe { S::eq_mask(v, 0x5c) };
+        // class ws
+        let v_m_ws = unsafe { S::to_bitmask(S::test(c0, S::splat(0x03))) };
+        // class control
+        let v_m_control = unsafe { S::to_bitmask(S::test(c0, S::splat(0x04))) };
+        // class op
+        let v_m_op = unsafe { S::to_bitmask(S::test(c0, S::splat(0x38))) };
+        // mask scalar = ~(op | ws)
+        let v_m_scalar = !(v_m_op | v_m_ws);
+        let p_m_nonquote_scalar = v_m_nonquote_scalar;
+        // mask nonquote_scalar = scalar & ~quote
+        v_m_nonquote_scalar = v_m_scalar & !v_m_quote;
+        // mask follows = prev(nonquote_scalar)
+        let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63);
+        if warm {
+            continue;
+        }
+        // mask escaped = escaped(backslash)
+        let v_m_escaped = {
+                const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
+                let bs = v_m_backslash;
+                let potential = bs & !c_m_escaped;
+                let series = ((potential << 1) | ODD).wrapping_sub(potential);
+                let escape_and_terminal = series ^ ODD;
+                let escaped = escape_and_terminal ^ (bs | c_m_escaped);
+                c_m_escaped = (escape_and_terminal & bs) >> 63;
+                escaped
+            };
+        // mask q = quote & ~escaped
+        let v_m_q = v_m_quote & !v_m_escaped;
+        // in_string: the region `str`'s opener to its closer, `toggle(q)`
+        let v_m_in_string = {
+                let mut x = v_m_q;
+                x ^= x << 1;
+                x ^= x << 2;
+                x ^= x << 4;
+                x ^= x << 8;
+                x ^= x << 16;
+                x ^= x << 32;
+                let x = x ^ 0u64.wrapping_sub(c_m_in_string);
+                c_m_in_string = x >> 63;
+                x
+            };
+        // mask string_tail = in_string ^ q
+        let v_m_string_tail = (v_m_in_string ^ v_m_q);
+        // mask structural_start = (op | (scalar & ~follows)) & ~string_tail
+        let v_m_structural_start = (v_m_op | v_m_scalar & !v_m_follows) & !v_m_string_tail;
+        // in_string & control
+        let v_t2 = v_m_in_string & v_m_control;
+        // The block before's records (simdjson's `indexer.write(idx - 64, prev_structurals)`).
+        unsafe { write_indexes(si, &mut count, ((off + 64 * q) as u32).wrapping_sub(64), prev_structurals) };
+        prev_structurals = v_m_structural_start;
+        // a control byte in a string
+        errors |= v_t2;
+    }
+    // The last block's records.
+    let q = to;
+    unsafe { write_indexes(si, &mut count, ((off + 64 * q) as u32).wrapping_sub(64), prev_structurals) };
+    // SAFETY: `count` records written, within the room reserved.
+    unsafe { starts.set_len(count) };
+    let mut refused = errors != 0;
+    // a string open at the end of the file: the carry out of the file's last block.
+    refused |= to == nw && c_m_in_string != 0;
+    // The byte-pair errors, and at the file's end a sequence left open.
+    refused |= unsafe { S::nonzero(error) } != 0 || to == nw && unsafe { S::nonzero(prev_incomplete) } != 0;
+    (refused, Carries {
+        m_escaped: c_m_escaped,
+        m_in_string: c_m_in_string,
+    })
+}
+
+rerail_simd8::dispatch! {
+    pub fn stage1_from_best(src: &[u8], n: usize, from: usize, to: usize, e: Carries, starts: &mut Vec<u32>) -> (bool, Carries) = stage1_from, on stage1_from_on;
+}
+
+/// The records of `buf[..n]` from the middle: its blocks in chunks of `blocks`, each chunk's ends from every entry
+/// (pass 1), each chunk's entry the end of the one before, then each chunk's records from its entry (pass 2). Each
+/// pass's chunks are each on their own. The records are `lex`'s.
+pub fn lex_chunked(buf: &[u8], n: usize, blocks: usize) -> Lexed {
+    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b"        "), "the source padded with spaces");
+    let blocks = blocks.max(1);
+    let off = if buf.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };
+    let nw = (n - off).div_ceil(64);
+    let ends: Vec<[Carries; LANES]> = (0..nw).step_by(blocks).map(|b| stage1_ends_best(buf, n, b, b + blocks)).collect();
+    let mut entry = Carries::default();
+    let entries: Vec<Carries> = ends.iter().map(|e| {
+        let next = e[lane_of(entry)];
+        std::mem::replace(&mut entry, next)
+    }).collect();
+    let mut starts: Vec<u32> = Vec::with_capacity(n + 64 + 3);
+    let mut refused = false;
+    for (c, b) in (0..nw).step_by(blocks).enumerate() {
+        let (r, end) = stage1_from_best(buf, n, b, b + blocks, entries[c], &mut starts);
+        debug_assert_eq!(end, ends[c][lane_of(entries[c])], "pass 2 ends where pass 1 did");
+        refused |= r;
+    }
+    let count = starts.len();
+    starts.extend([n as u32, n as u32, 0]);
+    Lexed { starts, count, len: n, refused }
+}
+
 /// The records of `buf[..n]`, its `PADDING` bytes after it spaces.
 pub fn lex(buf: &[u8], n: usize) -> Lexed {
     assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b"        "), "the source padded with spaces");
