@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -53,11 +53,18 @@ const AFTER_ANSWER_MS = 60_000;
 /** `rerail status`'s exit codes when no daemon answers it (docs/reference.md): 3 when none runs, 4 when it does not answer. */
 const NO_ANSWER = [3, 4];
 
-/** The pid the daemon's state file names, when the daemon has written it. */
+/**
+ * The pid the daemon's state file names, or `undefined` when the file is not written, is gone or cannot be read or
+ * parsed. Never throws, so the clean-up's `daemon stop` and `endProcess` still run and the case's own failure stays the
+ * one reported.
+ */
 async function recordedPid(home: string): Promise<number | undefined> {
-  const state = join(home, "daemon.json");
-  // Test boundary: the daemon's own record of itself.
-  return existsSync(state) ? (JSON.parse(await readFile(state, "utf8")) as { pid: number }).pid : undefined;
+  try {
+    // Test boundary: the daemon's own record of itself.
+    return (JSON.parse(await readFile(join(home, "daemon.json"), "utf8")) as { pid: number }).pid;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
