@@ -191,8 +191,9 @@ them.
    (`moves::word_pattern`). Kotlin's rows list them by class: the hard keywords that start nothing, the expression's,
    the declaration's, the loops'; the punctuation's equality operators together and those that may start an
    expression last. `as_kwi` is `CLASS..=DO | PACKAGE`; the statement's start `THIS..=DO | LPAREN..=AT | BY..=OUT |
-   SEALED..=ENUM`. No word test in tier 2 lists more than three single words. rr's code differs in its numbers and
-   its ranges' ends.
+   SEALED..=ENUM`. No word test in tier 2 lists more than two keywords: the two that list four or more words are
+   punctuation's (`IN | AT | LPAREN | FILE`, a postfix's `DOT | BANG_BANG | LPAREN | LBRACK | PLUS_PLUS..=COLON_COLON`).
+   rr's code differs in its numbers and its ranges' ends.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
