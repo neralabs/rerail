@@ -52,6 +52,7 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `{php,sql}/matcher/arguments/` | `matcher` | argument slots (`matcher/arguments.rs`; SQL's, PostgreSQL's binding, `matcher/arguments_sql.rs`) |
 | `{rust,sql,vue}/language/` | `language` | measurements that choose a planned language's registry entry: candidate grammars (`grammar/`, T1), Rust's capability census (`feasibility/`), Vue's embedded view (`view/`) |
 | `host/benchmark/` | — | the query-parity benchmark's semantic catalogs (`benchmark/query-parity.ts`); `steer-strategy/`, the steer-strategy benchmark's task project and prompt (`benchmark/steer-strategy.ts`) |
+| `host/ci-shards/` | — | the test files CI selected for a change heavy by time, for how many unit shards a selection gets (`test/scripts/check/test-selection.test.mjs`) |
 | `host/code-rule-dsl/` | — | engine-contract rule documents (`test/native-code-rule-dsl-runtime.test.ts`) |
 | `host/constraint-code-rules/` | — | constraint examples (`test/engine/code-rule/code-rule-dsl-constraints.test.ts`) |
 | `host/database/` | — | the database schema at the migration baseline (`test/engine/storage/database-baseline.test.ts`) |

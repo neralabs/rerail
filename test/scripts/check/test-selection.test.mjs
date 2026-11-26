@@ -1,9 +1,13 @@
 // scripts/check/ci/test-selection.mjs: which unit test files a change can affect, and the shards that run them.
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { engineSources, isEngineInput } from "../../../scripts/check/ci/engine-inputs.mjs";
-import { affected, namedPaths, names, outputs, seen, select, shards, stringLiterals } from "../../../scripts/check/ci/test-selection.mjs";
+import { affected, namedPaths, names, outputs, SHARDS, seen, select, shards, stringLiterals } from "../../../scripts/check/ci/test-selection.mjs";
+import { fixturesPath } from "../../support/oracles.ts";
+import { assignShards, platformTimes, runMs } from "../../support/shards/shard-split.ts";
+import { UNIT_TEST_TIMES } from "../../support/shards/unit-test-times.generated.ts";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -86,10 +90,58 @@ describe("affected", () => {
 });
 
 describe("shards and outputs", () => {
-  it("run as many shards as the selection's share needs, at least one", () => {
-    expect(shards(449, 449, 5)).toEqual([1, 2, 3, 4, 5]);
-    expect(shards(100, 449, 5)).toEqual([1, 2]);
-    expect(shards(0, 449, 5)).toEqual([1]);
+  // Ten files, 1,000 ms on each platform: one heavy file and nine light ones.
+  const light = ["l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l9"].map((name) => `${name}.test.ts`);
+  const files = { "h.test.ts": 910, ...Object.fromEntries(light.map((path) => [path, 10])) };
+  const TIMES = { linux: { firstShardExtraMs: 0, files }, win32: { firstShardExtraMs: 0, files } };
+  // Each unit job's platform in the times, and its output.
+  const JOBS = [
+    ["linux", "linux", "unit-shards"],
+    ["windows", "win32", "windows-shards"],
+  ];
+
+  it("run as many shards as the larger of the selection's share of the files and of the job's time needs, at least one", () => {
+    expect(shards("windows", ["h.test.ts"], 10, TIMES)).toEqual([1, 2, 3, 4, 5]);
+    expect(shards("linux", ["h.test.ts"], 10, TIMES)).toEqual([1, 2, 3]);
+    expect(shards("windows", light.slice(0, 5), 10, TIMES)).toEqual([1, 2, 3]);
+    expect(shards("linux", light.slice(0, 5), 10, TIMES)).toEqual([1, 2]);
+    expect(shards("windows", [], 10, TIMES)).toEqual([1]);
+    expect(shards("windows", Object.keys(files), 10, TIMES)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  // The 186 of 552 test files CI selected for a change to the daemon's tests: a third of the files and three fifths of
+  // Windows' time. Counted by the files, two Windows shards each held half of it, and one was cancelled at 15 minutes.
+  it("hold no more time in a shard of a selection heavy by time than in a shard of every file", () => {
+    const heavy = readFileSync(fixturesPath("host", "ci-shards", "heavy-selection.txt"), "utf8").split("\n").filter(Boolean);
+    for (const [job, platform, output] of JOBS) {
+      const times = platformTimes(UNIT_TEST_TIMES, platform);
+      const count = JSON.parse(outputs({ unit: "some", tests: heavy, all: 552, windowsExtra: false })[output]).length;
+      const wholeShard = runMs(Object.keys(times.files), times) / SHARDS[job];
+      expect.soft(runMs(heavy, times) / count, `${job}: ${count} shards`).toBeLessThanOrEqual(wholeShard);
+    }
+  });
+
+  // As the sequencer splits it, a shard of the selection holds no more than a shard of every file plus one file: the
+  // split is even up to the last file it places.
+  it("hold, in each shard of a selection the sequencer splits, at most a whole run's shard and one file", () => {
+    for (const [job, platform, output] of JOBS) {
+      const times = platformTimes(UNIT_TEST_TIMES, platform);
+      const byPath = Object.keys(times.files).sort();
+      const byTime = [...byPath].sort((a, b) => times.files[b] - times.files[a]);
+      const tenth = Math.ceil(byPath.length / 10);
+      const selections = [
+        ...[1, 2, 5, 10, 20, 50, 100, 200, 300, 400].flatMap((k) => [byTime.slice(0, k), byTime.slice(-k)]),
+        ...Array.from({ length: 10 }, (_, i) => byPath.slice(i * tenth, (i + 1) * tenth)),
+      ];
+      const wholeShard = runMs(byPath, times) / SHARDS[job];
+      for (const selection of selections) {
+        const count = JSON.parse(outputs({ unit: "some", tests: selection, all: byPath.length, windowsExtra: false })[output]).length;
+        const loads = Array.from({ length: count }, (_, shard) => (shard === 0 ? times.firstShardExtraMs : 0));
+        for (const [path, shard] of assignShards(selection, times, count)) loads[shard] += times.files[path];
+        const heaviest = Math.max(...selection.map((path) => times.files[path]));
+        expect(Math.max(...loads), `${job}: ${selection.length} files on ${count} shards`).toBeLessThanOrEqual(wholeShard + heaviest);
+      }
+    }
   });
 
   it("run no unit shard for none, and Windows' first shard when its hook test is selected", () => {
