@@ -1356,3 +1356,6 @@ Checks (Relax, local, 76 of 76):
 - The earlier B4 checks hold over slab rooms, with sealed in place of frozen.
 - The shape script refuses a per-document block for a document, and a documents' slab made otherwise than by the
   block policy, as the device may read it.
+
+**Item 4 kept** (the user's answer, 2026-11-26): sources and tapes as rooms of shared slabs, as built in
+`4b631818bc`.
