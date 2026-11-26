@@ -29,7 +29,7 @@ use rerail_blocks::layer::{
     parts_spec, rows_spec, sketch_room,
 };
 use rerail_blocks::order::{FENCE, print_vals};
-use rerail_blocks::relation::{self, Relation, freeze_layer, layer_sketches, row_digest};
+use rerail_blocks::relation::{self, Relation, layer_write, row_digest};
 use rerail_blocks::scratch::Scratch;
 use rerail_blocks::sketch::Sketch;
 use std::cmp::Ordering;
@@ -195,6 +195,10 @@ struct Work {
     sgn: usize,
     kid: usize,
     ks: usize,
+    ks2: usize,
+    abefore: usize,
+    st: usize,
+    pstart: usize,
     len: usize,
 }
 
@@ -207,6 +211,12 @@ const W_NADD: usize = 24;
 const W_NGONE: usize = 32;
 const W_REFUSED: usize = 40;
 const W_BLOOM: usize = 48;
+/// The kills' sort's width and array; the scan's carry (rows out, rows added); the partitions numbered so far.
+const W_KWIDTH: usize = W_BLOOM + 8 * MAX_IX;
+const W_KWHICH: usize = W_KWIDTH + 8;
+const W_SCAN: usize = W_KWHICH + 8;
+const W_NPART: usize = W_SCAN + 16;
+const W_END: usize = W_NPART + 8;
 
 fn round64(n: usize) -> usize {
     n.div_ceil(64) * 64
@@ -214,7 +224,7 @@ fn round64(n: usize) -> usize {
 
 fn work(cap: usize) -> Work {
     let base = round64(BODY_AT + LAYER_BODY);
-    let mut at = round64(W_BLOOM + 8 * MAX_IX);
+    let mut at = round64(W_END);
     let mut next = |bytes: usize| {
         let a = at;
         at = round64(at + bytes);
@@ -232,6 +242,10 @@ fn work(cap: usize) -> Work {
         sgn: next(4 * cap),
         kid: next(4 * cap),
         ks: next(4 * cap),
+        ks2: next(4 * cap),
+        abefore: next(4 * (cap + 1)),
+        st: next(4 * cap),
+        pstart: next(4 * (cap + 1)),
         len: 0,
     };
     Work { len: at, ..w }
@@ -310,8 +324,9 @@ fn below_chain<'t>(table: &'t Table<'t>, below: u32, arity: usize) -> relation::
     relation::View::chain(table, (below != NONE).then_some(below), arity).expect("the layers below, reached by reference")
 }
 
-fn scratch_for(n: usize, a: usize) -> Scratch {
-    Scratch::anon(((64 << 20) + n * (a + 8) * 64).next_multiple_of(rerail_blocks::block::PAGE))
+/// A call's own scratch for an index of `n` rows: a bitmap of a key's range (2^24 bits at most) and a word a row.
+fn scratch_for(n: usize) -> Scratch {
+    Scratch::anon(((4 << 20) + n * 64).next_multiple_of(rerail_blocks::block::PAGE))
 }
 
 // ---- sort -----------------------------------------------------------------------------------------------------------
@@ -391,7 +406,7 @@ fn segments<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     }
 }
 
-// ---- the rows out: count, scan (the layer opened), place -------------------------------------------------------------
+// ---- the rows out: count, scan, the layer opened, place ------------------------------------------------------------
 
 fn count<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     let v = view::<O>(c);
@@ -410,41 +425,75 @@ fn count<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     words_mut::<u64>(v.work, ac, ch + 1)[t.items()].copy_from_slice(&counts.iter().map(|x| x.1).collect::<Vec<_>>());
 }
 
-/// The counts' prefix sums, and the layer opened in its block: its three relations made (the layer continuing the one
-/// below), its added rows claimed, its header laid out, open.
-fn scan<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+/// The counts' exclusive prefix sums, a chunk an item, in order (each item adds its chunk's counts to the carry the
+/// item before it left); the last item, past the last chunk, writes the totals: rows out, added and gone.
+fn scan<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    let v = view::<O>(c);
+    let ch = chunks(v.src.n()) as usize;
+    for k in t.items() {
+        let carry = [v.word(W_SCAN), v.word(W_SCAN + 8)];
+        if k == ch {
+            words_mut::<u64>(v.work, v.w.ccount, ch + 1)[ch] = carry[0];
+            words_mut::<u64>(v.work, v.w.acount, ch + 1)[ch] = carry[1];
+            set_word::<u64>(v.work, W_NOUT, carry[0]);
+            set_word::<u64>(v.work, W_NADD, carry[1]);
+            set_word::<u64>(v.work, W_NGONE, carry[0] - carry[1]);
+            words_mut::<u32>(v.work, v.w.abefore, carry[0] as usize + 1)[carry[0] as usize] = carry[1] as u32;
+            continue;
+        }
+        let mut next = carry;
+        for (j, at) in [v.w.ccount, v.w.acount].into_iter().enumerate() {
+            let x = &mut words_mut::<u64>(v.work, at, ch + 1)[k];
+            next[j] += *x;
+            *x = carry[j];
+        }
+        set_word::<u64>(v.work, W_SCAN, next[0]);
+        set_word::<u64>(v.work, W_SCAN + 8, next[1]);
+    }
+}
+
+fn scan_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
+    src_chunks::<O>(c) + 1
+}
+
+/// The layer opened in its block (one item): its three relations made (the layer continuing the one below), the
+/// freeze's directories laid out (`layer_write::open`), its added rows and its kills by partition claimed, its header
+/// laid out, open.
+fn open<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+    if refused_so_far::<O>(c) {
+        return;
+    }
     let table = c.table;
     let (n_out, n_add, shape, below) = {
         let v = view::<O>(c);
-        let ch = chunks(v.src.n()) as usize;
-        let mut sums = [0u64; 2];
-        for (k, at) in [v.w.ccount, v.w.acount].into_iter().enumerate() {
-            for x in words_mut::<u64>(v.work, at, ch + 1).iter_mut() {
-                let y = *x;
-                *x = sums[k];
-                sums[k] += y;
-            }
-        }
-        set_word::<u64>(v.work, W_NOUT, sums[0]);
-        set_word::<u64>(v.work, W_NADD, sums[1]);
-        set_word::<u64>(v.work, W_NGONE, sums[0] - sums[1]);
-        (sums[0] as usize, sums[1] as usize, v.src.shape(), v.below)
+        (v.n_out(), v.word(W_NADD) as usize, v.src.shape(), v.below)
     };
+    let n_gone = n_out - n_add;
     let below_layer = (below != NONE).then(|| (below, Layer::new(table.block(below).expect("the layer below, reached by reference")).expect("committed")));
     let pin = c.pin_mut(OUT);
     let block = Arc::clone(pin.block());
-    let rows = Relation::try_continue_far(&block, &rows_spec(&shape, n_add), below_layer.map(|(id, l)| (id, l.head.rows as usize, l.rows))).expect("room for the layer");
+    let rs = rows_spec(&shape, n_add);
+    let rows = Relation::try_continue_far(&block, &rs, below_layer.map(|(id, l)| (id, l.head.rows as usize, l.rows))).expect("room for the layer");
     let parts = Relation::try_create(&block, &parts_spec(n_out), None).expect("room for the layer's partitions");
-    let gone = Relation::try_create(&block, &gone_spec(n_out - n_add), None).expect("room for the layer's kills by partition");
+    let gone = Relation::try_create(&block, &gone_spec(n_gone), None).expect("room for the layer's kills by partition");
+    assert!(layer_write::open(pin, rows, &rs, n_gone, true), "room for the layer's freeze");
+    assert!(layer_write::open(pin, parts, &parts_spec(n_out), 0, false), "room for the partitions' freeze");
+    assert!(layer_write::open(pin, gone, &gone_spec(n_gone), 0, false), "room for the kills' freeze");
     rows.claim_own(pin, n_add as u32).expect("room for the layer's rows");
+    gone.claim_own(pin, n_gone as u32).expect("room for the layer's kills by partition");
     let at = |r: &Relation| block.offset_of(std::ptr::from_ref(r));
     let head = LayerHead::open(shape, at(rows), at(parts), at(gone));
     set_word(pin.bytes_mut().expect("a write pin"), BODY_AT, head);
 }
 
-/// Each row out's source item, and its added rows written: each one's place is the count of rows added before it.
+/// Each row out's source item and sign, and how many rows added come before it; its added rows written: each one's
+/// place is the count of rows added before it.
 fn place<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
-    // copy: not block data (this tile's placements: row out, its source item, and its place among the rows added)
+    if refused_so_far::<O>(c) {
+        return;
+    }
+    // copy: not block data (this tile's placements: row out, its source item, the rows added before it, and whether it
+    // is added)
     let mut placed = Vec::new();
     {
         let v = view::<O>(c);
@@ -456,21 +505,25 @@ fn place<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
             let (mut o, mut a) = (oc[k] as usize, ac[k] as usize);
             for i in k * CHUNK..((k + 1) * CHUNK).min(n) {
                 if seg[i] != 0 {
-                    placed.push((o, perm[i], (seg[i] > 0).then_some(a)));
+                    placed.push((o, perm[i], a, seg[i] > 0));
                     o += 1;
                     a += usize::from(seg[i] > 0);
                 }
             }
         }
         let n_out = v.n_out();
-        let (net_at, sgn_at) = (v.w.net, v.w.sgn);
+        let (net_at, sgn_at, ab_at) = (v.w.net, v.w.sgn, v.w.abefore);
         let net = words_mut::<u32>(v.work, net_at, n_out.max(1));
-        for &(o, src, _) in &placed {
+        for &(o, src, _, _) in &placed {
             net[o] = src;
         }
         let sgn = words_mut::<i32>(v.work, sgn_at, n_out.max(1));
-        for &(o, _, add) in &placed {
-            sgn[o] = if add.is_some() { 1 } else { -1 };
+        for &(o, _, _, add) in &placed {
+            sgn[o] = if add { 1 } else { -1 };
+        }
+        let ab = words_mut::<u32>(v.work, ab_at, n_out + 1);
+        for &(o, _, a, _) in &placed {
+            ab[o] = a as u32;
         }
     }
     let (block, head) = out_block(c);
@@ -479,8 +532,8 @@ fn place<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     let (sb, pin) = c.read_and_pin(SRC, OUT);
     let src = O::src(sb, table, params);
     let a = head.shape.arity();
-    for &(_, i, at) in &placed {
-        if let Some(at) = at {
+    for &(_, i, at, add) in &placed {
+        if add {
             for col in 0..a {
                 rows.put_own(pin, at as u32, col, src.get(i as usize, col));
             }
@@ -488,10 +541,14 @@ fn place<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     }
 }
 
-// ---- kills: a batched search of the state below ---------------------------------------------------------------------
+// ---- kills: a batched search of the state below, then sorted ------------------------------------------------------
 
 fn n_out<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
     work_word::<O>(c, W_NOUT) as u32
+}
+
+fn n_gone<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
+    work_word::<O>(c, W_NGONE) as u32
 }
 
 fn kills<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
@@ -529,90 +586,253 @@ fn kills<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     }
 }
 
-/// The kills, ascending: the layer's change.
-fn ksort<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
-    let v = view::<O>(c);
-    if v.word(W_REFUSED) != 0 {
+/// The kills' sort, first phase: each chunk of the rows out's kill ids (none for a row added: `NONE`, sorted last)
+/// into `ks`, sorted by itself.
+fn ksort<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    if refused_so_far::<O>(c) {
         return;
     }
-    let n_out = v.n_out();
-    let kid: &[u32] = words(v.work, v.w.kid, n_out.max(1));
-    let mut ks: Vec<u32> = kid[..n_out].iter().copied().filter(|&k| k != NONE).collect(); // copy: not block data (the kills, sorted here)
-    ks.sort_unstable();
-    let at = v.w.ks;
-    words_mut::<u32>(v.work, at, ks.len().max(1))[..ks.len()].copy_from_slice(&ks);
+    let v = view::<O>(c);
+    let n = v.n_out();
+    set_word::<u64>(v.work, W_KWIDTH, CHUNK as u64);
+    set_word::<u64>(v.work, W_KWHICH, 0);
+    let (kid, ks) = (v.w.kid, v.w.ks);
+    let (lo, rest) = v.work.split_at_mut(ks);
+    let src: &[u32] = words(lo, kid, n.max(1));
+    let dst = words_mut::<u32>(rest, 0, n.max(1));
+    for k in t.items() {
+        let r = k * CHUNK..((k + 1) * CHUNK).min(n);
+        dst[r.clone()].copy_from_slice(&src[r]);
+    }
+    sort_chunks(&mut dst[..n], t, |x, y| x.cmp(&y));
 }
 
-// ---- the layer frozen where it lies -----------------------------------------------------------------------------------
+fn kpass_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
+    if refused_so_far::<O>(c) {
+        return 0;
+    }
+    let n = n_out::<O>(c) as usize;
+    let width = work_word::<O>(c, W_KWIDTH) as usize;
+    if more(n, width) { pairs(n, width) } else { 0 }
+}
 
-/// The layer's freeze (`relation::freeze_layer`): its order, its indexes, its change.
+/// A merge pass of the kills' sort: pairs of runs, between `ks` and `ks2`.
+fn kpass<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    let v = view::<O>(c);
+    let (n, width, which) = (v.n_out(), v.word(W_KWIDTH) as usize, v.word(W_KWHICH));
+    let (a, b) = v.work[v.w.ks..].split_at_mut(v.w.ks2 - v.w.ks);
+    let (a, b) = (words_mut::<u32>(a, 0, n), words_mut::<u32>(b, 0, n));
+    let cmp = |x: u32, y: u32| x.cmp(&y);
+    if which == 0 { merge_pairs(a, b, t, width, cmp) } else { merge_pairs(b, a, t, width, cmp) }
+}
+
+fn kpass_next<O: Op>(c: &mut Ctx<'_, '_, '_>) -> bool {
+    let v = view::<O>(c);
+    let n = v.n_out();
+    let width = v.word(W_KWIDTH) as usize;
+    if !more(n, width) {
+        return false;
+    }
+    set_word::<u64>(v.work, W_KWIDTH, 2 * width as u64);
+    set_word::<u64>(v.work, W_KWHICH, 1 - v.word(W_KWHICH));
+    more(n, 2 * width)
+}
+
+/// The sorted kills into the layer's change, a chunk an item: its first `ngone` (the rest are `NONE`).
+fn kplace<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    if refused_so_far::<O>(c) {
+        return;
+    }
+    let (lo, hi) = (t.lo as usize * CHUNK, t.hi as usize * CHUNK);
+    let tile: Vec<u32> = {
+        let v = view::<O>(c);
+        let ng = v.word(W_NGONE) as usize;
+        let at = if v.word(W_KWHICH) == 0 { v.w.ks } else { v.w.ks2 };
+        let sorted: &[u32] = words(v.work, at, ng.max(1));
+        sorted[lo.min(ng)..hi.min(ng)].to_vec() // copy: not block data (this tile's kills, between two places in one block)
+    };
+    let (block, head) = out_block(c);
+    let rows = rel(&block, head.rows);
+    let ks = layer_write::kills_mut(c.pin_mut(OUT), rows);
+    ks[lo..lo + tile.len()].copy_from_slice(&tile);
+}
+
+fn kplace_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
+    chunks(n_gone::<O>(c) as usize)
+}
+
+// ---- the partitions' change: a partition an item ------------------------------------------------------------------
+
+/// Row out `o`'s partition: its source item's value in the partition column (0 without one).
+fn part_of(src: &Src<'_>, net: &[u32], part: Option<usize>, o: usize) -> i64 {
+    part.map_or(0, |p| src.get(net[o] as usize, p))
+}
+
+/// Whether each row out starts a partition (the rows out lie in the canonical order, the partition first).
+fn pstarts<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    if refused_so_far::<O>(c) {
+        return;
+    }
+    let v = view::<O>(c);
+    let n = v.n_out();
+    let part = v.src.shape().partition();
+    let net: &[u32] = words(v.work, v.w.net, n.max(1));
+    // copy: not block data (this tile's flags)
+    let flags: Vec<u32> = t.items().map(|o| u32::from(o == 0 || part_of(&v.src, net, part, o) != part_of(&v.src, net, part, o - 1))).collect();
+    words_mut::<u32>(v.work, v.w.st, n.max(1))[t.items()].copy_from_slice(&flags);
+}
+
+/// The partitions' starts, a chunk of rows out an item, in order (each item numbers its chunk's starts after the carry
+/// the item before it left); the last item writes the end and claims a row of `parts` a partition.
+fn pscan<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    if refused_so_far::<O>(c) {
+        return;
+    }
+    let last = {
+        let v = view::<O>(c);
+        let n = v.n_out();
+        let ch = chunks(n) as usize;
+        let mut np = v.word(W_NPART) as usize;
+        let st: Vec<u32> = words::<u32>(v.work, v.w.st, n.max(1)).to_vec(); // copy: not block data (the flags, read beside the starts)
+        let ps = words_mut::<u32>(v.work, v.w.pstart, n + 1);
+        for k in t.items() {
+            for (o, &s) in st.iter().enumerate().take(((k + 1) * CHUNK).min(n)).skip(k * CHUNK) {
+                if s != 0 {
+                    ps[np] = o as u32;
+                    np += 1;
+                }
+            }
+        }
+        if t.items().contains(&(ch - 1)) {
+            ps[np] = n as u32;
+        }
+        set_word::<u64>(v.work, W_NPART, np as u64);
+        t.items().contains(&(ch - 1)).then_some(np)
+    };
+    if let Some(np) = last {
+        let (block, head) = out_block(c);
+        rel(&block, head.parts).claim_own(c.pin_mut(OUT), np as u32).expect("room for the partitions");
+    }
+}
+
+fn pscan_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
+    if refused_so_far::<O>(c) { 0 } else { chunks(n_out::<O>(c) as usize) }
+}
+
+fn parts_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
+    if refused_so_far::<O>(c) { 0 } else { work_word::<O>(c, W_NPART) as u32 }
+}
+
+/// Partition `p`'s change (P§11.2's partition index), an item each: `parts(part, digest, added, gone, first,
+/// kills_at)`, and its kills, ascending, at `kills_at` of `gone(part, id)`. Its rows out are a range (`pscan`'s); its
+/// own rows are `first .. first + added` of the layer's, its kills `kills_at .. kills_at + gone` of `gone`.
+fn parts<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    // copy: not block data (this tile's partitions' entries and kills, written below)
+    let mut entries: Vec<(u32, [i64; 6], Vec<u32>)> = Vec::new();
+    {
+        let v = view::<O>(c);
+        let n = v.n_out();
+        let shape = v.src.shape();
+        let a = shape.arity();
+        let (net, sgn, kid): (&[u32], &[i32], &[u32]) = (words(v.work, v.w.net, n.max(1)), words(v.work, v.w.sgn, n.max(1)), words(v.work, v.w.kid, n.max(1)));
+        let ab: &[u32] = words(v.work, v.w.abefore, n + 1);
+        let ps: &[u32] = words(v.work, v.w.pstart, n + 1);
+        for p in t.items() {
+            let (s, e) = (ps[p] as usize, ps[p + 1] as usize);
+            let first = ab[s];
+            let added = ab[e] - first;
+            let gone = (e - s) as u32 - added;
+            let mut digest = 0u64;
+            let mut ids = Vec::with_capacity(gone as usize); // copy: derived (the partition's kills, written below)
+            for o in s..e {
+                let d = row_digest((0..a).map(|col| v.src.get(net[o] as usize, col)));
+                if sgn[o] > 0 {
+                    digest = digest.wrapping_add(d);
+                } else {
+                    digest = digest.wrapping_sub(d);
+                    ids.push(kid[o]);
+                }
+            }
+            ids.sort_unstable();
+            let part = part_of(&v.src, net, shape.partition(), s);
+            entries.push((p as u32, [part, digest as i64, i64::from(added), i64::from(gone), i64::from(first), (s as u32 - first).into()], ids));
+        }
+    }
+    let (block, head) = out_block(c);
+    let (pr, gr) = (rel(&block, head.parts), rel(&block, head.gone));
+    let pin = c.pin_mut(OUT);
+    for (p, e, ids) in entries {
+        for (col, v) in e.into_iter().enumerate() {
+            pr.put_own(pin, p, col, v);
+        }
+        for (j, id) in ids.into_iter().enumerate() {
+            gr.put_own(pin, e[5] as u32 + j as u32, 0, e[0]);
+            gr.put_own(pin, e[5] as u32 + j as u32, 1, i64::from(id));
+        }
+    }
+}
+
+// ---- the layer frozen where it lies: ranges, indexes, the freeze ---------------------------------------------------
+
+/// The columns whose ranges `stats` takes: the layer's rows', then `parts`' six, then `gone`'s two.
+const PARTS_COLS: usize = 6;
+const GONE_COLS: usize = 2;
+
+fn stats_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
+    (O::src(c.read(SRC), c.table, c.params).shape().arity() + PARTS_COLS + GONE_COLS) as u32
+}
+
+/// A column's range, an item each, over the rows, `parts` or `gone` (`layer_write::stat`).
+fn stats<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    if refused_so_far::<O>(c) {
+        return;
+    }
+    let (block, head) = out_block(c);
+    let a = head.shape.arity();
+    let pin = c.pin_mut(OUT);
+    for x in t.items() {
+        let (r, col) = if x < a {
+            (rel(&block, head.rows), x)
+        } else if x < a + PARTS_COLS {
+            (rel(&block, head.parts), x - a)
+        } else {
+            (rel(&block, head.gone), x - a - PARTS_COLS)
+        };
+        layer_write::stat(pin, r, col);
+    }
+}
+
+fn index_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
+    rows_spec(&O::src(c.read(SRC), c.table, c.params).shape(), 0).indexes.len() as u32
+}
+
+/// The layer's hashed indexes, an index an item (`layer_write::index`: its row index, and each `Hash` of its shape).
+fn indexes<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    if refused_so_far::<O>(c) {
+        return;
+    }
+    let (block, head) = out_block(c);
+    let rows = rel(&block, head.rows);
+    let spec = rows_spec(&head.shape, rows.rows.len() as usize);
+    let s = scratch_for(rows.rows.len() as usize);
+    let pin = c.pin_mut(OUT);
+    for x in t.items() {
+        layer_write::index(pin, rows, &spec, x, &s);
+    }
+}
+
+/// The freeze (one item, every item of the phases before it done): the rows, `parts` and `gone` sealed
+/// (`layer_write::seal`).
 fn freeze<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     if refused_so_far::<O>(c) {
         return;
     }
     let (block, head) = out_block(c);
-    let v = view::<O>(c);
-    let ng = v.word(W_NGONE) as usize;
-    let ks: &[u32] = words(v.work, v.w.ks, ng.max(1));
-    let rows = rel(&block, head.rows);
-    let n = rows.rows.len() as usize;
-    let s = scratch_for(n, head.shape.arity());
-    freeze_layer(&block, rows, &rows_spec(&head.shape, n), &ks[..ng], &s);
-}
-
-/// The layer's partitions' change (P§11.2's partition index): `parts(part, digest, added, gone, first, kills_at)` and
-/// `gone(part, id)`, each sorted on the partition, written and frozen. A partition's own rows and its kills lie
-/// together (the rows sorted on the partition, the kills gathered by it), so `first` and `kills_at` are the sums of
-/// the partitions' before it.
-fn parts<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
-    if refused_so_far::<O>(c) {
-        return;
-    }
-    let (block, head) = out_block(c);
     let (rows, pr, gr) = (rel(&block, head.rows), rel(&block, head.parts), rel(&block, head.gone));
-    let a = head.shape.arity();
-    let part_col = head.shape.partition();
-    let table = c.table;
-    let below = O::below(c.params);
-    let chain = below_chain(table, below, a);
-    let part_of_own = |id: u32| part_col.map_or(0, |p| rows.own(id, p));
-    let part_of_below = |id: u32| part_col.map_or(0, |p| chain.get(id, p));
-    let digest_own = |id: u32| row_digest((0..a).map(|col| rows.own(id, col)));
-    let digest_below = |id: u32| row_digest((0..a).map(|col| chain.get(id, col)));
-    // By partition: the rows lie sorted on it; the kills are gathered by it, ascending within each.
-    let mut entries: std::collections::BTreeMap<i64, (u64, u32, u32)> = std::collections::BTreeMap::new(); // copy: derived (the partitions' change, written below)
-    let mut gone: Vec<(i64, u32)> = Vec::new(); // copy: derived (the kills by partition, written below)
-    for id in rows.ids() {
-        let e = entries.entry(part_of_own(id)).or_default();
-        e.0 = e.0.wrapping_add(digest_own(id));
-        e.1 += 1;
-    }
-    for &id in rows.changed.as_slice() {
-        let p = part_of_below(id);
-        let e = entries.entry(p).or_default();
-        e.0 = e.0.wrapping_sub(digest_below(id));
-        e.2 += 1;
-        gone.push((p, id));
-    }
-    gone.sort_unstable();
     let pin = c.pin_mut(OUT);
-    let at = pr.claim_own(pin, entries.len() as u32).expect("room for the partitions");
-    let (mut first, mut kills_at) = (0u32, 0u32);
-    for (k, (&p, &(d, added, g))) in entries.iter().enumerate() {
-        for (col, v) in [p, d as i64, i64::from(added), i64::from(g), i64::from(first), i64::from(kills_at)].into_iter().enumerate() {
-            pr.put_own(pin, at + k as u32, col, v);
-        }
-        first += added;
-        kills_at += g;
-    }
-    let at = gr.claim_own(pin, gone.len() as u32).expect("room for the kills by partition");
-    for (k, &(p, id)) in gone.iter().enumerate() {
-        gr.put_own(pin, at + k as u32, 0, p);
-        gr.put_own(pin, at + k as u32, 1, i64::from(id));
-    }
-    let s = scratch_for(entries.len() + gone.len(), 4);
-    freeze_layer(&block, pr, &parts_spec(entries.len()), &[], &s);
-    freeze_layer(&block, gr, &gone_spec(gone.len()), &[], &s);
+    layer_write::seal(pin, rows, &rows_spec(&head.shape, rows.rows.len() as usize));
+    layer_write::seal(pin, pr, &parts_spec(pr.rows.len() as usize));
+    layer_write::seal(pin, gr, &gone_spec(gr.rows.len() as usize));
 }
 
 /// The shape's orders and Bloom filters, an index an item (a `Hash` index is the relation's, built at its freeze).
@@ -654,9 +874,10 @@ fn nidx<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
     O::src(c.read(SRC), c.table, c.params).shape().nidx
 }
 
-/// The layer's statistics: each column's sketch of the state it ends, the state below's with its rows added and its
-/// kills taken (O§10: "a delta's sketch is added to and taken from"), in its kept form.
-fn sketch<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+/// The layer's statistics, a column an item: its sketch of the state the layer ends, the state below's with its rows
+/// added and its kills taken (O§10: "a delta's sketch is added to and taken from"), in its kept form, into its entry
+/// (`layer_write::sketch`).
+fn sketch<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     if refused_so_far::<O>(c) {
         return;
     }
@@ -667,8 +888,8 @@ fn sketch<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let table = c.table;
     let chain = below_chain(table, below, a);
     let below_layer = (below != NONE).then(|| Layer::new(table.block(below).expect("reached")).expect("committed"));
-    let mut kept = Vec::with_capacity(a); // copy: derived (each column's sketch, in its kept form)
-    for col in 0..a {
+    let pin = c.pin_mut(OUT);
+    for col in t.items() {
         let mut s = below_layer.and_then(|l| l.sketch(col)).unwrap_or_else(|| Sketch::new_in(sketch_room()));
         for id in rows.ids() {
             s.add(rows.own(id, col));
@@ -676,10 +897,12 @@ fn sketch<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         for &id in rows.changed.as_slice() {
             s.remove(chain.get(id, col));
         }
-        kept.push(s.encode());
+        assert!(layer_write::sketch(pin, rows, col, &s.encode()), "room for the layer's statistics");
     }
-    let all = layer_sketches(kept.iter().map(Vec::as_slice));
-    assert!(rows.set_sketches(c.pin_mut(OUT), &all), "room for the layer's statistics");
+}
+
+fn arity_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
+    O::src(c.read(SRC), c.table, c.params).shape().arity() as u32
 }
 
 // ---- seal: the header, last ----------------------------------------------------------------------------------------
@@ -742,14 +965,21 @@ macro_rules! pipeline {
             TwinPhase { name: "passes", items: pass_items::<$o>, run: pass::<$o>, again: Some(pass_next::<$o>) },
             TwinPhase { name: "segments", items: src_items::<$o>, run: segments::<$o>, again: None },
             TwinPhase { name: "count", items: src_chunks::<$o>, run: count::<$o>, again: None },
-            TwinPhase { name: "scan", items: |_| 1, run: scan::<$o>, again: None },
+            TwinPhase { name: "scan", items: scan_items::<$o>, run: scan::<$o>, again: None },
+            TwinPhase { name: "open", items: |_| 1, run: open::<$o>, again: None },
             TwinPhase { name: "place", items: src_chunks::<$o>, run: place::<$o>, again: None },
             TwinPhase { name: "kills", items: n_out::<$o>, run: kills::<$o>, again: None },
-            TwinPhase { name: "ksort", items: |_| 1, run: ksort::<$o>, again: None },
+            TwinPhase { name: "ksort", items: |c| chunks(n_out::<$o>(c) as usize), run: ksort::<$o>, again: None },
+            TwinPhase { name: "kpasses", items: kpass_items::<$o>, run: kpass::<$o>, again: Some(kpass_next::<$o>) },
+            TwinPhase { name: "kplace", items: kplace_items::<$o>, run: kplace::<$o>, again: None },
+            TwinPhase { name: "pstarts", items: n_out::<$o>, run: pstarts::<$o>, again: None },
+            TwinPhase { name: "pscan", items: pscan_items::<$o>, run: pscan::<$o>, again: None },
+            TwinPhase { name: "parts", items: parts_items::<$o>, run: parts::<$o>, again: None },
+            TwinPhase { name: "stats", items: stats_items::<$o>, run: stats::<$o>, again: None },
+            TwinPhase { name: "indexes", items: index_items::<$o>, run: indexes::<$o>, again: None },
             TwinPhase { name: "freeze", items: |_| 1, run: freeze::<$o>, again: None },
-            TwinPhase { name: "parts", items: |_| 1, run: parts::<$o>, again: None },
             TwinPhase { name: "orders", items: nidx::<$o>, run: orders::<$o>, again: None },
-            TwinPhase { name: "sketch", items: |_| 1, run: sketch::<$o>, again: None },
+            TwinPhase { name: "sketch", items: arity_items::<$o>, run: sketch::<$o>, again: None },
             TwinPhase { name: "seal", items: |_| 1, run: seal::<$o>, again: None },
         ];
     };

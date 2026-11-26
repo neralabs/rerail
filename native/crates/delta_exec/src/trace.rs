@@ -27,29 +27,41 @@ const fn ph(name: &'static str, found: Found, unit: Unit, inside: Inside, across
     Phase { name, found, unit, inside, across, output, bounds }
 }
 
-/// The phases `consolidate` and `merge` share (Operations §4): sort (14), segmented scan (10), emit (11: count, scan,
-/// place), a batched search of the state below (17), the kills sorted, the layer's freeze where it lies (its order,
-/// indexes and change), its partitions' change (8, a histogram), its orders and Bloom filters (18), its sketch (9),
-/// the seal.
-static PIPELINE: [Phase; 13] = {
+/// The phases `consolidate` and `merge` share (Operations §4), each on the six axes, as their twins run them:
+///
+/// - sort (14): chunks sorted, then merge passes, rounds bounded at 32 turns;
+/// - segmented sums (10), then emit (11): each chunk's counts, their scan (in order, a carry from chunk to chunk), the
+///   layer opened (one group), the rows placed;
+/// - a batched search of the state below (17), a row out a lane; the kills sorted (14) and placed in the change;
+/// - the partitions' change (8): each row out's start flag, the starts numbered (in order), then a partition an item;
+/// - the freeze where the layer lies: a column's range a lane, a hashed index (18) a group, the seal (one group);
+/// - its orders and Bloom filters (18), an index a group; its statistics (9), a column a lane; the header, last.
+static PIPELINE: [Phase; 20] = {
     use Found::*;
     use Output::*;
     use Unit::*;
     const PASSES: &[Bound] = &[Bound::Turns(32)];
     [
-        ph("sort", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
-        ph("passes", Indirect, Threadgroup, Inside::Nothing, Across::Ordered, ByIndex, PASSES),
-        ph("segments", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
-        ph("count", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
-        ph("scan", Fixed, Threadgroup, Inside::GroupMemory, Across::Combine, ByScan, &[]),
-        ph("place", Indirect, Threadgroup, Inside::Nothing, Across::Nothing, ByScan, &[]),
+        ph("sort", Fixed, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
+        ph("passes", Indirect, Threadgroup, Inside::Nothing, Across::Rounds, ByIndex, PASSES),
+        ph("segments", Fixed, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("count", Fixed, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
+        ph("scan", Fixed, Threadgroup, Inside::Nothing, Across::Ordered, ByScan, &[]),
+        ph("open", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, InPlace, &[]),
+        ph("place", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, ByScan, &[]),
         ph("kills", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
-        ph("ksort", Fixed, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
-        ph("freeze", Fixed, Threadgroup, Inside::GroupMemory, Across::Ordered, InPlace, &[]),
-        ph("parts", Fixed, Partition, Inside::Nothing, Across::Combine, ByScan, &[]),
-        ph("orders", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
-        ph("sketch", Fixed, Lane, Inside::Nothing, Across::Combine, Sketch, &[]),
-        ph("seal", Fixed, Lane, Inside::Nothing, Across::Ordered, InPlace, &[]),
+        ph("ksort", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
+        ph("kpasses", Indirect, Threadgroup, Inside::Nothing, Across::Rounds, ByIndex, PASSES),
+        ph("kplace", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("pstarts", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("pscan", Indirect, Threadgroup, Inside::Nothing, Across::Ordered, ByScan, &[]),
+        ph("parts", Indirect, Partition, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("stats", Fixed, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("indexes", Fixed, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
+        ph("freeze", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, InPlace, &[]),
+        ph("orders", Fixed, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
+        ph("sketch", Fixed, Lane, Inside::Nothing, Across::Nothing, Sketch, &[]),
+        ph("seal", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, InPlace, &[]),
     ]
 };
 

@@ -27,7 +27,8 @@
 use crate::bistate::{ColStats, ColumnIndex, Flips, RowId, Since, WordIndex};
 use crate::bloom::{self, Bloom};
 use crate::gens::{BODY_AT, Id, Table, set_word, word};
-use crate::relation::{Relation, Spec, View, layer_sketch, leading, row_digest};
+use crate::relation::layer_write::layer_sketch;
+use crate::relation::{Relation, Spec, View, leading, row_digest};
 use crate::sketch::Sketch;
 use std::cmp::Ordering;
 

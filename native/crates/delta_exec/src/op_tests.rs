@@ -61,7 +61,7 @@ fn shapes() -> Vec<(&'static Signature, &'static [TwinPhase])> {
             sig(
                 "sort",
                 io(kind::SCRATCH),
-                vec![lanes("chunks", Fixed, Nothing, ByIndex, &[]), lanes("passes", Indirect, Ordered, ByIndex, &[Bound::Turns(16)]), lanes("settle", Fixed, Nothing, ByIndex, &[])],
+                vec![lanes("chunks", Fixed, Nothing, ByIndex, &[]), lanes("passes", Indirect, Rounds, ByIndex, &[Bound::Turns(16)]), lanes("settle", Fixed, Nothing, ByIndex, &[])],
                 values,
             ),
             SORT,
@@ -359,7 +359,7 @@ fn a_twin_fits_its_signature() {
     let op = reg.declare(square).unwrap();
     let e = reg.register_reference(Version::twin(op, "sort as square", sort, square.shape)).unwrap_err();
     assert!(e.contains("the twin's phases (chunks, passes, settle) are not its shape's (map)"), "{e}");
-    let unbounded = sig("unbounded", vec![slot("in", R, kind::FACTS)], vec![lanes("chunks", Found::Fixed, Across::Nothing, Output::ByIndex, &[]), lanes("passes", Found::Indirect, Across::Ordered, Output::ByIndex, &[]), lanes("settle", Found::Fixed, Across::Nothing, Output::ByIndex, &[])], values);
+    let unbounded = sig("unbounded", vec![slot("in", R, kind::FACTS)], vec![lanes("chunks", Found::Fixed, Across::Nothing, Output::ByIndex, &[]), lanes("passes", Found::Indirect, Across::Rounds, Output::ByIndex, &[]), lanes("settle", Found::Fixed, Across::Nothing, Output::ByIndex, &[])], values);
     let op = reg.declare(unbounded).unwrap();
     let e = reg.register_reference(Version::twin(op, "sort", sort, unbounded.shape)).unwrap_err();
     assert!(e.contains("phase passes runs again, and its shape bounds no turns"), "{e}");
@@ -411,7 +411,9 @@ fn the_independence_axis_is_kept_and_checked() {
     let shape: &'static [Phase] = Box::leak(vec![lanes("map", Found::Fixed, Across::Ordered, Output::ByIndex, &[])].into_boxed_slice());
     let slots: &'static [SlotSpec] = Box::leak(vec![slot("in", R, kind::FACTS), slot("out", W, kind::FACTS)].into_boxed_slice());
     let not = Box::leak(Box::new(Signature::new("running", slots, NONE_P, shape, Independence::Not("item i reads item i - 1"), values)));
-    let along = Box::leak(Box::new(Signature::new("running, claimed independent", slots, NONE_P, shape, Independence::Along("items"), values)));
+    // The false claim: items independent, and the phase's units sharing nothing, so its tiles run in any order.
+    let unordered: &'static [Phase] = Box::leak(vec![lanes("map", Found::Fixed, Across::Nothing, Output::ByIndex, &[])].into_boxed_slice());
+    let along = Box::leak(Box::new(Signature::new("running, claimed independent", slots, NONE_P, unordered, Independence::Along("items"), values)));
     let make = |dir: &mut Directory| {
         let v: Vec<i64> = (1..=600).collect();
         let (i, o) = (values_block(dir, &v), dir.make(kind::FACTS, samples::vals_bytes(v.len())));
@@ -434,10 +436,68 @@ fn the_independence_axis_is_kept_and_checked() {
 
     let mut reg = Registry::default();
     let op = reg.declare(along).unwrap();
+    reg.register_reference(Version::twin(op, "twin", RUNNING, unordered)).unwrap();
+    let again = Version { status: Status::Default, ..Version::twin(op, "running again", RUNNING, unordered) };
+    let Err(e) = reg.check(&again, &make, &tilings) else { panic!("a false claim of independence is caught") };
+    assert!(e.contains("wrote other facts"), "{e}");
+
+    // Its units in order (a carry from one to the next, Operations §4's "phases in order"): tiled, its tiles run in
+    // order whatever the tiling's seed, so the same twin is right at every tiling.
+    let in_order = Box::leak(Box::new(Signature::new("running, in order", slots, NONE_P, shape, Independence::Along("items, in order"), values)));
+    let mut reg = Registry::default();
+    let op = reg.declare(in_order).unwrap();
     reg.register_reference(Version::twin(op, "twin", RUNNING, shape)).unwrap();
     let again = Version { status: Status::Default, ..Version::twin(op, "running again", RUNNING, shape) };
-    let e = reg.check(&again, &make, &tilings).err().expect("a false claim of independence is caught");
-    assert!(e.contains("wrote other facts"), "{e}");
+    reg.check(&again, &make, &tilings).expect("an ordered phase's tiles run in order at every tiling");
+}
+
+/// A phase of items made at the launch's start (`Found::Fixed`) whose count an earlier phase changed.
+const GROWS: &[TwinPhase] = &[
+    TwinPhase { name: "first", items: |_| 1, run: grow_tile, again: None },
+    TwinPhase { name: "then", items: |c| samples::vals(c.read(1)).first().map_or(0, |&n| n as u32), run: |_, _| {}, again: None },
+];
+
+fn grow_tile(c: &mut rerail_delta_twins::Ctx<'_, '_, '_>, _: rerail_delta_twins::Tile) {
+    let ([], [out]) = c.views([], [1]);
+    samples::vals_mut(out, 1)[0] = 5;
+}
+
+/// Operations §4's other axes, as the executor runs them: a phase of a fixed count has the count it had when the
+/// launch started (one an earlier phase made is indirect), and a phase runs again exactly when its units relate by
+/// rounds.
+#[test]
+fn a_phase_runs_by_its_axes() {
+    let slots: &'static [SlotSpec] = Box::leak(vec![slot("in", R, kind::FACTS), slot("out", W, kind::FACTS)].into_boxed_slice());
+    let make = |dir: &mut Directory| {
+        let v: Vec<i64> = vec![0];
+        let (i, o) = (values_block(dir, &v), dir.make(kind::FACTS, samples::vals_bytes(1)));
+        Case { slots: vec![i, o], params: vec![] }
+    };
+    let run = |found: Found| {
+        let shape: &'static [Phase] = Box::leak(vec![lanes("first", Found::Fixed, Across::Nothing, Output::ByIndex, &[]), lanes("then", found, Across::Nothing, Output::ByIndex, &[])].into_boxed_slice());
+        let sig = Box::leak(Box::new(Signature::new("grows", slots, NONE_P, shape, Independence::Along("items"), values)));
+        let mut reg = Registry::default();
+        let op = reg.declare(sig).unwrap();
+        reg.register_reference(Version::twin(op, "twin", GROWS, shape)).unwrap();
+        let mut dir = Directory::default();
+        let c = make(&mut dir);
+        run_cpu(&reg, &dir, op, &c.slots, &[], Tiling::WHOLE)
+    };
+    let e = run(Found::Fixed).unwrap_err();
+    assert!(e.contains("phase then has a fixed count of items, 0 when the launch started, and 5 when it ran"), "{e}");
+    run(Found::Indirect).expect("an indirect count is made by the phases before it");
+
+    let shapes = shapes();
+    let (_, sort) = shapes[2];
+    let mut reg = Registry::default();
+    let not_rounds = sig("sort, passes in order", vec![slot("in", R, kind::FACTS)], vec![lanes("chunks", Found::Fixed, Across::Nothing, Output::ByIndex, &[]), lanes("passes", Found::Indirect, Across::Ordered, Output::ByIndex, &[Bound::Turns(16)]), lanes("settle", Found::Fixed, Across::Nothing, Output::ByIndex, &[])], values);
+    let op = reg.declare(not_rounds).unwrap();
+    let e = reg.register_reference(Version::twin(op, "sort", sort, not_rounds.shape)).unwrap_err();
+    assert!(e.contains("phase passes runs again, and its shape's units do not relate by rounds"), "{e}");
+    let rounds = sig("square by rounds", vec![slot("in", R, kind::FACTS), slot("out", W, kind::FACTS)], vec![lanes("map", Found::Fixed, Across::Rounds, Output::ByIndex, &[Bound::Turns(4)])], values);
+    let op = reg.declare(rounds).unwrap();
+    let e = reg.register_reference(Version::twin(op, "square", SQUARE, rounds.shape)).unwrap_err();
+    assert!(e.contains("phase map relates its units by rounds, and its twin has no finisher"), "{e}");
 }
 
 /// E2 on a device: a kernel follows references through a launch's device descriptor table, reading each reached

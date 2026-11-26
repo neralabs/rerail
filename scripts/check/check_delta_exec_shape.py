@@ -211,9 +211,11 @@ def b2(failures: list) -> None:
     twins_code = strip_rust(twins)
     for want, why in (
         ("Relation::try_continue_far(", "the layer made as a Relation continuing the one below"),
-        ("freeze_layer(", "the layer frozen where it lies (blocks' freeze)"),
+        ("layer_write::open(", "the layer's freeze laid out where it lies (blocks' layer writing)"),
+        ("layer_write::index(", "the layer's hashed indexes, an index an item"),
+        ("layer_write::seal(", "the layer frozen where it lies"),
         ("add_order(", "an Order index added to the relation (P§11.2)"),
-        ("set_sketches(", "the layer's sketches kept in its relation"),
+        ("layer_write::sketch(", "the layer's sketches kept in its relation, a column an item"),
     ):
         if want not in twins_code:
             failures.append(f"the twins' trace.rs: {why} ({want} missing)")
@@ -244,7 +246,73 @@ def b2(failures: list) -> None:
     lcode = strip_rust(layer.read_text())
     if "vec![crate::rows::I32, 8, 4, 4, 4, 4]" not in lcode:
         failures.append(f"{layer.relative_to(ROOT)}: parts is (part, digest, added, gone, first, kills_at), the partition index")
-    hits(layer, lcode, r"leading\(self\.(rows|gone)", "a partition found by a search of the layer's rows or kills, not its index", failures)
+    hits(layer, lcode, r"leading\(self\.(rows|gone)\b", "a partition found by a search of the layer's rows or kills, not its index", failures)
+    # A layer's kills are kept twice and no more: its change (`changed`, ascending, the chain's liveness) and its
+    # partition index's `gone(part, id)` (P§: "a range of the block, by the partition's index"). The layer holds three
+    # relations; `gone` is (partition, id); the twins make exactly those three.
+    m = re.search(r"pub struct Layer<'a> \{(.*?)\}", lcode, re.S)
+    fields = re.findall(r"pub (\w+):", m.group(1)) if m else []
+    if fields != ["bytes", "head", "rows", "parts", "gone"]:
+        failures.append(f"{layer.relative_to(ROOT)}: a layer holds {fields}; its rows, parts and gone alone")
+    if "Spec { widths: vec![crate::rows::I32, 4], sort: Some(0)" not in lcode:
+        failures.append(f"{layer.relative_to(ROOT)}: gone is (partition, id), sorted on the partition")
+    tcode = strip_rust((TWINS / "src/trace.rs").read_text())
+    made = len(re.findall(r"Relation::try_create\(", tcode)), len(re.findall(r"Relation::try_continue_far\(", tcode))
+    if made != (2, 1):
+        failures.append(f"the twins' trace.rs makes {made[0]} relations and {made[1]} layers; a layer's rows, its parts and its gone alone")
+
+
+def axes(failures: list) -> None:
+    """Operations §4: an operation's shape is phases on the six axes, and its twin runs as its shape says. The executor
+    runs by the axes (a fixed count is the launch's from its start; only units that share nothing, combine or make a
+    round run in any order; a phase runs again exactly when its units relate by rounds). Here: the trace's pipeline is
+    one item only in the phases that open, freeze and seal a layer, each declared a fixed count of one group, and every
+    other phase's items are rows, chunks, pairs, partitions, columns or indexes."""
+    op = strip_rust((CRATE / "src/op.rs").read_text())
+    for want, why in (
+        (r"p\.found == Found::Fixed", "the executor checks a fixed count against the launch's start"),
+        (r"matches!\(phase\.across, Across::Nothing \| Across::Combine \| Across::Rounds\)", "the executor shuffles only units that may run in any order"),
+        (r"t\.again\.is_some\(\) != \(p\.across == Across::Rounds\)", "fits ties a phase's finisher to rounds"),
+    ):
+        if not re.search(want, op):
+            failures.append(f"native/crates/delta_exec/src/op.rs: {why}")
+    twins = (TWINS / "src/trace.rs").read_text()
+    one = set(re.findall(r'TwinPhase \{ name: "(\w+)", items: \|_\| 1,', twins))
+    if one != {"open", "freeze", "seal"}:
+        failures.append(f"the twins' trace.rs: one-item phases {sorted(one)}; only open, freeze and seal are one group")
+    shape = (CRATE / "src/trace.rs").read_text()
+    for name in sorted(one):
+        if not re.search(rf'ph\("{name}", Fixed, Threadgroup,', shape):
+            failures.append(f"native/crates/delta_exec/src/trace.rs: phase {name} is one item, declared otherwise")
+
+
+def reach(failures: list) -> None:
+    """The twins' rules reach the blocks code the twins call to write a layer (decision 0686): relation::layer_write,
+    where the twins' clippy lints are denied (blocks' clippy.toml lists the twins' paths, and the two lists agree),
+    and which names no static, thread-local, Once/Lazy cell, lock, thread's scratch, or the world. Its unsafe is
+    blocks' layout writing. The old freeze of a layer, one call over every row, is gone."""
+    lw = ROOT / "native/crates/blocks/src/relation/layer_write.rs"
+    if not lw.exists():
+        failures.append("native/crates/blocks/src/relation/layer_write.rs is missing")
+        return
+    text = lw.read_text()
+    if "#![deny(clippy::disallowed_methods, clippy::disallowed_types, clippy::disallowed_macros)]" not in text:
+        failures.append(f"{lw.relative_to(ROOT)}: the twins' clippy lints are not denied")
+    code = re.sub(r"'static", "", strip_rust(text))
+    for pattern, why in (
+        (r"\bstatic\b", "a static (state outliving a call)"),
+        (r"thread_local|\bOnce\w*|\bLazy\w*|lazy_static|once_cell", "a thread-local or a once/lazy cell"),
+        (r"\bMutex\b|\bRwLock\b|\bCondvar\b", "a lock"),
+        (r"scratch::with\b", "a thread's scratch"),
+        (r"std::(fs|env|net|process|time)\b|\bInstant\b|\bSystemTime\b", "the world"),
+    ):
+        hits(lw, code, pattern, why, failures)
+    def rules(p):
+        return [l for l in p.read_text().splitlines() if l.strip() and not l.lstrip().startswith("#")]
+    if rules(TWINS / "clippy.toml") != rules(ROOT / "native/crates/blocks/clippy.toml"):
+        failures.append("native/crates/blocks/clippy.toml: its disallowed paths differ from the twins' clippy.toml")
+    relp = ROOT / "native/crates/blocks/src/relation.rs"
+    hits(relp, strip_rust(relp.read_text()), r"\bfn freeze_layer\b|\bfn set_sketches\b", "a layer's freeze as one call (the twins' phases make it)", failures)
 
 
 def e1(failures: list) -> None:
@@ -280,14 +348,14 @@ def e1(failures: list) -> None:
 
 def main() -> int:
     failures: list = []
-    for check in (m0, b1, b2, e1):
+    for check in (m0, b1, b2, axes, reach, e1):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1, B2, E1)")
+    print("delta_exec shape: every check holds (M0, B1, B2, axes, reach, E1)")
     return 0
 
 

@@ -28,6 +28,8 @@ use std::cmp::Ordering;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicI64, AtomicU16, AtomicU32, AtomicU64, Ordering::*};
 
+pub mod layer_write;
+
 pub const FROZEN: u32 = 1;
 pub const DELTA: u32 = 2;
 /// Its index directory and every index in it were added (`try_reserve_index`), each a chunk of the block's: given back
@@ -175,7 +177,7 @@ structure! {
         /// live base rows), ascending, each once. A change is read from these and its own rows alone, never from the
         /// base's liveness. Empty for a full relation, an open one, and a delta that kills nothing.
         ///
-        /// A trace's layer (`freeze_layer`, decision 0686 B2) keeps its kills here alone: rows of the layers below it
+        /// A trace's layer (`layer_write`, decision 0686 B2) keeps its kills here alone: rows of the layers below it
         /// that it kills, ascending, each live below. It keeps no dead bits (`dead` empty): a row is live in a state
         /// when no layer above its own, up to the state's, names it here.
         pub changed: Span<u32>,
@@ -184,9 +186,10 @@ structure! {
         /// and offset, decision 0686 B1); `NO_BLOCK` for none.
         pub base_block: u32,
         pub pad_far: u32,
-        /// A trace's layer's statistics (P§11.2, O§10 "stats: each layer's sketch"): for each column in turn, a
-        /// `u32` length and that column's `blocks::sketch` in its kept form (`Sketch::encode`), of the state the layer
-        /// ends (the state below's sketch with the layer's rows added and its kills taken). Empty for any other.
+        /// A trace's layer's statistics (P§11.2, O§10 "stats: each layer's sketch"): a directory of a `Span<u8>` a
+        /// column, each that column's `blocks::sketch` in its kept form (`Sketch::encode`), of the state the layer
+        /// ends (the state below's sketch with the layer's rows added and its kills taken), each written by an item of
+        /// its own (`layer_write::sketch`). Empty for any other.
         pub sketches: Span<u8>,
     }
 }
@@ -408,26 +411,6 @@ impl Relation {
         }
         // SAFETY: within the block's reservation and aligned, where its maker put a descriptor.
         Some(unsafe { &*block.ptr::<Relation>(at) })
-    }
-
-    /// Its statistics (`sketches`), given once to a layer frozen just now (`freeze_layer`), through the write pin of
-    /// its block: each column's sketch in its kept form (`layer_sketches`). False when the block has no room or it has
-    /// them already.
-    pub fn set_sketches(&self, pin: &mut crate::region::BlockPin, sketches: &[u8]) -> bool {
-        let block: &Block = pin.block();
-        assert!(block.holds(std::ptr::from_ref(self)) && pin.writes() && self.is_frozen(), "a frozen layer of a block pinned to write");
-        if !self.sketches.is_empty() || sketches.is_empty() {
-            return sketches.is_empty();
-        }
-        let Some(at) = block.try_alloc(sketches.len(), 8) else { return false };
-        let p: *mut u8 = block.ptr(at);
-        // SAFETY: `p` holds `sketches.len()` bytes, just allocated in the block the pin holds to write.
-        unsafe {
-            // copy: derived: the layer's statistics, computed by its writer, written once where they are kept
-            std::ptr::copy_nonoverlapping(sketches.as_ptr(), p, sketches.len());
-            Span::set(&self.sketches, p, sketches.len());
-        }
-        true
     }
 
     /// Gives a layer frozen just now a sorted order on `cols` (P§11.2's `Order`; decision 0478 step 5b's form),
@@ -1405,21 +1388,31 @@ fn distinct_hashes(scratch: &crate::scratch::Scratch, hs: &[u64]) -> usize {
 /// in id order within a group, a hashed index's buckets from the number of distinct keys; a key of one column, the
 /// one the rows lie sorted on (`sort`), is that order (`ordered`, no buckets). The directory holds `room` entries
 /// (`keys` first; the rest left for orders added later, `try_add_order`). Freeze's (`freeze_in`) and a trace's layer's
-/// (`freeze_layer`): one builder.
+/// (`layer_write::index`, one of these a call): one builder.
 #[allow(clippy::too_many_arguments)]
 fn build_indexes(block: &Block, keys: &[Vec<u16>], room: usize, every: &[u16], sort: Option<usize>, val: &dyn Fn(usize, usize) -> i64, order: &[u32], lo: &[i64], hi: &[i64], br: usize, scratch: &crate::scratch::Scratch) -> *mut Index {
-    let live = order.len();
     let ixp: *mut crate::relation::Index = block.alloc_t(room.max(keys.len()).max(1));
     for (x, icols) in keys.iter().enumerate() {
+        // SAFETY: entry `x` of the directory just allocated.
+        build_one_index(block, unsafe { &mut *ixp.add(x) }, icols, every, sort, val, order, lo, hi, br, scratch);
+    }
+    ixp
+}
+
+/// Builds one index of `build_indexes` into its directory entry `ix`: a trace's layer builds each as an item of its
+/// own (`layer_write::index`).
+#[allow(clippy::too_many_arguments)]
+fn build_one_index(block: &Block, ix: &mut Index, icols: &[u16], every: &[u16], sort: Option<usize>, val: &dyn Fn(usize, usize) -> i64, order: &[u32], lo: &[i64], hi: &[i64], br: usize, scratch: &crate::scratch::Scratch) {
+    let live = order.len();
+    {
         assert!(icols.len() <= MAX_KEY);
-        let ix = unsafe { &mut *ixp.add(x) };
         ix.ncols = icols.len() as u32;
         for (j, &c) in icols.iter().enumerate() {
             ix.key[j] = c;
         }
         if icols.len() == 1 && sort == Some(icols[0] as usize) {
             ix.ordered = 1;
-            continue;
+            return;
         }
         let kv = |j: usize| -> [i64; MAX_KEY] {
             let mut k = [0i64; MAX_KEY];
@@ -1434,7 +1427,7 @@ fn build_indexes(block: &Block, keys: &[Vec<u16>], room: usize, every: &[u16], s
         let span: u32 = ibits.iter().sum();
         let distinct = if live == 0 {
             0
-        } else if *icols == every {
+        } else if icols == every {
             live
         } else if span <= 24 {
             let words: &mut [u64] = scratch.zeroed((1usize << span).div_ceil(64));
@@ -1484,8 +1477,6 @@ fn build_indexes(block: &Block, keys: &[Vec<u16>], room: usize, every: &[u16], s
             Span::set(&raw mut ix.rows, rp, live);
         }
     }
-
-    ixp
 }
 
 /// `freeze`, its temporaries from `scratch`. How, for `n` rows of `a` columns:
@@ -1689,116 +1680,6 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
         }
     }
     FreezeStats { rows: n as u64, live: live as u64, dropped, bytes: (block.used() - before) as u64 }
-}
-
-/// Freezes a trace's layer (decision 0686 B2; P§12's `commit`: "freeze (order, indexes, digests, statistics)"), an
-/// open relation of `block` (a first layer, or one continuing the layer below, `try_continue_far`) whose own rows its
-/// writer made a set change against the state below: none of them is live there, and `kills` (ascending, each once)
-/// are ids of that state's live rows. So it reads nothing below:
-///
-/// - its rows, sorted on `spec.sort` (the trace's partition, or its order's first column) in place, ties in the order
-///   they came (its writer wrote them in the trace's canonical order, so they stay in it); a duplicate dropped, as
-///   `freeze_in` drops one;
-/// - the indexes `spec.indexes` (`build_indexes`, freeze's), with room in its directory for orders added after
-///   (`try_add_order`);
-/// - `kills` as its change (`changed`), and no dead bits: liveness in a chain is read from the changes above a row;
-/// - its columns' ranges (`stats`). Its sketches come after, from its writer (`Relation::set_sketches`).
-///
-/// Everything it writes lies in `block`; its temporaries are `scratch`'s.
-pub fn freeze_layer(block: &Block, rel: &Relation, spec: &Spec, kills: &[u32], scratch: &crate::scratch::Scratch) -> FreezeStats {
-    assert!(!rel.is_frozen(), "a layer frozen once");
-    assert!(block.holds(std::ptr::from_ref(rel)), "a layer of the block it is frozen in");
-    assert!(kills.windows(2).all(|w| w[0] < w[1]) && kills.last().is_none_or(|&k| k < rel.base_rows), "a layer's kills: rows below it, ascending, once");
-    assert_eq!(rel.killed.len(), 0, "a layer's kills are given at its freeze");
-    let a = rel.arity as usize;
-    assert!((0..a).all(|c| !rel.rows.col(c).has_runs()), "a layer of key runs");
-    let n = rel.rows.len() as usize;
-    let before = block.used();
-    let br = rel.base_rows as usize;
-
-    let cols: &mut [i64] = scratch.take(n * a);
-    let mut lo = vec![i64::MAX; a];
-    let mut hi = vec![i64::MIN; a];
-    for c in 0..a {
-        let col = &mut cols[c * n..(c + 1) * n];
-        rel.rows.read_col(c, n as u32, col);
-        for &v in col.iter() {
-            lo[c] = lo[c].min(v);
-            hi[c] = hi[c].max(v);
-        }
-    }
-    let val = |c: usize, i: usize| cols[c * n + i];
-    let ids: &mut [u32] = scratch.take(n);
-    for (i, id) in ids.iter_mut().enumerate() {
-        *id = i as u32;
-    }
-    let want = spec.sort.map(|c| (c as usize, lo[c as usize], hi[c as usize]));
-    let (m, sort) = distinct_sorted(scratch, val, a, want, false, ids);
-    rel.set_sort_col(sort);
-    let order = &ids[..m];
-
-    let moved: &mut [i64] = scratch.take(m);
-    let sp: *mut ColStats = block.alloc_t(a.max(1));
-    for c in 0..a {
-        let (mut l, mut h) = (i64::MAX, i64::MIN);
-        for (d, &i) in moved.iter_mut().zip(order) {
-            let v = val(c, i as usize);
-            *d = v;
-            l = l.min(v);
-            h = h.max(v);
-        }
-        rel.rows.write_col(c, moved);
-        // SAFETY: `sp` holds `a` entries, just allocated in `block`.
-        unsafe { *sp.add(c) = ColStats { min: l, max: h } };
-    }
-    rel.rows.len.store(m as u32, Release);
-
-    let every: Vec<u16> = (0..a as u16).collect();
-    let ixp = build_indexes(block, &spec.indexes, ADDED_INDEXES.max(spec.indexes.len()), &every, sort, &val, order, &lo, &hi, br, scratch);
-    // SAFETY: each chunk just allocated in `block`, this relation's, which only its freezer writes.
-    unsafe {
-        if !kills.is_empty() {
-            let cp: *mut u32 = block.alloc_t(kills.len());
-            // copy: derived: the layer's change, computed by its writer, written once where it is kept
-            std::ptr::copy_nonoverlapping(kills.as_ptr(), cp, kills.len());
-            Span::set(&rel.changed, cp, kills.len());
-        }
-        Span::set(&rel.indexes, ixp, ADDED_INDEXES.max(spec.indexes.len()));
-        Span::set(&rel.stats, sp, a);
-    }
-    rel.nindex.store(spec.indexes.len() as u32, Relaxed);
-    rel.live.store(m as u32, Relaxed);
-    rel.flags.fetch_or(FROZEN, Release);
-    FreezeStats { rows: n as u64, live: m as u64, dropped: (n - m) as u64, bytes: (block.used() - before) as u64 }
-}
-
-/// Column `c`'s statistics in a layer's `sketches` (`freeze_layer`): its kept form's bytes, `None` when it keeps none.
-pub fn layer_sketch(rel: &Relation, c: usize) -> Option<&[u8]> {
-    let mut b = rel.sketches.as_slice();
-    for k in 0.. {
-        if b.len() < 4 {
-            return None;
-        }
-        let len = u32::from_ne_bytes(b[..4].try_into().expect("four bytes")) as usize;
-        let (this, rest) = b[4..].split_at(len.min(b.len() - 4));
-        if k == c {
-            return Some(this);
-        }
-        b = rest;
-    }
-    None
-}
-
-/// A layer's `sketches` from each column's kept form, in column order (`layer_sketch` reads one back).
-pub fn layer_sketches<'s>(cols: impl Iterator<Item = &'s [u8]>) -> Vec<u8> {
-    let mut out = Vec::new();
-    for s in cols {
-        // copy: derived: a column's sketch's length, then its kept form, laid beside the others
-        out.extend_from_slice(&(s.len() as u32).to_ne_bytes());
-        // copy: derived: a column's sketch, laid beside the others (its kept form)
-        out.extend_from_slice(s);
-    }
-    out
 }
 
 /// The own rows of a frozen relation whose columns `cols` equal `key`, by its indexes: a range of its sorted rows when

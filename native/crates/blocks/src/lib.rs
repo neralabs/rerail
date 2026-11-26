@@ -19,6 +19,10 @@
 //! Descriptors are never `Copy`: a reference is only meaningful at its own address, so a descriptor is only ever
 //! reached by reference into its block.
 
+// blocks' `clippy.toml` lists the twins' disallowed paths (decision 0686): denied only where the twins' rules hold, in
+// the layer writing the twins call (`relation::layer_write`); the rest of blocks may use them.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types, clippy::disallowed_macros)]
+
 pub mod alloc;
 pub mod atoms;
 pub mod bistate;

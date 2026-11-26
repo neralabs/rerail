@@ -416,6 +416,15 @@ impl Registry {
         if let Some((p, _)) = v.shape.iter().zip(twin).find(|(p, t)| t.again.is_some() && p.turns() < 2) {
             return Err(format!("{}: phase {} runs again, and its shape bounds no turns", sig.name, p.name));
         }
+        // A phase runs again exactly when its units relate by rounds (Operations §4: "rounds to a fixpoint").
+        if let Some((p, t)) = v.shape.iter().zip(twin).find(|(p, t)| t.again.is_some() != (p.across == Across::Rounds)) {
+            return Err(format!(
+                "{}: phase {} {}",
+                sig.name,
+                p.name,
+                if t.again.is_some() { "runs again, and its shape's units do not relate by rounds" } else { "relates its units by rounds, and its twin has no finisher" }
+            ));
+        }
         Ok(())
     }
 
@@ -563,15 +572,31 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
     let (pins, table) = launch.parts();
     let mut slot_views: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();
     let mut ctx = Ctx { slots: &mut slot_views, table: &table, params };
-    // The version's shape: its phases' bounds are the ones it runs by (`Registry::fits` checked its twin against it).
-    for (phase, tp) in v.shape.iter().zip(twin) {
+    // The version's shape is what it runs by (`Registry::fits` checked its twin against it), axis by axis:
+    //
+    // - how work is found: a phase of a fixed count has the count it had when the launch started (no earlier phase
+    //   made it); an indirect one's is made by the phases before it;
+    // - across units: tiles whose units share nothing, combine associatively or make a round run in any order; units
+    //   in order (a carry from one to the next), or any other relation, run in order;
+    // - its bounds: a phase that runs again stops at its bound on turns, past which the launch fails.
+    let fixed: Vec<Option<u32>> = v.shape.iter().zip(twin).map(|(p, tp)| (p.found == Found::Fixed).then(|| (tp.items)(&ctx))).collect();
+    for ((phase, tp), fixed) in v.shape.iter().zip(twin).zip(fixed) {
         let mut turn = 0;
         loop {
             turn += 1;
             let n = (tp.items)(&ctx) as usize;
+            if let Some(f) = fixed
+                && f as usize != n
+            {
+                return Err(format!(
+                    "{}: phase {} has a fixed count of items, {f} when the launch started, and {n} when it ran: an earlier phase made it (an indirect count)",
+                    sig.name, phase.name
+                ));
+            }
             let t = if tiling.tile == 0 { n.max(1) } else { tiling.tile as usize };
             let tiles = n.div_ceil(t);
-            let order = if tiling.seed == 0 { (0..tiles).collect() } else { shuffled(tiles, tiling.seed ^ turn as u64) };
+            let any_order = matches!(phase.across, Across::Nothing | Across::Combine | Across::Rounds);
+            let order = if tiling.seed == 0 || !any_order { (0..tiles).collect() } else { shuffled(tiles, tiling.seed ^ turn as u64) };
             for k in order {
                 let lo = k * t;
                 (tp.run)(&mut ctx, Tile { lo: lo as u32, hi: (lo + t).min(n) as u32 });
