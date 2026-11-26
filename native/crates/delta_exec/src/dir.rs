@@ -196,11 +196,6 @@ impl Directory {
         Directory { kept: Some(folder.to_path_buf()), ..self }
     }
 
-    /// Whether it has a source of pinned slabs.
-    pub fn has_slabs(&self) -> bool {
-        self.slabs.is_some()
-    }
-
     /// The directory with `slabs` its source of pinned slabs (`Placement::PinnedSlab`).
     pub fn with_slabs(self, slabs: Slabs) -> Directory {
         Directory { slabs: Some(slabs), ..self }

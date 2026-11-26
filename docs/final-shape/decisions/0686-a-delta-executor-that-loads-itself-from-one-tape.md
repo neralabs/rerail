@@ -1315,3 +1315,12 @@ Checks (Relax, local, 76 of 76):
 - L1's harness now drops the cache at a random step for each of three seeds, not at steps 1, 3 and 5. Its L4 check
   ("the cache is unchanged") now compares the sizes too.
 - The shape script refuses an L1 with no cache or none read, a `k0_pass` with no cache slot, and fixed drop steps.
+
+**Slabs: the per-document slab taken out**. The slab change above (`8b5532c5b6`) reinvented what the residency
+already does, and did it worse. In the residency (`rerail_slabs`), a slab is a 64 MB chunk block (`SLAB_BYTES`)
+leased from the device pool. It is shared by many documents, and each source and each tape is a room in it: an
+allocation of its own length, plus a word (`placed::place`, `tape_room`). Slabs are retired whole, by the budget and
+least recent use. The change instead gave each document a slab of its own, reserved at the tape's bound of 80 times
+the source and resident whole. `tape_block` is back to a sparse reservation in run memory, and the change's test is
+gone. A document's source and tape still do not lie in the residency's rooms; B4's "read once into a slab room
+through read_placed and a placer" is still not built.

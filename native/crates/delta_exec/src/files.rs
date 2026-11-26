@@ -316,13 +316,11 @@ fn place_in(b: &Arc<rerail_blocks::block::Block>, len: usize, fill: &mut dyn FnM
     Ok(home::Home::Placed(Arc::new(SourceRoom { region: m.freeze(), len })))
 }
 
-/// A document's tape block, for a source of about `len` bytes, room for its source and the parser's tape (80 times
-/// the source, the tape's bound): in a pinned slab when the directory has a source of them (P§11.4: sources and
-/// tapes are read in place in residency slabs, where a device reads them too), else a sparse reservation in the
-/// run's memory (nothing resident until written).
+/// A document's tape block, for a source of about `len` bytes: a sparse reservation its source and the parser's
+/// writes reach into (nothing is resident until written).
 fn tape_block(dir: &mut Directory, len: usize) -> Result<(BlockId, Arc<rerail_blocks::block::Block>), String> {
     let reserve = (80 * len).max(1 << 20).next_power_of_two();
-    let id = if dir.has_slabs() { dir.make_placed(crate::dir::PLACE_SLAB, kind::TAPE, 8, reserve)? } else { dir.make_capped(kind::TAPE, 8, reserve, reserve) };
+    let id = dir.make_capped(kind::TAPE, 8, reserve, reserve);
     Ok((id, dir.block(id).expect("just made")))
 }
 
