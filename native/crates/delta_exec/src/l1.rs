@@ -66,15 +66,31 @@ impl PortSet for L1Ports {
     }
 }
 
-/// The tape port's rows: `(d, source, tape, symbols)`, each blob by its four words, by document.
+/// The tape port's rows, P§11.4's document set (path → tape id, grammar; indexed by path, partitioned by document):
+/// `(d, path, grammar, source, tape, symbols)`: the document's key (decision 0052 §3, from its path's hash), its path's
+/// symbol, its grammar's word, and each blob by its four words.
 pub fn tape_shape() -> Shape {
-    let c = std::iter::once(ColType::I32).chain(std::iter::repeat_n(ColType::I64, 12)).collect();
-    Shape::run(c, (0..13).collect(), Some(0))
+    let c = [ColType::I32, ColType::I32].into_iter().chain(std::iter::repeat_n(ColType::I64, 13)).collect();
+    let mut s = Shape::run(c, (0..15).collect(), Some(0));
+    s.indexes = vec![rerail_blocks::layer::IndexSpec::Hash(vec![TAPE_PATH as u16])];
+    s
 }
 
-/// Document `doc`'s row in the tape port, as module `d`, with its symbols blob.
-pub fn tape_row(d: i64, doc: &DocIds, syms: &BlobId) -> Vec<i64> {
-    std::iter::once(d).chain(doc.source.words()).chain(doc.tape.words()).chain(syms.words()).collect()
+/// The tape port row's columns: the path's symbol, and the first word of each blob.
+pub const TAPE_PATH: usize = 1;
+pub const TAPE_SOURCE: usize = 3;
+pub const TAPE_TAPE: usize = 7;
+pub const TAPE_SYMS: usize = 11;
+
+/// Document `d`'s row in the tape port: at `path` (its symbol), in `grammar`, its blobs `doc` and its symbols blob.
+pub fn tape_row(d: i64, path: i64, grammar: i64, doc: &DocIds, syms: &BlobId) -> Vec<i64> {
+    [d, path, grammar].into_iter().chain(doc.source.words()).chain(doc.tape.words()).chain(syms.words()).collect()
+}
+
+/// A tape port row's blobs: its source and tape, and its symbols.
+pub fn row_blobs(row: &[i64]) -> (DocIds, BlobId) {
+    let b = |c: usize| BlobId::of_words(&row[c..c + 4]);
+    (DocIds { source: b(TAPE_SOURCE), tape: b(TAPE_TAPE) }, b(TAPE_SYMS))
 }
 
 /// L1: `k0_pass` over its tape port's changed documents.
@@ -93,11 +109,11 @@ fn doc_at(blobs: &BlobRows, dir: &Directory, tape: &View<'_>, id: RowId) -> Resu
         let w: Vec<i64> = (at..at + 4).map(|c| cell(tape, id, c)).collect();
         blobs.get(dir, &BlobId::of_words(&w))?.ok_or_else(|| "a blob the tape port names, which nothing holds".to_string())
     };
-    Ok(K0Doc { module: cell(tape, id, 0), src: blob(1)?, tape: blob(5)?, syms: blob(9)?.block })
+    Ok(K0Doc { module: cell(tape, id, 0), src: blob(TAPE_SOURCE as u16)?, tape: blob(TAPE_TAPE as u16)?, syms: blob(TAPE_SYMS as u16)?.block })
 }
 
 fn live<'v>(v: &'v View<'_>) -> impl Iterator<Item = RowId> + 'v {
-    (0..Read::end(v).get() as u32).map(RowId::new).filter(|&id| Read::live(v, id))
+    (0..Read::end(v).get()).map(RowId::new).filter(|&id| Read::live(v, id))
 }
 
 impl L1 {

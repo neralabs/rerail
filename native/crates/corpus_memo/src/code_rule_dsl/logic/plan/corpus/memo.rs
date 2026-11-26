@@ -275,17 +275,16 @@ pub struct Entry {
 /// so a key a collision moved only misses the memo. Guests (decision 0055) take `2^30..2^31`, so every key's
 /// `key << 32` stays positive.
 pub fn doc_keys(paths: &[String]) -> Vector<i64> {
-    const SPAN: u64 = (1 << 30) - 1;
+    // The key's one definition: `rerail_blocks::blob::doc_key`, which the delta executor's document set takes too.
     let mut taken = HashSet::with_capacity(paths.len());
     paths
         .iter()
         .map(|path| {
-            let hash: [u8; 32] = Sha256::digest(path.as_bytes()).into();
-            let mut key = u64::from_le_bytes(hash[..8].try_into().expect("8 bytes")) % SPAN + 1;
+            let mut key = rerail_blocks::blob::doc_key(path);
             while !taken.insert(key) {
-                key = key % SPAN + 1;
+                key = rerail_blocks::blob::next_key(key);
             }
-            key as i64
+            key
         })
         .collect()
 }

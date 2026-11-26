@@ -29,6 +29,18 @@ impl Atoms {
         Atoms(id)
     }
 
+    /// The store's atoms block, in the file at `path` (decision 0401: the store's atoms, which never give an id out
+    /// again): the file's block as it lies when there is one, else a new one, laid out empty. The same text keeps its
+    /// id in every later process.
+    pub fn open(dir: &mut Directory, path: &std::path::Path) -> Result<Atoms, String> {
+        let reserve = atoms_bytes(CAP, BYTES_CAP) + (1 << 20);
+        let (id, new) = dir.file_block(path, kind::ATOMS, 8, reserve)?;
+        if new {
+            lay_out_in(&dir.block(id).expect("just made"), 1, CAP, BYTES_CAP);
+        }
+        Ok(Atoms(id))
+    }
+
     /// The id of `s`, when it has one.
     pub fn find(self, dir: &Directory, s: &str) -> Option<i64> {
         let l = dir.read("atoms", &[self.0]).ok()?;

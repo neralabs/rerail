@@ -361,10 +361,11 @@ fn scan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let mut total = [0u32; R];
     for i in 0..items {
         let n = words_mut::<u32>(control, at + 4 * R * i, R);
-        for r in 0..R {
-            let k = n[r];
-            n[r] = total[r];
-            total[r] += k;
+        // An exclusive scan: each count's place is the total before it.
+        for (x, t) in n.iter_mut().zip(total.iter_mut()) {
+            let k = *x;
+            *x = *t;
+            *t += k;
         }
     }
     let mut base = [0u32; R];

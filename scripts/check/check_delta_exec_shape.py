@@ -72,7 +72,7 @@ def m0(failures: list) -> None:
         (r"\bstratum\b", "strata stated per head (strata are files, O4)"),
         (r"change::body|\bPart::|\bBody::", "the k-way body operator (steps are separate operators, O1)"),
         (r"write_pair|write_diff|write_keys", "the first build's writes"),
-        (r"\bWorld\b|std::fs::|File::open|read_to_string",
+        (r"\b(trait|dyn)\s+World\b|std::fs::|File::open|read_to_string",
          "a file read of the crate's own (files come through the engine's file layer: the observer, placed reads)"),
     ]
     for path in sorted((CRATE / "src").rglob("*.rs")):
@@ -80,7 +80,7 @@ def m0(failures: list) -> None:
         for pattern, why in forbidden:
             # A test may make the files it answers (write them, stamp them, remove them), and reads none.
             if path.name.endswith("_tests.rs") and "std::fs::" in pattern:
-                pattern, why = (r"\bWorld\b|fs::read|File::open|read_to_string|read_dir",
+                pattern, why = (r"\b(trait|dyn)\s+World\b|fs::read|File::open|read_to_string|read_dir",
                                 "a test's file read (a test writes the files the file layer answers, and reads none)")
             hits(path, code, pattern, why, failures)
     for path in sorted(CRATE.rglob("*.rerail")):
@@ -251,8 +251,16 @@ def b2(failures: list) -> None:
             allowed.add("rerail_gpu")
         # B4: a document is answered through the engine's file layer (the observer, the slabs' placer), in `files`
         # alone.
-        if path.name in ("files.rs", "files_tests.rs"):
+        if path.name in ("files.rs", "files_tests.rs", "l1_tests.rs"):
             allowed.add("rerail_observe")
+        # The store's objects (sources and tapes by content, a tape by its grammar) and documents' places, kept as is
+        # (*0686: Operations* §5; the user, 2026-11-26: "the objects store, documents' places and the journal"), in
+        # `files` alone.
+        if path.name == "files.rs":
+            allowed |= {"rerail_store", "rerail_store_base"}
+        # The residency's budget, slab size and drop: one definition with rerail_slabs (`rerail_accel::budget`).
+        if path.name in ("residency.rs", "dir.rs"):
+            allowed.add("rerail_accel")
         # Its tests narrow the observer's racy window, through the context's switches, as the engine's do.
         if path.name == "files_tests.rs":
             allowed.add("rerail_context")
@@ -493,8 +501,25 @@ def b6(failures: list) -> None:
     if not re.search(r"alloc::block\(&need\)", dirs) or "Device::May" not in dirs:
         failures.append("dir.rs: a documents' slab not made by the block policy, as the device may read it (Need::SLAB, Device::May)")
     boot = (CRATE / "src/boot.rs").read_text()
-    if "pub fn retire(" not in files or "dir.slabs()" not in files or "docs.retire(bench)?" not in boot:
-        failures.append("files.rs/boot.rs: a run does not retire the slabs and blocks no document names (the residency retires slabs whole)")
+    # Retirement is the residency's policy, as it is (rerail_slabs; the user, 2026-11-26): the least recently used slab
+    # only while the budget is short, all dropped DROP_AFTER after an execution; never a run's own eager retirement,
+    # which threw the content hit away.
+    residency = strip_rust((CRATE / "src/residency.rs").read_text())
+    for want, why in (
+        ("min_by_key(|(_, s)| s.2)", "the least recently used slab retired"),
+        ("held + bytes <= limit", "retired only while the budget is short"),
+        ("rerail_accel::budget::resident()", "the residency's share of the budget, one definition with rerail_slabs"),
+        ("rerail_accel::budget::DROP_AFTER", "all dropped DROP_AFTER after an execution"),
+        ("Arc::strong_count(&s.1) == 1", "a slab a reader holds is not retired"),
+    ):
+        if want not in residency:
+            failures.append(f"residency.rs: not the residency's policy: {why} ({want} missing)")
+    if "self.residency.room_for(bytes)?" not in dirs:
+        failures.append("dir.rs: a slab made without room under the residency's budget")
+    if re.search(r"pub fn retire\(", files) or "docs.retire(" in boot:
+        failures.append("files.rs/boot.rs: a run's own eager retirement (retirement is the residency's: rerail_slabs)")
+    if "bench.dir.executed();" not in boot or "forget_dead(" not in boot:
+        failures.append("boot.rs: a run that does not end an execution (the residency's drop), or keeps the blobs of slabs it let go")
     interned = (TWINS / "src/intern.rs").read_text()
     if re.search(r"is_leaf\(n\)\s*\{\s*put\(", interned):
         failures.append("delta_twins/src/intern.rs: every leaf interned (intern names only identifiers and strings)")
@@ -605,16 +630,58 @@ def e1(failures: list) -> None:
             failures.append(f"delta_device's tests lack {t}")
 
 
+def kept(failures: list) -> None:
+    """What lasts across processes (*Operations* §5, P§11.4, P§12 item 7; the user, 2026-11-26): the file layer kept
+    as is (the store's objects, documents' places, the observer's journal), the leaves and the pure answers as kept
+    traces (no map of the crate's own), the document key from the path's hash (0052 §3, one definition), the document
+    set's path and grammar columns, indexed by path, and a later process starting where the last run left off."""
+    src = CRATE / "src"
+    files = strip_rust((src / "files.rs").read_text())
+    for path in (src / "files.rs", src / "intern.rs", src / "boot.rs"):
+        hits(path, strip_rust(path.read_text()), r"\bHashMap\b|\bBTreeMap\b", "a map where P§11.4 has a trace (the leaves, the answers by key)", failures)
+    for want, why in (
+        ("pub objects: ContentStore", "the store's objects (sources and tapes by content, a tape by its grammar)"),
+        ("document_places(", "documents' places (0494): a later process reads a document where the segments hold it"),
+        ("put_source_and_tape(", "a parsed document put in the store's objects"),
+        ("i64::from(digest.is_some())", "every leaf recorded, misses too (D3)"),
+        ("pub trait Answerer", "P§12 item 7's answerer"),
+        ("const KIND: AnswerKind = AnswerKind::World", "load, a world reader"),
+        ("const KIND: AnswerKind = AnswerKind::Pure", "parse and intern, pure answers kept by key (D4)"),
+        ("o.watch(&[root])", "the journal's cover (decision 0105)"),
+        ("observe::store_beside(", "the observer's answers kept beside the content store, across processes"),
+    ):
+        if want not in files:
+            failures.append(f"files.rs: {why} ({want} missing)")
+    if "rerail_blocks::blob::doc_key(path)" not in files:
+        failures.append("files.rs: a document's key not from its path's hash (0052 §3, rerail_blocks::blob::doc_key)")
+    memo = (ROOT / "native/crates/corpus_memo/src/code_rule_dsl/logic/plan/corpus/memo.rs").read_text()
+    if "rerail_blocks::blob::doc_key(path)" not in memo or "% SPAN" in memo:
+        failures.append("corpus_memo memo.rs: the document key defined twice (one definition: rerail_blocks::blob::doc_key)")
+    l1 = strip_rust((src / "l1.rs").read_text())
+    if "IndexSpec::Hash(vec![TAPE_PATH as u16])" not in l1 or not re.search(r"pub fn tape_row\(d: i64, path: i64, grammar: i64", l1):
+        failures.append("l1.rs: the document set's row without its path and grammar, or not indexed by path (P§11.4)")
+    contract_code = strip_rust((src / "contract.rs").read_text())
+    boot = strip_rust((src / "boot.rs").read_text())
+    if "Directory::open_kept(kept" not in contract_code or "pins.keep(&mut bench.dir)" not in boot or "pub fn open(dir: &Directory)" not in boot:
+        failures.append("contract.rs/boot.rs: a run's traces not kept, or a later process not opening them where its pins say")
+    if "docs.tape.roll_up_run(" not in boot:
+        failures.append("boot.rs: the document set never rolled up (its layers kept for ever)")
+    if "pub fn open(dir: &mut Directory, path: &std::path::Path) -> Result<Atoms, String>" not in strip_rust((src / "sym.rs").read_text()):
+        failures.append("sym.rs: the store's atoms not a file of their own (0401: ids that last across processes)")
+    if "fn a_later_process_starts_where_the_last_run_left_off" not in (src / "l1_tests.rs").read_text():
+        failures.append("l1_tests.rs: no check that a later process starts where the last run left off")
+
+
 def main() -> int:
     failures: list = []
-    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, b6, reach, e1):
+    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, b6, reach, e1, kept):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, B6, reach, E1)")
+    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, B6, reach, E1, kept)")
     return 0
 
 

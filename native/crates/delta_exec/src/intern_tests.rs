@@ -1,7 +1,7 @@
 //! B5's checks: symbols, written by `intern` alone.
 
 use super::*;
-use crate::files::Files;
+use crate::files::tests::W;
 use crate::tape::{TapeView, View};
 use crate::tests::{D, Fx};
 use rerail_blocks::bistate::{ColumnIndex, Read, RowId};
@@ -10,7 +10,7 @@ use rerail_blocks::bistate::{ColumnIndex, Read, RowId};
 fn texts(fx: &Fx, doc: &D) -> Vec<(String, i64)> {
     fx.read(doc, |r, syms, names| {
         let v = TapeView::new(View::Text, 1, r, syms, names);
-        (0..Read::end(&v).get() as u32)
+        (0..Read::end(&v).get())
             .map(RowId::new)
             .filter(|&id| Read::live(&v, id))
             .map(|id| (r.text(id.get() as usize).to_string(), Read::get(&v, id, ColumnIndex::new(2))))
@@ -37,24 +37,25 @@ fn the_same_text_gets_the_same_symbol_across_runs() {
     assert_eq!(fx.atoms.find(&fx.dir, "q").map(|q| q > i64::from(n)), Some(true), "a new id past the first run's");
 }
 
-/// An unchanged tape interns nothing: its symbols block is the one it had, `intern` does not run, the atoms are as
-/// they were.
+/// An unchanged tape interns nothing: the intern answer is pure, kept by key ((tape, path, module), D4): its
+/// symbols block is the one it had, `intern` does not run, the atoms are as they were; the same tape at another path
+/// is interned (its key differs).
 #[test]
 fn an_unchanged_tape_interns_nothing() {
-    let dir_path = std::env::temp_dir().join(format!("rerail-b5-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir_path);
-    std::fs::create_dir_all(&dir_path).unwrap();
-    std::fs::write(dir_path.join("bootstrap-l0.rerail"), crate::L0).unwrap();
-    let mut files = Files::new(dir_path.clone(), dir_path.join("observer.db"));
-    let mut fx = Fx::new();
-    let mut interned = Interned::default();
-    let d = files.answer("bootstrap-l0.rerail", &fx.reg, &mut fx.blobs, &mut fx.dir).unwrap();
-    let s = interned.of(&fx.reg, &fx.ops, &mut fx.dir, &mut fx.blobs, fx.atoms, &d).unwrap();
-    let (runs, atoms) = (interned.runs, fx.atoms.count(&fx.dir));
-    let again = files.answer("bootstrap-l0.rerail", &fx.reg, &mut fx.blobs, &mut fx.dir).unwrap();
+    let mut w = W::new("b5-same");
+    let iops = InternOps::declare(&mut w.reg).unwrap();
+    let atoms = crate::sym::Atoms::new(&mut w.dir);
+    let d = w.answer("bootstrap-l0.rerail").unwrap();
+    let s = w.world.intern_answer(&w.reg, &w.traces, &iops, &mut w.dir, &mut w.blobs, atoms, &d).unwrap();
+    let (runs, n) = (w.world.asked.interns, atoms.count(&w.dir));
+    let again = w.answer("bootstrap-l0.rerail").unwrap();
     assert!(again.is_identity());
-    assert_eq!(interned.of(&fx.reg, &fx.ops, &mut fx.dir, &mut fx.blobs, fx.atoms, &again).unwrap(), s);
-    assert_eq!((interned.runs, fx.atoms.count(&fx.dir)), (runs, atoms));
+    assert_eq!(w.world.intern_answer(&w.reg, &w.traces, &iops, &mut w.dir, &mut w.blobs, atoms, &again).unwrap(), s);
+    assert_eq!((w.world.asked.interns, atoms.count(&w.dir)), (runs, n));
+    // The same tape answered at another path: another key, interned.
+    let other = crate::files::Doc { path: "elsewhere.rerail".into(), module: "elsewhere".into(), ..again };
+    assert_ne!(w.world.intern_answer(&w.reg, &w.traces, &iops, &mut w.dir, &mut w.blobs, atoms, &other).unwrap(), s);
+    assert_eq!(w.world.asked.interns, runs + 1);
 }
 
 /// No view's read writes the atoms: every row of every view of l0 read, and the atoms as they were.
@@ -67,7 +68,7 @@ fn no_views_read_writes_the_atoms() {
     fx.read(&doc, |r, syms, names| {
         for (view, _, arity) in View::ALL {
             let v = TapeView::new(view, 1, r, syms, names);
-            for id in (0..Read::end(&v).get() as u32).map(RowId::new).filter(|&id| Read::live(&v, id)) {
+            for id in (0..Read::end(&v).get()).map(RowId::new).filter(|&id| Read::live(&v, id)) {
                 for c in ColumnIndex::all(arity) {
                     Read::get(&v, id, c);
                     cells += 1;

@@ -406,6 +406,13 @@ impl Instance {
         Ok(Instance { outs, cache: OpCache::new(dir) })
     }
 
+    /// The instance with its outputs' layers placed at `place` (`dir::PLACE_KEPT`: they last across processes), at
+    /// `heads` (a kept run's; empty: none). Its cache is in memory: a new process's is ∅ (L5).
+    pub fn resumed(mut self, place: u32, heads: &[Option<BlockId>]) -> Instance {
+        self.outs = std::mem::take(&mut self.outs).into_iter().enumerate().map(|(k, t)| t.resumed(place, heads.get(k).copied().flatten())).collect();
+        self
+    }
+
     /// Its outputs' heads.
     pub fn heads(&self) -> Vec<Option<BlockId>> {
         self.outs.iter().map(Trace::head).collect()
@@ -500,7 +507,7 @@ pub fn rows_at(dir: &Directory, t: &Trace, head: Option<BlockId>) -> Result<BTre
     let l = t.read(dir, &[Some(h)])?;
     let table = l.table();
     let s = t.state(&table, head)?;
-    let live = (0..Read::end(&s).get() as u32).map(RowId::new).filter(|&id| Read::live(&s, id));
+    let live = (0..Read::end(&s).get()).map(RowId::new).filter(|&id| Read::live(&s, id));
     Ok(live.map(|id| ColumnIndex::all(Read::arity(&s)).map(|c| Read::get(&s, id, c)).collect()).collect()) // copy: derived (the oracle's rows)
 }
 
@@ -595,11 +602,43 @@ pub struct Bench {
 }
 
 impl Bench {
+    /// A bench in the run's memory: nothing lasts past it.
     pub fn new() -> Result<Bench, String> {
         let mut reg = Registry::default();
         let traces = TraceOps::declare(&mut reg)?;
         let caches = CacheOps::declare(&mut reg)?;
         Ok(Bench { reg, dir: Directory::default(), blobs: BlobRows::new(&traces), traces, caches })
+    }
+
+    /// A bench over the kept blocks in folder `kept` (a store's, `files::Store::kept`): each mapped where it lies, at
+    /// its id (`Directory::open_kept`), and what lasts kept there from now on; the last run's pins (`boot::Pins`) and
+    /// their block, when one was kept, and the blobs' rows at the head they name, less those of blocks a process does
+    /// not keep (a slab's: its bytes the store's objects hold, loaded again when asked).
+    pub fn open(kept: &std::path::Path) -> Result<(Bench, Option<(BlockId, crate::boot::Pins)>), String> {
+        let mut bench = Bench::new()?;
+        bench.dir = if rerail_blocks::kept::trace_folder::blocks(kept).map_err(|e| format!("{}: {e}", kept.display()))?.is_empty() {
+            Directory::default().with_kept(kept)
+        } else {
+            Directory::open_kept(kept, rerail_blocks::block::kind::FACTS)?
+        };
+        let pins = crate::boot::Pins::open(&bench.dir)?;
+        bench.blobs = BlobRows::new(&bench.traces).resumed(bench.dir.lasting(), pins.as_ref().and_then(|p| p.1.blobs));
+        // What the newest pins reach, and the blocks their blobs lie in (the symbols blocks, the pure answers kept
+        // by key): every other kept block is a state no run reads again (an older run's, a process stopped before
+        // letting it go), released, its file removed.
+        if let Some((id, _)) = &pins {
+            let named = crate::contract::rows_at(&bench.dir, bench.blobs.rows_trace(), bench.blobs.head())?;
+            let mut keep = bench.dir.reach(&[*id]);
+            keep.extend(named.iter().map(|r| BlockId(r[4] as u32)));
+            for b in bench.dir.owned() {
+                if !keep.contains(&b) {
+                    bench.dir.release(b);
+                }
+            }
+        }
+        let Bench { reg, dir, blobs, .. } = &mut bench;
+        blobs.forget_dead(reg, dir)?;
+        Ok((bench, pins))
     }
 
     pub fn cx(&mut self) -> Cx<'_> {
@@ -714,8 +753,8 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
             }
         }
         // L3: the chain's output is a cold run's.
-        for p in 0..threaded.outs.len() {
-            let a = rows_at(cx.dir, &threaded.outs[p], threaded.outs[p].head()).map_err(|e| fail("L3", k, e))?;
+        for (p, t) in threaded.outs.iter().enumerate() {
+            let a = rows_at(cx.dir, t, t.head()).map_err(|e| fail("L3", k, e))?;
             if a != cold_rows[p] {
                 return Err(fail("L3", k, format!("port {}: the chain's output drifted from a cold run's", ports.outs[p].name)));
             }

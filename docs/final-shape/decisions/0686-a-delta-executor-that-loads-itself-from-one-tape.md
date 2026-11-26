@@ -1376,6 +1376,9 @@ Checks (Relax, local): `a_port_set_whose_ports_are_not_its_counts_is_refused`. T
 over the typed contract. The shape script holds the trait to P§12's associated types and typed signatures, and
 refuses a port read by a bare index.
 
+(Superseded by "Retirement is the residency's", below. This was a policy of my own, not the residency's: it threw the
+content hit away, and its test asserted that it did.)
+
 **Slabs retired whole** (B4, the residency's retirement). A run starts by retiring what the document set's
 committed state (the run's before) does not name (`DocSet::retire`). It does this once the set or the current slab
 has moved since it last retired.
@@ -1433,3 +1436,90 @@ wrap"). `rerail_blocks::blob` holds `BlockId`, `BlobId` (with `of`, the sha256 o
 trait (`get`, `house`, through a home's directory and registry). `delta_exec`'s home of them is `BlobRows`, the rows
 in a trace, and implements the trait. The directory's `BlockId` is the blocks crate's. The shape script refuses a
 second definition of any of these names in `delta_exec`. Relax, local: 79 of 79.
+
+**What lasts across processes** (*Operations* §5: the file layer kept as is; P§11.4: "leaves read: path, digest,
+hit or miss" and "blobs, plus a trace from key to blob id"; P§12 item 7). Two maps of the crate's own stood where the
+pages have traces (`Files.kept`, `Interned.syms`). The objects store, documents' places and the journal were not
+used, and nothing survived a restart. Now `files::World` is the world a run reads, kept in a `Store` folder:
+
+- **The store's folder** (0700, decision 0574):
+  - the content store's objects (`objects.db` and its segments);
+  - the observer's answers beside it (`objects.db.files`, the P0 store, which keeps them in the content store's
+    facts);
+  - the store's atoms (`atoms.blk`, mapped writable: decision 0401's ids, which last);
+  - the kept traces' blocks (`kept/`, a file a block).
+- **Answerers** (P§12 item 7: `Answerer`, `AnswerKind::{World, Pure, SubRun}`):
+  - **load** is a World answerer. Under the observer's journal (`begin`, `watch`, `flush`: decision 0105) it writes
+    each leaf it reads to the leaves trace `(d, digest, found)`, misses too (D3). An unchanged leaf writes nothing.
+  - **parse** is Pure, keyed by (content, grammar). `rr_syntax::grammar()` is the parser's version: the sha256 of
+    its sources. A hit skips the read and the parse (*Operations* §6.2): the tape is either resident, or loaded from
+    the store's objects into a slab room (a load to the exact bytes, not a copy, 0353). A miss parses, then puts the
+    source and tape in the store's objects (`put_source_and_tape`).
+  - **intern** is Pure, keyed by (tape, path, module). Its answer is kept by key (D4) while the store's atoms keep
+    their ids. Its symbols block is a kept block.
+  - The answers trace keeps parse's and intern's answers, by answerer and key.
+- **Documents' places** (0494): a trace `(d, source's segment, the tape's hash and segment, its length)`, from the
+  store's new `ContentStore::document_places(sha256, grammar)`. A later process reads a document's source and tape
+  where the segments hold them, with no SQL.
+- **The document key** (0052 §3) comes from the path's hash: `rerail_blocks::blob::doc_key`, the next free key on a
+  collision. It is one definition, which `corpus_memo::doc_keys` now calls too. It is no longer the module's atom id.
+- **The document set's row** (P§11.4: path → tape id, grammar) is `(d, path, grammar, source, tape, symbols)`, with
+  a hash index on the path's symbol. A document is found by its path.
+- **Kept traces.** Every trace a run writes is placed where the directory keeps what lasts (`Directory::lasting`):
+  - the document set;
+  - L1's outputs;
+  - the leaves, the answers and the places;
+  - the blobs' rows.
+- **The pins.** A run's pins are kept as a block that refers to every head (`Pins::keep`).
+- **Opening the store** (`contract::Bench::open`):
+  - each kept block is mapped where it lies (`Directory::open_kept`);
+  - the newest pins are found among the unreferred blocks (`Pins::open`);
+  - every kept block they do not reach is let go, its file removed, except a block a blob's row names;
+  - the blobs' rows of blocks no process keeps (slabs) are forgotten.
+- **Rolling up the set.** The document set rolls up at a run's end, once its delta is read (`Trace::roll_up_run`).
+  The run's layers merge into one, then the geometric policy applies below, so the next run's before is one head.
+- `Files` and `Interned` are gone, and their maps with them.
+
+**Retirement is the residency's** (`rerail_slabs`, its policy as it is; the user, 2026-11-26). The directory's slabs
+are held by `residency::Residency`, not by the directory:
+
+- **Retired under the budget only.** A slab is retired only while what is held and a new slab pass the budget, and
+  then the least recently used slab no reader holds goes. The budget is `rerail_accel::budget::resident`, the
+  residency's share. That function and `SLAB_BYTES` and `DROP_AFTER` moved into `rerail_accel::budget`, one
+  definition, which `rerail_slabs` now takes.
+- **What counts as used.** A run uses each live document's slabs (`DocSet::resident`).
+- **The drop.** Everything is dropped `DROP_AFTER` after the last execution, by the residency's own thread, as
+  `rerail_slabs::executed` does.
+- **The content hit is kept.** A document whose slab went is loaded from the store's objects where its places say,
+  not parsed.
+- **The lock.** The residency's state is shared with its drop thread, behind a lock, as `rerail_slabs`'s is. It holds
+  slabs, not claims, so it lives in a module of its own and the directory's and traces' code stays lock-free.
+
+Checks (Relax, local, 84 of 84):
+
+- `every_leaf_read_is_recorded_misses_too`.
+- `a_content_answered_before_is_never_parsed_again`. The same content is not parsed again in any of three cases:
+  - at another path (a resident hit);
+  - after the residency's drop (loaded from the store's objects);
+  - in a new world over the same store.
+- `the_residency_retires_the_least_recently_used_slab_only_past_its_budget`. Nothing is retired within the budget.
+  Past it, the least recently used slab goes, and a slab a reader holds is skipped.
+- `a_run_retires_the_least_recently_used_slab_past_the_budget_and_keeps_the_content_hit`. This replaces
+  `a_run_retires_the_slabs_no_document_names`. l0's slab is retired past the budget, and going back to l0 loads it
+  without a parse.
+- `the_residency_drops_all_after_a_run_and_the_next_run_loads_again`.
+- `a_later_process_starts_where_the_last_run_left_off`. A second bench is opened over the store's kept folder, with
+  the observer forgotten, as a new process has none:
+  - L1's outputs are where the run left them, and the atoms keep their ids;
+  - the first run is L4's identity, checks only, with nothing parsed or interned and no read but the observer's
+    sampled check;
+  - an edit then gives its delta, 15 rules.
+- `an_unchanged_tape_interns_nothing`: the intern answer by key.
+- The shape script's new `kept` check holds each of these pieces. Its retirement check now refuses a run's own eager
+  retirement and requires the residency's policy.
+- Its patterns were narrowed, not dropped, where they had matched the pages' own names:
+  - `World` is B§8's `world`, so the check refuses a `World` trait or `dyn World`, not the name;
+  - `Trace::resumed` replaces `at`, the frontier name, and is a constructor;
+  - `roll_up_run` replaces `settle`.
+- Clippy is clean on `delta_exec` and the twins, the earlier warnings included.
+

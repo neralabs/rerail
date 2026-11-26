@@ -3811,12 +3811,15 @@ dependencies = [
 name = "rerail-delta-exec"
 version = "0.1.0"
 dependencies = [
+ "rerail-accel",
  "rerail-blocks",
  "rerail-context",
  "rerail-delta-exec",
  "rerail-delta-twins",
  "rerail-observe",
  "rerail-rr-syntax",
+ "rerail-store",
+ "rerail-store-base",
  "sha2 0.11.1",
 ]
 

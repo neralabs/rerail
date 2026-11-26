@@ -62,3 +62,20 @@ pub trait Blobs {
     /// home (a second of the same bytes is the first, and its place is not kept).
     fn house(&mut self, reg: &Self::Reg, dir: &mut Self::Dir, bytes: Placed) -> Result<(BlobId, bool), String>;
 }
+
+/// The keys a document takes: `1..2^30` (decision 0052 §3; guests, decision 0055, take `2^30..2^31`, so every key's
+/// `key << 32` stays positive).
+const KEY_SPAN: u64 = (1 << 30) - 1;
+
+/// A document's first key, from its path's hash (decision 0052 §3): a key that means the same in every run, as a
+/// position in a file list did not.
+pub fn doc_key(path: &str) -> i64 {
+    use sha2::Digest as _;
+    let hash: [u8; 32] = sha2::Sha256::digest(path.as_bytes()).into();
+    (u64::from_le_bytes(hash[..8].try_into().expect("8 bytes")) % KEY_SPAN + 1) as i64
+}
+
+/// The key after `key` (a collision's next free one), wrapping within the documents' keys.
+pub fn next_key(key: i64) -> i64 {
+    ((key as u64) % KEY_SPAN + 1) as i64
+}

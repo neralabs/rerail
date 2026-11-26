@@ -157,7 +157,7 @@ fn scan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let ([source, tape], [atoms, syms]) = c.views([SOURCE, TAPE], [ATOMS, SYMS]);
     let r = reads(source, tape, &p);
     let language = || KIND_NAMES.iter().chain(rerail_rr_syntax::tape::FIELD_NAMES).chain(&STEP_KINDS).filter(|n| !n.is_empty());
-    let last = language().last().expect("the language's names");
+    let last = language().next_back().expect("the language's names");
     if find_in(atoms, last, hash_bytes(last.as_bytes())).is_none() {
         for n in language() {
             put(atoms, n);

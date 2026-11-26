@@ -34,11 +34,13 @@ use crate::tape::Text;
 use rerail_blocks::block::kind;
 use rerail_blocks::maps::InBlock;
 use rerail_observe::content_store::observe::{self, DigestRead, DigestStep};
+use rerail_store::content_store::ContentStore;
+use rerail_store::content_store::DocumentPlaces;
+use rerail_store_base::content_store::HashKey;
 use rerail_blocks::maps::Placed as _;
 use rerail_blocks::region::{Frozen, Mutable};
 use rerail_rr_syntax::tape_format::home;
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use rerail_blocks::blob::{BlobId, Placed};
@@ -64,8 +66,40 @@ impl BlobRows {
         BlobRows { ops: *ops, rows: Trace::new(&blobs_shape()).expect("a storable shape") }
     }
 
-    /// Where blob `id`'s bytes lie: its row, probed by its name at the rows' head.
+    /// The blobs' rows placed at `place` (`dir::PLACE_KEPT`: they last across processes), at `head`.
+    pub fn resumed(self, place: u32, head: Option<BlockId>) -> BlobRows {
+        BlobRows { rows: self.rows.resumed(place, head), ..self }
+    }
+
+    /// Their rows' trace.
+    pub fn rows_trace(&self) -> &Trace {
+        &self.rows
+    }
+
+    /// Their rows' head, as a run's pins record it.
+    pub fn head(&self) -> Option<BlockId> {
+        self.rows.head()
+    }
+
+    /// Forgets the blobs whose block nothing holds: a slab the residency retired or dropped, or a new process's (a slab
+    /// is the run's memory). Their bytes are in the store's objects, loaded again when asked.
+    pub fn forget_dead(&mut self, reg: &Registry, dir: &mut Directory) -> Result<(), String> {
+        let rows = rows_at(dir, &self.rows, self.rows.head())?;
+        let gone: Vec<(Vec<i64>, i32)> = rows.into_iter().filter(|r| !dir.alive(BlockId(r[4] as u32))).map(|r| (r, -1)).collect(); // copy: derived (the dead blobs' rows, killed)
+        if !gone.is_empty() {
+            push_layer(reg, &self.ops, dir, &mut self.rows, &gone)?;
+        }
+        Ok(())
+    }
+
+    /// Where blob `id`'s bytes lie, while they are resident: its row, probed by its name at the rows' head, its
+    /// block still held (a slab the residency retired, or dropped, holds no blob).
     pub fn get(&self, dir: &Directory, id: &BlobId) -> Result<Option<Placed>, String> {
+        Ok(self.row(dir, id)?.filter(|p| dir.alive(p.block)))
+    }
+
+    /// Blob `id`'s row, its block held or not.
+    fn row(&self, dir: &Directory, id: &BlobId) -> Result<Option<Placed>, String> {
         let Some(h) = self.rows.head() else { return Ok(None) };
         let l = self.rows.read(dir, &[Some(h)])?;
         let table = l.table();
@@ -85,35 +119,15 @@ impl BlobRows {
             let l = dir.read("house", &[p.block])?;
             BlobId::of(&l.block(0)[p.at..p.at + p.len])
         };
-        if self.get(dir, &id)?.is_some() {
+        let was = self.row(dir, &id)?;
+        if was.is_some_and(|w| dir.alive(w.block)) {
             return Ok((id, false));
         }
-        let row: Vec<i64> = id.words().into_iter().chain([i64::from(p.block.0), p.at as i64, p.len as i64]).collect(); // copy: derived (a blob's row, written once)
-        push_layer(reg, &self.ops, dir, &mut self.rows, &[(row, 1)])?;
+        let row = |p: Placed| -> Vec<i64> { id.words().into_iter().chain([i64::from(p.block.0), p.at as i64, p.len as i64]).collect() }; // copy: derived (a blob's row, written once)
+        // A blob whose slab went, resident again: its row moves to where it lies now.
+        let pairs: Vec<(Vec<i64>, i32)> = was.map(|w| (row(w), -1)).into_iter().chain([(row(p), 1)]).collect(); // copy: derived (the row's change)
+        push_layer(reg, &self.ops, dir, &mut self.rows, &pairs)?;
         Ok((id, true))
-    }
-
-    /// Retires the blocks that hold no blob of `live` (the residency's retirement, whole slabs): the blocks its rows
-    /// name and the directory's slabs, a slab whose rooms were all housed already (a re-read of the same bytes) among
-    /// them. Their blobs' rows go (−1), and the directory's own handle is let go, so each goes once no reference or
-    /// reader holds it. The slab rooms go to now is kept. The blobs forgotten.
-    pub fn retire(&mut self, reg: &Registry, dir: &mut Directory, live: &[BlobId]) -> Result<Vec<BlobId>, String> {
-        let rows = rows_at(dir, &self.rows, self.rows.head())?;
-        let mut blocks: Vec<(u32, bool)> = rows.iter().map(|r| (r[4] as u32, live.contains(&BlobId::of_words(&r[..4])))).collect(); // copy: derived (each blob's block, and whether it is live)
-        blocks.sort_unstable();
-        let held: Vec<u32> = blocks.iter().filter(|b| b.1).map(|b| b.0).collect(); // copy: derived (the blocks a live blob lies in)
-        let retired = |b: u32| !held.contains(&b) && !dir.is_current_slab(BlockId(b));
-        let gone: Vec<(Vec<i64>, i32)> = rows.iter().filter(|r| retired(r[4] as u32)).map(|r| (r.clone(), -1)).collect(); // copy: derived (the retired blobs' rows, killed)
-        let mut freed: Vec<u32> = gone.iter().map(|(r, _)| r[4] as u32).chain(dir.slabs().into_iter().map(|s| s.0).filter(|&s| retired(s))).collect(); // copy: derived (the blocks retired)
-        freed.sort_unstable();
-        freed.dedup();
-        if !gone.is_empty() {
-            push_layer(reg, &self.ops, dir, &mut self.rows, &gone)?;
-        }
-        for b in freed {
-            dir.release(BlockId(b));
-        }
-        Ok(gone.iter().map(|(r, _)| BlobId::of_words(&r[..4])).collect())
     }
 
     /// How many it holds.
@@ -160,83 +174,420 @@ impl Doc {
     }
 }
 
-/// The module a document's path names: the path relative to the root, without its `.rerail`.
-fn module_of(path: &str) -> String {
-    path.strip_suffix(".rerail").unwrap_or(path).to_string()
+/// The store a run keeps across processes (*Operations* §5, kept as is): one folder holding the observer's store
+/// (`objects.db.files`, its answers by path and stat, under the journal), the content store's objects (`objects.db` and its
+/// segments: sources and tapes by content, a tape by its grammar), the store's atoms (`atoms.blk`, decision 0401) and
+/// the kept traces' blocks (`kept/`, a file a block, named by its id).
+pub struct Store {
+    pub folder: PathBuf,
+    pub objects: ContentStore,
 }
 
-/// The root's documents as the file layer answers them, with the digest and the blob each was last answered with.
-pub struct Files {
-    root: PathBuf,
-    /// The observer's store (`observe::with`): its answers kept there.
-    store: PathBuf,
-    kept: HashMap<String, ([u8; 32], DocIds)>,
-    /// Files read (each read placed once, by `read_placed`).
-    pub reads: u64,
-}
-
-impl Files {
-    pub fn new(root: PathBuf, store: PathBuf) -> Files {
-        Files { root, store, kept: HashMap::new(), reads: 0 }
+impl Store {
+    /// The store in `folder`, made when there is none, the user's alone.
+    pub fn open(folder: &Path) -> Result<Store, String> {
+        // The observer keeps its answers in the content store's facts (`STORE`), which boot registers as the program
+        // loads; a process without boot (a test's) registers it here, once.
+        static REGISTER: std::sync::Once = std::sync::Once::new();
+        REGISTER.call_once(|| {
+            if rerail_store_base::content_store::observer_store::base::STORE.try_get().is_none() {
+                rerail_store::content_store::observer_store::register();
+            }
+        });
+        // The user's alone (decision 0574): each folder made `0700`, and checked.
+        rerail_blocks::mapped::make_folder(&folder.join("kept")).map_err(|e| format!("{}: {e}", folder.display()))?;
+        let objects = ContentStore::open(&folder.join("objects.db")).map_err(|e| format!("{}: {e}", folder.display()))?;
+        Ok(Store { folder: folder.to_path_buf(), objects })
     }
 
-    /// Forgets its answers that name a blob of `gone` (retired): their paths are read again when next asked.
-    pub fn forget(&mut self, gone: &[BlobId]) {
-        self.kept.retain(|_, (_, d)| !gone.contains(&d.source) && !gone.contains(&d.tape));
+    /// The observer's store: the P0 store beside the content store (`observe::store_beside`, `<objects.db>.files`),
+    /// its answers kept in the content store's facts across processes.
+    pub fn observer(&self) -> PathBuf {
+        observe::store_beside(&self.folder.join("objects.db"))
+    }
+
+    /// The kept traces' folder.
+    pub fn kept(&self) -> PathBuf {
+        self.folder.join("kept")
+    }
+
+    /// The store's atoms' file.
+    pub fn atoms(&self) -> PathBuf {
+        self.folder.join("atoms.blk")
+    }
+}
+
+/// The pure answerers' tags in the answers trace (P§12 item 7: `AnswerKind::Pure`, kept by key, D4).
+pub const PARSE: i64 = 1;
+pub const INTERN: i64 = 2;
+
+/// P§12 item 7's kinds of answerer: what can change an answer between runs (P§7.2).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AnswerKind {
+    /// The world, through a leaf the answer read: each leaf recorded, misses too (D3).
+    World,
+    /// Nothing: the key is the whole input; kept by key for every run and workspace (D4).
+    Pure,
+    /// The sub-run's own inputs.
+    SubRun,
+}
+
+/// An answerer (P§12 item 7): maps a request's key to its answer, a row or a blob. Its kind says what can change the
+/// answer between runs.
+pub trait Answerer {
+    const KIND: AnswerKind;
+}
+
+/// The load answerer (B§7's `load`: path → bytes): a world reader.
+pub struct Load;
+impl Answerer for Load {
+    const KIND: AnswerKind = AnswerKind::World;
+}
+
+/// The parse answerer ((content, grammar) → tape): pure.
+pub struct Parse;
+impl Answerer for Parse {
+    const KIND: AnswerKind = AnswerKind::Pure;
+}
+
+/// The intern answerer ((tape, path, module) → symbols): pure, over the store's atoms, which never give an id out
+/// again.
+pub struct Intern;
+impl Answerer for Intern {
+    const KIND: AnswerKind = AnswerKind::Pure;
+}
+
+/// The leaves' rows (P§11.4: "leaves read: path, digest, hit or miss", the world's before): `(d, digest's four words,
+/// found)`, a document's key and what its path held when last read (found 0: no readable file there, a miss).
+pub fn leaves_shape() -> Shape {
+    let c = vec![ColType::I32, ColType::I64, ColType::I64, ColType::I64, ColType::I64, ColType::I32];
+    Shape::run(c, (0..6).collect(), Some(0))
+}
+
+/// The pure answers' rows (P§11.4: "blobs, plus a trace from key to blob id"): `(answerer, six key words, blob's four
+/// words)`, partitioned by answerer and ordered by key, so a key's probe is a prefix of the canonical order.
+pub fn answers_shape() -> Shape {
+    let c = std::iter::once(ColType::I32).chain(std::iter::repeat_n(ColType::I64, 10)).collect();
+    Shape::run(c, (0..11).collect(), Some(0))
+}
+
+/// The documents' places (decision 0494; *Operations* §5, kept as is): `(d, source's segment, offset and length, the
+/// tape's hash (its algorithm and four lanes), its segment, offset and length, its length)`, so a later process reads a
+/// document's source and tape where the store's segments hold them, with no SQL, each checked by its hash.
+pub fn places_shape() -> Shape {
+    let c = std::iter::once(ColType::I32).chain(std::iter::repeat_n(ColType::I64, 12)).collect();
+    Shape::run(c, (0..13).collect(), Some(0))
+}
+
+/// The first row of `t` at its head whose leading columns are `key`, read where it lies.
+pub fn probe(dir: &Directory, t: &Trace, key: &[i64]) -> Result<Option<Vec<i64>>, String> {
+    let Some(h) = t.head() else { return Ok(None) };
+    let l = t.read(dir, &[Some(h)])?;
+    let table = l.table();
+    let s = t.state(&table, Some(h))?;
+    let cols: Vec<ColumnIndex> = (0..key.len() as u16).map(ColumnIndex::new).collect();
+    // copy: derived (one row's cells, read where they lie)
+    Ok(Read::matching(&s, &cols, key).next().map(|r| (0..Read::arity(&s) as u16).map(|c| Read::get(&s, r, ColumnIndex::new(c))).collect()))
+}
+
+/// `t`'s row keyed by `key` (its leading columns) replaced by `row` (`None`: taken out), in one layer; nothing written
+/// when it holds that row already.
+pub fn put_row(reg: &Registry, ops: &TraceOps, dir: &mut Directory, t: &mut Trace, key: &[i64], row: Option<Vec<i64>>) -> Result<(), String> {
+    let old = probe(dir, t, key)?;
+    if old == row {
+        return Ok(());
+    }
+    let pairs: Vec<(Vec<i64>, i32)> = old.map(|r| (r, -1)).into_iter().chain(row.map(|r| (r, 1))).collect(); // copy: derived (the row's change)
+    push_layer(reg, ops, dir, t, &pairs)?;
+    Ok(())
+}
+
+/// A document's key (decision 0052 §3, `rerail_blocks::blob::doc_key`): from its path's hash, the next free one on a
+/// collision, `taken` saying which are.
+pub fn key_of(path: &str, taken: impl Fn(i64) -> bool) -> i64 {
+    let mut k = rerail_blocks::blob::doc_key(path);
+    while taken(k) {
+        k = rerail_blocks::blob::next_key(k);
+    }
+    k
+}
+
+/// What answering a document asked of the world and its answerers (the observer's counts are the files'): the files
+/// read and placed, the documents loaded from the store's objects (a hit: no read, no parse), and the parses.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct Asked {
+    pub reads: u64,
+    pub loads: u64,
+    pub parses: u64,
+    pub interns: u64,
+}
+
+/// The world a run reads (P§7, *Operations* §5): the root's files through the engine's file layer as it is, the
+/// observer's digest step under the journal and the racy rule, the placed read into a slab room, and the content
+/// store's objects; with what it keeps across runs as kept traces: the leaves it read (the world's before), the pure
+/// answers by key, and the documents' places.
+pub struct World {
+    root: PathBuf,
+    pub store: Store,
+    grammar: [i64; 3],
+    pub leaves: Trace,
+    pub answers: Trace,
+    pub places: Trace,
+    pub asked: Asked,
+}
+
+impl World {
+    /// The world of the files under `root`, kept in `store`, its traces at `heads` (`[leaves, answers, places]`, a
+    /// kept run's; `None`: empty), each placed where the directory keeps what lasts.
+    pub fn new(root: PathBuf, store: Store, dir: &Directory, heads: [Option<BlockId>; 3]) -> Result<World, String> {
+        let place = dir.lasting();
+        let t = |shape: Shape, head| Ok::<_, String>(Trace::new(&shape)?.resumed(place, head));
+        Ok(World {
+            root,
+            store,
+            grammar: rerail_rr_syntax::grammar(),
+            leaves: t(leaves_shape(), heads[0])?,
+            answers: t(answers_shape(), heads[1])?,
+            places: t(places_shape(), heads[2])?,
+            asked: Asked::default(),
+        })
+    }
+
+    /// The traces' heads (`[leaves, answers, places]`), as a run's pins record them.
+    pub fn heads(&self) -> [Option<BlockId>; 3] {
+        [self.leaves.head(), self.answers.head(), self.places.head()]
+    }
+
+    /// The grammar's one word in a key: its version (the tag and the format are the rr grammar's).
+    fn grammar_word(&self) -> i64 {
+        self.grammar[1]
+    }
+
+    /// Starts a run (decision 0105): the observer asks the journal once what changed under the root since the run
+    /// before, and trusts the rest with no `stat`.
+    pub fn begin(&self) {
+        let root = self.root.clone();
+        observe::with(Some(&self.store.observer()), |o| {
+            o.begin();
+            o.watch(&[root]);
+        });
+    }
+
+    /// Ends a run: the observer's answers written, the journal's cursor kept.
+    pub fn end(&self) {
+        observe::with(Some(&self.store.observer()), |o| o.flush());
     }
 
     /// The observer's counts (its stats, reuses, files read and hashed).
     pub fn counts(&self) -> observe::Counts {
-        observe::with(Some(&self.store), |o| o.counts.clone())
+        observe::with(Some(&self.store.observer()), |o| o.counts)
     }
 
-    /// Document `path` (relative to the root): its tape port, the tape housed in `blobs`, a tape block made in `dir`
-    /// for a tape the parser writes.
-    pub fn answer(&mut self, path: &str, reg: &Registry, blobs: &mut BlobRows, dir: &mut Directory) -> Result<Doc, String> {
+    /// Leaf `d`'s row as read now: `digest` (`None`: a miss), written when it changed (D3: every leaf, misses too).
+    fn leaf(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, d: i64, digest: Option<[u8; 32]>) -> Result<(), String> {
+        let w = digest.map_or([0; 4], |g| BlobId(g).words());
+        let row = vec![d, w[0], w[1], w[2], w[3], i64::from(digest.is_some())];
+        put_row(reg, ops, dir, &mut self.leaves, &[d], Some(row))
+    }
+
+    /// The load answer (`Load`, a world reader) for document `d` at `path`, `before` the blobs it was last answered
+    /// with: its leaf recorded, and its source and tape, the identity while the digest is unchanged. A file the
+    /// observer answers by its stat is not read; one whose content the store holds is loaded, not parsed (a hit skips
+    /// the parse, *Operations* §6.2); only a new content is parsed, its source and tape then put in the store.
+    #[allow(clippy::too_many_arguments)]
+    pub fn load(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, blobs: &mut BlobRows, d: i64, path: &str, module: &str, before: Option<DocIds>) -> Result<Doc, String> {
         let abs = self.root.join(path);
-        let kept = self.kept.get(path).copied();
-        let doc = |before: Option<DocIds>, after| Doc { path: path.to_string(), module: module_of(path), before, after };
-        let step = observe::with(Some(&self.store), |o| o.digest_step(&abs));
+        let doc = |after| Doc { path: path.to_string(), module: module.to_string(), before, after };
+        let step = observe::with(Some(&self.store.observer()), |o| o.digest_step(&abs));
         let read = match step {
-            DigestStep::Answered(None) => return Err(format!("{path}: not a readable file")),
-            DigestStep::Answered(Some(d)) => match kept {
-                Some((k, b)) if k == d => return Ok(doc(Some(b), b)),
-                // Known to the observer, not to these documents: read.
-                _ => None,
-            },
+            DigestStep::Answered(None) => {
+                self.leaf(reg, ops, dir, d, None)?;
+                return Err(format!("{path}: not a readable file"));
+            }
+            DigestStep::Answered(Some(g)) => {
+                self.leaf(reg, ops, dir, d, Some(g))?;
+                if before.is_some_and(|b| b.source.0 == g) {
+                    return Ok(doc(before.expect("kept")));
+                }
+                // Known by its digest: its blobs by content, the file read only if no home holds them.
+                if let Some(ids) = self.by_content(reg, ops, dir, blobs, BlobId(g))? {
+                    return Ok(doc(ids));
+                }
+                None
+            }
             DigestStep::Read(r) => Some(r),
         };
         let size = read.as_ref().and_then(|r| r.stat()).map_or(1 << 20, |s| s.size as usize);
         let (block, b) = dir.slab_room(kind::TAPE, room(size)).map_err(|e| format!("{path}: {e}"))?;
         let place = |len: usize, fill: &mut dyn FnMut(&mut [u8]) -> std::io::Result<()>| place_in(&b, len, fill);
+        let observer = self.store.observer();
         let placed = match read {
             Some(r) => match r.read_placed(&place) {
                 Some(home) => {
                     let hashed = DigestRead::hashed(&home);
-                    observe::with(Some(&self.store), |o| o.digest_read(r, Some(hashed))).map(|d| (d, home))
+                    observe::with(Some(&observer), |o| o.digest_read(r, Some(hashed))).map(|g| (g, home))
                 }
                 None => None,
             },
             None => rerail_observe::git_workspace::snapshot::read_placed(&abs, &place).ok().map(|home| (DigestRead::hashed(&home).1, home)),
         };
-        let Some((digest, source)) = placed else {
+        let Some((g, source)) = placed else {
             dir.seal(block)?;
+            self.leaf(reg, ops, dir, d, None)?;
             return Err(format!("{path}: could not be read"));
         };
-        self.reads += 1;
-        if let Some((k, b)) = kept
-            && k == digest
-        {
+        self.asked.reads += 1;
+        self.leaf(reg, ops, dir, d, Some(g))?;
+        if before.is_some_and(|k| k.source.0 == g) {
             // Read again (its stat changed, or a check), the same bytes: the identity. Its room stays in its slab, as
             // the residency's rooms do, until the slab goes.
             drop(source);
             dir.seal(block)?;
-            return Ok(doc(Some(b), b));
+            return Ok(doc(before.expect("kept")));
         }
-        let id = house(reg, dir, blobs, block, b, source).map_err(|e| format!("{path}: {e}"))?;
-        self.kept.insert(path.to_string(), (digest, id));
-        Ok(doc(kept.map(|k| k.1), id))
+        // A content a home holds: its room stays, unused, in its slab; nothing is parsed.
+        if let Some(ids) = self.by_content(reg, ops, dir, blobs, BlobId(g))? {
+            drop(source);
+            dir.seal(block)?;
+            return Ok(doc(ids));
+        }
+        let ids = house(reg, dir, blobs, block, b, source).map_err(|e| format!("{path}: {e}"))?;
+        self.asked.parses += 1;
+        self.put_object(reg, ops, dir, blobs, ids)?;
+        Ok(doc(ids))
     }
+
+    /// The parse answer for content `source` (`Parse`, pure: (content, grammar) → tape), when a home holds it: the
+    /// residency (its blobs resident), else the store's objects (its source and tape loaded into a slab room, a load,
+    /// not a parse). `None`: a content no home holds, to read and parse.
+    fn by_content(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, blobs: &mut BlobRows, source: BlobId) -> Result<Option<DocIds>, String> {
+        let key = parse_key(source, self.grammar_word());
+        if let Some(row) = probe(dir, &self.answers, &key)? {
+            let tape = BlobId::of_words(&row[7..11]);
+            if blobs.get(dir, &source)?.is_some() && blobs.get(dir, &tape)?.is_some() {
+                return Ok(Some(DocIds { source, tape }));
+            }
+        }
+        let Some(places) = self.store.objects.document_places(source.0, self.grammar).map_err(|e| e.to_string())? else { return Ok(None) };
+        let ids = self.load_places(reg, dir, blobs, &places)?;
+        put_row(reg, ops, dir, &mut self.answers, &key, Some(answer_row(&key, ids.tape)))?;
+        Ok(Some(ids))
+    }
+
+    /// The source and tape `places` names, read where the store's segments hold them (no SQL) and loaded into a room
+    /// of a slab, the residency's home (a load to their exact bytes: 0353), then housed. Refused when the store no
+    /// longer holds them there.
+    fn load_places(&mut self, reg: &Registry, dir: &mut Directory, blobs: &mut BlobRows, places: &DocumentPlaces) -> Result<DocIds, String> {
+        let src = self.store.objects.placed_source(places).ok_or("a document's source, gone from the store's segments")?;
+        let tape = self.store.objects.placed_tape(places).ok_or("a document's tape, gone from the store's segments")?;
+        let tape = tape.bytes().map_err(|e| e.to_string())?;
+        let (src, tape): (&[u8], &[u8]) = (&src, &tape);
+        let (block, b) = dir.slab_room(kind::TAPE, src.len() + tape.len() + 64)?;
+        let put = |bytes: &[u8]| {
+            let mut m = Mutable::<u8>::alloc_aligned(&b, bytes.len().max(1) + 16, 64, "a document loaded from the store").ok_or("a slab's room")?;
+            m.write()[..bytes.len()].copy_from_slice(bytes); // copy: load (the store's object to its exact bytes in the residency's slab)
+            let at = m.region().at();
+            drop(m.freeze());
+            Ok::<_, String>(Placed { block, at, len: bytes.len() })
+        };
+        let (s, t) = (put(src)?, put(tape)?);
+        drop(b);
+        dir.seal(block)?;
+        let (source, _) = blobs.house(reg, dir, s)?;
+        let (tape, _) = blobs.house(reg, dir, t)?;
+        self.asked.loads += 1;
+        Ok(DocIds { source, tape })
+    }
+
+    /// A parsed document's source and tape put in the store's objects (the bytes read where they lie, written once to
+    /// a segment of their own), and its parse answer kept.
+    fn put_object(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, blobs: &BlobRows, ids: DocIds) -> Result<(), String> {
+        let (s, t) = (blobs.get(dir, &ids.source)?.ok_or("a source just housed")?, blobs.get(dir, &ids.tape)?.ok_or("a tape just housed")?);
+        {
+            let l = dir.read("a document put in the store", &[s.block, t.block])?;
+            let (src, tape) = (&l.block(0)[s.at..s.at + s.len], &l.block(1)[t.at..t.at + t.len]);
+            let [g, v, f] = self.grammar;
+            self.store.objects.put_source_and_tape(src, HashKey::from_sha256_digest(ids.source.0), g, v, f, tape).map_err(|e| e.to_string())?;
+        }
+        let key = parse_key(ids.source, self.grammar_word());
+        put_row(reg, ops, dir, &mut self.answers, &key, Some(answer_row(&key, ids.tape)))
+    }
+
+    /// Document `d`'s places, as the store's objects hold its source `source` and its tape: kept, so a later process
+    /// reads them where they lie.
+    pub fn place(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, d: i64, source: Option<BlobId>) -> Result<(), String> {
+        let row = match source {
+            None => None,
+            Some(s) => {
+                let p = self.store.objects.document_places(s.0, self.grammar).map_err(|e| e.to_string())?.ok_or("a document's source and tape, not in the store")?;
+                Some(std::iter::once(d).chain(p.source).chain(p.tape_hash).chain(p.tape).chain([p.tape_length]).collect())
+            }
+        };
+        put_row(reg, ops, dir, &mut self.places, &[d], row)
+    }
+
+    /// Document `d`'s blobs resident: loaded from the store where its places say, when the residency no longer
+    /// holds them (a slab retired, or a process started since). The sha256 its source has is the place's check.
+    pub fn resident(&mut self, reg: &Registry, dir: &mut Directory, blobs: &mut BlobRows, d: i64, ids: DocIds) -> Result<(), String> {
+        if blobs.get(dir, &ids.source)?.is_some() && blobs.get(dir, &ids.tape)?.is_some() {
+            return Ok(());
+        }
+        let row = probe(dir, &self.places, &[d])?.ok_or("a document's places, not kept")?;
+        let w = |a: usize, b: usize| -> Vec<i64> { row[a..b].to_vec() }; // copy: derived (a place's words)
+        let places = DocumentPlaces {
+            sha256: ids.source.0,
+            source: w(1, 4).try_into().expect("three"),
+            tape_hash: w(4, 9).try_into().expect("five"),
+            tape: w(9, 12).try_into().expect("three"),
+            tape_length: row[12],
+        };
+        let got = self.load_places(reg, dir, blobs, &places)?;
+        if got != ids {
+            return Err(format!("document {d}'s places hold {got:?}, not {ids:?}"));
+        }
+        Ok(())
+    }
+
+    /// The intern answer (`Intern`, pure) for `doc`'s tape at its path and module: its symbols blob, kept by key
+    /// while the atoms keep their ids; `intern` runs only for a key not answered.
+    #[allow(clippy::too_many_arguments)]
+    pub fn intern_answer(&mut self, reg: &Registry, ops: &TraceOps, iops: &crate::intern::InternOps, dir: &mut Directory, blobs: &mut BlobRows, atoms: crate::sym::Atoms, doc: &Doc) -> Result<BlobId, String> {
+        let key = match (atoms.find(dir, &doc.path), atoms.find(dir, &doc.module)) {
+            (Some(p), Some(m)) => Some(intern_key(doc.after.tape, p, m)),
+            _ => None,
+        };
+        if let Some(k) = &key
+            && let Some(row) = probe(dir, &self.answers, k)?
+        {
+            let s = BlobId::of_words(&row[7..11]);
+            if blobs.get(dir, &s)?.is_some() {
+                return Ok(s);
+            }
+        }
+        let get = |id: &BlobId| blobs.get(dir, id)?.ok_or_else(|| format!("{}: a blob nothing holds", doc.path));
+        let (src, tape) = (get(&doc.after.source)?, get(&doc.after.tape)?);
+        let s = crate::intern::intern(reg, iops, dir, blobs, atoms, src, tape, &doc.path, &doc.module)?;
+        self.asked.interns += 1;
+        let (p, m) = (atoms.find(dir, &doc.path).ok_or("the path, interned")?, atoms.find(dir, &doc.module).ok_or("the module, interned")?);
+        let k = intern_key(doc.after.tape, p, m);
+        put_row(reg, ops, dir, &mut self.answers, &k, Some(answer_row(&k, s)))?;
+        Ok(s)
+    }
+}
+
+/// A parse answer's key: the answerer, the source's four words, the grammar's word, and a word unused.
+fn parse_key(source: BlobId, grammar: i64) -> Vec<i64> {
+    std::iter::once(PARSE).chain(source.words()).chain([grammar, 0]).collect()
+}
+
+/// An intern answer's key: the answerer, the tape's four words, the path's and the module's symbols.
+fn intern_key(tape: BlobId, path: i64, module: i64) -> Vec<i64> {
+    std::iter::once(INTERN).chain(tape.words()).chain([path, module]).collect()
+}
+
+/// An answer's row: its key, then the blob.
+fn answer_row(key: &[i64], blob: BlobId) -> Vec<i64> {
+    key.iter().copied().chain(blob.words()).collect()
 }
 
 /// A document of a source in hand (a test's, the bootstrap's own), in a slab's rooms, as a read places one.
@@ -310,7 +661,7 @@ fn place_in(b: &Arc<rerail_blocks::block::Block>, len: usize, fill: &mut dyn FnM
 
 /// The room a document of a source of `len` bytes needs in its slab: the source and a word past it, and the parser's
 /// tape at its bound (80 times the source). It is address space; what is resident is what the two write.
-fn room(len: usize) -> usize {
+pub(crate) fn room(len: usize) -> usize {
     81 * len + (64 << 10)
 }
 

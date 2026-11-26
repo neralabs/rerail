@@ -86,7 +86,7 @@ impl Fx {
     /// L1's rows of `doc` as module `d`, by relation: its plain function over a tape port of the one document.
     pub fn rows(&mut self, doc: &D, d: i64) -> Result<[Rows; 8], String> {
         let mut t = Trace::new(&tape_shape())?.with_roll_up(RollUp::Never);
-        let ht = push_layer(&self.reg, &self.traces, &mut self.dir, &mut t, &[(tape_row(d, &doc.ids, &doc.syms), 1)])?;
+        let ht = push_layer(&self.reg, &self.traces, &mut self.dir, &mut t, &[(tape_row(d, d, 0, &doc.ids, &doc.syms), 1)])?;
         let atoms = Global { block: self.atoms.0, count: u64::from(self.atoms.count(&self.dir)) };
         let l1 = self.l1();
         let mut cx = Cx { reg: &self.reg, dir: &mut self.dir, blobs: &self.blobs, traces: &self.traces, caches: &self.caches };
@@ -227,7 +227,7 @@ fn k_form_rows_are_stored_in_32_bits() {
                 w.push(r, 1).unwrap();
             }
         }
-        let h = tr.commit(reg, &ops, dir, runs, Tiling::WHOLE).unwrap();
+        let h = tr.commit(reg, ops, dir, runs, Tiling::WHOLE).unwrap();
         let l = tr.read(dir, &[Some(h)]).unwrap();
         let table = l.table();
         let st = tr.state(&table, Some(h)).unwrap();
@@ -343,7 +343,7 @@ fn a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape() {
     let d = fx.s("m");
     let want = fx.rows(&b, d).unwrap();
     let mut t = Trace::new(&tape_shape()).unwrap().with_roll_up(RollUp::Never);
-    let (ra, rb) = (tape_row(d, &a.ids, &a.syms), tape_row(d, &b.ids, &b.syms));
+    let (ra, rb) = (tape_row(d, d, 0, &a.ids, &a.syms), tape_row(d, d, 0, &b.ids, &b.syms));
     let h1 = push_layer(&fx.reg, &fx.traces, &mut fx.dir, &mut t, &[(ra.clone(), 1)]).unwrap();
     let h2 = push_layer(&fx.reg, &fx.traces, &mut fx.dir, &mut t, &[(ra, -1), (rb, 1)]).unwrap();
     let n = u64::from(fx.atoms.count(&fx.dir));

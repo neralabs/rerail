@@ -32,6 +32,22 @@ pub fn tape(src: &str) -> Result<rerail_tape_format::f16::Tape16, String> {
     lean::tape(src)
 }
 
+/// The rr grammar's identity, as a store keys a tape by its content and its grammar (decision 0686, *Operations* §5:
+/// "a tape by (content, grammar)"): its tag, its version and its tape format. The version is the parser's own sources
+/// (the lean parser, its scalar and micro-lexers, the tape's kinds and the syntax), hashed: an edit of any of them is
+/// another grammar, whose tapes are made again. The format is format 16's magic.
+pub fn grammar() -> [i64; 3] {
+    use sha2::Digest as _;
+    let mut h = sha2::Sha256::new();
+    for part in [&include_bytes!("lean.rs")[..], include_bytes!("lean_scalar.rs"), include_bytes!("micro.rs"), include_bytes!("tape.rs"), include_bytes!("syntax.rs")] {
+        h.update((part.len() as u64).to_le_bytes());
+        h.update(part);
+    }
+    let d: [u8; 32] = h.finalize().into();
+    let word = |b: &[u8]| i64::from_le_bytes(b.try_into().expect("eight bytes")) & i64::MAX;
+    [word(b"rr\0\0\0\0\0\0"), word(&d[..8]), word(rerail_tape_format::f16::MAGIC16)]
+}
+
 /// [`tape`], written in `room` (`lean::tape_in`): the tape lies where the parser wrote it.
 pub fn tape_in(src: &str, room: std::sync::Arc<dyn rerail_tape_format::VectorRoom>) -> Result<rerail_tape_format::f16::Tape16, String> {
     lean::tape_in(src, room)

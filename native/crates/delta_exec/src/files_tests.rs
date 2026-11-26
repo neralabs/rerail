@@ -4,14 +4,50 @@ use super::*;
 use std::time::{Duration, SystemTime};
 
 /// A root of its own for test `name`, holding a copy of l0, its stat older than the racy window (a file written in
-/// the window's tick is read again, as git's racy rule has it).
-pub(crate) fn root(name: &str) -> (PathBuf, Files) {
-    let dir = std::env::temp_dir().join(format!("rerail-b4-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+/// the window's tick is read again, as git's racy rule has it), and the store beside it: the root and the store.
+pub(crate) fn root(name: &str) -> (PathBuf, Store) {
+    let base = std::env::temp_dir().join(format!("rerail-b4-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let dir = base.join("root");
     std::fs::create_dir_all(&dir).unwrap();
     write(&dir.join("bootstrap-l0.rerail"), crate::L0, 60);
-    let files = Files::new(dir.clone(), dir.join("observer.db"));
-    (dir, files)
+    (dir, Store::open(&base.join("store")).unwrap())
+}
+
+/// The file layer over a root: the world, and a registry, blobs and directory of the run's memory; each path's last
+/// answer (the document set's, for these checks of the layer below it).
+pub(crate) struct W {
+    pub root: PathBuf,
+    pub world: World,
+    pub reg: crate::op::Registry,
+    pub traces: crate::trace::TraceOps,
+    pub blobs: BlobRows,
+    pub dir: Directory,
+    last: std::collections::BTreeMap<String, DocIds>,
+}
+
+impl W {
+    pub(crate) fn new(name: &str) -> W {
+        let (root, store) = root(name);
+        W::over(root, store, Directory::default())
+    }
+
+    pub(crate) fn over(root: PathBuf, store: Store, dir: Directory) -> W {
+        let mut reg = crate::op::Registry::default();
+        let traces = crate::trace::TraceOps::declare(&mut reg).unwrap();
+        let world = World::new(root.clone(), store, &dir, [None; 3]).unwrap();
+        W { root, world, reg, blobs: BlobRows::new(&traces), traces, dir, last: Default::default() }
+    }
+
+    /// The load answer for `path`, from its last one.
+    pub(crate) fn answer(&mut self, path: &str) -> Result<Doc, String> {
+        let d = key_of(path, |_| false);
+        let module = path.strip_suffix(".rerail").unwrap_or(path);
+        let before = self.last.get(path).copied();
+        let doc = self.world.load(&self.reg, &self.traces, &mut self.dir, &mut self.blobs, d, path, module, before)?;
+        self.last.insert(path.to_string(), doc.after);
+        Ok(doc)
+    }
 }
 
 /// The racy window these tests run under (`RERAIL_RACY_MS`), as the engine's tests narrow it (`TEST_RACY_MS`): a file
@@ -20,7 +56,7 @@ pub(crate) fn racy_window() -> rerail_context::Bound {
     rerail_context::bind(rerail_context::Switches(Arc::new(vec![("RERAIL_RACY_MS".into(), "100".into())])))
 }
 
-/// A registry with the trace's operations, no blob, and a directory.
+/// A registry with the trace's operations, no blob, and a directory (a document in hand's: no world).
 fn fresh() -> (crate::op::Registry, BlobRows, Directory) {
     let mut reg = crate::op::Registry::default();
     let traces = crate::trace::TraceOps::declare(&mut reg).unwrap();
@@ -40,12 +76,11 @@ pub(crate) fn write(path: &std::path::Path, text: &str, ago: u64) {
 
 #[test]
 fn a_document_is_its_path_its_module_and_a_tape_from_nothing() {
-    let (_, mut files) = root("cold");
-    let (reg, mut blobs, mut dir) = fresh();
-    let d = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
+    let mut w = W::new("cold");
+    let d = w.answer("bootstrap-l0.rerail").unwrap();
     assert_eq!((d.path.as_str(), d.module.as_str(), d.before), ("bootstrap-l0.rerail", "bootstrap-l0", None));
-    let (s, t) = (blobs.get(&dir, &d.after.source).unwrap().unwrap(), blobs.get(&dir, &d.after.tape).unwrap().unwrap());
-    let l = dir.read("t", &[t.block]).unwrap();
+    let (s, t) = (w.blobs.get(&w.dir, &d.after.source).unwrap().unwrap(), w.blobs.get(&w.dir, &d.after.tape).unwrap().unwrap());
+    let l = w.dir.read("t", &[t.block]).unwrap();
     assert_eq!(&l.block(0)[s.at..s.at + s.len], crate::L0.as_bytes());
     assert!(reads(l.block(0), s, l.block(0), t).len() > 100, "l0's tape");
 }
@@ -55,9 +90,9 @@ fn a_document_is_its_path_its_module_and_a_tape_from_nothing() {
 #[test]
 fn the_source_and_the_tape_are_blobs_in_sealed_rooms_of_a_slab() {
     use sha2::{Digest as _, Sha256};
-    let (_, mut files) = root("room");
-    let (reg, mut blobs, mut dir) = fresh();
-    let d = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
+    let mut w = W::new("room");
+    let d = w.answer("bootstrap-l0.rerail").unwrap();
+    let W { reg, mut blobs, mut dir, .. } = w;
     let (s, t) = (blobs.get(&dir, &d.after.source).unwrap().unwrap(), blobs.get(&dir, &d.after.tape).unwrap().unwrap());
     assert_eq!(s.block, t.block);
     assert!(dir.is_fixed(s.block, s.at + s.len) && dir.is_fixed(t.block, t.at + t.len), "a blob is never versioned");
@@ -93,48 +128,45 @@ fn a_new_source_may_share_an_earlier_tape() {
 #[test]
 fn an_unchanged_file_gives_the_identity_with_no_read_past_its_stat() {
     let _racy = racy_window();
-    let (_, mut files) = root("same");
+    let mut w = W::new("same");
     past_racy_window();
-    let (reg, mut blobs, mut dir) = fresh();
-    let first = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
-    let (c0, reads) = (files.counts(), files.reads);
-    let again = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
+    let first = w.answer("bootstrap-l0.rerail").unwrap();
+    let (c0, asked) = (w.world.counts(), w.world.asked);
+    let again = w.answer("bootstrap-l0.rerail").unwrap();
     assert!(again.is_identity(), "{again:?}");
     assert_eq!(again.after, first.after);
-    let c = files.counts().since(&c0);
+    let c = w.world.counts().since(&c0);
     // The observer hashes one trusted file in 64 again (`VALIDATE_EVERY`, a slice by path and the second): the only
     // bytes read past the stat are that check's, and it finds them unchanged.
     assert_eq!(c.hashed, c.validated, "no byte read but the observer's sampled check: {c:?}");
     assert_eq!((c.reused + c.validated, c.mismatched), (1, 0), "the answer trusted on its stat: {c:?}");
-    assert_eq!(files.reads, reads);
-    assert_eq!(blobs.len(&dir).unwrap(), 2, "its source and its tape");
+    assert_eq!(w.world.asked, asked, "nothing read, loaded or parsed");
+    assert_eq!(w.blobs.len(&w.dir).unwrap(), 2, "its source and its tape");
 }
 
 #[test]
 fn an_edited_file_is_read_once_and_placed_once() {
-    let (root, mut files) = root("edit");
-    let (reg, mut blobs, mut dir) = fresh();
-    let first = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
-    write(&root.join("bootstrap-l0.rerail"), &format!("{}\nb4_added(x) :- rule(x).\n", crate::L0), 30);
-    let (c0, reads) = (files.counts(), files.reads);
-    let edited = files.answer("bootstrap-l0.rerail", &reg, &mut blobs, &mut dir).unwrap();
+    let mut w = W::new("edit");
+    let first = w.answer("bootstrap-l0.rerail").unwrap();
+    write(&w.root.join("bootstrap-l0.rerail"), &format!("{}\nb4_added(x) :- rule(x).\n", crate::L0), 30);
+    let (c0, asked) = (w.world.counts(), w.world.asked);
+    let edited = w.answer("bootstrap-l0.rerail").unwrap();
     assert_eq!(edited.before, Some(first.after));
     assert_ne!(edited.after, first.after);
-    assert_eq!(files.reads, reads + 1, "read once, placed once (read_placed places what it reads)");
-    assert_eq!(files.counts().since(&c0).hashed, 1);
-    let s = blobs.get(&dir, &edited.after.source).unwrap().unwrap();
-    let l = dir.read("t", &[s.block]).unwrap();
+    assert_eq!((w.world.asked.reads, w.world.asked.parses), (asked.reads + 1, asked.parses + 1), "read once, placed once (read_placed places what it reads), parsed once");
+    assert_eq!(w.world.counts().since(&c0).hashed, 1);
+    let s = w.blobs.get(&w.dir, &edited.after.source).unwrap().unwrap();
+    let l = w.dir.read("t", &[s.block]).unwrap();
     assert!(std::str::from_utf8(&l.block(0)[s.at..s.at + s.len]).unwrap().contains("b4_added"));
 }
 
 #[test]
 fn a_file_that_does_not_parse_is_refused_naming_its_path() {
-    let (root, mut files) = root("bad");
-    write(&root.join("broken.rerail"), "this is not a rule (\n", 30);
-    let (reg, mut blobs, mut dir) = fresh();
-    let e = files.answer("broken.rerail", &reg, &mut blobs, &mut dir).unwrap_err();
+    let mut w = W::new("bad");
+    write(&w.root.join("broken.rerail"), "this is not a rule (\n", 30);
+    let e = w.answer("broken.rerail").unwrap_err();
     assert!(e.starts_with("broken.rerail: "), "{e}");
-    let e = files.answer("missing.rerail", &reg, &mut blobs, &mut dir).unwrap_err();
+    let e = w.answer("missing.rerail").unwrap_err();
     assert!(e.starts_with("missing.rerail: "), "{e}");
 }
 
@@ -166,4 +198,99 @@ fn documents_share_a_slab_their_rooms_sealed_as_written() {
     let big = "e(1, 2).\n".repeat(crate::dir::SLAB_BYTES / 81 / 9 + 1);
     let d = doc_of(&reg, &mut dir, &mut blobs, &big).unwrap();
     assert_ne!(place(&dir, &blobs, &d.tape).block, at.block, "the next slab");
+}
+
+/// The leaves (P§11.4: path, digest, hit or miss): each leaf read is recorded, a miss too (D3), and a leaf's row
+/// changes only when what its path holds does.
+#[test]
+fn every_leaf_read_is_recorded_misses_too() {
+    let mut w = W::new("leaves");
+    w.answer("bootstrap-l0.rerail").unwrap();
+    w.answer("missing.rerail").unwrap_err();
+    let (l0, gone) = (key_of("bootstrap-l0.rerail", |_| false), key_of("missing.rerail", |_| false));
+    let hit = probe(&w.dir, &w.world.leaves, &[l0]).unwrap().expect("l0's leaf");
+    assert_eq!(BlobId::of_words(&hit[1..5]), BlobId::of(crate::L0.as_bytes()));
+    assert_eq!(hit[5], 1, "found");
+    let miss = probe(&w.dir, &w.world.leaves, &[gone]).unwrap().expect("the missing file's leaf");
+    assert_eq!((&miss[1..5], miss[5]), (&[0i64; 4][..], 0), "a miss, recorded");
+    let head = w.world.leaves.head();
+    w.answer("missing.rerail").unwrap_err();
+    w.answer("bootstrap-l0.rerail").unwrap();
+    assert_eq!(w.world.leaves.head(), head, "an unchanged leaf writes nothing");
+    write(&w.root.join("missing.rerail"), "e(1, 2).\n", 30);
+    w.answer("missing.rerail").unwrap();
+    assert_eq!(probe(&w.dir, &w.world.leaves, &[gone]).unwrap().unwrap()[5], 1, "found now");
+}
+
+/// The parse answer is pure, keyed by (content, grammar) (*Operations* §5, §6.2: "a hit skips the read and the
+/// parse"): a content answered before is not parsed again, at another path, nor once the residency has let its slab
+/// go (it is loaded from the store's objects, where it lies), nor in a later process over the same store.
+#[test]
+fn a_content_answered_before_is_never_parsed_again() {
+    let mut w = W::new("hit");
+    let a = w.answer("bootstrap-l0.rerail").unwrap();
+    assert_eq!((w.world.asked.parses, w.world.asked.loads), (1, 0));
+    // The same content at another path: resident, so not parsed (its file is read: a new path's leaf).
+    write(&w.root.join("copy.rerail"), crate::L0, 30);
+    let b = w.answer("copy.rerail").unwrap();
+    assert_eq!(b.after, a.after);
+    assert_eq!((w.world.asked.parses, w.world.asked.loads), (1, 0), "a resident hit");
+    // Its slab dropped (the residency's drop after an execution): loaded from the store's objects, not parsed.
+    w.dir = std::mem::take(&mut w.dir).with_residency(1 << 40, Duration::from_millis(20));
+    w.dir.executed();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(w.dir.residency().1, 1, "dropped");
+    assert!(w.blobs.get(&w.dir, &a.after.tape).unwrap().is_none(), "no longer resident");
+    write(&w.root.join("third.rerail"), crate::L0, 30);
+    let c = w.answer("third.rerail").unwrap();
+    assert_eq!(c.after, a.after);
+    assert_eq!((w.world.asked.parses, w.world.asked.loads), (1, 1), "loaded where the store's segments hold it");
+    let (s, t) = (w.blobs.get(&w.dir, &c.after.source).unwrap().unwrap(), w.blobs.get(&w.dir, &c.after.tape).unwrap().unwrap());
+    {
+        let l = w.dir.read("t", &[s.block, t.block]).unwrap();
+        assert_eq!(&l.block(0)[s.at..s.at + s.len], crate::L0.as_bytes());
+        assert!(reads(l.block(0), s, l.block(1), t).len() > 100, "the tape, read where it was loaded");
+    }
+    // A later process over the same store: nothing resident, nothing parsed.
+    let W { root, world, .. } = w;
+    let store = Store::open(&world.store.folder).unwrap();
+    drop(world);
+    let mut later = W::over(root, store, Directory::default());
+    let d = later.answer("bootstrap-l0.rerail").unwrap();
+    assert_eq!(d.after, a.after);
+    assert_eq!((later.world.asked.parses, later.world.asked.loads), (0, 1));
+}
+
+/// The residency's policy (`rerail_slabs`, as it is): a slab is retired only while what is held and a new one pass the
+/// budget, and then the least recently used; a slab a document was asked for since is kept over an older one, and one
+/// a reader holds is not retired.
+#[test]
+fn the_residency_retires_the_least_recently_used_slab_only_past_its_budget() {
+    let (reg, mut blobs, dir) = fresh();
+    // Slabs of no more than a document's need, each source 1000 bytes longer than the last: its room is past what the
+    // last one's slab has left, so each lies in a slab of its own.
+    let mut dir = dir.with_slab_bytes(1);
+    let src = |k: usize| format!("e({k}, 2).\n// {}\n", "x".repeat(1000 * (k + 1)));
+    let docs: Vec<DocIds> = (0..3).map(|k| doc_of(&reg, &mut dir, &mut blobs, &src(k)).unwrap()).collect();
+    assert_eq!((dir.slabs().len(), dir.residency().0), (3, 0), "within the budget: nothing retired");
+    // The budget: the three held and the fourth's slab, less a byte.
+    let held: usize = dir.slabs().iter().map(|&b| dir.block(b).unwrap().reserved()).sum();
+    let fourth = dir.slab_room_bytes(room(src(3).len()));
+    let mut dir = dir.with_residency(held + fourth - 1, Duration::from_secs(3600));
+    let slab = |dir: &Directory, blobs: &BlobRows, d: &DocIds| blobs.get(dir, &d.tape).unwrap().map(|p| p.block);
+    // The first document asked for again: the second is the least recently used.
+    dir.touch(slab(&dir, &blobs, &docs[0]).unwrap());
+    let d = doc_of(&reg, &mut dir, &mut blobs, &src(3)).unwrap();
+    assert_eq!(dir.residency().0, 1, "one retired, to make room");
+    assert!(slab(&dir, &blobs, &docs[1]).is_none(), "the least recently used");
+    assert!(slab(&dir, &blobs, &docs[0]).is_some() && slab(&dir, &blobs, &docs[2]).is_some() && slab(&dir, &blobs, &d).is_some());
+    // A slab a reader holds is not retired: the third's, the least recently used now, held; the first goes.
+    let held = dir.block(slab(&dir, &blobs, &docs[2]).unwrap()).unwrap();
+    dir.touch(slab(&dir, &blobs, &docs[0]).unwrap());
+    dir.touch(slab(&dir, &blobs, &d).unwrap());
+    dir.touch(slab(&dir, &blobs, &docs[0]).unwrap());
+    doc_of(&reg, &mut dir, &mut blobs, &src(4)).unwrap();
+    assert!(slab(&dir, &blobs, &docs[2]).is_some(), "held by a reader");
+    assert!(dir.residency().0 >= 2 && slab(&dir, &blobs, &d).is_none(), "the least recently used of those no reader holds");
+    drop(held);
 }

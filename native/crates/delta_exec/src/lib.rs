@@ -19,6 +19,8 @@
 //!   tape and its symbols lie;
 //! - `kform`: K-form's relations;
 //! - `k0`: `k0_pass`, L1's reading of a K0 tape into K-form rows (its twin, the twins' `k0`);
+//! - `residency`: the slabs' residency, `rerail_slabs`'s policy (the budget's least recently used, the drop after a
+//!   run);
 //! - `boot`: B§8's run, its first two lines: the tape as a world read, then L1;
 //! - `l1`: L1, the boot operation: a delta operator of one tape, no program, K-form as its production and the symbols
 //!   as facts in.
@@ -41,6 +43,7 @@ pub mod k0;
 pub mod l1;
 pub mod kform;
 pub mod op;
+pub mod residency;
 pub mod sym;
 pub mod tape;
 pub mod trace;

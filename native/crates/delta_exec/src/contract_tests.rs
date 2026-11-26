@@ -38,7 +38,7 @@ fn cell(s: &impl Read, id: RowId, c: u16) -> i64 {
 }
 
 fn live_ids(s: &impl Read) -> impl Iterator<Item = RowId> + '_ {
-    (0..s.end().get() as u32).map(RowId::new).filter(|&id| s.live(id))
+    (0..s.end().get()).map(RowId::new).filter(|&id| s.live(id))
 }
 
 /// The toys' port set: one input, one output.

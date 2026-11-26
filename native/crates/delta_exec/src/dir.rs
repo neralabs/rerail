@@ -92,9 +92,9 @@ impl Drop for Evaluation<'_> {
     }
 }
 
-/// A documents' slab's bytes: the residency's (`rerail_slabs::SLAB_BYTES`, PIAT §20.2.1's default), reserved as
-/// address space, resident as rooms are written.
-pub const SLAB_BYTES: usize = 64 << 20;
+/// A documents' slab's bytes: the residency's (`rerail_slabs::SLAB_BYTES`, PIAT §20.2.1's default, one definition),
+/// reserved as address space, resident as rooms are written.
+pub use rerail_accel::budget::SLAB_BYTES;
 
 /// Where a block's memory is (P§12's `Placement`, as a shape holds it: `ShapeW::placement`).
 pub const PLACE_RUN: u32 = 0;
@@ -116,6 +116,8 @@ pub struct Directory {
     kept: Option<PathBuf>,
     slabs: Option<Slabs>,
     ledger: Ledger,
+    /// The slabs' residency (`residency`): they are its, not the directory's.
+    residency: crate::residency::Residency,
 }
 
 impl Directory {
@@ -208,6 +210,29 @@ impl Directory {
         Directory { kept: Some(folder.to_path_buf()), ..self }
     }
 
+    /// Where the directory keeps what lasts across processes: a kept file when it has a kept folder, else the run's
+    /// memory (a test's directory, which keeps nothing).
+    pub fn lasting(&self) -> u32 {
+        if self.kept.is_some() { PLACE_KEPT } else { PLACE_RUN }
+    }
+
+    /// A block in the file at `path`, open and written in place across processes (a store's atoms, decision 0401):
+    /// the file's block mapped as it lies when there is one (a load to its exact bytes, not a copy: 0353), else a new
+    /// file of `reserve` bytes with a body of `body`. Whether it was made new.
+    pub fn file_block(&mut self, path: &Path, kind: u32, body: usize, reserve: usize) -> Result<(BlockId, bool), String> {
+        self.sweep();
+        if path.exists() {
+            let b = Block::map_file(path, kind, true).map_err(|e| format!("{}: {e}", path.display()))?;
+            let b = Arc::new(b);
+            let weak = Arc::downgrade(&b);
+            self.entries.push(Entry { own: Own::Open(b), placed: None, held: Vec::new(), sealed: Cell::new(0), weak, body: body.max(8), file: None, cap: Cell::new(0) });
+            return Ok((BlockId(self.entries.len() as u32 - 1), false));
+        }
+        let b = Block::file(path, kind, reserve.max(BODY_AT + body + rerail_blocks::block::PAGE)).map_err(|e| format!("{}: {e}", path.display()))?;
+        // Not the directory's to remove: a store's file outlives the block.
+        Ok((self.adopt_new(b, body, None), true))
+    }
+
     /// The directory with `slabs` its source of pinned slabs (`Placement::PinnedSlab`).
     pub fn with_slabs(self, slabs: Slabs) -> Directory {
         Directory { slabs: Some(slabs), ..self }
@@ -263,6 +288,11 @@ impl Directory {
             }
         }
         Ok(dir)
+    }
+
+    /// The blocks the directory itself holds (not released).
+    pub fn owned(&self) -> Vec<BlockId> {
+        (0..self.entries.len() as u32).map(BlockId).filter(|id| !matches!(self.entries[id.0 as usize].own, Own::Released)).collect()
     }
 
     /// The frozen blocks no other block refers to: a kept trace's head among them.
@@ -322,18 +352,49 @@ impl Directory {
             && let Some(b) = self.block(id)
             && b.reserved().saturating_sub(b.used()) >= need
         {
+            self.touch(id);
             return Ok((id, b));
         }
         self.sweep();
-        let least = if self.slab_bytes == 0 { SLAB_BYTES } else { self.slab_bytes };
-        let bytes = least.max(BODY_AT + 8 + need + rerail_blocks::block::PAGE).next_multiple_of(rerail_blocks::block::PAGE);
+        let bytes = self.slab_room_bytes(need);
+        self.residency.room_for(bytes)?;
         let need = rerail_blocks::alloc::Need { kind, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::May, ..rerail_blocks::alloc::Need::SLAB };
         let b = rerail_blocks::alloc::block(&need)?;
         let id = self.adopt_new(b, 8, None);
         let b = self.block(id).expect("just made");
         self.entries[id.0 as usize].sealed.set(b.used());
+        // The residency holds it, not the directory: retired, or dropped, it goes once no reader holds it.
+        let e = &mut self.entries[id.0 as usize];
+        let Own::Open(held) = std::mem::replace(&mut e.own, Own::Released) else { unreachable!("just made") };
+        self.residency.hold(id, held);
         self.slab = Some(id);
         Ok((id, b))
+    }
+
+    /// The bytes a new slab for a room of `need` takes: `SLAB_BYTES` (or the directory's), or the need.
+    pub fn slab_room_bytes(&self, need: usize) -> usize {
+        let least = if self.slab_bytes == 0 { SLAB_BYTES } else { self.slab_bytes };
+        least.max(BODY_AT + 8 + need + rerail_blocks::block::PAGE).next_multiple_of(rerail_blocks::block::PAGE)
+    }
+
+    /// Slab `id` used now (a document in it asked for): the last the residency retires.
+    pub fn touch(&self, id: BlockId) {
+        self.residency.touch(id);
+    }
+
+    /// A full execution ended: the residency drops every slab `DROP_AFTER` from now, unless another ends first.
+    pub fn executed(&mut self) {
+        self.residency.executed();
+    }
+
+    /// The residency's counts: slabs retired, and drops.
+    pub fn residency(&self) -> (u64, u64) {
+        self.residency.counts()
+    }
+
+    /// The directory with a residency of `bytes`, which drops all `after` an execution (a test's).
+    pub fn with_residency(self, bytes: usize, after: std::time::Duration) -> Directory {
+        Directory { residency: self.residency.limited(bytes, after), ..self }
     }
 
     /// The directory with documents' slabs of `bytes` (a test's, to fill one in a few documents).
@@ -344,16 +405,6 @@ impl Directory {
     /// The slabs alive: made by `slab_room`, and held by anything.
     pub fn slabs(&self) -> Vec<BlockId> {
         (0..self.entries.len() as u32).map(BlockId).filter(|&id| self.entries[id.0 as usize].sealed.get() > 0 && self.alive(id)).collect()
-    }
-
-    /// The slab documents' rooms go to now: never retired.
-    pub fn current_slab(&self) -> Option<BlockId> {
-        self.slab
-    }
-
-    /// Whether `id` is the slab documents' rooms go to now.
-    pub fn is_current_slab(&self, id: BlockId) -> bool {
-        self.slab == Some(id)
     }
 
     /// Seals slab `id`'s rooms written so far: fixed from now on.

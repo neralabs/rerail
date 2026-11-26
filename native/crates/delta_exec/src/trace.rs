@@ -201,6 +201,13 @@ impl Trace {
         Ok(t)
     }
 
+    /// The trace with its layers placed at `place` (`dir::PLACE_KEPT`: kept files, which last across processes),
+    /// resumed at the committed state `head` a kept run left (`None`: empty): a constructor, as `open_kept` is.
+    pub fn resumed(mut self, place: u32, head: Option<BlockId>) -> Trace {
+        self.shape.placement = place;
+        Trace { head, ..self }
+    }
+
     /// The trace with roll-up policy `roll`.
     pub fn with_roll_up(self, roll: RollUp) -> Trace {
         Trace { roll, ..self }
@@ -301,6 +308,40 @@ impl Trace {
         dir.release(head);
         self.head = Some(out);
         Ok(out)
+    }
+
+    /// A run's end, for a trace a run reads as a chain (`RollUp::Never` while it runs: the run's before, `since`, a
+    /// layer of it until its delta is read): the layers committed since `since` rolled up into one, then the geometric
+    /// policy (`due_to_merge`) over the layers below, as a commit under `RollUp::Geometric` does. The head.
+    pub fn roll_up_run(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, since: Option<BlockId>, tiling: Tiling) -> Result<Option<BlockId>, String> {
+        let Some(head) = self.head else { return Ok(None) };
+        let count = {
+            let l = dir.read("a run's roll-up", &[head])?;
+            let table = l.table();
+            let (mut k, mut id) = (0u32, Some(head.0));
+            while let Some(b) = id
+                && Some(BlockId(b)) != since
+            {
+                k += 1;
+                id = Layer::new(table.block(b).expect("reached"))?.below().map(|(b, _)| b);
+            }
+            k
+        };
+        if count >= 2 {
+            self.roll_up(reg, ops, dir, count, tiling)?;
+        }
+        let head = self.head.expect("rolled up");
+        let due = {
+            let l = dir.read("a run's roll-up", &[head])?;
+            let table = l.table();
+            let layer = Layer::new(table.block(head.0).expect("reached"))?;
+            let size = layer.n() as u64 + layer.kills().len() as u64;
+            rerail_delta_twins::trace::due_to_merge(&table, layer.below().map_or(NONE, |(b, _)| b), size)
+        };
+        if due >= 2 {
+            self.roll_up(reg, ops, dir, due as u32, tiling)?;
+        }
+        Ok(self.head)
     }
 
     /// The trace emptied: its head let go (a cold run's outputs start from ∅, B§8). A trace has two states, the

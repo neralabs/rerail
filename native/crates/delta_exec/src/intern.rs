@@ -3,7 +3,7 @@
 //! `rerail_delta_twins::intern`.
 
 use crate::dir::Directory;
-use crate::files::{BlobId, BlobRows, Doc, Placed};
+use crate::files::{BlobId, BlobRows, Placed};
 use crate::op::{Across, Found, Independence, Inside, Mode, OpId, Output, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
 use crate::sym::Atoms;
 use rerail_blocks::atoms::{count_in, name_in};
@@ -66,8 +66,8 @@ impl InternOps {
 }
 
 /// Interns the document whose source and tape lie at `src` and `tape`, answered at `path` as
-/// `module`: its symbols block (node → symbol), made here, written by `intern` (which adds its new names to `atoms`),
-/// frozen and housed as a blob.
+/// `module`: its symbols block (node → symbol), made here where the directory keeps what lasts, written by `intern`
+/// (which adds its new names to `atoms`), frozen and housed as a blob.
 #[allow(clippy::too_many_arguments)]
 pub fn intern(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut BlobRows, atoms: Atoms, src: Placed, tape: Placed, path: &str, module: &str) -> Result<BlobId, String> {
     intern_at(reg, ops, dir, blobs, atoms, src, tape, path, module, Tiling::WHOLE)
@@ -78,7 +78,8 @@ pub fn intern(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut 
 pub fn intern_at(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut BlobRows, atoms: Atoms, src: Placed, tape: Placed, path: &str, module: &str, tiling: Tiling) -> Result<BlobId, String> {
     let n = crate::files::nodes(dir, src, tape)?;
     let body = twin::syms_bytes(n, path, module);
-    let id = dir.make(kind::FACTS, body);
+    // Kept where the directory keeps what lasts: a pure answer, kept by key (D4) while the store's atoms keep their ids.
+    let id = dir.make_placed(dir.lasting(), kind::FACTS, body, 0)?;
     let made = (|| {
         {
             let b = dir.block(id).expect("just made");
@@ -102,37 +103,6 @@ pub fn intern_at(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &m
             dir.release(id);
             Err(e)
         }
-    }
-}
-
-/// Each document's symbols blob, by its path and its tape: an unchanged tape's is the one it had, and `intern` runs
-/// only for a changed one.
-#[derive(Default)]
-pub struct Interned {
-    syms: std::collections::HashMap<(String, BlobId), BlobId>,
-    /// `intern`'s runs.
-    pub runs: u64,
-}
-
-impl Interned {
-    /// Forgets the symbols blobs of `gone` (retired), and those of tapes in it.
-    pub fn forget(&mut self, gone: &[BlobId]) {
-        self.syms.retain(|(_, tape), syms| !gone.contains(tape) && !gone.contains(syms));
-    }
-
-    /// Document `doc`'s symbols blob: kept when its tape was interned at its path, else `intern`'s.
-    #[allow(clippy::too_many_arguments)]
-    pub fn of(&mut self, reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut BlobRows, atoms: Atoms, doc: &Doc) -> Result<BlobId, String> {
-        let key = (doc.path.clone(), doc.after.tape);
-        if let Some(&s) = self.syms.get(&key) {
-            return Ok(s);
-        }
-        let get = |id: &BlobId| blobs.get(dir, id)?.ok_or_else(|| format!("{}: a blob nothing holds", doc.path));
-        let (src, tape) = (get(&doc.after.source)?, get(&doc.after.tape)?);
-        let s = intern(reg, ops, dir, blobs, atoms, src, tape, &doc.path, &doc.module)?;
-        self.runs += 1;
-        self.syms.insert(key, s);
-        Ok(s)
     }
 }
 
