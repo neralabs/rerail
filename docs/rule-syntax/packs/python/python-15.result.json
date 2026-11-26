@@ -1,0 +1,10 @@
+[
+  { "id": "ruff-c409-unnecessary-literal-within-tuple-call", "status": "same" },
+  { "id": "ruff-c411-unnecessary-list-call", "status": "same" },
+  { "id": "ruff-c413-unnecessary-call-around-sorted", "status": "same" },
+  { "id": "ruff-c414-unnecessary-double-cast-or-process", "status": "same" },
+  { "id": "ruff-c416-unnecessary-comprehension", "status": "same" },
+  { "id": "ruff-c417-unnecessary-map", "status": "same" },
+  { "id": "ruff-c418-unnecessary-literal-within-dict-call", "status": "same" },
+  { "id": "ruff-c419-unnecessary-comprehension-in-call", "status": "same" }
+]

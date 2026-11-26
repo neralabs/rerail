@@ -58,9 +58,9 @@ untarget(t0, t) :- paren_target(t0, u), untarget(u, t).
 .decl target_at(t: node)
 target_at(t0) :- p15_comp_at(e), p15_simple(e, fc), field(fc, "left", t0).
 target_at(u) :- paren_target(_, u).
-.decl paren_target(t0: node, u: node)  // `(u)`: a tuple pattern of one element and no comma
-paren_target(t0, u) :- target_at(t0), kind(t0, "tuple_pattern"), child(t0, u, i), !kind(u, "comment"), !op(t0, ","),
-    !other_child(t0, i).
+.decl paren_target(t0: node, u: node)  // `(u)`: a tuple pattern of one element and no trailing comma
+paren_target(t0, u) :- target_at(t0), kind(t0, "tuple_pattern"), child(t0, u, i), !kind(u, "comment"),
+    !other_child(t0, i), text(t0, s), !match("[\\s\\S]*,(\\s|#[^\\n]*)*\\)", s).
 .decl other_child(t0: node, i: number)
 other_child(t0, i) :- kind(t0, "tuple_pattern"), child(t0, _, i), child(t0, z, j), j != i, !kind(z, "comment").
 // names2(t, a, b): t has two children (comments aside), the plain names a and b, in that order. No count: a count
