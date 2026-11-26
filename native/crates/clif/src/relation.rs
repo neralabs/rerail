@@ -837,7 +837,7 @@ mod tests {
         let top = Relation::create(&top_block, &spec, Some(base));
         RelW { block: &top_block, rel: top, lock: &lock }.extend(&(0..500i64).flat_map(|i| [i * 5 - 700, -i]).collect::<Vec<_>>());
         freeze(&top_block, top, &spec, Some(base));
-        let view = rerail_blocks::relation::View { base: Some(base), top };
+        let view = rerail_blocks::relation::View::new(Some(base), top);
         assert_eq!(view.sort(), Some(ColumnIndex::new(0)));
         let (b, end) = (top.base_rows, view.end().get());
         let mut checked = 0;

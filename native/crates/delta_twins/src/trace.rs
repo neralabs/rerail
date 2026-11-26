@@ -25,11 +25,11 @@ use rerail_blocks::block::Block;
 use rerail_blocks::bloom::{self, Bloom};
 use rerail_blocks::gens::{BODY_AT, Id, Table, set_word, word, words, words_mut};
 use rerail_blocks::layer::{
-    Chain, IX_BLOOM, IX_FENCES, IX_ORDER, IX_PRINTS, LAYER_BODY, Layer, LayerHead, MAX_IX, NONE, Runs, ShapeW, bloom_key, bloom_words, gone_spec,
+    IX_BLOOM, IX_FENCES, IX_ORDER, IX_PRINTS, LAYER_BODY, Layer, LayerHead, MAX_IX, NONE, Runs, ShapeW, bloom_key, bloom_words, gone_spec,
     parts_spec, rows_spec, sketch_room,
 };
 use rerail_blocks::order::{FENCE, print_vals};
-use rerail_blocks::relation::{Relation, freeze_layer, layer_sketches, row_digest};
+use rerail_blocks::relation::{self, Relation, freeze_layer, layer_sketches, row_digest};
 use rerail_blocks::scratch::Scratch;
 use rerail_blocks::sketch::Sketch;
 use std::cmp::Ordering;
@@ -76,7 +76,7 @@ pub const CONTROL_BYTES: usize = 40;
 enum Src<'a> {
     Runs(Runs<'a>),
     // copy: not block data (a handle and a first item a merged layer)
-    Layers { chain: Chain<'a>, layers: Vec<Layer<'a>>, off: Vec<usize> },
+    Layers { chain: relation::View<'a>, layers: Vec<Layer<'a>>, off: Vec<usize> },
 }
 
 impl<'a> Src<'a> {
@@ -107,7 +107,7 @@ impl<'a> Src<'a> {
             Src::Runs(r) => r.get(i, c),
             Src::Layers { chain, .. } => match self.at(i) {
                 (l, Ok(id)) => l.get(id, c),
-                (l, Err(k)) => chain.get(rerail_blocks::bistate::RowId::new(l.kills()[k]), ColumnIndex::new(c as u16)),
+                (l, Err(k)) => chain.get(l.kills()[k], c),
             },
         }
     }
@@ -171,7 +171,7 @@ impl Op for Merge {
             }
         }
         assert_eq!(l.below().map_or(NONE, |(b, _)| b), p.below, "the merged layers lie over the layer below them");
-        let chain = Chain::new(table, Some(p.head), arity).expect("the merged layers and those below, reached");
+        let chain = relation::View::chain(table, Some(p.head), arity).expect("the merged layers and those below, reached");
         Src::Layers { chain, layers, off }
     }
     fn below(params: &[u8]) -> u32 {
@@ -306,8 +306,8 @@ fn rel(block: &Block, at: u64) -> &Relation {
 }
 
 /// The state below the new layer, read through the descriptor table.
-fn below_chain<'t>(table: &'t Table<'t>, below: u32, arity: usize) -> Chain<'t> {
-    Chain::new(table, (below != NONE).then_some(below), arity).expect("the layers below, reached by reference")
+fn below_chain<'t>(table: &'t Table<'t>, below: u32, arity: usize) -> relation::View<'t> {
+    relation::View::chain(table, (below != NONE).then_some(below), arity).expect("the layers below, reached by reference")
 }
 
 fn scratch_for(n: usize, a: usize) -> Scratch {
@@ -574,9 +574,9 @@ fn parts<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let below = O::below(c.params);
     let chain = below_chain(table, below, a);
     let part_of_own = |id: u32| part_col.map_or(0, |p| rows.own(id, p));
-    let part_of_below = |id: u32| part_col.map_or(0, |p| chain.get(rerail_blocks::bistate::RowId::new(id), ColumnIndex::new(p as u16)));
+    let part_of_below = |id: u32| part_col.map_or(0, |p| chain.get(id, p));
     let digest_own = |id: u32| row_digest((0..a).map(|col| rows.own(id, col)));
-    let digest_below = |id: u32| row_digest((0..a).map(|col| chain.get(rerail_blocks::bistate::RowId::new(id), ColumnIndex::new(col as u16))));
+    let digest_below = |id: u32| row_digest((0..a).map(|col| chain.get(id, col)));
     // By partition: the rows lie sorted on it; the kills are gathered by it, ascending within each.
     let mut entries: std::collections::BTreeMap<i64, (u64, u32, u32)> = std::collections::BTreeMap::new(); // copy: derived (the partitions' change, written below)
     let mut gone: Vec<(i64, u32)> = Vec::new(); // copy: derived (the kills by partition, written below)
@@ -669,7 +669,7 @@ fn sketch<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             s.add(rows.own(id, col));
         }
         for &id in rows.changed.as_slice() {
-            s.remove(chain.get(rerail_blocks::bistate::RowId::new(id), ColumnIndex::new(col as u16)));
+            s.remove(chain.get(id, col));
         }
         kept.push(s.encode());
     }

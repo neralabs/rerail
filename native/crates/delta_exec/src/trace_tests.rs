@@ -465,7 +465,7 @@ fn committed(runs_of: &[Vec<(Vec<i64>, i32)>]) -> (Registry, TraceOps, Directory
 
 /// P§1, P§11: a restriction reads only its partition's rows. Over a trace of a thousand rows in seven partitions and
 /// a few in partition 50, the restricted state's scan and probe and the restricted change's rows gone and added touch
-/// only partition 50's rows of each layer and its kills, counted where the reads are made (`Chain::counted`).
+/// only partition 50's rows of each layer and its kills, counted where the reads are made (`View::counted`).
 #[test]
 fn a_restriction_reads_only_its_partitions_rows() {
     let mut r = rng(61);
@@ -491,7 +491,7 @@ fn a_restriction_reads_only_its_partitions_rows() {
     let (_, _, dir, t, heads) = committed(&all);
     let l = t.read(&dir, &[heads[5]]).unwrap();
     let table = l.table();
-    let reads = std::cell::Cell::new(0u64);
+    let reads = std::sync::atomic::AtomicU64::new(0);
     let whole = t.state(&table, heads[5]).unwrap();
     let rows_total: usize = whole.layers().map(|(_, l)| l.n()).sum();
     let s = whole.counted(&reads).restrict(50);
@@ -499,12 +499,12 @@ fn a_restriction_reads_only_its_partitions_rows() {
     assert_eq!(rows_of(&s), want);
     let own: u64 = whole.layers().map(|(_, l)| l.part_rows(50).len() as u64).sum();
     let kills: u64 = whole.layers().map(|(_, l)| l.part_kills(50).len() as u64).sum();
-    let scan = reads.replace(0);
+    let scan = reads.swap(0, std::sync::atomic::Ordering::Relaxed);
     assert!(scan <= own + kills, "a restricted scan read {scan} rows, its partition's own rows being {own} (of {rows_total})");
     let cols: Vec<ColumnIndex> = ColumnIndex::all(3).collect();
     let x = want.iter().next().unwrap();
     assert_eq!(s.matching(&cols, x).count(), 1);
-    let probe = reads.replace(0);
+    let probe = reads.swap(0, std::sync::atomic::Ordering::Relaxed);
     assert!(probe <= own, "a restricted probe read {probe} rows");
     let before = t.state(&table, heads[3]).unwrap().counted(&reads).restrict(50);
     let b = Bistate::new(before, s);
@@ -513,7 +513,7 @@ fn a_restriction_reads_only_its_partitions_rows() {
     let of50 = |s: &Rows| s.iter().filter(|x| x[0] == 50).cloned().collect::<Rows>();
     assert_eq!(gone, of50(&sets[3]).difference(&of50(&sets[5])).cloned().collect(), "partition 50's rows gone, 3→5");
     assert_eq!(added, of50(&sets[5]).difference(&of50(&sets[3])).cloned().collect(), "and added");
-    let change = reads.replace(0);
+    let change = reads.swap(0, std::sync::atomic::Ordering::Relaxed);
     assert!(change <= 4 * (own + kills), "a restricted change read {change} rows and words, its partition's being {}", own + kills);
     assert!((scan + probe + change) * 10 < rows_total as u64, "far fewer reads than the trace's {rows_total} rows");
 }
@@ -529,7 +529,7 @@ fn is_identity_reads_a_layers_counts_only() {
     let (_, _, dir, t, heads) = committed(&[one, cancel, kill_only]);
     let l = t.read(&dir, &[heads[3]]).unwrap();
     let table = l.table();
-    let reads = std::cell::Cell::new(0u64);
+    let reads = std::sync::atomic::AtomicU64::new(0);
     let st = |k: usize| t.state(&table, heads[k]).unwrap().counted(&reads);
     for (k, identity) in [(1, false), (2, true), (3, false)] {
         let b = Bistate::new(st(k - 1), st(k));
@@ -538,7 +538,7 @@ fn is_identity_reads_a_layers_counts_only() {
         let restricted = b.restrict(p);
         assert_eq!(restricted.is_identity(), k == 2, "layer {k}, partition {p}");
         assert!(b.restrict(1_000).is_identity(), "layer {k}, a partition it does not hold");
-        assert_eq!(reads.get(), 0, "layer {k}: is_identity read no row");
+        assert_eq!(reads.load(std::sync::atomic::Ordering::Relaxed), 0, "layer {k}: is_identity read no row");
     }
     let l3 = st(3);
     let (_, top) = l3.layers().next().unwrap();

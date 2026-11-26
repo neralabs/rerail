@@ -57,7 +57,7 @@ fn main() {
     let rel: &Relation = Relation::create(&block, &spec, None);
     RelW { block: &block, rel, lock: &lock }.extend(&flat);
     let st = m.time("freeze in place (sort in place, hash index on col 1)", || relation::freeze(&block, rel, &spec, None));
-    let v = View { base: None, top: rel };
+    let v = View::new(None, rel);
     let in_place = rel.held_bytes();
 
     // Packed, two ways: from the frozen view (a roll-up's path), and straight from open rows.

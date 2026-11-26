@@ -147,7 +147,7 @@ fn k_form_rows_are_stored_in_32_bits() {
         let l = tr.read(&dir, &[Some(h)]).unwrap();
         let table = l.table();
         let st = tr.state(&table, Some(h)).unwrap();
-        let got: Rows = st.scan().map(|id| ColumnIndex::all(*arity).map(|c| st.get(id, c)).collect()).collect();
+        let got: Rows = st.scan().map(|id| ColumnIndex::all(*arity).map(|c| Read::get(&st, id, c)).collect()).collect();
         assert_eq!(got, want, "{name}");
     }
 }

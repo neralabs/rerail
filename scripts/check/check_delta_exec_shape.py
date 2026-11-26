@@ -169,9 +169,18 @@ def b2(failures: list) -> None:
     for kind in ("IX_FENCES", "IX_PRINTS", "IX_HASH", "IX_BLOOM"):
         if kind not in code:
             failures.append(f"{layer.relative_to(ROOT)}: the index kind {kind} (P§11.2) is missing")
-    chain = re.search(r"pub struct Chain<'a> \{(.*?)\}", code, flags=re.S)
-    if not chain or "Vec" in chain.group(1) or "table: &'a Table<'a>" not in chain.group(1):
-        failures.append(f"{layer.relative_to(ROOT)}: Chain reads its layers through the descriptor table, holding no list")
+    # The rebuild plan, B2: "Version and Bistate are its View generalized from a base and one delta to n layers ...
+    # as one definition". A trace's state is relation::View (View::chain), reading its layers through the descriptor
+    # table and holding no list of them; there is no second state type beside it.
+    rel = crates / "blocks/src/relation.rs"
+    rcode = strip_rust(rel.read_text())
+    view = re.search(r"pub struct View<'a> \{(.*?)\}", rcode, flags=re.S)
+    if not view or "Vec" in view.group(1) or "far: Option<&'a crate::gens::Table<'a>>" not in view.group(1):
+        failures.append(f"{rel.relative_to(ROOT)}: View reads a trace's layers through the descriptor table, holding no list")
+    if "pub fn chain(table: &'a Table<'a>, head: Option<Id>, arity: usize)" not in code:
+        failures.append(f"{layer.relative_to(ROOT)}: a trace's state is View::chain")
+    for path in [layer, crates / "blocks/src/bistate.rs", rel]:
+        hits(path, strip_rust(path.read_text()), r"\bstruct\s+Chain\b|\bimpl\b[^{;]*\b(Read|States)\s+for\s+Chain\b", "a second state type beside relation::View (B2: one definition)", failures)
     trace = CRATE / "src/trace.rs"
     code = strip_rust(trace.read_text())
     hits(trace, code, r"\bVec<\s*(Layer|Chain|BlockId)\b|\bVec<Vec<i64>>\s*[,;)]", "the host holding layers or rows", failures)

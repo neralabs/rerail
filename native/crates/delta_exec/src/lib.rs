@@ -11,7 +11,7 @@
 //!   registered only once checked against it; the CPU executor, which cuts each phase's items into tiles;
 //! - `trace`: the program trace (B2), on the host as handles only: a chain of frozen layer blocks, each written by
 //!   `consolidate` (or rolled up by `merge`) into a block of its own over the one below; its two states and the
-//!   change between them read where the layers lie (`rerail_blocks::layer::Chain`, `Bistate`);
+//!   change between them read where the layers lie (`rerail_blocks::relation::View::chain`, `Bistate`);
 //! - `sym`: the symbol table, the one program global;
 //! - `tape`: a document's text and its views (`kind`, `field`, `child`, `text`, `value`, `doc`), read where the
 //!   tape lies;

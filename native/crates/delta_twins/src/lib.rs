@@ -17,7 +17,7 @@
 //! writes a block's structures with blocks' own code, in place, through its slot's pin: "the twins depend on blocks,
 //! and a slot is the pinned block, so a twin uses blocks' layouts and freeze in place" (the rebuild plan, B1): a
 //! relation made, its rows claimed and written (`Relation::put_own`), frozen (`relation::freeze_layer`), its orders
-//! and sketches added; the reads every reader shares (`Chain`). Nothing may outlive a call or come from outside it: no
+//! and sketches added; the reads every reader shares (`relation::View`). Nothing may outlive a call or come from outside it: no
 //! `static`, thread-local, `Once`/`Lazy` cell, lock or atomic of the twin's own; no thread's scratch (a call makes its
 //! own, `Scratch::anon`); no file, environment, process, network or time. `unsafe` is forbidden.
 //! `check_delta_exec_shape.py` refuses each of these here, and this crate's `clippy.toml` disallows them by path.

@@ -1394,7 +1394,7 @@ mod tests {
             w.kill(id);
         }
         relation::freeze(&block, d, &spec, Some(b));
-        let view = relation::View { base: Some(b), top: d };
+        let view = relation::View::new(Some(b), d);
         let state = view.bistate();
         let version = Version::of(state.before().expect("a base"), &room);
         assert!(!version.column(0).is_exact() && version.column(1).is_exact(), "a column past its exact counts, one within");

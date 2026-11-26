@@ -382,12 +382,12 @@ fn merge_join<A: Table, B: Table>(a: &A, b: &B, on: &[(ColumnIndex, ColumnIndex)
 /// on exactly the probe's columns, in both relations.
 impl Table for View<'_> {
     fn sort(&self) -> Option<ColumnIndex> {
-        let frozen = self.top.is_frozen() && self.base.is_none_or(|b| b.is_frozen());
-        self.top.sort_col().filter(|_| frozen).map(|c| ColumnIndex::new(c as u16))
+        let frozen = self.rel().is_frozen() && self.base.is_none_or(|b| b.is_frozen());
+        self.rel().sort_col().filter(|_| frozen).map(|c| ColumnIndex::new(c as u16))
     }
 
     fn runs(&self) -> Runs {
-        let (b, end) = (self.top.base_rows, View::total(self));
+        let (b, end) = (self.rel().base_rows, View::total(self));
         match self.base {
             Some(_) => Runs::two(Run::new(0, b), Run::new(b, end)),
             None => Runs::one(Run::new(b, end)),
@@ -424,10 +424,10 @@ impl View<'_> {
     /// both), and for each of its key's columns, its place in `cols`.
     fn hashed(&self, cols: &[ColumnIndex]) -> Option<(usize, Vec<usize>)> {
         use crate::relation::HASHED;
-        if !self.top.is_frozen() {
+        if !self.rel().is_frozen() {
             return None;
         }
-        let n = self.top.nindex.load(std::sync::atomic::Ordering::Acquire) as usize;
+        let n = self.rel().nindex.load(std::sync::atomic::Ordering::Acquire) as usize;
         let covers = |r: &crate::relation::Relation, i: usize| {
             let nr = r.nindex.load(std::sync::atomic::Ordering::Acquire) as usize;
             let ix = (i < nr.min(r.indexes.len())).then(|| r.index_at(i))?;
@@ -436,8 +436,8 @@ impl View<'_> {
                 .then(|| key.iter().map(|&c| cols.iter().position(|x| x.get() == c as usize)).collect::<Option<Vec<usize>>>())
                 .flatten()
         };
-        (0..n.min(self.top.indexes.len())).find_map(|i| {
-            let order = covers(self.top, i)?;
+        (0..n.min(self.rel().indexes.len())).find_map(|i| {
+            let order = covers(self.rel(), i)?;
             match self.base {
                 Some(b) if covers(b, i).as_ref() != Some(&order) => None,
                 _ => Some((i, order)),
@@ -536,7 +536,7 @@ mod tests {
             w.kill(id);
         }
         relation::freeze(&block, d, &spec, Some(b));
-        f(View { base: Some(b), top: d });
+        f(View::new(Some(b), d));
     }
 
     /// The live rows of `t`, by id: what every operation is checked against, read a cell at a time.

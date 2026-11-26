@@ -28,7 +28,7 @@
 //! is read a liveness word at a time over every id: `after.end() / 64` words.
 
 pub use crate::ids::{ColumnIndex, RowId, WordIndex};
-use crate::relation::View;
+use crate::relation::{Relation, View};
 
 /// One column of a state, resolved once (`Read::column`): a row's value is the column's own read, with no lookup of
 /// the column again.
@@ -335,7 +335,7 @@ impl Iterator for Flips<'_> {
     }
 }
 
-/// States that can be inverted, composed and restricted to a partition (P§1): a trace's (`layer::Chain`).
+/// States that can be inverted, composed and restricted to a partition (P§1): a trace's (`relation::View::chain`).
 pub trait States: Read + Copy {
     /// The empty state of the same relation.
     fn empty(&self) -> Self;
@@ -565,31 +565,37 @@ pub fn is_least<S: Read>(s: &Bistate<S>) -> bool {
     s.gone().all(|g| s.added().all(|a| ColumnIndex::all(cols).any(|c| before.get(g, c) != s.after().get(a, c))))
 }
 
-/// A view's column: the base's and the delta's, each resolved once (`Rows::reader`).
+/// A view's column: the base's and the delta's, each resolved once (`Rows::reader`); a trace's state's, read through
+/// its layers (`View::get`).
 #[derive(Clone, Copy)]
-pub struct ViewColumn {
+pub struct ViewColumn<'s> {
     base: Option<crate::rows::ColRead>,
-    top: crate::rows::ColRead,
+    top: Option<crate::rows::ColRead>,
     base_rows: u32,
+    chain: Option<(&'s View<'s>, usize)>,
 }
 
-impl ColumnRead for ViewColumn {
+impl ColumnRead for ViewColumn<'_> {
     #[inline]
     fn get(&self, id: RowId) -> i64 {
+        if let Some((v, c)) = self.chain {
+            return v.get(id.get(), c);
+        }
         let id = id.get();
-        if id < self.base_rows { self.base.expect("a delta's base").get(id) } else { self.top.get(id - self.base_rows) }
+        if id < self.base_rows { self.base.expect("a delta's base").get(id) } else { self.top.expect("a row of the view").get(id - self.base_rows) }
     }
 }
 
-/// A relation read alone: its own rows, less its dead bits.
+/// A relation's state read where it lies (P§12's `Version`, `relation::View`): a relation alone, its own rows less its
+/// dead bits; a delta and its base; or a trace's state, its layers (`View::chain`).
 impl Read for View<'_> {
     type Column<'s>
-        = ViewColumn
+        = ViewColumn<'s>
     where
         Self: 's;
 
     fn arity(&self) -> usize {
-        self.top.arity as usize
+        View::arity(self)
     }
 
     fn end(&self) -> RowId {
@@ -598,10 +604,14 @@ impl Read for View<'_> {
 
     /// `View::live`, a word at a time: the delta's dead bits name its base's rows and its own, the base's its own.
     fn live_word(&self, w: WordIndex) -> u64 {
-        let dead = |r: &crate::relation::Relation| r.dead.as_slice().get(w.get()).copied().unwrap_or(0);
-        let mut live = below(Read::end(self), w) & !dead(self.top);
+        if self.is_chain() {
+            return self.chain_live_word(w);
+        }
+        let Some(top) = self.top else { return 0 };
+        let dead = |r: &Relation| r.dead.as_slice().get(w.get()).copied().unwrap_or(0);
+        let mut live = below(Read::end(self), w) & !dead(top);
         if let Some(b) = self.base {
-            live &= !(dead(b) & below(RowId::new(self.top.base_rows), w));
+            live &= !(dead(b) & below(RowId::new(top.base_rows), w));
         }
         live
     }
@@ -610,14 +620,96 @@ impl Read for View<'_> {
         View::get(self, id.get(), c.get())
     }
 
-    /// A frozen delta's change: its base's ids it killed (`Relation::changed`), and its own rows after them.
+    /// A frozen delta's change: its base's ids it killed (`Relation::changed`), and its own rows after them. A
+    /// trace's state's: its top layer's kills (its partition's, when restricted).
     fn since(&self) -> Option<Since<'_>> {
+        if self.is_chain() {
+            return self.chain_since();
+        }
         self.base?;
-        self.top.is_frozen().then(|| Since { end: RowId::new(self.top.base_rows), flips: self.top.changed.as_slice() })
+        let top = self.top?;
+        top.is_frozen().then(|| Since { end: RowId::new(top.base_rows), flips: top.changed.as_slice() })
     }
 
-    fn column(&self, c: ColumnIndex) -> ViewColumn {
-        ViewColumn { base: self.base.map(|b| b.rows.reader(c.get())), top: self.top.rows.reader(c.get()), base_rows: self.top.base_rows }
+    /// A trace's state names the layers above `before` itself (two states can end at one id: a layer that only
+    /// kills).
+    fn flips_since(&self, before: Option<&Self>) -> Option<Flips<'_>> {
+        if self.is_chain() {
+            return self.chain_flips_since(before);
+        }
+        self.flips_from(before.map_or(RowId::ZERO, Read::end))
+    }
+
+    fn new_ranges(&self, before: Option<&Self>) -> Option<Vec<(RowId, RowId)>> {
+        if self.is_chain() { self.chain_new_ranges(before) } else { None }
+    }
+
+    fn exact_counts_since(&self, before: Option<&Self>) -> Option<(usize, usize)> {
+        if self.is_chain() { self.chain_exact_counts_since(before) } else { None }
+    }
+
+    fn column(&self, c: ColumnIndex) -> ViewColumn<'_> {
+        ViewColumn {
+            base: self.base.map(|b| b.rows.reader(c.get())),
+            top: self.top.map(|t| t.rows.reader(c.get())),
+            base_rows: self.top.map_or(0, |t| t.base_rows),
+            chain: self.is_chain().then_some((self, c.get())),
+        }
+    }
+
+    /// A trace's state's live rows in its canonical order (its layers' runs merged); a relation's, in id order.
+    fn scan(&self) -> impl Iterator<Item = RowId> + '_ {
+        if self.is_chain() { Either::L(self.chain_scan()) } else { Either::R(self.live_ids()) }
+    }
+
+    /// A trace's state's matches by each layer's indexes (`layer::ProbeIter`); a relation's, by a scan.
+    fn matching<'s>(&'s self, cols: &'s [ColumnIndex], key: &'s [i64]) -> impl Iterator<Item = RowId> + 's {
+        if self.is_chain() {
+            Either::L(self.chain_matching(cols, key))
+        } else {
+            Either::R(self.live_ids().filter(move |&id| cols.iter().zip(key).all(|(&c, &k)| Read::get(self, id, c) == k)))
+        }
+    }
+
+    fn partition(&self) -> Option<ColumnIndex> {
+        if self.is_chain() { self.chain_partition() } else { None }
+    }
+
+    /// A trace's state's partition: its layers' ranges of it (`States::restrict`).
+    fn part(&self, p: i64) -> impl Iterator<Item = RowId> + '_ {
+        if self.is_chain() {
+            Either::L(States::restrict(self, p).chain_scan())
+        } else {
+            let c = Read::partition(self);
+            Either::R(self.live_ids().filter(move |&id| c.is_some_and(|c| Read::get(self, id, c) == p)))
+        }
+    }
+
+    fn stats(&self, c: ColumnIndex) -> ColStats {
+        if self.is_chain() { self.chain_stats(c) } else { stats_of(self, c) }
+    }
+}
+
+/// A trace's states (P§1): the empty state, a partition's, and the partitions a change touches, by the layers'
+/// digests. A relation's view is one state: its empty state is the empty one of its columns.
+impl<'a> States for View<'a> {
+    fn empty(&self) -> Self {
+        View { base: None, top: None, head: None, ..*self }
+    }
+
+    fn same(&self, other: &Self) -> bool {
+        let top = |v: &View<'_>| v.top.map(std::ptr::from_ref);
+        top(self) == top(other) && self.base.map(std::ptr::from_ref) == other.base.map(std::ptr::from_ref) && self.head == other.head && self.part == other.part && self.arity == other.arity
+    }
+
+    fn restrict(&self, p: i64) -> Self {
+        assert!(self.is_chain() || self.top.is_none(), "a restriction of a trace's state");
+        assert!(self.part.is_none_or(|q| q == p), "a restriction of another partition's");
+        View { part: Some(p), ..*self }
+    }
+
+    fn changed_parts_since(&self, before: Option<&Self>, out: &mut dyn FnMut(i64)) -> bool {
+        self.is_chain() && self.chain_changed_parts_since(before, out)
     }
 }
 
@@ -760,7 +852,7 @@ mod tests {
             w.kill(id);
         }
         relation::freeze(&block, d, &spec, Some(b));
-        f(View { base: Some(b), top: d });
+        f(View::new(Some(b), d));
     }
 
     /// A row's two columns, read through `Read`.
@@ -814,7 +906,7 @@ mod tests {
     fn a_delta_records_its_kills_and_brings_back_a_row_pushed_again() {
         let base = [[1, 10], [2, 20], [3, 30], [4, 40]];
         with_delta(&base, &[[5, 50], [3, 30]], &[0, 2, 0], |v| {
-            assert_eq!(v.top.changed.as_slice(), &[0], "id 2 pushed again: its kill cancelled; id 0 once");
+            assert_eq!(v.rel().changed.as_slice(), &[0], "id 2 pushed again: its kill cancelled; id 0 once");
             assert!(View::live(&v, 2), "brought back where it was");
             let s = v.bistate();
             assert!(s.listed().is_some());
@@ -825,7 +917,7 @@ mod tests {
             assert_eq!(s.counts(), (1, 1));
         });
         with_delta(&base, &[[3, 30]], &[2], |v| {
-            assert!(v.top.changed.as_slice().is_empty());
+            assert!(v.rel().changed.as_slice().is_empty());
             let s = v.bistate();
             check(&s);
             assert!(s.is_identity(), "killed and pushed again: no change");

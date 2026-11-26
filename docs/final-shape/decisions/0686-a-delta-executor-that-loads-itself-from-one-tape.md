@@ -613,3 +613,22 @@ them move the body from 192 to 320 bytes. `Directory::refer` takes the offset; a
 header (`BODY_AT`), and a chain refuses a layer whose relation continues one it does not refer to. Checks (Relax,
 local): `rerail-delta-exec --lib` 26 of 26; `rerail-blocks --lib -- gens:: layer:: bistate:: relation:: rows::` 21 of
 21.
+
+And the first item above, **one definition** (the rebuild plan, B2: "Version and Bistate are its View generalized
+from a base and one delta to n layers ... as one definition"): `layer::Chain` is gone, and a trace's state is
+`relation::View` itself. A View is a full relation, a delta and its base in hand, or a trace's state
+(`View::chain(table, head, arity)`): its top layer's relation and the layers below it, each reached by block id and
+offset through the launch's descriptor table, checked once when it is made, as `Chain::new` checked them. Its empty
+state has no top (`top: Option<&Relation>`; `View::rel` gives a relation's). One `bistate::Read` and one
+`bistate::States` are implemented for View: the delta-and-base reads as they were, and the chain's reads (liveness by
+the layers' kills, the probe by each layer's indexes and Bloom filters, the merged scan in canonical order, a
+partition's rows and kills, the counted reads, the partitions a change touches) as `Chain`'s were. The layer's
+`parts` and `gone` stay its own relations, read through `layer::Layer`. The read counter is an atomic, so a View stays
+`Send` and `Sync` for the readers that share one across threads. The old engine's uses of View now build it with
+`View::new(base, top)`. `check_delta_exec_shape.py` refuses a `Chain` type, or a `Read` or `States` for one, beside
+View. Checks (Relax, local): `rerail-delta-exec --lib` 26 of 26; `rerail-blocks --lib -- bistate:: relation:: table::
+change:: sketch:: facts:: layer:: rows::` 42 of 42; `rerail-clif --lib -- relation::` 8 of 8; the twins compile.
+Not run: the old engine's crates that build a View (setfix's blocks comparison tests, store's kept facts) and blocks'
+examples. Their change is the constructor only, and none of their tests are in the narrow runs allowed here.
+
+Still not built: E1 on a device, the cost of the kill search, and clippy (each as above).

@@ -467,10 +467,10 @@ pub fn pack(view: &View, spec: &Spec, kind: u32) -> (Block, PackStats) {
     crate::scratch::with(|s| {
         let a = view.arity();
         let (cols, n) = match view.base {
-            None if view.top.is_frozen() => {
-                let n = view.top.rows.len() as usize;
+            None if view.rel().is_frozen() => {
+                let n = view.rel().rows.len() as usize;
                 let cols: &mut [i64] = s.take(n * a);
-                let rows = &view.top.rows;
+                let rows = &view.rel().rows;
                 let read = |(c, out): (usize, &mut [i64])| rows.read_col(c, n as u32, out);
                 if n * a >= PAR_MIN { rerail_context::on_cores(|| cols.par_chunks_mut(n.max(1)).enumerate().for_each(read)) } else { cols.chunks_mut(n.max(1)).enumerate().for_each(read) }
                 (cols, n)

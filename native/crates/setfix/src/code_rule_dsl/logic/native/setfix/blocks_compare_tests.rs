@@ -186,7 +186,7 @@ fn blocks_compare_blocks() {
     });
     let st = m.time("freeze (dedup, order, index, stats)", || brel::freeze(&block, rel, &spec, None));
     m.note(format!("{} live rows of {N} pushed; block {} bytes used", st.live, block.used()));
-    let v = View { base: None, top: rel };
+    let v = View::new(None, rel);
 
     let hits = m.time("probe col 1, 1M keys", || {
         let mut n = 0u64;
@@ -227,7 +227,7 @@ fn blocks_compare_blocks() {
         brel::freeze(&delta_block, d, &spec, Some(rel));
         d
     });
-    let dv = View { base: Some(rel), top: d };
+    let dv = View::new(Some(rel), d);
     m.note(format!("after the edit: {} live; delta block {} bytes; probe hits {hits}, scan {scan}", dv.live_len(), delta_block.used()));
     m.print();
 }

@@ -20,16 +20,15 @@
 //! two small relations: `parts` (each partition it changed: its digest's move and counts) and `gone` (its kills by
 //! partition). Its header names the three and is written last: a layer is read only once committed.
 //!
-//! **Reads** (`Chain`, P§12's `Version`: `relation::View` generalized from a base and one delta to n layers): a
-//! trace's state at a layer, read in place through a launch's descriptor table, as `bistate::Read`; its change since
-//! another state, `bistate::Bistate`, read in the change's size.
+//! **Reads** (`relation::View::chain`, P§12's `Version`: `relation::View` generalized from a base and one delta to n
+//! layers, one definition): a trace's state at a layer, read in place through a launch's descriptor table, as
+//! `bistate::Read`; its change since another state, `bistate::Bistate`, read in the change's size.
 
-use crate::bistate::{ColStats, ColumnIndex, Flips, Read, RowId, Since, States, WordIndex};
+use crate::bistate::{ColStats, ColumnIndex, Flips, RowId, Since, WordIndex};
 use crate::bloom::{self, Bloom};
 use crate::gens::{BODY_AT, Id, Table, set_word, word};
-use crate::relation::{Relation, Spec, layer_sketch, leading, row_digest};
+use crate::relation::{Relation, Spec, View, layer_sketch, leading, row_digest};
 use crate::sketch::Sketch;
-use std::cell::Cell;
 use std::cmp::Ordering;
 
 /// The most columns a trace's relation has.
@@ -724,63 +723,49 @@ fn partition_point(n: usize, pred: impl Fn(usize) -> bool) -> usize {
     lo
 }
 
-/// A trace's state at a layer (P§12's `Version`: `blocks::relation::View` generalized to n layers), read in place
-/// through a launch's descriptor table: `bistate::Read`. A row is live when it is an own row of a layer at or below the
-/// state's and no layer above that one, up to the state's, kills it. With a partition key (`restrict`), only that
-/// partition's rows: each layer's range of it, and its kills of it. Its reads can be counted (`counted`): every own
-/// row and every liveness word they touch.
-#[derive(Clone, Copy)]
-pub struct Chain<'a> {
-    table: &'a Table<'a>,
-    head: Option<Id>,
-    arity: usize,
-    part: Option<i64>,
-    reads: Option<&'a Cell<u64>>,
-}
-
-impl<'a> Chain<'a> {
-    /// The state at layer `head` (`None`: the empty state, of `arity` columns). Each layer is checked once: reached,
-    /// committed, of `arity` columns, and where the layer above refers to it.
-    pub fn new(table: &'a Table<'a>, head: Option<Id>, arity: usize) -> Result<Chain<'a>, String> {
-        let c = Chain { table, head, arity, part: None, reads: None };
+/// A trace's state (`relation::View::chain`; P§12's `Version`, "its View generalized from a base and one delta to n
+/// layers"): the view's reads of a chain of layers, through its launch's descriptor table. A row is live when it is an
+/// own row of a layer at or below the state's and no layer above that one, up to the state's, kills it.
+impl<'a> View<'a> {
+    /// The state at layer `head` (`None`: the empty state, of `arity` columns), its layers reached through `table`.
+    /// Each layer is checked once: reached, committed, of `arity` columns, where the layer above refers to it, and
+    /// referred to by it (O§2: a reference is a block id and an offset, the layer's header).
+    pub fn chain(table: &'a Table<'a>, head: Option<Id>, arity: usize) -> Result<View<'a>, String> {
+        let mut v = View { base: None, top: None, arity: arity as u32, far: Some(table), head, part: None, reads: None };
         let mut at = head.map(|h| (h, None));
         while let Some((id, off)) = at {
-            let l = c.layer(id)?;
+            let l = v.try_layer(id)?;
             if off.is_some_and(|o| o != l.head.rows as usize) {
                 return Err(format!("layer #{id}'s relation is not where the layer above refers"));
             }
             if l.head.shape.arity() != arity || l.rows.arity as usize != arity {
                 return Err(format!("layer #{id} has {} columns, not {arity}", l.head.shape.arity()));
             }
-            // Its reference to the layer below (O§2: block id and offset, the layer's header) is its relation's.
             if let Some((b, _)) = l.below()
                 && !crate::gens::refs(l.bytes).contains(&crate::gens::Ref { id: b, at: BODY_AT as u32 })
             {
                 return Err(format!("layer #{id} continues #{b} and does not refer to it"));
             }
+            if Some(id) == head {
+                v.top = Some(l.rows);
+            }
             at = l.below().map(|(b, o)| (b, Some(o)));
         }
-        Ok(c)
+        Ok(v)
     }
 
-    /// The same state, its reads counted into `reads`.
-    pub fn counted(self, reads: &'a Cell<u64>) -> Chain<'a> {
-        Chain { reads: Some(reads), ..self }
+    fn table(&self) -> &'a Table<'a> {
+        self.far.expect("a trace's state")
     }
 
-    fn touch(&self, n: usize) {
-        if let Some(r) = self.reads {
-            r.set(r.get() + n as u64);
-        }
-    }
-
-    fn layer(&self, id: Id) -> Result<Layer<'a>, String> {
-        let b = self.table.block(id).ok_or_else(|| format!("layer #{id} is not reachable from the launch"))?;
+    fn try_layer(&self, id: Id) -> Result<Layer<'a>, String> {
+        let b = self.table().block(id).ok_or_else(|| format!("layer #{id} is not reachable from the launch"))?;
         Layer::new(b).map_err(|e| format!("block #{id}: {e}"))
     }
 
-    fn at(&self, id: Id) -> Layer<'a> {
-        self.layer(id).expect("a chain's layers were checked when it was made")
+    /// Layer `id`, checked when the state was made.
+    pub fn layer(&self, id: Id) -> Layer<'a> {
+        self.try_layer(id).expect("a chain's layers were checked when it was made")
     }
 
     /// Its layers, newest first, with their block ids.
@@ -788,23 +773,15 @@ impl<'a> Chain<'a> {
         let mut id = self.head;
         std::iter::from_fn(move || {
             let i = id?;
-            let l = self.at(i);
+            let l = self.layer(i);
             id = l.below().map(|(b, _)| b);
             Some((i, l))
         })
     }
 
-    pub fn head(&self) -> Option<Id> {
-        self.head
-    }
-
-    pub fn part(&self) -> Option<i64> {
-        self.part
-    }
-
     /// The layers above the state `before` ends (all of them for `None`), newest first: `None` when `before` is not
     /// one of this state's.
-    fn above(&self, before: Option<&Chain<'a>>) -> Option<Vec<Layer<'a>>> {
+    fn above(&self, before: Option<&View<'a>>) -> Option<Vec<Layer<'a>>> {
         let stop = before.and_then(|b| b.head);
         // copy: not block data (a handle a layer, as many as lie above)
         let mut out = Vec::new();
@@ -842,33 +819,26 @@ impl<'a> Chain<'a> {
     fn killed_above(&self, l: &Layer<'a>, id: u32) -> bool {
         self.layers().map(|(_, k)| k).take_while(|k| !std::ptr::eq(k.rows, l.rows)).any(|k| k.kills().binary_search(&id).is_ok())
     }
-}
 
-impl Read for Chain<'_> {
-    type Column<'s>
-        = crate::bistate::Cells<'s, Self>
-    where
-        Self: 's;
-
-    fn arity(&self) -> usize {
-        self.arity
+    pub(crate) fn chain_get(&self, id: u32, c: usize) -> i64 {
+        self.locate(id).unwrap_or_else(|| panic!("row {id} is not in the state")).get(id, c)
     }
 
-    fn end(&self) -> RowId {
-        RowId::new(self.head.map_or(0, |h| self.at(h).end()))
+    pub(crate) fn chain_live(&self, id: u32) -> bool {
+        self.locate(id).is_some_and(|l| self.span(&l).contains(&id) && !self.killed_above(&l, id))
     }
 
-    fn live_word(&self, w: WordIndex) -> u64 {
+    /// `bistate::Read::live_word`: each layer's own rows in the word (its partition's, when restricted), less every
+    /// kill of one of them by a layer above it. A layer kills only rows below its own, so a kill names a live row of
+    /// the state it was made over, and a row killed is never live again (a row added again is a new row): the kills
+    /// are taken after every layer's rows are in.
+    pub(crate) fn chain_live_word(&self, w: WordIndex) -> u64 {
         self.touch(1);
-        let (first, end) = (w.first().get(), self.end().get());
+        let (first, end) = (w.first().get(), self.total());
         let last = first.saturating_add(64).min(end);
         if first >= last {
             return 0;
         }
-        // Each layer's own rows in the word (its partition's, when restricted), less every kill of one of them by a
-        // layer above it: a layer kills only rows below its own, so a kill names a live row of the state it was made
-        // over, and a row killed is never live again (a row added again is a new row). The kills are taken after
-        // every layer's rows are in.
         let (mut live, mut killed) = (0u64, 0u64);
         for (_, l) in self.layers() {
             if l.end() <= first {
@@ -877,8 +847,7 @@ impl Read for Chain<'_> {
             let s = self.span(&l);
             let (lo, hi) = (s.start.max(first), s.end.min(last));
             if lo < hi {
-                let bits = if hi - lo == 64 { u64::MAX } else { ((1u64 << (hi - lo)) - 1) << (lo - first) };
-                live |= bits;
+                live |= if hi - lo == 64 { u64::MAX } else { ((1u64 << (hi - lo)) - 1) << (lo - first) };
             }
             let k = l.kills();
             let from = k.partition_point(|&x| x < first);
@@ -889,21 +858,12 @@ impl Read for Chain<'_> {
         live & !killed
     }
 
-    fn get(&self, id: RowId, c: ColumnIndex) -> i64 {
-        let l = self.locate(id.get()).unwrap_or_else(|| panic!("row {id} is not in the state"));
-        l.get(id.get(), c.get())
-    }
-
-    fn column(&self, c: ColumnIndex) -> Self::Column<'_> {
-        crate::bistate::Cells::new(self, c)
-    }
-
-    fn since(&self) -> Option<Since<'_>> {
-        let l = self.at(self.head?);
+    pub(crate) fn chain_since(&self) -> Option<Since<'_>> {
+        let l = self.layer(self.head?);
         Some(Since { end: RowId::new(l.start()), flips: self.kills_of(&l) })
     }
 
-    fn flips_since(&self, before: Option<&Self>) -> Option<Flips<'_>> {
+    pub(crate) fn chain_flips_since(&self, before: Option<&View<'a>>) -> Option<Flips<'_>> {
         let mut f = Flips::default();
         for l in self.above(before)? {
             f.push(self.kills_of(&l));
@@ -911,13 +871,13 @@ impl Read for Chain<'_> {
         Some(f)
     }
 
-    fn new_ranges(&self, before: Option<&Self>) -> Option<Vec<(RowId, RowId)>> {
+    pub(crate) fn chain_new_ranges(&self, before: Option<&View<'a>>) -> Option<Vec<(RowId, RowId)>> {
         let mut r: Vec<(RowId, RowId)> = self.above(before)?.iter().map(|l| self.span(l)).filter(|s| !s.is_empty()).map(|s| (RowId::new(s.start), RowId::new(s.end))).collect(); // copy: not block data (a range a layer)
         r.reverse();
         Some(r)
     }
 
-    fn exact_counts_since(&self, before: Option<&Self>) -> Option<(usize, usize)> {
+    pub(crate) fn chain_exact_counts_since(&self, before: Option<&View<'a>>) -> Option<(usize, usize)> {
         let above = self.above(before)?;
         let [l] = above.as_slice() else { return None };
         match self.part {
@@ -926,29 +886,14 @@ impl Read for Chain<'_> {
         }
     }
 
-    fn scan(&self) -> impl Iterator<Item = RowId> + '_ {
-        Scan::new(self)
-    }
-
-    fn matching<'s>(&'s self, cols: &'s [ColumnIndex], key: &'s [i64]) -> impl Iterator<Item = RowId> + 's {
-        let cs: [u16; MAX_COLS] = std::array::from_fn(|i| cols.get(i).map_or(0, |c| c.get() as u16));
-        let n = cols.len();
-        let k: [i64; MAX_COLS] = std::array::from_fn(|i| key.get(i).copied().unwrap_or(0));
-        ProbeIter { chain: *self, cs, k, n, inner: None, layer: self.head }
-    }
-
-    fn part(&self, p: i64) -> impl Iterator<Item = RowId> + '_ {
-        Scan::new(&States::restrict(self, p))
-    }
-
-    fn partition(&self) -> Option<ColumnIndex> {
-        let l = self.at(self.head?);
+    pub(crate) fn chain_partition(&self) -> Option<ColumnIndex> {
+        let l = self.layer(self.head?);
         l.head.shape.partition().map(|c| ColumnIndex::new(c as u16))
     }
 
-    fn stats(&self, c: ColumnIndex) -> ColStats {
-        // A partition's are read from its rows; the whole state's from its layers: the bounds of every row added
-        // (an estimate: rows since gone included), and the state's sketch, which its last layer keeps.
+    /// A state's statistics: a partition's are read from its rows; the whole state's from its layers: the bounds of
+    /// every row added (an estimate: rows since gone included), and the state's sketch, which its last layer keeps.
+    pub(crate) fn chain_stats(&self, c: ColumnIndex) -> ColStats {
         if self.part.is_some() || self.head.is_none() {
             return crate::bistate::stats_of(self, c);
         }
@@ -959,16 +904,53 @@ impl Read for Chain<'_> {
                 max = max.max(s.max);
             }
         }
-        let reading = self.at(self.head.expect("a state")).sketch(c.get()).map(|s| s.reading()).unwrap_or_default();
+        let reading = self.layer(self.head.expect("a state")).sketch(c.get()).map(|s| s.reading()).unwrap_or_default();
         ColStats { min, max, rows: reading.rows, ndv: reading.ndv, sq: reading.sq }
+    }
+
+    pub(crate) fn chain_matching(&self, cols: &[ColumnIndex], key: &[i64]) -> ProbeIter<'a> {
+        let cs: [u16; MAX_COLS] = std::array::from_fn(|i| cols.get(i).map_or(0, |c| c.get() as u16));
+        let n = cols.len();
+        let k: [i64; MAX_COLS] = std::array::from_fn(|i| key.get(i).copied().unwrap_or(0));
+        ProbeIter { chain: *self, cs, k, n, inner: None, layer: self.head }
+    }
+
+    pub(crate) fn chain_scan(&self) -> Scan<'a> {
+        Scan::new(self)
+    }
+
+    /// `States::changed_parts_since`: the layers above `before`, their `parts` merged on the partition, digests
+    /// summed.
+    pub(crate) fn chain_changed_parts_since(&self, before: Option<&View<'a>>, out: &mut dyn FnMut(i64)) -> bool {
+        let Some(above) = self.above(before) else { return false };
+        let n = above.len();
+        let mut at: Vec<u32> = vec![0; n]; // copy: not block data (a cursor a layer)
+        loop {
+            let key = (0..n).filter(|&k| at[k] < above[k].parts.rows.len()).map(|k| above[k].parts.own(at[k], 0)).min();
+            let Some(key) = key else { return true };
+            let (mut digest, mut moved) = (0u64, 0u64);
+            for k in 0..n {
+                let p = above[k].parts;
+                if at[k] < p.rows.len() && p.own(at[k], 0) == key {
+                    digest = digest.wrapping_add(p.own(at[k], 1) as u64);
+                    moved += (p.own(at[k], 2) + p.own(at[k], 3)) as u64;
+                    at[k] += 1;
+                }
+            }
+            // One layer's partition changed when it holds a row of it; across layers, when their digests do not
+            // cancel (an add and its undo sum to zero).
+            if ((n == 1 && moved > 0) || digest != 0) && self.part.is_none_or(|p| p == key) {
+                out(key);
+            }
+        }
     }
 }
 
-/// A probe of a chain: each layer's matches in turn, newest first, by the layer's indexes: a range of the canonical
-/// order when the key is a prefix of it, a sorted order (`Order`), a hashed index (`Hash`, or the row index), else
-/// its rows; a Bloom index skips a layer that cannot hold the key.
+/// A probe of a trace's state: each layer's matches in turn, newest first, by the layer's indexes: a range of the
+/// canonical order when the key is a prefix of it, a sorted order (`Order`), a hashed index (`Hash`, or the row
+/// index), else its rows; a Bloom index skips a layer that cannot hold the key.
 pub struct ProbeIter<'a> {
-    chain: Chain<'a>,
+    chain: View<'a>,
     cs: [u16; MAX_COLS],
     k: [i64; MAX_COLS],
     n: usize,
@@ -1009,7 +991,7 @@ impl Iterator for ProbeIter<'_> {
                 }
                 self.inner = None;
             }
-            let l = self.chain.at(self.layer?);
+            let l = self.chain.layer(self.layer?);
             self.layer = l.below().map(|(b, _)| b);
             let (cs, ks) = (&self.cs[..self.n], &self.k[..self.n]);
             if !l.may_hold(cs, ks) {
@@ -1029,16 +1011,16 @@ impl Iterator for ProbeIter<'_> {
     }
 }
 
-/// A chain's live rows in canonical order: a merge of its layers' runs (each layer lies in the order), as many as it
-/// has.
+/// A trace's state's live rows in canonical order: a merge of its layers' runs (each layer lies in the order), as many
+/// as it has.
 pub struct Scan<'a> {
-    chain: Chain<'a>,
+    chain: View<'a>,
     // copy: not block data (a cursor a layer: its handle and its place)
     heads: Vec<(Layer<'a>, u32, u32)>,
 }
 
 impl<'a> Scan<'a> {
-    fn new(chain: &Chain<'a>) -> Scan<'a> {
+    fn new(chain: &View<'a>) -> Scan<'a> {
         let heads = chain
             .layers()
             .map(|(_, l)| {
@@ -1076,46 +1058,6 @@ impl Iterator for Scan<'_> {
             self.chain.touch(1);
             if !self.chain.killed_above(&l, id) {
                 return Some(RowId::new(id));
-            }
-        }
-    }
-}
-
-impl<'a> States for Chain<'a> {
-    fn empty(&self) -> Self {
-        Chain { head: None, ..*self }
-    }
-
-    fn same(&self, other: &Self) -> bool {
-        self.head == other.head && self.part == other.part && self.arity == other.arity
-    }
-
-    fn restrict(&self, p: i64) -> Self {
-        assert!(self.part.is_none_or(|q| q == p), "a restriction of another partition's");
-        Chain { part: Some(p), ..*self }
-    }
-
-    fn changed_parts_since(&self, before: Option<&Self>, out: &mut dyn FnMut(i64)) -> bool {
-        // The layers above `before`: their `parts` merged on the partition, digests summed.
-        let Some(above) = self.above(before) else { return false };
-        let n = above.len();
-        let mut at: Vec<u32> = vec![0; n]; // copy: not block data (a cursor a layer)
-        loop {
-            let key = (0..n).filter(|&k| at[k] < above[k].parts.rows.len()).map(|k| above[k].parts.own(at[k], 0)).min();
-            let Some(key) = key else { return true };
-            let (mut digest, mut moved) = (0u64, 0u64);
-            for k in 0..n {
-                let p = above[k].parts;
-                if at[k] < p.rows.len() && p.own(at[k], 0) == key {
-                    digest = digest.wrapping_add(p.own(at[k], 1) as u64);
-                    moved += (p.own(at[k], 2) + p.own(at[k], 3)) as u64;
-                    at[k] += 1;
-                }
-            }
-            // One layer's partition changed when it holds a row of it; across layers, when their digests do not
-            // cancel (an add and its undo sum to zero).
-            if ((n == 1 && moved > 0) || digest != 0) && self.part.is_none_or(|p| p == key) {
-                out(key);
             }
         }
     }

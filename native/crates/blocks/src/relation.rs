@@ -1820,41 +1820,107 @@ pub fn own_matching<'r>(rel: &'r Relation, cols: &'r [u16], key: &'r [i64]) -> (
     (ids.filter(move |&id| same(id)), read)
 }
 
-/// A relation as readers see it: a full relation alone, or a base and its delta read as one. Ids `..base_rows`
-/// are the base's, the rest the delta's. A probe and the ordered scan come in order on the sort column.
+/// A relation's state as readers see it (P§12's `Version`; the rebuild plan's B2: "its View generalized from a base and
+/// one delta to n layers"), read where its rows lie. Three forms, one definition:
+///
+/// - a full relation alone (`full`): its own rows, less its dead bits;
+/// - a delta and its base in hand (`new`): ids `..base_rows` the base's, the rest the delta's; a base row is live
+///   unless either marks it dead;
+/// - a trace's state (`chain`): a layer and every layer below it, each a frozen continuation of the one below by block
+///   id and offset (`Relation::far`), reached through a launch's descriptor table. Each layer's own ids are
+///   `base_rows ..` its rows' end, and a row is live when no layer above its own, up to the state's, names it in its
+///   kills (`Relation::changed`). Restricted to a partition (`States::restrict`), only that partition's rows: each
+///   layer's range of them and its kills of them, by the layer's `parts` and `gone` (`layer::Layer`).
+///
+/// The empty state (`top` none) has no rows. A probe and the ordered scan come in order on the sort column (a chain's,
+/// in the trace's canonical order). Its reads can be counted (`counted`): every row and liveness word they touch.
 #[derive(Clone, Copy)]
 pub struct View<'a> {
     pub base: Option<&'a Relation>,
-    pub top: &'a Relation,
+    /// Its top relation: `None` for the empty state.
+    pub top: Option<&'a Relation>,
+    pub(crate) arity: u32,
+    /// A trace's state: the launch's descriptor table its layers are reached through, and the top layer's block.
+    pub(crate) far: Option<&'a crate::gens::Table<'a>>,
+    pub(crate) head: Option<crate::gens::Id>,
+    pub(crate) part: Option<i64>,
+    pub(crate) reads: Option<&'a AtomicU64>,
 }
 
 impl<'a> View<'a> {
+    /// A delta and its base (or a full relation alone, `base` none).
+    pub fn new(base: Option<&'a Relation>, top: &'a Relation) -> View<'a> {
+        View { base, top: Some(top), arity: top.arity, far: None, head: None, part: None, reads: None }
+    }
+
     pub fn full(r: &'a Relation) -> View<'a> {
-        View { base: None, top: r }
+        View::new(None, r)
+    }
+
+    /// Its top relation: a relation's view's, not the empty state's.
+    #[inline]
+    pub fn rel(&self) -> &'a Relation {
+        self.top.expect("a relation's view, not the empty state")
+    }
+
+    /// The same state, its reads counted into `reads`.
+    pub fn counted(self, reads: &'a AtomicU64) -> View<'a> {
+        View { reads: Some(reads), ..self }
+    }
+
+    #[inline]
+    pub(crate) fn touch(&self, n: usize) {
+        if let Some(r) = self.reads {
+            r.fetch_add(n as u64, Relaxed);
+        }
+    }
+
+    /// Whether it is a trace's state (`chain`).
+    #[inline]
+    pub fn is_chain(&self) -> bool {
+        self.far.is_some()
+    }
+
+    /// A trace's state's top layer's block: `None` for the empty state and for a relation's view.
+    pub fn head(&self) -> Option<crate::gens::Id> {
+        self.head
+    }
+
+    /// The partition it is restricted to.
+    pub fn part(&self) -> Option<i64> {
+        self.part
     }
 
     #[inline]
     pub fn arity(&self) -> usize {
-        self.top.arity as usize
+        self.arity as usize
     }
 
     /// Every id, live or not: `0 .. total`.
     #[inline]
     pub fn total(&self) -> u32 {
-        self.top.base_rows + self.top.rows.len()
+        self.top.map_or(0, |t| t.base_rows + t.rows.len())
     }
 
     #[inline]
     pub fn get(&self, id: u32, c: usize) -> i64 {
-        if id < self.top.base_rows { self.base.expect("a delta's base").rows.get(id, c) } else { self.top.own(id, c) }
+        if self.is_chain() {
+            return self.chain_get(id, c);
+        }
+        let t = self.rel();
+        if id < t.base_rows { self.base.expect("a delta's base").rows.get(id, c) } else { t.own(id, c) }
     }
 
     #[inline]
     pub fn live(&self, id: u32) -> bool {
-        if self.top.dead_bit(id) {
+        if self.is_chain() {
+            return self.chain_live(id);
+        }
+        let Some(t) = self.top else { return false };
+        if t.dead_bit(id) {
             return false;
         }
-        if id < self.top.base_rows {
+        if id < t.base_rows {
             return !self.base.expect("a delta's base").dead_bit(id);
         }
         // An open relation's own rows are live; a frozen one's dead bits cover its dropped duplicates.
@@ -1867,7 +1933,7 @@ impl<'a> View<'a> {
 
     /// Two rows by the sort column: equal when it has none (a merge then takes the base's row first).
     fn cmp(&self, x: u32, y: u32) -> Ordering {
-        match self.top.sort_col() {
+        match self.rel().sort_col() {
             None => Ordering::Equal,
             Some(c) => self.get(x, c).cmp(&self.get(y, c)),
         }
@@ -1879,16 +1945,20 @@ impl<'a> View<'a> {
         self.ordered_iter().collect()
     }
 
-    /// `ordered`, read in place: no allocation.
+    /// `ordered`, read in place: no allocation. A relation and its one base (a chain's is `bistate::Read::scan`).
     pub fn ordered_iter(&self) -> impl Iterator<Item = u32> + '_ {
-        assert!(self.top.is_frozen(), "an ordered read needs a frozen relation");
-        let own = self.top.base_rows..self.top.base_rows + self.top.rows.len();
+        assert!(!self.is_chain(), "an ordered read of a relation and its one base (a chain's is `bistate::Read::scan`)");
+        assert!(self.rel().is_frozen(), "an ordered read needs a frozen relation");
+        let own = self.rel().base_rows..self.rel().base_rows + self.rel().rows.len();
         let based = 0..self.base.map_or(0, |b| b.rows.len());
         Merge::new(self, based.filter(|&id| self.live(id)), own)
     }
 
     pub fn live_len(&self) -> usize {
-        let own = self.top.rows.len() as usize;
+        if self.is_chain() || self.top.is_none() {
+            return (0..self.total()).filter(|&id| self.live(id)).count();
+        }
+        let own = self.rel().rows.len() as usize;
         match self.base {
             None => own,
             Some(b) => own + (0..b.rows.len()).filter(|&id| self.live(id)).count(),
@@ -1902,20 +1972,21 @@ impl<'a> View<'a> {
 
     /// `probe`, read in place: both groups filtered and merged as they are walked, no allocation.
     pub fn probe_iter<'k>(&'k self, i: usize, key: &'k [i64]) -> Probe<'k> {
-        let ix = self.top.index_at(i);
+        assert!(!self.is_chain(), "a probe by index number reads a relation and its one base (a chain's is `bistate::Read::matching`)");
+        let ix = self.rel().index_at(i);
         let cols = &ix.key[..ix.ncols as usize];
         let (own, based, exact) = if ix.ordered == 1 {
-            let own = leading(self.top, cols, key);
+            let own = leading(self.rel(), cols, key);
             let based = self.base.map_or(0..0, |b| leading(b, cols, key));
-            (Ids::Range(self.top.base_rows + own.start..self.top.base_rows + own.end), Ids::Range(based), true)
+            (Ids::Range(self.rel().base_rows + own.start..self.rel().base_rows + own.end), Ids::Range(based), true)
         } else {
             let h = key_hash(key);
             let based: &[u32] = self.base.map_or(&[], |b| b.group(i, h));
-            (Ids::Slice(self.top.group(i, h).iter()), Ids::Slice(based.iter()), false)
+            (Ids::Slice(self.rel().group(i, h).iter()), Ids::Slice(based.iter()), false)
         };
-        let own0 = self.top.rows.reader(cols[0] as usize);
+        let own0 = self.rel().rows.reader(cols[0] as usize);
         let base0 = self.base.map_or(own0, |b| b.rows.reader(cols[0] as usize));
-        Probe { v: *self, key, cols, own0, base0, exact, own, based, ha: None, hb: None, primed: false }
+        Probe { v: *self, top: self.rel(), key, cols, own0, base0, exact, own, based, ha: None, hb: None, primed: false }
     }
 
     /// A digest of the live rows: the same for the same set, whatever wrote it, in any order (a sum of each row's
@@ -1935,6 +2006,7 @@ impl<'a> View<'a> {
 /// rows are checked against the key.
 pub struct Probe<'k> {
     v: View<'k>,
+    top: &'k Relation,
     /// The key, and its first column resolved once: the delta's (or the full relation's) own, and its base's. A
     /// key of more columns checks the rest by `cols` (`rest_match`).
     key: &'k [i64],
@@ -1959,14 +2031,14 @@ fn rest_match(rows: &Rows, cols: &[u16], key: &[i64], row: u32) -> bool {
 impl Probe<'_> {
     #[inline(always)]
     fn next_own(&mut self) -> Option<u32> {
-        let br = self.v.top.base_rows;
+        let br = self.top.base_rows;
         loop {
             let id = self.own.next()?;
             if self.exact {
                 return Some(id);
             }
             let row = id - br;
-            if self.own0.get(row) == self.key[0] && (self.cols.len() == 1 || rest_match(&self.v.top.rows, self.cols, self.key, row)) {
+            if self.own0.get(row) == self.key[0] && (self.cols.len() == 1 || rest_match(&self.top.rows, self.cols, self.key, row)) {
                 return Some(id);
             }
         }
@@ -1977,7 +2049,7 @@ impl Probe<'_> {
         let b = self.v.base?;
         loop {
             let id = self.based.next()?;
-            if self.v.top.dead_bit(id) {
+            if self.top.dead_bit(id) {
                 continue;
             }
             if self.exact || (self.base0.get(id) == self.key[0] && (self.cols.len() == 1 || rest_match(&b.rows, self.cols, self.key, id))) {
@@ -2401,7 +2473,7 @@ mod tests {
                 }
             }
             freeze(&dblock, d, &spec, Some(rel));
-            let dv = View { base: Some(rel), top: d };
+            let dv = View::new(Some(rel), d);
             let want: Vec<Vec<i64>> = now.iter().map(|&(b, a, c)| vec![a, b, c]).collect();
             assert_eq!(as_set(&rows_of(&dv)), want, "wide {wide}: the delta's set");
             assert!(sorted_on(&rows_of(&dv), 1), "wide {wide}: the delta's rows merged on its column");
@@ -2458,7 +2530,7 @@ mod tests {
             dw.push(&[9, 0]);
             dw.push(&[8, 3]);
             freeze(&dblock, d, &spec, Some(rel));
-            let dv = View { base: Some(rel), top: d };
+            let dv = View::new(Some(rel), d);
             assert_eq!(d.sort_col(), Some(1));
             assert_eq!(rows_of(&dv), vec![vec![9, 0], vec![5, 1], vec![3, 2], vec![5, 2], vec![8, 3], vec![1, 7], vec![0, 9]], "{want:?}: merged on column 1");
         }
@@ -2489,7 +2561,7 @@ mod tests {
             dw.push(&row(41));
             dw.push(&row(500));
             freeze(&dblock, d, &spec, Some(rel));
-            let dv = View { base: Some(rel), top: d };
+            let dv = View::new(Some(rel), d);
             assert!(!dv.live(gone) && dv.live(back) && dv.live(again), "{a} columns: the kill of a row pushed again is cancelled");
             assert_eq!(d.rows.len(), 1, "{a} columns: only the new row is the delta's own");
             assert_eq!(d.changed.as_slice(), &[gone], "{a} columns: the change is the one kill that stands");

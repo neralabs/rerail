@@ -8,7 +8,7 @@
 //! lets the merged generations go.
 //!
 //! Two states are read (the user, 2026-11-24): `read` gives a launch over the layers a state reaches, and through its
-//! descriptor table the state (`Chain`) and the change between two heads (`Bistate`), read where the layers lie.
+//! descriptor table the state (`relation::View::chain`) and the change between two heads (`Bistate`), read where the layers lie.
 
 use crate::dir::{BlockId, Directory, Launch};
 use crate::op::{
@@ -18,7 +18,8 @@ use crate::op::{
 use rerail_blocks::bistate::Bistate;
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::{BODY_AT, Table, word};
-use rerail_blocks::layer::{Chain, Layer, NONE, Runs, Shape, ShapeW, init_runs, layer_room, runs_bytes};
+use rerail_blocks::layer::{Layer, NONE, Runs, Shape, ShapeW, init_runs, layer_room, runs_bytes};
+use rerail_blocks::relation::View;
 use rerail_delta_twins::Params;
 use rerail_delta_twins::trace::{CONTROL_BYTES, ConsolidateP, MergeP, out_bytes, refused};
 
@@ -253,12 +254,12 @@ impl Trace {
     }
 
     /// The state at `head`, read through a launch's table.
-    pub fn state<'t>(&self, table: &'t Table<'t>, head: Option<BlockId>) -> Result<Chain<'t>, String> {
-        Chain::new(table, head.map(|h| h.0), self.shape.arity())
+    pub fn state<'t>(&self, table: &'t Table<'t>, head: Option<BlockId>) -> Result<View<'t>, String> {
+        View::chain(table, head.map(|h| h.0), self.shape.arity())
     }
 
     /// The change from the state at `before` to the state at `after` (`before` below `after` in the chain).
-    pub fn change<'t>(&self, table: &'t Table<'t>, before: Option<BlockId>, after: Option<BlockId>) -> Result<Bistate<Chain<'t>>, String> {
+    pub fn change<'t>(&self, table: &'t Table<'t>, before: Option<BlockId>, after: Option<BlockId>) -> Result<Bistate<View<'t>>, String> {
         let a = self.state(table, after)?;
         Ok(match before {
             None => Bistate::cold(a),
