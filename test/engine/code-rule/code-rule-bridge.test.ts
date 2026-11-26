@@ -1554,10 +1554,11 @@ describe("CodeRuleBridge", () => {
   });
 
   // The walk reads each entry's ids whole and makes its other numbers as `lstat` without `bigint` gives them: a stamp
-  // that differed would make the walk read again every file a tool read stamped.
-  it.each([
+  // that differed would make the walk read again every file a tool read stamped. Node's `utimes` on Windows 11 left a
+  // file's modified time at or after 1970 when given one before, so that row runs on the other systems.
+  it.each<[string, number | undefined]>([
     ["it was written", undefined],
-    ["before 1970", -86_400.123_456],
+    ...(process.platform === "win32" ? [] : [["before 1970", -86_400.123_456] as [string, number]]),
   ])("stamps a file it walks as lstat gives its numbers, with its modified time as %s", async (_name, at) => {
     const root = await workspace();
     const file = join(root, "src", "a.py");
