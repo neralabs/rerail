@@ -335,7 +335,7 @@ fn a_version_is_registered_only_once_checked_against_the_reference() {
     let case = |dir: &mut Directory| case("square", dir).0;
     let tilings = [Tiling::WHOLE, Tiling { tile: 7, seed: 5 }];
     let e = reg.check(&ukl, &case, &tilings).err().unwrap();
-    assert!(e.contains("not a twin"), "the CPU checks twins: {e}");
+    assert!(e.contains("no device was given"), "a UKL version runs on a device: {e}");
     let cube = Version { status: Status::Candidate, ..Version::twin(op, "cube", CUBE, sig.shape) };
     let e = reg.check(&cube, &case, &tilings).err().unwrap();
     assert!(e.contains("wrote other facts than the reference"), "{e}");
@@ -498,108 +498,6 @@ fn a_phase_runs_by_its_axes() {
     let op = reg.declare(rounds).unwrap();
     let e = reg.register_reference(Version::twin(op, "square", SQUARE, rounds.shape)).unwrap_err();
     assert!(e.contains("phase map relates its units by rounds, and its twin has no finisher"), "{e}");
-}
-
-/// E2 on a device: a kernel follows references through a launch's device descriptor table, reading each reached
-/// block where it lies (its header, its reference table, its values) as the CPU's table gives it; an id the launch
-/// cannot reach has no row. On the process's device, whatever its backend.
-#[cfg(any(target_os = "macos", target_os = "linux", windows))]
-#[test]
-fn a_kernel_follows_references_through_the_device_table() {
-    use rerail_gpu::device::ComputeQueue;
-    use rerail_gpu::kernels::{alloc, buffer_of, launch, read};
-    let Some(shared) = rerail_gpu::shared::get() else { return };
-    let mut dir = Directory::default();
-    let a = values_block(&mut dir, &(0..1000).map(|i| i * 3 + 1).collect::<Vec<_>>());
-    let b = values_block(&mut dir, &(0..500).map(|i| -i).collect::<Vec<_>>());
-    let c = dir.make(kind::FACTS, 64);
-    dir.refer(c, a, BODY_AT).unwrap();
-    dir.refer(c, b, BODY_AT).unwrap();
-    dir.freeze(c).unwrap();
-    let top = dir.make(kind::FACTS, 64);
-    dir.refer(top, c, BODY_AT).unwrap();
-    let l = dir.read("device probe", &[top]).unwrap();
-    let t = l.table();
-    let dt = rerail_blocks::gens::device_table(&t, &l.pins(), &shared.device).unwrap();
-    let ids = |rows: &[rerail_blocks::gens::Desc]| rows.iter().map(|d| (d.id, d.kind, d.version)).collect::<Vec<_>>();
-    assert_eq!(ids(dt.rows()), ids(t.rows()), "the device's table names the blocks the CPU's does");
-
-    // Each query: a block's id and a byte offset in it, of a word the kernel reads through the table.
-    let vals_at = |id: BlockId, i: usize| {
-        let bytes = t.block(id.0).unwrap();
-        (samples::vals(bytes).as_ptr() as usize - bytes.as_ptr() as usize + i * 8) as u64
-    };
-    let mut queries: Vec<(u32, u64)> = vec![(a.0, vals_at(a, 0)), (a.0, vals_at(a, 999)), (b.0, vals_at(b, 0)), (b.0, vals_at(b, 499))];
-    for id in [a, b, c, top] {
-        queries.extend([(id.0, 0), (id.0, rerail_blocks::gens::REFS_AT as u64), (id.0, rerail_blocks::gens::BODY_AT as u64)]);
-    }
-    queries.push((u32::MAX - 1, 0));
-    let n = queries.len();
-    let q: Vec<u64> = queries.iter().flat_map(|&(id, off)| [u64::from(id), off]).collect();
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct ProbeP {
-        n: u32,
-        pad: u32,
-    }
-    unsafe impl rerail_gpu::Pod for ProbeP {}
-    const KERNEL: &str = r#"
-typedef struct ProbeP { uint32_t n; uint32_t pad; } ProbeP;
-UKL_REFLECT_STRUCT(ProbeP, n, pad)
-DEFINE_KERNEL2(delta_exec_tests, desc_probe, ROBUFFER, uint8_t, t, "[table]", ROBUFFER, uint64_t, q, "[n * 2]", ARGS, ProbeP, p, ,
-               RWBUFFER, uint64_t, out, "[n * 3]", GID0, uint32_t, i, )
-{
-    if (i >= p.n) return;
-    CLIF_BLOCK_SPACE const DescRow* r = desc_row(t, (uint32_t)q[i * 2u]);
-    UKL_GLOBAL uint64_t* o = out + i * 3u;
-    if (r == 0) {
-        o[0] = 0; o[1] = 0; o[2] = 0;
-        return;
-    }
-    o[0] = (uint64_t)r->kind + 1u;
-    o[1] = r->len;
-    o[2] = *(CLIF_BLOCK_SPACE const uint64_t*)(r->addr + q[i * 2u + 1u]);
-}
-"#;
-    let src = format!("#include <ukl/backend.h>\n{}{KERNEL}", rerail_blocks::gens::DESC_READS);
-    let program = rerail_gpu::kernels::program("desc_probe.uglykl", Box::leak(src.into_boxed_str())).unwrap_or_else(|e| panic!("the kernel compiles: {e}"));
-    let probe = program.function("desc_probe").unwrap();
-    let qb = buffer_of(&q).unwrap();
-    let out = alloc::<u64>(n * 3).unwrap();
-    // What each query must read, from the CPU's table, before the launch is the device's.
-    let want: Vec<[u64; 3]> = queries
-        .iter()
-        .map(|&(id, off)| match (t.row(id), dt.rows().iter().find(|d| d.id == id)) {
-            (Some(d), Some(dd)) => {
-                let bytes = t.block(id).unwrap();
-                [u64::from(d.kind) + 1, dd.len, u64::from_le_bytes(bytes[off as usize..][..8].try_into().unwrap())]
-            }
-            _ => [0, 0, 0],
-        })
-        .collect();
-    // E1: the launch's pins are the device's until its work completes (the engine's watched queue completes the fence
-    // with the command buffer; here, after it).
-    // The kernel binds the table's buffer and reaches the blocks' (device handles, which the fence's uses keep).
-    let (table_buffer, table_at, reached) = (dt.buffer.clone(), dt.at, dt.reached.clone());
-    let fence = rerail_blocks::ledger::Fence::new();
-    dt.to_fence(&fence, "device probe").unwrap();
-    l.to_fence(&fence, "device probe", 0).map_err(|b| b.1).unwrap();
-    assert!(dir.launch("rival", &[(top, true)]).is_err(), "a block the device reads is not written meanwhile");
-    let mut cq = ComputeQueue::new(&shared.queue);
-    let mut run = launch(&cq, probe).buffer_at("t", &table_buffer, table_at).buffer("q", &qb).value("p", &ProbeP { n: n as u32, pad: 0 }).buffer("out", &out);
-    for r in &reached {
-        run = run.uses_read(r);
-    }
-    run.run(&[(n as u64).div_ceil(64)], &[64]).unwrap_or_else(|e| panic!("{e}"));
-    cq.flush().await_().unwrap();
-    fence.mark_committed();
-    fence.complete();
-    assert!(dir.launch("next", &[(top, true)]).is_ok(), "the device's pins end with its fence");
-    let got: Vec<u64> = read(&out, n * 3);
-    for (k, &(id, off)) in queries.iter().enumerate() {
-        assert_eq!(&got[k * 3..][..3], &want[k], "block #{id}, byte {off}: read through the device's table as in place");
-    }
 }
 
 /// E1 on a device: a launch handed to its fence (`Launch::to_fence`) holds every slot by its mode and every block it

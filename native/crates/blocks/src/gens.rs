@@ -205,6 +205,10 @@ pub struct DeviceTable<'l> {
     pub buffer: rerail_device::device::Buffer,
     /// The blocks' buffers, which the kernel reads through their addresses (`uses_read`).
     pub reached: Vec<rerail_device::device::Buffer>,
+    /// The memory domain it and the blocks it names lie in (0: the host's).
+    pub domain: u32,
+    /// Its block's region, when placed in a device's domain (`device_table_in`).
+    _placed: Option<crate::region::Shared<u8>>,
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -212,7 +216,13 @@ impl DeviceTable<'_> {
     /// Hands the table's block to the device (E1): read by `op` until `fence` completes, as the launch's slots are
     /// (`Launch::to_fence`, after this: the table reads the launch's pins).
     pub fn to_fence(self, fence: &std::sync::Arc<crate::ledger::Fence>, op: &'static str) -> Result<(), String> {
-        self.pin.to_fence(fence, op, 0).map_err(|(_, e)| e)
+        // The fence holds the block (its pin's GPU use) and its region with it, its copy there, until it completes.
+        let DeviceTable { pin, domain, _placed, .. } = self;
+        let r = pin.to_fence(fence, op, domain).map_err(|(_, e)| e);
+        if let Some(p) = _placed {
+            fence.on_complete(Box::new(move || drop(p)));
+        }
+        r
     }
 
     /// Its rows, by id ascending, as the device reads them.
@@ -236,7 +246,37 @@ pub fn device_table<'l>(table: &Table<'l>, pins: &[&'l BlockPin], device: &rerai
     }
     let pin = crate::region::pin_block(&block, "device descriptor table", false).expect("the table is the launch's");
     let buffer = block.device_buffer(device)?;
-    Ok(DeviceTable { _pins: std::marker::PhantomData, pin, at: at as u64, buffer, reached })
+    Ok(DeviceTable { _pins: std::marker::PhantomData, pin, at: at as u64, buffer, reached, domain: 0, _placed: None })
+}
+
+/// A launch's table in memory domain `domain` (a discrete GPU's, 1 and up, on `shared`'s device): its rows each
+/// block's replica's address there (`device_rows_in`), its own block placed there too (`region::DeviceCopy`), made on
+/// the host and brought to its copy when it is handed to the fence (`DeviceTable::to_fence`), as every block a kernel
+/// there reads is. The kernel binds the copy, and reaches the replicas' buffers.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub fn device_table_in<'l>(table: &Table<'l>, pins: &[&'l BlockPin], domain: u32, shared: &'static rerail_device::shared::Shared) -> Result<DeviceTable<'l>, String> {
+    use crate::block::{Block, PAGE, kind};
+    let rows = device_rows_in(table.rows(), pins, domain)?;
+    let reached = rows
+        .iter()
+        .map(|d| {
+            let pin = pins.iter().find(|p| p.copy_address(domain) == Some(d.addr)).expect("a row of a replica the launch pins");
+            pin.copy_buffer(domain).ok_or_else(|| format!("block #{}: its replica in domain {domain} has no buffer", d.id))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let block = std::sync::Arc::new(Block::anon(kind::DESC, BODY_AT + table_bytes(&rows) + PAGE));
+    let at = block.alloc(table_bytes(&rows), 64);
+    {
+        let mut w = crate::region::pin_block(&block, "device descriptor table", true).expect("a new block is unused");
+        write_table(&mut w.bytes_mut().expect("a write pin")[at..], &rows);
+    }
+    // The block's region, placed in the domain, lives with the table: its copy is the region's.
+    let placed = crate::region::whole(&block);
+    let copy = crate::region::DeviceCopy::new(shared, block.reserved());
+    let buffer = crate::region::Mirror::device_buffer(&copy).expect("a device copy has its buffer");
+    placed.region().mirror_in(domain, Box::new(copy));
+    let pin = crate::region::pin_block(&block, "device descriptor table", false).expect("the table is the launch's");
+    Ok(DeviceTable { _pins: std::marker::PhantomData, pin, at: at as u64, buffer, reached, domain, _placed: Some(placed) })
 }
 
 /// A descriptor table's device reads, in UKL (decision 0440: every backend's): a row as `Desc` lies, its address a

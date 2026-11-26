@@ -3796,13 +3796,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-delta-device"
+version = "0.1.0"
+dependencies = [
+ "rerail-blocks",
+ "rerail-delta-device",
+ "rerail-delta-exec",
+ "rerail-delta-twins",
+ "rerail-gpu",
+]
+
+[[package]]
 name = "rerail-delta-exec"
 version = "0.1.0"
 dependencies = [
  "rerail-blocks",
  "rerail-delta-exec",
  "rerail-delta-twins",
- "rerail-gpu",
  "rerail-rr-syntax",
 ]
 

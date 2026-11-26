@@ -110,6 +110,52 @@ pub trait Mirror: Send + Sync {
     fn device_address(&self) -> Option<u64> {
         None
     }
+    /// The device's buffer that holds the copy, for a kernel's launch to bind or name as used (`DeviceCopy`'s).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn device_buffer(&self) -> Option<rerail_device::device::Buffer> {
+        None
+    }
+}
+
+/// A block's copy in a device's own memory (a domain of 1 and up, 0440 §7.2): a buffer of the device's, the transfers
+/// the device's queue's (decision 0353: a GPU's own memory is the memory hierarchy, not a copy the engine reads). On
+/// the CPU backend its buffer is memory of its own apart from the block's, as a discrete GPU's is.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub struct DeviceCopy {
+    shared: &'static rerail_device::shared::Shared,
+    buffer: rerail_device::device::Buffer,
+    len: usize,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl DeviceCopy {
+    /// A copy of `len` bytes on `shared`'s device.
+    pub fn new(shared: &'static rerail_device::shared::Shared, len: usize) -> DeviceCopy {
+        let buffer = rerail_device::device::alloc_uninitialized_array_sync::<u8>(&shared.device, len.max(1));
+        DeviceCopy { shared, buffer, len }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl Mirror for DeviceCopy {
+    /// Transferred by the device's queue, and waited for: the work after it on `fence` reads it whole.
+    // copy: load (the block's bytes into its device's own memory: the memory hierarchy, 0353)
+    fn upload(&self, host: &[u8], _fence: &Fence) {
+        assert!(host.len() <= self.len, "a block's copy holds its bytes");
+        let mut q = rerail_device::device::ComputeQueue::new(&self.shared.queue);
+        q.enqueue_copy_from_host(&self.buffer, 0, host);
+        q.flush().await_().unwrap_or_else(|e| panic!("a block's upload to its device copy: {e}"));
+    }
+    fn download(&self, host: &mut [u8]) {
+        let v: Vec<u8> = rerail_device::device::transfer_to_host_sync(&self.buffer, host.len()); // copy: load (the device's bytes back to the block's)
+        host.copy_from_slice(&v);
+    }
+    fn device_address(&self) -> Option<u64> {
+        self.buffer.device_address()
+    }
+    fn device_buffer(&self) -> Option<rerail_device::device::Buffer> {
+        Some(self.buffer.clone())
+    }
 }
 
 /// A run of bytes in a block, and what holds and uses it. A range of another (`root`) shares its root's uses,
@@ -230,6 +276,16 @@ impl Region {
             return None;
         }
         self.mirror(domain).and_then(|m| m.device_address())
+    }
+
+    /// Its copy's buffer in memory domain `domain` (`Mirror::device_buffer`): `None` for the host's (0), or a domain
+    /// without a copy that has one.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub fn copy_buffer(&self, domain: u32) -> Option<rerail_device::device::Buffer> {
+        if domain == 0 {
+            return None;
+        }
+        self.mirror(domain).and_then(|m| m.device_buffer())
     }
 
     fn mirror(&self, domain: u32) -> Option<Arc<dyn Mirror>> {
@@ -604,6 +660,12 @@ impl BlockPin {
     /// Its copy's address in memory domain `domain` (`Region::copy_address`).
     pub fn copy_address(&self, domain: u32) -> Option<u64> {
         self.r.copy_address(domain)
+    }
+
+    /// Its copy's buffer in memory domain `domain` (`Region::copy_buffer`).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub fn copy_buffer(&self, domain: u32) -> Option<rerail_device::device::Buffer> {
+        self.r.copy_buffer(domain)
     }
 
     /// Where the block lies in the host's memory: a CPU descriptor table's address of it (`gens::Desc`).

@@ -355,9 +355,40 @@ def e1(failures: list) -> None:
     tests = strip_rust((CRATE / "src/op_tests.rs").read_text())
     if "fn a_launch_on_a_device_holds_its_blocks_until_its_fence_completes" not in tests:
         failures.append("delta_exec's op tests lack a_launch_on_a_device_holds_its_blocks_until_its_fence_completes")
-    dev = re.search(r"fn a_kernel_follows_references_through_the_device_table\(\) \{(.*?)\n\}", tests, flags=re.S)
+    # The device side is rerail-delta-device's, above the executor (B§7: delta_exec compiles and launches nothing).
+    device = crates / "delta_device"
+    dtests = strip_rust((device / "src/tests.rs").read_text())
+    dev = re.search(r"fn a_kernel_follows_references_through_the_device_table\(\) \{(.*?)\n\}", dtests, flags=re.S)
     if not dev or "l.to_fence(&fence" not in dev.group(1) or "dt.to_fence(&fence" not in dev.group(1):
-        failures.append("delta_exec's device test does not hand its launch to its fence")
+        failures.append("delta_device's device test does not hand its launch to its fence")
+    if "rerail-gpu" in (CRATE / "Cargo.toml").read_text():
+        failures.append("delta_exec depends on rerail-gpu: its device is rerail-delta-device's (B§7)")
+    # E3 on a device: the executor runs a UKL version through `Kernels`, its launch and its device table handed to
+    # one fence; the device crate implements it, places blocks in a device domain (`region::DeviceCopy`, a backend's
+    # Mirror) and its tests check a UKL version against its twin in both domains.
+    op_code = strip_rust((CRATE / "src/op.rs").read_text())
+    for want, why in (
+        ("pub trait Kernels", "the executor's device interface"),
+        ("launch.to_fence(&fence, sig.name, d.domain())", "a UKL version's launch handed to its fence"),
+        ("Impl::Ukl { source, entry } =>", "the executor runs UKL versions"),
+        ("pub fn check_on(", "a UKL version checked against the twin on a device"),
+        ("pub fn run_on(", "a device's default version run"),
+    ):
+        if want not in op_code:
+            failures.append(f"delta_exec/src/op.rs: {why}")
+    dlib = strip_rust((device / "src/lib.rs").read_text())
+    for want, why in (
+        ("impl Kernels for Gpu", "the device implements the executor's Kernels"),
+        ("gens::device_table_in(", "a device domain's table in its own domain"),
+        ("region::DeviceCopy::new(", "replicas in a backend's memory"),
+    ):
+        if want not in dlib:
+            failures.append(f"delta_device/src/lib.rs: {why}")
+    if "impl Mirror for DeviceCopy" not in strip_rust((crates / "blocks/src/region.rs").read_text()):
+        failures.append("blocks/src/region.rs: a backend's Mirror (DeviceCopy)")
+    for t in ("fn a_ukl_version_is_checked_against_its_twin_on_the_device", "fn a_ukl_version_runs_on_replicas_in_a_device_domain"):
+        if t not in dtests:
+            failures.append(f"delta_device's tests lack {t}")
 
 
 def main() -> int:

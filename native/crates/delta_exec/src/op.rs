@@ -22,9 +22,17 @@
 //! nothing stays pinned (E1). The CPU's descriptor table of the reached blocks is written for the launch (E2). The
 //! CPU executor (`run_cpu`) then runs the twin's phases on the pinned bytes, in place, each phase cut into tiles of
 //! its items, run in any order (`Tiling`). The registry and the executor are host Rust, handles only; the computation
-//! is the twin's alone.
+//! is the version's alone.
+//!
+//! A **UKL version** (`Impl::Ukl`) runs on a device the crate above gives (`Kernels`: this crate compiles and launches
+//! nothing, B§7), by the same driver and the same shape: the launch is pinned as a twin's is, its device descriptor
+//! table made (E2), both handed to one fence (E1), and each phase's kernels launched by tiles in any order; the fence
+//! completes when the last has. So `Registry::check_on` checks it against the twin (Operations, revision 4: "UKL
+//! versions after the twins, checked against them on ukl_vec"), and `run_on` runs a device's default version.
 
-use crate::dir::{BlockId, Directory};
+use crate::dir::{BlockId, Directory, Launch};
+use rerail_blocks::ledger::Fence;
+use std::sync::Arc;
 use rerail_blocks::gens::Table;
 use rerail_delta_twins::{Ctx, Field, Params, Slot, Tile, Twin};
 
@@ -264,6 +272,8 @@ pub struct OpId(u32);
 pub enum Impl {
     /// The Rust twin (`rerail_delta_twins`): the reference every other version is checked against.
     Twin(Twin),
+    /// UKL `source`, its kernels named from `entry` (`Kernels`): phase `p`'s `<entry>_<p>`, a thread an item; its item
+    /// count's `<entry>_<p>_items`, and, for a phase by rounds, whether it runs again, `<entry>_<p>_again`.
     Ukl { source: &'static str, entry: &'static str },
     /// Compiled ahead and kept per machine (0395), found by its key.
     Compiled(ArtifactKey),
@@ -282,6 +292,7 @@ impl Devices {
     pub const METAL: Devices = Devices(2);
     pub const CUDA: Devices = Devices(4);
     pub const HIP: Devices = Devices(8);
+    pub const OPENCL: Devices = Devices(16);
 
     pub fn has(self, d: Devices) -> bool {
         self.0 & d.0 == d.0
@@ -428,6 +439,20 @@ impl Registry {
         Ok(())
     }
 
+    /// A UKL version's shape: it declares no twin's phases, so its own shape is what it runs by; a phase that runs again
+    /// (by rounds) has a bound on its turns.
+    fn fits_shape(sig: &Signature, v: &Version) -> Result<(), String> {
+        if let Some(p) = v.shape.iter().find(|p| p.across == Across::Rounds && p.turns() < 2) {
+            return Err(format!("{}: phase {} relates its units by rounds, and its shape bounds no turns", sig.name, p.name));
+        }
+        Ok(())
+    }
+
+    /// The version `device` runs `op` by: its default UKL version for the device's processors, else none.
+    fn device_version(&self, op: OpId, device: &dyn Kernels) -> Option<&Version> {
+        self.versions.iter().find(|v| v.op == op && v.status == Status::Default && matches!(v.imp, Impl::Ukl { .. }) && v.devices.has(device.devices()))
+    }
+
     /// An operation's reference: its twin, registered first and once.
     pub fn register_reference(&mut self, v: Version) -> Result<(), String> {
         let sig = *self.ops.get(v.op.0 as usize).ok_or("a version of an operation not declared")?;
@@ -478,18 +503,28 @@ impl Registry {
 
     /// Runs `candidate` and the reference on the launches `case` makes (each in a directory of its own), at each of
     /// `tilings`, and compares the facts every written slot holds after, by meaning (F1). The `Checked` it gives is
-    /// what `register` takes. A version the CPU cannot run (UKL, compiled) cannot be checked here yet.
+    /// what `register` takes. A UKL version runs on a device (`check_on`); a compiled one is not built.
     pub fn check(&self, candidate: &Version, case: &dyn Fn(&mut Directory) -> Case, tilings: &[Tiling]) -> Result<Checked, String> {
+        self.check_with(candidate, None, case, tilings)
+    }
+
+    /// `check`, a UKL version run on `device` (the reference on the CPU, as ever).
+    pub fn check_on(&self, candidate: &Version, device: &dyn Kernels, case: &dyn Fn(&mut Directory) -> Case, tilings: &[Tiling]) -> Result<Checked, String> {
+        self.check_with(candidate, Some(device), case, tilings)
+    }
+
+    fn check_with(&self, candidate: &Version, device: Option<&dyn Kernels>, case: &dyn Fn(&mut Directory) -> Case, tilings: &[Tiling]) -> Result<Checked, String> {
         let sig = *self.ops.get(candidate.op.0 as usize).ok_or("a version of an operation not declared")?;
         let reference = self.reference(candidate.op).ok_or_else(|| format!("{}: no reference to check against", sig.name))?;
-        let Impl::Twin(twin) = candidate.imp else {
-            return Err(format!("{}: {} is not a twin, and the CPU runs only twins", sig.name, candidate.name));
-        };
-        Self::fits(sig, candidate, twin)?;
+        match candidate.imp {
+            Impl::Twin(twin) => Self::fits(sig, candidate, twin)?,
+            Impl::Ukl { .. } => Self::fits_shape(sig, candidate)?,
+            Impl::Compiled(_) => return Err(format!("{}: {} is compiled ahead, which is not built", sig.name, candidate.name)),
+        }
         let run = |v: &Version, tiling: Tiling| -> Result<Vec<Vec<Vec<i64>>>, String> {
             let mut dir = Directory::default();
             let c = case(&mut dir);
-            execute(sig, v, &dir, &c.slots, &c.params, tiling)?;
+            execute(sig, v, &dir, &c.slots, &c.params, tiling, device)?;
             written_facts(sig, &dir, &c.slots)
         };
         let want = run(reference, Tiling::WHOLE)?;
@@ -529,7 +564,92 @@ pub fn written_facts(sig: &Signature, dir: &Directory, slots: &[BlockId]) -> Res
 pub fn run_cpu(reg: &Registry, dir: &Directory, op: OpId, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
     let sig = reg.signature(op);
     let v = reg.cpu_version(op).ok_or_else(|| format!("{}: no twin registered", sig.name))?;
-    execute(sig, v, dir, slots, params, tiling)
+    execute(sig, v, dir, slots, params, tiling, None)
+}
+
+/// Runs `op` on `device`: its default UKL version for the device's processors (a version is registered only once
+/// checked against the twin), else its twin on the CPU (`run_cpu`). Its slots pinned and its descriptor table made as
+/// `run_cpu`'s, then handed to the device (E1, E2) until its work completes.
+pub fn run_on(reg: &Registry, dir: &Directory, op: OpId, device: &dyn Kernels, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
+    let sig = reg.signature(op);
+    match reg.device_version(op, device) {
+        Some(v) => execute(sig, v, dir, slots, params, tiling, Some(device)),
+        None => run_cpu(reg, dir, op, slots, params, tiling),
+    }
+}
+
+/// A device a UKL version's kernels run on (E3), given by the crate above that holds one (its compiler, its queue):
+/// this crate makes the launch and drives its phases, and launches nothing itself (B§7).
+pub trait Kernels {
+    /// The processors it is: a version runs on it when its `devices` has them.
+    fn devices(&self) -> Devices;
+    /// The memory domain its kernels read (0: the host's, each block read in place; 1 and up, a discrete GPU's, each
+    /// block's replica there, `Directory::replicate`).
+    fn domain(&self) -> u32;
+    /// Binds `launch` on the device: its descriptor table there (E2, `gens::device_table`), over every block the
+    /// launch pins, that table's block handed to `fence` (E1); the kernels' other arguments are `slots` (the slots'
+    /// block ids, in order) and `params`. The launch's own pins are handed to `fence` after.
+    fn bind(&self, launch: &Launch, fence: &Arc<Fence>, slots: &[u32], params: &[u8]) -> Result<Box<dyn OnDevice + '_>, String>;
+}
+
+/// A launch bound on a device (`Kernels::bind`).
+pub trait OnDevice {
+    /// Runs kernel `name` of `source` on items `lo..hi`, a thread an item (item `lo + i` for thread `i`), and waits
+    /// for it: the word it wrote to its result (an item count, or whether its phase runs again; 0 otherwise).
+    fn run(&mut self, source: &'static str, name: &str, lo: u32, hi: u32) -> Result<u64, String>;
+}
+
+/// What runs a version's phases: its twin's calls, or a device's kernels.
+trait Runs {
+    fn items(&mut self, p: usize) -> Result<u32, String>;
+    fn run(&mut self, p: usize, t: Tile) -> Result<(), String>;
+    /// Whether phase `p` runs again (a phase by rounds; asked after each turn).
+    fn again(&mut self, p: usize) -> Result<bool, String>;
+}
+
+struct TwinRuns<'s, 'p, 't> {
+    ctx: Ctx<'s, 'p, 't>,
+    twin: Twin,
+}
+
+impl Runs for TwinRuns<'_, '_, '_> {
+    fn items(&mut self, p: usize) -> Result<u32, String> {
+        Ok((self.twin[p].items)(&self.ctx))
+    }
+    fn run(&mut self, p: usize, t: Tile) -> Result<(), String> {
+        (self.twin[p].run)(&mut self.ctx, t);
+        Ok(())
+    }
+    fn again(&mut self, p: usize) -> Result<bool, String> {
+        Ok(self.twin[p].again.is_some_and(|again| again(&mut self.ctx)))
+    }
+}
+
+/// A UKL version's kernels on a bound launch.
+struct UklRuns<'b> {
+    bound: Box<dyn OnDevice + 'b>,
+    source: &'static str,
+    entry: &'static str,
+    shape: &'static [Phase],
+}
+
+impl Runs for UklRuns<'_> {
+    fn items(&mut self, p: usize) -> Result<u32, String> {
+        let n = self.bound.run(self.source, &format!("{}_{}_items", self.entry, self.shape[p].name), 0, 1)?;
+        u32::try_from(n).map_err(|_| format!("phase {}: {n} items", self.shape[p].name))
+    }
+    fn run(&mut self, p: usize, t: Tile) -> Result<(), String> {
+        if t.lo < t.hi {
+            self.bound.run(self.source, &format!("{}_{}", self.entry, self.shape[p].name), t.lo, t.hi)?;
+        }
+        Ok(())
+    }
+    fn again(&mut self, p: usize) -> Result<bool, String> {
+        if !matches!(self.shape[p].across, Across::Rounds) {
+            return Ok(false);
+        }
+        Ok(self.bound.run(self.source, &format!("{}_{}_again", self.entry, self.shape[p].name), 0, 1)? != 0)
+    }
 }
 
 /// Item `i` of a shuffle of `0..n` by `seed` (Fisher–Yates, splitmix64): the order tiles run in.
@@ -544,10 +664,7 @@ fn shuffled(n: usize, seed: u64) -> Vec<usize> {
     order
 }
 
-fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
-    let Impl::Twin(twin) = v.imp else {
-        return Err(format!("{}: {} is not a twin; the CPU executor runs twins", sig.name, v.name));
-    };
+fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], params: &[u8], tiling: Tiling, device: Option<&dyn Kernels>) -> Result<(), String> {
     if slots.len() != sig.slots.len() {
         return Err(format!("{}: {} blocks for {} slots", sig.name, slots.len(), sig.slots.len()));
     }
@@ -569,22 +686,66 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
     };
     let modes: Vec<(BlockId, bool)> = slots.iter().zip(sig.slots).map(|(&id, s)| (id, s.mode.writes())).collect();
     let mut launch = dir.launch(sig.name, &modes)?;
-    let (pins, table) = launch.parts();
-    let mut slot_views: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();
-    let mut ctx = Ctx { slots: &mut slot_views, table: &table, params };
-    // The version's shape is what it runs by (`Registry::fits` checked its twin against it), axis by axis:
-    //
-    // - how work is found: a phase of a fixed count has the count it had when the launch started (no earlier phase
-    //   made it); an indirect one's is made by the phases before it;
-    // - across units: tiles whose units share nothing, combine associatively or make a round run in any order; units
-    //   in order (a carry from one to the next), or any other relation, run in order;
-    // - its bounds: a phase that runs again stops at its bound on turns, past which the launch fails.
-    let fixed: Vec<Option<u32>> = v.shape.iter().zip(twin).map(|(p, tp)| (p.found == Found::Fixed).then(|| (tp.items)(&ctx))).collect();
-    for ((phase, tp), fixed) in v.shape.iter().zip(twin).zip(fixed) {
+    match v.imp {
+        Impl::Twin(twin) => {
+            let (pins, table) = launch.parts();
+            let mut slot_views: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();
+            let ctx = Ctx { slots: &mut slot_views, table: &table, params };
+            drive(sig, v, tiling, &mut TwinRuns { ctx, twin })
+        }
+        Impl::Ukl { source, entry } => {
+            let d = device.ok_or_else(|| format!("{}: {} is a UKL version, and no device was given to run it on", sig.name, v.name))?;
+            if !v.devices.has(d.devices()) {
+                return Err(format!("{}: {} runs on {:?}, not on the device's {:?}", sig.name, v.name, v.devices, d.devices()));
+            }
+            let ids: Vec<u32> = slots.iter().map(|s| s.0).collect(); // copy: not block data (the slots' ids, an argument)
+            let fence = Fence::new();
+            // Every use the launch hands the fence ends with it, whatever the work did.
+            let done = |r: Result<(), String>| {
+                fence.mark_committed();
+                fence.complete();
+                r
+            };
+            let bound = match d.bind(&launch, &fence, &ids, params) {
+                Ok(b) => b,
+                Err(e) => return done(Err(e)),
+            };
+            if let Err(b) = launch.to_fence(&fence, sig.name, d.domain()) {
+                drop(bound);
+                return done(Err(b.1));
+            }
+            let r = done(drive(sig, v, tiling, &mut UklRuns { bound, source, entry, shape: v.shape }));
+            // A device domain of its own: what the kernels wrote comes back to the host's bytes (`Region::sync_host`).
+            if d.domain() != 0 {
+                for (spec, &id) in sig.slots.iter().zip(slots) {
+                    if let (true, Some(b)) = (spec.mode.writes(), dir.block(id)) {
+                        rerail_blocks::region::whole(&b).region().sync_host();
+                    }
+                }
+            }
+            r
+        }
+        Impl::Compiled(_) => Err(format!("{}: {} is compiled ahead, which is not built", sig.name, v.name)),
+    }
+}
+
+/// Runs a version's phases by its shape, axis by axis:
+///
+/// - how work is found: a phase of a fixed count has the count it had when the launch started (no earlier phase
+///   made it); an indirect one's is made by the phases before it;
+/// - across units: tiles whose units share nothing, combine associatively or make a round run in any order; units
+///   in order (a carry from one to the next), or any other relation, run in order;
+/// - its bounds: a phase that runs again stops at its bound on turns, past which the launch fails.
+fn drive(sig: &Signature, v: &Version, tiling: Tiling, r: &mut dyn Runs) -> Result<(), String> {
+    let mut fixed = Vec::with_capacity(v.shape.len());
+    for (k, p) in v.shape.iter().enumerate() {
+        fixed.push(if p.found == Found::Fixed { Some(r.items(k)?) } else { None });
+    }
+    for (k, (phase, fixed)) in v.shape.iter().zip(fixed).enumerate() {
         let mut turn = 0;
         loop {
             turn += 1;
-            let n = (tp.items)(&ctx) as usize;
+            let n = r.items(k)? as usize;
             if let Some(f) = fixed
                 && f as usize != n
             {
@@ -597,17 +758,16 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
             let tiles = n.div_ceil(t);
             let any_order = matches!(phase.across, Across::Nothing | Across::Combine | Across::Rounds);
             let order = if tiling.seed == 0 || !any_order { (0..tiles).collect() } else { shuffled(tiles, tiling.seed ^ turn as u64) };
-            for k in order {
-                let lo = k * t;
-                (tp.run)(&mut ctx, Tile { lo: lo as u32, hi: (lo + t).min(n) as u32 });
+            for k2 in order {
+                let lo = k2 * t;
+                r.run(k, Tile { lo: lo as u32, hi: (lo + t).min(n) as u32 })?;
             }
-            match tp.again {
-                Some(again) if again(&mut ctx) => {
-                    if turn >= phase.turns() {
-                        return Err(format!("{}: phase {} ran past its bound of {} turns", sig.name, phase.name, phase.turns()));
-                    }
+            if r.again(k)? {
+                if turn >= phase.turns() {
+                    return Err(format!("{}: phase {} ran past its bound of {} turns", sig.name, phase.name, phase.turns()));
                 }
-                _ => break,
+            } else {
+                break;
             }
         }
     }

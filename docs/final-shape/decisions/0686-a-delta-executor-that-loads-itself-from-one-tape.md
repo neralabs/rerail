@@ -794,3 +794,89 @@ Checks:
 - Clippy over the three crates: clean (the narrow command above).
 - Relax, local: `rerail-delta-exec --lib -- --skip device_table` 30 of 30; `rerail-blocks --lib` 123 of 123.
 - Both check scripts.
+
+**A trace's shape settings are built** (P§11.3, P§12, 0364). `Shape::encode` refused them before; now each one
+changes what is written and read:
+
+- **Levels** (0364): `ShapeW::level_col` names the level column. A key is live at one level at a time: the kills
+  phase finds a key at another level and kills it there too (`one_level`). A trace with a level column and a second
+  key order is refused, saying where. `levels_are_a_column_one_live_a_key` checks it.
+- **Cache** (P§11.3, retention `Cache`): a cache trace holds one state, which its header names (`kind::CACHE`, 32
+  bytes, `cache.rs`). `CACHE_OPEN` and `CACHE_COMMIT` are twins, with phases of their own. `Trace::open_cache`,
+  `commit_cache` and `cached` use them; a commit to a cache whose header is not open is refused, and so is `change()`
+  of a cache. `a_cache_is_one_state_its_header_names` checks it.
+- **Placement** (P§12): `KeptFile` lays the layers in a trace folder's files (`blocks::kept::trace_folder`, the only
+  file access, so the shape script still refuses `std::fs` in the crate). `Trace::open_kept` opens it again from the
+  generations' references, and a gone layer's file is removed when it is swept. `PinnedSlab` lays them in slabs
+  through a `Backing`. `a_kept_trace_lies_in_its_files_and_opens_again` and `a_slab_trace_lies_in_its_slabs` check
+  them.
+- **Encodings** (P§12): an encoded layer's own rows are written once, in blocks' own forms, and read where they
+  lie:
+  - `Packed`: `packed::Packed`, each column in the smallest of col's encodings.
+  - `Dict`: the same, with `DICT` where it is smallest (`choose_for_reads`).
+  - `Ranged`: `ranged::Columns`, each column cut into ranges, each range in its own encoding.
+  - `Perm`: packed's permutation index on one column the order does not lead. It is allowed only with Packed or
+    Dict, and refused otherwise, saying where.
+
+  The pipeline gains two phases, 22 in all. `place` records each added row's source item; `encode` writes a column
+  an item and `perm` an index an item, both reading the source where it lies (`layer_write::encode_open`,
+  `encode_col`, `encode_perm`, over `packed::writer` and `ranged::writer`). Nothing is first written open: an encoded
+  layer's relation holds no rows. `layer::OwnRows` reads them for `Layer`, for the twins' later phases (ranges,
+  indexes, orders, sketches) and for probes, where a Perm column's probe goes through its index. A chain's end is now
+  its newest layer's end (`View::total`), not its top relation's row count. col's passes run piece after piece when
+  a twin calls them (`choose_serial`, `write_serial`).
+
+  `every_encoding_reads_as_its_set` checks each encoding: B2's random chains (states, least changes, restrictions,
+  probes), layers that lie encoded with their relations empty, a roll-up, probes on every index kind, and a Perm
+  probe that reads at most 4 rows per row found (plus 8). consolidate and merge write the same facts at every tiling.
+- **History** stays refused, by the user's answer recorded with B2: "a trace holds two states … no Frontier, at,
+  between, fork or pins". The refusal test keeps it, along with the level column's errors and Perm without
+  Packed or Dict.
+
+**The device side runs outside the tests, and runs** (E1–E3; Operations, revision 4: "UKL versions after the
+twins, checked against them on ukl_vec; no Metal run"). There were four gaps:
+
+- **The executor runs UKL versions.** `execute` runs every version through one phase driver (`drive`), the
+  axes' rules above included, with a twin's calls or a device's kernels behind it:
+  - The device is `op::Kernels`, given by the crate above it. delta_exec compiles and launches nothing (B§7), and
+    no longer has a dev-dependency on rerail-gpu.
+  - The launch is pinned as a twin's is. `Kernels::bind` makes its device table and hands that to the fence, then
+    `Launch::to_fence` hands over the launch.
+  - Phase `p` is three kernels, launched by tiles in any order where the axes allow: `<entry>_<p>`, one thread an
+    item; `<entry>_<p>_items`, its count; and, for a phase by rounds, `<entry>_<p>_again`.
+  - The fence completes when the last kernel has. In a device domain of its own, the written slots then come back
+    to the host (`Region::sync_host`).
+  - `Registry::check_on` checks a UKL version against the twin at each tiling. `run_on` runs the device's default
+    version, and runs the twin when there is none.
+- **A backend implements `Mirror`.** `region::DeviceCopy` is a block's copy in a buffer of the device's own: uploaded
+  and downloaded by the device's queue, with its address and buffer (`Mirror::device_buffer`, `copy_buffer`).
+- **The table's own block lies in the device's domain.** `gens::device_table_in` writes the rows (each replica's
+  address there), then places its block there (a `DeviceCopy`, uploaded at the handoff). The kernel binds that copy,
+  and the fence keeps the block's region until it completes.
+- **The device test runs.** `rerail-delta-device` (`native/crates/delta_device`) is `Kernels` on the process's device,
+  whichever backend it is. `Gpu::host` reads each block in place, and `Gpu::discrete(domain)` reads replicas
+  (`Gpu::replicate`). Its tests choose the CPU device's vector path (`RERAIL_GPU=cpu`, `RERAIL_CPU_EXEC=vec`), unless
+  the process names a device, so there is no Metal run:
+  - `a_kernel_follows_references_through_the_device_table`, moved here from delta_exec. It had never run before.
+  - `a_ukl_version_is_checked_against_its_twin_on_the_device`: a UKL `square`, read and written through the device
+    table, is checked against `samples::SQUARE` at three tilings, then registered, and `run_on` runs it. A broken
+    one (the cube) is refused, which shows the kernels ran. With no device given, the check is refused.
+  - `a_ukl_version_runs_on_replicas_in_a_device_domain`: the same in domain 1, where every block is a `DeviceCopy`
+    and so is the table's block. The facts are right only if the replicas were uploaded, read and written by the
+    kernels, and the written one was brought back.
+
+  The shape script checks each of these, and that delta_exec does not depend on rerail-gpu.
+
+Not built: the CPU device's buffers stand for a discrete GPU's memory. No discrete GPU ran here, nor any GPU: there
+is no Metal run until the user lifts that. `Impl::Compiled` is refused ("compiled ahead, which is not built").
+
+Checks:
+
+- Relax, local: `rerail-delta-exec --lib` 35 of 35, nothing skipped; `rerail-delta-device --lib` 3 of 3;
+  `rerail-blocks --lib` 123 of 123.
+- All three check scripts.
+- Clippy: clean over blocks, the twins and delta_exec before the device crate. After it, `cargo clippy` fails in
+  the installed farm wrapper: on a crate it compiled within two hours, it puts its remap flags before the `rustc`
+  argument that clippy-driver takes first, and clippy-driver then reads that path as an input file. The fix is in
+  `scripts/build/farm/farm.py` (the remaps go after that argument). It is not installed, so clippy did not run on
+  this step.
