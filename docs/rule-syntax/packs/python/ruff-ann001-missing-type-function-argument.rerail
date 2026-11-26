@@ -1,4 +1,4 @@
-.policy "ruff-ann001-missing-type-function-argument" revision 2
+.policy "ruff-ann001-missing-type-function-argument" revision 3
 .description "Annotate every function parameter with a type so type checkers can verify calls and readers know what the function accepts."
 .language python
 .mode steer
@@ -12,9 +12,9 @@
 //   class C:
 //       def m(self, a: int) -> int: …   not reported: self is the receiver
 //   lambda x: x                         not reported: lambdas are not checked
-#include "python/annotations.rerail"
+#include "python/python-26.rerail"
 
 .violation ANN001(at: node, name: symbol) code "ANN001"
     "Add a type annotation to parameter `{name}`."
     suppress ruff "ANN001"
-ANN001(nm, x) :- ann_def(f), ann_param(f, nm, x, k, a), k != "vararg", k != "kwarg", unset(a).
+ANN001(nm, x) :- ann_def(f), p26_ann_param(f, nm, x, k, a), k != "vararg", k != "kwarg", unset(a).

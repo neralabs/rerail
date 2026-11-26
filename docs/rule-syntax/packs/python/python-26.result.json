@@ -1,0 +1,78 @@
+[
+  {
+    "id": "ruff-ann001-missing-type-function-argument",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ann201-missing-return-type-undocumented-public-function",
+    "status": "different",
+    "reason": "The JSON original omits nine public functions in ruff/flake8_bugbear/B012.py. Ruff reports ANN201 for all nine (including lines 1, 16, 26, 36, and 50), as does the translation.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 9
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-ann202-missing-return-type-private-function",
+    "status": "different",
+    "reason": "The JSON original omits the four nested functions at lines 40, 55, 68, and 80 of ruff/flake8_bugbear/B012.py. Ruff reports ANN202 for each, as does the translation.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 4
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-ann204-missing-return-type-special-method",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ann205-missing-return-type-static-method",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ann206-missing-return-type-class-method",
+    "status": "same"
+  },
+  {
+    "id": "ruff-ann401-any-type",
+    "status": "different",
+    "reason": "The JSON original omits four valid ANN401 finding keys in Pydantic's json_schema.py (lines 207, 2029, 2127, and 2393) and exceeds its clause budget on that corpus. Ruff reports ANN401 on every listed line, as does the translation.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 4
+      }
+    }
+  }
+]
