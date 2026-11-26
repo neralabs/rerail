@@ -253,6 +253,12 @@ const STATE: &[(&str, &str)] = &[
     // The run's frame keys while the run is under way (`reuse::Naming`, K4), for its manifest to name: the run's own
     // binding, gone when it ends.
     ("code_rule_dsl/logic/plan/corpus/reuse.rs", "RunFrame"),
+    // The keys the run's phases declared on their exports (decision 0705), bound once they ran: the run's own
+    // binding, gone when it ends.
+    ("code_rule_dsl/logic/plan/phased.rs", "DeclaredKeys"),
+    // What an asked phase's first round measured (a chunk mix's constants), bound for its rounds alone (decision
+    // 0705): the rounds' own state, as a run's chunks share their first chunk's within it; gone when the rounds end.
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "RoundsMeasured"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
     // The width census's counts by relation and by span (`RERAIL_WIDTH_CENSUS`), printed at the run's end: a

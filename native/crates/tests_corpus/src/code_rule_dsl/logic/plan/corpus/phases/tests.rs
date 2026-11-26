@@ -634,3 +634,40 @@ resolved(k, q) :- answer(k, q).
         assert_eq!(syms, want_syms.map(|q| vec![q.to_owned()]), "the symbols");
         assert!(!asked.phase_runs.iter().find(|r| r.name == "py_names").unwrap().rounds.is_empty(), "it ran in rounds");
     }
+
+    /// The asked `tsx_names` (decision 0705) resolves an import through a re-export (`export { g } from`), a star
+    /// (`export * from`) and a namespace import's member, each ask answered by the file of the module that defines it.
+    /// An export nobody imports added to `d.ts` builds `d.ts` alone, in the phase and in the reader; an answer that
+    /// changes (`b.ts` defines `g` itself) builds `b.ts` and `a.ts`, its asker, not `e.ts`. Then the rows equal a fresh
+    /// run's.
+    #[test]
+    fn the_asked_tsx_names_answers_only_what_is_imported() {
+        let files = [
+            ("a.ts", "import { g, h } from \"./b\";\nimport * as E from \"./e\";\ng();\nh();\nE.k();\n"),
+            ("b.ts", "export { g } from \"./c\";\nexport * from \"./d\";\n"),
+            ("c.ts", "export function g() {}\nexport function unused() {}\n"),
+            ("d.ts", "export function h() {}\n"),
+            ("e.ts", "export function k() {}\n"),
+        ];
+        let reader = ".language typescript\n#include \"tsx/names.rerail\"\n.decl s(p: symbol, q: symbol)\ns(p, q) :- sym_of(n, q), docof(n, d), doc(d, p, _).\n.output s\n";
+        let t = AskedTree::new("asked-tsx-names", &[], &files);
+        let cold = t.run(reader).unwrap();
+        let rounds = |r: &crate::code_rule_dsl::logic::plan::corpus::Report| -> Vec<(usize, usize)> {
+            r.phase_runs.iter().find(|r| r.name == "tsx_names").expect("tsx_names ran").rounds.iter().map(|r| (r.asks, r.files - r.memo.0)).collect()
+        };
+        assert_eq!(t.rows("s"), [["a.ts", "c#g"], ["a.ts", "d#h"], ["a.ts", "e#k"]], "g through b's re-export, h through its star, E.k a namespace member");
+        assert_eq!(rounds(&cold), [(6, 5), (6, 4)], "round 1 makes every ask (b's g and h, c's g, d's g and h, e's k); round 2 builds the four files asked, and asks nothing new");
+        t.write(&[("d.ts", "export function h() {}\nexport function spare() {}\n")]);
+        let spare = t.run(reader).unwrap();
+        assert_eq!(rounds(&spare), [(6, 1)], "d.ts alone, no ask changed");
+        assert_eq!(built(&spare), 1, "the reader builds d.ts alone: no asker of d is built again");
+        t.write(&[("b.ts", "export function g() {}\nexport * from \"./d\";\n")]);
+        let moved = t.run(reader).unwrap();
+        assert_eq!(t.rows("s"), [["a.ts", "b#g"], ["a.ts", "d#h"], ["a.ts", "e#k"]]);
+        assert_eq!(rounds(&moved), [(5, 1), (5, 1)], "b.ts in round 1; c.ts, whose ask is gone, in round 2");
+        assert_eq!(built(&moved), 2, "the reader builds b.ts and a.ts, whose answer changed; not e.ts or c.ts");
+        let after = t.rows("s");
+        t.store("fresh.sqlite");
+        t.run(reader).unwrap();
+        assert_eq!(t.rows("s"), after, "the same rows as a fresh run's");
+    }

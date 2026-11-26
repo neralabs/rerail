@@ -697,6 +697,22 @@ pub(super) fn documents(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Vec
     program_text::sources(store, &digests)
 }
 
+/// The sources of the program `key` for the run's manifest, where the store does not hold its text yet: this process
+/// queued its write (`record`), which stores them. Looked up in the run's record (decision 0306), behind that write
+/// (FIFO), and named there (`Apply::name`): the text's source and its programs'. A run that read the program from
+/// memory before the write was applied (an asked phase's round 2, behind round 1's) named neither, and its manifest
+/// differed from the next process's, which reads them from the store.
+pub(super) fn named_late(store: &ContentStore, text: String, key: &[u8; 32]) {
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+        let (text, key): (String, [u8; 32]) = crate::content_store::record::codec::from_body("the prepared program's sources", body)?;
+        let text_source = cx.store.source_by_hash(crate::content_store::HashKey::sha256(text.as_bytes()))?;
+        let documents = documents(cx.store, &key)?;
+        cx.name(text_source.into_iter().chain(documents));
+        Ok(())
+    }
+    store.record("the prepared program's sources", Vec::new(), &(text, *key), None, apply);
+}
+
 /// What the write of the program `key` is queued under (`write_back`, decision 0102).
 pub(super) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
     crate::content_store::write_back::Key::of(&[b"facts_memo/prepared", key])

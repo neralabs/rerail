@@ -1,7 +1,7 @@
 # 0705: An asked phase answers only what its files ask
 
-Status: built (2026-11-26); `py_names` is asked, and its eager program and the switch `RERAIL_ASKED_PHASES` that
-chose between them are removed. Amends 0083 §1 (a
+Status: built (2026-11-26); `py_names` and `tsx_names` are asked, and py_names' eager program and the switch
+`RERAIL_ASKED_PHASES` that chose between them are removed. Amends 0083 §1 (a
 phase's run) and 0665 (which relations are settings, and how each keys a reader's memo). Follows 0702.
 
 ## Intro
@@ -217,6 +217,39 @@ python/django-shared.
 `a_reader_is_keyed_by_the_answers_to_its_asks` locks the hop on a small phase: an edit to a fact no ask resolves to
 builds its own file alone; one to a fact asks resolve to, through a re-export and directly, builds those files and
 not a file that asks the same module for another name.
+
+## The asked `tsx_names`
+
+`typing/programs/tsx_names.rerail` is asked the same way, with no eager program kept beside it:
+
+- `tx_ask(d, t, x)`: each name document d imports of its target t, a specifier's name or `default`, and each member
+  `l.x` of a namespace import's name `l` anywhere in the file (a superset of tsx/names' `ns_target`, which follows
+  the name's scope). `asks_at as asked_at by_path 1` hands them on as `t#x` (`@qname`).
+- `asked(m, x)` follows each ask to a workspace module through the files' re-exports (`fwd`: `export { y as x } from`)
+  and `export *` (`star_of`, never `default`), each file's own statements, made whatever is asked; `ask_in(p, x)`
+  sends it to the module's file. So round 1 has every ask, round 2 answers, and a cold run takes two rounds.
+- In the next round the asked file answers from its own export statements (`ans_def`), and `exports(m, x, q)`
+  follows the answers back through the forwards and stars, as before but for the asked names alone (both `asked`
+  and `exports` recurse across files: `cross_file`, 0652). `resolved(t#x, q) by_key` hands on each ask's answer, in
+  place of `exports`; a forward to a package names the package's symbol.
+- `target_at by_path 2` and `module by_key` are as before. `symbol` and `reexported`, read by no rule, are gone.
+
+tsx/names' `sym_of` reads an imported name under the file's own ask: `tsx_names__asked_at(p, k)`, `k = @qname(t,
+x)`, then `tsx_names__resolved(k, q)`. The import rules both programs read (`import_binding`, `local_of`,
+`source_of`) moved from tsx/names to tsx/exports, which the phase includes.
+
+`the_asked_tsx_names_answers_only_what_is_imported` (phases/tests.rs) holds the rows of an import through a
+re-export, a star and a namespace member, the two cold rounds, and two edits: an export nobody imports added to
+`d.ts` builds `d.ts` alone, in the phase (one round) and in the reader; an answer that changes builds the file and
+its asker alone. Then the rows equal a fresh run's.
+
+**A later round's manifest names the program it ran.** Round 2 of a cold run reads the phase's prepared program
+from memory, where round 1 prepared it and queued its write. When the round starts before the writer has applied
+that write, the store holds no source of the program's text yet, and the round's manifest named neither that source
+nor the program's documents. The next process reads the program from the store, names them, and so recorded a new
+manifest in a warm run (`the_run_after_a_cold_one_through_a_phase_writes_nothing`, with `tsx_names`; py_names' warm
+test did not meet it). Now such a round names them in its record, behind the queued write
+(`prepared::named_late`), as the sources of a queued tape are named (`named_digests`): nothing waits.
 
 ## Measured
 

@@ -2556,6 +2556,10 @@ fn run_observed_within(
                     }
                 };
                 program_sources.extend(documents);
+            } else if let (Some(None), Some(text)) = (durable, durable_text.clone()) {
+                // Its text not stored yet: this process's write of it is queued (an asked phase's round 2, behind
+                // round 1's). Named behind that write, as the next process, reading it from the store, names them.
+                prepared::named_late(store, text, &prepared_key);
             }
             (Some(p), "memory")
         }

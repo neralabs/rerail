@@ -221,9 +221,9 @@ fn a_row_is_located_by_its_path_not_a_name_built_from_it() {
 fn a_rule_resolving_through_a_phases_names_stays_per_file() {
     let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl docof(n: node, d: number)\n.input docof\n\
                 .decl import_ref(n: node, s: symbol)\n.input import_ref\n\
-                .decl tsx_names__target_at(p: symbol, spec: symbol, t: symbol)\n.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)\n\
+                .decl tsx_names__target_at(p: symbol, spec: symbol, t: symbol)\n.decl tsx_names__module(m: symbol)\n\
                 .decl target(d: number, spec: symbol, t: symbol)\ntarget(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).\n\
-                .decl sym(n: node, q: symbol)\nsym(n, q) :- import_ref(n, s), docof(n, d), target(d, s, t), tsx_names__exports(t, \"default\", q).\n.output sym\n\
+                .decl sym(n: node, q: symbol)\nsym(n, q) :- import_ref(n, s), docof(n, d), target(d, s, q), tsx_names__module(q).\n.output sym\n\
                 .decl near(d: number, s: symbol, t: symbol)\nnear(d, s, m) :- docof(n, d), import_ref(n, s), doc(_, s, m).\n.output near\n";
     let split = split_of(&read(text));
     for rel in ["target", "sym"] {

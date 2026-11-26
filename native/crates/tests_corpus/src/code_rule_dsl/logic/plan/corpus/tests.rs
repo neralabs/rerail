@@ -3152,14 +3152,14 @@ root(n) :- kind(n, "function_definition"), package_field(".", "type", "module").
 none(n) :- kind(n, "function_definition").
 .output none
 .decl tsx_names__target_at(p: symbol, s: symbol, t: symbol)
-.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)
+.decl tsx_names__module(m: symbol)
 .decl tgt(d: number, s: symbol, t: symbol)
 tgt(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
-.decl resolved(n: node, q: symbol)
-resolved(n, q) :- kind(n, "identifier"), text(n, x), docof(n, d), tgt(d, s, t), tsx_names__exports(t, x, q).
+.decl resolved(n: node, t: symbol)
+resolved(n, t) :- kind(n, "identifier"), text(n, s), docof(n, d), tgt(d, s, t), tsx_names__module(t).
 .output resolved
-.decl other(n: node, q: symbol)
-other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
+.decl other(n: node, t: symbol)
+other(n, t) :- kind(n, "identifier"), text(n, t), tsx_names__module(t).
 .output other
 "#).unwrap();
     let v = crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap();
@@ -3170,7 +3170,7 @@ other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
     assert_eq!(scopes.get("any"), Some(&SettingsScope::All), "{scopes:?}");
     assert_eq!(scopes.get("root"), Some(&SettingsScope::All), "{scopes:?}");
     assert_eq!(scopes.get("none"), None, "{scopes:?}");
-    // A target its own path's row names, carried by a derived relation (`tgt`), keys its exports' read as its own.
+    // A target its own path's row names, carried by a derived relation (`tgt`), keys its module's read as its own.
     assert_eq!(scopes.get("resolved"), Some(&SettingsScope::OwnFile), "{scopes:?}");
     assert_eq!(scopes.get("other"), Some(&SettingsScope::All), "{scopes:?}");
     let _ = std::fs::remove_dir_all(&dir);
