@@ -4850,6 +4850,60 @@ impl Source for Viewed {
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.read_matches(column, value, columns, cursor, each)
     }
+    /// Decision 0706 E1: a batch of nodes by their own ids, whether each one's row has `want` in column `read`, as
+    /// `read_matches` reads a probe by the own column (a node's one row): every id found first (its document, local
+    /// id, tape node and row), then each read, through the document's directory row where the view is the kernels',
+    /// else off the tape.
+    fn test_own_batch(&self, column: usize, values: &[i64], read: usize, want: &[i64], out: &mut [bool]) -> bool {
+        use read_op::*;
+        if column != self.own() || matches!(self.view, View::Loc(_) | View::Text | View::Op) {
+            return false;
+        }
+        const B: usize = 256;
+        let b = &*self.batch;
+        let (firsts, kernel, view) = (b.firsts(self.view), self.kernel_view(), self.view);
+        let node = std::cell::Cell::new(super::NodeMemo::default());
+        let mut hint = 0u32;
+        let (op, needs) = Self::read_op(view, read);
+        let mut found = [(0usize, 0u32, 0u32, 0usize); B];
+        let one = want.len() == 1;
+        for (c, (vs, os)) in values.chunks(B).zip(out.chunks_mut(B)).enumerate() {
+            let want_of = |k: usize| if one { want[0] } else { want[c * B + k] };
+            for ((&v, f), o) in vs.iter().zip(found.iter_mut()).zip(os.iter_mut()) {
+                *o = false;
+                let row = b.node_hint(v, &mut hint, &node).and_then(|(doc, local, x)| {
+                    let row = if x != NONE { b.row_of_node(view, doc, local, x) } else { b.row(view, doc, local) }?;
+                    Some((doc, local, x, row))
+                });
+                match row {
+                    Some(r) => *f = r,
+                    None => *f = (usize::MAX, 0, 0, 0),
+                }
+            }
+            for (k, ((&v, &(doc, local, x, row)), o)) in vs.iter().zip(found.iter()).zip(os.iter_mut()).enumerate() {
+                if doc == usize::MAX {
+                    continue;
+                }
+                if kernel
+                    && let Some(d) = b.docs.read(doc, false)
+                {
+                    let i = row - firsts.at(doc);
+                    let d = match view {
+                        _ if x == NONE => d,
+                        View::Field => d.knowing(local, x, i as u32),
+                        _ => d.knowing(local, x, u32::MAX),
+                    };
+                    *o = self.read_value(&d, i, read) == want_of(k);
+                    continue;
+                }
+                let p = &b.docs[doc];
+                let x = if x != NONE || needs & NEED_X == 0 { x } else { b.tape_node(doc, local, v, &node) };
+                let up = if needs & NEED_UP != 0 { Self::parent_id_of(p, local, x) } else { 0 };
+                *o = Self::op_value(b, p, local, x, v, up, Known::default(), op) == want_of(k);
+            }
+        }
+        true
+    }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.lookup_docs(column, values, None)
     }

@@ -44,6 +44,12 @@ pub(super) fn observe(j: &JoinRule, counts: &[(u64, u64)]) {
         if tests == 0 {
             continue;
         }
+        if super::kinds::trace() && let Step::Atom { src, neg, keys, binds, tests: t, .. } = &j.steps[i] {
+            let name = match src { Src::In(r, x) => j.src_in(r, x).0.name.get().cloned().unwrap_or_default(), Src::Delta(_) => "delta".into(), Src::Full(_) => "full".into(), Src::FullMulti(..) => "multi".into() };
+            if name == "kind" {
+                eprintln!("RERAIL_KIND_TRACE steps kind first {} neg {neg} keys {} binds {} tests {} fused {} ranged {} batchable {} in {tests} out {out}", i == 0, keys.len(), binds.len(), t.len(), j.fused[i].is_some(), j.ranges[i].is_some(), super::kinds::kind_test(j, i).is_some());
+            }
+        }
         let Some((a, neg)) = needs(j, i) else {
             if trace() && let Step::Atom { src: Src::In(rel, ix), neg, binds, keys, tests } = &j.steps[i] {
                 let (rel, _) = j.src_in(rel, ix);

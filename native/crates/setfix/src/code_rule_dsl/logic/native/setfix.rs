@@ -107,6 +107,9 @@ mod block_index_tests;
 use spec::{ArchivedArg as Arg, ArchivedJoinItem as JoinItem, ArchivedJoinSpec, ArchivedLine as Line, ArchivedSource as Source, ArchivedStart as Start, ArchivedTok as Tok, ComponentSpec, Join, JoinSpec, Reprobe, Spec};
 pub mod closure;
 mod cands;
+mod kinds;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use kinds::{batched_rows_for_tests as kind_batched_rows, force_for_tests as kind_batches_forced};
 pub mod access;
 mod sorted_hash;
 pub mod table;
@@ -8731,6 +8734,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      /// a row whose rest of the body fails before reaching `upto` fails by those values alone.
                      factor: Vec<Option<Factor>>,
                      screen: Option<&'a join_filter::JoinFilter>,
+                     /// Per step, a kind test whose rows wait to be tested a batch at a time (decision 0706 E1,
+                     /// `kinds::KindTest`): the test, and the waiting rows' slots, one after another.
+                     batch: Vec<Option<(kinds::KindTest<'a>, Vec<i64>)>>,
                      /// This walk's (morsel's) tests of `screen`, added to its counts as it ends.
                      screening: join_filter::Screening,
                      /// The deepest step entered (`go`), so a factored step knows where its row's descent stopped.
@@ -8939,6 +8945,56 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         enter(cx, i, slots);
         if let Some(clock) = cx.clock.as_mut() { clock.to(was); }
     }
+    /// Step `i`'s waiting rows tested (decision 0706 E1): their nodes' values read as one batch, and each row whose
+    /// value is the test's (or is not, negated) goes on to the next step.
+    fn run_batch(cx: &mut Ctx<'_, '_>, i: usize) {
+        let Some(Some((t, rows))) = cx.batch.get_mut(i) else { return };
+        let (t, rows) = (*t, std::mem::take(rows));
+        let w = cx.j.nslots.max(1);
+        let n = rows.len() / w;
+        if n == 0 || cx.error.is_some() { return; }
+        // Every row of the batch goes on, a cut or not: they are rows of first-step rows the walk has passed, which a
+        // cut counts as finished. The budget waits until the batch is done; past it, the walk stops at its next step.
+        let (stop, budget) = (cx.stop, cx.budget);
+        cx.stop = false;
+        cx.budget = u64::MAX;
+        let vals: Vec<i64> = (0..n).map(|r| rows[r * w + t.slot]).collect();
+        let wants: Vec<i64> = match t.want { Key::Const(c) => vec![c], Key::Slot(s) => (0..n).map(|r| rows[r * w + s]).collect() };
+        let mut out = vec![false; n];
+        if kinds::trace() { eprintln!("RERAIL_KIND_TRACE batch {n}"); }
+        let was = cx.clock.as_mut().map(|c| c.to(i));
+        t.read(&vals, &wants, &mut out);
+        let mut slots = vec![0i64; w];
+        for (r, &hit) in out.iter().enumerate() {
+            if hit != t.neg {
+                slots.copy_from_slice(&rows[r * w..(r + 1) * w]);
+                go(cx, i + 1, &mut slots);
+            }
+        }
+        if let (Some(c), Some(was)) = (cx.clock.as_mut(), was) { c.to(was); }
+        cx.budget = budget;
+        cx.stop |= stop || cx.work > budget;
+        // The buffer's room back, for the step's next rows.
+        if let Some(Some((_, b))) = cx.batch.get_mut(i) && b.is_empty() {
+            let mut rows = rows;
+            rows.clear();
+            *b = rows;
+        }
+    }
+    /// Every step's waiting rows tested, in step order (a step's passing rows wait at later steps only), a cut or not
+    /// (`run_batch`): a walk cut at its budget finishes the rows waiting, past it by at most a batch a step. Its rows
+    /// from the cut on are walked again, and a head row made twice is one row of its set (decision 0206).
+    fn flush_batches(cx: &mut Ctx<'_, '_>) {
+        for i in 0..cx.batch.len() {
+            while cx.batch[i].as_ref().is_some_and(|(_, r)| !r.is_empty()) {
+                if cx.error.is_some() {
+                    cx.batch[i].as_mut().expect("a batch").1.clear();
+                    break;
+                }
+                run_batch(cx, i);
+            }
+        }
+    }
     fn enter<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
         if cx.error.is_some() || cx.stop { return; }
         // The walk's work is the steps it enters, as the planner counts a line's (`profile::plan_work`).
@@ -8956,6 +9012,14 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 |step|step.observes(*slot))) {
                 cx.error=Some(super::aggregation::sum_value(*value).unwrap_err());return;
             }
+        // A kind test tested a batch at a time (decision 0706 E1): the row waits with the step's others. Counted as
+        // gone past every step, so no factored step records it as failed while it waits.
+        if let Some(Some((_, rows))) = cx.batch.get_mut(i) && cx.pending.is_empty() {
+            rows.extend_from_slice(slots);
+            cx.deep = j.steps.len();
+            if rows.len() >= kinds::BATCH * slots.len() { run_batch(cx, i); }
+            return;
+        }
         let Some(step) = j.steps.get(i) else {
             cx.row.clear();
             for o in &j.out {
@@ -9607,12 +9671,13 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let mut w = Ctx { j, head, store, syms: &mut syms, fresh: &mut fresh, n: 0, key: rerail_blocks::vector::Vector::new(), row: rerail_blocks::vector::Vector::new(), error: None, cap, pending: Vec::new(),
                                       scratch: j.steps.iter().map(|_| rowcode::Scratch::default()).collect(), texts: Vec::new(),
                                       collect: if collecting { Some(&mut rows) } else { None }, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: LastProbe::for_steps(j.steps.len()),
-                                      factor, screen, screening: Default::default(), failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
+                                      factor, screen, batch: kinds::batches(j, share == u64::MAX || !collecting, [screen.map(|f| f.step), None]), screening: Default::default(), failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
                                       only_step: usize::MAX, only: None, list0: None, cut_from,
                                       counts: j.counts.iter().map(|_| Default::default()).collect(), first: Some((rows_of_first(j, src, store), first)),
                                       left0: None, clock: StepClock::start(j.steps.len()) };
                     let mut slots = slots.to_vec();
                     go(&mut w, 0, &mut slots);
+                    flush_batches(&mut w);
                     let (n, skipped, work, error) = (w.n, w.skipped, w.work, w.error.take());
                     // Cut at its share: its rows from the one it stopped in (that row included), as one walk's cut.
                     let left = w.stop.then(|| w.list0.as_ref().map_or_else(Vector::new, |(_, list)| {
@@ -9677,13 +9742,15 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     /// (its rows hold deferred values until settled), absorbed into the stratum's as a morsel's are.
     fn whole(cx: &mut Ctx<'_, '_>, slots: &mut [i64]) {
         if !makes_atoms(cx.j) || cx.syms.deferred.is_some() {
-            return go(cx, 0, slots);
+            go(cx, 0, slots);
+            return flush_batches(cx);
         }
         cx.syms.deferred = Some(Default::default());
         let (head, collecting) = (cx.head, cx.collect.is_some());
         let from = cx.collect.as_ref().map_or(0, |c| c.len());
         let before = if collecting { None } else { Some(std::mem::take(&mut cx.fresh[head])) };
         go(cx, 0, slots);
+        flush_batches(cx);
         let mut texts = cx.syms.deferred.take().map_or_else(Vec::new, |d| d.texts);
         let mut mine = if collecting { Fresh::default() } else { std::mem::take(&mut cx.fresh[head]) };
         let mut rows = cx.collect.as_deref_mut().map_or_else(Vector::new, |c| c.split_off(from));
@@ -9804,8 +9871,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     let screen = if limit.is_none() && each.is_none() && paired.is_none() && preset.is_empty() {
         join_filter::JoinFilter::choose(j, store)
     } else { None };
+    let no_collect = collect.is_none();
     let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: rerail_blocks::vector::Vector::new(), row: rerail_blocks::vector::Vector::new(), error: None, cap: super::width::Limits::here().cap, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: LastProbe::for_steps(j.steps.len()),
-                       factor, screen: screen.as_ref(), screening: Default::default(), failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0,
+                       factor, screen: screen.as_ref(), batch: kinds::batches(j, limit.is_none() || no_collect, [screen.as_ref().map(|f| f.step), limit.as_ref().and_then(|l| l.only.as_ref()).map(|o| o.0)]), screening: Default::default(), failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,
                        cut_from: usize::MAX, counts: j.counts.iter().map(|_| Default::default()).collect(), first: None, left0: None,
@@ -9822,6 +9890,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 out.clear();
                 for (&y, &v) in ys.iter().zip(&vals) { slots[y] = v; }
                 go(&mut cx, 0, &mut slots);
+                flush_batches(&mut cx);
                 if cx.error.is_some() || cx.stop { break; }
             }
         }
@@ -9851,6 +9920,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 for &(c, s) in b1 { slots[s] = row.at(c); }
                 go(&mut cx, 2, &mut slots);
             }
+            flush_batches(&mut cx);
         }
         _ => if !morsels(&mut cx, &slots) { whole(&mut cx, &mut slots) },
     }

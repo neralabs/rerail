@@ -1754,3 +1754,36 @@ fn str_answered_on_request_holds_the_eager_rows() {
     assert_eq!(asked, eager);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Decision 0706 E1: a kind test after the first step (`kind(n, K)` and `!kind(n, K)`, the node bound) is tested a
+/// batch of rows at a time, by the source's batch test, and gives the rows each row's test gives: the call children
+/// that are identifiers (every line of `a.py` calls one, and lines 2 and 4 of `b.py`), and the statements' children
+/// that are not calls (`a.py`'s assignments, its odd lines).
+#[test]
+fn kind_tests_in_batches_give_each_rows_rows() {
+    use crate::code_rule_dsl::logic::native::component::{kind_batched_rows, kind_batches_forced};
+    let body: String = (0..400).map(|i| format!("x{i} = f{i}(a{i}, b{i}) + g(c{i})\nprint(x{i})\n")).collect();
+    let files = [("a.py", body.as_str()), ("b.py", "def h(q):\n    return q(1, 2)\n\nh(len)\n")];
+    let dir = corpus("kind-batches", &files);
+    let program = r#"
+.decl at(n: node, p: symbol, l: number)
+at(n, p, l) :- docof(n, d), doc(d, p, _), line(n, l).
+.decl callee_ids(p: symbol, l: number)
+callee_ids(p, l) :- kind(c, "call"), child(c, n, _), kind(n, "identifier"), at(n, p, l).
+.decl not_calls(p: symbol, l: number, k: symbol)
+not_calls(p, l, k) :- kind(c, "expression_statement"), child(c, n, _), node(_, n, k, _, _), !kind(n, "call"), at(n, p, l).
+.output callee_ids, not_calls
+"#;
+    kind_batches_forced(Some(true));
+    let before = kind_batched_rows();
+    let got = run(&dir, program, &["callee_ids", "not_calls"]);
+    kind_batches_forced(None);
+    assert!(kind_batched_rows() > before + 256, "tested in batches ({} rows)", kind_batched_rows() - before);
+    let file = |p: &str| p.rsplit('/').next().unwrap_or(p).trim_matches('"').to_owned();
+    let callees: BTreeSet<(String, i64)> = got[0].iter().map(|r| (file(&r[0]), r[1].parse().unwrap())).collect();
+    let want: BTreeSet<(String, i64)> = (1..=800).map(|l| ("a.py".to_owned(), l)).chain([2, 4].map(|l| ("b.py".to_owned(), l))).collect();
+    assert_eq!(callees, want, "{:?}", &got[0][..got[0].len().min(4)]);
+    let not_calls: BTreeSet<(String, i64, String)> = got[1].iter().map(|r| (file(&r[0]), r[1].parse().unwrap(), r[2].trim_matches('"').to_owned())).collect();
+    let want: BTreeSet<(String, i64, String)> = (0..400).map(|i| ("a.py".to_owned(), 2 * i + 1, "assignment".to_owned())).collect();
+    assert_eq!(not_calls, want, "{:?}", &got[1][..got[1].len().min(4)]);
+}

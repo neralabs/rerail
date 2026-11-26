@@ -924,6 +924,48 @@ impl Source for Layered {
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read_at(column, value, columns, &mut super::super::ProbeCursor::default(), each)
     }
+    /// The base's batch test (decision 0706 E1), then, for each value the base has no such row of, the parts that may
+    /// hold it, read as `lookup_read_at` reads them.
+    fn test_own_batch(&self, column: usize, values: &[i64], read: usize, want: &[i64], out: &mut [bool]) -> bool {
+        if !self.base.test_own_batch(column, values, read, want, out) {
+            return false;
+        }
+        if self.values.admitted.load(Ordering::Acquire) == 0 {
+            return true;
+        }
+        let all = self.values.parts.load();
+        let Some(p) = all.get(self.name.as_str()).filter(|p| p.total > 0) else { return true };
+        // Made on lookup: the values' rows of each value, by the scan's index.
+        let want_of = |k: usize| if want.len() == 1 { want[0] } else { want[k] };
+        if self.made.is_some() {
+            let width = self.width.max(1);
+            self.scanned(|s| {
+                for (k, (&v, o)) in values.iter().zip(out.iter_mut()).enumerate().filter(|(_, (_, o))| !**o) {
+                    *o = s.holding(0, column, v).any(|i| s.row(i, width)[read] == want_of(k));
+                }
+            });
+            return true;
+        }
+        let docs = self.base.keys_documents(column);
+        let mut row = [0i64; 1];
+        for (k, (&v, o)) in values.iter().zip(out.iter_mut()).enumerate().filter(|(_, (_, o))| !**o) {
+            let want = want_of(k);
+            p.of(v, docs, &mut |part| {
+                if *o {
+                    return;
+                }
+                if part.src.lookup_read(column, v, &[read], &mut |_, got| *o |= got[0] == want) {
+                    return;
+                }
+                let rows = part.src.lookup(column, &[v]).unwrap_or_else(|| (0..part.src.len()).filter(|&r| part.src.value(r, column) == v).collect());
+                for r in rows {
+                    part.src.row_at(r, &[read], &mut row);
+                    *o |= row[0] == want;
+                }
+            });
+        }
+        true
+    }
     /// The cursor is the base's: a part's reads keep none (a value's rows are few).
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         // No value admitted (a chunk's first run): the base's read, with no load of the parts.

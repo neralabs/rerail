@@ -350,6 +350,10 @@ pub trait Source: Send + Sync {
     /// ended, which a source may keep its place in (a view of the tape: the document and granule). Probes in key
     /// order (a scan's rows sorted by the next key, decision 0112) then find their place without a search. A hint is
     /// checked, never trusted: any value gives the same rows.
+    /// Decision 0706 E1: for each of `values` of `column` (a row's own id: a node's), whether a row with it has its
+    /// value of `want` (one for every value, or one each) in column `read`, into `out`. The batch's ids resolved
+    /// first, then their values read. `false` where the source has no such read (nothing written).
+    fn test_own_batch(&self, _column: usize, _values: &[i64], _read: usize, _want: &[i64], _out: &mut [bool]) -> bool { false }
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], _cursor: &mut ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read(column, value, columns, each)
     }

@@ -555,6 +555,8 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
     // A test asked as the index's probe alone (the spike, decision 0561); `RERAIL_DIRECT_TESTS=off` asks it as a join.
     let direct = std::env::var("RERAIL_DIRECT_TESTS").map_or(true, |v| v != "off");
     let asked: Vec<std::cell::RefCell<super::cands::Asked>> = cl.tests.iter().map(|_| Default::default()).collect();
+    // A test that is a kind test (decision 0706 E1): its rows' nodes read as one batch (`kinds::KindTest`).
+    let kinds: Vec<Option<super::kinds::KindTest<'_>>> = cl.tests.iter().map(|t| if direct && super::kinds::in_closures() { super::kinds::kind_test(t, 0) } else { None }).collect();
     while !frontier.is_empty() {
         depths += 1;
         made.clear();
@@ -568,7 +570,16 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
             let mut alive: Vector<u32> = (0..n as u32).collect();
             for &(t, want) in need {
                 let ask: Vector<u32> = alive.iter().copied().filter(|&i| answers[t][i as usize] == 0).collect();
-                if !ask.is_empty() && direct {
+                if !ask.is_empty() && let Some(kt) = &kinds[t] {
+                    let nodes: Vector<i64> = ask.iter().map(|&r| frontier[r as usize * k + kt.slot]).collect();
+                    let wants: Vec<i64> = match kt.want { super::Key::Const(c) => vec![c], super::Key::Slot(s) => ask.iter().map(|&r| frontier[r as usize * k + s]).collect() };
+                    let mut vals = vec![false; nodes.len()];
+                    if super::kinds::trace() { eprintln!("RERAIL_KIND_TRACE closure {}", nodes.len()); }
+                    kt.read(&nodes, &wants, &mut vals[..]);
+                    for (&r, &v) in ask.iter().zip(vals.iter()) {
+                        answers[t][r as usize] = if v { 1 } else { 2 };
+                    }
+                } else if !ask.is_empty() && direct {
                     let mut a = asked[t].borrow_mut();
                     for &r in ask.iter() {
                         let r = r as usize;

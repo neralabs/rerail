@@ -122,6 +122,28 @@ views, not computed relations. `kind` by two bound columns is 5,541 plans' steps
 (`join_filter`). So E2's filters save little on `all`, and the catalogue's worth is in the executors that follow,
 E1 first.
 
+### Step 2 (E1's tests), as built
+
+- `Source::test_own_batch` (facts_base): for a batch of ids of a view's own column, whether each one's row has its
+  wanted value in another column (one value for all, or one each). `Viewed` (syntax.rs) finds every id first
+  (document, local id, tape node, row), then reads each, through the document's directory row where the view is the
+  kernels', else off the tape, as `read_matches` reads a probe by the own column. The values wrapper (values.rs)
+  then checks its made rows or its parts for the ids the base did not match, as its `lookup_read_at` does.
+- setfix `kinds`: a step testing a view by a bound node and a second bound value (a constant or a slot: `kind(n,
+  K)`, `!kind(n, K)`, `child(c, n, _)` both bound) is a `KindTest`. The walker leaves each row at the step
+  (`Ctx::batch`); 256 rows, or the walk's end, are tested in one call, and the rows that pass go on. A waiting row
+  counts as gone past every step (no factored step records it as failed). A batch finishes every row even past the
+  walk's budget, which then stops the walk at its next step: a batch's rows are of first-step rows a cut counts as
+  finished (dropping them lost rows, read under negation as 50 more findings; found by `RERAIL_KIND_BATCH=walk`).
+  Not batched: the first step, a delta-restricted step, a screened step, or a limited walk that collects its rows.
+- Closures (decision 0561) ask a kind test of a depth's rows with one batch call.
+- `RERAIL_KIND_BATCH=off|walk|closure` and `RERAIL_KIND_TRACE` are measurement aids. Test:
+  `kind_tests_in_batches_give_each_rows_rows` (tests_corpus), the rows checked against the source's own.
+
+On `all` (m1max, load 7–10, two runs each, same rows): 18.9 M rows in 139,778 batches, 0.49 M in closures. CPU
+129.6 / 127.6 s before, 124.3 / 124.1 s after; instructions 1,408 / 1,409 G before, 1,368 / 1,367 G after; peak
+2,319 / 2,350 MB before, 2,291 / 2,341 MB after. W: 48.8 s, 477 G.
+
 ## Consequences
 
 - 0694's node bits are made by the build batch, not at a key's first test.
