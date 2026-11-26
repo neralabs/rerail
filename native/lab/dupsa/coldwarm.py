@@ -1,6 +1,7 @@
 """Cold and warm cost of each design, both methods: cold is the first run from nothing (a process: read, build,
-blocks; for the saved index, also writing it); warm is one later edit (in a running process for the in-memory designs,
-its median per-edit count; a fresh process mapping the saved index for the saved one). Instructions retired (the
+blocks; for the saved index, also writing it); warm is one later edit: its median per-edit count in a running process
+for the in-memory incremental designs; a fresh process for the others (mapping the saved index, or rebuilding the
+edited tree). Instructions retired (the
 process's own count, `proc_pid_rusage`): the machine's load does not change them, as it does CPU time.
 
 usage: python3 native/lab/dupsa/coldwarm.py <out.tsv>   (from the worktree root; steps in tmp/dup-incr)
@@ -38,21 +39,21 @@ def steps(out, col):
     return [float(r[col]) for r in rows]
 
 
+SINGLE = ["0001", "0002", "0041", "0046", "0047", "0048"]
 rows = []
 for m, (base, opts) in METHODS.items():
     empty = ["incr", m, base, f"{I}/empty"] + opts
     cold_sais, _ = proc(empty + ["--build", "sais"])
     cold_dbl, _ = proc(empty + ["--build", "doubling"])
-    _, out = proc(["incr", m, base, f"{I}/ten"] + opts + ["--build", "sais", "--check"])
-    warm_sais = statistics.median(steps(out, 22))
-    _, out = proc(["incr", m, base, f"{I}/ten"] + opts + ["--build", "doubling", "--check"])
-    warm_dbl = statistics.median(steps(out, 22))
+    # A design that rebuilds every run has no warm state: a run after an edit is a fresh process over the edited tree.
+    warm_sais = statistics.median([proc(["incr", m, base, f"{I}/single-{s}"] + opts + ["--build", "sais"])[0] for s in SINGLE])
+    warm_dbl = statistics.median([proc(["incr", m, base, f"{I}/single-{s}"] + opts + ["--build", "doubling"])[0] for s in SINGLE])
     _, out = proc(["incr", m, base, f"{I}/native"] + opts + ["--whole-doc"])
     warm_whole = statistics.median([u + d for u, d in zip(steps(out, 20), steps(out, 21))])
     _, out = proc(["incr", m, base, f"{I}/native"] + opts)
     warm_local = statistics.median([u + d for u, d in zip(steps(out, 20), steps(out, 21))])
     cold_saved, _ = proc(empty + ["--save", f"{I}/{m}.dupix"])
-    warm_saved = statistics.median([proc(["incr", m, base, f"{I}/single-{s}"] + opts + ["--load", f"{I}/{m}.dupix"])[0] for s in ["0001", "0002", "0041", "0046", "0047", "0048"]])
+    warm_saved = statistics.median([proc(["incr", m, base, f"{I}/single-{s}"] + opts + ["--load", f"{I}/{m}.dupix"])[0] for s in SINGLE])
     rows += [
         (m, "Rebuild every run, SA-IS", cold_sais, warm_sais),
         (m, "Rebuild every run, doubling", cold_dbl, warm_dbl),

@@ -7,17 +7,17 @@
    with the tables and the diagram allowed wider than the text. */
 :root {
   --bg: #f5f6f3; --panel: #ffffff; --ink: #1b1f1c; --muted: #5c655f; --line: #d8ddd8; --soft: #eceee9;
-  --accent: #1f5f8b; --dead: #b23e58; --new: #00826b; --kept: #7d8781; --bar: #1f5f8b;
+  --accent: #1f5f8b; --dead: #b23e58; --new: #00826b; --kept: #7d8781; --bar: #1f5f8b; --cold: #b06d12; --warm: #2b67b0;
   --display: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
   --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #131614; --panel: #1b1f1c; --ink: #e4e8e4; --muted: #9aa39c; --line: #303631; --soft: #232825;
-  --accent: #6fb0e0; --dead: #d9677f; --new: #2aa58f; --kept: #8c968f; --bar: #5a8fd8; color-scheme: dark } }
+  --accent: #6fb0e0; --dead: #d9677f; --new: #2aa58f; --kept: #8c968f; --bar: #5a8fd8; --cold: #c98a2e; --warm: #5a8fd8; color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #131614; --panel: #1b1f1c; --ink: #e4e8e4; --muted: #9aa39c; --line: #303631; --soft: #232825;
-  --accent: #6fb0e0; --dead: #d9677f; --new: #2aa58f; --kept: #8c968f; --bar: #5a8fd8; color-scheme: dark }
+  --accent: #6fb0e0; --dead: #d9677f; --new: #2aa58f; --kept: #8c968f; --bar: #5a8fd8; --cold: #c98a2e; --warm: #5a8fd8; color-scheme: dark }
 * { box-sizing: border-box }
 body { background: var(--bg); color: var(--ink); font: 15px/1.6 var(--body) }
 .wrap { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 56px; max-width: 980px; margin: 0 auto; display: grid; gap: 28px }
@@ -39,7 +39,20 @@ th { color: var(--muted); font-weight: 500; font-size: 12.5px; white-space: nowr
 td.n { text-align: right; white-space: nowrap }
 tr.pick td { background: color-mix(in srgb, var(--accent) 9%, transparent) }
 tr:last-child td { border-bottom: 0 }
-.bars { min-width: 640px }
+.chart { display: grid; gap: 4px; min-width: 640px }
+.crow { display: grid; grid-template-columns: 300px minmax(0, 1fr) 150px; gap: 12px; align-items: center; min-height: 28px; border-radius: 4px; padding: 0 6px }
+.crow:hover { background: var(--soft) }
+.crow .lab { font-size: 13px; text-align: right }
+.crow.pick .lab { font-weight: 600 }
+.crow .track { position: relative; height: 14px }
+.crow .seg { position: absolute; top: 1px; height: 12px }
+.crow .num { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap }
+.crow .num b { color: var(--ink); font-weight: 500 }
+.ticks { display: grid; grid-template-columns: 300px minmax(0, 1fr) 150px; gap: 12px; padding: 0 6px }
+.ticks .t { position: relative; height: 18px; border-top: 1px solid var(--line) }
+.ticks .t span { position: absolute; top: 2px; transform: translateX(-50%); font-size: 11px; color: var(--muted) }
+.gl { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--soft) }
+.tip { position: fixed; z-index: 20; pointer-events: none; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 12.5px; box-shadow: 0 4px 16px rgba(0,0,0,.12); max-width: 360px }
 .bars td.track { width: 46%; position: relative }
 .bars .b { height: 12px; border-radius: 0 3px 3px 0; background: var(--bar); display: block }
 .bars .b.lsm { opacity: .55 }
@@ -65,7 +78,7 @@ svg .muted { fill: var(--muted) }
     <ol>
       <li><b>A suffix array to depth w is enough, and it is local.</b> A finding only depends on which w-unit windows are equal, so the index needs the windows sorted, and nothing past depth w. An edit then changes only the windows that overlap it.</li>
       <li><b>Two levels: an immutable base plus an overlay.</b> Base windows that the edit overlaps get tombstones. The new windows the edit makes are looked up in the base and added to their class. The rest of the edited file stays in the base and only moves. Compaction merges the overlay into a new base in one linear pass.</li>
-      <li><b>About 2,000× faster than a rebuild.</b> On Jeff's <code>native/src</code> as node symbols (5.6 M windows), an update takes a median <b>2.9 ms</b> with the index in memory, against 7.0 s to rebuild. A cold process that loads a saved index takes 0.05–0.07 s CPU. All 100 replayed steps (50 per method) gave the rebuild's exact findings.</li>
+      <li><b>About 1,000× fewer instructions than a rebuild.</b> On Jeff's <code>native/src</code> as node symbols (5.6 M windows), an edit costs a median <b>5.7 M instructions</b> (0.6 ms) with the index in memory, against 6.4 G for a run that rebuilds. A fresh process that maps the saved index and applies the edit costs 0.15 G instructions, 0.02 s. All 100 replayed steps (50 per method) gave the rebuild's exact findings.</li>
     </ol>
   </section>
 
@@ -164,28 +177,31 @@ svg .muted { fill: var(--muted) }
       <li>one file deleted;</li>
       <li>three steps that each change 5 files.</li>
     </ul>
-    <p class="text">The figures are CPU time on node symbols (<code>--cells local</code>, window 150 nodes, at least 30 lines). The rebuild is SA-IS and blocks over the same tree. Bars are on a log scale.</p>
-    <div class="tscroll">
-      <table class="bars">
-        <thead><tr><th>Per edit, node symbols (5.6 M windows)</th><th class="n">median</th><th class="n">worst</th><th>log scale, 1 ms to 10 s</th></tr></thead>
-        <tbody id="bars"></tbody>
-      </table>
+    <p class="text">Each bar is one design, in two colours on one log scale of instructions retired:</p>
+    <ul class="text">
+      <li><b>cold</b> is the first run from nothing: a whole process that reads the base, builds the index and computes its findings, and for the saved index also writes it;</li>
+      <li><b>warm</b> is one later edit. For the in-memory designs, that is the median per-edit cost inside a running process (rebuilds over steps 1–10, updates over all 50). For the saved index, it is a whole new process that maps the index, applies the edit and reports the changes, median over six steps.</li>
+    </ul>
+    <p class="text">Instructions are the process's own count. Unlike CPU time, the machine's load doesn't change them (its load average reached 145 during these runs). Hover a bar for both figures.</p>
+    <div class="legend" style="display:flex; gap:18px; font-size:13px; color:var(--muted)">
+      <span style="display:inline-flex; align-items:center; gap:6px"><span style="width:14px; height:10px; border-radius:2px; background:var(--warm)"></span>warm: one later edit</span>
+      <span style="display:inline-flex; align-items:center; gap:6px"><span style="width:14px; height:10px; border-radius:2px; background:var(--cold)"></span>cold: first run from nothing</span>
     </div>
-    <div class="axis" style="margin-left:auto; width:46%; min-width:290px"><span>1 ms</span><span>10 ms</span><span>100 ms</span><span>1 s</span><span>10 s</span></div>
+    <div id="charts" style="display:grid; gap:18px"></div>
     <div class="tscroll">
       <table>
         <thead><tr><th>Design</th><th>What it does</th><th>Result</th></tr></thead>
         <tbody>
-          <tr><td>Rebuild every run</td><td>SA-IS and Kasai LCP over every document, then blocks.</td><td>7.0 s median per step on nodes; 135 ms on lines.</td></tr>
-          <tr><td>Construction by prefix doubling, to depth w</td><td>Each symbol read once. Each round sorts only the groups still tied (Larsson and Sadakane), and the rounds stop at w.</td><td>Base in 0.6–1.0 s on nodes against 7.3 s for SA-IS; 0.02 s on lines against 0.11 s. Same classes (tested).</td></tr>
-          <tr><td>Log-structured, a whole file per insert</td><td>An edited file is tombstoned whole and all its windows are inserted again, as an LSM of per-file runs would do (<code>--whole-doc</code>).</td><td>35 ms median, 666 ms worst. It grows with the file, not the edit.</td></tr>
-          <tr class="pick"><td>Tombstones plus edit-local delta</td><td>Only the windows the edit overlaps go out and come in; the rest of the file moves.</td><td><b>2.9 ms median, 29 ms worst</b> on nodes; 0.06 ms median on lines.</td></tr>
+          <tr><td>Rebuild every run</td><td>SA-IS and Kasai LCP over every document, then blocks. With no state kept, a run after an edit costs what the first run did.</td><td>6.4 G instructions a run on nodes (0.47 s for the suffix array, down from 7 s: see below); 3.5 G on lines, most of it reading the files.</td></tr>
+          <tr><td>Construction by prefix doubling, to depth w</td><td>Each symbol read once. Each round sorts only the groups still tied (Larsson and Sadakane), and the rounds stop at w.</td><td>Base in 0.38 s on nodes, about the same as SA-IS now that SA-IS reads the symbol relation; 0.02 s on lines against 0.11 s. Same classes (tested).</td></tr>
+          <tr><td>Log-structured, a whole file per insert</td><td>An edited file is tombstoned whole and all its windows are inserted again, as an LSM of per-file runs would do (<code>--whole-doc</code>).</td><td>54 M instructions median on nodes. It grows with the file, not the edit.</td></tr>
+          <tr class="pick"><td>Tombstones plus edit-local delta</td><td>Only the windows the edit overlaps go out and come in; the rest of the file moves.</td><td><b>5.7 M instructions, 0.6 ms median, 5.6 ms worst</b> on nodes; 1.4 M, 0.16 ms on lines.</td></tr>
           <tr><td>Compaction</td><td>The overlay merged into a new base, in one pass (<code>--compact-every 10</code>).</td><td>About 230 ms. Lookups don't slow down as the overlay grows (7,347 tombstones and 6,361 added windows after 50 steps), so it is only needed to bound memory.</td></tr>
-          <tr><td>A cold process with a saved index</td><td>The base, the blocks and the node dictionary are read from a file, then the edits are applied (<code>--save</code>, <code>--load</code>).</td><td>0.6 G instructions, 0.05–0.07 s CPU, 0.1 s wall, against 13.6 G (1.2 s) building the base by doubling and 66 G (6.5 s) with SA-IS.</td></tr>
+          <tr><td>A fresh process with the saved index mapped</td><td>The index file and the tapes are mapped (memmap2) and read where they lie: the base, the blocks, the dictionaries, the lines' ids and the last findings. The run applies the edit and reports the changes (<code>--save</code>, <code>--load</code>).</td><td>0.15 G instructions on nodes, 0.06 G on lines; 0.02 s wall. Writing the index adds 0.4–0.6 G to the first run.</td></tr>
         </tbody>
       </table>
     </div>
-    <p class="note">This Mac's load average was 19–90 during these runs, which inflates CPU and wall times but not instruction counts. The worst updates (16–29 ms) are the 60-line paste and the 5-file steps: those add 600–1,100 windows, and each binary search reads up to 150 symbols per step from the tape.</p>
+    <p class="note">This Mac's load average was 7–42 during the final runs, which changes CPU and wall times but not instruction counts. The worst updates are the 60-line paste and the 5-file steps, which add 600–1,100 windows each.</p>
   </section>
 
   <section>
@@ -202,15 +218,29 @@ svg .muted { fill: var(--muted) }
   </section>
 
   <section>
-    <h2>Why the node rebuild took 7 s</h2>
+    <h2>Why the node rebuild took 7 s, and the fix</h2>
     <div class="text" style="display:grid; gap:10px">
-      <p>The algorithm isn't the problem; the symbol reads are.</p>
+      <p>The algorithm wasn't the problem; the symbol reads were. The profile:</p>
       <ul>
-        <li><b>The same symbols, read three ways.</b> SA-IS and LCP reading the tape take 5.5 s. Over per-document arrays they take 1.3 s, and over one flat array 0.37 s. That last figure is 63 ns per symbol, in line with lines.</li>
-        <li><b>The tape reads cost about 4.2 s.</b> SA-IS and Kasai's LCP read each symbol 11.9 times, mostly in random order. Every read rebuilds the node's symbol from the tape: two <code>start</code> reads (<code>start_stated</code> tops the profile), a scan of the source for a newline, and a SipHash lookup in the dictionary.</li>
-        <li><b><code>Joined::locate</code> costs about 0.9 s.</b> It is a binary search over the document starts, done on every read.</li>
+        <li><b>The same symbols, read three ways.</b> SA-IS and LCP reading the tape took 5.5 s. Over per-document arrays they took 1.3 s, and over one flat array 0.37 s, which is 63 ns per symbol, in line with lines.</li>
+        <li><b>The tape reads cost about 4.2 s.</b> SA-IS and Kasai's LCP read each symbol 11.9 times, mostly in random order. Each read derived the node's symbol again: two <code>start</code> reads (<code>start_stated</code> topped the profile), a scan of the source for a newline, and a SipHash lookup in the dictionary.</li>
+        <li><b><code>Joined::locate</code> cost about 0.9 s.</b> It was a binary search over the document starts, done on every read.</li>
       </ul>
-      <p>The doubling build reads each symbol once, into the rank array it sorts, which is the sort's own working state. That is what brings the base to 0.6–1.0 s, with no copy of the tape kept. Lookups in the incremental path read only about 150 symbols per binary-search step, so the read cost there is small.</p>
+      <p><b>Faster tape reads in the tree.</b> None of the worktrees has a bulk decoder for format 16. The fastest read there is <code>reads::f16::start_next</code>: each start is the previous one plus the node's gap, with a checkpoint every K nodes. <code>start_stated</code> is the random-access form, which sums up to K − 1 gaps from the checkpoint. The <code>reads</code> crate on uglykl-CPU-SIMD-parallelization decodes 16z blocks into a shared cache; it is for compressed tapes and doesn't apply here.</p>
+      <p><b>The fix: derive each symbol once.</b> A node's symbol is not a column of the tape. It is derived from the code, the leaf bit, the gap and its line break, and the leaf's length, then numbered by the dictionary. <code>NodeDocs</code> now derives every symbol once, in tape order:</p>
+      <ul>
+        <li>starts by <code>start_next</code>;</li>
+        <li>line breaks by one forward scan of the source;</li>
+        <li>dictionary lookups by an Fx hash instead of SipHash;</li>
+        <li>the results go into a u32 relation laid out as the joined text the sort reads, one separator after each document.</li>
+      </ul>
+      <p>The tape is not read again for these symbols. SA-IS and LCP read the relation directly (<code>Docs::joined</code>), with no <code>locate</code>. On 5.9 M nodes:</p>
+      <ul>
+        <li>deriving the symbols takes 0.15 s;</li>
+        <li>the SA-IS base takes 0.47 s, down from 7 s;</li>
+        <li>a whole cold process takes 6.4 G instructions, down from 65.6 G.</li>
+      </ul>
+      <p>The relation is 24 MB. It is a derived fact written once where it is computed, which decision 0353 counts as not a copy. A run on a saved index skips it: it reads about 150 symbols per lookup and derives each one where it reads it.</p>
     </div>
   </section>
 
@@ -218,12 +248,13 @@ svg .muted { fill: var(--muted) }
     <h2>The path after a small edit</h2>
     <div class="text" style="display:grid; gap:10px">
       <p><b>A process that stays up</b> (a watch mode or a language server) keeps the index in memory. After each save it reads the changed files' new versions, which for node symbols means parsing them. Reading a step's new tapes took 0.1–2.4 ms here; the engine's parse of the changed files is a separate cost, not measured here. It sets them in the overlay and recomputes the affected documents. That is milliseconds, and then it reports the changes in the findings.</p>
-      <p><b>A CLI run</b> loads the saved index and the base's tapes, applies every document changed since the base, and diffs against the last run's findings. That is 0.1 s wall today, with these costs left:</p>
+      <p><b>A CLI run</b> maps the saved index and the base's tapes, applies every document changed since the base, and reports what changed since the last run: 0.02 s wall, 0.15 G instructions. The steps:</p>
       <ul>
-        <li>The index file is read into memory, 91 MB. Mapping it would cost nearly nothing.</li>
-        <li>The lines method still reads and normalises every base file, 0.23 s, because the base lines' ids are not saved with the index. The node method reads its tapes in place.</li>
-        <li>The finding diff rebuilds every finding with its copies on each step, 4–7 ms on nodes. Building only the affected documents' findings would make it proportional to the change.</li>
-        <li>Each language (tape tag) needs its own base, and the spike runs one. With several languages there would be one base per language, as the node method already does.</li>
+        <li>The index file is mapped. Its arrays are slices of the mapping, aligned to 8 bytes, and nothing is read until used.</li>
+        <li>The lines method's base ids and its line dictionary are in the index, so the base files are not read again.</li>
+        <li>The last findings are in the index, by document. Only the affected documents' findings are recomputed; the others' are moved through the change.</li>
+        <li>Tombstone counts are held only for the classes an edit touched, so a loaded index starts without a pass over its 5.5 M classes.</li>
+        <li>Still open: each language (tape tag) needs its own base, and the spike runs one.</li>
       </ul>
     </div>
   </section>
@@ -232,22 +263,38 @@ svg .muted { fill: var(--muted) }
     <h2>Where it lives</h2>
     <ul class="text">
       <li><code>native/lab/dupsa/src/incr.rs</code>: the base, both builds, the overlay, compaction, saving, and the oracle tests.</li>
-      <li><code>dupsa incr lines|nodes &lt;base&gt; &lt;steps&gt;</code> with <code>--check</code>, <code>--whole-doc</code>, <code>--compact-every N</code>, <code>--save</code> and <code>--load</code>. <code>dupsa readcost</code> is the profile of the node build above.</li>
-      <li><code>native/lab/dupsa/make_steps.py</code> writes the edit steps. Commit <code>5ddac0e5d0</code>, pushed.</li>
+      <li><code>dupsa incr lines|nodes &lt;base&gt; &lt;steps&gt;</code> with <code>--check</code>, <code>--whole-doc</code>, <code>--compact-every N</code>, <code>--save</code> and <code>--load</code>. <code>dupsa readcost</code> was the profile of the node build above.</li>
+      <li><code>native/lab/dupsa/make_steps.py</code> writes the edit steps. <code>native/lab/dupsa/src/store.rs</code> maps the files, and <code>coldwarm.py</code> measures the chart above. Commits <code>5ddac0e5d0</code> and <code>c810505dbc</code>, pushed.</li>
     </ul>
   </section>
 </div>
 
+<div class="tip" id="tip" hidden></div>
 <script>
-const rows = [
-  ["Rebuild: SA-IS and blocks", 7016, 9772, false],
-  ["Fresh process: base by doubling, then the edit", 1270, 1380, false],
-  ["Fresh process: saved index loaded, then the edit", 60, 70, false],
-  ["In memory: whole file re-inserted (LSM per file)", 35.5, 666, true],
-  ["In memory: tombstones plus edit-local delta", 2.87, 29.1, false],
-];
-const x = v => Math.max(0, Math.min(1, (Math.log10(v) - 0) / 4));
-const fmt = v => v >= 1000 ? (v / 1000).toFixed(1) + " s" : v >= 10 ? Math.round(v) + " ms" : v.toFixed(1) + " ms";
-document.getElementById("bars").innerHTML = rows.map(([name, med, max, lsm]) =>
-  `<tr${name.includes("edit-local") ? ' class="pick"' : ""}><td>${name}</td><td class="n">${fmt(med)}</td><td class="n">${fmt(max)}</td><td class="track" title="median ${fmt(med)}, worst ${fmt(max)}"><span class="b${lsm ? " lsm" : ""}" style="width:${(100 * x(med)).toFixed(1)}%"></span></td></tr>`).join("");
+// [method, design, cold instructions, warm instructions], from coldwarm.py.
+const DATA = [["lines", "Rebuild every run, SA-IS", 3579317421, 3505281315], ["lines", "Rebuild every run, doubling", 2362773463, 2377127476], ["lines", "Whole file re-inserted", 2362773463, 2975022], ["lines", "Tombstones and edit-local delta, in memory", 2362773463, 1445996], ["lines", "Tombstones and edit-local delta, saved index mapped", 2941543398, 57343928], ["nodes", "Rebuild every run, SA-IS", 6387707424, 6402005204], ["nodes", "Rebuild every run, doubling", 7185207768, 7208801371], ["nodes", "Whole file re-inserted", 7185207768, 54177510], ["nodes", "Tombstones and edit-local delta, in memory", 7185207768, 5747337], ["nodes", "Tombstones and edit-local delta, saved index mapped", 7582489648, 152821745]];
+const LO = 1e6, HI = 1e11;
+const x = v => Math.max(0, Math.min(1, (Math.log10(Math.max(v, LO)) - Math.log10(LO)) / (Math.log10(HI) - Math.log10(LO))));
+const fmt = v => v >= 1e9 ? (v / 1e9).toFixed(v >= 1e10 ? 0 : 1) + " G" : v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + " M" : (v / 1e3).toFixed(0) + " K";
+const ticks = [1e6, 1e7, 1e8, 1e9, 1e10, 1e11];
+const tickLab = v => v >= 1e9 ? v / 1e9 + " G" : v / 1e6 + " M";
+const titles = { lines: "Lines (0.63 M counted lines, window 30)", nodes: "Node symbols (5.9 M nodes, window 150)" };
+const tip = document.getElementById("tip");
+document.getElementById("charts").innerHTML = ["lines", "nodes"].map(m => {
+  const rows = DATA.filter(r => r[0] === m);
+  return `<div style="display:grid; gap:6px"><h3>${titles[m]}</h3><div class="tscroll" style="padding:8px 0"><div class="chart">${rows.map(([, name, cold, warm], i) => {
+    // One bar: warm from 0, cold from there on (or the other way round where warm costs more).
+    const [lo, hi] = warm <= cold ? [warm, cold] : [cold, warm];
+    const [cLo, cHi] = warm <= cold ? ["var(--warm)", "var(--cold)"] : ["var(--cold)", "var(--warm)"];
+    const a = 100 * x(lo), b = 100 * x(hi);
+    return `<div class="crow${name.includes("in memory") ? " pick" : ""}" data-m="${m}" data-i="${i}"><div class="lab">${name}</div><div class="track">${ticks.map(t => `<span class="gl" style="left:${(100 * x(t)).toFixed(2)}%"></span>`).join("")}<span class="seg" style="left:0;width:${a.toFixed(2)}%;background:${cLo};border-radius:0 ${b - a < 0.5 ? "3px 3px" : "0 0"} 0"></span><span class="seg" style="left:${a.toFixed(2)}%;width:${Math.max(0.4, b - a).toFixed(2)}%;background:${cHi};border-left:2px solid var(--panel);border-radius:0 3px 3px 0"></span></div><div class="num">warm <b>${fmt(warm)}</b> · cold ${fmt(cold)}</div></div>`;
+  }).join("")}<div class="ticks"><div class="note" style="text-align:right">instructions, log scale</div><div class="t">${ticks.map(t => `<span style="left:${(100 * x(t)).toFixed(2)}%">${tickLab(t)}</span>`).join("")}</div><div></div></div></div></div></div>`;
+}).join("");
+for (const el of document.querySelectorAll(".crow")) {
+  const [, name, cold, warm] = DATA.filter(r => r[0] === el.dataset.m)[+el.dataset.i];
+  const move = e => { const w = tip.offsetWidth; tip.style.left = Math.min(e.clientX + 14, innerWidth - w - 8) + "px"; tip.style.top = (e.clientY + 14) + "px" };
+  el.onmouseenter = e => { tip.innerHTML = `<b>${name}</b><br>${titles[el.dataset.m]}<table style="margin-top:4px;font-variant-numeric:tabular-nums"><tr><td>cold, first run</td><td style="text-align:right;padding-left:12px">${(cold / 1e6).toLocaleString(undefined, {maximumFractionDigits: 1})} M instr.</td></tr><tr><td>warm, one edit</td><td style="text-align:right;padding-left:12px">${(warm / 1e6).toLocaleString(undefined, {maximumFractionDigits: 2})} M instr.</td></tr><tr><td>warm against cold</td><td style="text-align:right;padding-left:12px">${cold / warm >= 1 ? (cold / warm).toFixed(cold / warm >= 10 ? 0 : 1) + "× less" : (warm / cold).toFixed(1) + "× more"}</td></tr></table>`; tip.hidden = false; move(e) };
+  el.onmousemove = move;
+  el.onmouseleave = () => { tip.hidden = true };
+}
 </script>

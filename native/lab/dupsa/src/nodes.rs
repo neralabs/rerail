@@ -202,9 +202,8 @@ impl<'a> NodeDocs<'a> {
     /// The documents ranked by a dictionary a run before kept (its rows in rank order).
     pub fn with_values(capture: &'a Capture, tag: u8, cells: Cells, values: &[u128]) -> Result<Self, String> {
         let rank = values.iter().enumerate().map(|(r, &v)| (v, r as u32)).collect();
-        let mut docs = Self::open(capture, tag, cells, rank)?;
-        docs.derive(|m, v| m[&v]);
-        Ok(docs)
+        // No symbol relation: a run on a saved index reads a few symbols per lookup, each derived where it is read.
+        Self::open(capture, tag, cells, rank)
     }
 
     /// Document `d`'s rows in tape order (`value`'s), each read once: starts by the running sum of gaps
@@ -329,10 +328,13 @@ impl Docs for NodeDocs<'_> {
     }
     #[inline(always)]
     fn at(&self, d: usize, j: usize) -> u32 {
+        if self.joined.is_empty() {
+            return self.rank[&self.value(d, j, self.cells)];
+        }
         self.joined[self.starts[d] as usize + j] - 1
     }
     fn joined(&self) -> Option<&[u32]> {
-        Some(&self.joined)
+        (!self.joined.is_empty()).then_some(&self.joined[..])
     }
     fn upper(&self) -> u32 {
         self.rank.len().saturating_sub(1) as u32
