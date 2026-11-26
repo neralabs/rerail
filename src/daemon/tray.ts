@@ -276,7 +276,7 @@ export interface TrayOptions {
   runUpdate(): Promise<UpdateExit>;
   /** Writes one line, with no newline, to daemon.log. */
   log(line: string): void;
-  /** How often the daemon's health is read for a changed menu; 5 s by default. */
+  /** How often the daemon's health and repositories are read for a changed menu; 5 s by default. */
   intervalMs?: number;
 }
 
@@ -288,8 +288,9 @@ const TRAY_PREFIX = "rerail-tray: ";
 
 /**
  * Starts the tray program and keeps its menu current: it writes the first state at once, then reads the daemon's
- * health every `intervalMs` and writes a state only when it changed. That read is in-process and cheap, and sends
- * nothing anywhere. A tray that exits, or cannot start, is logged once and never started again.
+ * health and repositories every `intervalMs` and writes a state only when it changed. Both reads are in-process and
+ * send nothing anywhere; the repositories' rules are counted again only after a database commit or a pack change
+ * (`RerailDaemon.repositories`). A tray that exits, or cannot start, is logged once and never started again.
  */
 export function startTray(options: TrayOptions): TrayHandle {
   const { daemon, log } = options;

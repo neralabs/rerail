@@ -893,9 +893,11 @@ export class RerailDaemon {
    * Every repository Rerail knows on this machine, as the dashboard lists them, with how many of its rules run. The
    * answer is read again only once the database has a commit since (`dataVersion`) or the installed packs changed (the
    * cached catalog is another object), so a caller that asks every few seconds costs a version read while nothing moves.
+   * Before the database exists there is no repository, and asking does not create it.
    */
   repositories(): RepositoriesRead["list"] {
-    const version = this.#stores.dataVersion();
+    const version = this.#stores.historyVersion();
+    if (version === undefined) return [];
     const catalog = this.#stores.ruleCatalog();
     const read = this.#repositoriesRead;
     if (read !== undefined && read.version === version && read.catalog === catalog) return read.list;

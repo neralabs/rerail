@@ -871,8 +871,10 @@ describe("the daemon's tray service", () => {
     expect(atRepository.searchParams.get("repository")).toBe("remote:github.com/acme/web");
     expect([...atRepository.searchParams.values()]).toContain(state.accessToken);
     expect(given.health().pid).toBe(process.pid);
-    // The repositories the menu lists, read again once another connection records one.
+    // The repositories the menu lists: none in this fresh home, which has no database yet, and asking creates none.
+    expect(existsSync(state.databasePath)).toBe(false);
     expect(given.repositories()).toEqual([]);
+    expect(existsSync(state.databasePath)).toBe(false);
     const database = openRerailDatabase(state.databasePath);
     try {
       database.insert(repositories).values({ repositoryKey: "remote:github.com/acme/web", displayName: "web", configuredAt: 5, started: true, createdAt: 1, updatedAt: 1 }).run();
