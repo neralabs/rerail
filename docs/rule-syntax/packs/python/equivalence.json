@@ -4574,46 +4574,6 @@
         }
       }
     },
-    "ruff-ytt101-sys-version-slice3": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ytt102-sys-version2": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ytt103-sys-version-cmp-str3": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ytt201-sys-version-info0-eq3": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 3
-        }
-      }
-    },
     "ruff-ytt202-six-py3": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -4641,36 +4601,6 @@
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ytt301-sys-version0": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ytt302-sys-version-cmp-str10": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 7
-        }
-      }
-    },
-    "ruff-ytt303-sys-version-slice1": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
         }
       }
     }
