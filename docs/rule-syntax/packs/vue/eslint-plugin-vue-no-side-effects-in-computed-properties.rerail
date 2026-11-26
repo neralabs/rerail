@@ -1,49 +1,211 @@
 .policy "eslint-plugin-vue-no-side-effects-in-computed-properties" revision 2
+.guests off
 .description "Keep Vue computed properties free of side effects such as assigning to or mutating component state; a computed should only derive a value."
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rerail"
-#include "vue/mutation.rerail"
-//   vcomputed(o, x, f), vcomputed_fn(c, f), vsetup(o, f), vscript(p, setup), vmutation(s, at, how)
+#include "vue/vue-02.rerail"
+//   vv_site(r, d), vv_site_only(d), vv_marker(m, k), str(n, v)
 
-// eslint-plugin-vue's no-side-effects-in-computed-properties. No options.
-// Options API, in a getter's own code (not a nested function's): a mutation of `this` state, or this.$set / Vue.set.
+// eslint-plugin-vue's no-side-effects-in-computed-properties over the component's view (vue/view). No options.
+// Options API, in a computed getter's own code (not a nested function's), in a file without <script setup>: a
+// mutation of `this` state (or of a `const vm = this` alias), or this.$set / Vue.set.
 //   computed: { a() { this.n++; return this.list.sort() } }             both reported
-// computed() getters: a mutation of a variable declared in <script setup> or in setup(), outside the getter, read
-// as `x.…` (a bare `x = 1` is not looked at). Imports and globals are not state.
+//   computed: { a: { get() { delete this.x } } }                        reported
+// computed() getters (computed imported from Vue): a mutation of a variable the getter does not declare, declared in
+// <script setup> (in a file with one) or in setup() of the component's definition (in a file without), read as `x.…`
+// (a bare `x = 1` is not looked at). Imports are not state.
 //   const n = ref(0); const c = computed(() => n.value++)                reported
 //   const c = computed(() => { const a = []; a.push(1); return a })     not reported: a is the getter's own
-// When the file has <script setup>, only <script setup> is checked, as the plugin does.
-.violation side_effect(at: node, msg: symbol) code "vue/no-side-effects-in-computed-properties" "{msg}"
+// A mutation is an assignment, an update, a `delete`, a call of an array mutator (push, sort, …) on it, or
+// Object.assign with it as the target.
+.violation side_effect(at: node, x: symbol, what: symbol) code "vue/no-side-effects-in-computed-properties"
+    "Remove this {what} from the \"{x}\" computed and make the change in a method or watcher instead."
     suppress eslint "vue/no-side-effects-in-computed-properties"
-side_effect(p, cat("Remove this assignment from the \"", x, "\" computed and make the change in a method or watcher instead.")) :-
-    options_getter(x, f), member_of(n, m), own(n, f), vue_set(n, m), field(m, "property", p).
-side_effect(at, cat("Remove this mutation from the \"", x, "\" computed and make the change in a method or watcher instead.")) :-
-    options_getter(x, f), member_of(n, m), kind(n, "this"), own(n, f), !vue_set(n, m), vmutation(m, at, _).
-side_effect(at, "Remove this mutation from the computed getter and make the change in a function or watcher instead.") :-
-    composition_getter(g), member_of(n, _), kind(n, "identifier"), own(n, g), ref_site(n, d), state(d, g),
-    vmutation(n, at, _).
+side_effect(n, x, "assignment") :- docof(n, g), (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ;
+    guest(g, _, _, "tsx")), kind(n, "property_identifier"), field(m, "property", n), kind(m, "member_expression"),
+    child(p, m, _), (kind(p, "call_expression") ; kind(p, "arguments"), child(c, p, _), kind(c, "call_expression")),
+    field(m, "object", o), (text(n, "$set"), root_opt(o, k) ; text(n, "set"), kind(o, "identifier"), text(o, "Vue"),
+    !file_setup(o), nearest(o, f, fn_like), opt_getter(f, k)), computed_name(k, x).
+side_effect(n, x, "mutation") :- docof(n, g), (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ;
+    guest(g, _, _, "tsx")), mutation(n, t, _), chain_opt(t, k), computed_name(k, x).
+.violation side_effect_setup(at: node) code "vue/no-side-effects-in-computed-properties"
+    "Remove this mutation from the computed getter and make the change in a function or watcher instead."
+    suppress eslint "vue/no-side-effects-in-computed-properties"
+side_effect_setup(n) :- docof(n, g), (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ;
+    guest(g, _, _, "tsx")), mutation(n, t, how), (chain_comp(t) ; how = "call", base_comp(t)).
 
-.decl options_getter(x: symbol, f: node)
-options_getter(x, f) :- vcomputed(_, x, f), docof(f, d), !vsetup_doc(d).
-.decl composition_getter(g: node)
-composition_getter(g) :- vcomputed_fn(_, g), vin_setup(g).
-composition_getter(g) :- vcomputed_fn(_, g), docof(g, d), !vsetup_doc(d), vcomp(o), within(g, o).
-// member_of(n, m): `this` or a name n is the object of member access m: the selector `MemberExpression > Identifier`.
-.decl member_of(n: node, m: node)
-member_of(n, m) :- vmut_object(m, n), (kind(n, "this") ; kind(n, "identifier")).
-vmut_ask(m) :- member_of(n, m), kind(n, "this").
-vmut_ask(n) :- member_of(n, _), kind(n, "identifier").
-.decl own(n: node, f: node)
-own(n, f) :- nearest(n, f, vfn_kind).
-// this.$set(…) and Vue.set(…): a call of the member.
-.decl vue_set(n: node, m: node)
-vue_set(n, m) :- member_of(n, m), estree_parent(m, c), kind(c, "call_expression"), field(c, "function", w),
-    deparen(w, m), (kind(n, "this"), static_prop(m, n, "$set") ; text(n, "Vue"), static_prop(m, n, "set")).
-// state(d, g): declaration site d is in <script setup> or a setup() body, not inside getter g, and no import.
-.decl state(d: node, g: node)
-state(d, g) :- composition_getter(g), site_form(d, f), f != "import", in_setup(d), !within(d, g).
-.decl in_setup(d: node)
-in_setup(d) :- vin_setup(d).
-in_setup(d) :- vsetup(_, f), field(f, "body", b), within(d, b).
+// mutation(n, t, how): n changes t, or what t's member chain heads: `t = …`, `t += …`, `t++`, `delete t`,
+// `Object.assign(t, …)`, or (how "call") `t.push(…)`. In a computed() getter the plugin takes the object of a
+// mutator call as it comes (`arr.reverse()`), elsewhere only a member access (`this.arr.reverse()`).
+.decl mutation(n: node, t: node, how: symbol)
+mutation(n, t, "set") :- (kind(n, "assignment_expression") ; kind(n, "augmented_assignment_expression")),
+    field(n, "left", t).
+mutation(n, t, "set") :- kind(n, "update_expression"), field(n, "argument", t).
+mutation(n, t, "set") :- kind(n, "unary_expression"), op(n, "delete"), field(n, "argument", t).
+mutation(n, t, "call") :- kind(n, "call_expression"), field(n, "function", f), mutator_callee(f, t).
+mutation(n, t, "set") :- kind(n, "call_expression"), field(n, "function", f), kind(f, "member_expression"),
+    field(f, "object", o), kind(o, "identifier"), text(o, "Object"), field(f, "property", p), text(p, "assign"),
+    field(n, "arguments", as), child(as, t, 0).
+.decl mutator_callee(f: node, t: node)  // `t.push`, `t["sort"]`, `(t.push)`
+mutator_callee(f, t) :- kind(f, "parenthesized_expression"), child(f, c, _), mutator_callee(c, t).
+mutator_callee(f, t) :- kind(f, "member_expression"), field(f, "object", t), field(f, "property", p), mutator(p).
+mutator_callee(f, t) :- kind(f, "subscript_expression"), field(f, "object", t), field(f, "index", i), kind(i, "string"),
+    child(i, s, _), kind(s, "string_fragment"), mutator(s).
+.decl mutator(p: node)
+mutator(p) :- (field(_, "property", p) ; kind(p, "string_fragment")),
+    match("push|pop|shift|unshift|reverse|splice|sort|copyWithin|fill", p).
+
+// ---- the options API ---------------------------------------------------------------------------------------------
+// chain_opt(t, k): t is a member access on `this` in computed k's getter; root_opt(o, k): o is that `this`.
+.decl chain_opt(t: node, k: node)
+chain_opt(t, k) :- kind(t, "parenthesized_expression"), child(t, c, _), chain_opt(c, k).
+chain_opt(t, k) :- (kind(t, "member_expression") ; kind(t, "subscript_expression")), field(t, "object", o), base_opt(o, k).
+.decl base_opt(o: node, k: node)
+base_opt(o, k) :- root_opt(o, k).
+base_opt(o, k) :- kind(o, "parenthesized_expression"), child(o, c, _), base_opt(c, k).
+base_opt(o, k) :- (kind(o, "member_expression") ; kind(o, "subscript_expression")), field(o, "object", c), base_opt(c, k).
+.decl root_opt(o: node, k: node)
+root_opt(o, k) :- this_ish(o), !file_setup(o), nearest(o, f, fn_like), opt_getter(f, k).
+.decl this_ish(o: node)  // `this`, or a name only `const vm = this` declares
+this_ish(o) :- kind(o, "this").
+this_ish(o) :- kind(o, "identifier"), vv_site(o, s), vv_site_only(s), (d = s ; within(s, d)),
+    kind(d, "variable_declarator"), field(d, "name", i), kind(i, "identifier"), field(d, "value", v), kind(v, "this"),
+    child(l, d, _), kind(l, "lexical_declaration"), op(l, "const").
+// opt_getter(f, k): f is the getter of computed k: `computed: { k() {} }`, `k: function () {}`,
+// `k: { get() {} }`, `k: { get: function () {} }` (arrows are no getters here).
+.decl opt_getter(f: node, k: node)
+opt_getter(f, k) :- kind(f, "method_definition"), field(f, "name", k), child(o, f, _), computed_object(o).
+opt_getter(f, k) :- fn_expr(f), nearest(f, p, not_paren_as), kind(p, "pair"), field(p, "key", k), child(o, p, _),
+    computed_object(o).
+opt_getter(f, k) :- kind(f, "method_definition"), field(f, "name", gk), key_named(gk, "get"), child(go, f, _),
+    kind(go, "object"), nearest(go, p, not_paren_as), kind(p, "pair"), field(p, "key", k), child(o, p, _),
+    computed_object(o).
+opt_getter(f, k) :- fn_expr(f), nearest(f, gp, not_paren), kind(gp, "pair"), field(gp, "key", gk), key_named(gk, "get"),
+    child(go, gp, _), kind(go, "object"), nearest(go, p, not_paren_as), kind(p, "pair"), field(p, "key", k),
+    child(o, p, _), computed_object(o).
+.decl computed_object(o: node)  // the object of `computed: { … }` in the component's definition
+computed_object(o) :- kind(o, "object"), field(p, "value", o), kind(p, "pair"), field(p, "key", k),
+    key_named(k, "computed"), child(v, p, _), vue_object(v).
+// computed_name(k, x): the name a message gives computed key k: `a`, `'a'` and `['a']` are a; `[x]` is Unknown.
+.decl computed_name(k: node, x: symbol)
+computed_name(k, x) :- text(k, t),
+    y = @replace_all(t, "^(?:\\[\\s*(?:'([^']*)'|\"([^\"]*)\")\\s*\\]|'([^']*)'|\"([^\"]*)\")$", "${1}${2}${3}${4}"),
+    x = @replace_all(y, "^\\[.*\\]$", "Unknown").
+
+// ---- computed() ----------------------------------------------------------------------------------------------------
+// chain_comp(t): t is a member access on state, in a computed() getter; root_comp(r): r is that state's name.
+.decl chain_comp(t: node)
+chain_comp(t) :- kind(t, "parenthesized_expression"), child(t, c, _), chain_comp(c).
+chain_comp(t) :- (kind(t, "member_expression") ; kind(t, "subscript_expression")), field(t, "object", o), base_comp(o).
+.decl base_comp(o: node)
+base_comp(o) :- root_comp(o).
+base_comp(o) :- kind(o, "parenthesized_expression"), child(o, c, _), base_comp(c).
+base_comp(o) :- (kind(o, "member_expression") ; kind(o, "subscript_expression")), field(o, "object", c), base_comp(c).
+// root_comp(r): r names a variable of <script setup> or setup() (no import), declared outside the getter r is in.
+.decl root_comp(r: node)
+root_comp(r) :- kind(r, "identifier"), comp_ctx(r), nearest(r, f, fn_like), comp_getter(f), vv_site(r, s),
+    vv_site_only(s), !kind(s, "import_specifier"), !kind(s, "import_clause"), !kind(s, "namespace_import"),
+    (file_setup(s), in_setup(s) ; !file_setup(s), inside(s, b, "statement_block"), field(sf, "body", b), setup_fn(sf)),
+    !within(s, f).
+.decl comp_ctx(r: node)  // where the plugin looks: <script setup> in a file with one, else a component's definition
+comp_ctx(r) :- file_setup(r), in_setup(r).
+comp_ctx(r) :- !file_setup(r), within(r, o), vue_object(o).
+// comp_getter(f): `computed(() => …)`, `computed(function () {})`, `computed({ get() {} })`,
+// `computed({ get: () => … })`.
+.decl comp_getter(f: node)
+comp_getter(f) :- fn_or_arrow(f), computed_arg(f).
+comp_getter(f) :- kind(f, "method_definition"), field(f, "name", k), key_named(k, "get"), child(o, f, _),
+    kind(o, "object"), computed_arg(o).
+comp_getter(f) :- fn_or_arrow(f), nearest(f, p, not_paren), kind(p, "pair"), field(p, "key", k), key_named(k, "get"),
+    child(o, p, _), kind(o, "object"), computed_arg(o).
+.decl computed_arg(a: node)  // the first argument of a call of Vue's computed
+computed_arg(a) :- first_child(a, as), child(c, as, _), kind(c, "call_expression"), field(c, "function", f),
+    computed_callee(f).
+computed_arg(a) :- child(p, a, _), kind(p, "parenthesized_expression"), computed_arg(p).
+.decl computed_callee(f: node)  // `computed` imported from Vue, or `Vue.computed` of `import * as Vue`
+computed_callee(f) :- kind(f, "identifier"), vv_site(f, s), (d = s ; within(s, d)), kind(d, "import_specifier"),
+    field(d, "name", n), text(n, "computed"), from_vue(d).
+computed_callee(f) :- kind(f, "member_expression"), field(f, "property", p), text(p, "computed"),
+    field(f, "object", o), kind(o, "identifier"), vv_site(o, s), (d = s ; within(s, d)), kind(d, "namespace_import"),
+    from_vue(d).
+.decl from_vue(d: node)  // d is in an import of Vue's package
+from_vue(d) :- inside(d, i, "import_statement"), field(i, "source", m), vue_package(m).
+.decl vue_package(m: node)
+vue_package(m) :- kind(m, "string"), str(m, v), match("vue|@vue/composition-api|@nuxtjs/composition-api|#imports", v).
+.decl setup_fn(f: node)  // `setup() {}`, `setup: () => …` of the component's definition
+setup_fn(f) :- kind(f, "method_definition"), field(f, "name", k), key_named(k, "setup"), child(o, f, _), vue_object(o).
+setup_fn(f) :- fn_or_arrow(f), child(p, f, _), kind(p, "pair"), field(p, "key", k), key_named(k, "setup"),
+    child(o, p, _), vue_object(o).
+
+// ---- the component's definition ----------------------------------------------------------------------------------
+// vue_object(o): `export default { … }` (outside <script setup>), the last argument of defineComponent(…) and the
+// like, the first of `new Vue(…)`, or an object right under a `// @vue/component` line.
+.decl vue_object(o: node)
+vue_object(o) :- kind(o, "object"), nearest(o, e, not_paren), kind(e, "export_statement"), !top_in_setup(e).
+vue_object(o) :- kind(o, "object"), last_arg(o, as), child(c, as, _), kind(c, "call_expression"),
+    field(c, "function", f), definer(f).
+vue_object(o) :- kind(o, "object"), first_arg(o, as), child(c, as, _), kind(c, "new_expression"),
+    field(c, "constructor", v), kind(v, "identifier"), text(v, "Vue").
+vue_object(o) :- kind(o, "object"), inside(o, p, "program"), has(p, c, "comment"), text(c, t),
+    contains("@vue/component", t), node(_, c, _, _, e), node(_, o, _, s, _), s >= e, end_line(c, l), line(o, lo),
+    lo = l + 1.
+// first_arg(a, as), last_arg(a, as): a is the first or last argument of as, through parentheses and `as`;
+// first_child and last_child: without them. Comments do not count.
+.decl first_arg(a: node, as: node)
+first_arg(a, as) :- first_child(a, as).
+first_arg(a, as) :- child(p, a, _), paren_as(p), first_arg(p, as).
+.decl last_arg(a: node, as: node)
+last_arg(a, as) :- last_child(a, as).
+last_arg(a, as) :- child(p, a, _), paren_as(p), last_arg(p, as).
+.decl first_child(a: node, as: node)
+first_child(a, as) :- kind(as, "arguments"), child(as, a, _), !kind(a, "comment"),
+    count : { child(as, b, _), !kind(b, "comment"), precedes(b, a) } = 0.
+.decl last_child(a: node, as: node)
+last_child(a, as) :- kind(as, "arguments"), child(as, a, _), !kind(a, "comment"),
+    count : { child(as, b, _), !kind(b, "comment"), precedes(a, b) } = 0.
+.decl definer(f: node)  // defineComponent and the like, unless the name is a function, class or import of its own
+definer(f) :- kind(f, "member_expression"), field(f, "object", o), kind(o, "identifier"), field(f, "property", p),
+    (match("component|mixin", p) ; text(o, "Vue"), text(p, "extend")).
+definer(f) :- kind(f, "identifier"), text(f, "defineNuxtComponent").
+definer(f) :- kind(f, "identifier"), match("component|createApp|defineComponent", f),
+    count : { vv_site(f, s), (d = s ; within(s, d)), own_binding(d) } = 0.
+.decl own_binding(d: node)
+own_binding(d) :- kind(d, "function_declaration") ; kind(d, "generator_function_declaration") ;
+    kind(d, "class_declaration") ; kind(d, "catch_clause").
+own_binding(d) :- kind(d, "import_specifier"), !from_vue(d).
+
+// ---- <script setup> ------------------------------------------------------------------------------------------------
+// file_setup(n): n's file has <script setup>; in_setup(n): n is in it (after its marker, before the next script's).
+.decl file_setup(n: node)
+file_setup(n) :- inside(n, p, "program"), child(p, m, _), vv_marker(m, "setup").
+.decl in_setup(n: node)
+in_setup(n) :- top_in_setup(n).
+in_setup(n) :- within(n, s), top_in_setup(s).
+.decl top_in_setup(s: node)
+top_in_setup(s) :- child(p, s, _), kind(p, "program"), precedes_stop(m, s, any_marker), vv_marker(m, "setup").
+.decl any_marker(m: node)
+any_marker(m) :- vv_marker(m, _).
+
+// ---- node sets -----------------------------------------------------------------------------------------------------
+.decl key_named(k: node, x: symbol)  // key k is x: `get`, `'get'`, `"get"`, `['get']`, for x computed, get or setup
+key_named(k, x) :- (field(_, "key", k) ; field(_, "name", k)), !kind(k, "computed_property_name"), text(k, t),
+    key_word(x), (t = x ; t = cat("'", x, "'") ; t = cat("\"", x, "\"")).
+key_named(k, x) :- kind(k, "computed_property_name"), child(k, s, _), kind(s, "string"), text(s, t), key_word(x),
+    (t = cat("'", x, "'") ; t = cat("\"", x, "\"")).
+.decl key_word(x: symbol)
+key_word("computed"). key_word("get"). key_word("setup").
+.decl fn_like(k: symbol)
+fn_like("function_declaration"). fn_like("function_expression"). fn_like("arrow_function").
+fn_like("generator_function"). fn_like("generator_function_declaration"). fn_like("method_definition").
+.decl fn_expr(f: node)
+fn_expr(f) :- kind(f, "function_expression") ; kind(f, "generator_function").
+.decl fn_or_arrow(f: node)
+fn_or_arrow(f) :- fn_expr(f) ; kind(f, "arrow_function").
+.decl paren_as(n: node)
+paren_as(n) :- kind(n, "parenthesized_expression") ; kind(n, "as_expression").
+// not_paren(n), not_paren_as(n): the first ancestor that is not parentheses (nor an `as`): `nearest`'s stop sets.
+.decl not_paren(n: node)
+not_paren(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+.decl not_paren_as(n: node)
+not_paren_as(n) :- node(_, n, _, _, _), !paren_as(n).

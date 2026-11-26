@@ -1,62 +1,135 @@
 .policy "eslint-plugin-vue-no-unused-refs" revision 2
+.guests off
 .description "Remove template ref attributes that the Vue component never reads through $refs, useTemplateRef or a setup binding."
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rerail"
-//   vplain(e, a, x), vval(a, v), tfree(r, x, a), vin_script(n), vname(o, g, x, n), vsetup_doc(d), vscript(p, s)
+#include "vue/vue-02.rerail"
+#include "vue/compare.rerail"
+//   vv_module_name(k), vv_marker(m, k), vv_site(r, d), cmp_unquoted(n, x), str(n, v)
 
-// eslint-plugin-vue's no-unused-refs: a template `ref="name"` that nothing reads. A ref is read by
-//   $refs.name, this.$refs.name, $refs["name"], const { name } = this.$refs     (template or script)
-//   useTemplateRef("name"); a name setup() returns; in a file with <script setup>, any top-level binding name
-// When $refs escapes whole (`const r = this.$refs`, `f($refs)`, `return $refs`, `$refs[key]`) the file is not
-// checked. No options.
+// eslint-plugin-vue's no-unused-refs: a template `ref="name"` that nothing in the component's view (vue/view) reads.
+// A ref is read, in the template or a script, by
+//   $refs.name, this.$refs.name, $refs["name"], const { name } = this.$refs, ({ name } = this.$refs)
+//   useTemplateRef("name"); a key of the object setup() returns; in a file with <script setup>, a top-level binding
+// When $refs escapes whole (`const r = this.$refs`, `f($refs)`, `return $refs`, `$refs[key]`, `for (k in $refs)`,
+// `const { ...rest } = $refs`) every ref of the file is read. No options.
 //   <div ref="box" />  with nothing reading it          reported at "box"
 .violation unused_ref(at: node, x: symbol) code "vue/no-unused-refs"
     "Remove the unused ref '{x}', or read it through the component's refs, useTemplateRef or a matching setup binding."
     suppress eslint "vue/no-unused-refs"
-unused_ref(q, x) :- vplain(_, a, n), vlower(n, "ref"), vval(a, v), text(v, x), child(a, q, _),
-    kind(q, "quoted_attribute_value"), docof(a, d), !used(d, x), !unknown(d).
-unused_ref(v, x) :- vplain(_, a, n), vlower(n, "ref"), vval(a, v), text(v, x), !child_quoted(a), docof(a, d),
-    !used(d, x), !unknown(d).
-.decl child_quoted(a: node)
-child_quoted(a) :- child(a, q, _), kind(q, "quoted_attribute_value").
+unused_ref(v, x) :- (kind(v, "quoted_attribute_value") ; kind(v, "attribute_value")), child(a, v, _),
+    kind(a, "attribute"), child(a, n, _), kind(n, "attribute_name"), text(n, "ref"), inside(a, _, "template_element"),
+    cmp_unquoted(v, x), docof(v, d), !read(d, x), !escapes(d).
 
-// refs(n): a read of $refs: the identifier in template code, `this.$refs` (the member) or `$refs` in a script.
+// read(d, x): document d's view reads the ref x; escapes(d): it reads $refs whole.
+.decl read(d: number, x: symbol)
+read(d, x) :- (guest(g, d, _, "javascript") ; guest(g, d, _, "typescript") ; guest(g, d, _, "tsx")),
+    docof(n, g), ref_name(n), cmp_unquoted(n, x).
+read(d, x) :- (guest(g, d, _, "javascript") ; guest(g, d, _, "typescript") ; guest(g, d, _, "tsx")),
+    docof(n, g), (kind(n, "identifier") ; kind(n, "type_identifier") ; kind(n, "shorthand_property_identifier_pattern")),
+    vv_module_name(n), vv_marker(m, "setup"), docof(m, g), cmp_unquoted(n, x).
+.decl escapes(d: number)
+escapes(d) :- (guest(g, d, _, "javascript") ; guest(g, d, _, "typescript") ; guest(g, d, _, "tsx")),
+    docof(n, g), unknown_use(n).
+
+// refs(n): $refs itself: `this.$refs` (the member), `$refs` in the template, or a bare `$refs` in a script.
 .decl refs(n: node)
-refs(r) :- tfree(r, "$refs", _).
-refs(m) :- vin_script(i), kind(i, "property_identifier"), text(i, "$refs"), field(m, "property", i).
-refs(i) :- vin_script(i), kind(i, "identifier"), text(i, "$refs").
-// used(d, x): document d reads ref x.
-.decl used(d: number, x: symbol)
-used(d, x) :- refs(n), estree_parent(n, m), static_prop(m, o, x), deparen(o, n), docof(n, d).
-used(d, x) :- refs(n), destructured(n, l), child(l, p, _), vprop_key_pattern(p, x), docof(n, d).
-used(d, x) :- kind(c, "call_expression"), vin_script(c), field(c, "function", f), kind(f, "identifier"),
-    text(f, "useTemplateRef"), call_arg(c, s, 0), (kind(s, "string") ; kind(s, "template_string")), value(s, x),
-    docof(c, d).
-used(d, x) :- vname(o, "setup", x, _), docof(o, d).
-used(d, x) :- vsetup_doc(d), vscript(p, _), docof(p, d), decl_site(p, x, _, _, _).
-// destructured(n, l): `const { a } = $refs` or `({ a } = $refs)`: l is the object pattern.
-.decl destructured(n: node, l: node)
-destructured(n, l) :- refs(n), estree_parent(n, p), kind(p, "variable_declarator"), field(p, "value", w), deparen(w, n),
-    field(p, "name", l), kind(l, "object_pattern").
-destructured(n, l) :- refs(n), estree_parent(n, p), kind(p, "assignment_expression"), field(p, "right", w),
-    deparen(w, n), field(p, "left", l), kind(l, "object_pattern").
-.decl vprop_key_pattern(p: node, x: symbol)  // a property of an object pattern with a static key
-vprop_key_pattern(p, x) :- kind(p, "shorthand_property_identifier_pattern"), text(p, x).
-vprop_key_pattern(p, x) :- kind(p, "pair_pattern"), field(p, "key", k), key_static(k, x).
-vprop_key_pattern(p, x) :- kind(p, "object_assignment_pattern"), field(p, "left", k), text(k, x).
-// unknown(d): $refs escapes, and the plugin stops checking the file.
-.decl unknown(d: number)
-unknown(d) :- refs(n), docof(n, d), escapes(n).
-.decl escapes(n: node)
-escapes(n) :- refs(n), estree_parent(n, m), (kind(m, "member_expression") ; kind(m, "subscript_expression")),
-    field(m, "object", w), deparen(w, n), !static_prop(m, _, _).
-escapes(n) :- refs(n), estree_parent(n, p), kind(p, "variable_declarator"), field(p, "value", w), deparen(w, n),
-    field(p, "name", l), kind(l, "identifier").
-escapes(n) :- refs(n), estree_parent(n, p), kind(p, "assignment_expression"), field(p, "right", w), deparen(w, n),
-    field(p, "left", l), kind(l, "identifier").
-escapes(n) :- refs(n), estree_parent(n, p), kind(p, "arguments").
-escapes(n) :- refs(n), estree_parent(n, p), (kind(p, "return_statement") ; kind(p, "for_in_statement")).
-// A pattern with a computed key or a rest element: `const { [k]: a, ...rest } = $refs`.
-escapes(n) :- destructured(n, l), child(l, p, _), !vprop_key_pattern(p, _).
+refs(n) :- kind(n, "member_expression"), field(n, "property", p), kind(p, "property_identifier"), text(p, "$refs"),
+    !in_template(n).
+refs(n) :- kind(n, "subscript_expression"), field(n, "index", p), kind(p, "identifier"), text(p, "$refs"),
+    !in_template(n).
+refs(n) :- kind(n, "identifier"), text(n, "$refs"), (in_template(n) ; !index_of_subscript(n)).
+refs(n) :- kind(n, "parenthesized_expression"), child(n, c, _), refs(c).
+.decl index_of_subscript(n: node)
+index_of_subscript(n) :- field(s, "index", n), kind(s, "subscript_expression").
+.decl in_template(n: node)
+in_template(n) :- inside(n, b, "statement_block"), host_node(b, t), kind(t, "template_element").
+// refs_pattern(l): `const { a } = $refs`, `({ a } = $refs)`.
+.decl refs_pattern(l: node)
+refs_pattern(l) :- kind(l, "object_pattern"), (field(p, "left", l), kind(p, "assignment_expression"),
+    field(p, "right", r) ; field(p, "name", l), kind(p, "variable_declarator"), field(p, "value", r)), refs(r).
+
+// ref_name(n): n names a ref it reads: `$refs.a`, `$refs["a"]`, `{ a, b: c, ["d"]: e } = $refs`, a key of the object
+// setup() returns, useTemplateRef("a").
+.decl ref_name(n: node)
+ref_name(n) :- kind(n, "property_identifier"), field(m, "property", n), kind(m, "member_expression"),
+    field(m, "object", o), refs(o).
+ref_name(n) :- static_index(n), field(s, "index", n), kind(s, "subscript_expression"), field(s, "object", o), refs(o).
+ref_name(n) :- kind(n, "shorthand_property_identifier_pattern"), child(l, n, _), refs_pattern(l).
+ref_name(n) :- kind(n, "shorthand_property_identifier_pattern"), field(p, "left", n),
+    kind(p, "object_assignment_pattern"), child(l, p, _), refs_pattern(l).
+ref_name(n) :- plain_key(n), field(p, "key", n), kind(p, "pair_pattern"), child(l, p, _), refs_pattern(l).
+ref_name(n) :- static_index(n), child(k, n, _), kind(k, "computed_property_name"), field(p, "key", k),
+    kind(p, "pair_pattern"), child(l, p, _), refs_pattern(l).
+ref_name(n) :- kind(n, "shorthand_property_identifier"), child(o, n, _), setup_returned(o).
+ref_name(n) :- plain_key(n), (field(p, "key", n), kind(p, "pair") ; field(p, "name", n), kind(p, "method_definition")),
+    child(o, p, _), setup_returned(o).
+ref_name(n) :- (kind(n, "string") ; plain_template(n)), first_arg(n), child(as, n, _), kind(as, "arguments"),
+    child(c, as, _), kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"),
+    text(f, "useTemplateRef").
+.decl plain_key(n: node)
+plain_key(n) :- kind(n, "property_identifier") ; kind(n, "string") ; kind(n, "number").
+.decl static_index(n: node)
+static_index(n) :- kind(n, "string") ; kind(n, "number") ; kind(n, "true") ; kind(n, "false") ; plain_template(n).
+.decl plain_template(n: node)  // a template literal without `${…}`
+plain_template(n) :- kind(n, "template_string"), count : { child(n, s, _), kind(s, "template_substitution") } = 0.
+
+// unknown_use(n): $refs read whole, so any ref may be read.
+.decl unknown_use(n: node)
+unknown_use(n) :- (kind(n, "assignment_expression") ; kind(n, "augmented_assignment_expression")), field(n, "left", l),
+    kind(l, "identifier"), field(n, "right", r), refs(r).
+unknown_use(n) :- kind(n, "variable_declarator"), field(n, "name", l), kind(l, "identifier"), field(n, "value", r),
+    refs(r).
+unknown_use(n) :- kind(n, "member_expression"), field(n, "object", o), refs(o), field(n, "property", p),
+    !kind(p, "property_identifier").
+unknown_use(n) :- kind(n, "subscript_expression"), field(n, "object", o), refs(o), field(n, "index", i),
+    !static_index(i).
+unknown_use(n) :- kind(n, "call_expression"), field(n, "arguments", as), kind(as, "arguments"), child(as, r, _), refs(r).
+unknown_use(n) :- kind(n, "return_statement"), child(n, r, _), refs(r).
+unknown_use(n) :- kind(n, "for_in_statement"), op(n, "in"), (field(n, "left", r) ; field(n, "right", r)), refs(r).
+unknown_use(l) :- refs_pattern(l), child(l, p, _), (kind(p, "rest_pattern") ;
+    kind(p, "pair_pattern"), field(p, "key", k), !static_key(k)).
+.decl static_key(k: node)
+static_key(k) :- plain_key(k).
+static_key(k) :- kind(k, "computed_property_name"), child(k, i, _), static_index(i).
+
+// The component's setup(): a method or function `setup` of its definition's object, and the object it returns.
+.decl setup_returned(o: node)
+setup_returned(o) :- kind(o, "object"), child(r, o, _), kind(r, "return_statement"), child(b, r, _),
+    kind(b, "statement_block"), field(f, "body", b), setup_fn(f).
+setup_returned(o) :- kind(o, "object"), child(p, o, _), kind(p, "parenthesized_expression"), field(f, "body", p),
+    kind(f, "arrow_function"), setup_fn(f).
+.decl setup_fn(f: node)
+setup_fn(f) :- kind(f, "method_definition"), field(f, "name", k), setup_key(k), child(o, f, _), vue_object(o).
+setup_fn(f) :- (kind(f, "function_expression") ; kind(f, "arrow_function")), field(p, "value", f), kind(p, "pair"),
+    field(p, "key", k), setup_key(k), child(o, p, _), vue_object(o).
+.decl setup_key(k: node)
+setup_key(k) :- (field(_, "name", k) ; field(_, "key", k)), match("setup|\"setup\"|'setup'", k).
+// vue_object(o): `export default { … }`, the last argument of defineComponent(…) and the like, `new Vue({ … })`.
+.decl vue_object(o: node)
+vue_object(o) :- kind(o, "object"), field(e, "value", o), kind(e, "export_statement"), op(e, "default").
+vue_object(o) :- kind(o, "object"), child(as, o, _), kind(as, "arguments"), child(c, as, _), kind(c, "call_expression"),
+    field(c, "function", f), definer(f), last_arg(o).
+vue_object(o) :- kind(o, "object"), first_arg(o), child(as, o, _), kind(as, "arguments"), child(c, as, _),
+    kind(c, "new_expression"), field(c, "constructor", v), kind(v, "identifier"), text(v, "Vue").
+.decl first_arg(n: node)  // `(` comes right before n; last_arg(n): `)` right after it
+first_arg(n) :- structural_before(n, s), match("\\(\\s*", s).
+.decl last_arg(n: node)
+last_arg(n) :- structural_after(n, s), match("\\s*\\)", s).
+.decl definer(f: node)
+definer(f) :- kind(f, "identifier"), text(f, "defineNuxtComponent").
+definer(f) :- kind(f, "identifier"), match("component|createApp|defineComponent", f),
+    count : { vv_site(f, s), (d = s ; within(s, d)), shadowing_site(d) } = 0.
+definer(f) :- kind(f, "member_expression"), field(f, "object", o), kind(o, "identifier"), field(f, "property", p),
+    (match("component|mixin", p) ; text(o, "Vue"), text(p, "extend")).
+.decl shadowing_site(d: node)  // a binding that is not Vue's: a function, a class, an import from elsewhere, …
+shadowing_site(d) :- kind(d, "function_declaration") ; kind(d, "generator_function_declaration") ;
+    kind(d, "class_declaration") ; kind(d, "catch_clause").
+shadowing_site(d) :- kind(d, "import_specifier"),
+    count : { inside(d, i, "import_statement"), field(i, "source", m), vue_package(m) } = 0.
+shadowing_site(d) :- kind(d, "variable_declarator"), field(d, "name", l), kind(l, "object_pattern"), field(d, "value", c),
+    kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), text(f, "require"),
+    count : { field(c, "arguments", as), child(as, m, _), vue_package(m) } = 0.
+.decl vue_package(m: node)
+vue_package(m) :- kind(m, "string"), str(m, v), match("vue|@vue/composition-api|@nuxtjs/composition-api|#imports", v).

@@ -1,0 +1,100 @@
+// vue/vue-02: the template's own variables in a component's view (vue/view), as main's Vue rules read them.
+// A v-for is `(SRC), (ALIAS) => { E };` in the view, a slot `(P) => { children };`; both sit in the `{ … }` block
+// the <template> becomes (vue/view's table). A rule reaches the view by naming `guest` in its own body
+// (`docof(n, g), (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx"))`): that is
+// what makes the engine specialise these relations' kinds to the view's dialect, and a library relation over
+// `guest` does not. Interface:
+//   vv_arrow(a)           a is the arrow of a v-for or a slot: a statement's arrow, or the arrow after a v-for's list
+//   vv_param(n, x, a)     arrow a's parameters declare x at n, destructured or not: `item`, `{ a, b: [c] }`, `d = 1`
+//   vv_destructured(n)    n is declared inside a pattern: `{ a }`, `[c]` (main's `param-destructured`)
+//   vv_read(r, n)         reference r reads the template variable declared at n
+//   vv_site(r, d)         reference r reads the variable declared at d: tsx/names' ref_site, where a name a pattern
+//                         declares is a declaration too (`const { a } = o`, `({ a }) => a`, `(a = 1) => a`); d is
+//                         that name, as tsx/names' decl_site has it
+//   vv_site_only(d)       d is its variable's one declaration in its scope (tsx/names' site_only)
+//   vv_pattern_name(n)    n is a name in a binding position of a pattern (a declaration's, or an assignment's)
+//   vv_setup_stmt(s)      s is in <script setup>: a statement after a <script setup>'s `;` marker (vue/view), and
+//                         after no plain <script>'s marker that follows one (main's `setup-statement`)
+//   vv_module_name(k)     k names a binding of the scripts' top level (main's `binds: {scope: module}`): an import,
+//                         a declaration, a type or interface, or a name a top-level declarator's pattern binds:
+//                         `const { a, b: [c] } = f()`
+//   <li v-for="(item, i) in items">{{ item }}</li>     view: (items), (item, i) => { (item); };
+//     vv_param(<item>, "item", <arrow>), vv_param(<i>, "i", <arrow>), vv_read(<the item of {{ }}>, <item>)
+//
+// tsx/names reads the view's simple parameters and declarations, but not what it tests through a kind variable
+// (`kind(p, k), (k = "…" ; …)`): the view's dialect specialises a kind written in an atom, not one compared with
+// `=`. So bound_name (destructuring) and the type and interface declarations declare nothing over the view, and
+// `{ a }` is a reference there. vv_param, vv_module_name and vv_site read those binding positions themselves:
+// vv_site resolves a reference along tsx/names' lookup (`look`, which climbs past a scope that declares a name only
+// by a pattern) to the nearest scope on it that declares the name, by a pattern or not.
+#include "vue/names.rerail"
+#include "vue/view.rerail"
+
+.decl vv_arrow(a: node)
+vv_arrow(a) :- kind(a, "arrow_function"), child(p, a, _),
+    (kind(p, "expression_statement") ; kind(p, "sequence_expression"), child(s, p, _), kind(s, "expression_statement")),
+    inside(a, b, "statement_block"), host_node(b, t), kind(t, "template_element").
+
+.decl vv_param(n: node, x: symbol, a: node)
+vv_param(n, x, a) :- vv_arrow(a), field(a, "parameters", ps), within(n, ps), vv_binding(n), text(n, x).
+.decl vv_binding(n: node)  // n is a name in a binding position of a parameter list or a pattern
+vv_binding(n) :- kind(n, "identifier"), child(p, n, _), kind(p, "formal_parameters").
+vv_binding(n) :- kind(n, "identifier"), field(p, "pattern", n), (kind(p, "required_parameter") ; kind(p, "optional_parameter")).
+vv_binding(n) :- vv_pattern_name(n).
+.decl vv_pattern_name(n: node)
+vv_pattern_name(n) :- (kind(n, "identifier") ; kind(n, "shorthand_property_identifier_pattern")), child(p, n, _),
+    (kind(p, "object_pattern") ; kind(p, "array_pattern") ; kind(p, "rest_pattern") ;
+     kind(p, "pair_pattern"), field(p, "value", n) ;
+     (kind(p, "assignment_pattern") ; kind(p, "object_assignment_pattern")), field(p, "left", n)).
+.decl vv_destructured(n: node)
+vv_destructured(n) :- vv_param(n, _, _), (kind(n, "shorthand_property_identifier_pattern") ;
+    inside(n, _, "pair_pattern") ; inside(n, _, "array_pattern")).
+
+.decl vv_read(r: node, n: node)
+vv_read(r, n) :- vv_site(r, n), vv_param(n, _, _).
+
+.decl vv_site(r: node, d: node)
+vv_site(r, d) :- ref(r, x, "value"), !vv_declares(r), look(r, x, "value", s), vv_decl(s, x, d), !vv_nearer(r, x, s).
+.decl vv_nearer(r: node, x: symbol, s: node)  // a scope nearer to r than s declares x
+vv_nearer(r, x, s) :- look(r, x, "value", t), vv_decl(t, x, _), within(t, s).
+.decl vv_site_only(d: node)
+vv_site_only(d) :- vv_decl(s, x, d), count : { vv_decl(s, x, o), o != d } = 0.
+// vv_decl(s, x, d): scope s declares x at d; vv_declares(n): name n declares itself (a pattern's, a parameter's).
+.decl vv_decl(s: node, x: symbol, d: node)
+vv_decl(s, x, d) :- decl_site(s, x, d, _, "value").
+vv_decl(s, x, n) :- vv_pattern_scope(n, s), text(n, x).
+.decl vv_declares(n: node)
+vv_declares(n) :- vv_pattern_scope(n, _).
+// vv_pattern_scope(n, s): name n of a pattern or a parameter list declares in scope s, as decl_site would: a
+// declarator's pattern in its block (let, const) or function (var), a parameter in its function (TypeScript's
+// `(a: T)` too, whose required_parameter tsx/names tests through `k = …`), a catch parameter's pattern in its
+// clause, a `for (const … of)` loop's in the loop.
+.decl vv_pattern_scope(n: node, s: node)
+vv_pattern_scope(n, s) :- vv_pattern_name(n), nearest(n, d, "variable_declarator"), field(d, "name", l), within(n, l),
+    nearest(n, f, fn_scope), nearest(d, f, fn_scope), child(v, d, _),
+    (kind(v, "lexical_declaration"), nearest(d, s, block_scope) ; kind(v, "variable_declaration"), s = f).
+vv_pattern_scope(n, f) :- vv_binding(n), nearest(n, f, fn_scope), field(f, "parameters", ps), within(n, ps).
+vv_pattern_scope(n, c) :- vv_pattern_name(n), nearest(n, c, "catch_clause"), field(c, "parameter", p), within(n, p),
+    nearest(n, f, fn_scope), nearest(c, f, fn_scope).
+vv_pattern_scope(n, l) :- vv_pattern_name(n), nearest(n, l, "for_in_statement"), field(l, "left", p), within(n, p),
+    nearest(n, f, fn_scope), nearest(l, f, fn_scope), (op(l, "let") ; op(l, "const")).
+
+.decl vv_module_name(k: node)
+vv_module_name(k) :- bind_name(k, s), (site_scope(s, "module") ; site_scope(s, "global")).
+vv_module_name(k) :- vv_pattern_name(k), nearest(k, d, "variable_declarator"), field(d, "name", l), within(k, l),
+    child(v, d, _), (kind(v, "lexical_declaration") ; kind(v, "variable_declaration")), child(p, v, _),
+    kind(p, "program"), nearest(k, p, fn_scope).
+vv_module_name(k) :- kind(k, "type_identifier"), field(t, "name", k),
+    (kind(t, "type_alias_declaration") ; kind(t, "interface_declaration")), nearest(t, p, block_scope), kind(p, "program").
+
+.decl vv_setup_stmt(s: node)
+vv_setup_stmt(s) :- precedes(m, s), vv_marker(m, "setup"), !vv_reopened(s).
+.decl vv_reopened(s: node)  // a plain <script>'s marker after a <script setup>'s comes before s
+vv_reopened(s) :- precedes(p, s), vv_marker(p, "plain"), precedes(m, p), vv_marker(m, "setup").
+// vv_marker(m, k): the `;` a <script> block starts with; k is "setup" for <script setup>, else "plain".
+.decl vv_marker(m: node, k: symbol)
+vv_marker(m, k) :- kind(m, "empty_statement"), host_node(m, t), kind(t, "start_tag"), match("<script\\b.*", t),
+    (vv_setup_tag(t), k = "setup" ; !vv_setup_tag(t), k = "plain").
+.decl vv_setup_tag(t: node)
+vv_setup_tag(t) :- kind(t, "start_tag"),
+    match("<script(?:\\s+[^\\s\"'<>/=]+(?:\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'<>=`]+))?)*\\s+setup(?:[\\s/>=]|$).*", t).
