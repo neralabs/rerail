@@ -13,6 +13,7 @@ import {
 } from "../storage/schema.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { normalizeFolder, RULE_SETTING_ORIGINS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS, type RuleCatalog } from "./repository-model.js";
+import { readableRepositoryRows } from "./repository-registry.js";
 import { approve, isApproved, ruleSubject } from "./rule-approval.js";
 import { listLibraryRules, quarantinedLibraryRules, validateLibraryDocument, writeLibraryRule } from "./rule-library.js";
 import { RULE_MODES } from "./rule-mode.js";
@@ -140,7 +141,7 @@ export function exportRulesDump(db: RerailDatabase, now = new Date()): RulesDump
     .orderBy(asc(ruleAttachments.repositoryKey), asc(ruleAttachments.folder), asc(ruleAttachments.sourceKind), asc(ruleAttachments.sourceId)).all();
   const settings = db.select().from(ruleSettings).where(eq(ruleSettings.ownerKind, "repository"))
     .orderBy(asc(ruleSettings.ownerId), asc(ruleSettings.folder), asc(ruleSettings.targetKind), asc(ruleSettings.targetId)).all();
-  const repositoryRows = db.select().from(repositories).orderBy(asc(repositories.repositoryKey)).all();
+  const repositoryRows = readableRepositoryRows(db);
   return {
     version: RULES_DUMP_VERSION,
     exportedAt: now.toISOString(),

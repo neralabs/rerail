@@ -1,8 +1,12 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { listRepositories } from "../../../../src/engine/catalog/repository-registry.js";
+import { dirname, join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRerailApi, DatabaseApiStores, operations } from "../../../../src/api/index.js";
+import { listRepositories, lookupCheckout, recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
+import { exportRulesDump } from "../../../../src/engine/catalog/rule-bootstrap.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../../src/engine/storage/database.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 
@@ -75,5 +79,90 @@ describe("the repository list with a repository whose stored aliases do not read
       ["remote:github.com/acme/api", []], ["remote:github.com/acme/cli", []], ["remote:github.com/acme/web", []],
     ]);
     expect(listed.find(repository => repository.displayName === "web")).toMatchObject({ configuredAt: null, started: false, createdAt: 1, updatedAt: 2 });
+  });
+});
+
+const CLI = "remote:github.com/acme/cli";
+
+function git(cwd: string, ...args: string[]): void {
+  execFileSync("git", args, { cwd, stdio: "ignore" });
+}
+
+/**
+ * `cli` given the alias `old-cli`, and a clone of `old-cli` Rerail has not recorded, with one commit and a worktree:
+ * the clone's and the worktree's paths. The repositories read in the order they were added, so a lookup reads `api`'s
+ * aliases before it reaches `cli`'s.
+ */
+function newCloneOfAnAlias(database: RerailDatabase): [string, string] {
+  database.$client.prepare("UPDATE repositories SET aliases_json = ? WHERE repository_key = ?").run('["remote:github.com/acme/old-cli"]', CLI);
+  const clone = join(dirname(database.$client.name), "new-clone");
+  mkdirSync(clone);
+  git(clone, "init", "-q", "-b", "main");
+  git(clone, "-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-q", "--allow-empty", "-m", "base");
+  git(clone, "remote", "add", "origin", "https://github.com/acme/old-cli.git");
+  const worktree = join(dirname(clone), "new-worktree");
+  git(clone, "worktree", "add", "-q", "-b", "feature", worktree);
+  return [clone, worktree];
+}
+
+/** Spies on this thread's stderr, where a lookup writes the line that names a damaged row: the lines naming `api`. */
+function spyOnStderr(): { named: () => string[]; restore: () => void } {
+  const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  return {
+    named: () => stderr.mock.calls.map(([chunk]) => String(chunk)).filter(line => line.includes("repository remote:github.com/acme/api reads with no aliases")),
+    restore: () => stderr.mockRestore(),
+  };
+}
+
+describe("a checkout not recorded yet, while another repository's stored aliases do not read", () => {
+  it.each([["does not parse", '{"x":'], ["is another JSON value", '{"x":1}']])(
+    "is found and recorded by its repository's alias when another's aliases_json %s, and the list's line names that one once",
+    async (_, text) => {
+      const database = await threeRepositories();
+      const [clone, worktree] = newCloneOfAnAlias(database);
+      damage(database, "remote:github.com/acme/api", text);
+      const stderr = spyOnStderr();
+      try {
+        expect([clone, worktree].map(path => lookupCheckout(database, path)?.repositoryKey)).toEqual([CLI, CLI]);
+        expect(recordCheckout(database, worktree).repositoryKey).toBe(CLI);
+        listRepositories(database);
+        expect(stderr.named()).toHaveLength(1);
+      } finally {
+        stderr.restore();
+      }
+    },
+  );
+
+  it("answers GET /api/repository?checkout= for a new clone with its repository", async () => {
+    const database = await threeRepositories();
+    const [clone] = newCloneOfAnAlias(database);
+    damage(database, "remote:github.com/acme/api", '{"x":');
+    const path = database.$client.name;
+    const stores = new DatabaseApiStores(path, {
+      health: () => ({ pid: process.pid, database: { path, exists: true }, native: { ok: true } }), origin: () => "http://127.0.0.1:4737",
+    });
+    const stderr = spyOnStderr();
+    try {
+      const response = await createRerailApi(stores, operations, { version: "0.0.0-test" }).request(`/api/repository?checkout=${encodeURIComponent(clone)}`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ repository: { repositoryKey: CLI } });
+    } finally {
+      stderr.restore();
+      stores.close();
+    }
+  });
+
+  it("exports every repository's rules, the one whose aliases do not read with none", async () => {
+    const database = await threeRepositories();
+    damage(database, "remote:github.com/acme/api", '{"x":');
+    const stderr = spyOnStderr();
+    try {
+      expect(exportRulesDump(database).repositories.map(repository => [repository.displayName, repository.aliases])).toEqual([
+        ["api", []], ["cli", []], ["web", ["remote:github.com/acme/old-web", "clone:git:web"]],
+      ]);
+      expect(stderr.named()).toHaveLength(1);
+    } finally {
+      stderr.restore();
+    }
   });
 });
