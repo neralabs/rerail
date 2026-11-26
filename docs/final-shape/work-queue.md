@@ -11536,3 +11536,7 @@ asks for the new check), c-directives eval::tests 50.
   - 0652's crossing check: django-bugs' d7ec54c12f exempted every `magic_…` relation, beside the hub's `magic::same_documents` (the user's choice A at the green pass, where this exemption was option B and not taken). The exemption is removed; a demand set is checked as any relation, and keeps its document by A.
 - 0342 and 0628 already carry Typing-support's long room (the owners' rooms gone). Option C's measurement is now of the stack with the long room.
 - Checked with Relax, RERAIL_GPU=cpu: check over boot, device-metal, tests-corpus, tests-logic, tests-lang, tests-tape, tests-rr, tests-sql, tests-cpu, tests-admission, adapters and json-rules: 0 errors.
+
+### Q556. Roll-up 128 (build-and-test-loop-time a1be6a7657 onto Pulling-it-all-together): what the merge chose
+
+- build-and-test-loop-time (1 commit, a1be6a7657): farm 61, the hot path keeps clippy-driver's rustc argument first. Tooling only; a clean merge.
