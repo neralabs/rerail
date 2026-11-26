@@ -606,3 +606,4 @@ This continues the series in PIAT's `docs/rule-engine-direction/decisions/`
 | 0690 | [A corpus is spread over the chunks that evaluate at once](0690-a-corpus-is-spread-over-the-chunks-that-evaluate-at-once.md) |
 | 0697 | [A language's codes' atoms are constants in the binary](0697-a-languages-codes-atoms-are-constants-in-the-binary.md) |
 | 0700 | [The `node` view's rows by kind are made per kind, at its first lookup](0700-the-node-views-rows-by-kind-are-made-per-kind-at-its-first-lookup.md) |
+| 0703 | [The parse writes its tape's auxiliary index and digest, and the preparation runs on the cores](0703-the-parse-writes-its-tapes-aux-and-digest-and-the-preparation-runs-on-the-cores.md) |
