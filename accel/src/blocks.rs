@@ -79,6 +79,18 @@ pub fn host_free_resident() -> usize {
     }).sum()
 }
 
+/// The bytes of the host blocks live now that are in memory, measured (`Extent::resident`): a profile's account,
+/// where their used bytes count room reserved and never written.
+pub fn host_resident() -> usize {
+    let host = rerail_context::machine::<Host>();
+    let live: Vec<_> = {
+        let mut live = host.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        live.retain(|e| e.strong_count() > 0);
+        live.iter().filter_map(std::sync::Weak::upgrade).collect()
+    };
+    live.iter().map(|e| e.resident()).sum()
+}
+
 /// The host blocks live now: bytes used in them, and of those the bytes their free lists hold.
 pub fn host_held() -> (usize, usize) {
     let host = rerail_context::machine::<Host>();

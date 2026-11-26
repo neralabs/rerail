@@ -333,19 +333,21 @@ fn open_given_back(span: u32, ty: &'static str, bytes: usize) {
     }
 }
 
-pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
+pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String, usize)> {
     let made = crate::code_rule_dsl::logic::profile::machine::<Made>();
     let m = made.0.lock().unwrap_or_else(|e| e.into_inner());
-    let mut by: std::collections::HashMap<(u32, u8, Option<Arc<str>>), (usize, usize)> = std::collections::HashMap::new();
+    let mut by: std::collections::HashMap<(u32, u8, Option<Arc<str>>), (usize, usize, usize)> = std::collections::HashMap::new();
     for (e, span, life, maker) in m.iter() {
         if let Some(e) = e.upgrade() {
             use std::sync::atomic::Ordering::Relaxed;
             let v = by.entry((*span, *life, maker.clone())).or_default();
             v.0 += e.top.load(Relaxed).saturating_sub(e.free.load(Relaxed));
             v.1 += 1;
+            // What of it is in memory: its used bytes count room reserved and never written.
+            v.2 += e.resident();
         }
     }
-    let mut out: Vec<(u32, u8, usize, usize, String)> = by.into_iter().map(|((s, l, w), (b, n))| (s, l, b, n, w.map_or_else(String::new, |w| w.to_string()))).collect();
+    let mut out: Vec<(u32, u8, usize, usize, String, usize)> = by.into_iter().map(|((s, l, w), (b, n, res))| (s, l, b, n, w.map_or_else(String::new, |w| w.to_string()), res)).collect();
     // What lies in the chunks' open run-life blocks, by the span whose arrays hold it (no blocks of its own).
     let used = crate::code_rule_dsl::logic::profile::machine::<OpenUse>();
     let used = used.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -365,7 +367,7 @@ pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
         }
         types.sort_by_key(|t| std::cmp::Reverse(t.0));
         let types: Vec<String> = types.iter().take(4).map(|(b, n, t)| format!("{} MB in {n} {t}", b >> 20)).collect();
-        out.push((s, Life::Run as u8, b, 0, format!("  in the open block of run-life arrays: held by this span's arrays ({})", types.join(", "))));
+        out.push((s, Life::Run as u8, b, 0, format!("  in the open block of run-life arrays: held by this span's arrays ({})", types.join(", ")), 0));
     }
     // What lies in the batches' blocks of sources, by relation (`made::sources_held`): the span of its first group and
     // of its latest, and the batch's documents made.
@@ -374,7 +376,7 @@ pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
     for (k, (bytes, name, made, docs, first, last)) in sources.into_iter().enumerate() {
         if bytes >= 1 << 20 && k < 24 {
             let last = if last == first { String::new() } else { format!("; its latest group in {}", crate::code_rule_dsl::logic::profile::short(&rerail_prof::heap::name(last), 160)) };
-            out.push((first, Life::Source as u8, bytes, 0, format!("  in a batch's block of sources: {name}, {made} of its {docs} documents made{last}")));
+            out.push((first, Life::Source as u8, bytes, 0, format!("  in a batch's block of sources: {name}, {made} of its {docs} documents made{last}"), 0));
         } else {
             small += bytes;
             small_n += 1;
@@ -382,11 +384,11 @@ pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
     }
     if n > 0 {
         let s = rerail_prof::heap::intern("the batches' relations, all of them");
-        out.push((s, Life::Source as u8, all, 0, format!("  in a batch's block of sources: {n} relations; {small_n} of them not listed, {} MB", small >> 20)));
+        out.push((s, Life::Source as u8, all, 0, format!("  in a batch's block of sources: {n} relations; {small_n} of them not listed, {} MB", small >> 20), 0));
     }
     if rest > 0 {
         let s = rerail_prof::heap::intern("the open block's arrays of spans under 1 MB each");
-        out.push((s, Life::Run as u8, rest, 0, format!("  in the open block of run-life arrays: {rest_spans} spans")));
+        out.push((s, Life::Run as u8, rest, 0, format!("  in the open block of run-life arrays: {rest_spans} spans"), 0));
     }
     out.sort_by_key(|o| std::cmp::Reverse(o.2));
     out
@@ -2190,6 +2192,11 @@ impl Part {
         }
     }
 
+    /// The bytes of its chunks in memory now (`Rows::resident`).
+    fn resident_bytes(&self) -> usize {
+        self.rel().rows.resident()
+    }
+
     /// The bytes its chunks hold.
     fn capacity_bytes(&self) -> usize {
         self.rel().rows.reserved() as usize * self.rel().rows.ncols as usize * 8
@@ -2431,6 +2438,11 @@ impl Rows {
     /// The bytes of the values held (the frozen segments counted whole, shared or not).
     pub fn bytes(&self) -> usize {
         self.len() * 8
+    }
+
+    /// The bytes of the chunks in memory now, the frozen segments' and the tail's: a profile's measure.
+    pub fn resident_bytes(&self) -> usize {
+        self.segs.iter().map(|(_, p)| p.resident_bytes()).sum::<usize>() + self.tail.as_ref().map_or(0, Part::resident_bytes)
     }
 
     /// The bytes the chunks hold: the frozen segments' and the tail's.

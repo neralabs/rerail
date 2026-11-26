@@ -325,6 +325,24 @@ impl Rows {
         self.len() == 0
     }
 
+    /// The bytes of its columns' chunks made that are in memory now (`mem::resident`; a sealed chunk's piece is
+    /// not read): a profile's measure beside the room they reserve.
+    pub fn resident(&self) -> usize {
+        let n = self.nchunks.load(Acquire) as usize;
+        (0..self.ncols as usize)
+            .map(|c| {
+                let d = self.col(c);
+                (0..n.min(d.chunk.len()))
+                    .filter(|&s| d.chunk[s].load(Relaxed) & SEALED == 0)
+                    .map(|s| {
+                        let start = std::ptr::from_ref(d).cast::<u8>().wrapping_offset(d.chunk[s].load(Relaxed) as isize);
+                        crate::mem::resident(start as usize, chunk_rows(s, self.min_log) as usize * d.width as usize)
+                    })
+                    .sum::<usize>()
+            })
+            .sum()
+    }
+
     /// The rows the chunks made hold.
     #[inline]
     pub fn reserved(&self) -> u32 {

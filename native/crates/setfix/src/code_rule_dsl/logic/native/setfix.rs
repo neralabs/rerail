@@ -375,16 +375,18 @@ pub fn held_on(conn: impl Scoped) -> Vec<(String, usize, usize, [usize; 3])> {
     out
 }
 
-pub fn held_by_name() -> Vec<(String, usize, usize, usize, usize)> {
+pub fn held_by_name() -> Vec<(String, usize, usize, usize, usize, usize)> {
     let held = crate::code_rule_dsl::logic::profile::machine::<Held>();
     let conns: Vec<Arc<OnConn>> = held.0.lock().iter().filter_map(std::sync::Weak::upgrade).collect();
-    let mut by: HashMap<String, (usize, usize, usize, usize)> = HashMap::default();
+    let mut by: HashMap<String, (usize, usize, usize, usize, usize)> = HashMap::default();
     let mut add = |name: String, r: &InRel| {
         let e = by.entry(name).or_default();
         e.0 += rows_held(r);
         e.1 = r.k;
         e.2 += r.held_bytes().0;
         e.3 += 1;
+        // What of its values' room is in memory.
+        e.4 += r.rows.resident_bytes();
     };
     for c in &conns {
         for (name, r) in c.derived.lock().iter() {
@@ -394,7 +396,7 @@ pub fn held_by_name() -> Vec<(String, usize, usize, usize, usize)> {
             add(format!("input: {}", key.sql.chars().take(80).collect::<String>()), r);
         }
     }
-    let mut out: Vec<(String, usize, usize, usize, usize)> = by.into_iter().map(|(n, (rows, k, b, runs))| (n, rows, k, b, runs)).collect();
+    let mut out: Vec<(String, usize, usize, usize, usize, usize)> = by.into_iter().map(|(n, (rows, k, b, runs, res))| (n, rows, k, b, runs, res)).collect();
     out.sort_by_key(|o| std::cmp::Reverse(o.3));
     out
 }
