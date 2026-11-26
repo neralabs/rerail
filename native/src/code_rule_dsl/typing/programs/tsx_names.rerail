@@ -8,6 +8,7 @@
 
 #include "core.rerail"
 #include "tsx/exports.rerail"
+#include "tsx/project.rerail"  // tsconfig, tsconfig_for, tsconfig_path
 
 .phase tsx_names
 .export target_at, exports, module

@@ -55,6 +55,7 @@
 
 #include "tsx/node.rerail"   // builtin_spec
 #include "tsx/node-package.rerail"
+#include "tsx/project.rerail"  // tsconfig, tsconfig_for, tsconfig_path
 
 // spec_resolved(n, f): the phase node_resolve's answer for n's file, specifier and style, read at n's own path. The
 // phase resolves every string a specifier may be (a superset of node_target's), so each of node_target's is asked.

@@ -534,18 +534,12 @@
 // the Git tree, the policy) and is native because that is IO and format parsing, not logic.
 // file("src/c.tsx"): the file exists. Import resolution tests candidate paths against this.
 .decl file(path: symbol) setting                                 // a file in the scanned tree (Git tree facts)
-// tsconfig("web", "web/src") for web/tsconfig.json with "baseUrl": "src". `extends` chains are merged first.
-.decl tsconfig(dir: symbol, base_url: symbol) keyed            // tsconfig.json / jsconfig.json, `extends` followed
-// tsconfig_for("web/src/a.ts", "web"): the nearest tsconfig.json in or above its directory.
-.decl tsconfig_for(path: symbol, dir: symbol) by_path 1            // the tsconfig directory that governs a file
-// "paths": {"@/*": ["src/*"]} in web/tsconfig.json gives tsconfig_path("web", "@/*", "src/*"), one row per target.
-.decl tsconfig_path(dir: symbol, pattern: symbol, target: symbol) keyed
 // package("packages/ui", "@acme/ui") from packages/ui/package.json: maps a workspace package name to its directory.
 .decl package(dir: symbol, name: symbol) keyed                 // package.json name
 // "exports": {"./button": "./src/button.ts"} in @acme/ui's package.json gives
 // package_export("@acme/ui", "./button", "./src/button.ts").
 .decl package_export(name: symbol, subpath: symbol, target: symbol) setting
-// package_for("web/src/a.js", "web"): the nearest package.json in or above a file's directory, as tsconfig_for.
+// package_for("web/src/a.js", "web"): the nearest package.json in or above a file's directory.
 // package_field("web", "engines/node", ">=18"): its string values, one row each. The key is the member's path
 // from the root, segments joined by "/" and escaped as JSON pointer tokens (RFC 6901: "~" as "~0", "/" as "~1"),
 // array elements by index from 0: "type", "engines/node", "devEngines/runtime/0/version". Only strings give
@@ -605,7 +599,7 @@
 // Surrogates delimit runs. This projection does not replace full decoded string values.
 .decl str_part_word(lit: node, i: number, w: symbol, at: node, spec: number)
 .decl str_part_start(lit: node, i: number, l: number, c: number)
-.input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, package_for, package_field
+.input file, package, package_export, package_for, package_field
 .input string_annotation, option, option_item
 .input signed_list, git_rev, str_part, str_part_word, str_part_start, literal_json
 .input dump_sha256, body_sha256, signature_sha256

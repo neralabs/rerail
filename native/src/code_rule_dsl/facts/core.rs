@@ -782,10 +782,6 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "package" => &["dir", "name"],
         "package_field" => &["dir", "key", "v"],
         "package_for" => &["path", "dir"],
-        "tsconfig" => &["dir", "base_url"],
-        "tsconfig_for" => &["path", "dir"],
-        "tsconfig_path" => &["dir", "pattern", "target"],
-        "npm_ignored" => &["path"],
         "pkg" => &["d", "p"],
         "path_part" | "file_name" => &["d", "s"],
         "tape" => &["n", "par", "size", "depth"],
@@ -803,7 +799,8 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::GROUPS) => &["sp", "m", "g", "gsp"],
         // A registered family's lazy relations (`facts::vtab::syntax::Families`: Python's `py.*`).
         rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::family_columns(rel)?,
-        _ => return None,
+        // A language's project relations (decision 0710), with the columns its reader states.
+        rel => return super::repository::project_columns(rel),
     })
 }
 
