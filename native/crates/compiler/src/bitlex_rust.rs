@@ -3187,7 +3187,8 @@ impl<'a> G<'a> {
                     ::bitlex::syntax::PartLen::Bytes(b) => *b,
                     ::bitlex::syntax::PartLen::Last(_) => 0,
                 };
-                let _ = write!(parts, "            // `{name}`\n            if let Some(e) = first_bit(&m.{start}, at).filter(|&e| e < c) {{\n                if part.is_none_or(|q| (e, {bytes}, {i}) < q) {{\n                    part = Some((e, {bytes}, {i}));\n                }}\n            }}\n");
+                let test = if rd.parts.len() == 1 { String::new() } else { format!(".filter(|&e| bit(&m.{start}, e))") };
+                let _ = write!(parts, "            // `{name}`\n            if let Some(e) = first{test} {{\n                if part.is_none_or(|q| (e, {bytes}, {i}) < q) {{\n                    part = Some((e, {bytes}, {i}));\n                }}\n            }}\n");
                 let l = match last {
                     Some(f) => format!("match first_bit(&m.{f}, e) {{\n                            Some(l) => l,\n                            None => return self.refuse(),\n                        }}"),
                     None => format!("e + {}", usize::from(bytes).saturating_sub(1)),
@@ -3236,17 +3237,22 @@ impl<'a> G<'a> {
                 // Its opener's kind: its own row's.
                 let rows = self.x.lexer.iter().filter(|s| matches!(s, ::bitlex::syntax::Stmt::Token { .. }));
                 let own = rows.enumerate().find(|(_, s)| matches!(s, ::bitlex::syntax::Stmt::Token { kind, .. } if *kind == rd.kind)).and_then(|(i, _)| self.x.row_kinds.get(i).copied().flatten());
-                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_bit(&self.m.{}, from).filter(|&p| p < (if self.i + 1 < self.n {{ self.recs[self.i + 1].start }} else {{ u32::MAX }}).min(self.next_x) as usize) {{\n            self.known = 0;\n            return self.resume_{r}(p);\n        }}\n", rd.open);
+                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_of([&self.m.{}], from, (if self.i + 1 < self.n {{ self.recs[self.i + 1].start }} else {{ u32::MAX }}).min(self.next_x) as usize) {{\n            self.known = 0;\n            return self.resume_{r}(p);\n        }}\n", rd.open);
                 (format!("resume_{r}"), "at byte `s`, no record of its own: the string's parts after its template's `}`", format!("s: usize) -> R {{\n        self.sub.clear();\n        self.k = 0;\n        self.piece(s, s, {});", kind_or(own, "s")))
             } else {
                 (format!("split_{r}"), "record `j`", "j: usize) -> R {\n        let s = self.recs[j].start as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.recs[j].code));".to_owned())
             };
             let _ = write!(
                 out,
-                "    /// `{kind}`'s region (`read {regions} parts`), {doc}: its opener's byte, each part, each run of the bytes between, its closer.\n    fn {name}(&mut self, {head}\n        let m = self.m;\n        let mut at = s + 1;\n        loop {{\n            let Some(c) = first_bit(&m.{close}, at) else {{\n                return self.refuse();\n            }};\n            // The part first after `at`, before the closer: the earliest, the shortest at one byte.\n            let mut part: Option<(usize, u8, usize)> = None;\n{parts}            let to = part.map_or(c, |q| q.0);\n            if to > at {{\n                self.piece(at, to - 1, {content});\n            }}\n            match part {{\n                Some((e, _, i)) => {{\n                    let (l, kind) = match i {{\n{lasts}                        _ => unreachable!(),\n                    }};\n                    self.piece(e, l, kind);\n                    at = l + 1;\n                }}\n                None => {{\n                    let (l, kind) = {closer};\n                    self.piece(c, l, kind);\n{strings}                    return Ok(());\n                }}\n            }}\n        }}\n    }}\n\n",
+                "    /// `{kind}`'s region (`read {regions} parts`), {doc}: its opener's byte, each part, each run of the bytes between, its closer.\n    fn {name}(&mut self, {head}\n        let m = self.m;\n        let mut at = s + 1;\n        loop {{\n            let Some(c) = first_bit(&m.{close}, at) else {{\n                return self.refuse();\n            }};\n            // The part first after `at`, before the closer: the earliest, the shortest at one byte.{scan}\n            let mut part: Option<(usize, u8, usize)> = None;\n{parts}            let to = part.map_or(c, |q| q.0);\n            if to > at {{\n                self.piece(at, to - 1, {content});\n            }}\n            match part {{\n                Some((e, _, i)) => {{\n                    let (l, kind) = match i {{\n{lasts}                        _ => unreachable!(),\n                    }};\n                    self.piece(e, l, kind);\n                    at = l + 1;\n                }}\n                None => {{\n                    let (l, kind) = {closer};\n                    self.piece(c, l, kind);\n{strings}                    return Ok(());\n                }}\n            }}\n        }}\n    }}\n\n",
                 kind = rd.kind,
                 regions = regions.join(" | "),
-                close = rd.close
+                close = rd.close,
+                scan = if rd.parts.is_empty() {
+                    String::new()
+                } else {
+                    format!(" One scan of the\n            // parts' starts, to the closer.\n            let first = first_of([{}], at, c);", rd.parts.iter().map(|p| format!("&m.{}", p.1)).collect::<Vec<_>>().join(", "))
+                }
             );
         }
         let _ = write!(out, "    /// Past the token, to the next grammar token's record{}.\n    #[inline(always)]\n    fn advance(&mut self, from: usize) -> R {{\n{resume}        // The next token, the comments before it passed.\n        self.i += 1;\n        self.pass_comments();\n        self.arrive()\n    }}\n\n", if resume.is_empty() { "" } else { ", or the string's parts a template's `}` resumes, at the record before the next (decision 0600)" });
@@ -4026,6 +4032,27 @@ fn first_bit(x: &[u64], from: usize) -> Option<usize> {
         w = *x.get(q)?;
     }
     Some(64 * q + w.trailing_zeros() as usize)
+}
+
+/// The first byte in `from..to` where one of the masks `xs` holds, a word of their union at a time: the words up to
+/// `to` read, and no more, as the lean lexer's string reader looks no further than its quote.
+#[inline(always)]
+fn first_of<const N: usize>(xs: [&[u64]; N], from: usize, to: usize) -> Option<usize> {
+    let len = xs.iter().map(|x| x.len()).max().unwrap_or(0);
+    if from >= to || from / 64 >= len {
+        return None;
+    }
+    let (mut q, last) = (from / 64, ((to - 1) / 64).min(len - 1));
+    let word = |q: usize| xs.iter().fold(0u64, |a, x| a | x.get(q).copied().unwrap_or(0));
+    let mut w = word(q) & (!0u64 << (from % 64));
+    while w == 0 {
+        if q == last {
+            return None;
+        }
+        q += 1;
+        w = word(q);
+    }
+    Some(64 * q + w.trailing_zeros() as usize).filter(|&p| p < to)
 }
 
 /// Whether mask `x` holds at byte `i`.

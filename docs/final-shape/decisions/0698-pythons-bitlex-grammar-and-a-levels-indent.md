@@ -353,3 +353,10 @@ statements and blocks end.
       alone, as lean's `while !matches!(peek, Dedent | Eof) { statement }`. It no longer asks a statement's whole first
       set at every statement. A token that is neither refuses in the statement, as in lean. An expression level is no
       such loop: its callers' tokens (`)`) end it too.
+66. **A string's parts are found in one scan of their starts, to the string's closer.** Tier 2's split of a string
+    asked each part's mask apart with `first_bit`, which reads to the mask's next bit wherever it is, the file's end
+    where there is none. That was once a part, for each of a string's parts, for every string, so it was quadratic in
+    a file's strings. `first_of` reads the union of the parts' masks, a word at a time, up to the closer and no
+    further, as the lean lexer's string reader looks no further than its quote. Each part then asks its own mask at
+    the one byte found. `advance`'s look for a template's `}` that resumes a string reads up to the next record in the
+    same way.

@@ -632,6 +632,27 @@ fn first_bit(x: &[u64], from: usize) -> Option<usize> {
     Some(64 * q + w.trailing_zeros() as usize)
 }
 
+/// The first byte in `from..to` where one of the masks `xs` holds, a word of their union at a time: the words up to
+/// `to` read, and no more, as the lean lexer's string reader looks no further than its quote.
+#[inline(always)]
+fn first_of<const N: usize>(xs: [&[u64]; N], from: usize, to: usize) -> Option<usize> {
+    let len = xs.iter().map(|x| x.len()).max().unwrap_or(0);
+    if from >= to || from / 64 >= len {
+        return None;
+    }
+    let (mut q, last) = (from / 64, ((to - 1) / 64).min(len - 1));
+    let word = |q: usize| xs.iter().fold(0u64, |a, x| a | x.get(q).copied().unwrap_or(0));
+    let mut w = word(q) & (!0u64 << (from % 64));
+    while w == 0 {
+        if q == last {
+            return None;
+        }
+        q += 1;
+        w = word(q);
+    }
+    Some(64 * q + w.trailing_zeros() as usize).filter(|&p| p < to)
+}
+
 /// Whether mask `x` holds at byte `i`.
 fn bit(x: &[u64], i: usize) -> bool {
     x.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)
@@ -6035,34 +6056,36 @@ impl<L: Layout> P<'_, L> {
             let Some(c) = first_bit(&m.rd0_close, at) else {
                 return self.refuse();
             };
-            // The part first after `at`, before the closer: the earliest, the shortest at one byte.
+            // The part first after `at`, before the closer: the earliest, the shortest at one byte. One scan of the
+            // parts' starts, to the closer.
+            let first = first_of([&m.rd0_part0, &m.r_start, &m.id_dollar, &m.rd0_part3, &m.lone], at, c);
             let mut part: Option<(usize, u8, usize)> = None;
             // `""`
-            if let Some(e) = first_bit(&m.rd0_part0, at).filter(|&e| e < c) {
+            if let Some(e) = first.filter(|&e| bit(&m.rd0_part0, e)) {
                 if part.is_none_or(|q| (e, 2, 0) < q) {
                     part = Some((e, 2, 0));
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.r_start, at).filter(|&e| e < c) {
+            if let Some(e) = first.filter(|&e| bit(&m.r_start, e)) {
                 if part.is_none_or(|q| (e, 0, 1) < q) {
                     part = Some((e, 0, 1));
                 }
             }
             // `interpolation_identifier_start`
-            if let Some(e) = first_bit(&m.id_dollar, at).filter(|&e| e < c) {
+            if let Some(e) = first.filter(|&e| bit(&m.id_dollar, e)) {
                 if part.is_none_or(|q| (e, 1, 2) < q) {
                     part = Some((e, 1, 2));
                 }
             }
             // `interpolated_identifier`
-            if let Some(e) = first_bit(&m.rd0_part3, at).filter(|&e| e < c) {
+            if let Some(e) = first.filter(|&e| bit(&m.rd0_part3, e)) {
                 if part.is_none_or(|q| (e, 0, 3) < q) {
                     part = Some((e, 0, 3));
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.lone, at).filter(|&e| e < c) {
+            if let Some(e) = first.filter(|&e| bit(&m.lone, e)) {
                 if part.is_none_or(|q| (e, 1, 4) < q) {
                     part = Some((e, 1, 4));
                 }
@@ -6121,28 +6144,30 @@ impl<L: Layout> P<'_, L> {
             let Some(c) = first_bit(&m.rd1_close, at) else {
                 return self.refuse();
             };
-            // The part first after `at`, before the closer: the earliest, the shortest at one byte.
+            // The part first after `at`, before the closer: the earliest, the shortest at one byte. One scan of the
+            // parts' starts, to the closer.
+            let first = first_of([&m.r_start, &m.id_dollar, &m.rd0_part3, &m.lone], at, c);
             let mut part: Option<(usize, u8, usize)> = None;
             // `string_content`
-            if let Some(e) = first_bit(&m.r_start, at).filter(|&e| e < c) {
+            if let Some(e) = first.filter(|&e| bit(&m.r_start, e)) {
                 if part.is_none_or(|q| (e, 0, 0) < q) {
                     part = Some((e, 0, 0));
                 }
             }
             // `interpolation_identifier_start`
-            if let Some(e) = first_bit(&m.id_dollar, at).filter(|&e| e < c) {
+            if let Some(e) = first.filter(|&e| bit(&m.id_dollar, e)) {
                 if part.is_none_or(|q| (e, 1, 1) < q) {
                     part = Some((e, 1, 1));
                 }
             }
             // `interpolated_identifier`
-            if let Some(e) = first_bit(&m.rd0_part3, at).filter(|&e| e < c) {
+            if let Some(e) = first.filter(|&e| bit(&m.rd0_part3, e)) {
                 if part.is_none_or(|q| (e, 0, 2) < q) {
                     part = Some((e, 0, 2));
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.lone, at).filter(|&e| e < c) {
+            if let Some(e) = first.filter(|&e| bit(&m.lone, e)) {
                 if part.is_none_or(|q| (e, 1, 3) < q) {
                     part = Some((e, 1, 3));
                 }
@@ -6205,22 +6230,24 @@ impl<L: Layout> P<'_, L> {
             let Some(c) = first_bit(&m.sq_close, at) else {
                 return self.refuse();
             };
-            // The part first after `at`, before the closer: the earliest, the shortest at one byte.
+            // The part first after `at`, before the closer: the earliest, the shortest at one byte. One scan of the
+            // parts' starts, to the closer.
+            let first = first_of([&m.c_uesc, &m.rd2_part1, &m.rd2_part2], at, c);
             let mut part: Option<(usize, u8, usize)> = None;
             // `\u`
-            if let Some(e) = first_bit(&m.c_uesc, at).filter(|&e| e < c) {
+            if let Some(e) = first.filter(|&e| bit(&m.c_uesc, e)) {
                 if part.is_none_or(|q| (e, 2, 0) < q) {
                     part = Some((e, 2, 0));
                 }
             }
             // `uni_digits`
-            if let Some(e) = first_bit(&m.rd2_part1, at).filter(|&e| e < c) {
+            if let Some(e) = first.filter(|&e| bit(&m.rd2_part1, e)) {
                 if part.is_none_or(|q| (e, 4, 1) < q) {
                     part = Some((e, 4, 1));
                 }
             }
             // `character_escape_seq`
-            if let Some(e) = first_bit(&m.rd2_part2, at).filter(|&e| e < c) {
+            if let Some(e) = first.filter(|&e| bit(&m.rd2_part2, e)) {
                 if part.is_none_or(|q| (e, 2, 2) < q) {
                     part = Some((e, 2, 2));
                 }
@@ -6254,7 +6281,7 @@ impl<L: Layout> P<'_, L> {
     /// Past the token, to the next grammar token's record, or the string's parts a template's `}` resumes, at the record before the next (decision 0600).
     #[inline(always)]
     fn advance(&mut self, from: usize) -> R {
-        if self.strings > 0 && let Some(p) = first_bit(&self.m.rd1_open, from).filter(|&p| p < (if self.i + 1 < self.n { self.recs[self.i + 1].start } else { u32::MAX }).min(self.next_x) as usize) {
+        if self.strings > 0 && let Some(p) = first_of([&self.m.rd1_open], from, (if self.i + 1 < self.n { self.recs[self.i + 1].start } else { u32::MAX }).min(self.next_x) as usize) {
             self.known = 0;
             return self.resume_1(p);
         }
