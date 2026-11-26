@@ -125,6 +125,17 @@ fn await_ellipsis_and_async_are_the_lean_parsers() {
 }
 
 #[test]
+fn targets_slices_lambdas_yields_and_concatenations_are_the_lean_parsers() {
+    same(&["a, b = c\n", "a, b = c, d\n", "a, = c\n", "a, *b = c\n", "a.x, b[0] = c\n", "a, b, = c\n"]);
+    same(&["x = a[1:2]\n", "x = a[:2]\n", "x = a[1:]\n", "x = a[::2]\n", "x = a[:, 0]\n", "x = a[1:-1]\n", "x = a[:]\n", "a[1:] = b\n"]);
+    same(&["x = lambda: a\n", "x = lambda a, *b, **c: a\n", "f(key=lambda k: k)\n", "x = lambda a=1: a if a else b\n"]);
+    same(&["def f():\n    yield a\n", "def f():\n    yield\n", "def f():\n    x = yield a\n", "def f():\n    yield from a\n", "def f():\n    yield a, b\n"]);
+    same(&["x = \"a\" \"b\"\n", "x = (\"a\"\n     \"b\")\n", "x = \"a\" r\"b\" f\"{c}\"\n"]);
+    // Not read yet: a bare list of expressions as a statement, a tuple as a target.
+    refused(&["a, b\n", "(a, b) = c\n"]);
+}
+
+#[test]
 fn types_are_the_lean_parsers() {
     same(&["x: int | None = None\n", "x: int | None\n", "def f(a: int | None = None) -> str | None:\n    a\n", "x: Optional[int] = None\n"]);
     // A union over a generic is a `union_type`, left to right; any other `|` is an expression's.
@@ -246,7 +257,9 @@ fn corpus() {
     }
     let mut why: Vec<(usize, String)> = why.into_iter().map(|(w, n)| (n, w)).collect();
     why.sort_unstable_by(|a, b| b.cmp(a));
-    for (n, w) in why.iter().take(40) {
+    // `RERAIL_PYTHON_WHY=N`: the N most frequent reasons (40 where it is no number).
+    let shown = std::env::var("RERAIL_PYTHON_WHY").ok().and_then(|v| v.parse().ok()).unwrap_or(40);
+    for (n, w) in why.iter().take(shown) {
         eprintln!("refused {n:5}: {w}");
     }
     eprintln!("python corpus: {same} the same, {refused} refused, {differ} differ ({lean_refused} the lean parser refuses)");

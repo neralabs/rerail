@@ -186,3 +186,13 @@ statements and blocks end.
     `async` is a leaf before `def`, `for` or `with`, the node retagged by the word after it.
 33. **A list whose one item is a splat is refused.** tree-sitter reads `[*b]` with the splat a primary (`[*b.c()]`:
     the call's object), not a list item.
+34. **Targets, slices, lambdas, yields and concatenations.**
+    - A statement's first expression is moved into a `pattern_list` at its comma, the rest patterns (a
+      `list_splat_pattern` among them), and only an assignment follows. A bare `a, b` statement (its expressions
+      the statement's own) and a tuple target are refused. A target list's trailing comma is a leaf, as a list's
+      (`trail` before `=`).
+    - A slice is a node whose `:` are leaves, the expression before it moved in.
+    - A `lambda` is in slot `expression` (not a primary), its parameters `lambda_parameters`.
+    - `yield` is a node, not an expression, its keyword and `from` leaves; a statement or an assignment's right
+      side.
+    - Strings side by side are a `concatenated_string` of them, the first moved in.
