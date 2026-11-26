@@ -23,7 +23,7 @@ import Database from "better-sqlite3";
 import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
-import { checkouts, recordCheckout, repositories } from "../../src/engine/index.js";
+import { checkouts, lookupCheckout, recordCheckout, repositories } from "../../src/engine/index.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** Statements run on any connection while `counting` is on, prepared once or for one run. */
@@ -46,24 +46,29 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-/**
- * A started, set-up repository whose main checkout is a Git checkout, with `rows` more checkouts recorded under the
- * same clone, as `git worktree add` and the walk record a repository's worktrees.
- */
-async function repositoryWith(rows: ReadonlyArray<{ readonly path: (main: string, root: string) => string; readonly started: boolean | null }>) {
+/** A new folder with the daemon's stores over a database in it, and the API the daemon serves from them. */
+async function daemonStores() {
   const root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-context-cost-")));
   cleanups.push(() => removeFolder(root));
-  const main = join(root, "factory");
-  mkdirSync(main, { recursive: true });
-  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: main });
-  execFileSync("git", ["remote", "add", "origin", "git@github.com:acme/factory.git"], { cwd: main });
   const databasePath = join(root, "rerail.sqlite");
   const stores = new DatabaseApiStores(databasePath, {
     health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
     origin: () => "http://127.0.0.1:4737",
   });
   cleanups.push(async () => stores.close());
-  const db = stores.database();
+  return { root, stores, db: stores.database(), app: createRerailApi(stores, operations, { version: "0.0.0-test" }) };
+}
+
+/**
+ * A started, set-up repository whose main checkout is a Git checkout, with `rows` more checkouts recorded under the
+ * same clone, as `git worktree add` and the walk record a repository's worktrees.
+ */
+async function repositoryWith(rows: ReadonlyArray<{ readonly path: (main: string, root: string) => string; readonly started: boolean | null }>) {
+  const { root, stores, db, app } = await daemonStores();
+  const main = join(root, "factory");
+  mkdirSync(main, { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: main });
+  execFileSync("git", ["remote", "add", "origin", "git@github.com:acme/factory.git"], { cwd: main });
   const { repositoryKey, cloneId } = recordCheckout(db, main);
   db.update(repositories).set({ started: true, configuredAt: 1 }).where(eq(repositories.repositoryKey, repositoryKey)).run();
   if (rows.length > 0) {
@@ -71,7 +76,7 @@ async function repositoryWith(rows: ReadonlyArray<{ readonly path: (main: string
       checkoutPath: row.path(main, root), repositoryKey, cloneId, started: row.started, createdAt: 1, lastSeenAt: 1,
     }))).run();
   }
-  return { stores, db, main, repositoryKey, cloneId, app: createRerailApi(stores, operations, { version: "0.0.0-test" }) };
+  return { stores, db, main, repositoryKey, cloneId, app };
 }
 
 /** A Git worktree of `main` at `path`, which no row records yet, as `git worktree add` leaves one. */
@@ -80,6 +85,35 @@ function addWorktree(main: string, path: string): void {
   git("commit", "-q", "--allow-empty", "-m", "first");
   git("worktree", "add", "-q", "--detach", path);
 }
+
+/** A Git clone at `path` with one commit and `origin` at `remote`; Rerail records nothing there, so it has no clone id yet. */
+function cloneAt(path: string, remote: string): string {
+  mkdirSync(path, { recursive: true });
+  const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: path, stdio: "ignore" });
+  git("init", "-q", "-b", "main");
+  git("remote", "add", "origin", remote);
+  git("commit", "-q", "--allow-empty", "-m", "first");
+  return path;
+}
+
+/**
+ * The repository each read of `checkout` names, as the status line (GET /api/presentation) and the dashboard's
+ * repository page and rules list read it; null where a read names none.
+ */
+async function namedRepositories(app: ReturnType<typeof createRerailApi>, checkout: string) {
+  const read = async (path: string, query: Record<string, string>) => await (await app.request(`${path}?${new URLSearchParams(query)}`)).json() as {
+    scope?: { repositoryKey: string } | null;
+    repository?: { repositoryKey: string };
+    repositoryKey?: string;
+  };
+  const presentation = await read("/api/presentation", { repository: checkout, host: "claude-code" });
+  const page = await read("/api/repository", { checkout });
+  const rules = await read("/api/repository/rules", { checkout });
+  return { statusLine: presentation.scope?.repositoryKey ?? null, page: page.repository?.repositoryKey ?? null, rules: rules.repositoryKey ?? null };
+}
+
+/** What {@link namedRepositories} gives when every read names `repositoryKey`. */
+const allNaming = (repositoryKey: string) => ({ statusLine: repositoryKey, page: repositoryKey, rules: repositoryKey });
 
 /** The state the dashboard gives `checkout` (GET /api/repository) and the one the status line and the runtime give it. */
 async function shownStates(app: ReturnType<typeof createRerailApi>, checkout: string) {
@@ -194,5 +228,65 @@ describe("a repository's context", () => {
       const state = holder === "WT" ? "started" : "stopped";
       expect(await shownStates(app, inner), order.join(" then ")).toEqual({ listed: [state, join(main, holder)], dashboard: state, statusLine: state });
     }
+  });
+});
+
+describe("a checkout replaced at its path while the daemon runs", () => {
+  /** Two known repositories, each recorded at a clone of its own: `app` (acme/app) and `other` (acme/other). */
+  async function twoRepositories() {
+    const { root, db, app } = await daemonStores();
+    const first = recordCheckout(db, cloneAt(join(root, "app"), "git@github.com:acme/app.git"));
+    const second = recordCheckout(db, cloneAt(join(root, "other"), "git@github.com:acme/other.git"));
+    return { root, db, api: app, first, second };
+  }
+  const worktreeAdd = (clone: string, path: string, branch: string) => execFileSync("git", ["worktree", "add", "-q", "-b", branch, path], { cwd: clone, stdio: "ignore" });
+
+  it("names the other clone's repository at once when that clone's worktree replaces the checkout", async () => {
+    const { root, api, first, second } = await twoRepositories();
+    const replaced = join(root, "app");
+    expect(await namedRepositories(api, replaced)).toEqual(allNaming(first.repositoryKey));
+
+    await removeFolder(replaced);
+    worktreeAdd(second.checkoutPath, replaced, "side");
+
+    expect(await namedRepositories(api, replaced)).toEqual(allNaming(second.repositoryKey));
+  });
+
+  it("names the other clone's repository at once when that clone's worktree replaces a worktree, whose clone id stays", async () => {
+    const { root, db, api, first, second } = await twoRepositories();
+    const replaced = join(root, "feature");
+    worktreeAdd(first.checkoutPath, replaced, "feature");
+    recordCheckout(db, replaced);
+    expect(await namedRepositories(api, replaced)).toEqual(allNaming(first.repositoryKey));
+
+    await removeFolder(replaced);
+    worktreeAdd(second.checkoutPath, replaced, "side");
+
+    expect(await namedRepositories(api, replaced)).toEqual(allNaming(second.repositoryKey));
+  });
+
+  it("names the repository a new clone's remote names, not the one the clone it replaced named, before either is recorded", async () => {
+    const { root, api, first, second } = await twoRepositories();
+    const replaced = join(root, "fresh");
+    cloneAt(replaced, "git@github.com:acme/app.git");
+    expect(await namedRepositories(api, replaced)).toEqual(allNaming(first.repositoryKey));
+
+    await removeFolder(replaced);
+    cloneAt(replaced, "git@github.com:acme/other.git");
+
+    expect(await namedRepositories(api, replaced)).toEqual(allNaming(second.repositoryKey));
+  });
+
+  it("names the repository a new clone's remote names, not the removed clone's recorded there, in the daemon and in a lookup", async () => {
+    const { root, db, api, first, second } = await twoRepositories();
+    const replaced = first.checkoutPath;
+    expect(await namedRepositories(api, replaced)).toEqual(allNaming(first.repositoryKey));
+
+    // A new clone has no clone id until Rerail records it; the row at its path is the removed clone's.
+    await removeFolder(replaced);
+    cloneAt(replaced, "git@github.com:acme/other.git");
+
+    expect(await namedRepositories(api, replaced)).toEqual(allNaming(second.repositoryKey));
+    expect(lookupCheckout(db, replaced)?.repositoryKey).toBe(second.repositoryKey);
   });
 });
