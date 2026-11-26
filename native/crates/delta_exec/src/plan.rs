@@ -79,6 +79,46 @@ pub const TRIAL_LEAST: usize = 8;
 /// The exploration's seed (the old engine's `RERAIL_JOIN_SEED`, fixed: the plan is a function of its inputs).
 const SEED: u64 = 0x0686_0203;
 
+/// Orders tried a line keeps, and a run's weight in an order's measured ratio, a geometric mean over runs (0203 §6).
+pub const TRIED: usize = 8;
+pub const RUN_WEIGHT: f64 = 0.5;
+/// A line on the run's critical path with this share of the path's work, past `CRITICAL_ROWS` of its own, is critical
+/// (0203 §4): a wider search is asked for it while its order measured over `CRITICAL_RATIO` times its price or it has
+/// no proposals.
+pub const CRITICAL: f64 = 0.05;
+pub const CRITICAL_ROWS: f64 = 10_000.0;
+pub const CRITICAL_RATIO: f64 = 2.0;
+/// The wider search (0203 §5): exact up to `WIDE_GREEDY` steps (a round's is `GREEDY`) with its runners-up, and
+/// `RANDOM_ORDERS` random connected orders, each priced as a kept order is; the best `PROPOSALS`, distinct, are the
+/// line's proposals. It is made inline at the line's next plan where its measured work is `WIDE_PAYS` times the
+/// search's cost (0203 §2; 0122: planning never costs more than running).
+pub const WIDE_GREEDY: usize = 16;
+pub const RANDOM_ORDERS: usize = 48;
+pub const PROPOSALS: usize = 6;
+pub const WIDE_PAYS: f64 = 100.0;
+/// A step miss (0203 §3a), judged once a line has done `SLOW_FACTOR` searches' work: a step over-estimated is one
+/// entered with at least `MISS_BINDINGS` bindings.
+pub const MISS_BINDINGS: f64 = 64.0;
+
+/// A search's states over `free` steps under a bound of `greedy`: the subsets and their last steps, or past the bound
+/// the greedy order's candidates.
+fn states(free: usize, greedy: usize) -> f64 {
+    if free <= greedy { (1u64 << free) as f64 * free as f64 } else { (free * free) as f64 }
+}
+
+/// A wider search's cost in rows of join work: a round's search is `SEARCH_WORK` (0122), the exact part that times its
+/// states over a round's, and a row for each step of each random order priced.
+pub fn wide_cost(free: usize) -> f64 {
+    SEARCH_WORK * states(free, WIDE_GREEDY) / states(free, GREEDY).max(1.0) + (RANDOM_ORDERS * free) as f64
+}
+
+fn splitmix(x: u64) -> u64 {
+    let mut z = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
 /// Decision 0271: the limit of an order that goes on at a cut: past the work `base` it has done, `SLOW_FACTOR` times
 /// its work per row `rate` over the `left` rows left; an order that has done no row may double the larger of `base`
 /// and the cut's `work`. Always finite: no order goes on unlimited.
@@ -99,6 +139,9 @@ pub struct Planned {
     pub handoffs: u64,
     pub trials: u64,
     pub pairs: u64,
+    /// Wider searches made inline (0203 §5), and lines the run's critical path marked critical (§4).
+    pub wide: u64,
+    pub critical: u64,
 }
 
 impl std::ops::AddAssign for Planned {
@@ -112,6 +155,8 @@ impl std::ops::AddAssign for Planned {
         self.handoffs += o.handoffs;
         self.trials += o.trials;
         self.pairs += o.pairs;
+        self.wide += o.wide;
+        self.critical += o.critical;
     }
 }
 
@@ -471,13 +516,15 @@ struct Searched {
     order: Vec<usize>,
     price: f64,
     est: Vec<f64>,
-    /// The best order ending in each other step, cheapest first.
+    /// The best order ending in each other step, cheapest first; a wider search's, its other proposals.
     runners: Vec<(Vec<usize>, f64)>,
+    /// A wider search's (0203 §5): the order and runners are the line's proposals.
+    wide: bool,
 }
 
 /// The cheapest valid order of chain `c` after its `prefix` (its steps already run, `rows_in` tuples there; empty: a
 /// round's start, its fixed first step kept first), and the runners-up.
-fn search(c: &ChainVars, lp: &LinePrice, prefix: &[usize], rows_in: f64) -> Option<Searched> {
+fn search(c: &ChainVars, lp: &LinePrice, prefix: &[usize], rows_in: f64, greedy: usize) -> Option<Searched> {
     let n = c.len();
     if n == 0 {
         return None;
@@ -496,12 +543,12 @@ fn search(c: &ChainVars, lp: &LinePrice, prefix: &[usize], rows_in: f64) -> Opti
     let done = |order: Vec<usize>, runners: Vec<(Vec<usize>, f64)>| {
         let est = rows_along(c, lp, &order, prefix.len(), rows0);
         let price = priced(&est);
-        Some(Searched { order, price, est, runners })
+        Some(Searched { order, price, est, runners, wide: false })
     };
     if free == 0 {
         return done(prefix.clone(), Vec::new());
     }
-    if free > GREEDY {
+    if free > greedy {
         let mut order = prefix.clone();
         let mut placed = pmask;
         let mut rows = rows0;
@@ -556,13 +603,81 @@ fn search(c: &ChainVars, lp: &LinePrice, prefix: &[usize], rows_in: f64) -> Opti
     let mut ends: Vec<(f64, usize)> = (0..free).filter_map(|l| st[full * free + l].map(|(cost, _, _)| (cost, l))).collect();
     ends.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
     let (_, best) = *ends.first()?;
-    let runners = ends[1..].iter().take(RUNNERS_UP).map(|&(_, l)| {
+    let runners = ends[1..].iter().take(if greedy > GREEDY { PROPOSALS } else { RUNNERS_UP }).map(|&(_, l)| {
         let o = order_of(l);
         let p = price_of(&o);
         (o, p)
     });
     let runners: Vec<(Vec<usize>, f64)> = runners.collect();
     done(order_of(best), runners)
+}
+
+/// Up to `n` distinct random connected orders of chain `c` (0203 §5, `joins::random_orders`), drawn from `key`: each
+/// next atom shares a variable with those placed while one can, a filter is placed as soon as it is ready, and a
+/// fixed first step stays first.
+fn random_orders(c: &ChainVars, n: usize, key: i64) -> Vec<Vec<usize>> {
+    let len = c.len();
+    let mut rng = SEED ^ key as u64;
+    let mut below = |k: usize| {
+        rng = splitmix(rng);
+        (rng % k as u64) as usize
+    };
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    for _ in 0..n * 4 {
+        if out.len() >= n {
+            break;
+        }
+        let (mut order, mut placed) = (Vec::new(), 0u64);
+        if c.fixed {
+            order.push(0);
+            placed |= 1;
+        }
+        while order.len() < len {
+            let ready: Vec<usize> = (0..len).filter(|&j| placed >> j & 1 == 0 && c.ready(placed, j)).collect();
+            if ready.is_empty() {
+                break;
+            }
+            let pick = match ready.iter().copied().find(|&j| c.nodes[j].op != Op::Atom) {
+                Some(f) => f,
+                None => {
+                    let joined: Vec<usize> = ready.iter().copied().filter(|&j| c.nodes[j].binds & c.bound(placed) != 0).collect();
+                    let from = if joined.is_empty() { &ready } else { &joined };
+                    from[below(from.len())]
+                }
+            };
+            order.push(pick);
+            placed |= 1 << pick;
+        }
+        if c.valid(&order) && !out.contains(&order) {
+            out.push(order);
+        }
+    }
+    out
+}
+
+/// The wider search of chain `c` (0203 §5): the exact search up to `WIDE_GREEDY` steps with its runners-up, and the
+/// random connected orders, each priced; the best `PROPOSALS`, distinct, best first.
+fn wide(c: &ChainVars, lp: &LinePrice, key: i64) -> Vec<(Vec<usize>, f64)> {
+    let mut out: Vec<(Vec<usize>, f64)> = Vec::new();
+    if let Some(s) = search(c, lp, &[], 0.0, WIDE_GREEDY) {
+        out.push((s.order, s.price));
+        out.extend(s.runners);
+    }
+    for o in random_orders(c, RANDOM_ORDERS, key) {
+        let price = rows_along(c, lp, &o, 0, 0.0).iter().sum();
+        out.push((o, price));
+    }
+    out.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let mut seen: Vec<Vec<usize>> = Vec::new();
+    out.retain(|(o, _)| {
+        let new = !seen.contains(o);
+        if new {
+            seen.push(o.clone());
+        }
+        new
+    });
+    out.truncate(PROPOSALS);
+    out
 }
 
 // ---- The memo: what a line's planning keeps across rounds and runs.
@@ -598,6 +713,15 @@ pub struct Note {
     pub runners: Vec<(Vec<usize>, f64)>,
     pub pairs: Vec<(usize, usize, f64)>,
     pub samples: Vec<Sample>,
+    /// Its share of the critical path, a moving average over runs (0203 §4).
+    pub critical: f64,
+    /// Up to `PROPOSALS` orders a wider search proposed, with their prices then (0203 §5).
+    pub proposals: Vec<(Vec<usize>, f64)>,
+    /// A wider search is wanted, not made yet.
+    pub wants_search: bool,
+    /// It ran since the run's critical path last marked it, and its work since then, over its rounds.
+    pub fresh: bool,
+    pub ran: f64,
 }
 
 impl Note {
@@ -619,6 +743,11 @@ impl Note {
         w.push(self.samples.len() as i64);
         for s in &self.samples {
             w.extend([s.step as i64, s.pos as i64, s.mask as i64, fb(s.est_in), fb(s.est_fan), fb(s.actual_in), fb(s.actual_out), fb(s.card), fb(s.key_ndv)]);
+        }
+        w.extend([fb(self.critical), i64::from(self.wants_search), i64::from(self.fresh), fb(self.ran), self.proposals.len() as i64]);
+        for (o, x) in &self.proposals {
+            w.extend(o.iter().map(|&j| j as i64));
+            w.push(fb(*x));
         }
         w
     }
@@ -643,7 +772,40 @@ impl Note {
         let samples = (0..ns)
             .map(|_| Sample { step: c.n(), pos: c.n(), mask: c.next() as u64, est_in: c.f(), est_fan: c.f(), actual_in: c.f(), actual_out: c.f(), card: c.f(), key_ndv: c.f() })
             .collect();
-        Note { order, price, est, work, start, runs, slow, tried, runners, pairs, samples }
+        let (critical, wants_search, fresh, ran) = (c.f(), c.next() != 0, c.next() != 0, c.f());
+        let proposals = (0..c.n())
+            .map(|_| {
+                let o = c.vec(n);
+                (o, c.f())
+            })
+            .collect();
+        Note { order, price, est, work, start, runs, slow, tried, runners, pairs, samples, critical, proposals, wants_search, fresh, ran }
+    }
+
+    /// Ratio `ratio` measured for order `o`, merged into its tried ratio, a geometric mean at weight `weight`; at most
+    /// `TRIED` orders, the oldest dropped.
+    fn merge_tried(&mut self, o: &[usize], ratio: f64, weight: f64) {
+        let ratio = ratio.clamp(1e-6, 1e9);
+        match self.tried.iter_mut().find(|t| t.0 == o) {
+            Some(t) => t.1 = t.1.powf(1.0 - weight) * ratio.powf(weight),
+            None => {
+                if self.tried.len() >= TRIED {
+                    self.tried.remove(0);
+                }
+                self.tried.push((o.to_vec(), ratio));
+            }
+        }
+    }
+
+    /// Whether it matters (0203 §7): on the critical path with its share, or slow.
+    fn matters(&self) -> bool {
+        self.critical >= CRITICAL || self.slow > 0
+    }
+
+    /// Whether it is pending (0203 §6): a wider search wanted, or a proposal not tried yet; searched at its next plan,
+    /// its kept order not taken.
+    fn pending(&self) -> bool {
+        self.wants_search || self.proposals.iter().any(|(o, _)| self.ratio(o).is_none())
     }
 
     /// Line `key`'s note in memo `memo`, if it holds one of a chain of `n` steps.
@@ -740,6 +902,12 @@ fn seed_draw(key: i64, runs: u64) -> f64 {
     (h >> 11) as f64 / (1u64 << 53) as f64
 }
 
+/// Whether line `key`'s next plan may explore (0203 §7): it matters, and its seeded draw at its runs falls under
+/// `EXPLORE_RATE`. Such a plan is searched, not kept, so the draw has candidates to take.
+fn explores(n: &Note, key: i64) -> bool {
+    n.matters() && seed_draw(key, n.runs) < EXPLORE_RATE
+}
+
 /// `lines`: read the plan, atoms, memo · write lines: each chain's status, its first step's rows, its kept order.
 fn lines(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let table = c.table;
@@ -764,7 +932,7 @@ fn lines(c: &mut Ctx<'_, '_, '_>, _: Tile) {
                 let first = note.as_ref().map_or(0, |n| n.order[0]);
                 let rows = start(if ch.fixed { 0 } else { first });
                 match &note {
-                    Some(n) if ch.valid(&n.order) && n.work * (rows.max(1.0) / n.start.max(1.0)) < SEARCH_WORK => (KEPT, n.order.clone()),
+                    Some(n) if ch.valid(&n.order) && !n.pending() && !explores(n, keys[ti]) && n.work * (rows.max(1.0) / n.start.max(1.0)) < SEARCH_WORK => (KEPT, n.order.clone()),
                     _ => (PRICE, Vec::new()),
                 }
             }
@@ -900,10 +1068,12 @@ fn prices_of(b: &[u8]) -> Vec<Option<LinePrice>> {
     (0..c.n()).map(|_| (c.next() == 1).then(|| LinePrice::read(&mut c))).collect()
 }
 
-/// `search`: read the plan, lines, prices, corrections, running, the running choice · write the searched orders.
+/// `search`: read the plan, lines, prices, corrections, running, the running choice, memo · write the searched
+/// orders. A round's line that wants a wider search, where its measured work is `WIDE_PAYS` times the search's cost,
+/// has it inline (0203 §2, §5); any other's proposals are priced again beside its runners-up.
 fn search_op(c: &mut Ctx<'_, '_, '_>, _: Tile) {
-    let ([plan, lines, prices, corr, running, now], [out]) = c.views([0, 1, 2, 3, 4, 5], [6]);
-    let (p, _) = plan_and_keys(plan);
+    let ([plan, lines, prices, corr, running, now, memo], [out]) = c.views([0, 1, 2, 3, 4, 5, 6], [7]);
+    let (p, keys) = plan_and_keys(plan);
     let (ls, rs, now) = (lines_of(lines), running_of(running), choices_of(now));
     let mut lps = prices_of(prices);
     // The learned correction, each step's at each set of its columns bound (`correct`).
@@ -924,9 +1094,30 @@ fn search_op(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             (Some(Some(lp)), Some(ch)) if priced(&ls, &rs, ti) => match rs.get(ti) {
                 Some(r) => {
                     let prefix = &now[ti].order[..=r.cut];
-                    search(&ch, lp, prefix, r.counts[r.cut])
+                    search(&ch, lp, prefix, r.counts[r.cut], GREEDY)
                 }
-                None => search(&ch, lp, &[], 0.0),
+                None => {
+                    let note = Note::of(memo, keys[ti], ch.len());
+                    let free = ch.len() - usize::from(ch.fixed);
+                    match note {
+                        Some(n) if n.wants_search && n.work.max(n.ran) >= WIDE_PAYS * wide_cost(free) => {
+                            let props = wide(&ch, lp, keys[ti]);
+                            props.first().map(|(o, _)| {
+                                let est = rows_along(&ch, lp, o, 0, 0.0);
+                                Searched { order: o.clone(), price: est.iter().sum(), est, runners: props[1..].to_vec(), wide: true }
+                            })
+                        }
+                        n => search(&ch, lp, &[], 0.0, GREEDY).map(|mut s| {
+                            for (o, _) in n.map(|n| n.proposals).unwrap_or_default() {
+                                if ch.valid(&o) && o != s.order && !s.runners.iter().any(|r| r.0 == o) {
+                                    let price = rows_along(&ch, lp, &o, 0, 0.0).iter().sum();
+                                    s.runners.push((o, price));
+                                }
+                            }
+                            s
+                        }),
+                    }
+                }
             },
             _ => None,
         };
@@ -941,6 +1132,7 @@ fn search_op(c: &mut Ctx<'_, '_, '_>, _: Tile) {
                     w.push(fb(*x));
                     w.extend(o.iter().map(|&j| j as i64));
                 }
+                w.push(i64::from(s.wide));
             }
         }
     }
@@ -966,7 +1158,8 @@ fn searched_of(b: &[u8]) -> Vec<Option<Searched>> {
                         (c.vec(n), x)
                     })
                     .collect();
-                Searched { order, price, est, runners }
+                let wide = c.next() != 0;
+                Searched { order, price, est, runners, wide }
             })
         })
         .collect()
@@ -1012,7 +1205,7 @@ fn choose(c: &mut Ctx<'_, '_, '_>, _: Tile) {
                 let runs = note.as_ref().map_or(0, |n| n.runs);
                 let untried = cands.iter().skip(1).find(|c| c.1 <= MARGIN * best.1 && note.as_ref().is_none_or(|n| n.ratio(&c.0).is_none()));
                 match untried {
-                    Some(u) if best.1 < EXPLORE_ROWS && seed_draw(keys[ti], runs) < EXPLORE_RATE => Choice { order: u.0.clone(), price: u.1, est: s.est.clone(), explored: true },
+                    Some(u) if best.1 < EXPLORE_ROWS && note.as_ref().is_some_and(|n| n.matters()) && seed_draw(keys[ti], runs) < EXPLORE_RATE => Choice { order: u.0.clone(), price: u.1, est: s.est.clone(), explored: true },
                     _ => {
                         let est = if best.0 == s.order { s.est.clone() } else { vec![0.0; best.0.len()] };
                         Choice { order: best.0, price: best.1, est, explored: false }
@@ -1055,7 +1248,11 @@ fn emit_plan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         note.order = cs[ti].order.clone();
         note.price = cs[ti].price;
         note.est = if cs[ti].est.len() == note.order.len() { cs[ti].est.clone() } else { s.est.clone() };
-        note.runners = s.runners.clone();
+        note.runners = s.runners.iter().take(RUNNERS_UP).cloned().collect();
+        if s.wide {
+            note.proposals = std::iter::once((s.order.clone(), s.price)).chain(s.runners.iter().cloned()).take(PROPOSALS).collect();
+            note.wants_search = false;
+        }
         if !memo_twin::keep_line(c, 4, keys[ti] as u64, &note.words()) {
             return;
         }
@@ -1065,11 +1262,26 @@ fn emit_plan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     put_words(out, &w);
 }
 
+/// A step miss at depth `d` of a line that ran `counts` against its choice's priced rows `est` (0203 §3a), judged once
+/// it has done `SLOW_FACTOR` searches' work: its widest step blown up (over `SLOW_FACTOR` times the widest priced, and
+/// over a search's work), or a step over-estimated (priced at `SLOW_FACTOR` searches' work or more, entered with
+/// `MISS_BINDINGS` bindings or more, it made under `1 / SLOW_FACTOR` of its priced rows per binding).
+fn step_miss(work: f64, counts: &[f64], est: &[f64], d: usize) -> bool {
+    if work < SLOW_FACTOR * SEARCH_WORK || est.len() != counts.len() || est.iter().all(|&x| x <= 0.0) {
+        return false;
+    }
+    let widest = est.iter().copied().fold(0.0, f64::max);
+    let blown = counts[d] > SLOW_FACTOR * widest && counts[d] > SEARCH_WORK;
+    let over = d > 0 && est[d] >= SLOW_FACTOR * SEARCH_WORK && counts[d - 1] >= MISS_BINDINGS && est[d - 1] > 0.0 && counts[d] / counts[d - 1] < est[d] / est[d - 1] / SLOW_FACTOR;
+    blown || over
+}
+
 /// `check`: read the plan, choice, frames · rw running (its first word the depth just run): each line's tuples
-/// counted at that depth; past its due point, slow when its work passed its limit.
+/// counted at that depth; past its due point, slow when its work passed its limit or a step missed (0203 §3a).
 fn check(c: &mut Ctx<'_, '_, '_>, _: Tile) {
-    let ([plan, frames], [running]) = c.views([0, 2], [3]);
+    let ([plan, choice, frames], [running]) = c.views([0, 1, 2], [3]);
     let (p, _) = plan_and_keys(plan);
+    let cs = choices_of(choice);
     let mut w = words_of(running);
     let d = w.remove(0) as usize;
     let mut rs = running_of_words(&w);
@@ -1087,7 +1299,8 @@ fn check(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             while r.due <= r.work {
                 r.due *= 2.0;
             }
-            if r.work > r.limit && !r.slow {
+            let missed = cs.get(ti).is_some_and(|ch| step_miss(r.work, &r.counts, &ch.est, d));
+            if (r.work > r.limit || missed) && !r.slow {
                 r.slow = true;
                 r.times += 1;
                 r.cut = d;
@@ -1177,12 +1390,14 @@ fn note(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             note.start = r.counts[0];
             note.runs += 1;
             note.slow += r.times;
+            note.ran = if note.fresh { note.ran + r.work } else { r.work };
+            note.fresh = true;
+            // A slow line asks for a wider search (0203 §3).
+            if r.times > 0 {
+                note.wants_search = true;
+            }
             if ch.price > 0.0 {
-                let ratio = r.work / ch.price;
-                match note.tried.iter_mut().find(|x| x.0 == ch.order) {
-                    Some(x) => x.1 = ratio,
-                    None => note.tried.push((ch.order.clone(), ratio)),
-                }
+                note.merge_tried(&ch.order, r.work.max(1.0) / ch.price.max(1.0), RUN_WEIGHT);
             }
             note.samples = (1..ch.order.len())
                 .map(|pos| {
@@ -1196,6 +1411,107 @@ fn note(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     };
     for (key, note) in notes {
         if !memo_twin::keep_line(c, 3, key as u64, &note.words()) {
+            return;
+        }
+    }
+}
+
+// ---- The run's critical path (0203 §4): over a level's strata, at the run's end.
+
+rerail_delta_twins::params! {
+    /// `weigh`'s and `mark`'s stratum: its place in the run's order.
+    pub struct StratumP {
+        pub at: u64,
+    }
+}
+
+/// A path block's words: its strata's count, the path's work, the lines marked critical, then each stratum's weight,
+/// then whether each is on the path, then each one's producers (a count, then their places, each before it).
+const PATH_TOTAL: usize = 1;
+const PATH_MARKED: usize = 2;
+const PATH_AT: usize = 3;
+
+/// A path block's words before `weigh`: strata `producers` (each stratum's, by place, in the run's order).
+fn path_words(producers: &[Vec<usize>]) -> Vec<i64> {
+    let n = producers.len();
+    let mut w = vec![n as i64, fb(0.0), 0];
+    w.extend(std::iter::repeat_n(fb(0.0), n));
+    w.extend(std::iter::repeat_n(0, n));
+    for ps in producers {
+        w.push(ps.len() as i64);
+        w.extend(ps.iter().map(|&p| p as i64));
+    }
+    w
+}
+
+/// `weigh`: read a stratum's memo · rw the path: the stratum's weight, the work its lines did this run.
+fn weigh(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+    let at = <StratumP as rerail_delta_twins::Params>::read(c.params).at as usize;
+    let ([memo], [path]) = c.views([0], [1]);
+    let weight: f64 = notes(memo).iter().filter(|(_, n)| n.fresh).map(|(_, n)| n.ran).sum();
+    let mut w = words_of(path);
+    w[PATH_AT + at] = fb(weight);
+    put_words(path, &w);
+}
+
+/// `critical`: rw the path: the longest chain of producers, by the strata's weights, marked on it; its work.
+fn critical(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+    let ([], [path]) = c.views([], [0]);
+    let mut w = words_of(path);
+    let n = w[0] as usize;
+    let weight: Vec<f64> = (0..n).map(|j| bf(w[PATH_AT + j])).collect();
+    let mut at = PATH_AT + 2 * n;
+    let (mut dist, mut prev) = (vec![0.0f64; n], vec![None::<usize>; n]);
+    for j in 0..n {
+        let np = w[at] as usize;
+        let from = w[at + 1..at + 1 + np].iter().map(|&p| p as usize).filter(|&p| p < j).max_by(|&a, &b| dist[a].total_cmp(&dist[b]));
+        at += 1 + np;
+        dist[j] = weight[j] + from.map_or(0.0, |p| dist[p]);
+        prev[j] = from;
+    }
+    let end = (0..n).max_by(|&a, &b| dist[a].total_cmp(&dist[b]));
+    w[PATH_TOTAL] = fb(end.map_or(0.0, |e| dist[e]));
+    let mut on = end;
+    while let Some(j) = on {
+        w[PATH_AT + n + j] = 1;
+        on = prev[j];
+    }
+    put_words(path, &w);
+}
+
+/// `mark`: rw the path, a stratum's memo: each line that ran this run, its share of the path (its work over the
+/// path's, where its stratum is on it; else 0) averaged into its note's; a wider search asked for where it is critical
+/// (`CRITICAL` of the path, `CRITICAL_ROWS` of work) and its order measured over `CRITICAL_RATIO` times its price or it
+/// has no proposals. Its run's work is let go.
+fn mark(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+    let at = <StratumP as rerail_delta_twins::Params>::read(c.params).at as usize;
+    let notes = {
+        let ([], [path, memo]) = c.views([], [0, 1]);
+        let w = words_of(path);
+        let n = w[0] as usize;
+        let (total, on) = (bf(w[PATH_TOTAL]), w[PATH_AT + n + at] == 1);
+        let mut marked = 0i64;
+        let mut out = Vec::new();
+        for (key, mut note) in notes(memo).into_iter().filter(|(_, n)| n.fresh) {
+            let share = if on && total > 0.0 { note.ran / total } else { 0.0 };
+            note.critical = if note.runs <= 1 { share } else { 0.5 * note.critical + 0.5 * share };
+            if share >= CRITICAL && note.ran >= CRITICAL_ROWS {
+                marked += 1;
+                if note.ratio(&note.order).is_some_and(|r| r > CRITICAL_RATIO) || note.proposals.is_empty() {
+                    note.wants_search = true;
+                }
+            }
+            note.fresh = false;
+            note.ran = 0.0;
+            out.push((key, note));
+        }
+        let mut w = w;
+        w[PATH_MARKED] += marked;
+        put_words(path, &w);
+        out
+    };
+    for (key, note) in notes {
+        if !memo_twin::keep_line(c, 1, key, &note.words()) {
             return;
         }
     }
@@ -1228,12 +1544,15 @@ const CTL: u32 = kind::CONTROL;
 
 static LINES_SLOTS: [SlotSpec; 4] = [s("plan", R, CTL), s("atoms", R, kind::ATOMS), s("memo", R, kind::CACHE), s("lines", W, CTL)];
 static PRICE_SLOTS: [SlotSpec; 6] = [s("plan", R, CTL), s("atoms", R, kind::ATOMS), s("memo", R, kind::CACHE), s("lines", R, CTL), s("running", R, CTL), s("prices", W, CTL)];
-static SEARCH_SLOTS: [SlotSpec; 7] = [s("plan", R, CTL), s("lines", R, CTL), s("prices", R, CTL), s("corrections", R, CTL), s("running", R, CTL), s("running choice", R, CTL), s("searched", W, CTL)];
+static SEARCH_SLOTS: [SlotSpec; 8] = [s("plan", R, CTL), s("lines", R, CTL), s("prices", R, CTL), s("corrections", R, CTL), s("running", R, CTL), s("running choice", R, CTL), s("memo", R, kind::CACHE), s("searched", W, CTL)];
 static CHOOSE_SLOTS: [SlotSpec; 7] = [s("plan", R, CTL), s("lines", R, CTL), s("searched", R, CTL), s("memo", R, kind::CACHE), s("trials", R, CTL), s("running choice", R, CTL), s("choice", W, CTL)];
 static EMIT_SLOTS: [SlotSpec; 5] = [s("plan", R, CTL), s("choice", R, CTL), s("searched", R, CTL), s("planned", W, CTL), s("memo", RW, kind::CACHE)];
 static CHECK_SLOTS: [SlotSpec; 4] = [s("plan", R, CTL), s("choice", R, CTL), s("frames", R, kind::SCRATCH), s("running", RW, CTL)];
 static STATS_SLOTS: [SlotSpec; 4] = [s("plan", R, CTL), s("atoms", R, kind::ATOMS), s("running", R, CTL), s("memo", RW, kind::CACHE)];
 static NOTE_SLOTS: [SlotSpec; 4] = [s("plan", R, CTL), s("choice", R, CTL), s("running", R, CTL), s("memo", RW, kind::CACHE)];
+static WEIGH_SLOTS: [SlotSpec; 2] = [s("memo", R, kind::CACHE), s("path", RW, CTL)];
+static CRITICAL_SLOTS: [SlotSpec; 1] = [s("path", RW, CTL)];
+static MARK_SLOTS: [SlotSpec; 2] = [s("path", RW, CTL), s("memo", RW, kind::CACHE)];
 
 /// A planning block's facts, by meaning: its words.
 fn words_facts(_: &Table<'_>, _: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
@@ -1252,6 +1571,16 @@ fn emit_facts(t: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     if slot == 4 { memo_facts(bytes) } else { words_facts(t, slot, bytes) }
 }
 
+/// `weigh`'s slots' facts: its memo's (slot 0) by note, the path's by words.
+fn memo0_facts(t: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
+    if slot == 0 { memo_facts(bytes) } else { words_facts(t, slot, bytes) }
+}
+
+/// `mark`'s slots' facts: its memo's (slot 1) by note, the path's by words.
+fn memo1_facts(t: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
+    if slot == 1 { memo_facts(bytes) } else { words_facts(t, slot, bytes) }
+}
+
 /// `stats`' and `note`'s slots' facts: their memo's (slot 3) by note, the rest by words.
 fn memo3_facts(t: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     if slot == 3 { memo_facts(bytes) } else { words_facts(t, slot, bytes) }
@@ -1267,6 +1596,10 @@ pub static EMIT_PLAN: Signature = Signature::new("emit_plan", &EMIT_SLOTS, Param
 pub static CHECK: Signature = Signature::new("check", &CHECK_SLOTS, ParamsLayout::of::<NoParams>(), &MAP, ALONG, words_facts);
 pub static STATS: Signature = Signature::new("stats", &STATS_SLOTS, ParamsLayout::of::<NoParams>(), &MAP_MEMO, ALONG, memo3_facts);
 pub static NOTE: Signature = Signature::new("note", &NOTE_SLOTS, ParamsLayout::of::<NoParams>(), &MAP_MEMO, ALONG, memo3_facts);
+const STRATA: Independence = Independence::Along("strata: a stratum's lines are its own");
+pub static WEIGH: Signature = Signature::new("weigh", &WEIGH_SLOTS, ParamsLayout::of::<StratumP>(), &MAP, STRATA, memo0_facts);
+pub static CRITICAL_OP: Signature = Signature::new("critical", &CRITICAL_SLOTS, ParamsLayout::of::<NoParams>(), &MAP, STRATA, words_facts);
+pub static MARK: Signature = Signature::new("mark", &MARK_SLOTS, ParamsLayout::of::<StratumP>(), &MAP_MEMO, STRATA, memo1_facts);
 
 static LINES_HOST: [TwinPhase; 1] = [TwinPhase { name: "emit", items: one, run: lines, again: None }];
 static PRICE_HOST: [TwinPhase; 1] = [TwinPhase { name: "map", items: one, run: price, again: None }];
@@ -1276,6 +1609,9 @@ static EMIT_HOST: [TwinPhase; 1] = [TwinPhase { name: "emit", items: one, run: e
 static CHECK_HOST: [TwinPhase; 1] = [TwinPhase { name: "map", items: one, run: check, again: None }];
 static STATS_HOST: [TwinPhase; 1] = [TwinPhase { name: "map", items: one, run: stats, again: None }];
 static NOTE_HOST: [TwinPhase; 1] = [TwinPhase { name: "map", items: one, run: note, again: None }];
+static WEIGH_HOST: [TwinPhase; 1] = [TwinPhase { name: "map", items: one, run: weigh, again: None }];
+static CRITICAL_HOST: [TwinPhase; 1] = [TwinPhase { name: "map", items: one, run: critical, again: None }];
+static MARK_HOST: [TwinPhase; 1] = [TwinPhase { name: "map", items: one, run: mark, again: None }];
 
 /// The planning operations, declared, their host versions their references.
 #[derive(Clone, Copy)]
@@ -1288,6 +1624,9 @@ pub struct PlanOps {
     pub check: OpId,
     pub stats: OpId,
     pub note: OpId,
+    pub weigh: OpId,
+    pub critical: OpId,
+    pub mark: OpId,
 }
 
 impl PlanOps {
@@ -1306,7 +1645,37 @@ impl PlanOps {
             check: d(&CHECK, "check on the host", &CHECK_HOST, &MAP)?,
             stats: d(&STATS, "stats on the host", &STATS_HOST, &MAP_MEMO)?,
             note: d(&NOTE, "note on the host", &NOTE_HOST, &MAP_MEMO)?,
+            weigh: d(&WEIGH, "weigh on the host", &WEIGH_HOST, &MAP)?,
+            critical: d(&CRITICAL_OP, "critical on the host", &CRITICAL_HOST, &MAP)?,
+            mark: d(&MARK, "mark on the host", &MARK_HOST, &MAP_MEMO)?,
         })
+    }
+
+    /// The run's critical path (0203 §4) over strata `memos` (each stratum's memo, in the run's order) with
+    /// `producers` (each one's, by place, each before it): `weigh` each, `critical`, then `mark` each. The lines it
+    /// marked critical.
+    pub fn critical_path(&self, reg: &Registry, dir: &mut Directory, memos: &[BlockId], producers: &[Vec<usize>]) -> Result<u64, String> {
+        if memos.is_empty() {
+            return Ok(0);
+        }
+        let path = given(dir, &path_words(producers))?;
+        let at = |j: usize| {
+            let mut p = vec![0u8; <StratumP as rerail_delta_twins::Params>::SIZE];
+            rerail_delta_twins::Params::write(&StratumP { at: j as u64 }, &mut p);
+            p
+        };
+        let ran = (|| {
+            for (j, &m) in memos.iter().enumerate() {
+                run_cpu(reg, dir, self.weigh, &[m, path], &at(j), Tiling::WHOLE)?;
+            }
+            run_cpu(reg, dir, self.critical, &[path], &[], Tiling::WHOLE)?;
+            for (j, &m) in memos.iter().enumerate() {
+                run_cpu(reg, dir, self.mark, &[path, m], &at(j), Tiling::WHOLE)?;
+            }
+            read_block(dir, path, |b| words_of(b)[PATH_MARKED] as u64)
+        })();
+        dir.release(path);
+        ran
     }
 }
 
@@ -1392,8 +1761,10 @@ impl Round<'_> {
             let prices = self.into(dir, made, self.ops.price, &[rule, atoms, memo, lines, empty], 5, n)?;
             pd.priced += read_block(dir, prices, |b| prices_of(b).iter().flatten().map(|lp| lp.steps.len() as u64).sum::<u64>())?;
             let corr = self.correct(dir, made, prices)?;
-            let searched = self.into(dir, made, self.ops.search, &[rule, lines, prices, corr, empty, empty], 6, n)?;
-            pd.searched += read_block(dir, searched, |b| searched_of(b).iter().flatten().count() as u64)?;
+            let searched = self.into(dir, made, self.ops.search, &[rule, lines, prices, corr, empty, empty, memo], 7, n)?;
+            let ss = read_block(dir, searched, searched_of)?;
+            pd.searched += ss.iter().flatten().count() as u64;
+            pd.wide += ss.iter().flatten().filter(|s| s.wide).count() as u64;
             searched
         } else {
             let none = given(dir, &[0])?;
@@ -1524,7 +1895,7 @@ impl Round<'_> {
         };
         let prices = self.into(dir, made, self.ops.price, &[rule, atoms, memo, lines, rblock], 5, n)?;
         let corr = self.correct(dir, made, prices)?;
-        let searched = self.into(dir, made, self.ops.search, &[rule, lines, prices, corr, rblock, choice], 6, n)?;
+        let searched = self.into(dir, made, self.ops.search, &[rule, lines, prices, corr, rblock, choice, self.memo], 7, n)?;
         // The trials: each line's running order and its candidates over a sample of its tuples at depth `d`.
         let ss = read_block(dir, searched, searched_of)?;
         let cs = read_block(dir, choice, choices_of)?;

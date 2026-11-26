@@ -1934,3 +1934,47 @@ Checks (Relax, local, 113 of 113): `a_levels_memo_lasts_from_one_run_to_the_next
 the first prices its delta's line and the second takes it kept, with the rows a cold run gives. With a new cache each
 run, the second run keeps none (`kept: 0`), and the test fails. The shape script's K1 section requires the kept cache
 and the test.
+
+### 0203's remaining planner, as operations (§2–§7; 2026-11-26)
+
+Operations §8 carries 0203's algorithms and measured constants over, and five of its parts were not built: the wider
+search, the critical path, the step misses, the notes' moving measures and exploration's bound. Each is now in
+`plan.rs`, as an operation or a part of one, over the memo:
+
+- **The notes (§6).** A note keeps its share of the critical path as a moving average, up to `PROPOSALS` (6)
+  proposals, and whether it wants a wider search. Its tried ratios are a geometric mean over runs (`RUN_WEIGHT` 0.5),
+  at most `TRIED` (8) orders. A line is pending while it wants a search or has an untried proposal. A pending line is
+  searched at its next plan, and its kept order is not taken (`lines`).
+- **The wider search (§5, §2).** It is exact up to `WIDE_GREEDY` (16) steps with its runners-up, plus `RANDOM_ORDERS`
+  (48) random connected orders drawn from the line's key; the best 6 distinct orders are the proposals. 0243 put the
+  wider search in a background job. Here `search` makes it inline when the line wants one and its measured work is
+  `WIDE_PAYS` (100) times the search's cost (`wide_cost`; 0122). `emit_plan` keeps the proposals and answers the
+  ask. Any other plan of the line prices its proposals again, beside the round's runners-up.
+- **A slow line (§3)** asks for a wider search (`note`).
+- **The step misses (§3a)** are part of `check`, judged once a line has done `SLOW_FACTOR` searches' work. One kind is
+  the widest step blown up: over 8× the widest priced, and over a search's work. The other is a step over-estimated:
+  priced at 8 searches' work or more, entered with `MISS_BINDINGS` (64) bindings or more, it made under 1/8 of its
+  priced rows per binding. Either makes the line slow, so it is cut and handed off as a slow line is.
+- **The critical path (§4)** is three operations at the end of a level's run.
+  - `weigh` gives each stratum the work its lines did this run, summed over its rounds.
+  - `critical` finds the longest chain of producers. A stratum's producers are the strata before it that write a
+    relation it reads.
+  - `mark` gives each line that ran its share of the path, as a moving average. A line with `CRITICAL` (5%) of the
+    path and `CRITICAL_ROWS` (10⁴) of work is critical. It asks for a wider search while its order measured over
+    `CRITICAL_RATIO` (2×) its price, or while it has no proposals.
+- **Exploration (§7)** is only for a line that matters: on the path with its share, or slow. Its seeded draw also
+  makes its next plan a search, so the draw has candidates to take.
+
+Checks (Relax, local, 118 of 118):
+- `exploration_is_a_seeded_draw_and_runs_a_runner_up`: the line does not explore until the path gives it its share.
+  With the gate removed, it fails.
+- `random_orders_are_distinct_valid_and_connected`.
+- `a_wider_search_is_exact_past_the_rounds_bound_and_proposes_distinct_orders`: on 14 steps, no dearer than the
+  round's greedy order.
+- `step_misses_are_judged_past_eight_searches_of_work`.
+- The slow-line test, extended: the ask, the inline wider search, the proposals kept with δa first, the geometric
+  mean, and the rows unchanged.
+- `the_critical_path_marks_the_lines_of_its_heaviest_chain`: without the on-path test, it fails.
+- `a_levels_run_marks_its_critical_lines`: a cold run's 14,400-row line is critical, and a small edit marks none.
+
+The shape script requires the constants, the three operations, the level's call and the tests.

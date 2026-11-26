@@ -1124,10 +1124,23 @@ impl Level {
         // Its strata: modules gone first (their rows retracted), then the program's in k_order.
         let gone: Vec<i64> = self.ran.modules.keys().filter(|m| !next.modules.contains_key(m)).copied().collect();
         let order: Vec<i64> = gone.iter().copied().chain(next.strata()).collect();
+        // The strata that ran, in order: each one's module, the relations it writes and those it reads.
+        let mut strata: Vec<(i64, Vec<i64>, Vec<i64>)> = Vec::new();
         for m in order {
             let before = self.ran.modules.get(&m).map_or(Vec::new(), |md| md.rules.clone());
             let after = next.modules.get(&m).map_or(Vec::new(), |md| md.rules.clone());
-            work += self.run_module(ops, bench, atoms, &known, m, before, after, facts).map_err(|e| format!("module {}: {e}", docs.path_of(&bench.dir, atoms, m)))?;
+            let (w, writes, reads) = self.run_module(ops, bench, atoms, &known, m, before, after, facts).map_err(|e| format!("module {}: {e}", docs.path_of(&bench.dir, atoms, m)))?;
+            work += w;
+            if next.modules.contains_key(&m) {
+                strata.push((m, writes, reads));
+            }
+        }
+        // The run's critical path over its strata (0203 §4): each one's producers the strata before it that write a
+        // relation it reads.
+        let producers: Vec<Vec<usize>> = strata.iter().enumerate().map(|(j, (_, _, reads))| (0..j).filter(|&p| strata[p].1.iter().any(|r| reads.contains(r))).collect()).collect();
+        let memos: Vec<BlockId> = strata.iter().filter_map(|(m, _, _)| self.caches.get(m).map(|c| c.0)).collect();
+        if memos.len() == strata.len() {
+            work.planned.critical += ops.plan.critical_path(&bench.reg, &mut bench.dir, &memos, &producers)?;
         }
         self.ran = next;
         for f in facts {
@@ -1178,7 +1191,7 @@ impl Level {
     /// One stratum's run: module `m`'s rules `before` and `after`, its inputs each between where this level last read
     /// it and where it is now.
     #[allow(clippy::too_many_arguments)]
-    fn run_module(&mut self, ops: PhaseOps, bench: &mut Bench, atoms: Atoms, known: &Known, m: i64, before: Vec<Rule>, after: Vec<Rule>, facts: &[FactIn<'_>]) -> Result<Work, String> {
+    fn run_module(&mut self, ops: PhaseOps, bench: &mut Bench, atoms: Atoms, known: &Known, m: i64, before: Vec<Rule>, after: Vec<Rule>, facts: &[FactIn<'_>]) -> Result<(Work, Vec<i64>, Vec<i64>), String> {
         let mut shapes: BTreeMap<i64, Shape> = facts.iter().map(|f| (f.rel, f.shape.clone())).collect();
         shapes.extend(self.rels.iter().map(|(&r, t)| (r, t.shape.clone())));
         let after_empty = after.is_empty();
@@ -1232,11 +1245,11 @@ impl Level {
             }
             w
         };
-        let ran = run();
+        let ran = run()?;
         for (rel, r) in taken {
             self.rels.insert(rel, r);
         }
-        ran
+        Ok((ran, st.heads.iter().map(|h| h.rel).collect(), st.ins.iter().map(|i| i.0).collect()))
     }
 
     /// The run's end: every trace's layers since the run's start rolled up.

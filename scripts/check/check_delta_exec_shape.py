@@ -790,7 +790,27 @@ def planning(failures: list) -> None:
     ):
         if want not in plan:
             failures.append(f"plan.rs: {why} ({want} missing)")
+    # 0203 §2–§7: the memo's notes, the wider search, the step misses and the critical path, with their constants.
+    for name, value in (("TRIED", "8"), ("RUN_WEIGHT", "0.5"), ("CRITICAL", "0.05"), ("CRITICAL_ROWS", "10_000.0"), ("CRITICAL_RATIO", "2.0"), ("WIDE_GREEDY", "16"), ("RANDOM_ORDERS", "48"), ("PROPOSALS", "6"), ("WIDE_PAYS", "100.0"), ("MISS_BINDINGS", "64.0")):
+        if not re.search(rf"\bpub const {name}: \w+ = {re.escape(value)};", plan):
+            failures.append(f"plan.rs: {name} is not {value} (0203)")
+    for op in ("WEIGH", "CRITICAL_OP", "MARK"):
+        if f"d(&{op}," not in plan:
+            failures.append(f"plan.rs: {op.lower()} not an operation of the registry (0203 §4)")
+    for want, why in (
+        ("fn wide(", "the wider search (0203 §5)"),
+        ("fn random_orders(", "the wider search's random connected orders (0203 §5)"),
+        ("WIDE_PAYS * wide_cost(", "a wider search inline where its line's work pays for it (0203 §2)"),
+        ("fn step_miss(", "the step misses (0203 §3a)"),
+        ("note.merge_tried(", "a run's ratio merged as a geometric mean (0203 §6)"),
+        ("n.matters()", "exploration only for lines that matter (0203 §7)"),
+        ("!n.pending()", "a pending line searched, its kept order not taken (0203 §6)"),
+    ):
+        if want not in plan:
+            failures.append(f"plan.rs: {why} ({want} missing)")
     phase = strip_rust((src / "phase.rs").read_text())
+    if "ops.plan.critical_path(" not in phase:
+        failures.append("phase.rs: a level's run does not end with its critical path (0203 §4)")
     if "type Cache = crate::plan::Memo;" not in phase or "s.memo = Some(cache.write(cx)?);" not in phase:
         failures.append("phase.rs: the planner's memo is not the stratum's operator cache (P§11.3)")
     hits(src / "phase.rs", phase, r"\brun_plan\s*\(", "a stratum's chains run in their rules' order, unplanned", failures)
@@ -806,9 +826,15 @@ def planning(failures: list) -> None:
         "fn exploration_is_a_seeded_draw_and_runs_a_runner_up",
         "fn a_slow_line_is_cut_trialled_and_handed_off_to_a_better_order",
         "fn a_handed_off_order_is_limited_again",
+        "fn random_orders_are_distinct_valid_and_connected",
+        "fn a_wider_search_is_exact_past_the_rounds_bound_and_proposes_distinct_orders",
+        "fn step_misses_are_judged_past_eight_searches_of_work",
+        "fn the_critical_path_marks_the_lines_of_its_heaviest_chain",
     ):
         if t not in tests:
             failures.append(f"the planning track's tests lack {t}")
+    if "fn a_levels_run_marks_its_critical_lines" not in (src / "phase_tests.rs").read_text():
+        failures.append("the test that a level's run marks its critical lines is missing")
 
 
 def k1(failures: list) -> None:

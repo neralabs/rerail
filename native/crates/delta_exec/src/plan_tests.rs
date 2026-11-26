@@ -163,13 +163,13 @@ fn the_search_takes_the_cheapest_order_and_keeps_the_runners_up() {
     let t = term(vec![atom(0, Side::After, vec![Arg::Bind, Arg::Bind]), atom(1, Side::After, vec![Arg::Eq(0, 1)])], vec![Arg::Eq(0, 0), Arg::Eq(0, 1)]);
     let ch = ChainVars::of(&t).unwrap();
     let lp = LinePrice { steps: vec![step(1e6, &[1e6, 10.0]), step(1.0, &[1.0])], pairs: Vec::new() };
-    let s = search(&ch, &lp, &[], 0.0).unwrap();
+    let s = search(&ch, &lp, &[], 0.0, GREEDY).unwrap();
     assert_eq!(s.order, vec![1, 0]);
     assert_eq!(s.price, 1.0 + 1e5);
     assert_eq!(s.runners, vec![(vec![0, 1], 2e6)]);
     // An exact pair (0203 §3) overrides the independence estimate.
     let lp2 = LinePrice { pairs: vec![(1, 0, 3.0)], ..lp.clone() };
-    assert_eq!(search(&ch, &lp2, &[], 0.0).unwrap().price, 1.0 + 3.0);
+    assert_eq!(search(&ch, &lp2, &[], 0.0, GREEDY).unwrap().price, 1.0 + 3.0);
     // A chain of 14 steps, each joined to the last: greedy, valid, and the small one first.
     let n = 14;
     let steps: Vec<StepPlan> = (0..n).map(|j| atom(0, Side::After, if j == 0 { vec![Arg::Bind, Arg::Bind] } else { vec![Arg::Eq(j - 1, 1), Arg::Bind] })).collect();
@@ -177,7 +177,7 @@ fn the_search_takes_the_cheapest_order_and_keeps_the_runners_up() {
     let ch = ChainVars::of(&long).unwrap();
     let mut prices: Vec<StepPrice> = (0..n).map(|_| step(1000.0, &[100.0, 100.0])).collect();
     prices[5] = step(2.0, &[2.0, 2.0]);
-    let s = search(&ch, &LinePrice { steps: prices, pairs: Vec::new() }, &[], 0.0).unwrap();
+    let s = search(&ch, &LinePrice { steps: prices, pairs: Vec::new() }, &[], 0.0, GREEDY).unwrap();
     assert!(ch.valid(&s.order) && s.runners.is_empty(), "{:?}", s.order);
     assert_eq!(s.order[0], 5);
 }
@@ -273,11 +273,12 @@ fn a_learned_correction_changes_the_order_chosen_not_the_answer() {
     assert_eq!(order(&mut b, Some(&model)), vec![0, 1]);
 }
 
-/// Exploration (0203 §2) is a seeded draw from the line's key and its runs: a line whose draw falls under
-/// `EXPLORE_RATE` runs its untried runner-up within `MARGIN`, and answers the same.
+/// Exploration (0203 §2, §7) is a seeded draw from the line's key and its runs, and only for a line that matters:
+/// one whose draw falls under `EXPLORE_RATE` does not explore while it matters to nothing; once the run's critical
+/// path gives it its share, its next plan runs its untried runner-up within `MARGIN`, and answers the same.
 #[test]
 fn exploration_is_a_seeded_draw_and_runs_a_runner_up() {
-    let key = (0..10_000i64).find(|&k| seed_draw(k, 0) < EXPLORE_RATE).unwrap();
+    let key = (0..100_000i64).find(|&k| seed_draw(k, 0) < EXPLORE_RATE && seed_draw(k, 1) < EXPLORE_RATE).unwrap();
     assert_eq!(seed_draw(key, 0), seed_draw(key, 0));
     let mut b = B::new();
     // Both orders about as cheap: a(x, y), c(y) with a of 4 rows and c of 2.
@@ -288,7 +289,81 @@ fn exploration_is_a_seeded_draw_and_runs_a_runner_up() {
     let want = b.ruled(&plan, &[2]);
     let memo = b.memo();
     let (got, pd) = b.planned(&plan, &[key], memo, None, &[2]);
+    assert_eq!((got, pd.explored), (want.clone(), 0), "a line that matters to nothing");
+    // A line left off the path keeps its order.
+    let other = b.memo();
+    b.planned(&plan, &[key], other, None, &[2]);
+    let (got, pd) = b.planned(&plan, &[key], other, None, &[2]);
+    assert_eq!((got, pd.kept, pd.explored), (want.clone(), 1, 0));
+    // On the path, the whole of it: it matters.
+    let marked = b.plan.critical_path(&b.reg, &mut b.dir, &[memo], &[Vec::new()]).unwrap();
+    assert_eq!(marked, 0, "under CRITICAL_ROWS of work: no wider search asked");
+    let note = &b.notes(memo)[0].1;
+    assert_eq!((note.critical, note.fresh, note.ran, note.wants_search), (1.0, false, 0.0, false));
+    let (got, pd) = b.planned(&plan, &[key], memo, None, &[2]);
     assert_eq!((got, pd.explored), (want, 1));
+}
+
+/// The random connected orders of a wider search (0203 §5): distinct, valid, a fixed first step first, each next
+/// atom joined to those placed; drawn the same from the same key.
+#[test]
+fn random_orders_are_distinct_valid_and_connected() {
+    let n = 14;
+    // A star: δs(x, y) first, every other step joined to it on y.
+    let steps: Vec<StepPlan> = (0..n).map(|j| atom(0, if j == 0 { Side::Delta } else { Side::After }, if j == 0 { vec![Arg::Bind, Arg::Bind] } else { vec![Arg::Eq(0, 1), Arg::Bind] })).collect();
+    let ch = ChainVars::of(&term(steps, vec![Arg::Eq(0, 0), Arg::Eq(n - 1, 1)])).unwrap();
+    let os = random_orders(&ch, RANDOM_ORDERS, 7);
+    assert_eq!(os.len(), RANDOM_ORDERS, "13! orders to draw from");
+    assert_eq!(os, random_orders(&ch, RANDOM_ORDERS, 7));
+    for (i, o) in os.iter().enumerate() {
+        assert!(ch.valid(o) && o[0] == 0 && !os[..i].contains(o), "{o:?}");
+        let mut placed = 1u64;
+        for &j in &o[1..] {
+            assert!(ch.nodes[j].binds & ch.bound(placed) != 0, "{o:?}: {j} joins nothing placed");
+            placed |= 1 << j;
+        }
+    }
+}
+
+/// The wider search (0203 §5): exact past a round's `GREEDY` (up to `WIDE_GREEDY`), so on a 14-step chain its best is
+/// no dearer than the round's greedy one; at most `PROPOSALS`, distinct and valid, cheapest first.
+#[test]
+fn a_wider_search_is_exact_past_the_rounds_bound_and_proposes_distinct_orders() {
+    let n = 14;
+    let steps: Vec<StepPlan> = (0..n).map(|j| atom(0, Side::After, if j == 0 { vec![Arg::Bind, Arg::Bind] } else { vec![Arg::Eq(j - 1, 1), Arg::Bind] })).collect();
+    let ch = ChainVars::of(&term(steps, vec![Arg::Eq(0, 0), Arg::Eq(n - 1, 1)])).unwrap();
+    let mut prices: Vec<StepPrice> = (0..n).map(|j| step(1000.0 + 37.0 * j as f64, &[100.0, 10.0 + j as f64])).collect();
+    prices[9] = step(2.0, &[2.0, 2.0]);
+    prices[3] = step(5.0, &[5.0, 3.0]);
+    let lp = LinePrice { steps: prices, pairs: Vec::new() };
+    let greedy = search(&ch, &lp, &[], 0.0, GREEDY).unwrap();
+    let props = wide(&ch, &lp, 11);
+    assert!(!props.is_empty() && props.len() <= PROPOSALS);
+    assert!(props[0].1 <= greedy.price, "{} over the greedy {}", props[0].1, greedy.price);
+    for (i, (o, x)) in props.iter().enumerate() {
+        assert!(ch.valid(o) && !props[..i].iter().any(|p| &p.0 == o));
+        assert!(i == 0 || props[i - 1].1 <= *x);
+    }
+    assert!(wide_cost(n) > SEARCH_WORK, "a wider search costs more than a round's");
+}
+
+/// The step misses (0203 §3a): judged only once a line has done `SLOW_FACTOR` searches' work; its widest step blown
+/// up, or a step over-estimated with enough bindings entering it.
+#[test]
+fn step_misses_are_judged_past_eight_searches_of_work() {
+    let est = [100.0, 1000.0, 500.0];
+    let early = SLOW_FACTOR * SEARCH_WORK - 1.0;
+    let late = SLOW_FACTOR * SEARCH_WORK;
+    // Blown up: 9000 tuples where the widest priced is 1000.
+    assert!(!step_miss(early, &[100.0, 9000.0, 0.0], &est, 1));
+    assert!(step_miss(late, &[100.0, 9000.0, 0.0], &est, 1));
+    assert!(!step_miss(late, &[100.0, 7000.0, 0.0], &est, 1), "within eight times");
+    // Over-estimated: step 1 priced at 2000 rows per... 20 per binding; 100 bindings made 200, 2 per binding.
+    let est = [100.0, 2000.0, 2000.0];
+    assert!(step_miss(late, &[100.0, 200.0, 0.0], &est, 1));
+    assert!(!step_miss(late, &[100.0, 400.0, 0.0], &est, 1), "a fifth of its price: within the factor");
+    assert!(!step_miss(late, &[50.0, 10.0, 0.0], &est, 1), "too few bindings to judge");
+    assert!(!step_miss(late, &[100.0, 200.0, 0.0], &[0.0; 3], 1), "unpriced");
 }
 
 /// A slow line (0203 §3, 0206, 0207): its estimate misled by skew, it passes its limit at a depth; its exact pairs
@@ -320,6 +395,54 @@ fn a_slow_line_is_cut_trialled_and_handed_off_to_a_better_order() {
     assert_eq!(note.order, vec![0, 1, 2, 3], "c before d, after the handoff");
     assert_eq!(note.slow, 1);
     assert!(note.work < 200_000.0, "d before c would have made 400800 tuples: {}", note.work);
+    // A slow line asks for a wider search (0203 §3); its work pays for it, so its next plan makes it inline (§2):
+    // its proposals kept, the ask answered, the rows the same.
+    assert!(note.wants_search && note.proposals.is_empty());
+    assert!(note.work >= WIDE_PAYS * wide_cost(3), "{}", note.work);
+    let (got, pd) = b.planned(&plan, &[0x5eed_0003], memo, None, &[3]);
+    assert_eq!((got, pd.wide), (want.clone(), 1), "{pd:?}");
+    let note = b.notes(memo)[0].1.clone();
+    assert!((1..=PROPOSALS).contains(&note.proposals.len()), "{note:?}");
+    assert!(note.proposals.iter().all(|(o, _)| o[0] == 0), "δa stays first");
+    // The search's answer taken, the ask stands again only where the run went slow again (its skew is in no price).
+    assert_eq!(note.wants_search, note.slow > 1, "{note:?}");
+    // The geometric mean of its order's measured ratios over the runs (0203 §6).
+    assert_eq!(note.tried.iter().filter(|t| t.0 == note.order).count(), 1);
+    let (got, pd) = b.planned(&plan, &[0x5eed_0003], memo, None, &[3]);
+    assert_eq!((got, pd.wide), (want, u64::from(note.wants_search)));
+}
+
+/// The run's critical path (0203 §4): the longest chain of producers by the strata's work. A line on it with its
+/// share and `CRITICAL_ROWS` of work is marked critical and, slow and unproposed, asks for a wider search; lines off
+/// it get no share; each line's run work is let go after.
+#[test]
+fn the_critical_path_marks_the_lines_of_its_heaviest_chain() {
+    let mut b = B::new();
+    let a = b.rel(2, (0..200).map(|x| vec![x, 0]));
+    let bb = b.rel(2, (0..=60).map(|z| vec![0, z]));
+    let t = term(vec![atom(0, Side::Delta, vec![Arg::Bind, Arg::Bind]), atom(1, Side::After, vec![Arg::Eq(0, 1), Arg::Bind])], vec![Arg::Eq(0, 0), Arg::Eq(1, 1)]);
+    let heavy = Plan { srcs: vec![tr(2, a), tr(2, bb)], docs: Vec::new(), terms: vec![t.clone()] };
+    let small = b.rel(2, (0..3).map(|x| vec![x, 0]));
+    let one = b.rel(2, [vec![0, 1]]);
+    let light = Plan { srcs: vec![tr(2, small), tr(2, one)], docs: Vec::new(), terms: vec![t] };
+    let memos = [b.memo(), b.memo(), b.memo()];
+    b.planned(&heavy, &[1], memos[0], None, &[2]);
+    b.planned(&light, &[2], memos[1], None, &[2]);
+    b.planned(&light, &[3], memos[2], None, &[2]);
+    let ran0 = b.notes(memos[0])[0].1.ran;
+    assert!(ran0 >= CRITICAL_ROWS, "{ran0}");
+    // Stratum 2 reads stratum 1's: their chain is lighter than stratum 0 alone.
+    let marked = b.plan.critical_path(&b.reg, &mut b.dir, &memos, &[Vec::new(), Vec::new(), vec![1]]).unwrap();
+    assert_eq!(marked, 1);
+    let n0 = b.notes(memos[0])[0].1.clone();
+    assert_eq!((n0.critical, n0.fresh, n0.ran, n0.wants_search), (1.0, false, 0.0, true));
+    for m in &memos[1..] {
+        let n = &b.notes(*m)[0].1;
+        assert_eq!((n.critical, n.fresh, n.ran), (0.0, false, 0.0));
+    }
+    // The path again with nothing run since: no line ran, none marked, the shares kept.
+    assert_eq!(b.plan.critical_path(&b.reg, &mut b.dir, &memos, &[Vec::new(), Vec::new(), vec![1]]).unwrap(), 0);
+    assert_eq!(b.notes(memos[0])[0].1.critical, 1.0);
 }
 
 /// `limit_again` (0271): finite always; past the work done, eight times the rate over the rows left.

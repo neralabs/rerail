@@ -676,3 +676,24 @@ fn a_levels_memo_lasts_from_one_run_to_the_next() {
     r.run();
     assert_eq!(r.rows(1, "p"), warm, "cold");
 }
+
+/// A level's run ends with its critical path over its strata (0203 §4): a line of more than `CRITICAL_ROWS` of work on
+/// it is marked critical; an edit that does little marks none.
+#[test]
+fn a_levels_run_marks_its_critical_lines() {
+    let mut r = Run::new("phase-critical");
+    let base = |n: i64| (0..n).map(|i| format!("a({i}).\nb({i}).\n")).collect::<String>();
+    r.write("base.rerail", &base(120), 50);
+    r.write("rule.rerail", "p(x, y) :- a(x), b(y).\n", 50);
+    r.names(&["base.rerail", "base", "rule.rerail", "rule", "rr"]);
+    let (pb, mb, pr, mr, rr) = (r.s("base.rerail"), r.s("base"), r.s("rule.rerail"), r.s("rule"), r.s("rr"));
+    r.fact("load", &[vec![pb, mb, rr], vec![pr, mr, rr]]);
+    r.fact("boot", &[vec![pb, 1], vec![pr, 2]]);
+    let cold = r.run();
+    assert!(cold.planned.critical >= 1, "{:?}", cold.planned);
+    assert_eq!(r.rows(1, "p").len(), 120 * 120);
+    r.write("base.rerail", &format!("{}a(500).\n", base(120)), 40);
+    let edit = r.run();
+    assert_eq!(edit.planned.critical, 0, "{:?}", edit.planned);
+    assert_eq!(r.rows(1, "p").len(), 121 * 120);
+}
