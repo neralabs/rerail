@@ -556,6 +556,49 @@ r(p, t) :- doc(_, p, _), s__asked_at(p, k), s__resolved(k, q), s__params(q, t).
         assert!(err.contains("column 3"), "a key column the export lacks is refused: {err}");
     }
 
+    /// `ASKED_PHASE` with its answer read through a chain of per-file relations that read no ask (`defn`, `sig`,
+    /// `named`), as py_names' `ans_def` reads `def_name` and `qualname`.
+    const ASKED_HELD_PHASE: &str = r#"
+#include "core.rerail"
+.phase q
+.rounds ask_in
+.export asked_at by_path 1, ask_in by_path, answer by_key, resolved by_key
+.decl asked_at(p: symbol, k: symbol)
+asked_at(p, @cat(m, x)) :- kind(s, "import_from_statement"), field(s, "module_name", mn), text(mn, m), field(s, "name", nn), text(nn, x), docof(s, d), doc(d, p, _).
+.decl asked(m: symbol, x: symbol)
+asked(m, x) :- kind(s, "import_from_statement"), field(s, "module_name", mn), text(mn, m), field(s, "name", nn), text(nn, x).
+.decl ask_in(p: symbol, x: symbol)
+ask_in(p, x) :- asked(m, x), doc(_, p, m).
+.decl q__ask_in(p: symbol, x: symbol)
+.decl defn(f: node, x: symbol)
+defn(f, x) :- kind(f, "function_definition"), field(f, "name", i), text(i, x).
+.decl sig(f: node, x: symbol, t: symbol)
+sig(f, x, t) :- defn(f, x), field(f, "parameters", ps), text(ps, t0), t = @cat(x, t0).
+.decl named(f: node, x: symbol, t: symbol)
+named(f, x, t) :- sig(f, x, t), docof(f, _).
+.decl answer(k: symbol, q: symbol)
+answer(@cat(m, x), @cat(m, t)) :- doc(d, p, m), q__ask_in(p, x), named(f, x, t), docof(f, d).
+.decl resolved(k: symbol, q: symbol)
+resolved(k, q) :- answer(k, q).
+"#;
+
+    /// A later round's partial hits derive the rules that read the asks alone (decision 0705): the relations those
+    /// read without reading an ask (`named`, a per-file relation made by three rules) are held in the file's entry
+    /// from round 1, so round 2's chunk of `m.py` runs `answer`'s rule, not `named`'s, `sig`'s and `defn`'s. Its
+    /// constants are round 1's, not measured again (`phases::RoundsMeasured`).
+    #[test]
+    fn a_later_round_derives_only_the_rules_that_read_its_asks() {
+        let t = AskedTree::new("asked-held", &[("q", ASKED_HELD_PHASE)], &[("a.py", "from m import x\n"), ("m.py", "def x(a):\n    return a\n\ndef y():\n    return 2\n")]);
+        let report = t.run(ASKED_READER, true).unwrap();
+        assert_eq!(t.rows("r"), [["a.py", "m.x.(a)"]]);
+        assert_eq!(t.rows("answered"), [["m.x", "m.x.(a)"]]);
+        let q = report.phase_runs.iter().find(|r| r.name == "q").expect("q ran");
+        assert_eq!(q.rounds.iter().map(|r| (r.asks, r.files - r.memo.0)).collect::<Vec<_>>(), [(1, 2), (1, 1)], "round 2 builds m.py alone");
+        assert_eq!(q.rounds[0].partial_rules, 0, "round 1 has no partial hit");
+        assert_eq!(q.rounds[1].partial_rules, 1, "round 2's partial hit of m.py runs answer's rule alone, named read from its entry");
+        assert_eq!((q.rounds[0].constants_measured, q.rounds[1].constants_measured), (1, 0), "round 2 reads its chunk's constants as round 1 measured them");
+    }
+
     /// An asked phase's run starts from the asks its last run over the root ended with (decision 0705): over an
     /// unchanged tree it runs one round; when the asks shrink, the smaller set is the run's, and a removed import's
     /// ask is in no export after it.

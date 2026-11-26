@@ -94,6 +94,29 @@ impl HandingDown {
     }
 }
 
+/// What an asked phase's rounds measure once (decision 0705): each round runs the same prepared program over the
+/// same tree, so a statistic one round measured (a chunk mix's constants, `corpus::Own`) is a later round's, as a
+/// later chunk of the mix reads the first chunk's within one run. Bound for the rounds' runs, by the measuring run's
+/// key; outside them, nothing is kept.
+#[derive(Clone, Default)]
+pub struct RoundsMeasured(Option<std::sync::Arc<parking_lot::Mutex<std::collections::HashMap<String, std::sync::Arc<dyn std::any::Any + Send + Sync>>>>>);
+
+impl RoundsMeasured {
+    /// What an earlier round of the phase under way measured under `key`.
+    pub fn get<T: Clone + Send + Sync + 'static>(key: &str) -> Option<T> {
+        let kept = crate::code_rule_dsl::logic::profile::bound::<RoundsMeasured>().0?;
+        let kept = kept.lock();
+        kept.get(key)?.downcast_ref::<T>().cloned()
+    }
+
+    /// Keeps `value` under `key` for the later rounds of the phase under way; outside a phase's rounds, nothing.
+    pub fn put<T: Send + Sync + 'static>(key: String, value: T) {
+        if let Some(kept) = crate::code_rule_dsl::logic::profile::bound::<RoundsMeasured>().0 {
+            kept.lock().insert(key, std::sync::Arc::new(value));
+        }
+    }
+}
+
 /// Marks `name`'s run under way until dropped.
 struct Running {
     _phases: crate::code_rule_dsl::logic::profile::Bound,
@@ -531,6 +554,10 @@ pub struct Round {
     /// (`Report::files`, `Report::memo`).
     pub files: usize,
     pub memo: (usize, usize),
+    /// The most rules a chunk of its partial hits ran (`Report::memo_partial_rules`).
+    pub partial_rules: usize,
+    /// The chunk mixes whose constants it measured (`Report::constants_measured`).
+    pub constants_measured: usize,
 }
 
 /// One phase's run, as the reader's run reports it.
@@ -672,6 +699,7 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
         let mut asks: BTreeMap<String, Vec<Vec<Value>>> =
             untagged(kept_key.as_ref().and_then(|k| super::observe(|o| o.run_record(k))).and_then(|(_, rows)| decode_rows(&rows)).unwrap_or_default(), &rounds_of);
         let mut rounds: Vec<Round> = Vec::new();
+        let _measured = (!rounds_of.is_empty()).then(|| crate::code_rule_dsl::logic::profile::bind(RoundsMeasured(Some(Default::default()))));
         let (report, rows) = loop {
             let mut down = upstream.clone();
             for (r, own) in &own_reads {
@@ -690,7 +718,7 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
                 break (report, rows);
             }
             let got: BTreeMap<String, Vec<Vec<Value>>> = rounds_of.iter().map(|r| (r.clone(), rows.get(r).cloned().unwrap_or_default())).collect();
-            rounds.push(Round { asks: got.values().map(Vec::len).sum(), files: report.files, memo: report.memo });
+            rounds.push(Round { asks: got.values().map(Vec::len).sum(), files: report.files, memo: report.memo, partial_rules: report.memo_partial_rules, constants_measured: report.constants_measured });
             let changed: Vec<(&String, BTreeSet<String>)> = rounds_of
                 .iter()
                 .filter_map(|r| {

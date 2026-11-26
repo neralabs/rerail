@@ -136,6 +136,29 @@ file's module-level imports, and the cross part drops a tuple the file imports o
 (`tc_only`, which reads no ask, held in the entry from round 1). A file on the memo's kept route whose outputs
 missed now takes that partial hit too (`corpus.rs`, `Unbuilt::partial`): it was built again whole.
 
+A file's entry holds the relations the ask-reading rules read without reading an ask (`corpus::asked_held`): of
+the rules that read `<phase>__ask_in`, or a relation such a rule derives, the derived relations they read that
+read no ask, are not exports or outputs, name a file's node, and are no view of the tape (a base relation, an input,
+a view of an input's columns as `kind` is: read in place, decision 0353). For py_names these are `def_name`,
+`qualname`, `all_here` and `all_assigned`. Each is kept to the chunk's end, not handed off, and its rows go into the
+files' entries alone, never to the cross part. A later round's partial hit stops its cone at them
+(`wanted_cone`'s boundary): it reads their rows from its files' entries as inputs (`flat_source`) and derives only
+the rules that read the asks, and the new entries carry those rows on. Before, round 2 derived `def_name`,
+`qualname`, `value`, `all_assigned`, `rr_value_req` and the `modname` strata again for each asked file (about
+0.6 s of round 2's CPU over bwh's Django sample): now it runs `ans_def_at` and `ans_pub_at` alone.
+`Report::memo_partial_rules` (`Round::partial_rules`) is the most rules a chunk of partial hits ran:
+`a_later_round_derives_only_the_rules_that_read_its_asks` holds it at 1 for round 2, where without the held `named` its cone
+would be 4 rules (`answer`, `named`, `sig`, `defn`).
+
+A later round reads its chunks' constants as the first round measured them (`phases::RoundsMeasured`, bound for
+the rounds, keyed by the prepared program and the chunk's mix), as a later chunk of a mix reads the first chunk's
+within one run: each round runs the same prepared program over the same tree. Over bwh's Django sample the
+measurements went from four (two mixes, two rounds; 0.35 s) to two (0.14 s). `Report::constants_measured`
+(`Round::constants_measured`) counts them, and the test above holds round 2 at none. The other costs a round pays
+again are small there: the base rows' statistics are round 1's kept inputs (0.11 s) and about 6 ms in round 2, and
+writing the entries is 0.05 s over both rounds. The cross part runs in each round, since it makes the asks, and
+its session derives again only the strata the new asks reach.
+
 `asked` makes a row only for a module of the workspace: a name of an outside package, or an attribute chain past a
 module, is asked of no file.
 
