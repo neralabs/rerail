@@ -50,6 +50,7 @@ pub mod phase;
 pub mod plan;
 pub mod program;
 pub mod residency;
+pub mod shapes;
 pub mod sym;
 pub mod tally;
 pub mod tape;

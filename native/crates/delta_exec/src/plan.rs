@@ -55,6 +55,7 @@ use crate::body::{self, Arg, BodyOps, Env, Op, Plan, Side, StepPlan, TermPlan};
 use crate::dir::{BlockId, Directory};
 use crate::op::{Across, Bound, Found, Independence, Inside, Mode, OpId, Output, Over, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
 use crate::program::Cmp;
+use crate::shapes::Facts;
 use crate::sym::Names;
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::{BODY_AT, Table, set_word, word};
@@ -410,20 +411,14 @@ struct StepPrice {
     ndv: Vec<f64>,
     /// The learned correction at each set of its columns bound (bit i: column i), when a model gave one.
     corr: Vec<f64>,
-    /// What its relation declares (0361): its keys, each a mask of columns, and its columns' fanout caps.
-    keys: Vec<u64>,
-    caps: Vec<(usize, f64)>,
+    /// What its relation declares, or its rules give it (0361): its keys and its columns' fanout caps.
+    decl: Facts,
 }
 
 impl StepPrice {
-    /// The rows a probe with columns `mask` bound returns at most, by its declarations (0361): one where they hold a
-    /// key, a column's cap where they hold it; none known: infinite.
+    /// The rows a probe with columns `mask` bound returns at most, by its facts (0361).
     fn cap(&self, mask: usize) -> f64 {
-        let m = mask as u64;
-        if self.keys.iter().any(|&k| k != 0 && k & !m == 0) {
-            return 1.0;
-        }
-        self.caps.iter().filter(|&&(c, _)| c < 64 && m >> c & 1 == 1).map(|&(_, x)| x).fold(f64::INFINITY, f64::min)
+        self.decl.cap(mask as u64)
     }
 }
 
@@ -442,10 +437,7 @@ impl LinePrice {
             w.extend(s.ndv.iter().map(|&x| fb(x)));
             w.push(s.corr.len() as i64);
             w.extend(s.corr.iter().map(|&x| fb(x)));
-            w.push(s.keys.len() as i64);
-            w.extend(s.keys.iter().map(|&k| k as i64));
-            w.push(s.caps.len() as i64);
-            w.extend(s.caps.iter().flat_map(|&(c, x)| [c as i64, fb(x)]));
+            s.decl.words(w);
         }
         w.push(self.pairs.len() as i64);
         w.extend(self.pairs.iter().flat_map(|&(a, b, r)| [a as i64, b as i64, fb(r)]));
@@ -460,11 +452,7 @@ impl LinePrice {
                 let ndv = c.fs(k);
                 let m = c.n();
                 let corr = c.fs(m);
-                let nk = c.n();
-                let keys = (0..nk).map(|_| c.next() as u64).collect();
-                let nc = c.n();
-                let caps = (0..nc).map(|_| (c.n(), c.f())).collect();
-                StepPrice { card, ndv, corr, keys, caps }
+                StepPrice { card, ndv, corr, decl: Facts::of_words(&mut || c.next()) }
             })
             .collect();
         let np = c.n();
@@ -951,13 +939,15 @@ struct DeclaredPlan {
 /// Chain `c`'s default plan from its relations' declarations alone (0361: no statistics, no search), its steps'
 /// keys and caps `decl` and first steps' rows `rows` (the counts the run has exactly): its first step (its change,
 /// else the atom of fewest rows), then while steps remain, each filter as soon as it is ready, else the atom whose
-/// probe the declarations bound least (ties in rule order). `None` where an atom is left that no declaration bounds.
+/// probe the declarations bound least (ties in rule order). `None` where an atom is left that no declaration bounds,
+/// or none is placed by one (a line its facts do not plan).
 fn declared_order(c: &ChainVars, decl: &[StepPrice], rows: impl Fn(usize) -> f64) -> Option<DeclaredPlan> {
     let n = c.len();
     let atoms: Vec<usize> = (0..n).filter(|&j| c.nodes[j].op == Op::Atom).collect();
     let first = if c.fixed { 0 } else { *atoms.iter().min_by(|&&a, &&b| rows(a).total_cmp(&rows(b)))? };
     let (mut order, mut placed) = (vec![first], 1u64 << first);
     let (mut est, mut caps) = (vec![rows(first)], vec![f64::INFINITY]);
+    let mut by_facts = false;
     while order.len() < n {
         let ready: Vec<usize> = (0..n).filter(|&j| placed >> j & 1 == 0 && c.ready(placed, j)).collect();
         let (j, cap) = match ready.iter().copied().find(|&j| c.nodes[j].op != Op::Atom) {
@@ -965,6 +955,7 @@ fn declared_order(c: &ChainVars, decl: &[StepPrice], rows: impl Fn(usize) -> f64
             None => {
                 let bound = c.bound(placed);
                 let capped = ready.iter().map(|&j| (j, decl[j].cap(mask_of(&c.nodes[j], bound)))).filter(|x| x.1.is_finite());
+                by_facts = true;
                 capped.min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))?
             }
         };
@@ -975,7 +966,7 @@ fn declared_order(c: &ChainVars, decl: &[StepPrice], rows: impl Fn(usize) -> f64
         placed |= 1 << j;
     }
     let price = est.iter().sum();
-    c.valid(&order).then_some(DeclaredPlan { order, est, price, caps })
+    (by_facts && c.valid(&order)).then_some(DeclaredPlan { order, est, price, caps })
 }
 
 fn seed_draw(key: i64, runs: u64) -> f64 {
@@ -1009,7 +1000,7 @@ fn lines(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             rows as f64
         };
         // Its declarations (0361), unless its rows broke them.
-        let decl: Vec<StepPrice> = t.steps.iter().map(|s| if matches!(s.op, Op::Cmp(_)) || note.as_ref().is_some_and(|n| n.broken) { StepPrice::default() } else { let (keys, caps) = env.declared(s.src); StepPrice { keys, caps, ..StepPrice::default() } }).collect();
+        let decl: Vec<StepPrice> = t.steps.iter().map(|s| if matches!(s.op, Op::Cmp(_)) || note.as_ref().is_some_and(|n| n.broken) { StepPrice::default() } else { StepPrice { decl: env.declared(s.src), ..StepPrice::default() } }).collect();
         let mut default = None;
         let (status, kept) = match &chain {
             None => (ONE, Vec::new()),
@@ -1167,8 +1158,8 @@ fn price(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             .iter()
             .map(|s| {
                 let (rows, ndv) = env.side_stats(s.src, s.side, s.args.len());
-                let (keys, caps) = if broken || matches!(s.op, Op::Cmp(_)) { (Vec::new(), Vec::new()) } else { env.declared(s.src) };
-                StepPrice { card: rows as f64, ndv: ndv.into_iter().map(|x| x as f64).collect(), corr: Vec::new(), keys, caps }
+                let decl = if broken || matches!(s.op, Op::Cmp(_)) { Facts::default() } else { env.declared(s.src) };
+                StepPrice { card: rows as f64, ndv: ndv.into_iter().map(|x| x as f64).collect(), corr: Vec::new(), decl }
             })
             .collect();
         let pairs = note.map(|n| n.pairs).unwrap_or_default();

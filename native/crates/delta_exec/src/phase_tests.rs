@@ -739,3 +739,33 @@ fn a_levels_declared_keys_give_its_lines_default_plans() {
     r.run();
     assert_eq!(r.rows(1, "p"), warm, "cold");
 }
+
+/// A derived relation's key, inferred through its rule (0361): `q` copies `f` keeping its key, `r` keeps `g`'s, and
+/// a later stratum's line over `e`, `q` and `r` takes its default plan from what the earlier strata's rules give
+/// them. With `f` and `g` undeclared, nothing is inferred and the line is priced; the rows are the same.
+#[test]
+fn a_derived_relations_inferred_key_gives_a_later_line_its_default_plan() {
+    let base = (0..40).map(|i| format!("e({i}, {}).\nf({}, {}).\ng({}, {i}).\n", i + 1, i + 1, i + 2, i + 2)).collect::<String>();
+    let run = |rel: &str| {
+        let mut r = Run::new("phase-inferred");
+        r.write("base.rerail", &base, 50);
+        r.write("decl.rerail", &format!("{rel}(\"e\", 0, 1).\n{rel}(\"f\", 0, 0).\n{rel}(\"g\", 0, 0).\n"), 50);
+        r.write("mid.rerail", "q(y, z) :- f(y, z), y < 1000.\nr(z, w) :- g(z, w).\n", 50);
+        r.write("rule.rerail", "p(x, w) :- e(x, y), q(y, z), r(z, w).\n", 50);
+        r.names(&["base.rerail", "base", "decl.rerail", "decl", "mid.rerail", "mid", "rule.rerail", "rule", "rr"]);
+        let rr = r.s("rr");
+        let files = [("base.rerail", "base", 1), ("decl.rerail", "decl", 1), ("mid.rerail", "mid", 2), ("rule.rerail", "rule", 3)];
+        let load: Vec<Vec<i64>> = files.iter().map(|(p, m, _)| vec![r.s(p), r.s(m), rr]).collect();
+        let boot: Vec<Vec<i64>> = files.iter().map(|(p, _, k)| vec![r.s(p), *k]).collect();
+        r.fact("load", &load);
+        r.fact("boot", &boot);
+        let cold = r.run();
+        let p = r.rows(1, "p");
+        (cold, p)
+    };
+    let (plain, want) = run("other");
+    let (keyed, got) = run("key");
+    assert_eq!((got.len(), &got), (40, &want));
+    assert_eq!(plain.planned.declared, 0, "{:?}", plain.planned);
+    assert!(keyed.planned.declared >= 1, "p's line, by q's and r's inferred keys: {:?}", keyed.planned);
+}

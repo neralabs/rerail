@@ -2039,3 +2039,31 @@ Checks (Relax, local, 123 of 123):
   relation. An edit giving `f` two rows at one key, probed by `e`'s change, is caught. The rows equal a cold run's.
 - Mutations: without the cap in `fan`, without `check`'s break, and without the declared branch in `lines`, a test
   fails each time.
+
+### Derived relations' facts, inferred through their rules (0361; 2026-11-26)
+
+0361's "Inferred for derived relations": declarations go where inference cannot reach, and every other relation gets
+its facts from its rules, as types are propagated. `shapes::infer` does this, as 0361 step 3 found sound:
+- **A key.** A rule gives its head a key where the head's columns at one atom's key determine every head variable.
+  That covers a projection keeping the key, a join along a key, and a filter. A variable is determined by a
+  constant, by an atom's key whose variables are all determined (which determines the atom's every variable), or
+  by an equality with a determined variable.
+- **A fanout.** A head column gets one where it holds an atom's fanout column and the atom's row determines the
+  head's.
+- **Unions and recursions** keep their declared facts alone. A key is not sound across a union, and a recursion's
+  facts would need its base case and its step proved.
+
+The level infers as its strata run, in k_order. After each stratum, its heads get what their rules give them from
+the declarations (`Level::declared`, the `key` and `fanout` rows, read from their traces) and the facts inferred
+before. A stratum takes those of the relations it reads (`Stratum::with_inferred`). Its plan carries them as
+derived words (`Decls::inferred`), and `Env::declared` adds them to the declarations it reads in place. A
+declared plan must place at least one atom by a fact. A line of one atom and its filters is planned as before.
+
+Checks (Relax, local, 127 of 127):
+- `a_rules_head_keeps_the_keys_its_body_determines`: a projection keeping and dropping a key, a join along a key, a
+  cross product, filters and a negation, an equality, and a head column the body leaves free.
+- `a_fanout_carries_where_an_atoms_row_determines_the_heads_and_unions_keep_nothing`, and
+  `declared_rows_give_each_relations_facts`.
+- `a_derived_relations_inferred_key_gives_a_later_line_its_default_plan`. `q` copies `f` under a filter, `r` copies
+  `g`, and a later stratum's three-atom line over `e`, `q` and `r` takes its default plan. With the same facts under
+  another relation it is priced, and the rows are the same. Without the level's inference, it fails.

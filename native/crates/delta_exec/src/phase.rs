@@ -40,6 +40,7 @@ use crate::files::LeavesW;
 use crate::kform::{self, RELATIONS, Refused};
 use crate::l1::{row_blobs, tape_shape};
 use crate::program::{Cmp, Kind, Known, Program, Rule, Term};
+use crate::shapes::{Facts, Shapes};
 use crate::sym::Atoms;
 use crate::tally::{self, TallyOps};
 use crate::trace::{RollUp, Trace, open_runs};
@@ -127,6 +128,8 @@ pub struct Stratum {
     pub heads: Vec<Head>,
     /// Whether its rules read its own heads (Δfix).
     pub recursive: bool,
+    /// The facts earlier strata's rules give the relations it reads (0361, `shapes::infer`).
+    pub inferred: Vec<(i64, Facts)>,
 }
 
 /// What a stratum's run reads, on its two sides: each input port's heads and the partitions it changed in, the
@@ -212,6 +215,7 @@ impl<'s> Planner<'s> {
         let docs = s.docs.clone(); // copy: derived (the documents' places, the plan's)
         let mut p = Planner { st, s, plan: Plan { srcs: Vec::new(), docs, decls: Decls::default(), terms: Vec::new() }, keys: Vec::new(), own: Vec::new() };
         // The declarations (0361): their relations as sources, read where they lie by the planning operations.
+        p.plan.decls.inferred = st.inferred.clone(); // copy: derived (the facts inferred for its reads, its plan's words)
         p.plan.decls.one = st.known.one.unwrap_or(0);
         p.plan.decls.few = st.known.few.unwrap_or(0);
         if let Some(k) = st.known.key.filter(|&k| st.port_of(k).is_some()) {
@@ -447,7 +451,15 @@ impl Stratum {
                 ins.push((d, sh.clone()));
             }
         }
-        Ok(Stratum { ops, module, before, after, known, tape, ins, heads, recursive })
+        Ok(Stratum { ops, module, before, after, known, tape, ins, heads, recursive, inferred: Vec::new() })
+    }
+
+    /// It, with the facts `inferred` gives the relations it reads and does not write (0361).
+    pub fn with_inferred(mut self, inferred: &Shapes) -> Stratum {
+        let own: BTreeSet<i64> = self.heads.iter().map(|h| h.rel).collect();
+        let reads: BTreeSet<i64> = self.before.iter().chain(&self.after).flat_map(|r| r.reads().map(|(_, rel)| rel)).filter(|r| !own.contains(r)).collect();
+        self.inferred = reads.into_iter().filter_map(|r| inferred.get(&r).map(|f| (r, f.clone()))).collect(); // copy: derived (the few facts inferred for what it reads)
+        self
     }
 
     /// The heads module `module` writes with rules `before` and `after`, and whether it is recursive: each head's
@@ -1148,13 +1160,31 @@ impl Level {
         let order: Vec<i64> = gone.iter().copied().chain(next.strata()).collect();
         // The strata that ran, in order: each one's module, the relations it writes and those it reads.
         let mut strata: Vec<(i64, Vec<i64>, Vec<i64>)> = Vec::new();
+        // The facts the strata's rules give their heads (0361), as they run: each from the declarations and the facts
+        // inferred before it.
+        let mut inferred: Shapes = BTreeMap::new();
         for m in order {
             let before = self.ran.modules.get(&m).map_or(Vec::new(), |md| md.rules.clone());
             let after = next.modules.get(&m).map_or(Vec::new(), |md| md.rules.clone());
-            let (w, writes, reads) = self.run_module(ops, bench, atoms, &known, m, before, after, facts).map_err(|e| format!("module {}: {e}", docs.path_of(&bench.dir, atoms, m)))?;
+            let (w, writes, reads) = self.run_module(ops, bench, atoms, &known, m, before, after, facts, &inferred).map_err(|e| format!("module {}: {e}", docs.path_of(&bench.dir, atoms, m)))?;
             work += w;
-            if next.modules.contains_key(&m) {
-                strata.push((m, writes, reads));
+            if let Some(md) = next.modules.get(&m) {
+                strata.push((m, writes.clone(), reads));
+                let declared = self.declared(&bench.dir, &known, facts)?;
+                let of = |r: i64| match (declared.get(&r), inferred.get(&r)) {
+                    (Some(a), Some(b)) => Some(a.and(b)),
+                    (a, b) => a.or(b).cloned(),
+                };
+                let recursive = md.rules.iter().any(|r| r.reads().any(|(_, rel)| writes.contains(&rel)));
+                let got: Vec<(i64, Facts)> = writes
+                    .iter()
+                    .map(|&h| {
+                        let rules: Vec<&Rule> = md.rules.iter().filter(|r| r.head == h).collect();
+                        (h, crate::shapes::infer(h, &rules, recursive, &of))
+                    })
+                    .filter(|(_, f)| !f.is_empty())
+                    .collect();
+                inferred.extend(got);
             }
         }
         // The run's critical path over its strata (0203 §4): each one's producers the strata before it that write a
@@ -1171,6 +1201,19 @@ impl Level {
         let ksyms = kform_syms(&bench.dir, atoms);
         let program = self.exports(&bench.dir, &ksyms)?;
         Ok(LevelRun { work, program, reset })
+    }
+
+    /// The facts the level's relations declare now (0361): its `key` and `fanout` rows, a relation of the level's or a
+    /// fact in.
+    fn declared(&self, dir: &Directory, known: &Known, facts: &[FactIn<'_>]) -> Result<Shapes, String> {
+        let rows = |rel: Option<i64>| -> Result<BTreeSet<Vec<i64>>, String> {
+            let Some(rel) = rel else { return Ok(BTreeSet::new()) };
+            match self.rels.get(&rel).map(|r| &r.head).or_else(|| facts.iter().find(|f| f.rel == rel).map(|f| f.trace)) {
+                Some(t) => rows_at(dir, t, t.head()),
+                None => Ok(BTreeSet::new()),
+            }
+        };
+        Ok(crate::shapes::declared(&rows(known.key)?, &rows(known.fanout)?, known.one, known.few))
     }
 
     /// The level's documents moved to the `load` rows of its facts in and of its program's facts: each path read
@@ -1213,13 +1256,13 @@ impl Level {
     /// One stratum's run: module `m`'s rules `before` and `after`, its inputs each between where this level last read
     /// it and where it is now.
     #[allow(clippy::too_many_arguments)]
-    fn run_module(&mut self, ops: PhaseOps, bench: &mut Bench, atoms: Atoms, known: &Known, m: i64, before: Vec<Rule>, after: Vec<Rule>, facts: &[FactIn<'_>]) -> Result<(Work, Vec<i64>, Vec<i64>), String> {
+    fn run_module(&mut self, ops: PhaseOps, bench: &mut Bench, atoms: Atoms, known: &Known, m: i64, before: Vec<Rule>, after: Vec<Rule>, facts: &[FactIn<'_>], inferred: &Shapes) -> Result<(Work, Vec<i64>, Vec<i64>), String> {
         let mut shapes: BTreeMap<i64, Shape> = facts.iter().map(|f| (f.rel, f.shape.clone())).collect();
         shapes.extend(self.rels.iter().map(|(&r, t)| (r, t.shape.clone())));
         let after_empty = after.is_empty();
         let st = {
             let l = bench.dir.read("atoms", &[atoms.0])?;
-            Stratum::new(ops, m, before, after, known.clone(), &shapes, l.block(0)).map_err(|e| format!("rule {}: {}", e.rule, e.why))?
+            Stratum::new(ops, m, before, after, known.clone(), &shapes, l.block(0)).map_err(|e| format!("rule {}: {}", e.rule, e.why))?.with_inferred(inferred)
         };
         for h in &st.heads {
             if !self.rels.contains_key(&h.rel) {

@@ -525,7 +525,7 @@ fn a_handed_off_order_is_limited_again() {
 /// else none.
 #[test]
 fn a_declared_key_or_fanout_bounds_a_probe() {
-    let s = StepPrice { keys: vec![0b011], caps: vec![(2, FEW)], ..StepPrice::default() };
+    let s = StepPrice { decl: Facts { keys: vec![0b011], caps: vec![(2, FEW)] }, ..StepPrice::default() };
     assert_eq!(s.cap(0b011), 1.0);
     assert_eq!(s.cap(0b111), 1.0);
     assert_eq!(s.cap(0b001), f64::INFINITY, "half a key");
@@ -536,7 +536,7 @@ fn a_declared_key_or_fanout_bounds_a_probe() {
     let ch = ChainVars::of(&t).unwrap();
     let mut lp = LinePrice { steps: vec![step(1e6, &[1e6, 10.0]), step(1.0, &[1.0])], pairs: Vec::new() };
     assert_eq!(search(&ch, &lp, &[], 0.0, GREEDY).unwrap().price, 1.0 + 1e5);
-    lp.steps[0].keys = vec![0b10];
+    lp.steps[0].decl.keys = vec![0b10];
     assert_eq!(search(&ch, &lp, &[], 0.0, GREEDY).unwrap().price, 1.0 + 1.0);
 }
 
@@ -549,7 +549,7 @@ fn declared_three_hop(b: &mut B, class: i64) -> Plan {
     let (re, rf, rg, one, few) = (101, 102, 103, 7001, 7002);
     let key = b.rel(3, [vec![rf, 0, 0], vec![rf, 1, 1], vec![rg, 0, 0]]);
     let fanout = b.rel(3, [vec![re, 1, if class == 1 { one } else { few }]]);
-    let decls = Decls { key: Some(3), fanout: Some(4), rels: vec![re, rf, rg, 0, 0], one, few };
+    let decls = Decls { key: Some(3), fanout: Some(4), rels: vec![re, rf, rg, 0, 0], one, few, inferred: Vec::new() };
     Plan { srcs: vec![tr(2, e), tr(2, f), tr(2, g), tr(3, key), tr(3, fanout)], docs: Vec::new(), decls, terms: vec![three_hop()] }
 }
 

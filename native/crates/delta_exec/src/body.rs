@@ -27,6 +27,7 @@ use crate::dir::{BlockId, Directory};
 use crate::files::Placed;
 use crate::op::{Across, Bound, Found, Independence, Inside, Mode, OpId, Output, Over, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
 use crate::program::Cmp;
+use crate::shapes::Facts;
 use crate::sym::Names;
 use crate::tape::{Reads, TapeView, View};
 use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
@@ -119,21 +120,22 @@ pub struct TermPlan {
 /// `key(rel, k, col)` (column `col` is in key `k` of `rel`: a probe binding every column of a key returns at most one
 /// row) and `fanout(rel, col, class)` (a probe binding `col` returns at most one row for the class `one`, at most
 /// `FEW` for `few`, any number for any other), read where they lie; each source's relation (0: none, a view's own);
-/// and the symbols of `one` and `few`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// the symbols of `one` and `few`; and the facts inferred for the derived relations it reads (`shapes::infer`).
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Decls {
     pub key: Option<usize>,
     pub fanout: Option<usize>,
     pub rels: Vec<i64>,
     pub one: i64,
     pub few: i64,
+    pub inferred: Vec<(i64, Facts)>,
 }
 
 /// At most this many rows a probe of a `few` fanout returns (0361).
 pub const FEW: f64 = 16.0;
 
 /// A stratum's chains as data, with the sources and documents they read, and the shapes its relations declare.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Plan {
     pub srcs: Vec<Src>,
     pub docs: Vec<DocAt>,
@@ -236,6 +238,11 @@ impl Plan {
         let at = |x: Option<usize>| x.map_or(-1, |i| i as i64);
         w.extend([at(d.key), at(d.fanout), d.one, d.few, d.rels.len() as i64]);
         w.extend(&d.rels);
+        w.push(d.inferred.len() as i64);
+        for (rel, f) in &d.inferred {
+            w.push(*rel);
+            f.words(&mut w);
+        }
         w
     }
 
@@ -310,7 +317,8 @@ impl Plan {
         let at = |x: i64| (x >= 0).then_some(x as usize);
         let (key, fanout, one, few) = (at(next()), at(next()), next(), next());
         let rels = (0..next()).map(|_| next()).collect();
-        p.decls = Decls { key, fanout, rels, one, few };
+        let inferred = (0..next()).map(|_| (next(), Facts::of_words(&mut next))).collect();
+        p.decls = Decls { key, fanout, rels, one, few, inferred };
         p
     }
 
@@ -426,11 +434,12 @@ impl<'t> Env<'t> {
     /// Source `src`'s rows on `side` (its change's, for `Delta`), and each of its first `ncols` columns' distinct values
     /// (*0686: Operations* §8's statistics, read where they lie: a trace's from its layers' sketches, a view's from its
     /// documents' rows).
-    /// What source `src`'s relation declares (0361), read where the declarations lie: its keys, each a mask of its
-    /// columns, and its columns' fanout caps (the rows a probe binding the column returns at most).
-    pub(crate) fn declared(&self, src: usize) -> (Vec<u64>, Vec<(usize, f64)>) {
+    /// What source `src`'s relation declares (0361), read where the declarations lie, with what its rules give it
+    /// (`shapes::infer`): its keys, each a mask of its columns, and its columns' fanout caps (the rows a probe binding
+    /// the column returns at most).
+    pub(crate) fn declared(&self, src: usize) -> Facts {
         let d = &self.plan.decls;
-        let Some(&rel) = d.rels.get(src).filter(|&&r| r != 0) else { return (Vec::new(), Vec::new()) };
+        let Some(&rel) = d.rels.get(src).filter(|&&r| r != 0) else { return Facts::default() };
         let rows = |at: Option<usize>| -> Vec<[i64; 3]> {
             match at.map(|i| &self.srcs[i]) {
                 Some(Live::Trace { after, .. }) => {
@@ -455,7 +464,8 @@ impl<'t> Env<'t> {
             .filter(|r| (0..64).contains(&r[1]))
             .filter_map(|[_, col, class]| if class == d.one { Some((col as usize, 1.0)) } else if class == d.few { Some((col as usize, FEW)) } else { None })
             .collect();
-        (keys.into_iter().map(|k| k.1).collect(), caps)
+        let own = Facts { keys: keys.into_iter().map(|k| k.1).collect(), caps };
+        d.inferred.iter().filter(|i| i.0 == rel).fold(own, |f, i| f.and(&i.1))
     }
 
     pub(crate) fn side_stats(&self, src: usize, side: Side, ncols: usize) -> (u64, Vec<u64>) {
