@@ -9,10 +9,9 @@
  * `.git` entry, is judged with the checkout around it, so a `.git` never exempts files from that checkout's rules. A
  * declared submodule that is not set up runs nothing.
  */
-import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
+import { FolderPlaces } from "../catalog/checkouts/folder-places.js";
 import { placeWorktrees, placingWorktrees } from "../catalog/checkouts/checkout-placement.js";
 import { learnWorktreeList, worktreeRegistry, type WorktreeListLearning, type WorktreeRegistry } from "../catalog/repository-identity.js";
 import type { GitReads } from "../git.js";
@@ -45,6 +44,8 @@ export interface CheckoutCodeRuleRouterOptions {
   /** The physical root of the checkout the session started in; its lane opens with the session. */
   readonly startingCheckout: string;
   readonly owners: CheckoutOwners;
+  /** Where each worktree's top folder is (`FolderPlaces`), the daemon's for every session; looked up on disk without it. */
+  readonly places?: FolderPlaces | undefined;
   readonly catalogs: CheckoutCatalogs;
   readonly steerDelivery: RuleSteerDelivery;
   readonly audits: AuditRecorder;
@@ -71,6 +72,13 @@ interface Lane {
 /** How many repositories' rules a session builds ahead as it opens (`#aheadRoots`): each may hold hundreds of MB compiled. */
 const BUILT_AHEAD_REPOSITORIES = 8;
 
+/**
+ * How many worktrees a session's first list of the other worktrees records and filters between two turns of the event
+ * loop (`worktreeRootsInTurns`): each one first seen costs its checkout's record and its owner's look-up, about 12 ms
+ * of the daemon's thread on Windows 11 with 190 worktrees, so a turn holds the thread for about 200 ms.
+ */
+const ELIGIBILITY_PER_TURN = 16;
+
 function merged(revision: number, responses: readonly CodeRuleResponse[]): CodeRuleResponse {
   return {
     revision,
@@ -90,6 +98,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #sessionRoot: string;
   /** Where Git registers the worktrees, as `worktreeRoots` last read them (`worktreeRegistry`). */
   #registryFolder: string | undefined;
+  readonly #places: FolderPlaces;
   readonly #lanes = new Map<string, Lane>();
   readonly #eligibility = new Map<string, CheckoutEligibility>();
   /** The daemon's Git ignore matchers (`gitIgnoreMatchers`), or the router's own. */
@@ -125,6 +134,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     this.#sessionRoot = resolve(options.sessionRoot);
     this.#settings = { scope: options.scope ?? DEFAULT_AUDIT_SETTINGS.scope, mode: options.mode ?? DEFAULT_AUDIT_SETTINGS.mode };
     this.#gitIgnoreMatchers = options.gitIgnoreMatchers ?? new GitIgnoreMatchers();
+    this.#places = options.places ?? new FolderPlaces();
   }
 
   /**
@@ -345,10 +355,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * each folder gets the full lookup once, for itself and its files. A checkout recorded while the walk runs owns its
    * files from the next walk.
    */
-  walkView(): Required<WalkView> {
+  walkView(root?: string): Required<WalkView> {
     const folders = new Map<string, CheckoutOwner | undefined>();
+    const real = this.#realBelow(root);
     const folderOwner = (folder: string): CheckoutOwner | undefined => {
-      if (!folders.has(folder)) folders.set(folder, this.#owner(resolve(this.#sessionRoot, folder)));
+      if (!folders.has(folder)) folders.set(folder, this.#owner(resolve(this.#sessionRoot, folder), real));
       return folders.get(folder);
     };
     const fileOwner = (path: string): CheckoutOwner | undefined => {
@@ -366,6 +377,13 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       ignoresPath: (path, directory) => this.#ignores(directory ? folderOwner(path) : fileOwner(path), directory, look),
       sourceRoot: path => fileOwner(path)?.checkoutRoot,
     };
+  }
+
+  /** A test of whether a path a walk from `root` reached is its own real path: below `root`, whose place is its path. */
+  #realBelow(root: string | undefined): (absolute: string) => boolean {
+    const start = root === undefined ? undefined : resolve(this.#sessionRoot, root);
+    if (start === undefined || this.#places.physical(start) !== start) return () => false;
+    return absolute => absolute === start || absolute.startsWith(start.endsWith(sep) ? start : `${start}${sep}`);
   }
 
   /**
@@ -559,12 +577,69 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * session wrote a file, so what it finds there is recorded under the repository and steers no session. `registry` is
    * the list `learnWorktreeRoots` gave as stored, in the same synchronous run; without it the registry is read now.
    */
-  worktreeRoots(registry: WorktreeRegistry | undefined = worktreeRegistry(this.#options.startingCheckout)): string[] {
+  worktreeRoots(registry?: WorktreeRegistry): string[] {
+    const roots = this.#listedWorktreeRoots(registry);
+    this.#readEligibility(roots);
+    return this.#worktreesThatMayRun(roots);
+  }
+
+  /**
+   * {@link worktreeRoots}, giving the event loop a turn after each {@link ELIGIBILITY_PER_TURN} worktrees while any of
+   * them has an eligibility this session has not read: a session's first list of a repository with hundreds of
+   * worktrees records each of them and then finds each one's owner afresh (recording changes what the owners know), and
+   * done at once that held the daemon's thread for seconds on Windows. Each group is recorded and filtered before the
+   * next turn. The list is Git's as the first turn read it (`registry` as `worktreeRoots` takes it); the next list
+   * reads Git's registry again. Undefined once the router is interrupted between two turns: it records no group after,
+   * and what it listed by then is part of the worktrees, which no caller may take for all of them.
+   */
+  async worktreeRootsInTurns(registry?: WorktreeRegistry): Promise<string[] | undefined> {
+    const roots = this.#listedWorktreeRoots(registry);
+    if (roots.every(root => this.#eligibility.has(root))) return this.#worktreesThatMayRun(roots);
+    const running: string[] = [];
+    for (let at = 0; at < roots.length; at += ELIGIBILITY_PER_TURN) {
+      if (at > 0) {
+        await new Promise(resolve => setImmediate(resolve));
+        if (this.#closing) return undefined;
+      }
+      const group = roots.slice(at, at + ELIGIBILITY_PER_TURN);
+      this.#readEligibility(group);
+      running.push(...this.#worktreesThatMayRun(group));
+    }
+    return running;
+  }
+
+  /**
+   * The other worktrees Git lists for the session's checkout (`registry`, else its registry read now), by where they
+   * are, that exist. None while the session's own checkout may run no rules: then none is listed, looked up or watched
+   * by the places.
+   */
+  #listedWorktreeRoots(listed: WorktreeRegistry | undefined): string[] {
     const starting = this.#options.startingCheckout;
+    if (!this.#startingMayRun()) return [];
+    const registry = listed ?? worktreeRegistry(starting);
     this.#registryFolder = registry === undefined ? undefined : join(registry.commonDirectory, "worktrees");
     return (registry?.worktrees ?? [])
-      .map(worktree => storedPath(worktree))
-      .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+      .map(worktree => this.#places.worktreeRoot(worktree))
+      .filter(root => root !== starting && this.#places.exists(root));
+  }
+
+  /** Each of `roots` that is its own checkout's top folder and may run rules. */
+  #worktreesThatMayRun(roots: readonly string[]): string[] {
+    return roots.filter(root => this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+  }
+
+  /**
+   * The eligibility of each of `roots` that is its own checkout's top folder and that this session has not read yet,
+   * read in one read of the recorded checkouts (`refreshAll`), which records the worktrees of a started clone among them
+   * in one pass over Git's registry: a read per worktree read the whole registry again for each one. A folder that is no
+   * checkout's top yet, such as a worktree Git lists before it writes its `.git` file, is left to the look-up that finds
+   * it one, as a look-up per worktree left it.
+   */
+  #readEligibility(roots: readonly string[]): void {
+    const owners = this.#options.owners;
+    const unread = roots.filter(root => !this.#eligibility.has(root) && owners.ownerOf(root)?.checkoutRoot === root);
+    if (unread.length === 0) return;
+    for (const [root, eligibility] of this.#options.catalogs.refreshAll(unread)) this.#eligibility.set(root, eligibility);
   }
 
   /**
@@ -757,9 +832,9 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /** The checkout whose rules judge `absolute`: its Git checkout, or the nearest one around it that owns its files. */
-  #owner(absolute: string): CheckoutOwner | undefined {
+  #owner(absolute: string, real: (absolute: string) => boolean = () => false): CheckoutOwner | undefined {
     const owners = this.#options.owners;
-    let owner = owners.ownerOf(absolute);
+    let owner = real(absolute) ? owners.ownerOfReal(absolute) : owners.ownerOf(absolute);
     while (owner !== undefined && !this.#ownsItsFiles(owner.checkoutRoot)) {
       const enclosing = owners.ownerOf(dirname(owner.checkoutRoot));
       if (enclosing === undefined) break;
@@ -859,6 +934,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     if (startingEligibility === "stopped" || startingEligibility === "unrecorded") return { checkoutRoot: starting, eligibility: startingEligibility };
     const eligibility = this.#eligibilityOf(root);
     return eligibility === "ok" ? undefined : { checkoutRoot: root, eligibility };
+  }
+
+  /** Whether any checkout may run rules in this session: its own checkout is recorded and not stopped (`whyNoRules`). */
+  #startingMayRun(): boolean {
+    const starting = this.#eligibilityOf(this.#options.startingCheckout);
+    return starting !== "stopped" && starting !== "unrecorded";
   }
 
   #eligibilityOf(root: string): CheckoutEligibility {

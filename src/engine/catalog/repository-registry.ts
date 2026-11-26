@@ -7,7 +7,7 @@ import { opendir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse, resolve, sep } from "node:path";
 import { and, eq, getTableColumns, inArray, ne, sql } from "drizzle-orm";
-import { earlierPhysicalPath, physicalPath, storedPath, storedPathAsync, withinCheckout } from "./checkout-control.js";
+import { earlierPhysicalPath, physicalPath, storedPathAsync, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGitAsync } from "../git.js";
 import { mergeAssistExperimentEnabled } from "../experimental-features.js";
@@ -21,7 +21,7 @@ import {
   repositoryFolderName,
   repositoryIdentityLocation,
   resolveCloneId,
-  worktreeRegistry,
+  WorktreeRegistryPass,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
 import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
@@ -283,21 +283,21 @@ function adoptRemoteOnce<C extends CheckoutContext>(db: RerailDatabase, context:
  * its `.git` keeps the clone id but reads its own registry, so it neither grants nor refuses for the original. Git runs
  * only in a recorded checkout Rerail runs in; false when nothing was recorded.
  */
-export function recordStartedWorktree(db: RerailDatabase, root: string, location: RepositoryIdentityLocation): boolean {
+export function recordStartedWorktree(
+  db: RerailDatabase,
+  root: string,
+  location: RepositoryIdentityLocation,
+  registries: WorktreeRegistryPass = new WorktreeRegistryPass(),
+): boolean {
   const cloneId = readCloneIdAt(location.identityPath);
   if (!location.git || cloneId === undefined || physicalPath(location.workspaceRoot) !== root) return false;
   const commonDirectory = physicalPath(dirname(location.identityPath));
   const recorded = db.select({ path: checkouts.checkoutPath, key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).all();
+  // A gone folder lists nothing. A caller recording many worktrees passes one pass for all, which reads each registry once.
   const listed = recorded.some(peer =>
-    checkoutStatus(db, contextOf(location, root, peer.key, cloneId)).started && registryLists(peer.path, commonDirectory, root));
+    checkoutStatus(db, contextOf(location, root, peer.key, cloneId)).started && registries.lists(peer.path, commonDirectory, root));
   if (listed) recordCheckout(db, root);
   return listed;
-}
-
-/** Whether the recorded `checkout` reads Git's registry in `commonDirectory` and lists `root` there; a gone folder lists nothing. */
-function registryLists(checkout: string, commonDirectory: string, root: string): boolean {
-  const registry = worktreeRegistry(checkout);
-  return registry?.commonDirectory === commonDirectory && registry.worktrees.some(worktree => storedPath(worktree) === root);
 }
 
 /**
@@ -1359,9 +1359,32 @@ export function recordedCheckoutsVersion(db: Pick<RerailDatabase, "select">): st
  * {@link recordedCheckoutsVersion} for a connection that asks on every lookup, as a source walk does for each file: the
  * statement is prepared once, where each one-off read prepared it again.
  */
-export function recordedCheckoutsVersionReader(db: Pick<RerailDatabase, "select">): () => string {
+export function recordedCheckoutsVersionReader(db: Pick<RerailDatabase, "select"> & Partial<Pick<RerailDatabase, "$client">>): () => string {
   const query = recordedCheckoutsVersionQuery(db).prepare();
-  return () => query.get()?.version ?? EMPTY_RECORDED_CHECKOUTS;
+  if (db.$client === undefined) return () => query.get()?.version ?? EMPTY_RECORDED_CHECKOUTS;
+  // Each owner look-up asks this, a few hundred times a walk at a few hundred worktrees, and the query reads every row:
+  // it runs again only once a write reached the database.
+  const commits = commitMark(db.$client);
+  let mark = "";
+  let version: string | undefined;
+  return () => {
+    const now = commits();
+    if (version === undefined || now !== mark) {
+      mark = now;
+      version = query.get()?.version ?? EMPTY_RECORDED_CHECKOUTS;
+    }
+    return version;
+  };
+}
+
+/**
+ * A text that changes whenever a write reaches the database: SQLite's `data_version`, which another connection's commit
+ * changes, and `total_changes()`, which counts this connection's own. While it holds, every table reads the same. One
+ * statement, as the version query it stands in front of is.
+ */
+function commitMark(client: RerailDatabase["$client"]): () => string {
+  const mark = client.prepare("SELECT (SELECT data_version FROM pragma_data_version()) || ':' || total_changes()").pluck();
+  return () => String(mark.get());
 }
 
 const EMPTY_RECORDED_CHECKOUTS = "0:0:0";

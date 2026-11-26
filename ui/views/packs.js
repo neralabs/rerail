@@ -107,7 +107,7 @@ function installedItem(pack) {
     question);
 }
 
-const CATALOG_LINE = "Rule packs are ready-made rules, mostly the same ones linters use (ESLint, Ruff, Clippy…), checked while your coding agent writes. Add one to this repo, or remove it later.";
+const CATALOG_LINE = "Rule packs are best practices, mostly the same ones linters use (ESLint, Ruff, Clippy…), checked while your coding agent writes. Add one to this repo, or remove it later.";
 
 function catalog() {
   const all = catalogEntries(listed(), data.publishedPacks), kinds = catalogKinds(all);
