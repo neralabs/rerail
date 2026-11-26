@@ -369,6 +369,8 @@ struct StagedFile {
     space: [u8; 32],
     name: String,
     tag: u64,
+    /// The bytes its file takes on the disk, which its chain row records (`segments::file_bytes`).
+    bytes: u64,
     /// Its space's `STAGING_LOCK`, held shared until every copy of this is dropped: after its commit.
     _held: std::sync::Arc<std::fs::File>,
 }
@@ -431,13 +433,14 @@ fn stage_space(store: &Path, space: &[u8; 32], puts: &[KeptPut], flush: rerail_b
     }
     w.finish(flush).map_err(io)?;
     sync_dir(&dir, flush).map_err(io)?;
-    Ok(StagedFile { space: *space, name, tag, _held: std::sync::Arc::new(held) })
+    let bytes = super::segments::file_bytes(&path);
+    Ok(StagedFile { space: *space, name, tag, bytes, _held: std::sync::Arc::new(held) })
 }
 
 /// Links `f` as the newest file of its space's chain, in the commit's transaction.
 fn link_staged(t: &Connection, f: &StagedFile) -> StoreResult<()> {
     let seq = chain_rows(t, &f.space)?.last().map_or(1, |r| r.0 + 1);
-    t.prepare_cached("INSERT INTO main.facts_chain(space, seq, name, tag) VALUES (?1, ?2, ?3, ?4)")?.execute(rusqlite::params![&f.space[..], seq, f.name, f.tag as i64])?;
+    t.prepare_cached("INSERT INTO main.facts_chain(space, seq, name, tag, bytes) VALUES (?1, ?2, ?3, ?4, ?5)")?.execute(rusqlite::params![&f.space[..], seq, f.name, f.tag as i64, f.bytes as i64])?;
     Ok(())
 }
 
@@ -779,7 +782,8 @@ fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut
     if from < rows.len() {
         t.prepare_cached("DELETE FROM main.facts_chain WHERE space = ?1 AND seq >= ?2")?.execute(rusqlite::params![&space[..], rows[from].0])?;
     }
-    t.prepare_cached("INSERT INTO main.facts_chain(space, seq, name, tag) VALUES (?1, ?2, ?3, ?4)")?.execute(rusqlite::params![&space[..], seq, name, tag as i64])?;
+    let bytes = super::segments::file_bytes(&dir.join(&name)) as i64;
+    t.prepare_cached("INSERT INTO main.facts_chain(space, seq, name, tag, bytes) VALUES (?1, ?2, ?3, ?4, ?5)")?.execute(rusqlite::params![&space[..], seq, name, tag as i64, bytes])?;
     let mut now: ChainRows = rows[..from].to_vec();
     now.push((seq, name, tag));
     Ok(Some(now))
@@ -810,8 +814,15 @@ impl KeptWrite {
                 link_staged(t, f)?;
             }
             let mut written = Vec::new();
+            // The files each write unnames (a merge's), removed once the transaction commits (`remove_replaced`).
+            let mut replaced: Vec<([u8; 32], Vec<String>)> = Vec::new();
             for (space, puts) in spaces {
+                let before = chain_rows(t, &space)?;
                 if let Some(row) = write_space(&path, t, &space, puts, store.atoms.forked().then_some(&map as &dyn Fn(&mut [i64]) -> StoreResult<()>))? {
+                    let gone: Vec<String> = before.iter().filter(|(_, n, _)| !row.iter().any(|(_, m, _)| m == n)).map(|(_, n, _)| n.clone()).collect();
+                    if !gone.is_empty() {
+                        replaced.push((space, gone));
+                    }
                     written.push((space, row));
                 }
             }
@@ -820,8 +831,10 @@ impl KeptWrite {
                     written.push((f.space, chain_rows(t, &f.space)?));
                 }
             }
-            Ok(written)
+            Ok((written, replaced))
         })?;
+        let (written, replaced) = written;
+        remove_replaced(&path, &replaced);
         // Committed: the rows this process holds are the new ones (where it holds the store's rows at all).
         super::held::snapshot_kept(&path, |kept| {
             if let Some(rows) = kept {
@@ -829,6 +842,21 @@ impl KeptWrite {
             }
         });
         Ok(())
+    }
+}
+
+/// The files of each space a committed write no longer names (a merge replaced them), removed: their rows went in
+/// its transaction, and with them their bytes from the store's total (`store_bytes`), so the disk holds what the total
+/// says. A file's name is its maker's alone (its tag), never named again, and a process mapping one keeps reading it.
+/// Left to the next sweep (a process's first write of the space, a collection), a long run kept every file its merges
+/// replaced: 405 files beside 385 named over 10 files of the Python pack. Where one cannot be removed (mapped, on
+/// Windows), that sweep removes it.
+fn remove_replaced(store: &Path, replaced: &[([u8; 32], Vec<String>)]) {
+    for (space, names) in replaced {
+        let dir = space_dir(store, space);
+        for name in names {
+            let _ = std::fs::remove_file(dir.join(name));
+        }
     }
 }
 
