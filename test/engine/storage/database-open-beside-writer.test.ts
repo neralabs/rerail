@@ -50,6 +50,15 @@ function opened(path: string, migrations?: readonly Migration[]): Database.Datab
   return client;
 }
 
+function thrown(act: () => unknown): unknown {
+  try {
+    act();
+  } catch (error) {
+    return error;
+  }
+  return undefined;
+}
+
 function hasNote(path: string): boolean {
   const reader = new Database(path, { readonly: true });
   try {
@@ -82,7 +91,11 @@ describe("a writable open while another connection holds the database's write lo
     const holder = holdWriteLock(path);
     const runs = { count: 0 };
 
-    expect(() => opened(path, [...RERAIL_MIGRATIONS, noteStep(runs)])).toThrow(/database is locked/u);
+    // SQLite's busy answer once the 5 s wait is over, as Drizzle's error for the query that took the lock.
+    expect(thrown(() => opened(path, [...RERAIL_MIGRATIONS, noteStep(runs)]))).toMatchObject({
+      message: expect.stringContaining("BEGIN IMMEDIATE"),
+      cause: { code: "SQLITE_BUSY" },
+    });
     expect({ runs: runs.count, note: hasNote(path) }).toEqual({ runs: 0, note: false });
 
     holder.exec("COMMIT");
