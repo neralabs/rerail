@@ -281,7 +281,6 @@ impl CodeTable {
     }
 
     #[inline(always)]
-    #[inline(always)]
     fn words(&self) -> &[u32] {
         // SAFETY: `words`' slice, alive and unwritten while `self.words` is (`CodeTable::at`).
         unsafe { std::slice::from_raw_parts(self.at, self.n) }
@@ -351,7 +350,6 @@ impl CodeTable {
     }
     /// Code `number`'s entry.
     #[inline(always)]
-    #[inline]
     pub fn entry(&self, number: u32) -> EntryRef<'_> {
         let r = self.rec(number);
         let alias = (r[1] >> 8 & 1 != 0).then(|| {
