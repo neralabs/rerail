@@ -853,7 +853,7 @@ describe("Claude Code one-shot hook", () => {
       }, steer, join(root, "sessions"), { TERM_PROGRAM: "iTerm.app", COLORTERM: "truecolor" });
       expect(output).toMatchObject({
         // Claude Code draws ANSI colour, so Rerail is its coloured mark, each letter its own colour.
-        systemMessage: expect.stringMatching(/^◆ \u001b\[38;2;165;173;251mR\u001b\[39m .* · acme:no-print {2}steered {2}· {2}\u001b\]8;;http:\/\/127\.0\.0\.1:4791\/#rule\/acme%3Ano-print\u0007why\?\u001b\]8;;\u0007$/u),
+        systemMessage: expect.stringMatching(/^◆ \u001b\[38;2;165;173;251mR\u001b\[39m .* · acme:no-print {2}steered {2}· {2}\u001b\]8;;http:\/\/127\.0\.0\.1:4791\/#rule\/acme%3Ano-print\u0007\u001b\[4mwhy\?\u001b\[24m\u001b\]8;;\u0007$/u),
         hookSpecificOutput: {
           hookEventName: "PostToolUse",
           additionalContext: editSteer("acme:no-print", "Remove print."),
