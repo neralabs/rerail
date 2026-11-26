@@ -53,6 +53,8 @@ pub mod issue;
 /// A source's rows where they lie, digested and lent to a keep (`SourceRows`), the component's and the corpus's.
 pub mod source_rows;
 pub mod sql_kernel;
+pub mod spike_segments;
+pub mod spike_prefix;
 
 /// Plans kept across chunks on this thread while held (a corpus run), none kept at the start: a run's plans from
 /// earlier runs are the store's (`compiled_plans`' kept facts), a session's runs' as a new process's (t33 step 3).
@@ -6677,6 +6679,43 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             // Not rewritten: the program's own version, made above.
             rewritten.unwrap_or(normal_v)
         }
+    };
+    // SPIKE C2 (a): a body another relation's one rule already walks, read from that relation (`spike_prefix`).
+    let placed = if corpus && spike_prefix::on() {
+        match body::pass("plan.spike_prefix", "shared bodies (spike C2)", &placed, spike_prefix::apply).map_err(Error::Plan)? {
+            Some((shared, v)) => {
+                crate::threads::drop_behind(std::mem::take(&mut model.analysis));
+                if let Some(path) = std::env::var_os("RERAIL_SPIKE_PREFIX_DUMP") {
+                    use std::io::Write as _;
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                        let _ = writeln!(f, "== a program of {} rules\n{}", placed.len(), shared.lines.join("\n"));
+                    }
+                }
+                v
+            }
+            None => placed,
+        }
+    } else {
+        placed
+    };
+    // SPIKE B: a relation written by several strata, as segments (`spike_segments`).
+    let placed = if corpus && spike_segments::on() {
+        match body::pass("plan.spike_segments", "segments (spike B)", &placed, spike_segments::apply).map_err(Error::Plan)? {
+            Some((split, v)) => {
+                crate::threads::drop_behind(std::mem::take(&mut model.analysis));
+                super::profile::decision("segments (spike B)", || format!("{} relations split: {}", split.lines.len(), split.lines.join("; ")));
+                if let Some(path) = std::env::var_os("RERAIL_SPIKE_SEGMENTS_DUMP") {
+                    use std::io::Write as _;
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                        let _ = writeln!(f, "== a program of {} rules\n{}", placed.len(), split.lines.join("\n"));
+                    }
+                }
+                v
+            }
+            None => placed,
+        }
+    } else {
+        placed
     };
     drop(demand_span);
     let strata_span = super::profile::span(|| "strata".into());
