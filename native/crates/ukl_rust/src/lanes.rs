@@ -331,9 +331,14 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     let width = r32(c, 0);
+    // Each lane's chunk's word of the directory: a sealed chunk's (decision 0622) is read by its encoding.
+    let words = if one { s64(r64(c, 8 + 8 * seg[0] as u64)) } else { gather64_ix(c.wrapping_add(8), seg, 3) };
+    if (words & s64(SEALED)).simd_ne(s64(0)).any() {
+        return sealed_lanes(Simd::splat(c), words, seg, within, i);
+    }
     let low = if one && (width == 4 || width == 8) {
         // Every lane's row in one chunk: its base and each lane's place in it.
-        let base = c.wrapping_add(r64(c, 8 + 8 * seg[0] as u64) as usize);
+        let base = c.wrapping_add(words[0] as usize);
         if width == 8 {
             return gather64_ix(base, within, 3);
         }
@@ -341,8 +346,7 @@ where
     } else {
         // Each lane's chunk: its word of the directory, by its index from one base (a step's rows' chunks span more
         // than 8 words of it, so one load of 8 would not hold them).
-        let chunks = if one { s64(r64(c, 8 + 8 * seg[0] as u64)) } else { gather64_ix(c.wrapping_add(8), seg, 3) };
-        let a = Simd::splat(c).wrapping_add((scaled(within, width) + chunks).cast::<usize>());
+        let a = Simd::splat(c).wrapping_add((scaled(within, width) + words).cast::<usize>());
         if width != 4 {
             return gather64(a);
         }
@@ -364,6 +368,10 @@ where
 {
     let width = gather32(c);
     let chunks = gather64(c.wrapping_add((seg.cast::<u64>() * s64(8) + s64(8)).cast::<usize>()));
+    // A sealed chunk's lanes (decision 0622) read by its encoding.
+    if (chunks & s64(SEALED)).simd_ne(s64(0)).any() {
+        return sealed_lanes(c, chunks, seg, within, i);
+    }
     // Each lane's width a power of two: its offset a shift.
     let off = if (width & (width - s32(1))).simd_eq(s32(0)).all() {
         within.cast::<u64>() << width.trailing_zeros().cast::<u64>()
@@ -386,6 +394,88 @@ where
         searched.select(doc_high(tab, n, i), s32(0))
     };
     low.cast::<u64>() | (four.select(high4, high8).cast::<u64>() << s64(32))
+}
+
+/// A chunk word's mark of a sealed chunk (`rerail_blocks::rows::SEALED`, decision 0622): the rest of the word is its
+/// encoded column's (`rerail_blocks::col::IntCol`) offset from the column's directory.
+pub(crate) const SEALED: u64 = 1;
+
+/// Each lane's value where some lane's chunk is sealed (`words`, each lane's chunk word of its column `c`): a sealed
+/// lane's by its encoding (`sealed_get`), any other's as an open chunk's, one lane at a time.
+#[cold]
+#[inline(never)]
+unsafe fn sealed_lanes<const N: usize>(c: P<N>, words: V<N>, seg: R<N>, within: R<N>, i: R<N>) -> V<N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    let mut out = [0u64; N];
+    for k in 0..N {
+        out[k] = if words[k] & SEALED != 0 {
+            sealed_get(c[k].wrapping_add((words[k] & !SEALED) as usize), u64::from(within[k]))
+        } else {
+            col_get_in::<1>(c[k], Simd::<u32, 1>::splat(seg[k]), Simd::<u32, 1>::splat(within[k]), Simd::<u32, 1>::splat(i[k]), true)[0]
+        };
+    }
+    V::from_array(out)
+}
+
+/// `clif_col_sealed`: value `i` of the sealed chunk's encoded column at `col` (`rerail_blocks::col::IntCol`: tag 0,
+/// bits 4, rbits 12, nruns 16, base 24, slope 32, rmin 40, its packed values 48 and runs 64, each an offset from its
+/// own place). Its encodings: 0 a constant, 1 packed, 2 runs, 3 a line and residuals, 4 groups, 5 a dictionary.
+unsafe fn sealed_get(col: *const u8, i: u64) -> u64 {
+    let mask = |b: u64| if b >= 64 { u64::MAX } else { (1u64 << b) - 1 };
+    // `mask`'s bits at bit `bit` of packed words (a column's words end with a spare one).
+    let at = |w: *const u8, bit: u64, m: u64| {
+        let p = w.wrapping_add(((bit >> 6) << 3) as usize);
+        let sh = (bit & 63) as u32;
+        ((r64(p, 0) >> sh) | ((r64(p, 8) << 1) << (63 - sh))) & m
+    };
+    let (tag, bits, base) = (r32(col, 0), u64::from(r32(col, 4)), r64(col, 24));
+    if tag == 0 {
+        return base;
+    }
+    let data = follow(col, 48);
+    let vm = mask(bits);
+    match tag {
+        1 => base.wrapping_add(at(data, i * bits, vm)),
+        3 => {
+            let (slope, rmin) = (r64(col, 32), r64(col, 40));
+            let t = i.wrapping_mul(((slope as i64) >> 16) as u64).wrapping_add(i.wrapping_mul(slope & 0xffff) >> 16);
+            let r = if bits == 0 { 0 } else { at(data, i * bits, vm) };
+            base.wrapping_add(t).wrapping_add(rmin).wrapping_add(r)
+        }
+        2 => {
+            let rbits = u64::from(r32(col, 12));
+            let (runs, rm) = (follow(col, 64), mask(rbits));
+            // The last run whose first position is at most `i`.
+            let (mut lo, mut hi) = (0u64, u64::from(r32(col, 16)));
+            while hi - lo > 1 {
+                let mid = lo + (hi - lo) / 2;
+                if at(runs, mid * rbits, rm) <= i {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            base.wrapping_add(at(data, lo * bits, vm))
+        }
+        5 => {
+            let rbits = u64::from(r32(col, 12));
+            let k = at(data, i * rbits, mask(rbits));
+            base.wrapping_add(at(follow(col, 64), k * bits, vm))
+        }
+        _ => {
+            // Groups of 128: each its minimum, then its entry (its values' first bit << 7 | their width).
+            let rbits = u64::from(r32(col, 12));
+            let runs = follow(col, 64);
+            let entries = (((u64::from(r32(col, 16)) * bits + 63) >> 6) + 1) << 6;
+            let g = i >> 7;
+            let min = at(runs, g * bits, vm);
+            let e = at(runs, entries + g * rbits, mask(rbits));
+            let w = e & 127;
+            base.wrapping_add(min).wrapping_add(at(data, (e >> 7) + (i & 127) * w, mask(w)))
+        }
+    }
 }
 
 /// A relation's rows (`rows`, at `d + 40` of its descriptor): column `c`'s directory.

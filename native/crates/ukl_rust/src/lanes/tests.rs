@@ -83,6 +83,46 @@ fn the_lane_reads_are_the_compiled_reads() {
     relation_lanes::<4>(d, 0, n, link.rows.len(), far, &one, false);
     relation_lanes::<8>(d, 0, n, link.rows.len(), far, &one, false);
 
+    // Sealed chunks (decision 0622): a frozen relation's full chunks in the frozen encodings, each column shaped for
+    // one of them (a constant, sorted runs, a line, a small range, a few large values, groups of mixed widths, and
+    // scattered values), every row read at 4, 8 and 16 lanes against the compiled read.
+    let sealed_block = Block::anon(kind::FACTS, 64 << 20).with_free_list();
+    let wide = Spec { widths: vec![8, 8, 8, 4, 8, 8, 8], order: vec![], indexes: vec![], min_log: 6 };
+    let sealed = Relation::create(&sealed_block, &wide, None);
+    let col = |c: usize, i: i64| match c {
+        0 => 7,
+        1 => i / 300 * 5,
+        2 => i * 3 + (i * 2_654_435_761) % 4,
+        3 => (i * 2_654_435_761) % 1000,
+        4 => [1i64 << 40, -3, 1 << 50, 99][(i % 4) as usize] + (i / 1000 % 2),
+        5 => if i % 2_000 < 1_000 { i % 3 } else { (i * 7919) % 100_000 },
+        _ => (i * 2_654_435_761) ^ (i << 40),
+    };
+    let n = 20_000i64;
+    RelW { block: &sealed_block, rel: sealed, lock: &lock }.extend(&(0..n).flat_map(|i| (0..7).map(move |c| col(c, i))).collect::<Vec<_>>());
+    freeze(&sealed_block, sealed, &wide, None);
+    // SAFETY: the relation is frozen, no writer holds its rows.
+    let (raw, packed) = unsafe { sealed.rows.seal(&sealed_block) };
+    assert!(packed < raw && (0..6).all(|c| sealed.rows.is_sealed(c)), "sealed: {packed} bytes for {raw}");
+    let mut tags = std::collections::BTreeSet::new();
+    for c in 0..7 {
+        let d = sealed.rows.col(c);
+        (0..sealed.rows.nchunks.load(std::sync::atomic::Ordering::Relaxed) as usize).filter_map(|k| d.sealed(k)).for_each(|ic| {
+            tags.insert(ic.tag);
+        });
+    }
+    assert!(tags.len() >= 5, "the encodings sealed: {tags:?}");
+    let d = std::ptr::from_ref(sealed).cast::<u8>();
+    for i in (0..sealed.rows.len()).step_by(97).chain([63, 64, sealed.rows.len() - 1]) {
+        for c in 0..7u32 {
+            // The host's read of the sealed chunk (its rows as `freeze` ordered them).
+            assert_eq!((one.rel_get)(d, i, c, std::ptr::null()) as i64, sealed.rows.get(i, c as usize), "the compiled read of row {i} column {c}");
+        }
+    }
+    relation_lanes::<4>(d, 0, sealed.rows.len(), sealed.rows.len(), std::ptr::null(), &one, false);
+    relation_lanes::<8>(d, 0, sealed.rows.len(), sealed.rows.len(), std::ptr::null(), &one, false);
+    relation_lanes::<16>(d, 0, sealed.rows.len(), sealed.rows.len(), std::ptr::null(), &one, false);
+
     // A bloom filter's hashes and verdicts, for keys it holds and keys it does not.
     use rerail_blocks::bloom::{self, Bloom};
     let keys: Vec<u64> = (0..3_000u64).map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (i << 7)).chain([1, 2, 3, u64::MAX]).collect();

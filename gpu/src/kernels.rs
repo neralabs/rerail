@@ -162,11 +162,16 @@ fn program_on(host: bool, name: &str, text: &str, defines: &[(&str, &str)]) -> R
             ship(name, text, defines);
         }
         let started = std::time::Instant::now();
-        let rust = !std::env::var("RERAIL_CPU_RUST").is_ok_and(|v| v == "0");
+        // The CPU runs only a kernel's SIMD Rust (the user's order, until they say otherwise): `RERAIL_CPU_RUST=0`,
+        // which ran its UKL's build instead, is refused.
+        if std::env::var("RERAIL_CPU_RUST").is_ok_and(|v| v == "0") {
+            return Err("RERAIL_CPU_RUST=0 is refused: the CPU runs only a kernel's SIMD Rust, never its UKL".to_owned());
+        }
+        let rust = true;
         let (library, preprocessed, bytes) = if host || crate::vec::on(&shared.device) {
             // Its rows the interpreter's, its kernels that are Rust of this text and these defines that Rust.
             let library = crate::vec::library(name, &format!("/<kernels>/{name}"), text, defines)?;
-            let library = if rust { library.with_rust(text, defines) } else { library };
+            let library = if rust { library.with_rust(text, defines)? } else { library };
             (library, started.elapsed(), text.len())
         } else {
             let source = preprocess_with(name, text, defines)?;
@@ -178,7 +183,7 @@ fn program_on(host: bool, name: &str, text: &str, defines: &[(&str, &str)]) -> R
             };
             // On the CPU, a kernel that is Rust of this very text and these defines runs as that Rust (decision 0567
             // step 3).
-            let library = if rust { library.with_rust(text, defines) } else { library };
+            let library = if rust { library.with_rust(text, defines)? } else { library };
             (library, preprocessed, source.len())
         };
         // `RERAIL_GPU_TIMES`, a measurement aid: each program's preprocessing and compile (or load), on stderr.

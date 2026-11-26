@@ -604,15 +604,16 @@ impl ComputeFunctionLibrary {
 
     /// This library of the UKL `text` specialized by `defines`, its kernels that are Rust of that very text and those
     /// defines (`rerail_ukl_rust::kernels`, decision 0567 step 3) run as their Rust on the CPU; on another device,
-    /// or of another text, the same library.
-    pub fn with_rust(self, text: &str, defines: &[(&str, &str)]) -> Self {
-        match self {
+    /// or of a text with no kernel that has Rust, the same library. An error on the CPU where the text compiles a
+    /// kernel that has Rust but is not the source that Rust was written from: no other build runs in its place.
+    pub fn with_rust(self, text: &str, defines: &[(&str, &str)]) -> Result<Self, String> {
+        Ok(match self {
             ComputeFunctionLibrary::Cpu(l) => {
-                let host = rerail_ukl_rust::kernels(text, defines);
+                let host = rerail_ukl_rust::kernels(text, defines)?;
                 ComputeFunctionLibrary::Cpu(l.with_host(host))
             }
             other => other,
-        }
+        })
     }
 
     /// A library of code compiled ahead of time for a target the device runs (decision 0645: a shipped kernel). Only

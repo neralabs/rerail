@@ -393,10 +393,17 @@ pub(in crate::code_rule_dsl) fn run_view_format() -> u32 {
 /// M3, an indirect dispatch of a pipeline that makes calls (a call stack) hung the GPU at its second group, even when
 /// every thread returned first (decision 0641). Inlined, the phase runs indirectly, as on every backend.
 fn program_pipes(format: u32) -> Result<[Arc<rerail_accel_gpu::gpu::join::Pipe>; 3], String> {
-    let inline = if rerail_device::device::is_metal() { "#define UKL_COLD static inline\n#define UKL_ONCE static inline\n" } else { "" };
-    let source = || format!("{inline}#define JOIN_PROGRAM 1\n{}", view_source(format));
+    let metal = rerail_device::device::is_metal();
+    let source = || program_source(metal, format);
     let name = format!("joinprog{format}");
     Ok([pipeline(&name, "join_grid", source)?, pipeline(&name, "join_phase", source)?, pipeline(&name, "join_chain", source)?])
+}
+
+/// The program's text for views of `format`, on Metal (`metal`: call-free, decision 0641) or another device: what
+/// `program_pipes` compiles, and on the CPU what `rerail_ukl_rust::join_run` must be written from (its digest).
+fn program_source(metal: bool, format: u32) -> String {
+    let inline = if metal { "#define UKL_COLD static inline\n#define UKL_ONCE static inline\n" } else { "" };
+    format!("{inline}#define JOIN_PROGRAM 1\n{}", view_source(format))
 }
 
 /// The tape format of the views `rels` read (`ViewInPlace::format`), one for them all: a relation reads none, and with
@@ -6707,12 +6714,13 @@ fn lat_bytes(p: &LatParams) -> &[u8] {
 #[cfg(test)]
 mod join_rust {
     /// The join program's Rust (`rerail_ukl_rust::join_run`, decision 0567) was written from this source: each view
-    /// format's program text has a digest it runs for. A change to the source is a change to that Rust too.
+    /// format's program text, as the CPU device loads it (`program_source`, the very text `program_pipes`
+    /// compiles), has a digest it runs for. A change to the source is a change to that Rust too.
     #[test]
     fn the_join_programs_rust_is_of_this_source() {
         let digests: Vec<u64> = [0, 16, rerail_clif::view::F16Z_FORMAT]
             .iter()
-            .map(|&f| rerail_ukl_rust::digest(&format!("#define JOIN_PROGRAM 1\n#define CLIF_BLOCKS_COHERENT 1\n{}", super::view_source(f)), &[]))
+            .map(|&f| rerail_ukl_rust::digest(&super::program_source(false, f), &[]))
             .collect();
         assert_eq!(digests, rerail_ukl_rust::JOIN_PROGRAM, "join_stages.uglykl changed: bring rerail_ukl_rust::join_run to it, then its digests ({digests:#018x?})");
     }

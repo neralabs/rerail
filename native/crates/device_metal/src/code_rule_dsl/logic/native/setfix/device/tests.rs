@@ -2563,7 +2563,7 @@ use rerail_blocks::vector::Vector;
 
     /// The same strata on the engine's CPU joins (scalar Rust) and on the device's join program, warm: wall and the
     /// process's CPU time of each, the best of three (a measure: `--ignored`). On the CPU device (`RERAIL_GPU=cpu`) the
-    /// program is `rerail_ukl_rust::join_run`; `RERAIL_CPU_RUST=0` makes it the c++ build.
+    /// program is `rerail_ukl_rust::join_run`, its SIMD Rust: the only code the CPU device runs.
     #[test]
     #[ignore]
     fn joins_timed_on_the_cpu_and_the_device() {
