@@ -477,7 +477,10 @@ impl<'a> Bytes<'a> {
                 // A test of several windows after one that rarely holds (a `\u` escape's digits after its `\u`): read
                 // only where the first holds, as the lean lexer unescapes a string only when it saw a `\u`. A side
                 // that carries escapes is always read, its carry the next window's.
-                if b.matches("cls_").count() >= 3 && !b.contains("esc)") {
+                // A mask made of the bytes (`d_`) or a fill (`wf_`) is many classes' tests: read only where the first holds,
+                // as the lean lexer decodes a character only at a byte past ASCII.
+                let cost = b.matches("cls_").count() + 3 * (b.matches("unsafe { d_").count() + b.matches("unsafe { wf_").count());
+                if cost >= 3 && !b.contains("esc)") {
                     format!("{{ let a = {a}; if a == 0 {{ 0 }} else {{ a & {b} }} }}")
                 } else {
                     format!("({a} & {b})")

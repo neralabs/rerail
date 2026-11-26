@@ -233,6 +233,18 @@ pub struct Reader {
 /// A mask's field in `Masks`: a grammar name's own, else the reader's `rd{r}_{role}`. One mask is
 /// one field, whichever readers read it: `all` holds each field made so far by its expression,
 /// and the reader that makes a field first lists it in `masks`.
+/// `e`'s factors of `&`, its names kept whole.
+fn conjuncts(e: &Expr) -> Vec<Expr> {
+    match e {
+        Expr::And(a, b) => {
+            let mut v = conjuncts(a);
+            v.extend(conjuncts(b));
+            v
+        }
+        e => vec![e.clone()],
+    }
+}
+
 /// The names among `e`'s terms of `|` (a row's run: `prev(hex_at) | hx`'s `hx`).
 fn or_names(e: &Expr) -> Vec<String> {
     match e {
@@ -1264,7 +1276,7 @@ struct Gen<'a> {
     /// The escapes over the bytes outside every region token, tested over each token of code's
     /// bytes: each its reason and its mask there.
     /// … and its anchor (`anchor`): the runs whose last byte it holds at, and its offset from it in the mask.
-    code_checks: Vec<(String, String, Expr, Option<(Vec<String>, i64)>)>,
+    code_checks: Vec<(String, String, Expr, Option<(Vec<String>, i64)>, Vec<Expr>)>,
     /// Each class's bytes.
     class_bytes: HashMap<String, [bool; 256]>,
     /// The regions (`regions H { … }`) and the name of their hidden bytes.
@@ -4768,7 +4780,7 @@ impl Gen<'_> {
             // The mask is shifted back by its `prev`'s distance: its anchor too, where every term's is one.
             let js: Vec<i64> = out.iter().map(|(j, _)| *j).collect();
             let at = anchor(e, &self.defs).filter(|_| js.windows(2).all(|w| w[0] == w[1])).map(|(ys, a)| (ys, i64::from(a) - js.first().copied().unwrap_or(0)));
-            self.code_checks.push((why.to_owned(), name, v, at));
+            self.code_checks.push((why.to_owned(), name, v, at, conjuncts(e)));
             return Ok(true);
         }
         let mut code = Vec::new();
@@ -4905,7 +4917,7 @@ impl Gen<'_> {
         if let Some(v) = outside {
             let name = self.val(&v)?;
             let at = anchor(e, &self.defs).map(|(ys, a)| (ys, i64::from(a)));
-            self.code_checks.push((why.to_owned(), name, v, at));
+            self.code_checks.push((why.to_owned(), name, v, at, conjuncts(e)));
         }
         Ok(true)
     }
@@ -6177,6 +6189,8 @@ impl Gen<'_> {
         // Each row's rule where a common token's (decision 0655 step 4): a run of one mask (`run M`), a pair (`pairs F`:
         // the pairs mask `k_F`; `pair M`), one byte (`one`).
         let mut row_shapes: Vec<Option<String>> = Vec::new();
+        // Every row's start: an escape with one as a factor holds only at a token's first byte.
+        let row_starts: Vec<Expr> = rows.iter().filter_map(|(_, s)| if let Stmt::Token { start, .. } = s { Some(start.clone()) } else { None }).collect();
         for (row, s) in &rows {
             let Stmt::Token { kind, start, last, rule, .. } = s else { continue };
             if matches!(rule, Some(TokenRule::Inside(..))) {
@@ -6473,7 +6487,7 @@ impl Gen<'_> {
                     Some(TokenRule::Run(r) | TokenRule::RunOnce(r, _)) => or_names(r),
                     _ => Vec::new(),
                 };
-                for (why, v, e, at) in &self.code_checks {
+                for (why, v, e, at, facs) in &self.code_checks.clone() {
                     let first = self.may_hold(e, &Ctx::of(sb));
                     let after = (0..256).any(|i| tb[i]) && self.may_hold(e, &at_tail);
                     let test = match (first, after) {
@@ -6485,6 +6499,20 @@ impl Gen<'_> {
                     // One anchored at a run's last byte (`anchor`): tested there, once, in the rows whose run that is,
                     // as the lean lexer's number reader refuses at the number's end. Elsewhere it holds at none of a
                     // token's bytes: not proved, a test build checks it.
+                    // One at a row's start (a factor is its `start`): at a token's first byte, the start of that row's token
+                    // alone, as the lean lexer reads an operator from its first byte. Other rows' tokens start no such
+                    // token: not proved, a test build checks it.
+                    if let Some(f) = facs.iter().find(|f| row_starts.contains(f)) {
+                        if f == start {
+                            // The row holds its start at `s`: the escape's other factors there.
+                            let rest = facs.iter().filter(|g| *g != f).fold(Expr::Not(Box::new(Expr::Empty)), |a, g| Expr::And(Box::new(a), Box::new(g.clone())));
+                            let r = self.row_val(&simplify_all(rest), rule)?;
+                            let _ = write!(hits, "            // {why}: at the token's first byte\n            if bit(&{r}, s) {{\n                refused = true;\n                break;\n            }}\n");
+                        } else if let Some(t) = test {
+                            let _ = write!(hits, "            // {why}: at no byte of this token (it holds at another's start), not proved: a test build checks it.\n            #[cfg(feature = \"test-hooks\")]\n            assert!(!({t}), \"escape at a token not its start's: {}\");\n", why.replace('"', "'").replace('\\', ""));
+                        }
+                        continue;
+                    }
                     if let Some((ys, off)) = at {
                         if ys.iter().any(|y| run_terms.contains(y)) {
                             let at = match off {

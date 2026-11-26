@@ -223,6 +223,16 @@ them.
    end. Kotlin's three (a digit after a binary number, a word touching a real number, a number that ends in `_`) leave
    the name arm; the other rows assert, in a test build, that it holds at none of their bytes. rr and JSON have none.
    Measured (same run): tier 1 243 ms against 735 ms before 0703 (3.0×), the AOT parse 507 ms against 982 ms (1.9×).
+27. **A character is decoded only at a byte past ASCII**: a window test's early exit counts a mask of the bytes
+   (`d_`) or a fill (`wf_`) as many classes, so a name's "a byte above 0x7f, not a name's letter" reads `cls_high`
+   first and `d_uni` only where it holds, as the lean lexer's `name_end` decodes only at a byte from 0x80.
+28. **An escape at a row's start is tested at its token's first byte**: one with a row's `start` as a factor holds only
+   at the first byte of that row's token. It is tested there, its other factors alone (the row holds its start), and
+   the other rows assert in a test build that it holds at none of their bytes. The operator's "a triple's last byte
+   starts a pair" is `at_two_start_three(s) && at_two_start_two(s + 2)`, its own bytes as the lean lexer's `match`
+   reads them, no longer a scan of the pair masks over every operator's and number's bytes.
+   Measured with 27 (same run, m1max, best of 15): tier 1 45 ms against 229 ms after 26, the AOT parse 278 ms against
+   469 ms. rr and JSON are unchanged.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
