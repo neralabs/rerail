@@ -3085,6 +3085,18 @@ fn the_join_programs_view_reads_are_the_jits() {
                             tried += 1;
                         }
                     }
+                    // Its rows walked in order (an index's key pass), from each first row the walk may start at:
+                    // each found as `Doc::at` finds it.
+                    for from in [0, n / 3, n.saturating_sub(1)].into_iter().filter(|&f| f < n) {
+                        // SAFETY: the document's rows of the view, from `from` on.
+                        let mut w = unsafe { doc.rows_from(k as u32, from) };
+                        for r in from..n {
+                            let walked = unsafe { w.next() };
+                            for c in 0..cols {
+                                assert_eq!(unsafe { walked.col(c) }, unsafe { doc.view(k as u32, r, c) }, "{at}: {} row {r} column {c}, walked from {from}", VIEWS[k]);
+                            }
+                        }
+                    }
                 }
                 let nodes = doc.e.nodes;
                 for x in 0..nodes {

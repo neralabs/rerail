@@ -194,6 +194,57 @@ where
     }
 }
 
+/// `ix_key`'s of a view's rows `t0..t1` at `N` lanes: each document found once and its rows walked in order
+/// (`reads::Rows`: each one's tape node the next of its numbering's, not selected again), `N` rows' keys hashed an
+/// operation. A placed view's rows past its directory's (its tail relation's) are `ix_hash`'s.
+pub(super) unsafe fn ix_keys_view_lanes<const N: usize>(bb: *const u8, out: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    let (mut kind, mut d, mut lim) = (p.kind as u32, p.dir, t1);
+    if kind & VIEW_PLACED != 0 {
+        let pd = d as *const PlacedDir;
+        (kind, d, lim) = (kind & !VIEW_PLACED, (*pd).dir, t1.min((*pd).rows));
+    }
+    let (k, nk) = (kind - 1, (p.ncols & !IX_LIVE).min(8) as usize);
+    let (ndocs, rows) = ((*d).ndocs, view_rows(d));
+    let (mut t, mut memo) = (t0, NONE);
+    while t < lim {
+        let a = (*d).doc_of_row(k, t, memo);
+        memo = a;
+        let e = rows.add(a as usize);
+        let first = (*e).rows[k as usize];
+        let stop = if a + 1 < ndocs { (*rows.add(a as usize + 1)).rows[k as usize].min(lim) } else { lim };
+        if stop <= t {
+            *out.add((eb + t) as usize) = kb.wrapping_add(ix_hash(bb, p, t));
+            t += 1;
+            continue;
+        }
+        let mut w = doc(d, e).rows_from(k.min(11), t - first);
+        while t < stop {
+            let n = (stop - t).min(N as u32);
+            // Each key column's values of the lanes' rows (0 past them, their keys not written).
+            let mut v = [[0u64; N]; 8];
+            for j in 0..n as usize {
+                let at = w.next();
+                for (c, &col) in v[..nk].iter_mut().zip(&p.cols) {
+                    c[j] = at.col(col);
+                }
+            }
+            let mut h = U::<N>::splat(KEY_SEED);
+            for c in &v[..nk] {
+                h = ln::key_mix(h, U::from_array(*c));
+            }
+            let keys: [u32; N] = ((h & U::splat(p.mask)).cast::<u32>() + sr(kb)).to_array();
+            core::ptr::copy_nonoverlapping(keys.as_ptr(), out.add((eb + t) as usize), n as usize);
+            t += n;
+        }
+    }
+    for t in lim.max(t0)..t1 {
+        *out.add((eb + t) as usize) = kb.wrapping_add(ix_hash(bb, p, t));
+    }
+}
+
 /// Rows `t0..t1` of an index's relation (rows in its block, no view): each one's key hash, masked, plus `kb`, at
 /// `eb + t` of `out`, as `ix_key`'s.
 pub(super) unsafe fn ix_keys_lanes<const N: usize>(bb: *const u8, out: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)

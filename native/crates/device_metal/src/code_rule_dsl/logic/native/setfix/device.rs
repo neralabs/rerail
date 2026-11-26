@@ -1266,7 +1266,7 @@ fn one_launch(rep: &Report) {
         let budget = rep.launch_items.max(1);
         let ok = one && rep.dispatches == launches && rep.reruns == 0 && u64::from(rep.relaunches) <= rep.taken / budget + rep.programs as u64;
         if std::env::var_os("RERAIL_ONE_LAUNCH_CHECK").is_some_and(|v| v == "log") {
-            eprintln!("ONE_LAUNCH {} programs {} reruns {} arena_reruns {} texts {} rounds {}", if ok { "ok" } else { "breach" }, rep.programs, rep.reruns, rep.arena_reruns, rep.made, rep.rounds);
+            eprintln!("ONE_LAUNCH {} programs {} reruns {} arena_reruns {} texts {} rounds {} gpu_seconds {:.6}", if ok { "ok" } else { "breach" }, rep.programs, rep.reruns, rep.arena_reruns, rep.made, rep.rounds, rep.gpu_seconds);
         } else {
             assert!(ok, "a stratum past one launch and its budget's relaunches (decision 0603): {rep:?}");
         }

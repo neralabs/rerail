@@ -2534,9 +2534,7 @@ unsafe fn ix_key_range(bb: *const u8, out: *mut u32, places: *mut u32, p: &IxP, 
         dedup_lanes::ix_keys_lanes::<{ stage_lanes::LANES }>(bb, out, p, kb, eb, t0, t1);
         return;
     }
-    for t in t0..t1 {
-        *out.add((eb + t) as usize) = kb.wrapping_add(ix_hash(bb, p, t));
-    }
+    dedup_lanes::ix_keys_view_lanes::<{ stage_lanes::LANES }>(bb, out, p, kb, eb, t0, t1);
 }
 
 unsafe fn ix_place_range(bb: *const u8, keys: *const u32, places: *const u32, offs: *mut u32, rows: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32) {

@@ -168,6 +168,26 @@ impl At<'_> {
     }
 }
 
+/// A walk of a document's rows of one view in order (`Doc::rows_from`): the next row's number, and its numbering's
+/// walk where its rows read a tape node.
+pub struct Rows<'a> {
+    d: Doc<'a>,
+    k: u32,
+    r: u32,
+    nodes: Option<rerail_reads::ids::Nodes<'a>>,
+}
+
+impl<'a> Rows<'a> {
+    /// The next row, found (`At`, as `Doc::at` finds it).
+    #[inline]
+    pub unsafe fn next(&mut self) -> At<'a> {
+        let x = self.nodes.as_mut().map_or(0, |n| n.next());
+        let at = At { d: self.d, k: self.k, r: self.r, x };
+        self.r = self.r.wrapping_add(1);
+        at
+    }
+}
+
 /// Which place a `Loc` view's second column holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Place {
@@ -410,6 +430,19 @@ impl<'a> Doc<'a> {
             _ => 0,
         };
         At { d: self, k, r, x }
+    }
+
+    /// View `k`'s rows from `r` on, in order (`Rows`): each one's tape node the next of its numbering's (`Nodes`),
+    /// not selected again for each row.
+    #[inline]
+    pub unsafe fn rows_from(self, k: u32, r: u32) -> Rows<'a> {
+        let nodes = match k {
+            0 | 3 | 4 | 9 | 10 => Some(self.n.nodes_from(0, r)),
+            1 => Some(self.n.nodes_from(0, r.wrapping_add(1))),
+            2 => Some(self.n.nodes_from(2, r)),
+            _ => None,
+        };
+        Rows { d: self, k, r, nodes }
     }
 
     /// The `child` row of the first numbered node from tape node `c` on, `c` and each sibling after it within
