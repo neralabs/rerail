@@ -268,12 +268,17 @@ describe("daemon.log with an audit both the history and the audits list read", (
   });
 });
 
+const SCOPED = "remote:github.com/acme/scoped";
+
 describe("the repository audits page's cost", () => {
   it("tests the stored lists of the audits a filtered or scoped page lists, and of no other", async () => {
     const path = await temporaryDatabase();
     const auditIds = fourAudits(path);
     const client = new Database(path);
+    // /w3's repository audit is running, and /w4's belongs to a session of the repository the scoped page reads.
     client.prepare("UPDATE repository_audits SET status = 'running' WHERE workspace_root = '/w3'").run();
+    client.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at) VALUES ('session-b', 'claude', '/w4', ?, 1)").run(SCOPED);
+    client.prepare("UPDATE repository_audits SET session_id = 'session-b' WHERE workspace_root = '/w4'").run();
     client.close();
     const store = new SqliteAuditStore(path);
     const probe = new Database(path, { readonly: true });
@@ -281,8 +286,8 @@ describe("the repository audits page's cost", () => {
     let statements: Array<{ source: string; params: unknown[] }> = [];
     try {
       const pages = [store.listRepositoryAudits({ workspaceRoot: "/w2" }), store.listRepositoryAudits({ status: "running" }),
-        store.listRepositoryAudits({}, ["remote:github.com/acme/none"])];
-      expect(pages.map(page => page.repositories.map(repository => repository.workspaceRoot))).toEqual([["/w2"], ["/w3"], []]);
+        store.listRepositoryAudits({}, [SCOPED])];
+      expect(pages.map(page => page.repositories.map(repository => repository.workspaceRoot))).toEqual([["/w2"], ["/w3"], ["/w4"]]);
       statements = reads.mock.contexts.map((statement, index) => ({ source: (statement as Database.Statement).source, params: reads.mock.calls[index]! }))
         .filter(statement => statement.source.includes("lengths AS MATERIALIZED"));
     } finally {
@@ -306,7 +311,7 @@ describe("the repository audits page's cost", () => {
         probe.prepare(source).all(...params);
         return auditIds.filter(id => texts.has(violationsOf.get(id)));
       });
-      expect(tested).toEqual([[auditIds[1]], [auditIds[2]], []]);
+      expect(tested).toEqual([[auditIds[1]], [auditIds[2]], [auditIds[3]]]);
     } finally {
       probe.close();
     }
