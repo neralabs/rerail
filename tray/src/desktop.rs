@@ -25,16 +25,8 @@ const TEMPLATE: bool = cfg!(target_os = "macos");
 /// The status line's circle, in pixels. macOS draws a menu item's icon at most 18 pt tall.
 const CIRCLE_SIZE: u32 = 32;
 
-/// The menu, top to bottom: the status line, Version and Home path (0 to 2), a separator, Go to the Dashboard (4), a
-/// separator, Settings… and Documentation, a separator, then the update line when there is one (9), Restart and Stop
-/// Rerail (9 and 10 without an update line). The items that carry an image on macOS are named by index.
-const UPDATE_AT: usize = 9;
-#[cfg(target_os = "macos")]
-const DASHBOARD_AT: usize = 4;
-#[cfg(target_os = "macos")]
-const RESTART_AT: usize = 9;
-#[cfg(target_os = "macos")]
-const STOP_AT: usize = 10;
+/// The item the update line goes in just before, while there is one.
+const UPDATE_BEFORE: &str = "restart";
 
 /// Runs the tray until stdin closes. The icon appears with the first menu state.
 pub fn run() -> ! {
@@ -147,13 +139,13 @@ impl Tray {
             &MenuItem::with_id("stop", "Stop Rerail", true, None),
         ])
         .map_err(|error| format!("could not build the menu: {error}"))?;
-        // Before the update line can shift them: AppKit keeps each image on its item.
+        // Once, by id: AppKit keeps each image on its item wherever the update line puts it later.
         #[cfg(target_os = "macos")]
         {
-            show_item_image(&menu, 0, None);
-            show_item_image(&menu, DASHBOARD_AT, Some("sidebar.left"));
-            show_item_image(&menu, RESTART_AT, Some("arrow.clockwise"));
-            show_item_image(&menu, STOP_AT, Some("power"));
+            show_item_image(&menu, "status", None);
+            show_item_image(&menu, "open", Some("sidebar.left"));
+            show_item_image(&menu, "restart", Some("arrow.clockwise"));
+            show_item_image(&menu, "stop", Some("power"));
         }
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu.clone()))
@@ -188,7 +180,7 @@ impl Tray {
             &self.update,
             self.update_shown,
             state.update.is_some(),
-            UPDATE_AT,
+            UPDATE_BEFORE,
         );
         if let Err(error) = self.icon.set_tooltip(Some(&state.status)) {
             eprintln!("rerail-tray: could not set the tooltip: {error}");
@@ -199,10 +191,14 @@ impl Tray {
         }
     }
 
-    /// Adds or removes an optional line, and returns whether it is in the menu now.
-    fn toggle(&self, item: &MenuItem, shown: bool, wanted: bool, at: usize) -> bool {
+    /// Adds an optional line just before the item with id `before`, or removes it, and returns whether it is in the
+    /// menu now.
+    fn toggle(&self, item: &MenuItem, shown: bool, wanted: bool, before: &str) -> bool {
         let changed = match (shown, wanted) {
-            (false, true) => self.menu.insert(item, at),
+            (false, true) => match position(&self.menu, before) {
+                Some(at) => self.menu.insert(item, at),
+                None => return shown,
+            },
             (true, false) => self.menu.remove(item),
             _ => return shown,
         };
@@ -230,13 +226,13 @@ impl Tray {
     }
 }
 
-/// Gives the menu's item at `index` the SF Symbol `symbol`, as a template so it takes the menu's colour, and asks
+/// Gives the menu's item with id `id` the SF Symbol `symbol`, as a template so it takes the menu's colour, and asks
 /// AppKit to draw that item's image: the status line's circle, which muda sets, has no symbol. From macOS 27 AppKit
 /// hides menu item images unless an item's `preferredImageVisibility` is `.visible`; earlier versions have no such
 /// property and always draw them. muda does not expose its `NSMenuItem`s, so the item is reached through the menu's
 /// `NSMenu`. Windows has no such images, so its menu is text alone, as Linux's is.
 #[cfg(target_os = "macos")]
-fn show_item_image(menu: &Menu, index: usize, symbol: Option<&str>) {
+fn show_item_image(menu: &Menu, id: &str, symbol: Option<&str>) {
     use muda::ContextMenu;
     use objc2::runtime::NSObjectProtocol;
     use objc2::{msg_send, sel};
@@ -245,11 +241,18 @@ fn show_item_image(menu: &Menu, index: usize, symbol: Option<&str>) {
 
     /// `NSMenuItemImageVisibilityVisible`.
     const VISIBLE: isize = 1;
-    // SAFETY: `ns_menu` is the live `NSMenu` muda keeps for `menu`, and this runs on the main thread, as muda's own
-    // calls do.
-    let ns_menu = unsafe { &*(menu.ns_menu() as *const NSMenu) };
+    let Some(index) = position(menu, id) else {
+        return;
+    };
+    // SAFETY: `ns_menu` is the live `NSMenu` muda keeps for `menu`, or null, which `as_ref` turns into None; this runs
+    // on the main thread, as muda's own calls do.
+    let Some(ns_menu) = (unsafe { (menu.ns_menu() as *const NSMenu).as_ref() }) else {
+        return eprintln!("rerail-tray: the menu has no NSMenu to give its {id} item an image");
+    };
     let Some(item) = ns_menu.itemAtIndex(index as isize) else {
-        return eprintln!("rerail-tray: the menu has no item {index} to give an image");
+        return eprintln!(
+            "rerail-tray: the menu's NSMenu has no item {index} ({id}) to give an image"
+        );
     };
     if let Some(symbol) = symbol {
         match NSImage::imageWithSystemSymbolName_accessibilityDescription(
@@ -267,6 +270,16 @@ fn show_item_image(menu: &Menu, index: usize, symbol: Option<&str>) {
         // SAFETY: the item responds to the setter, whose argument is an NSInteger.
         let _: () = unsafe { msg_send![&*item, setPreferredImageVisibility: VISIBLE] };
     }
+}
+
+/// Where the item with `id` is in `menu` now, counted from 0, so no position is counted by hand; None, with a note,
+/// where it is not there.
+fn position(menu: &Menu, id: &str) -> Option<usize> {
+    let at = menu.items().iter().position(|item| *item.id() == id);
+    if at.is_none() {
+        eprintln!("rerail-tray: the menu has no {id} item");
+    }
+    at
 }
 
 fn menu_icon(image: Rgba) -> Option<muda::Icon> {
