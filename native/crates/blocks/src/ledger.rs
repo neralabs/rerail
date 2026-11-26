@@ -16,7 +16,7 @@
 use crate::block::{Extent, PAGE};
 use crate::free::MIN_LOG;
 use std::sync::atomic::{AtomicBool, Ordering::*};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// How a GPU use reaches the block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,7 +150,7 @@ fn bit(bits: &[u64], i: usize) -> bool {
 impl Ledger {
     pub(crate) fn new(base: *mut u8, len: usize, pages: bool, ext: Arc<Extent>) -> Arc<Ledger> {
         let l = Arc::new(Ledger { state: Mutex::default(), chunk_uses: std::sync::atomic::AtomicUsize::new(0), root: Mutex::new(std::sync::Weak::new()), base: base as usize, pages, ext });
-        let mut live = blocks();
+        let mut live = blocks_mut();
         // After any at the same address: memory an outer ledger holds (a pooled lease) made a block's (`Block::over`)
         // or `Tracked`, the inner ledger is the one its address finds (`of_address`).
         let i = live.partition_point(|e| e.0 <= l.base);
@@ -160,7 +160,7 @@ impl Ledger {
 
     /// Its block keeps only its first `len` bytes now (a freeze gave the rest of its reservation back).
     pub(crate) fn resized(&self, len: usize) {
-        if let Some(e) = blocks().iter_mut().find(|e| std::ptr::eq(e.2.as_ptr(), self)) {
+        if let Some(e) = blocks_mut().iter_mut().find(|e| std::ptr::eq(e.2.as_ptr(), self)) {
             e.1 = self.base + len;
         }
     }
@@ -492,7 +492,7 @@ impl Ledger {
         let release: Box<dyn FnOnce() + Send> = Box::new(move || {
             // No longer found by its address before another mapping can take it; an outer ledger of the same memory
             // (a lease's) stays.
-            blocks().retain(|e| e.2.as_ptr() as usize != me);
+            blocks_mut().retain(|e| e.2.as_ptr() as usize != me);
             release()
         });
         let now = {
@@ -553,12 +553,21 @@ impl<T: Send + 'static> Drop for Tracked<T> {
 }
 
 /// The live blocks' address ranges, the lowest first, each with its ledger: how a buffer bound for a kernel is found
-/// to be a block's (`Fence::uses_address`), whoever made the buffer.
+/// to be a block's (`Fence::uses_address`), whoever made the buffer. Read by every bind of every dispatch, on every
+/// thread that encodes one, and written only as a block is made, resized or let go: a reader shares it. As a mutex,
+/// the CPU's join programs' binds queued on it (the data-layer rules over 50 files: 20 of 52 s of CPU in its waits
+/// and wakes, 2026-11-25).
 // state: bookkeeping (the blocks in the process, by address: what is mapped, not what a relation has)
-static BLOCKS: Mutex<Vec<(usize, usize, std::sync::Weak<Ledger>)>> = Mutex::new(Vec::new());
+static BLOCKS: RwLock<Vec<(usize, usize, std::sync::Weak<Ledger>)>> = RwLock::new(Vec::new());
 
-fn blocks() -> MutexGuard<'static, Vec<(usize, usize, std::sync::Weak<Ledger>)>> {
-    BLOCKS.lock().unwrap_or_else(|e| e.into_inner())
+type Live = Vec<(usize, usize, std::sync::Weak<Ledger>)>;
+
+fn blocks() -> RwLockReadGuard<'static, Live> {
+    BLOCKS.read().unwrap_or_else(|e| e.into_inner())
+}
+
+fn blocks_mut() -> RwLockWriteGuard<'static, Live> {
+    BLOCKS.write().unwrap_or_else(|e| e.into_inner())
 }
 
 /// The ledger of the live block whose memory holds `addr`: the innermost, where one ledger's memory lies in
@@ -602,11 +611,16 @@ impl Fence {
     /// once however often it is bound. Whether a block holds it: a buffer of no block's is not the ledger's.
     pub fn uses_address(&self, addr: usize) -> bool {
         let Some(l) = of_address(addr) else { return false };
-        let known = self.uses.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|u| Arc::ptr_eq(&u.0, &l));
-        if !known {
-            self.add(&l, Access::Write, None);
-        }
+        self.uses_ledger(&l);
         true
+    }
+
+    /// Its work reads or writes the block of ledger `l` (found by an address, `of_address`), once however often.
+    pub fn uses_ledger(&self, l: &Arc<Ledger>) {
+        let known = self.uses.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|u| Arc::ptr_eq(&u.0, l));
+        if !known {
+            self.add(l, Access::Write, None);
+        }
     }
 
     /// Whether `key` (a region, with its access) is pinned on it for the first time now.

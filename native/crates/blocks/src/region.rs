@@ -428,7 +428,7 @@ pub fn whole(block: &Arc<Block>) -> Shared<u8> {
 /// own region, while a handle holds it, is pinned (once a fence and access). Whether a ledger knows the address.
 pub fn bind_address(fence: &Arc<Fence>, addr: usize, write: bool, op: &'static str) -> bool {
     let Some(l) = crate::ledger::of_address(addr) else { return false };
-    fence.uses_address(addr);
+    fence.uses_ledger(&l);
     let root = l.root.lock().unwrap_or_else(|e| e.into_inner()).upgrade();
     if let Some(r) = root
         && fence.first_pin(Arc::as_ptr(&r) as usize, write)
