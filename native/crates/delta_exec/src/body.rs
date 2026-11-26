@@ -115,11 +115,29 @@ pub struct TermPlan {
     pub level: Option<Vec<(usize, usize)>>,
 }
 
-/// A stratum's chains as data, with the sources and documents they read.
+/// The shapes a program's relations declare (decision 0361), as the planner reads them: the sources of the facts
+/// `key(rel, k, col)` (column `col` is in key `k` of `rel`: a probe binding every column of a key returns at most one
+/// row) and `fanout(rel, col, class)` (a probe binding `col` returns at most one row for the class `one`, at most
+/// `FEW` for `few`, any number for any other), read where they lie; each source's relation (0: none, a view's own);
+/// and the symbols of `one` and `few`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Decls {
+    pub key: Option<usize>,
+    pub fanout: Option<usize>,
+    pub rels: Vec<i64>,
+    pub one: i64,
+    pub few: i64,
+}
+
+/// At most this many rows a probe of a `few` fanout returns (0361).
+pub const FEW: f64 = 16.0;
+
+/// A stratum's chains as data, with the sources and documents they read, and the shapes its relations declare.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Plan {
     pub srcs: Vec<Src>,
     pub docs: Vec<DocAt>,
+    pub decls: Decls,
     pub terms: Vec<TermPlan>,
 }
 
@@ -214,6 +232,10 @@ impl Plan {
                 }
             }
         }
+        let d = &self.decls;
+        let at = |x: Option<usize>| x.map_or(-1, |i| i as i64);
+        w.extend([at(d.key), at(d.fanout), d.one, d.few, d.rels.len() as i64]);
+        w.extend(&d.rels);
         w
     }
 
@@ -285,6 +307,10 @@ impl Plan {
             let level = (nl >= 0).then(|| (0..nl).map(|_| (next() as usize, next() as usize)).collect());
             p.terms.push(TermPlan { head, sign, parts, steps, out, level });
         }
+        let at = |x: i64| (x >= 0).then_some(x as usize);
+        let (key, fanout, one, few) = (at(next()), at(next()), next(), next());
+        let rels = (0..next()).map(|_| next()).collect();
+        p.decls = Decls { key, fanout, rels, one, few };
         p
     }
 
@@ -400,6 +426,38 @@ impl<'t> Env<'t> {
     /// Source `src`'s rows on `side` (its change's, for `Delta`), and each of its first `ncols` columns' distinct values
     /// (*0686: Operations* §8's statistics, read where they lie: a trace's from its layers' sketches, a view's from its
     /// documents' rows).
+    /// What source `src`'s relation declares (0361), read where the declarations lie: its keys, each a mask of its
+    /// columns, and its columns' fanout caps (the rows a probe binding the column returns at most).
+    pub(crate) fn declared(&self, src: usize) -> (Vec<u64>, Vec<(usize, f64)>) {
+        let d = &self.plan.decls;
+        let Some(&rel) = d.rels.get(src).filter(|&&r| r != 0) else { return (Vec::new(), Vec::new()) };
+        let rows = |at: Option<usize>| -> Vec<[i64; 3]> {
+            match at.map(|i| &self.srcs[i]) {
+                Some(Live::Trace { after, .. }) => {
+                    let c = |i: u16| ColumnIndex::new(i);
+                    Read::matching(after, &[c(0)], &[rel]).map(|r| [Read::get(after, r, c(0)), Read::get(after, r, c(1)), Read::get(after, r, c(2))]).collect() // copy: derived (a relation's few declarations, read)
+                }
+                _ => Vec::new(),
+            }
+        };
+        let mut keys: Vec<(i64, u64)> = Vec::new();
+        for [_, k, col] in rows(d.key) {
+            if !(0..64).contains(&col) {
+                continue;
+            }
+            match keys.iter_mut().find(|x| x.0 == k) {
+                Some(x) => x.1 |= 1 << col,
+                None => keys.push((k, 1 << col)),
+            }
+        }
+        let caps = rows(d.fanout)
+            .into_iter()
+            .filter(|r| (0..64).contains(&r[1]))
+            .filter_map(|[_, col, class]| if class == d.one { Some((col as usize, 1.0)) } else if class == d.few { Some((col as usize, FEW)) } else { None })
+            .collect();
+        (keys.into_iter().map(|k| k.1).collect(), caps)
+    }
+
     pub(crate) fn side_stats(&self, src: usize, side: Side, ncols: usize) -> (u64, Vec<u64>) {
         let of = |v: &dyn Fn(ColumnIndex) -> rerail_blocks::bistate::ColStats, rows: &dyn Fn() -> u64| -> (u64, Vec<u64>) {
             let n = if ncols == 0 { rows() } else { v(ColumnIndex::new(0)).rows };

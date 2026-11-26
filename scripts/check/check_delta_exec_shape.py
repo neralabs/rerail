@@ -873,16 +873,39 @@ def k1(failures: list) -> None:
         failures.append("B§10 step 7's test is missing")
 
 
+def declared(failures: list) -> None:
+    """Decision 0361 in the delta executor: relations declare their shapes as facts (`key`, `fanout`), read where they
+    lie; a line they cover takes its default plan, unpriced and unsearched; run time checks they hold, and a line whose
+    rows broke them is planned from statistics."""
+    plan = strip_rust((CRATE / "src" / "plan.rs").read_text())
+    body = strip_rust((CRATE / "src" / "body.rs").read_text())
+    program = strip_rust((CRATE / "src" / "program.rs").read_text())
+    for code, what in (("fn declared_order(", "the declared default plan"), ("const DECLARED: i64", "the declared line's status"),
+                       ("min(sp.cap(mask))", "a probe's fan capped by its declarations"),
+                       ("r.broken = true", "the run-time check of a declared plan"), ("note.broken |= r.broken", "a broken note")):
+        if code not in plan:
+            failures.append(f"plan.rs: {what} is missing (0361)")
+    if "pub(crate) fn declared(&self, src: usize)" not in body or "Read::matching(after" not in body:
+        failures.append("body.rs: the declarations are not read where they lie (0361, 0353)")
+    if 'key: find(atoms,' not in program or 'fanout: find(atoms,' not in program:
+        failures.append("program.rs: the engine does not know the declarations' relations (0361)")
+    tests = (CRATE / "src" / "plan_tests.rs").read_text() + (CRATE / "src" / "phase_tests.rs").read_text()
+    for t in ("fn a_declared_key_or_fanout_bounds_a_probe", "fn a_declared_line_takes_its_default_plan_and_a_broken_declaration_is_planned_from_statistics",
+              "fn a_levels_declared_keys_give_its_lines_default_plans"):
+        if t not in tests:
+            failures.append(f"0361's test {t} is missing")
+
+
 def main() -> int:
     failures: list = []
-    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, b6, reach, e1, kept, b8, planning, k1):
+    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, b6, reach, e1, kept, b8, planning, k1, declared):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, B6, reach, E1, kept, B8, planning, K1)")
+    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, B6, reach, E1, kept, B8, planning, K1, declared)")
     return 0
 
 

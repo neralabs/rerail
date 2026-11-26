@@ -3,7 +3,7 @@
 //! round answers as its chains in their rules' order do.
 
 use super::*;
-use crate::body::{BodyOps, Src, run_plan};
+use crate::body::{BodyOps, Decls, FEW, Src, run_plan};
 use crate::cache::OpCache;
 use crate::contract::push_layer;
 use crate::sym::Atoms;
@@ -139,7 +139,7 @@ fn a_chain_bound_again_in_its_own_order_is_itself_and_every_valid_order_answers_
     let arity = |t: &TermPlan| t.out.len() + usize::from(t.level.is_some());
     for t in [&lone, &path, &reach, &same] {
         let ch = ChainVars::of(t).unwrap();
-        let p = |t: TermPlan| Plan { srcs: srcs.clone(), docs: Vec::new(), terms: vec![t] };
+        let p = |t: TermPlan| Plan { srcs: srcs.clone(), docs: Vec::new(), decls: Decls::default(), terms: vec![t] };
         let want = b.ruled(&p(t.clone()), &[arity(t)]);
         assert!(!want[0].is_empty());
         let n = t.steps.len();
@@ -152,7 +152,7 @@ fn a_chain_bound_again_in_its_own_order_is_itself_and_every_valid_order_answers_
 }
 
 fn step(card: f64, ndv: &[f64]) -> StepPrice {
-    StepPrice { card, ndv: ndv.to_vec(), corr: Vec::new() }
+    StepPrice { card, ndv: ndv.to_vec(), ..StepPrice::default() }
 }
 
 /// The dynamic program takes the cheapest order (a small relation first, the big one probed by it) and keeps the
@@ -190,7 +190,7 @@ fn a_round_plans_keeps_its_order_under_the_budget_and_a_dropped_memo_answers_the
     let e = b.rel(2, (0..6).map(|i| vec![i, i % 3]));
     let f = b.rel(2, (0..3).map(|i| vec![i, 10 + i]));
     let g = b.rel(2, [vec![11, 100]]);
-    let plan = Plan { srcs: vec![tr(2, e), tr(2, f), tr(2, g)], docs: Vec::new(), terms: vec![three_hop()] };
+    let plan = Plan { srcs: vec![tr(2, e), tr(2, f), tr(2, g)], docs: Vec::new(), decls: Decls::default(), terms: vec![three_hop()] };
     let want = b.ruled(&plan, &[2]);
     assert_eq!(want[0], vec![(vec![1, 100], 1), (vec![4, 100], 1)]);
     let memo = b.memo();
@@ -258,7 +258,7 @@ fn a_learned_correction_changes_the_order_chosen_not_the_answer() {
     let big = b.rel(2, (0..1000).map(|i| vec![i, i % 10]));
     let small = b.rel(1, [vec![3]]);
     let t = term(vec![atom(0, Side::After, vec![Arg::Bind, Arg::Bind]), atom(1, Side::After, vec![Arg::Eq(0, 1)])], vec![Arg::Eq(0, 0), Arg::Eq(0, 1)]);
-    let plan = Plan { srcs: vec![tr(2, big), tr(1, small)], docs: Vec::new(), terms: vec![t] };
+    let plan = Plan { srcs: vec![tr(2, big), tr(1, small)], docs: Vec::new(), decls: Decls::default(), terms: vec![t] };
     let want = b.ruled(&plan, &[2]);
     assert_eq!(want[0].len(), 100);
     let key = 0x5eed_0002;
@@ -285,7 +285,7 @@ fn exploration_is_a_seeded_draw_and_runs_a_runner_up() {
     let a = b.rel(2, (0..4).map(|i| vec![i, i % 2]));
     let c = b.rel(1, [vec![0], vec![1]]);
     let t = term(vec![atom(0, Side::After, vec![Arg::Bind, Arg::Bind]), atom(1, Side::After, vec![Arg::Eq(0, 1)])], vec![Arg::Eq(0, 0), Arg::Eq(0, 1)]);
-    let plan = Plan { srcs: vec![tr(2, a), tr(1, c)], docs: Vec::new(), terms: vec![t] };
+    let plan = Plan { srcs: vec![tr(2, a), tr(1, c)], docs: Vec::new(), decls: Decls::default(), terms: vec![t] };
     let want = b.ruled(&plan, &[2]);
     let memo = b.memo();
     let (got, pd) = b.planned(&plan, &[key], memo, None, &[2]);
@@ -378,7 +378,7 @@ fn skewed(b: &mut B, delta: i64, y: i64) -> Plan {
         vec![atom(0, Side::Delta, vec![Arg::Bind, Arg::Bind]), atom(1, Side::After, vec![Arg::Eq(0, 1), Arg::Bind]), atom(2, Side::After, vec![Arg::Eq(1, 1), Arg::Bind]), atom(3, Side::After, vec![Arg::Eq(1, 1), Arg::Bind])],
         vec![Arg::Eq(0, 0), Arg::Eq(2, 1), Arg::Eq(3, 1)],
     );
-    Plan { srcs: vec![tr(2, a), tr(2, bb), tr(2, c), tr(2, d)], docs: Vec::new(), terms: vec![t] }
+    Plan { srcs: vec![tr(2, a), tr(2, bb), tr(2, c), tr(2, d)], docs: Vec::new(), decls: Decls::default(), terms: vec![t] }
 }
 
 /// A slow line on the critical path (0274): run first on a small change that reaches none of the skew (y = 1) and
@@ -457,7 +457,7 @@ fn a_critical_line_is_trialled_once_at_its_first_check() {
             vec![atom(0, Side::Delta, vec![Arg::Bind, Arg::Bind]), atom(1, Side::After, vec![Arg::Eq(0, 1), Arg::Bind]), atom(2, Side::After, vec![Arg::Eq(1, 1), Arg::Bind]), atom(3, Side::After, vec![Arg::Eq(1, 1), Arg::Bind])],
             vec![Arg::Eq(0, 0), Arg::Eq(2, 1), Arg::Eq(3, 1)],
         );
-        Plan { srcs: vec![tr(2, a), tr(2, bb), tr(2, c), tr(2, d)], docs: Vec::new(), terms: vec![t] }
+        Plan { srcs: vec![tr(2, a), tr(2, bb), tr(2, c), tr(2, d)], docs: Vec::new(), decls: Decls::default(), terms: vec![t] }
     };
     let mut b = B::new();
     let key = (0..10_000i64).find(|&k| (1..4).all(|r| seed_draw(k, r) >= EXPLORE_RATE)).unwrap();
@@ -489,10 +489,10 @@ fn the_critical_path_marks_the_lines_of_its_heaviest_chain() {
     let a = b.rel(2, (0..200).map(|x| vec![x, 0]));
     let bb = b.rel(2, (0..=60).map(|z| vec![0, z]));
     let t = term(vec![atom(0, Side::Delta, vec![Arg::Bind, Arg::Bind]), atom(1, Side::After, vec![Arg::Eq(0, 1), Arg::Bind])], vec![Arg::Eq(0, 0), Arg::Eq(1, 1)]);
-    let heavy = Plan { srcs: vec![tr(2, a), tr(2, bb)], docs: Vec::new(), terms: vec![t.clone()] };
+    let heavy = Plan { srcs: vec![tr(2, a), tr(2, bb)], docs: Vec::new(), decls: Decls::default(), terms: vec![t.clone()] };
     let small = b.rel(2, (0..3).map(|x| vec![x, 0]));
     let one = b.rel(2, [vec![0, 1]]);
-    let light = Plan { srcs: vec![tr(2, small), tr(2, one)], docs: Vec::new(), terms: vec![t] };
+    let light = Plan { srcs: vec![tr(2, small), tr(2, one)], docs: Vec::new(), decls: Decls::default(), terms: vec![t] };
     let memos = [b.memo(), b.memo(), b.memo()];
     b.planned(&heavy, &[1], memos[0], None, &[2]);
     b.planned(&light, &[2], memos[1], None, &[2]);
@@ -519,4 +519,70 @@ fn a_handed_off_order_is_limited_again() {
     assert_eq!(limit_again(2.0, 100.0, 10.0, 50.0), 100.0 + 8.0 * 2.0 * 10.0);
     assert_eq!(limit_again(f64::INFINITY, 100.0, 10.0, 300.0), 600.0);
     assert!(limit_again(f64::NAN, 0.0, 0.0, 0.0).is_finite());
+}
+
+/// A probe's declared bound (0361): one row where its bound columns hold a key, a column's cap where they hold it,
+/// else none.
+#[test]
+fn a_declared_key_or_fanout_bounds_a_probe() {
+    let s = StepPrice { keys: vec![0b011], caps: vec![(2, FEW)], ..StepPrice::default() };
+    assert_eq!(s.cap(0b011), 1.0);
+    assert_eq!(s.cap(0b111), 1.0);
+    assert_eq!(s.cap(0b001), f64::INFINITY, "half a key");
+    assert_eq!(s.cap(0b101), FEW);
+    assert_eq!(StepPrice::default().cap(0b1), f64::INFINITY);
+    // The search prices by it: big's y, of 10 values in statistics, declared a key, probed by small's one row.
+    let t = term(vec![atom(0, Side::After, vec![Arg::Bind, Arg::Bind]), atom(1, Side::After, vec![Arg::Eq(0, 1)])], vec![Arg::Eq(0, 0), Arg::Eq(0, 1)]);
+    let ch = ChainVars::of(&t).unwrap();
+    let mut lp = LinePrice { steps: vec![step(1e6, &[1e6, 10.0]), step(1.0, &[1.0])], pairs: Vec::new() };
+    assert_eq!(search(&ch, &lp, &[], 0.0, GREEDY).unwrap().price, 1.0 + 1e5);
+    lp.steps[0].keys = vec![0b10];
+    assert_eq!(search(&ch, &lp, &[], 0.0, GREEDY).unwrap().price, 1.0 + 1.0);
+}
+
+/// The three-hop chain e(x, y), f(y, z), g(z, w) with its relations' declarations as sources (0361): f's columns
+/// are each a key, g's first is, and e's y has a fanout of `class`.
+fn declared_three_hop(b: &mut B, class: i64) -> Plan {
+    let e = b.rel(2, (0..6).map(|i| vec![i, i % 3]));
+    let f = b.rel(2, (0..3).map(|i| vec![i, 10 + i]));
+    let g = b.rel(2, [vec![11, 100]]);
+    let (re, rf, rg, one, few) = (101, 102, 103, 7001, 7002);
+    let key = b.rel(3, [vec![rf, 0, 0], vec![rf, 1, 1], vec![rg, 0, 0]]);
+    let fanout = b.rel(3, [vec![re, 1, if class == 1 { one } else { few }]]);
+    let decls = Decls { key: Some(3), fanout: Some(4), rels: vec![re, rf, rg, 0, 0], one, few };
+    Plan { srcs: vec![tr(2, e), tr(2, f), tr(2, g), tr(3, key), tr(3, fanout)], docs: Vec::new(), decls, terms: vec![three_hop()] }
+}
+
+/// A line its declarations cover takes its default plan (0361): no statistics, no search; g, of one row, first,
+/// then f by its key, then e by its fanout; the rows the rule order's. A declaration its rows break (e's y declared
+/// `one`, two rows each) is caught at run time: the line is flagged, and its next plan is priced from statistics.
+#[test]
+fn a_declared_line_takes_its_default_plan_and_a_broken_declaration_is_planned_from_statistics() {
+    let mut b = B::new();
+    let plan = declared_three_hop(&mut b, FEW as i64);
+    let want = b.ruled(&plan, &[2]);
+    assert_eq!(want[0], vec![(vec![1, 100], 1), (vec![4, 100], 1)]);
+    let memo = b.memo();
+    let (got, pd) = b.planned(&plan, &[0x5eed_0361], memo, None, &[2]);
+    assert_eq!(got, want);
+    assert_eq!((pd.declared, pd.priced, pd.searched, pd.broken), (1, 0, 0, 0), "{pd:?}");
+    assert_eq!(b.notes(memo)[0].1.order, vec![2, 1, 0]);
+    // e's y declared one: broken by its two rows each.
+    let plan = declared_three_hop(&mut b, 1);
+    let memo = b.memo();
+    let (got, pd) = b.planned(&plan, &[0x5eed_0362], memo, None, &[2]);
+    assert_eq!(got, want);
+    assert_eq!((pd.declared, pd.broken), (1, 1), "{pd:?}");
+    assert!(b.notes(memo)[0].1.broken);
+    let (got, pd) = b.planned(&plan, &[0x5eed_0362], memo, None, &[2]);
+    assert_eq!(got, want);
+    assert_eq!(pd.declared, 0, "{pd:?}");
+    assert!(pd.priced > 0 || pd.kept > 0, "{pd:?}");
+    // Undeclared, the same chain is priced.
+    let mut plain = declared_three_hop(&mut b, FEW as i64);
+    plain.decls = Decls::default();
+    let fresh = b.memo();
+    let (got, pd) = b.planned(&plain, &[0x5eed_0363], fresh, None, &[2]);
+    assert_eq!((got, pd.declared), (want, 0));
+    assert!(pd.priced > 0);
 }

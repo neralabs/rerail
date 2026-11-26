@@ -97,13 +97,19 @@ pub struct Rule {
 pub struct Known {
     pub views: BTreeMap<i64, View>,
     pub load: Option<i64>,
+    /// The declarations' relations and classes (decision 0361): `key(rel, k, col)`, `fanout(rel, col, class)`, and
+    /// the classes `one` and `few`.
+    pub key: Option<i64>,
+    pub fanout: Option<i64>,
+    pub one: Option<i64>,
+    pub few: Option<i64>,
 }
 
 impl Known {
     /// The views' and `load`'s symbols in the atoms block `atoms`, where they have one.
     pub fn new(atoms: &[u8]) -> Known {
         let views = View::ALL.iter().filter_map(|(v, name, _)| find(atoms, name).map(|s| (s, *v))).collect();
-        Known { views, load: find(atoms, "load") }
+        Known { views, load: find(atoms, "load"), key: find(atoms, "key"), fanout: find(atoms, "fanout"), one: find(atoms, "one"), few: find(atoms, "few") }
     }
 
     pub fn view(&self, rel: i64) -> Option<View> {

@@ -697,3 +697,45 @@ fn a_levels_run_marks_its_critical_lines() {
     assert_eq!(edit.planned.critical, 0, "{:?}", edit.planned);
     assert_eq!(r.rows(1, "p").len(), 121 * 120);
 }
+
+/// Declarations are facts of the program (0361): `key(rel, k, col)` in a module of an earlier stratum, the relation
+/// named by its text. A level's lines they cover take their default plans, unpriced, with a cold run's rows; a
+/// declaration the rows break is caught, and the line is planned from statistics.
+#[test]
+fn a_levels_declared_keys_give_its_lines_default_plans() {
+    let base = (0..40).map(|i| format!("e({i}, {}).\nf({}, {}).\ng({}, {i}).\n", i + 1, i + 1, i + 2, i + 2)).collect::<String>();
+    let declared = |decl: &str| {
+        let mut r = Run::new("phase-declared");
+        r.write("base.rerail", &base, 50);
+        r.write("decl.rerail", decl, 50);
+        r.write("rule.rerail", "p(x, w) :- e(x, y), f(y, z), g(z, w).\n", 50);
+        r.names(&["base.rerail", "base", "decl.rerail", "decl", "rule.rerail", "rule", "rr"]);
+        let s = |n: &str| r.s(n);
+        let (pb, mb, pd, md, pr, mr, rr) = (s("base.rerail"), s("base"), s("decl.rerail"), s("decl"), s("rule.rerail"), s("rule"), s("rr"));
+        r.fact("load", &[vec![pb, mb, rr], vec![pd, md, rr], vec![pr, mr, rr]]);
+        r.fact("boot", &[vec![pb, 1], vec![pd, 1], vec![pr, 2]]);
+        let cold = r.run();
+        (r, cold)
+    };
+    // Undeclared (the same facts under another relation): its lines are priced.
+    let keys = "(\"e\", 0, 1).\n_(\"f\", 0, 0).\n_(\"f\", 1, 1).\n_(\"g\", 0, 0).\n";
+    let (_, plain) = declared(&format!("other{}", keys.replace("_(", "other(")));
+    let (mut r, cold) = declared(&format!("key{}", keys.replace("_(", "key(")));
+    assert_eq!((plain.planned.declared, plain.planned.broken), (0, 0), "{:?}", plain.planned);
+    assert!(cold.planned.declared >= 1, "the cold line: {:?}", cold.planned);
+    assert!(cold.planned.priced < plain.planned.priced, "{:?} {:?}", plain.planned, cold.planned);
+    assert_eq!(cold.planned.broken, 0, "{:?}", cold.planned);
+    assert_eq!(r.rows(1, "p").len(), 40);
+    // f's first column is no key once two rows share it: e's change probes f at y = 1 and finds three rows. Caught,
+    // and planned from statistics; the rows those of the facts.
+    r.write("base.rerail", &format!("{base}f(1, 99).\nf(1, 98).\ng(99, 7).\ng(98, 8).\ne(50, 1).\n"), 40);
+    let edit = r.run();
+    assert!(edit.planned.broken >= 1, "{:?}", edit.planned);
+    let p = r.rows(1, "p");
+    assert_eq!(p.len(), 45);
+    assert!([[0, 7], [0, 8], [50, 0], [50, 7], [50, 8]].iter().all(|x| p.contains(x.as_slice())), "{p:?}");
+    let warm = r.rows(1, "p");
+    r.last = None;
+    r.run();
+    assert_eq!(r.rows(1, "p"), warm, "cold");
+}

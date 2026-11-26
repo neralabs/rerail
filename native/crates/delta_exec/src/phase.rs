@@ -30,7 +30,7 @@
 //! where it is now (L6: the composed operator's delta). What a level exports (O6): its K-form relations are the next
 //! level's program, the rest its facts in.
 
-use crate::body::{Arg, BodyOps, DocAt, Op, Plan, Side, Src, StepPlan, TermPlan, Text};
+use crate::body::{Arg, BodyOps, Decls, DocAt, Op, Plan, Side, Src, StepPlan, TermPlan, Text};
 use crate::plan::{PlanOps, Round};
 use crate::boot::DocSet;
 use crate::contract::{Asks, At, Bench, CacheW, Cx, DeltaOp, GlobalIn, In, Instance, Out, Port, Ports, PortIn, PortOut, Programmed, Work, rows_at};
@@ -210,14 +210,27 @@ enum Docs<'a> {
 impl<'s> Planner<'s> {
     fn new(st: &'s Stratum, s: &'s Sides) -> Planner<'s> {
         let docs = s.docs.clone(); // copy: derived (the documents' places, the plan's)
-        Planner { st, s, plan: Plan { srcs: Vec::new(), docs, terms: Vec::new() }, keys: Vec::new(), own: Vec::new() }
+        let mut p = Planner { st, s, plan: Plan { srcs: Vec::new(), docs, decls: Decls::default(), terms: Vec::new() }, keys: Vec::new(), own: Vec::new() };
+        // The declarations (0361): their relations as sources, read where they lie by the planning operations.
+        p.plan.decls.one = st.known.one.unwrap_or(0);
+        p.plan.decls.few = st.known.few.unwrap_or(0);
+        if let Some(k) = st.known.key.filter(|&k| st.port_of(k).is_some()) {
+            p.plan.decls.key = Some(p.source(k, 3, Docs::All));
+        }
+        if let Some(f) = st.known.fanout.filter(|&f| st.port_of(f).is_some()) {
+            p.plan.decls.fanout = Some(p.source(f, 3, Docs::All));
+        }
+        p
     }
 
-    fn src(&mut self, src: Src) -> usize {
-        if let Some(i) = self.plan.srcs.iter().position(|s| *s == src) {
+    /// Source `src` of relation `rel`: one a relation, kept once.
+    fn src(&mut self, src: Src, rel: i64) -> usize {
+        let d = &mut self.plan.decls;
+        if let Some(i) = self.plan.srcs.iter().zip(&d.rels).position(|(s, r)| *s == src && *r == rel) {
             return i;
         }
         self.plan.srcs.push(src);
+        d.rels.push(rel);
         self.plan.srcs.len() - 1
     }
 
@@ -236,22 +249,22 @@ impl<'s> Planner<'s> {
                 })
                 .map(|(i, _)| i)
                 .collect();
-            return self.src(Src::View { view, docs: places });
+            return self.src(Src::View { view, docs: places }, rel);
         }
         if let Some(k) = self.st.heads.iter().position(|h| h.rel == rel)
             && self.st.recursive
         {
             let (before, after) = self.own[k];
-            return self.src(Src::Trace { arity: self.st.heads[k].arity + 1, before, after });
+            return self.src(Src::Trace { arity: self.st.heads[k].arity + 1, before, after }, rel);
         }
         match self.st.port_of(rel) {
             Some(p) => {
                 let (before, after) = self.s.heads[p];
                 // The trace's own columns: a recursive relation's carry its level after the atom's.
                 let arity = self.st.ins[p - usize::from(self.st.tape)].1.columns.len();
-                self.src(Src::Trace { arity, before, after })
+                self.src(Src::Trace { arity, before, after }, rel)
             }
-            None => self.src(Src::Trace { arity, before: None, after: None }),
+            None => self.src(Src::Trace { arity, before: None, after: None }, rel),
         }
     }
 
@@ -423,6 +436,15 @@ impl Stratum {
                 if let Some(sh) = shapes.get(&s.rel) {
                     ins.push((s.rel, sh.clone()));
                 }
+            }
+        }
+        // The shapes its relations declare (0361), read by its planner: the declarations of earlier strata and the
+        // facts in.
+        for d in [known.key, known.fanout].into_iter().flatten() {
+            if !own.contains(&d) && !ins.iter().any(|i| i.0 == d)
+                && let Some(sh) = shapes.get(&d)
+            {
+                ins.push((d, sh.clone()));
             }
         }
         Ok(Stratum { ops, module, before, after, known, tape, ins, heads, recursive })
@@ -810,7 +832,7 @@ impl Stratum {
                 let pairs: Vec<(Vec<i64>, i32)> = rows.iter().map(|r| (r.clone(), 1)).collect(); // copy: derived (the candidates, a relation the recheck starts from)
                 let head = crate::contract::push_layer(cx.reg, cx.traces, cx.dir, &mut t, &pairs)?;
                 temps.push(t);
-                let src = p.src(Src::Trace { arity: self.heads[k].arity, before: None, after: Some(head) });
+                let src = p.src(Src::Trace { arity: self.heads[k].arity, before: None, after: Some(head) }, 0);
                 for r in self.after.iter().filter(|r| r.head == self.heads[k].rel) {
                     let order = cold(r, Side::After);
                     p.chain(Walk { rule: r, order: &order, head: k, sign: 1, cand: Some(src), below }, Docs::All, Docs::All, &[]);

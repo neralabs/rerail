@@ -153,6 +153,9 @@ pub struct Planned {
     /// Wider searches made inline (0203 §5), and lines the run's critical path marked critical (§4).
     pub wide: u64,
     pub critical: u64,
+    /// Lines given their default plan by their relations' declarations (0361), and those whose rows broke them.
+    pub declared: u64,
+    pub broken: u64,
 }
 
 impl std::ops::AddAssign for Planned {
@@ -168,6 +171,8 @@ impl std::ops::AddAssign for Planned {
         self.pairs += o.pairs;
         self.wide += o.wide;
         self.critical += o.critical;
+        self.declared += o.declared;
+        self.broken += o.broken;
     }
 }
 
@@ -405,6 +410,21 @@ struct StepPrice {
     ndv: Vec<f64>,
     /// The learned correction at each set of its columns bound (bit i: column i), when a model gave one.
     corr: Vec<f64>,
+    /// What its relation declares (0361): its keys, each a mask of columns, and its columns' fanout caps.
+    keys: Vec<u64>,
+    caps: Vec<(usize, f64)>,
+}
+
+impl StepPrice {
+    /// The rows a probe with columns `mask` bound returns at most, by its declarations (0361): one where they hold a
+    /// key, a column's cap where they hold it; none known: infinite.
+    fn cap(&self, mask: usize) -> f64 {
+        let m = mask as u64;
+        if self.keys.iter().any(|&k| k != 0 && k & !m == 0) {
+            return 1.0;
+        }
+        self.caps.iter().filter(|&&(c, _)| c < 64 && m >> c & 1 == 1).map(|&(_, x)| x).fold(f64::INFINITY, f64::min)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -422,6 +442,10 @@ impl LinePrice {
             w.extend(s.ndv.iter().map(|&x| fb(x)));
             w.push(s.corr.len() as i64);
             w.extend(s.corr.iter().map(|&x| fb(x)));
+            w.push(s.keys.len() as i64);
+            w.extend(s.keys.iter().map(|&k| k as i64));
+            w.push(s.caps.len() as i64);
+            w.extend(s.caps.iter().flat_map(|&(c, x)| [c as i64, fb(x)]));
         }
         w.push(self.pairs.len() as i64);
         w.extend(self.pairs.iter().flat_map(|&(a, b, r)| [a as i64, b as i64, fb(r)]));
@@ -435,7 +459,12 @@ impl LinePrice {
                 let k = c.n();
                 let ndv = c.fs(k);
                 let m = c.n();
-                StepPrice { card, ndv, corr: c.fs(m) }
+                let corr = c.fs(m);
+                let nk = c.n();
+                let keys = (0..nk).map(|_| c.next() as u64).collect();
+                let nc = c.n();
+                let caps = (0..nc).map(|_| (c.n(), c.f())).collect();
+                StepPrice { card, ndv, corr, keys, caps }
             })
             .collect();
         let np = c.n();
@@ -480,9 +509,9 @@ fn fan(c: &ChainVars, lp: &LinePrice, placed: u64, j: usize) -> f64 {
             if need != 0
                 && let Some(&(a, _, rows)) = lp.pairs.iter().find(|&&(a, b, _)| b == j && placed >> a & 1 == 1 && need & !c.nodes[a].binds == 0)
             {
-                return rows / lp.steps[a].card.max(1.0) * corr;
+                return (rows / lp.steps[a].card.max(1.0) * corr).min(sp.cap(mask));
             }
-            sp.card * sel * corr
+            (sp.card * sel * corr).min(sp.cap(mask))
         }
         Op::Not => (1.0 - (sp.card * sel).min(1.0)).max(0.01) * corr,
         Op::Cmp(cmp) => match cmp {
@@ -735,6 +764,8 @@ pub struct Note {
     pub ran: f64,
     /// Its orders were trialled (0207 §2, 0274): once, and once more after it is flagged slow.
     pub trialled: bool,
+    /// Its rows broke what its relations declare (0361): it is planned from statistics.
+    pub broken: bool,
 }
 
 impl Note {
@@ -757,7 +788,7 @@ impl Note {
         for s in &self.samples {
             w.extend([s.step as i64, s.pos as i64, s.mask as i64, fb(s.est_in), fb(s.est_fan), fb(s.actual_in), fb(s.actual_out), fb(s.card), fb(s.key_ndv)]);
         }
-        w.extend([fb(self.critical), i64::from(self.wants_search), i64::from(self.fresh), fb(self.ran), i64::from(self.trialled), self.proposals.len() as i64]);
+        w.extend([fb(self.critical), i64::from(self.wants_search), i64::from(self.fresh), fb(self.ran), i64::from(self.trialled), i64::from(self.broken), self.proposals.len() as i64]);
         for (o, x) in &self.proposals {
             w.extend(o.iter().map(|&j| j as i64));
             w.push(fb(*x));
@@ -786,13 +817,14 @@ impl Note {
             .map(|_| Sample { step: c.n(), pos: c.n(), mask: c.next() as u64, est_in: c.f(), est_fan: c.f(), actual_in: c.f(), actual_out: c.f(), card: c.f(), key_ndv: c.f() })
             .collect();
         let (critical, wants_search, fresh, ran, trialled) = (c.f(), c.next() != 0, c.next() != 0, c.f(), c.next() != 0);
+        let broken = c.next() != 0;
         let proposals = (0..c.n())
             .map(|_| {
                 let o = c.vec(n);
                 (o, c.f())
             })
             .collect();
-        Note { order, price, est, work, start, runs, slow, tried, runners, pairs, samples, critical, proposals, wants_search, fresh, ran, trialled }
+        Note { order, price, est, work, start, runs, slow, tried, runners, pairs, samples, critical, proposals, wants_search, fresh, ran, trialled, broken }
     }
 
     /// Ratio `ratio` measured for order `o`, merged into its tried ratio, a geometric mean at weight `weight`; at most
@@ -906,6 +938,45 @@ const NONE: i64 = 0;
 const ONE: i64 = 1;
 const KEPT: i64 = 2;
 const PRICE: i64 = 3;
+const DECLARED: i64 = 4;
+
+/// A declared plan (0361): its order, its rows after each step at most, their sum, and each step's cap.
+struct DeclaredPlan {
+    order: Vec<usize>,
+    est: Vec<f64>,
+    price: f64,
+    caps: Vec<f64>,
+}
+
+/// Chain `c`'s default plan from its relations' declarations alone (0361: no statistics, no search), its steps'
+/// keys and caps `decl` and first steps' rows `rows` (the counts the run has exactly): its first step (its change,
+/// else the atom of fewest rows), then while steps remain, each filter as soon as it is ready, else the atom whose
+/// probe the declarations bound least (ties in rule order). `None` where an atom is left that no declaration bounds.
+fn declared_order(c: &ChainVars, decl: &[StepPrice], rows: impl Fn(usize) -> f64) -> Option<DeclaredPlan> {
+    let n = c.len();
+    let atoms: Vec<usize> = (0..n).filter(|&j| c.nodes[j].op == Op::Atom).collect();
+    let first = if c.fixed { 0 } else { *atoms.iter().min_by(|&&a, &&b| rows(a).total_cmp(&rows(b)))? };
+    let (mut order, mut placed) = (vec![first], 1u64 << first);
+    let (mut est, mut caps) = (vec![rows(first)], vec![f64::INFINITY]);
+    while order.len() < n {
+        let ready: Vec<usize> = (0..n).filter(|&j| placed >> j & 1 == 0 && c.ready(placed, j)).collect();
+        let (j, cap) = match ready.iter().copied().find(|&j| c.nodes[j].op != Op::Atom) {
+            Some(f) => (f, if c.nodes[f].op == Op::Not { 1.0 } else { f64::INFINITY }),
+            None => {
+                let bound = c.bound(placed);
+                let capped = ready.iter().map(|&j| (j, decl[j].cap(mask_of(&c.nodes[j], bound)))).filter(|x| x.1.is_finite());
+                capped.min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))?
+            }
+        };
+        let last = *est.last().expect("a first step");
+        est.push(if cap.is_finite() { last * cap } else { last });
+        caps.push(cap);
+        order.push(j);
+        placed |= 1 << j;
+    }
+    let price = est.iter().sum();
+    c.valid(&order).then_some(DeclaredPlan { order, est, price, caps })
+}
 
 fn seed_draw(key: i64, runs: u64) -> f64 {
     let mut h = SEED ^ (key as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ runs.wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -937,10 +1008,18 @@ fn lines(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             let (rows, _) = env.side_stats(s.src, s.side, 0);
             rows as f64
         };
+        // Its declarations (0361), unless its rows broke them.
+        let decl: Vec<StepPrice> = t.steps.iter().map(|s| if matches!(s.op, Op::Cmp(_)) || note.as_ref().is_some_and(|n| n.broken) { StepPrice::default() } else { let (keys, caps) = env.declared(s.src); StepPrice { keys, caps, ..StepPrice::default() } }).collect();
+        let mut default = None;
         let (status, kept) = match &chain {
             None => (ONE, Vec::new()),
             Some(ch) if ch.fixed && start(0) == 0.0 => (NONE, Vec::new()),
             Some(ch) if ch.len() - usize::from(ch.fixed) <= 1 => (ONE, Vec::new()),
+            Some(ch) if let Some(d) = declared_order(ch, &decl, start) => {
+                let o = d.order.clone();
+                default = Some(d);
+                (DECLARED, o)
+            }
             Some(ch) => {
                 let first = note.as_ref().map_or(0, |n| n.order[0]);
                 let rows = start(if ch.fixed { 0 } else { first });
@@ -952,6 +1031,10 @@ fn lines(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         };
         w.extend([status, kept.len() as i64]);
         w.extend(kept.iter().map(|&j| j as i64));
+        if let Some(d) = default {
+            w.push(fb(d.price));
+            w.extend(d.est.iter().chain(&d.caps).map(|&x| fb(x)));
+        }
     }
     put_words(out, &w);
 }
@@ -959,6 +1042,8 @@ fn lines(c: &mut Ctx<'_, '_, '_>, _: Tile) {
 struct LineInfo {
     status: i64,
     kept: Vec<usize>,
+    /// A declared line's price, rows after each step and caps (0361).
+    declared: Option<(f64, Vec<f64>, Vec<f64>)>,
 }
 
 fn lines_of(b: &[u8]) -> Vec<LineInfo> {
@@ -968,7 +1053,9 @@ fn lines_of(b: &[u8]) -> Vec<LineInfo> {
         .map(|_| {
             let status = c.next();
             let k = c.n();
-            LineInfo { status, kept: c.vec(k) }
+            let kept = c.vec(k);
+            let declared = (status == DECLARED).then(|| (c.f(), c.fs(k), c.fs(k)));
+            LineInfo { status, kept, declared }
         })
         .collect()
 }
@@ -986,6 +1073,8 @@ struct RunningLine {
     /// and whether this round trialled them.
     trial: bool,
     trialled: bool,
+    /// Its rows broke a declaration (0361).
+    broken: bool,
     counts: Vec<f64>,
 }
 
@@ -996,7 +1085,7 @@ fn running_of(b: &[u8]) -> Vec<RunningLine> {
 fn running_words(lines: &[RunningLine], width: usize) -> Vec<i64> {
     let mut w = vec![lines.len() as i64, width as i64];
     for l in lines {
-        w.extend([fb(l.work), fb(l.due), fb(l.limit), i64::from(l.slow), l.cut as i64, l.times as i64, i64::from(l.trial), i64::from(l.trialled)]);
+        w.extend([fb(l.work), fb(l.due), fb(l.limit), i64::from(l.slow), l.cut as i64, l.times as i64, i64::from(l.trial), i64::from(l.trialled), i64::from(l.broken)]);
         w.extend(l.counts.iter().map(|&x| fb(x)));
     }
     w
@@ -1010,6 +1099,9 @@ struct Choice {
     price: f64,
     est: Vec<f64>,
     explored: bool,
+    /// A declared plan's (0361): the rows each step's probe returns at most per tuple in, by position (infinite:
+    /// none declared), which `check` holds it to. Empty for any other.
+    caps: Vec<f64>,
 }
 
 fn choices_of(b: &[u8]) -> Vec<Choice> {
@@ -1024,7 +1116,9 @@ fn choices_of(b: &[u8]) -> Vec<Choice> {
             let order = c.vec(n);
             let price = c.f();
             let est = c.fs(n);
-            Choice { order, price, est, explored: c.next() != 0 }
+            let explored = c.next() != 0;
+            let k = c.n();
+            Choice { order, price, est, explored, caps: c.fs(k) }
         })
         .collect()
 }
@@ -1037,6 +1131,8 @@ fn choice_words(cs: &[Choice]) -> Vec<i64> {
         w.push(fb(ch.price));
         w.extend(ch.est.iter().map(|&x| fb(x)));
         w.push(i64::from(ch.explored));
+        w.push(ch.caps.len() as i64);
+        w.extend(ch.caps.iter().map(|&x| fb(x)));
     }
     w
 }
@@ -1062,15 +1158,20 @@ fn price(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             continue;
         }
         w.push(1);
+        let note = Note::of(memo, keys[ti], t.steps.len());
+        // A line whose declarations broke is priced by its statistics alone (0361: "or one whose rows broke what it
+        // declared").
+        let broken = note.as_ref().is_some_and(|n| n.broken) || rs.get(ti).is_some_and(|r| r.broken);
         let steps = t
             .steps
             .iter()
             .map(|s| {
                 let (rows, ndv) = env.side_stats(s.src, s.side, s.args.len());
-                StepPrice { card: rows as f64, ndv: ndv.into_iter().map(|x| x as f64).collect(), corr: Vec::new() }
+                let (keys, caps) = if broken || matches!(s.op, Op::Cmp(_)) { (Vec::new(), Vec::new()) } else { env.declared(s.src) };
+                StepPrice { card: rows as f64, ndv: ndv.into_iter().map(|x| x as f64).collect(), corr: Vec::new(), keys, caps }
             })
             .collect();
-        let pairs = Note::of(memo, keys[ti], t.steps.len()).map(|n| n.pairs).unwrap_or_default();
+        let pairs = note.map(|n| n.pairs).unwrap_or_default();
         LinePrice { steps, pairs }.words(&mut w);
     }
     put_words(out, &w);
@@ -1205,14 +1306,14 @@ fn choose(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         let ch = match (ss.get(ti).cloned().flatten(), now.get(ti)) {
             // A handoff: the order a trial measured least, where it beats the running one by the margin.
             (Some(s), Some(run)) if !now.is_empty() && matches!(measured.get(ti), Some(None)) => {
-                if s.order == run.order { run.clone() } else { Choice { order: s.order.clone(), price: s.price, est: s.est.clone(), explored: false } }
+                if s.order == run.order { run.clone() } else { Choice { order: s.order.clone(), price: s.price, est: s.est.clone(), explored: false, caps: Vec::new() } }
             }
             (Some(s), Some(run)) if !now.is_empty() => {
                 let m = measured.get(ti).cloned().flatten().unwrap_or_default();
                 let cands: Vec<(Vec<usize>, f64)> = std::iter::once((run.order.clone(), run.price)).chain(std::iter::once((s.order.clone(), s.price))).chain(s.runners.iter().cloned()).collect();
                 let best = (0..cands.len().min(m.len())).min_by(|&a, &b| m[a].total_cmp(&m[b])).unwrap_or(0);
                 if best != 0 && m[best] * TRIAL_MARGIN < m[0] {
-                    Choice { order: cands[best].0.clone(), price: cands[best].1, est: s.est.clone(), explored: false }
+                    Choice { order: cands[best].0.clone(), price: cands[best].1, est: s.est.clone(), explored: false, caps: Vec::new() }
                 } else {
                     run.clone()
                 }
@@ -1226,16 +1327,20 @@ fn choose(c: &mut Ctx<'_, '_, '_>, _: Tile) {
                 let runs = note.as_ref().map_or(0, |n| n.runs);
                 let untried = cands.iter().skip(1).find(|c| c.1 <= MARGIN * best.1 && note.as_ref().is_none_or(|n| n.ratio(&c.0).is_none()));
                 match untried {
-                    Some(u) if best.1 < EXPLORE_ROWS && note.as_ref().is_some_and(|n| n.matters()) && seed_draw(keys[ti], runs) < EXPLORE_RATE => Choice { order: u.0.clone(), price: u.1, est: s.est.clone(), explored: true },
+                    Some(u) if best.1 < EXPLORE_ROWS && note.as_ref().is_some_and(|n| n.matters()) && seed_draw(keys[ti], runs) < EXPLORE_RATE => Choice { order: u.0.clone(), price: u.1, est: s.est.clone(), explored: true, caps: Vec::new() },
                     _ => {
                         let est = if best.0 == s.order { s.est.clone() } else { vec![0.0; best.0.len()] };
-                        Choice { order: best.0, price: best.1, est, explored: false }
+                        Choice { order: best.0, price: best.1, est, explored: false, caps: Vec::new() }
                     }
                 }
             }
             _ => match (ls[ti].status, &note) {
-                (KEPT, Some(n)) => Choice { order: ls[ti].kept.clone(), price: n.price, est: n.est.clone(), explored: false },
-                _ => Choice { order: rule.clone(), price: 0.0, est: vec![0.0; rule.len()], explored: false },
+                (KEPT, Some(n)) => Choice { order: ls[ti].kept.clone(), price: n.price, est: n.est.clone(), explored: false, caps: Vec::new() },
+                (DECLARED, _) => {
+                    let (price, est, caps) = ls[ti].declared.clone().expect("a declared line's plan");
+                    Choice { order: ls[ti].kept.clone(), price, est, explored: false, caps }
+                }
+                _ => Choice { order: rule.clone(), price: 0.0, est: vec![0.0; rule.len()], explored: false, caps: Vec::new() },
             },
         };
         cs.push(ch);
@@ -1253,7 +1358,7 @@ fn emit_plan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         let notes: Vec<Option<Note>> = p.terms.iter().enumerate().map(|(ti, t)| Note::of(memo, keys[ti], t.steps.len())).collect();
         (p, keys, cs, ss, notes)
     };
-    let mut planned = Plan { srcs: p.srcs.clone(), docs: p.docs.clone(), terms: Vec::new() };
+    let mut planned = Plan { srcs: p.srcs.clone(), docs: p.docs.clone(), decls: p.decls.clone(), terms: Vec::new() };
     for (ti, t) in p.terms.iter().enumerate() {
         let ch = ChainVars::of(t);
         let order = &cs[ti].order;
@@ -1317,6 +1422,17 @@ fn check(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     for (ti, r) in rs.iter_mut().enumerate() {
         r.counts[d] = n[ti];
         r.work += n[ti];
+        // A declared plan's step past what its relation declares, at every depth (0361: "run time only checks that
+        // the facts still hold"): the declaration broke, the line goes slow and is planned from statistics.
+        let broke = d > 0 && !r.broken && cs.get(ti).and_then(|ch| ch.caps.get(d)).is_some_and(|&cap| cap.is_finite() && r.counts[d] > cap * r.counts[d - 1]);
+        if broke {
+            r.broken = true;
+            if !r.slow {
+                r.slow = true;
+                r.times += 1;
+                r.cut = d;
+            }
+        }
         if r.work >= r.due {
             while r.due <= r.work {
                 r.due *= 2.0;
@@ -1344,7 +1460,7 @@ fn running_of_words(w: &[i64]) -> Vec<RunningLine> {
     }
     let mut c = Cur::new(w);
     let (n, width) = (c.n(), c.n());
-    (0..n).map(|_| RunningLine { work: c.f(), due: c.f(), limit: c.f(), slow: c.next() != 0, cut: c.n(), times: c.next() as u64, trial: c.next() != 0, trialled: c.next() != 0, counts: c.fs(width) }).collect()
+    (0..n).map(|_| RunningLine { work: c.f(), due: c.f(), limit: c.f(), slow: c.next() != 0, cut: c.n(), times: c.next() as u64, trial: c.next() != 0, trialled: c.next() != 0, broken: c.next() != 0, counts: c.fs(width) }).collect()
 }
 
 /// `stats`: read the rule-order plan, atoms, running · rw memo: each slow line's exact pairs.
@@ -1419,6 +1535,7 @@ fn note(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             note.fresh = true;
             // Trialled once, and once more after it is flagged slow (0207 §2).
             note.trialled = (note.trialled && r.times == 0) || r.trialled;
+            note.broken |= r.broken;
             // A slow line asks for a wider search (0203 §3).
             if r.times > 0 {
                 note.wants_search = true;
@@ -1783,6 +1900,7 @@ impl Round<'_> {
         let lines = self.into(dir, made, self.ops.lines, &[rule, atoms, memo], 3, n)?;
         let ls = read_block(dir, lines, lines_of)?;
         pd.kept += ls.iter().filter(|l| l.status == KEPT).count() as u64;
+        pd.declared += ls.iter().filter(|l| l.status == DECLARED).count() as u64;
         let any = ls.iter().any(|l| l.status == PRICE);
         let searched = if any {
             let prices = self.into(dir, made, self.ops.price, &[rule, atoms, memo, lines, empty], 5, n)?;
@@ -1805,7 +1923,7 @@ impl Round<'_> {
         // The run, checked after each depth.
         let width = planned.width();
         let cs = read_block(dir, choice, choices_of)?;
-        let start: Vec<RunningLine> = cs.iter().map(|c| RunningLine { work: 0.0, due: SLOW_ROWS, limit: (SLOW_FACTOR * c.price).max(SLOW_ROWS), slow: false, cut: 0, times: 0, trial: false, trialled: false, counts: vec![0.0; width] }).collect();
+        let start: Vec<RunningLine> = cs.iter().map(|c| RunningLine { work: 0.0, due: SLOW_ROWS, limit: (SLOW_FACTOR * c.price).max(SLOW_ROWS), slow: false, cut: 0, times: 0, trial: false, trialled: false, broken: false, counts: vec![0.0; width] }).collect();
         let mut rw = vec![0i64];
         rw.extend(running_words(&start, width));
         let running = given(dir, &rw)?;
@@ -1838,6 +1956,7 @@ impl Round<'_> {
             body::run_block(self.reg, self.body, dir, atoms, &planned, planned_b, runs, &mut between)?
         };
         // What each line measured, into the memo.
+        pd.broken += read_block(dir, running, |b| running_of_words(&words_of(b)[1..]).iter().filter(|r| r.broken).count() as u64)?;
         self.launch(dir, self.ops.note, &[rule, choice, running, memo])?;
         Ok((probes, pd))
     }

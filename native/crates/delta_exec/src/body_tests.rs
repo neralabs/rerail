@@ -69,6 +69,7 @@ fn a_hand_written_plan_runs_a_join_on_each_side_and_on_a_change() {
     let cold = |before, after, side| Plan {
         srcs: vec![Src::Trace { arity: 2, before, after }],
         docs: Vec::new(),
+        decls: Decls::default(),
         terms: vec![TermPlan { head: 0, sign: 1, parts: Vec::new(), steps: vec![atom(0, side, vec![Arg::Bind, Arg::Bind]), atom(0, side, vec![Arg::Eq(0, 1), Arg::Bind])], out: out.clone(), level: None }],
     };
     assert_eq!(b.run(&cold(Some(h0), Some(h1), Side::After), &[2]), vec![vec![(vec![1, 4], 1), (vec![2, 1], 1), (vec![4, 2], 1)]]);
@@ -78,7 +79,7 @@ fn a_hand_written_plan_runs_a_join_on_each_side_and_on_a_change() {
         TermPlan { head: 0, sign: 1, parts: Vec::new(), steps: vec![atom(0, Side::Delta, vec![Arg::Bind, Arg::Bind]), atom(0, Side::Before, vec![Arg::Eq(0, 1), Arg::Bind])], out: out.clone(), level: None },
         TermPlan { head: 0, sign: 1, parts: Vec::new(), steps: vec![atom(0, Side::Delta, vec![Arg::Bind, Arg::Bind]), atom(0, Side::After, vec![Arg::Bind, Arg::Eq(0, 0)])], out: vec![Arg::Eq(1, 0), Arg::Eq(0, 1)], level: None },
     ];
-    let plan = Plan { srcs: vec![Src::Trace { arity: 2, before: Some(h0), after: Some(h1) }], docs: Vec::new(), terms };
+    let plan = Plan { srcs: vec![Src::Trace { arity: 2, before: Some(h0), after: Some(h1) }], docs: Vec::new(), decls: Decls::default(), terms };
     let mut net: std::collections::BTreeMap<Vec<i64>, i32> = std::collections::BTreeMap::new();
     for (r, d) in b.run(&plan, &[2]).remove(0) {
         *net.entry(r).or_default() += d;
@@ -103,6 +104,7 @@ fn filters_facts_and_levels_in_a_hand_written_plan() {
     let plan = Plan {
         srcs: vec![Src::Trace { arity: 2, before: None, after: Some(he) }, Src::Trace { arity: 1, before: None, after: Some(hm) }, Src::Trace { arity: 3, before: None, after: Some(hp) }],
         docs: Vec::new(),
+        decls: Decls::default(),
         terms: vec![
             // lone(x, y) :- e(x, y), !m(x), x < y.
             TermPlan {

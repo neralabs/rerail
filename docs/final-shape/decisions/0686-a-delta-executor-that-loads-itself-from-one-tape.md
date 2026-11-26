@@ -2004,3 +2004,38 @@ Checks (Relax, local, 120 of 120):
 - `a_critical_line_is_trialled_once_at_its_first_check`. An exactly priced line of 300 K rows is not slow. On the
   path, it is trialled at its first due point; its next run trials nothing; off the path it is never trialled.
   Without `check`'s trial flag, it fails.
+
+### Relations declare their shapes, and lines plan from them (0361; 2026-11-26)
+
+0361 has the `.rr` files state what the rules' writer knows of a relation's rows, so that plans come from those facts
+and run time only checks that they hold. The delta executor now does this:
+
+- **Declarations are facts.** `key(rel, k, col)` puts column `col` in key `k` of `rel`. `fanout(rel, col, class)`
+  gives a probe binding `col` at most one row (`one`) or at most `FEW`, 16 (`few`). Each is an ordinary K0 fact in
+  any module, its relation named by its text. So K0 needs no new syntax. `Known` knows the four symbols, a stratum
+  reads `key` and `fanout` as inputs, and its plan carries them as sources, beside each source's relation
+  (`Decls`). The planning operations read them where they lie (`Env::declared`, a probe of the trace's first
+  column).
+- **Priced by them.** A step's fan is capped by its declarations (`StepPrice::cap`): one row where its bound columns
+  hold a key, a column's cap where they hold a fanout's.
+- **A default plan, no statistics and no search.** `lines` gives a line its declared order (`declared_order`,
+  status `DECLARED`) when its declarations bound every atom after its first. The first is its change, else the atom
+  of fewest rows (the counts the run has exactly). Then each filter is placed as soon as it is ready, else the atom
+  whose probe the declarations bound least. Its price is the first rows times the caps. `choose` takes it, and
+  `price` and `search` skip it.
+- **Checked at run time.** At every depth, `check` holds a declared plan's step to its cap times the tuples into it.
+  A step past it marks the line broken and slow. The note keeps `broken`, and from then on the line is planned from
+  statistics alone: `lines` and `price` read no declarations for it. `Planned` counts the declared and the broken
+  lines.
+
+Checks (Relax, local, 123 of 123):
+- `a_declared_key_or_fanout_bounds_a_probe`: a key, half a key, a fanout. A search prices a probe of a declared key
+  at one row where statistics give 10⁵.
+- `a_declared_line_takes_its_default_plan_and_a_broken_declaration_is_planned_from_statistics`: three hops,
+  declared. Declared 1, priced 0, searched 0; the order is g, f, e; the rows are the rule order's. A `one` that the
+  rows break is caught. The next plan is priced, and an undeclared chain is priced.
+- `a_levels_declared_keys_give_its_lines_default_plans`: the declarations in a `.rerail` module of the level, read
+  by a later stratum. Its cold line is declared, and fewer lines are priced than with the same facts under another
+  relation. An edit giving `f` two rows at one key, probed by `e`'s change, is caught. The rows equal a cold run's.
+- Mutations: without the cap in `fan`, without `check`'s break, and without the declared branch in `lines`, a test
+  fails each time.
