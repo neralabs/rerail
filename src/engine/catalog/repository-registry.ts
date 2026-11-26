@@ -13,6 +13,7 @@ import { gitExecutable, GitUnavailableError, runGitAsync } from "../git.js";
 import { mergeAssistExperimentEnabled } from "../experimental-features.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
+  folderIdentity,
   GIT_IDENTITY_FILE,
   normalizeRemoteAddress,
   outsideGit,
@@ -313,7 +314,8 @@ export function lookupCheckout(db: FileReader, workspace: string): CheckoutConte
     if (error instanceof GitUnavailableError) return undefined;
     throw error;
   }
-  return lookupAt(db, repositoryIdentityLocation(workspace), new Map());
+  const location = repositoryIdentityLocation(workspace);
+  return lookupAt(db, location, new Map(), readCloneIdAt(location.identityPath));
 }
 
 /**
@@ -321,23 +323,36 @@ export function lookupCheckout(db: FileReader, workspace: string): CheckoutConte
  * the thread): a recorded checkout is found with no Git process.
  */
 export function lookupCheckoutAt(db: FileReader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
-  return lookupAt(db, location, new Map());
+  return lookupAt(db, location, new Map(), readCloneIdAt(location.identityPath));
 }
 
-function lookupAt(db: FileReader, location: RepositoryIdentityLocation, remoteKeys: Map<string, RepositoryKey | undefined>): CheckoutContext | undefined {
-  const cloneId = readCloneIdAt(location.identityPath) ?? null;
+/** {@link lookupCheckout} at `location`, given the clone id read at its identity path. */
+function lookupAt(
+  db: FileReader,
+  location: RepositoryIdentityLocation,
+  remoteKeys: Map<string, RepositoryKey | undefined>,
+  readId: string | undefined,
+): CheckoutContext | undefined {
+  const cloneId = readId ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
-  const repositoryKey = recordedRepositoryAt(db, checkoutPath, cloneId)
+  const repositoryKey = recordedRepositoryAt(db, location, checkoutPath, cloneId)
     ?? (cloneId === null ? undefined : cloneRepository(db, cloneId))
     ?? remoteRepository(db, location, checkoutPath, remoteKeys);
   return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, cloneId);
 }
 
-/** The repository of the row recorded at `checkoutPath`. Without an id file that row still names the checkout; a different id is a re-clone. */
-function recordedRepositoryAt(db: Reader, checkoutPath: string, cloneId: string | null): RepositoryKey | undefined {
+/**
+ * The repository of the row recorded at `checkoutPath` when that row is the checkout's own: its clone id is the one
+ * read there; a different id is a re-clone. A linked worktree whose Git folder is gone has no id it can read, and the
+ * row still names it, as {@link refusedCheckoutCloneId} takes it when recording. Any other folder without an id file
+ * was not recorded, since recording writes the id: a row at its path is a removed clone's, which
+ * {@link recordCheckout} records over as a re-clone.
+ */
+function recordedRepositoryAt(db: Reader, location: RepositoryIdentityLocation, checkoutPath: string, cloneId: string | null): RepositoryKey | undefined {
   const recorded = db.select({ key: checkouts.repositoryKey, cloneId: checkouts.cloneId }).from(checkouts)
     .where(eq(checkouts.checkoutPath, checkoutPath)).get();
-  return recorded !== undefined && (cloneId === null || recorded.cloneId === cloneId) ? recorded.key : undefined;
+  if (recorded === undefined) return undefined;
+  return recorded.cloneId === cloneId || (cloneId === null && location.gitFolderGone === true) ? recorded.key : undefined;
 }
 
 /** The known repository the checkout's remote names, its remote read once per `remoteKeys`; a folder outside git has none. */
@@ -354,13 +369,47 @@ function remoteRepository(
 }
 
 /**
- * A `lookupCheckout` for many workspaces over one connection, as the daemon answers per request: each
- * workspace's git location is read once (a folder outside git is located again, so a later `git init` is seen),
- * and the database is read on every call, so adoption and new records show at once.
+ * A Git location the resolver read for a workspace, with what was there then: the clone id at its identity path, the
+ * identity of its top level's `.git` ({@link folderIdentity}; undefined where it could not be read), and the checkout's
+ * remote once it was read.
+ */
+interface KeptLocation {
+  readonly location: RepositoryIdentityLocation;
+  readonly cloneId: string | undefined;
+  readonly gitEntry: string | undefined;
+  readonly remoteKeys: Map<string, RepositoryKey | undefined>;
+}
+
+/**
+ * Whether `kept` still places its workspace. A main checkout's id file is in its own `.git`, which goes with the
+ * checkout, so the same id there is the same clone. A linked worktree's is in its clone's common Git folder, which
+ * outlives the worktree, and a folder without an id tells nothing by it: for those the `.git` at the top level must be
+ * the same entry too, as a checkout made again at the path makes a new one.
+ */
+function stillPlaces(kept: KeptLocation): boolean {
+  if (readCloneIdAt(kept.location.identityPath) !== kept.cloneId) return false;
+  if (kept.location.main && kept.cloneId !== undefined) return true;
+  return folderIdentity(join(kept.location.workspaceRoot, ".git")) === kept.gitEntry;
+}
+
+/** `workspace`'s location read afresh, with the clone id there, kept in `located` when it is in Git. */
+function locatedAfresh(located: Map<string, KeptLocation>, workspace: string): KeptLocation {
+  const location = repositoryIdentityLocation(workspace);
+  const gitEntry = location.git ? folderIdentity(join(location.workspaceRoot, ".git")) : undefined;
+  const kept = { location, cloneId: readCloneIdAt(location.identityPath), gitEntry, remoteKeys: new Map<string, RepositoryKey | undefined>() };
+  if (location.git) located.set(workspace, kept);
+  else located.delete(workspace);
+  return kept;
+}
+
+/**
+ * A `lookupCheckout` for many workspaces over one connection, as the daemon answers per request: each workspace's Git
+ * location is kept while the clone there is the one it was read with ({@link stillPlaces}), and read afresh, its remote
+ * too, once another checkout takes its path; a folder outside Git is located again each time, so a later `git init` is
+ * seen. The database is read on every call, so adoption and new records show at once.
  */
 export function createCheckoutResolver(db: FileReader): (workspace: string) => CheckoutContext | undefined {
-  const locations = new Map<string, RepositoryIdentityLocation>();
-  const remoteKeys = new Map<string, RepositoryKey | undefined>();
+  const located = new Map<string, KeptLocation>();
   return workspace => {
     try {
       gitExecutable();
@@ -368,12 +417,9 @@ export function createCheckoutResolver(db: FileReader): (workspace: string) => C
       if (error instanceof GitUnavailableError) return undefined;
       throw error;
     }
-    let location = locations.get(workspace);
-    if (location === undefined) {
-      location = repositoryIdentityLocation(workspace);
-      if (location.git) locations.set(workspace, location);
-    }
-    return lookupAt(db, location, remoteKeys);
+    const known = located.get(workspace);
+    const kept = known !== undefined && stillPlaces(known) ? known : locatedAfresh(located, workspace);
+    return lookupAt(db, kept.location, kept.remoteKeys, kept.cloneId);
   };
 }
 
