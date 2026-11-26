@@ -204,11 +204,9 @@ fn json_rules_value_type_is_the_nodes_own() {
 /// strings, not the number.
 #[test]
 fn json_rules_value_type_holds_in_a_family_w_reads_no_values_of() {
-    let rule = format!(
-        r#"{{"format":"rerail.policy/v1","id":"a-string","revision":1,"mode":"steer","description":"x","scope":{{"include":["**/*"],"exclude":[]}},
-"clauses":[{{"id":"c","forbid":{{"ast":{{"language":"json","rule":{{"any":[{{"kind":"string"}},{{"kind":"number"}}],"value":{{"type":"string"}}}}}}}},"message":"a string"}}]}}"#
-    );
-    let text = super::Translator::new().translate_text(&rule, "a-string").expect("translates");
+    let rule = r#"{"format":"rerail.policy/v1","id":"a-string","revision":1,"mode":"steer","description":"x","scope":{"include":["**/*"],"exclude":[]},
+"clauses":[{"id":"c","forbid":{"ast":{"language":"json","rule":{"any":[{"kind":"string"},{"kind":"number"}],"value":{"type":"string"}}}},"message":"a string"}]}"#;
+    let text = super::Translator::new().translate_text(rule, "a-string").expect("translates");
     assert!(text.contains("value_type_of("), "{text}");
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("root");
