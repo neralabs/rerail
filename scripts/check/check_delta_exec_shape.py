@@ -516,8 +516,11 @@ def b6(failures: list) -> None:
     # The answerers (P§12 item 7): `answer(key, leaves) -> Answer`, a world reader's leaves into the run's layer; the
     # document set reads through all three.
     files = strip_rust((CRATE / "src/files.rs").read_text())
-    if not re.search(r"pub trait Answerer \{\s*const KIND: AnswerKind;\s*fn answer\(&mut self, key: &\[i64\], leaves: &mut LeavesW\) -> Result<Answer, String>;", files):
-        failures.append("files.rs: the Answerer trait is not P§12's (answer(key, leaves) -> Answer)")
+    answer_rs = strip_rust((ROOT / "native/crates/blocks/src/answer.rs").read_text())
+    if not re.search(r"pub trait Answerer \{\s*const KIND: AnswerKind;\s*type Leaves;\s*fn answer\(&mut self, key: &\[i64\], leaves: &mut Self::Leaves\) -> Result<Answer, String>;", answer_rs):
+        failures.append("blocks/src/answer.rs: the Answerer trait is not P§12's (answer(key, leaves) -> Answer)")
+    if files.count("type Leaves = LeavesW;") != 3:
+        failures.append("files.rs: an answerer whose leaves are not the run's layer of the world's leaves (LeavesW)")
     for n in ("Load", "Parse", "Intern"):
         if not re.search(rf"impl Answerer for {n}<'_>", files):
             failures.append(f"files.rs: {n} is not an answerer")
@@ -700,7 +703,7 @@ def kept(failures: list) -> None:
         ("document_places(", "documents' places (0494): a later process reads a document where the segments hold it"),
         ("put_source_and_tape(", "a parsed document put in the store's objects"),
         ("i64::from(digest.is_some())", "every leaf recorded, misses too (D3)"),
-        ("pub trait Answerer", "P§12 item 7's answerer"),
+        ("pub use rerail_blocks::answer::{Answer, AnswerKind, Answerer};", "P§12 item 7's answerer, the blocks crate's"),
         ("const KIND: AnswerKind = AnswerKind::World", "load, a world reader"),
         ("const KIND: AnswerKind = AnswerKind::Pure", "parse and intern, pure answers kept by key (D4)"),
         ("o.watch(&[root])", "the journal's cover (decision 0105)"),
