@@ -160,3 +160,17 @@ statements and blocks end.
 27. **A node moved into a slot is one of the slot's kinds** (`NODE_SUPER m=1`, both tiers). A wrap moves the
     expression read so far into its slot (an assignment's `left` into `pattern`). Where the slot has no row for the
     node's kind (a list as a target, which tree-sitter reads as a `list_pattern`), the file is refused at that pc.
+28. **A union over a generic is a `union_type`** (`choice types = type (wrap type _ wrap union_type _ '|' type)*`),
+    as the lean parser's annotation reads it: an expression operand takes every `|` itself (`int | None` a
+    `binary_operator`), so only after a generic does a `|` start a union. Each step is a `type` of its own around a
+    `union_type`, left to right. An annotation, a return type and a generic's arguments are `types`.
+29. **A wrap inside a wrap of the same node goes inside it** (`stream.rs`, `WRAP`). A wrap's moved node is the head
+    of its base's chain where it wraps the node so far; one run inside an open wrap moves the node that wrap moved,
+    so its wrapper stands just outside that node in the chain, and its size counts none of the wrappers outside it.
+    The JIT's wraps nested so already.
+30. **`try`, `with` and `for`.** A handler's `except` and its `:` are leaves, its block and `finally`'s have no
+    field; `with` is a leaf, its items a `with_clause`. `as` binds an `as_pattern` in the expression's slot (its
+    target a primary). A loop's target is a `pattern`, a name and its attributes and subscripts, or a
+    `pattern_list` of them: not an expression, whose comparison takes `in`. `expressions` is `nested`, as the loop
+    reads it before `:` and a statement before its line break. Not read yet, refused: `async`, a parenthesized
+    `with` (a token mark no state takes), a tuple or list as a target.

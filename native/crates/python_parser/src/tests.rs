@@ -109,6 +109,23 @@ fn dictionaries_are_the_lean_parsers() {
 }
 
 #[test]
+fn types_are_the_lean_parsers() {
+    same(&["x: int | None = None\n", "x: int | None\n", "def f(a: int | None = None) -> str | None:\n    a\n", "x: Optional[int] = None\n"]);
+    // A union over a generic is a `union_type`, left to right; any other `|` is an expression's.
+    same(&["x: list[int] | None = None\n", "def f(a: dict[str, int] | None = None):\n    a\n", "x: list[int] | dict[str, int] | None\n"]);
+    same(&["x: int | list[int]\n", "x: list[int | None]\n", "def f() -> list[int] | None:\n    a\n"]);
+}
+
+#[test]
+fn try_with_and_for_are_the_lean_parsers() {
+    same(&["try:\n    a\nexcept E as e:\n    b\nexcept:\n    c\nelse:\n    d\nfinally:\n    e\n", "try:\n    a\nexcept (A, B):\n    b\n", "try:\n    a\nfinally:\n    b\n"]);
+    same(&["with a as b, c:\n    d\n", "with a(x) as b:\n    d\n", "with a as b.c:\n    d\n"]);
+    same(&["for i in range(3):\n    a\nelse:\n    b\n", "for a, b in c:\n    d\n", "for a.b in c:\n    d\n", "for a in b, c:\n    d\n", "for a[0] in b:\n    c\n"]);
+    // Not read yet: `async`, a parenthesized `with`, a tuple or list as a loop's target.
+    refused(&["async for a in b:\n    c\n", "async with a as b:\n    c\n", "with (\n    a as b,\n):\n    c\n", "with (a(), b()):\n    c\n", "with (a):\n    c\n", "for (a, b) in c:\n    d\n", "for [a] in c:\n    d\n"]);
+}
+
+#[test]
 fn assignment_targets_are_the_lean_parsers() {
     same(&["a.b = c\n", "a[0] = c\n", "a = b = c\n", "a.b += 1\n"]);
     // A list or a call as a target: tree-sitter's `list_pattern`, or no pattern at all. Not read yet.

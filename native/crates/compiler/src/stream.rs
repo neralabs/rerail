@@ -402,6 +402,22 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
 
 /// A token's column (decision 0698): the bytes from the start of its line, the byte after the last
 /// line break before it, to its start.
+/// The wrappers outside node `at` in its base's chain (outermost first, `head` then `link`): a wrap
+/// opened inside another that moved the same node. Its records follow theirs, so its size counts
+/// none of them.
+fn outside(head: &HashMap<usize, usize>, link: &HashMap<usize, usize>, base: usize, at: usize) -> usize {
+    let mut n = 0;
+    let mut c = head.get(&base).copied();
+    while let Some(x) = c {
+        if x == at {
+            return n;
+        }
+        n += 1;
+        c = link.get(&x).copied();
+    }
+    0
+}
+
 pub fn column(bytes: &[u8], start: u32) -> u32 {
     let s = (start as usize).min(bytes.len());
     s as u32 - bytes[..s].iter().rposition(|&b| b == b'\n').map_or(0, |i| i as u32 + 1)
@@ -902,8 +918,27 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 nodes[r].field = 0;
                 nodes.push(Node { kind: operand, field, supers: slot, start, end: 0, size: 0 });
                 wraps.insert(w);
-                if let Some(h) = head.insert(base, w) {
-                    link.insert(w, h);
+                // The wrapper stands just outside the moved node in its base's chain (outermost
+                // first): the chain's head where the node is (a wrap of the node so far), else
+                // inside the wraps open around it (`wrap type _ wrap union_type _`: the second
+                // moves the node the first moved).
+                let mut outside = None;
+                let mut c = head.get(&base).copied();
+                while let Some(x) = c.filter(|&x| x != r) {
+                    outside = Some(x);
+                    c = link.get(&x).copied();
+                }
+                match outside {
+                    None => {
+                        if let Some(h) = head.insert(base, w) {
+                            link.insert(w, h);
+                        }
+                    }
+                    Some(o) => {
+                        if let Some(h) = link.insert(o, w) {
+                            link.insert(w, h);
+                        }
+                    }
                 }
                 moved = r;
                 pending = 0;
@@ -962,7 +997,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     }
                 }
                 nodes[at].end = if mode == 1 { end } else if pending > 0 { keep } else { last_end };
-                nodes[at].size = (nodes.len() - pending - base) as u32;
+                nodes[at].size = (nodes.len() - pending - base - outside(&head, &link, base, at)) as u32;
             }
             // A token the grammar implies (`implied`): no node; the extras pending stay where
             // they are, as a leaf's would.
@@ -1207,7 +1242,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 *l = Some((at, base));
             }
             nodes[at].end = if pending > 0 { keep } else { last_end };
-            nodes[at].size = (nodes.len() - pending - base) as u32;
+            nodes[at].size = (nodes.len() - pending - base - outside(&head, &link, base, at)) as u32;
         }
         held = false;
         (moved, dead, word, flags, indent, counts, strings, lost) = (m.moved, m.dead, m.word, m.flags, m.indent, m.counts, m.strings, None);

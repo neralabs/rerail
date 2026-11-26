@@ -296,6 +296,9 @@ mark future     = tokens "from" "__future__"
 mark generic    = tokens identifier "["
 # A number with a `.` or an exponent: a float.
 mark real       = empty, at integer when count(n_dot | exp_at) at least 1
+# `with (`: tree-sitter reads a parenthesized clause of items there, not a tuple. Not read yet:
+# no state takes it, so the file is refused.
+mark with_paren = tokens "with" "("
 # A `*` alone in a parameter list: a keyword separator (a leaf), not a splat's.
 mark kw_sep     = tokens "*" "," | ")"
 
@@ -303,24 +306,38 @@ tree python {
   node module whole padded = statement*
   choice statement      = simple_statements | compound_statement
   choice simple_statements nested = simple_statement (';' [simple_statement])* newline
-  choice compound_statement = if_statement | while_statement | function_definition | class_definition
-                        | decorated_definition
+  choice compound_statement = if_statement | while_statement | for_statement | try_statement | with_statement
+                        | function_definition | class_definition | decorated_definition
   node if_statement     = 'if' condition: expression ':' indent consequence: block (alternative: elif_clause)* [alternative: else_clause]
   node elif_clause      = 'elif' condition: expression ':' indent consequence: block
   node else_clause      = 'else' ':' indent body: block
   node while_statement  = 'while' condition: expression ':' indent body: block [alternative: else_clause]
+  # A loop's target: a pattern, or a list of them; not an expression, whose comparison takes `in`.
+  node for_statement    = 'for' left: for_target 'in' right: expressions ':' indent body: block [alternative: else_clause]
+  choice for_target     = pattern [wrap pattern_list _ in pattern (',' pattern)+]
+  # `try`'s handlers: the `except` and its `:` are leaves, its block and `finally`'s have no field.
+  node try_statement    = 'try' ':' indent body: block (except_clause+ [else_clause] [finally_clause] | finally_clause)
+  node except_clause    = 'except' [value: as_value] ':' indent block
+  node finally_clause   = 'finally' ':' indent block
+  # `with`: its keyword a leaf, its items a clause.
+  node with_statement   = 'with' with_clause ':' indent body: block
+  node with_clause      = with_item (',' with_item)*
+  node with_item        = value: as_value
+  # An expression, or one bound by `as` (an `as_pattern` in the expression's slot).
+  choice as_value supertype expression = expression [wrap as_pattern _ in expression 'as' alias: as_pattern_target]
+  node as_pattern_target = primary_expression
   # --- Definitions
-  node function_definition = ['async'] 'def' name: identifier parameters: parameters ['->' return_type: type] ':' indent body: block
+  node function_definition = ['async'] 'def' name: identifier parameters: parameters ['->' return_type: types] ':' indent body: block
   node class_definition = 'class' name: identifier [superclasses: argument_list] ':' indent body: block
   node decorated_definition = decorator+ definition: definition
   choice definition     = function_definition | class_definition
   node decorator        = '@' expression newline
   node parameters       = '(' [parameter (',' parameter)*] (trail_paren | ')')
-  choice parameter supertype parameter = identifier [param_tail] | splat_pattern [wrap typed_parameter _ ':' type: type]
+  choice parameter supertype parameter = identifier [param_tail] | splat_pattern [wrap typed_parameter _ ':' type: types]
                         | keyword_separator | positional_separator
   # `a: int`'s name has no field, `a: int = 1`'s is `name`: the `=` decides, past the type.
   choice param_tail     = wrap default_parameter name '=' value: expression
-                        | wrap typed_parameter _ ':' type: type [retag typed_default_parameter inner name ('=' value: expression)]
+                        | wrap typed_parameter _ ':' type: types [retag typed_default_parameter inner name ('=' value: expression)]
   choice splat_pattern  = list_splat_pattern | dictionary_splat_pattern
   node list_splat_pattern = '*' identifier
   node dictionary_splat_pattern = '**' identifier
@@ -338,14 +355,17 @@ tree python {
   node expression_statement = expression [assign_tail]
   choice assign_tail    = wrap assignment left in pattern assign_rest
                         | wrap augmented_assignment left in pattern operator: aug_op right: rhs
-  choice assign_rest    = '=' right: rhs | ':' type: type ['=' right: rhs]
+  choice assign_rest    = '=' right: rhs | ':' type: types ['=' right: rhs]
   choice rhs nested     = expression [wrap expression_list _ in expression (',' [expression])+
                                     | wrap assignment left in pattern '=' right: rhs]
   choice aug_op         = '+=' | '-=' | '*=' | '/=' | '%=' | '&=' | '|=' | '^=' | '@=' | '**=' | '//=' | '<<=' | '>>='
-  # A type: a generic type, or an expression.
+  # A type: a generic type, or an expression. A union over a generic (`list[int] | None`) is a
+  # `union_type` of two types, left to right, each step a type of its own; any other `|` is the
+  # expression's (`int | None` a `binary_operator`), as tree-sitter reads an annotation.
+  choice types          = type (wrap type _ wrap union_type _ '|' type)*
   node type             = generic_type | expression
   node generic_type     = generic identifier type_parameter
-  node type_parameter   = '[' type (',' type)* (trail_bracket | ']')
+  node type_parameter   = '[' types (',' types)* (trail_bracket | ']')
   node pass_statement   = 'pass'
   node return_statement = 'return' [expressions]
   node raise_statement  = 'raise' [expressions] ['from' cause: expression]
@@ -356,7 +376,7 @@ tree python {
   node break_statement  = 'break'
   node continue_statement = 'continue'
   # One expression, or a list of them (tree-sitter-python's `_expressions`).
-  choice expressions    = expression [wrap expression_list _ in expression (',' [expression])+]
+  choice expressions nested = expression [wrap expression_list _ in expression (',' [expression])+]
   # --- Imports
   node import_statement = 'import' import_name (',' import_name)*
   choice import_name    = name: dotted_name [wrap aliased_import name 'as' alias: identifier]
@@ -409,8 +429,12 @@ tree python {
                         | wrap subscript value in primary_expression '[' subscript: expression (',' subscript: expression)* ']'
   choice atom           = identifier | real integer as float | integer | string | list | parenthesized_expression | dictionary
                         | 'True' as true | 'False' as false | 'None' as none
-  # The patterns an assignment's target is in (tree-sitter-python's `pattern`).
-  choice pattern supertype pattern = identifier | attribute | subscript
+  # The patterns an assignment's target is in (tree-sitter-python's `pattern`), and a loop's
+  # target read as one: a name, its attributes and subscripts.
+  choice pattern supertype pattern = identifier pattern_postfix*
+  choice pattern_postfix = wrap attribute object in primary_expression '.' attribute: identifier
+                        | wrap subscript value in primary_expression '[' subscript: expression (',' subscript: expression)* ']'
+
   node argument_list    = '(' [argument (',' argument)*] (trail_paren | ')')
   choice argument       = expression [wrap keyword_argument name '=' value: expression] | list_splat | dictionary_splat
   node list_splat       = '*' expression
@@ -452,6 +476,14 @@ tree python {
   implied elif_clause 'elif' ':'
   implied else_clause 'else' ':'
   implied while_statement 'while' ':'
+  implied for_statement 'in' ':'
+  implied for_target ','
+  implied try_statement 'try' ':'
+  implied finally_clause 'finally' ':'
+  implied with_statement ':'
+  implied with_clause ','
+  implied as_value 'as'
+  implied pattern_postfix '.' '[' ']' ','
   implied assign_rest '=' ':'
   implied rhs ',' '='
   implied expressions ','
@@ -476,6 +508,7 @@ tree python {
   implied dictionary_splat '**'
   implied list '[' ']' ','
   implied type_parameter '[' ']' ','
+  implied types '|'
   implied parenthesized_expression '(' ')'
   implied not_operator 'not'
   implied conditional 'if' 'else'
