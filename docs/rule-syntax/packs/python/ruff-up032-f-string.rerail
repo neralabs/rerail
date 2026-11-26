@@ -6,27 +6,52 @@
 
 // Ruff UP032 (pyupgrade): `"…".format(…)` on a str literal that Ruff can rewrite as an f-string. Every field
 // must find its argument (`{}` the next positional one, `{0}` by index, `{x}` by keyword; unused ones may be
-// dropped), and the call may have no `*args` or `**kwargs`, no nested field in a spec, and no `{}` mixed with
-// `{0}`. Each argument must fit inside `{…}` on Python before 3.12: it holds no string literal. One used by two
-// fields is evaluated once today, so it must be free of effects (no call, await, subscript or operator). A
-// format string inside django's gettext()/gettext_lazy() is left for translation. Finally Ruff keeps the
-// line length: the f-string must fit in 88 columns, or be shorter than the line it replaces.
+// dropped), and there may be no nested field in a spec and no `{}` mixed with `{0}`. Ruff looks at every
+// argument, used or not, parentheses off: none may be `*args` or `**kwargs`, hold a quote character (it could
+// not go inside `{…}` before Python 3.12) or span lines, and there must be at least one. One used by two fields
+// of the same piece of the literal (Ruff converts adjacent literals one by one) is evaluated once today, so it
+// must be free of effects (a call, await, yield, subscript, comprehension, or an
+// operator on anything but literals). A format string inside django's gettext()/gettext_lazy() is left for
+// translation. Ruff 0.17 does not measure the line. The call's function may be parenthesized
+// (`("{}".format)(x)`), and Ruff checks a string annotation's code too.
 //   "{} {}".format(a, b)       ← UP032: f"{a} {b}"
-//   "{x} {x}".format(x=f())    "{}".format(a["b"])    "{} {}".format(*a)       not reported
+//   "{}".format((a  # it's
+//   ))                         ← UP032: the argument is `a`
+//   "{x} {x}".format(x=f())    "{}".format(a["b"])    "{} {}".format(*a)    "{}".format(a, "b")    not reported
 // The finding is at the call.
 #include "python/upgrade.rerail"
 //   sym_at(e, q)
 #include "python/upgrade-format.rerail"
 //   lit_piece; and, through it, python/pyflakes-format.rerail: format_call, brace_ok, brace_arg,
-//   brace_name, brace_nested, call_pos, call_kw, call_star, call_kwsplat
+//   brace_name, brace_nested, call_pos, call_kwarg
+#include "python/python-12.rerail"
+//   plain_str rows for the literals of string annotations
 
 .violation UP032(at: node) code "UP032"
     "Replace this `.format()` call with an f-string, putting each argument inside its `{{}}` placeholder; keep `.format()` when the string is passed to a translation function."
     suppress ruff "UP032"
-UP032(c) :- format_call(c, v), brace_ok(v), !brace_nested(v, _, _, _, _, _), !call_star(c), !call_kwsplat(c),
-    !mixed(v), count : { brace_name(v, k, _, _), !refers(c, k, _) } = 0, count : { refers(c, _, e), quoted(e) } = 0, !split_field(c),
+UP032(c) :- format_call(c, v), brace_ok(v), !brace_nested(v, _, _, _, _, _), !mixed(v), up_args_ok(c),
+    count : { brace_name(v, k, _, _), !refers(c, k, _) } = 0, !split_field(c),
+    count : { refers(c, k1, e), refers(c, k2, e), k1 != k2, same_piece(c, k1, k2), effect(e) } = 0,
+    !translated(c).
 
-    count : { refers(c, k1, e), refers(c, k2, e), k1 != k2, effect(e) } = 0, !translated(c), fits(c).
+// `("{}".format)(x)`: Ruff's call.func is the attribute, the parentheses gone.
+format_call(c, v) :- kind(c, "call"), field(c, "function", f0), kind(f0, "parenthesized_expression"), unparen(f0, f),
+    attr_of(f, o, "format"), unparen(o, s), plain_str(s, v).
+
+// up_args_ok(c): Ruff's FormatSummaryValues: at least one argument, and each one, parentheses off, plain.
+.decl up_arg_node(c: node, e: node)  // each argument of c (a keyword's value), parentheses off
+up_arg_node(c, e) :- format_call(c, _), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, _),
+    !kind(a, "comment"), !kind(a, "keyword_argument"), unparen(a, e).
+up_arg_node(c, e) :- format_call(c, _), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, _),
+    kind(a, "keyword_argument"), field(a, "value", w), unparen(w, e).
+up_arg_node(c, g) :- format_call(c, _), field(c, "arguments", g), kind(g, "generator_expression").
+.decl up_args_ok(c: node)
+up_args_ok(c) :- format_call(c, _), up_arg_node(c, _), count : { up_arg_node(c, e), bad_arg(e) } = 0.
+.decl bad_arg(e: node)
+bad_arg(e) :- up_arg_node(_, e), (kind(e, "list_splat") ; kind(e, "dictionary_splat")).
+bad_arg(e) :- up_arg_node(_, e), text(e, t), (contains("'", t) ; contains("\"", t)).
+bad_arg(e) :- up_arg_node(_, e), line(e, l), !end_line(e, l).
 
 // refers(c, k, e): field k of c's string takes argument e.
 .decl refers(c: node, k: number, e: node)
@@ -36,45 +61,43 @@ refers(c, k, e) :- format_call(c, v), brace_arg(v, k, a), match("[0-9]+", a), ca
 refers(c, k, e) :- format_call(c, v), brace_arg(v, k, x), x != "", !match("[0-9]+", x), call_kwarg(c, x, e).
 .decl mixed(v: symbol)  // `{}` and `{0}` together: a ValueError
 mixed(v) :- brace_arg(v, _, ""), brace_arg(v, _, a), match("[0-9]+", a).
-.decl quoted(e: node)  // e is or holds a string literal
-quoted(e) :- refers(_, _, e), (kind(e, "string") ; kind(e, "concatenated_string")).
-quoted(e) :- refers(_, _, e), kind(s, "string"), within(s, e).
 // split_field(c): a piece of c's adjacent literals has unbalanced braces (`'{' '0}'`): Ruff converts each piece
-// on its own, so a field across two pieces stops it. An argument written over several lines stops it too.
+// on its own, so a field across two pieces stops it.
 .decl split_field(c: node)
-split_field(c) :- fmt_str(c, s), lit_piece(s, p), value(p, x), @count_matches("[{]", x) != @count_matches("[}]", x).
-split_field(c) :- refers(c, _, e), line(e, l), !end_line(e, l).
-.decl effect(e: node)  // e may have an effect, so it cannot be evaluated twice
-effect(e) :- refers(_, _, e), kind(e, k), effect_kind(k).
-effect(e) :- refers(_, _, e), effect_kind(k), kind(n, k), within(n, e).
+split_field(c) :- fmt_str(c, s), lit_piece(s, p), str(p, x), @count_matches("[{]", x) != @count_matches("[}]", x).
+.decl fmt_str(c: node, s: node)  // the literal of format call c
+fmt_str(c, s) :- format_call(c, _), field(c, "function", f0), unparen(f0, f), attr_of(f, s0, _), unparen(s0, s).
+// same_piece(c, k1, k2): fields k1 and k2 of c's literal are in the same piece of it. Each piece of adjacent
+// literals is parsed too (brace_value seeds the parser), to number its fields: field_ord counts top-level fields
+// (no nested ones get this far), piece_first gives the first ordinal of each piece.
+brace_value(x) :- fmt_str(_, s), kind(s, "concatenated_string"), child(s, p, _), kind(p, "string"), str(p, x).
+.decl piece_nf(c: node, j: number, n: number)
+piece_nf(c, j, n) :- fmt_str(c, s), kind(s, "concatenated_string"), child(s, p, j), kind(p, "string"), str(p, x),
+    n = count : { brace_field(x, _, _, _, _, _) }.
+.decl piece_first(c: node, j: number, f: number)
+piece_first(c, j, f) :- piece_nf(c, j, _), f = sum n : { piece_nf(c, j2, n), j2 < j }.
+.decl field_ord(c: node, k: number, r: number)
+field_ord(c, i * 1000, r) :- format_call(c, v), brace_field(v, i, _, _, _, _),
+    r = count : { brace_field(v, i2, _, _, _, _), i2 < i }.
+.decl field_piece(c: node, k: number, j: number)
+field_piece(c, k, 0) :- fmt_str(c, s), kind(s, "string"), field_ord(c, k, _).
+field_piece(c, k, j) :- field_ord(c, k, r), piece_nf(c, j, n), piece_first(c, j, f), r >= f, r < f + n.
+.decl same_piece(c: node, k1: number, k2: number)
+same_piece(c, k1, k2) :- field_piece(c, k1, j), field_piece(c, k2, j).
+// effect(e): Ruff's contains_effect: e may have an effect, so it cannot be evaluated twice.
+.decl effect(e: node)
+effect(e) :- refers(_, _, e), unparen(e, m), (n = m ; within(n, m)), kind(n, k), effect_kind(k).
+effect(e) :- refers(_, _, e), unparen(e, m), (n = m ; within(n, m)), kind(n, "binary_operator"),
+    (field(n, "left", o) ; field(n, "right", o)), unparen(o, o0), !lit_operand(o0).
 .decl effect_kind(k: symbol)
-effect_kind("call"). effect_kind("await"). effect_kind("subscript"). effect_kind("binary_operator").
+effect_kind("call"). effect_kind("await"). effect_kind("subscript"). effect_kind("yield").
+effect_kind("list_comprehension"). effect_kind("set_comprehension"). effect_kind("dictionary_comprehension").
+effect_kind("generator_expression").
+.decl lit_operand(o: node)  // operands that keep a `+` or `%` free of effects in Ruff's eyes
+lit_operand(o) :- kind(o, k), (k = "string" ; k = "concatenated_string" ; k = "integer" ; k = "float" ;
+    k = "true" ; k = "false" ; k = "none" ; k = "ellipsis" ; k = "list" ; k = "tuple" ; k = "set" ;
+    k = "dictionary" ; k = "list_comprehension" ; k = "set_comprehension" ; k = "dictionary_comprehension").
 // translated(c): c is inside the arguments of django's gettext or gettext_lazy.
 .decl translated(c: node)
 translated(c) :- format_call(c, _), inside(c, g, "call"), field(g, "function", f),
     (sym_at(f, "django.utils.translation.gettext") ; sym_at(f, "django.utils.translation.gettext_lazy")).
-
-// fits(c): Ruff's fits_or_shrinks, for a call on one line: the f-string's line is its column, `f`, the string
-// with each field's argument part replaced by the argument's text, and whatever follows the call. A call over
-// several lines is not measured (NOTES).
-.decl fits(c: node)
-fits(c) :- format_call(c, _), !one_line(c).
-fits(c) :- one_line(c), new_width(c, w), (w <= 88 ; old_width(c, o), w < o).
-.decl one_line(c: node)
-one_line(c) :- format_call(c, _), line(c, l), end_line(c, l).
-.decl new_width(c: node, w: number)
-new_width(c, col0 + 1 + strlen(t) + g + a) :- one_line(c), fmt_str(c, s), text(s, t), col(c, col0), grow(c, g),
-    after(c, a).
-.decl fmt_str(c: node, s: node)  // the literal of format call c
-fmt_str(c, s) :- format_call(c, _), field(c, "function", f), attr_of(f, s0, _), unparen(s0, s).
-.decl grow(c: node, g: number)  // how much longer the fields get: `{}` becomes `{name}`
-grow(c, g) :- one_line(c), format_call(c, v), g = sum strlen(x) - strlen(a) : { refers(c, k, e), text(e, x),
-    brace_arg(v, k, a) }.
-.decl after(c: node, a: number)  // the length of the line after the call's `)`
-after(c, strlen(ln) - zc - 1) :- one_line(c), end_line(c, l), docof(c, d), last_token(c, z), col(z, zc),
-    src_line(d, l, sp), text(sp, ln).
-.decl old_width(c: node, o: number)
-old_width(c, o) :- one_line(c), call_lines(c, d, l1, l2),
-    o = max strlen(t) : { src_line(d, l, sp), l >= l1, l <= l2, text(sp, t) }.
-.decl call_lines(c: node, d: number, l1: number, l2: number)
-call_lines(c, d, l1, l2) :- one_line(c), line(c, l1), end_line(c, l2), docof(c, d).
