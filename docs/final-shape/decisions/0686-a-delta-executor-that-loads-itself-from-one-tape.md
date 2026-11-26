@@ -2628,3 +2628,71 @@ Checks (Relax, local, 144 of 144, at a load average of 58 to 70: the suite took 
 
 Not built: `top` as a term, since rr parses `top` as a variable (typing's `top` is one). Still to build in step 9:
 the passes.
+
+### L4: phase programs, each in a fact space of its own, by a pass of the compiler's (B§6's L4 row; B§8; 2026-11-26)
+
+B§8: "From L4 on, an export may hold several programs: the user's phase DAG (`p0_phase`)… run in the DAG's order."
+The includes section left phase programs for the passes to define. The program-bistate page's §4 maps each pass onto
+an operator ("a phase: one stratum per pass, in order"), with preparation as one phase. In B§ that phase is the
+compiler's run at L4, and B§11 drops the writer: "Lowering and rewriting are rules whose heads are K-form rows". So
+a pass is the compiler's rules, deciding a rewrite that c-10, the emission, applies. The first pass built is the one
+that gives phase programs their meaning. That pass is today's `phases.rs`:
+- a file of `.phase p` and `.export e, …` runs in a fact space of its own;
+- a reader sees only its exports, as `p__e`;
+- the runner refuses a read of a relation the phase does not export, and an export with a `node` column.
+
+Three files, c-21 to c-23:
+- **c-21:**
+  - a file's phase (the `.phase` setting) and exports (`.export`);
+  - the relations it declares named `<phase>__<export>`. As `bootstrap.rerail` has it, a typing program's or the
+    engine's own (`typing_`, `rr_`) are left out.
+- **c-22:**
+  - **A file asks for each phase it reads, its own excepted:** `<p0_phase_lib>/<phase>.rerail`, `p0_phase`. c-14
+    loads it as an include, an edge of the include graph, and a phase file that is not there is `p0_absent`.
+  - **A phase's own relations are those its file writes:** an export is renamed `<phase>__<export>`, and any other
+    `<phase>/<name>`, a name no rule can write.
+  - **The refusals' facts.**
+- **c-23:** the rename as a map, each relation a phase's file names to its program name. A call's function and a
+  comparison's operator are never renamed, and the refusals are rules.
+- **c-10** writes through the map: heads, atom and negation steps, an aggregate's folded relation (`agg_rel`) and
+  declarations. **c-11's graph** reads the renamed names, so a phase is ordered before its readers. That ordering is
+  the DAG's, as strata. Without it, `nd` was ordered before the `st` it reads (a mutation, below).
+- **A refusal** is a rule of the module whose head variable no step binds, named with why. The executor refuses it
+  naming the variable, as a pattern's two `$$$` are refused (L4-h).
+- **A file a phase includes** is a module like any include's, shared by every fact space that includes it. That is
+  equal to a copy per space, since a relation is written by one module (O4) and the same rules over the same views
+  give the same rows.
+- **The executor gained two functions:** `before` and `after`, the text either side of a separator's first
+  occurrence. A phase's name is cut from its relation's name with them. No change in Rust beyond that.
+
+**Fixed on the way: a step whose variables no atom binds.** Each lowerer (the kernel's k1-7 and k1-8, the compiler's c-7
+and c-8) left such a step at its own node's key. Its variables are bound only by an answer (`y = @cat(x, "!"), z =
+@cat(y, "?")`), or it has none. Its operands (a call under it, a later node in preorder) then ran after it, and the
+executor refused the rule. c-21's `@substr(p, 0, 7) != "typing_"`, with `p` an answer, was the first case.
+- Such a step now stays where it was written, as a place: after the last atom written before it, or at -1 when none
+  is. There c-8's order runs an operand before its operator, as at every place.
+- The kernel, in K0, finds that last atom with a negation (`later_atom`). The compiler finds it with `max`.
+- `const_op` moved a stratum earlier, to k1-7 and c-7, since `stays` negates it. The shape check's list of the
+  kernel's heads follows.
+
+Checks (Relax, local, 145 of 145, at a load average of 43 to 60: the suite took 227 s):
+`phase_programs_run_in_fact_spaces_of_their_own_before_their_readers`.
+- **A phase `st`:**
+  - its own `inner` sits beside the reader's own `inner`: without the rename, two modules write it;
+  - its export, read by the reader, by a second phase `nd`, and in a reader's aggregate;
+  - no phase relation under its own name;
+  - `p0_phase` lists u's three phases and nd's one.
+- **A phase file not there** is absent, and runs once it appears.
+- **Edits:** a phase's fact added and taken away again, and a cold run after, all give the same rows as cold.
+- **Refused:** a read of `st__inner`; an export with a node column; an aggregate of a phase's own relation in its
+  own file, which names the renamed `zz/zz_in`, so the rename reaches aggregates.
+- **A chain of answers in a user rule** (`deco`).
+- **Mutations caught:**
+  - a phase's heads not renamed ("relation inner is written by module … too");
+  - the graph's writes not renamed ("reads relation st__def, the head of … a later stratum");
+  - c-8's place for a step that stays dropped ("variable z is not bound by an earlier step").
+  - The kernel's fix was shown before it was made: P4 could not run c-21.
+
+Still to build in step 9: the other passes of §4's groups (pruning what no output reads, the per-rule rewrites,
+demand's rules, the file-local split, the declarations). Then, from B§6's L4 row: ordered by, must/may, and
+violations and edits.

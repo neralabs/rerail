@@ -3,3 +3,9 @@
 // refuses it (B§7), or binds the variable where it is the `=` of an answer (`y = x + 1`).
 place(d, r, f, k) :- in_filter(d, r, f, v), binds(d, r, v, k), !waits(d, r, f, k).
 moved(d, r, f) :- place(d, r, f, _).
+// An operator of constants alone (it goes first, k1-8), and the atoms written before each step that moves, each but
+// the last of them (where one no atom binds stays, k1-8).
+const_op(d, r, e) :- mover(d, r, e), expr(d, e), !uses_var(d, r, e).
+atom_before(d, r, f, k) :- mover(d, r, f), read_step(d, r, k, -1, "atom", _), !expr(d, k), k < f.
+some_atom_before(d, r, f) :- atom_before(d, r, f, _).
+later_atom(d, r, f, k) :- atom_before(d, r, f, k), atom_before(d, r, f, j), k < j.

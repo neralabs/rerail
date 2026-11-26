@@ -8,6 +8,8 @@ load(c, c, "rr") :- p0_cand(_, _, _, 1, c).
 // A pattern's code (L4-h, c-16), a text the load answer parses.
 load(t, t, "rr") :- pat(_, _, t).
 load(c, c, "rr") :- p0_cand(f, at, n, 2, c), p0_cand(f, at, n, 1, l), missing(l).
+// A phase a file reads (c-22): its file, loaded as an include is.
+load(c, c, "rr") :- ph_cand(_, _, c).
 // What each loaded file names: its includes, at their offsets, and `core.rerail` first for a root not in T's shape.
 p0_names(f, at, n) :- kind(d, i, "include"), field(d, i, "path", p), value(d, p, n), doc(d, f, _), node(d, i, _, at, _).
 p0_from(f, at, n) :- p0_names(f, at, n).
@@ -22,6 +24,8 @@ p0_found(f, at, n) :- p0_resolved(f, at, n, _).
 // and the include graph between files.
 p0_include(f, at, n, c) :- p0_resolved(f, at, n, c).
 p0_absent(c) :- p0_cand(_, _, _, _, c), missing(c).
+p0_absent(c) :- ph_cand(_, _, c), missing(c).
 p0_includes(a, b) :- p0_resolved(a, _, _, b), a != b.
+p0_includes(a, c) :- ph_cand(a, _, c), doc(_, c, _), !missing(c), a != c.
 p0_reach(a, b) :- p0_includes(a, b).
 p0_reach(a, c) :- p0_reach(a, b), p0_includes(b, c).

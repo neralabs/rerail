@@ -1,9 +1,12 @@
 // Strata computed (K1-e; B§6, L3: "strata computed"; O4, at module grain): the modules' graph. A module depends on
 // each other module whose head it reads, an atom's, a negation's or an aggregate's; its depth is each chain's length
 // below it, up to 64; a module that reaches itself is in a cycle.
-writes(d, h) :- read_rule(d, _, h).
+// A phase's file (c-21..c-23) by its map: the names its relations have in the program.
+writes(d, h) :- read_rule(d, _, h), !ph_module(d).
+writes(d, n) :- ph_own(d, _, n).
 writes(pd, h) :- p_rule(pd, _, h).
-reads(d, x) :- read_step(d, _, _, -1, "atom", x) ; read_step(d, _, _, -1, "not", x) ; agg_rel(d, _, x).
+reads(d, x) :- read_step(d, _, _, -1, "atom", x), !ph_module(d) ; read_step(d, _, _, -1, "not", x), !ph_module(d) ; agg_rel(d, _, x), !ph_module(d).
+reads(d, y) :- ph_used(d, x), ph_rel(d, x, y).
 dep(d, w) :- reads(d, x), writes(w, x), d != w.
 reach(d, w) :- dep(d, w).
 reach(d, u) :- reach(d, w), dep(w, u).

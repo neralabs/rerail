@@ -873,7 +873,8 @@ def k1(failures: list) -> None:
              "k1-3-rank": ("succ", "least", "rank", "agg_own", "agg_rel", "agg_arg", "agg_pat", "call_in"),
              "k1-4-rules": ("inst", "read_rule", "read_arg", "in_rule", "read_step"),
              "k1-5-steps": ("in_atom", "mover", "below", "in_filter", "uses_var", "bound_before"), "k1-6-binds": ("binds", "waits"),
-             "k1-7-place": ("place", "moved"), "k1-8-order": ("const_op", "at", "before", "twixt", "not_first"),
+             "k1-7-place": ("place", "moved", "const_op", "atom_before", "some_atom_before", "later_atom"),
+             "k1-8-order": ("stays", "at", "before", "twixt", "not_first"),
              "k1-9-turn": ("then", "turn", "placed"), "k1-10-emit": ("k_rule", "k_step", "k_arg", "k_var", "k_decl"),
              "k1-11-graph": ("writes", "reads", "dep", "reach", "cycle", "depth", "deeper"), "k1-12-strata": ("k_order",)}
     for f in files:

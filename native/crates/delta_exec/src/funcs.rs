@@ -6,7 +6,8 @@
 //! text, an overflow, a zero divisor) gives no row, as Soufflé's functors give none.
 //!
 //! The functions are `core.rerail`'s and Soufflé's, each by its meaning there, and `replace`, a text's every
-//! occurrence replaced by another (a pattern's metavariables named so its language's parser reads them: 0686, L4-h).
+//! occurrence replaced by another (a pattern's metavariables named so its language's parser reads them: 0686, L4-h),
+//! `before` and `after`, a text's parts about a separator's first occurrence (a phase's relation's name).
 
 /// What a function reads or gives: a number, or a symbol's text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +52,8 @@ pub const FUNCS: &[(&str, Args, Ty)] = &[
     ("join", Some(&[Text, Text]), Text),
     ("replace", Some(&[Text, Text, Text]), Text),
     ("shortlex_min", Some(&[Text, Text]), Text),
+    ("before", Some(&[Text, Text]), Text),
+    ("after", Some(&[Text, Text]), Text),
 ];
 
 /// Function `name`'s place in `FUNCS`.
@@ -116,12 +119,16 @@ pub fn call<'a>(f: usize, args: &[i64], text: &dyn Fn(i64) -> Option<&'a str>) -
         "dir" => txt(t(0)?.rsplit_once('/').map_or("", |(d, _)| d).to_string()),
         // `rel` from `dir`, normalised, `..` resolved (`@join(@dir("src/a/b.ts"), "../c")` = `"src/c"`).
         "join" => txt(join(t(0)?, t(1)?)),
-        // Every occurrence of the text `from` (no regex: `core.rerail`'s `replace_all` is one) by `by`, left to right.
         // The shorter, then the lesser by text (`core.rerail`'s `shortlex_min<>`, a lattice's join).
         "shortlex_min" => {
             let (a, b) = (t(0)?, t(1)?);
             txt(if (a.len(), a) <= (b.len(), b) { a } else { b }.to_string())
         }
+        // The text before and after the first occurrence of `sep`; none where it has none (a phase's relation,
+        // `<phase>__<export>`: 0686, the passes).
+        "before" => t(0)?.split_once(t(1)?).map(|(a, _)| Out::Text(a.to_string())),
+        "after" => t(0)?.split_once(t(1)?).map(|(_, b)| Out::Text(b.to_string())),
+        // Every occurrence of the text `from` (no regex: `core.rerail`'s `replace_all` is one) by `by`, left to right.
         "replace" => {
             let (s, from, by) = (t(0)?, t(1)?, t(2)?);
             txt(if from.is_empty() { s.to_string() } else { s.replace(from, by) })

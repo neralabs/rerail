@@ -566,7 +566,7 @@ const KERNEL: [(&str, &str); 13] = [
 
 /// The compiler (B§6, L4; B§10 step 9): the full lowerer, written in the language the kernel lowers. L3 reads it into
 /// P4, which reads the user's files at L4.
-const COMPILER: [(&str, &str); 20] = [
+const COMPILER: [(&str, &str); 23] = [
     ("compiler/c-1-read.rerail", include_str!("../rerail/compiler/c-1-read.rerail")),
     ("compiler/c-2-shared.rerail", include_str!("../rerail/compiler/c-2-shared.rerail")),
     ("compiler/c-3-rank.rerail", include_str!("../rerail/compiler/c-3-rank.rerail")),
@@ -587,6 +587,9 @@ const COMPILER: [(&str, &str); 20] = [
     ("compiler/c-18-pattern-tree.rerail", include_str!("../rerail/compiler/c-18-pattern-tree.rerail")),
     ("compiler/c-19-pattern-rank.rerail", include_str!("../rerail/compiler/c-19-pattern-rank.rerail")),
     ("compiler/c-20-pattern-rule.rerail", include_str!("../rerail/compiler/c-20-pattern-rule.rerail")),
+    ("compiler/c-21-phases.rerail", include_str!("../rerail/compiler/c-21-phases.rerail")),
+    ("compiler/c-22-phase-own.rerail", include_str!("../rerail/compiler/c-22-phase-own.rerail")),
+    ("compiler/c-23-phase-map.rerail", include_str!("../rerail/compiler/c-23-phase-map.rerail")),
 ];
 
 /// What L3 reads: the stand-in for the compiler's files (Bootstrap §6: "P3 loads the full compiler"), a K0 file of
@@ -930,6 +933,79 @@ loose(1) :- n ~ `other($A, $B).`.\n";
     r.last = None;
     let e = r.try_run().expect_err("two $$$");
     assert!(e.contains("a list of two $$$"), "{e}");
+}
+
+/// Phase programs (B§6's L4 row, the passes as phases; B§8's phase DAG; decision 0083 §1): a file that declares
+/// `<phase>__<export>` reads that phase's export; the phase's file (`<phase>.rerail` in `p0_phase_lib`) loads as an
+/// include does, runs in a fact space of its own (its relations renamed by the compiler's pass, c-21..c-23), and is
+/// ordered before its readers. A phase reads another's export; a reader aggregates one. A read of a relation a phase
+/// does not export is refused, as is an export with a node column. A phase whose file is not there is absent, and
+/// runs once its file appears. Edits give what a cold run gives.
+#[test]
+fn phase_programs_run_in_fact_spaces_of_their_own_before_their_readers() {
+    const ST: &str = ".phase st\n.export def\n#include \"st-facts.rerail\"\n.decl def(x: symbol)\n\
+inner(x) :- base(x), x != \"c\".\ndef(x) :- inner(x).\n";
+    const ST_FACTS: &str = "base(\"a\").\nbase(\"b\").\nbase(\"c\").\n";
+    const ND: &str = ".phase nd\n.export two\n.decl st__def(x: symbol)\ntwo(x, y) :- st__def(x), st__def(y), x != y.\n";
+    // The reader's own `inner`: without a phase's own fact space, two modules would write it.
+    const U: &str = ".decl st__def(x: symbol)\n.decl nd__two(x: symbol, y: symbol)\n.decl zz__q(x: symbol)\n\
+inner(x) :- st__def(x), x = \"a\".\nseen(x) :- inner(x).\npair(x, y) :- nd__two(x, y).\nn(k) :- k = count : { st__def(_) }.\nq(x) :- zz__q(x).\n\
+deco(z) :- st__def(x), y = @cat(x, \"!\"), z = @cat(y, \"?\").\n";
+    let roots = "root(\"u.rerail\", \"u\").\np0_lib(\"lib\").\np0_phase_lib(\"phases\").\n";
+    let mut r = compiler_files("phase-programs", roots, &[("u.rerail", U)]);
+    std::fs::create_dir_all(r.root.join("phases")).unwrap();
+    r.write("phases/st.rerail", ST, 50);
+    r.write("phases/st-facts.rerail", ST_FACTS, 50);
+    r.write("phases/nd.rerail", ND, 50);
+    r.run();
+    let one = |r: &Run, xs: &[&str]| -> BTreeSet<Vec<i64>> { xs.iter().map(|x| vec![r.s(x)]).collect() };
+    let check = |r: &Run, what: &str, defs: &[&str]| {
+        assert_eq!(r.rows(3, "st__def"), one(r, defs), "{what}: the export, renamed");
+        assert_eq!(r.rows(3, "st/inner"), one(r, defs), "{what}: the phase's own relation, in its own space");
+        assert_eq!(r.rows(3, "inner"), one(r, &["a"]), "{what}: the reader's own relation of the same name");
+        assert_eq!(r.rows(3, "seen"), one(r, &["a"]), "{what}: read by the reader");
+        let pairs: BTreeSet<Vec<i64>> = defs.iter().flat_map(|x| defs.iter().filter(move |y| *y != x).map(move |y| (x, y))).map(|(x, y)| vec![r.s(x), r.s(y)]).collect();
+        assert_eq!(r.rows(3, "pair"), pairs, "{what}: a phase reading another's export");
+        assert_eq!(r.rows(3, "n"), [vec![defs.len() as i64]].into_iter().collect(), "{what}: an aggregate of an export");
+        let deco: Vec<String> = defs.iter().map(|x| format!("{x}!?")).collect();
+        assert_eq!(r.rows(3, "deco"), deco.iter().map(|x| vec![r.s(x)]).collect(), "{what}: a chain of answers, each after the one it reads");
+        assert!(r.rows(3, "def").is_empty() && r.rows(3, "two").is_empty(), "{what}: no phase relation under its own name");
+        assert_eq!(r.rows(2, "p0_phase").len(), 4, "{what}: u reads st, nd and zz; nd reads st");
+    };
+    check(&r, "cold", &["a", "b"]);
+    assert!(r.rows(2, "p0_absent").contains(&vec![r.s("phases/zz.rerail")]), "a phase not there");
+    assert!(r.rows(3, "q").is_empty());
+    // A phase's facts edited, and back.
+    r.write("phases/st-facts.rerail", "base(\"a\").\nbase(\"b\").\nbase(\"c\").\nbase(\"d\").\n", 40);
+    r.run();
+    check(&r, "a phase's fact added", &["a", "b", "d"]);
+    r.write("phases/st-facts.rerail", ST_FACTS, 30);
+    r.run();
+    check(&r, "back", &["a", "b"]);
+    // The phase not there appears, and runs.
+    r.write("phases/zz.rerail", ".phase zz\n.export q\nq(\"z\").\n", 30);
+    r.run();
+    assert_eq!(r.rows(3, "q"), one(&r, &["z"]), "the phase appeared");
+    assert!(!r.rows(2, "p0_absent").contains(&vec![r.s("phases/zz.rerail")]));
+    r.last = None;
+    r.run();
+    check(&r, "cold again", &["a", "b"]);
+    assert_eq!(r.rows(3, "q"), one(&r, &["z"]));
+    // A read of a relation the phase does not export.
+    r.write("u.rerail", &format!("{U}.decl st__inner(x: symbol)\nbad(x) :- st__inner(x).\n"), 20);
+    let e = r.try_run().expect_err("an unexported read");
+    assert!(e.contains("phase st does not export inner"), "{e}");
+    // An export with a node column.
+    r.write("u.rerail", U, 15);
+    r.write("phases/zz.rerail", ".phase zz\n.export q, w\n.decl w(x: node)\nq(\"z\").\nw(x) :- node(_, x, _, _, _).\n", 15);
+    r.last = None;
+    let e = r.try_run().expect_err("a node export");
+    assert!(e.contains("phase zz's export w has a node column"), "{e}");
+    // A phase's own relation is its stratum's: an aggregate of it in its own file is refused, as for any module.
+    r.write("phases/zz.rerail", ".phase zz\n.export q\nq(k) :- k = count : { zz_in(_) }.\nzz_in(1).\n", 10);
+    r.last = None;
+    let e = r.try_run().expect_err("an aggregate of its own stratum");
+    assert!(e.contains("zz/zz_in"), "{e}");
 }
 
 /// Lattices (B§6, L4; `core.rerail`; L4-i): a relation whose last column is a lattice keeps one row a key, the join
