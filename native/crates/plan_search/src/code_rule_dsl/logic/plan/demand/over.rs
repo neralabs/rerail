@@ -286,13 +286,17 @@ pub fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super::Model
                 let got = var_rows(f, model, r, Some(i), Some(&mut sizes)).get(&key).copied();
                 match got.as_ref() {
                     Some(n) => asked += n,
-                    None => return true,
+                    None => return true
                 }
             }
         }
-        let keep = asked < own;
+        // Demanded, each of its rules joins the keys asked first: its work is at least those keys a rule, against at
+        // least its own rows whole. `bind_only`'s seven rules over 57,000 keys a chunk were demanded against an
+        // estimate of 70,000 rows (17,600 made): 12.2 M rows of work demanded, 5.6 M whole.
+        let rules_of = by_rel.get(rel).map_or(1, |rs| rs.len().max(1)) as f64;
+        let keep = asked * rules_of < own;
         if !keep {
-            super::super::super::profile::decision("demand (decision 0048)", || format!("{rel}: whole, its readers ask about {asked:.0} keys of its {own:.0} rows"));
+            super::super::super::profile::decision("demand (decision 0048)", || format!("{rel}: whole, its readers ask about {asked:.0} keys, each for {rules_of:.0} rules, of its {own:.0} rows"));
         }
         keep
     });
@@ -569,9 +573,51 @@ pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, c
     // A positive read is cut only where one kept anchor binds all its variables (the module's guard). Every reader is
     // checked before any is split, so one round drops every candidate a guard refuses.
     let mut refused = BTreeSet::new();
+    // Each relation's reads, its rules' atoms (`depends`).
+    let mut reads_of: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for r in &rules {
+        let e = reads_of.entry(r.head()).or_default();
+        for i in 0..r.lits.len() {
+            if let Some(a) = r.atom(i) {
+                e.insert(r.rel(a));
+            }
+        }
+    }
+    // Whether `from` reads `to`, through any chain of rules.
+    let depends = |from: &str, to: &str| -> bool {
+        let (mut seen, mut todo) = (BTreeSet::from([from]), vec![from]);
+        while let Some(x) = todo.pop() {
+            for &y in reads_of.get(x).into_iter().flatten() {
+                if y == to {
+                    return true;
+                }
+                if seen.insert(y) {
+                    todo.push(y);
+                }
+            }
+        }
+        false
+    };
     for &k in &readers {
         let r = &rules[k];
         let cut = |j: usize| negated(r, j);
+        // A reader whose kept literals read a relation an answer produces (decision 0065: `parsed`, answered from
+        // `rr_embed_req`), where the request reads the demanded relation: the demand's keys would wait on the answer,
+        // and the answer on the demand. `ann_parse(s, r) :- ann_ctx(s), ann_str(s), parsed(s, "annotation", r)` split
+        // for `ann_ctx` made its keys from `parsed`, while a string is parsed only once it is in `ann_ctx`: no key,
+        // no parse, and the call through `n: "Node"` lost its target. Its reads are built whole.
+        let waits = |rel: &str| {
+            (0..r.lits.len()).filter(|&j| !cut(j)).filter_map(|j| r.plain(j)).any(|b| {
+                let q = r.rel(b);
+                f.produced(q) && f.request_of(q).is_some_and(|req| req == rel || depends(req, rel))
+            })
+        };
+        let waiting: Vec<&str> = (0..r.lits.len()).filter(|&i| cut(i)).filter_map(|i| r.atom(i)).map(|a| r.rel(a)).filter(|rel| waits(rel)).collect();
+        if !waiting.is_empty() {
+            super::super::super::profile::decision("demand (decision 0048)", || format!("not demanded: {} (a reader's keys wait on an answer that waits on it)", waiting.join(", ")));
+            refused.extend(waiting.into_iter().map(str::to_owned));
+            continue;
+        }
         // A reader with nothing but its demanded reads (`p :- !allow_status("plan_helpers", "valid")`), and no demand
         // of its own: no `pre_<i>` binds it, so it would stay as written and demand nothing, while its reads' relations
         // are computed only for their other readers' keys. Its keys would hold no rows, and each negation would hold
