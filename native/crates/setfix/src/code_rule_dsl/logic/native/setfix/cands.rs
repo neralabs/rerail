@@ -352,9 +352,6 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     if let Some(found) = node_bits_test(j, src, keys, tests, asked.key.first().copied().unwrap_or(0), &mut asked.hints[0]) {
         return found;
     }
-    if let Some(found) = read_one(j, src, keys, tests, &asked.key, 0, &mut asked.last.cursor, &mut [0; super::READ]) {
-        return found;
-    }
     // As the join's step: the key columns the probe matched exactly, which its rows need not be checked for.
     let exact: u64 = if keys.is_empty() { 0 } else { exact_cols(j, src, tests.is_empty()) };
     let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
@@ -378,12 +375,12 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     })
 }
 
-/// A step of a view by a key with at most one row (`View::read_one`: a node's own facts by its id), read in place:
-/// whether its row holds the keys and `tests`, its values of view columns `need` in `out`. `None` where the step's
-/// source has no such read (it probes), or `RERAIL_READ_ONE=off` (a measurement aid, the run's setting).
+/// A lookup's one row (`setfix::lookups`: a view by a key with at most one row, a node's own facts by its id), read
+/// in place (`View::read_one`): whether it holds the keys and `tests`, its values of view columns `need` in `out`.
+/// `None` where the source has no such read now (it probes).
 pub(super) fn read_one(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], key: &[i64], need: u64, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, out: &mut [i64; super::READ]) -> Option<bool> {
     let Src::In(rel, ix) = src else { return None };
-    if keys.len() > MAX_KEY || !read_one_on() {
+    if keys.len() > MAX_KEY {
         return None;
     }
     let (rel, _) = j.src_in(rel, ix);
@@ -395,8 +392,41 @@ pub(super) fn read_one(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[
     v.read_one(&cols[..keys.len()], key, tests, need, cursor, out)
 }
 
-fn read_one_on() -> bool {
-    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_READ_ONE").map_or(true, |v| v != "off"))
+/// A lookup asked in a fused chunk (`rowcode::Test::reads`), `slots` the row's values: whether its one row is there
+/// and holds its keys and tests, its values of the columns it binds in `out` (by column). Read in place
+/// (`read_one`); where the source cannot read it so now, probed, its first matching row's.
+pub(super) fn look(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], asked: &mut Asked, out: &mut [i64]) -> bool {
+    let Step::Atom { src, keys, tests, binds, .. } = step else { unreachable!("a lookup is an atom") };
+    let val = |k: Key| match k {
+        Key::Slot(s) => slots[s],
+        Key::Const(c) => c,
+    };
+    asked.key.clear();
+    asked.key.extend(keys.iter().map(|&(_, k)| val(k)));
+    let need = binds.iter().fold(0u64, |m, &(c, _)| m | 1 << c);
+    let mut row = [0i64; super::READ];
+    if let Some(found) = read_one(j, src, keys, tests, &asked.key, need, &mut asked.last.cursor, &mut row) {
+        if found {
+            for &(c, _) in binds {
+                out[c] = row[c];
+            }
+        }
+        return found;
+    }
+    let need = need | keys.iter().fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
+    let (rows, cands) = candidates(j, src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None, true);
+    let mut found = false;
+    rows.each(cands, need, &mut asked.last, |id, r| {
+        if rows.dead(id) || !keys.iter().all(|&(c, k)| r.at(c) == val(k)) || !tests.iter().all(|&(c, c0)| r.at(c) == r.at(c0)) {
+            return false;
+        }
+        for &(c, _) in binds {
+            out[c] = r.at(c);
+        }
+        found = true;
+        true
+    });
+    found
 }
 
 /// Whether a test of one node column reads its node-keyed index: `RERAIL_NODE_BITS=off` (a measurement aid, the

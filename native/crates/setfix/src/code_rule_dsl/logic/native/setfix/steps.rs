@@ -212,6 +212,10 @@ pub struct Plan {
     pub plan_steps: usize,
     #[archive(flat)]
     pub ranges: Vec<Option<Ranged>>,
+    /// Per step, whether it is a lookup (`setfix::lookups`): an atom whose rows are the one row of a key, read in
+    /// place, no join loop. Empty: none.
+    #[archive(flat)]
+    pub lookups: Vec<bool>,
 }
 
 /// An edit an analysis of the plan's view asks for, made on the owned steps before they are encoded again.
@@ -343,6 +347,7 @@ impl Plan {
             from: FlatDecode::decode(&p.from),
             plan_steps: p.plan_steps,
             ranges: p.ranges.to_vec(),
+            lookups: p.lookups.to_vec(),
         }
     }
 }
