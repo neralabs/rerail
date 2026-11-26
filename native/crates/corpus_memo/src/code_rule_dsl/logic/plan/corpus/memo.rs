@@ -288,7 +288,7 @@ pub enum SettingsScope {
 /// path, a variable its head drops) is of every file's rows, and so is a memoised relation still keyed by one.
 pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> BTreeMap<String, SettingsScope> {
     use crate::code_rule_dsl::logic::program_image::TermRef;
-    use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, setting_by_path};
+    use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path};
     /// A relation's reads of the settings: of any file's, of its own file's, and keyed by its columns' paths or folders.
     #[derive(Clone, Default, PartialEq)]
     struct Reach {
@@ -299,7 +299,7 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
     }
     let v = &local.v;
     let base = |rel: &str| -> Option<Reach> {
-        if SETTINGS_BY_FOLDER.contains(&rel) {
+        if setting_by_folder(rel) {
             Some(Reach { folder: [0].into(), ..Reach::default() })
         } else if setting_by_path(rel).is_some() {
             Some(Reach { path: [0].into(), ..Reach::default() })
@@ -406,7 +406,7 @@ pub struct SettingsDigests {
 impl SettingsDigests {
     /// Of `rels`: each setting the run binds, by name.
     pub fn of(rels: &[(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)]) -> Self {
-        use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, setting_by_path};
+        use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path};
         let mut out = SettingsDigests::default();
         let mut hash = Sha256::new();
         hash.update(b"rerail.settings/v1\0");
@@ -426,7 +426,7 @@ impl SettingsDigests {
                     out.hop.insert(k, c);
                 }
                 Some(&mut out.by_path)
-            } else if SETTINGS_BY_FOLDER.contains(name) {
+            } else if setting_by_folder(name) {
                 Some(&mut out.by_folder)
             } else {
                 None
@@ -513,6 +513,11 @@ pub struct StageDigests {
 }
 
 impl StageDigests {
+    /// The exports a placed probe keys (`probes`): a declared one among them is keyed here, not by its declaration.
+    pub fn probed(&self) -> BTreeSet<&str> {
+        self.probes.values().map(|(e, _)| e.as_str()).collect()
+    }
+
     /// Of the phases' rows (`phased`), the probes (`(probe, export, columns)`), the exports read whole, and the
     /// memoised relations' identities' leaves (`Strata`). A probe the file-local part does not output (`local`) keys
     /// nothing: its export is read whole, as is one a memoised relation reaches with no probe of it.
@@ -542,11 +547,21 @@ impl StageDigests {
             h.finalize().into()
         };
         let mut out = StageDigests::default();
-        let mut whole = whole.clone();
-        whole.extend(probes.iter().filter(|(p, _, _)| !local(p)).map(|(_, e, _)| e.clone()));
+        // An export its phase declares a key for (decision 0705, a setting) is keyed here only where a placed probe
+        // reads it, which is finer than its declaration; elsewhere its declaration keys it (`SettingsDigests`), never
+        // every row: an asked phase's own read of its rounds' export has no probe, and read whole, each round missed
+        // every file.
+        let declared = |e: &str| crate::code_rule_dsl::typing::file_local::setting_input(e);
+        let mut whole: BTreeSet<String> = whole.iter().filter(|e| !declared(e)).cloned().collect();
+        whole.extend(probes.iter().filter(|(p, e, _)| !local(p) && !declared(e)).map(|(_, e, _)| e.clone()));
         let probes: Vec<&(String, String, Vec<usize>)> = probes.iter().filter(|(p, _, _)| local(p)).collect();
         for (rel, (_, leaves)) in &strata.by_rel {
-            let reached: Vec<String> = leaves.iter().filter(|l| phased.contains_key(l.as_str()) && crate::code_rule_dsl::logic::plan::phased::is_probed(l)).cloned().collect();
+            let reached: Vec<String> = leaves
+                .iter()
+                .filter(|l| phased.contains_key(l.as_str()) && crate::code_rule_dsl::logic::plan::phased::is_probed(l))
+                .filter(|l| !declared(l) || probes.iter().any(|(_, x, _)| x == *l))
+                .cloned()
+                .collect();
             for e in &reached {
                 if !probes.iter().any(|(_, x, _)| x == e) {
                     whole.insert(e.clone());

@@ -337,9 +337,10 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
 /// A stratum a changed read reaches, none of whose rules sees a row the read's delta gained or lost, is passed on as
 /// kept (decision 0563 B): an edit adds an assignment to a file. `wh` reads `kind` only for `while` statements, which
 /// the edit's nodes are none of (the delta's own rows); `pair` joins `node`'s new rows to `wh`, which holds none of
-/// their nodes (a derived witness, read through its index), and so does `rr_unplaced` (decision 0431 R9), which joins
-/// `node` to the findings `W` (`rr_found_node`). A second edit adds a `while` loop, which both see; a third moves a.py's
-/// loop a line down, which `rr_unplaced` does not read (`Net`). Each run's findings are a full run's.
+/// their nodes (a derived witness, read through its index). `rr_unplaced` (decision 0431 R9) joins the findings `W` to
+/// the nodes no file places, each file's own (`rr_unplaced_node`, decision 0677), which no edit of a placed file
+/// changes: no edit reaches it. A second edit adds a `while` loop, which `pair` sees; a third moves a.py's loop a line
+/// down (`Net`). Each run's findings are a full run's.
 #[test]
 fn a_session_passes_on_a_stratum_its_changed_kinds_do_not_reach() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-unseen");
@@ -383,26 +384,34 @@ W(n) :- pair(n, _).
     let report = run();
     let got = findings();
     assert_eq!(got, full(), "the session's findings are a full run's");
-    assert!(report.cross_unseen.iter().any(|k| k == crate::code_rule_dsl::logic::rr::lower::findings::UNPLACED), "`W` holds none of the edit's nodes: {:?} unseen", report.cross_unseen);
+    unplaced_not_reached(&report);
     std::fs::write(src.join("c.py"), "x = 1\nwhile x:\n    x = 0\n").unwrap();
     run();
     let got = findings();
     assert_eq!(got, full(), "the session's findings are a full run's");
     assert_eq!(got.len(), 3, "c.py's loop pairs too: {got:?}");
     // A line put at a.py's top moves its loop down and keeps its id (`granules`): `node`'s rows past it change only
-    // in their places. `rr_unplaced(c) :- rr_found_node(c, n), node(d, n, _, _, _), !doc(d, _, _)` reads none of
-    // them, so it sees no change, though
-    // `W` holds the loop; `violation` reads its line, which moved, so it is reached. The finding moves with the loop.
+    // in their places. The nodes no file places are none of them, so `rr_unplaced` is not reached, though `W` holds
+    // the loop; `violation` reads its line, which moved, so it is reached. The finding moves with the loop.
     let was = findings();
     std::fs::write(src.join("a.py"), "import os\nwhile a:\n    pass\n").unwrap();
     let report = run();
     let got = findings();
     assert_eq!(got, full(), "the session's findings are a full run's");
     assert_ne!(got, was, "a.py's finding is a line lower");
-    assert!(report.cross_unseen.iter().any(|k| k == crate::code_rule_dsl::logic::rr::lower::findings::UNPLACED), "`rr_unplaced` reads no place of a.py's moved nodes: {:?} unseen", report.cross_unseen);
+    unplaced_not_reached(&report);
     assert!(!report.cross_unseen.iter().any(|k| k == "violation"), "`violation` reads the moved loop's line: {:?} unseen", report.cross_unseen);
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// An edit of a placed file changes none of the nodes no file places (`rr_unplaced_node`, made in the file's part,
+/// decision 0677), so the cross-file part's `rr_unplaced` is not reached by it: not an input that changed, nor a
+/// stratum reached that saw no row.
+fn unplaced_not_reached(report: &super::super::Report) {
+    use crate::code_rule_dsl::logic::rr::lower::findings::{UNPLACED, UNPLACED_NODE};
+    assert!(!report.cross_changed.iter().any(|k| k == UNPLACED_NODE), "no node of a placed file is unplaced: {:?} changed", report.cross_changed);
+    assert!(!report.cross_unseen.iter().any(|k| k == UNPLACED), "`rr_unplaced` is not reached: {:?} unseen", report.cross_unseen);
 }
 
 /// A run admits no guest where none of its documents embeds a program (decision 0563 A) and its file-local part

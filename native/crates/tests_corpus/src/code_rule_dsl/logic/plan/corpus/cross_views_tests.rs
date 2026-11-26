@@ -216,7 +216,10 @@ fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
     profile::set(false);
     // Counted, or a source's own from its structure (`doc`'s from its documents, `within`'s from the tree): no row made.
     assert!(cold_counted(&cold), "a cold run counts them: {cold:?}");
-    assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
+    // The run after it counts none: each it takes is kept. Here it takes none: every file a memo hit, and the cross part
+    // reads no base relation since a pushed lookup is narrowed to its reader's nodes and made in the files (decision
+    // 0677). Before, `doc` was read there, and its statistics taken as kept.
+    assert!(warm.iter().all(|x| x.ends_with(": kept") || x.ends_with(": kept at the held nodes")), "the run after it takes them as kept: {warm:?}");
     // A semi-join's at its held nodes too, by the nodes the changed files' exports held and hold (`held_counted`).
     assert!(all(&edit, "patched by the changed documents", "patched by the changed documents") || inside, "an edit patches them, but inside another run's waves: {edit:?}");
 }
@@ -251,7 +254,10 @@ fn a_session_keeps_its_corpus_batch_and_its_base_statistics() {
     profile::set(false);
     assert!(cold_counted(&cold), "a session's first run counts them: {cold:?}");
     assert_eq!(cold_batch, BTreeSet::from(["4 documents made".to_owned()]), "and makes every document");
-    assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
+    // The run after it counts none: each it takes is kept. Here it takes none: every file a memo hit, and the cross part
+    // reads no base relation since a pushed lookup is narrowed to its reader's nodes and made in the files (decision
+    // 0677). Before, `doc` was read there, and its statistics taken as kept.
+    assert!(warm.iter().all(|x| x.ends_with(": kept") || x.ends_with(": kept at the held nodes")), "the run after it takes them as kept: {warm:?}");
     let made = |batch: &BTreeSet<String>, n: usize| batch.len() == 1 && batch.iter().all(|x| x.starts_with(&format!("{n} documents made")));
     assert!(made(&warm_batch, 0), "and makes none: {warm_batch:?}");
     assert!(all(&edit, "patched by the changed documents", "patched by the changed documents"), "an edit patches them: {edit:?}");

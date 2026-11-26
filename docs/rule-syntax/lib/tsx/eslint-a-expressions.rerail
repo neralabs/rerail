@@ -105,13 +105,15 @@ raw_digits(r, @replace_all(@replace_all(@replace_all(r, "e.*$", ""), "\\.", ""),
 // significant_bits(n, k): in base 2^b each digit is b bits; the first digit may use fewer, and the last
 // non-zero digit may end in zero bits. 0x1F is 5 bits; 0x20000000000001 is 54.
 .decl significant_bits(n: node, k: number)
-significant_bits(n, (strlen(D) - 1) * b + lead - z - b * strlen(Z)) :- raw_number(n, r), radix(r, D, Z, b),
+significant_bits(n, (strlen(D) - 1) * b + lead - z - b * strlen(Z)) :- radix_digits(n, D, Z, b),
     lead_bits(@slice(D, 0, 1), lead), last_zero_bits(@slice(D, strlen(D) - 1, strlen(D)), b, z).
-// radix(r, D, Z, b): D runs from the first non-zero digit to the last, Z is the trailing zeros, b bits per digit.
-.decl radix(r: symbol, digits: symbol, zeros: symbol, b: number)
-radix(r, D, Z, 4) :- raw_number(_, r), match("0x0*(?<D>[1-9a-f][0-9a-f]*[1-9a-f]|[1-9a-f])(?<Z>0*)", r).
-radix(r, D, Z, 1) :- raw_number(_, r), match("0b0*(?<D>1[01]*1|1)(?<Z>0*)", r).
-radix(r, D, Z, 3) :- raw_number(_, r), match("0o?0*(?<D>[1-7][0-7]*[1-7]|[1-7])(?<Z>0*)", r).
+// radix_digits(n, D, Z, b): literal n's digits, D from the first non-zero digit to the last, Z the trailing zeros, b
+// bits per digit. Of the literal's own text (decision 0677: a table of every file's literal texts was the cross
+// part's, and significant_bits joined each literal to it there).
+.decl radix_digits(n: node, digits: symbol, zeros: symbol, b: number)
+radix_digits(n, D, Z, 4) :- raw_number(n, r), match("0x0*(?<D>[1-9a-f][0-9a-f]*[1-9a-f]|[1-9a-f])(?<Z>0*)", r).
+radix_digits(n, D, Z, 1) :- raw_number(n, r), match("0b0*(?<D>1[01]*1|1)(?<Z>0*)", r).
+radix_digits(n, D, Z, 3) :- raw_number(n, r), match("0o?0*(?<D>[1-7][0-7]*[1-7]|[1-7])(?<Z>0*)", r).
 .decl lead_bits(d: symbol, k: number)  // bits of the leading digit: 1 → 1, 2-3 → 2, 4-7 → 3, 8-f → 4
 lead_bits("1", 1). lead_bits("2", 2). lead_bits("3", 2). lead_bits("4", 3). lead_bits("5", 3). lead_bits("6", 3).
 lead_bits("7", 3). lead_bits("8", 4). lead_bits("9", 4). lead_bits("a", 4). lead_bits("b", 4). lead_bits("c", 4).

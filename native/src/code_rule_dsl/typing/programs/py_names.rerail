@@ -61,10 +61,14 @@
 #include "python/django-shared.rerail"
 
 .phase py_names
-.export reads_at, exports, class, defined, public, ancestor, library_ancestor, anc_call, anc_kw, anc_ref, anc_method,
-    member_call, member_kw, member_method, plain_def, dj_group, dj_cond_group, dj_opaque, dj_unmanaged, dj_abstract,
-    dj_manager_method, dj_hook, dj_receiver_fn, dj_deferred_task, dj_app_defers, dj_task_def,
-    dj_view_model, dj_anc_clean_call
+// Keyed in a reader's memo (decision 0705): a file's modules read at its path, naming each module in column 1, and
+// every other export by the module (or `m.x` key) in its column 0.
+.export reads_at by_path 1, exports by_key, class by_key, defined by_key, public by_key, ancestor by_key,
+    library_ancestor by_key, anc_call by_key, anc_kw by_key, anc_ref by_key, anc_method by_key, member_call by_key,
+    member_kw by_key, member_method by_key, plain_def by_key, dj_group by_key, dj_cond_group by_key,
+    dj_opaque by_key, dj_unmanaged by_key, dj_abstract by_key, dj_manager_method by_key, dj_hook by_key,
+    dj_receiver_fn by_key, dj_deferred_task by_key, dj_app_defers by_key, dj_task_def by_key, dj_view_model by_key,
+    dj_anc_clean_call by_key
 
 // imported(p, q): an import statement of the file at path p names q: a module (`import a.b`, `from .m import x`'s
 // "pkg.m"), or a name of one ("pkg.m.x").

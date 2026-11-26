@@ -145,7 +145,7 @@ pub mod code_rule_dsl {
         pub mod rr {
             pub use rerail_rr::code_rule_dsl::logic::rr::lower;
             pub use rerail_rr::code_rule_dsl::logic::rr::lower::{FILE_SYSTEM, WORLD};
-            pub use rerail_rr::code_rule_dsl::logic::rr::lower::findings::UNPLACED;
+            pub use rerail_rr::code_rule_dsl::logic::rr::lower::findings::{UNPLACED, UNPLACED_NODE, UNPLACED_THROUGH};
             pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand;
             pub use rerail_rr::code_rule_dsl::logic::rr::print::{self, print_version};
             pub use rerail_rr_syntax::syntax::quote;

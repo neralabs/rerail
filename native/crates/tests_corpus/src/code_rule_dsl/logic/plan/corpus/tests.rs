@@ -1272,7 +1272,9 @@ fn a_value_cycle_a_library_relation_bounds_is_bounded_in_a_pack() {
 /// A program that states facts of a library relation (`lit_repr_threshold(16384).`, an `extensible` one) asks of the
 /// library as one that derives it does (decision 0089 §3): its readers in the library (`dec_lit_repr`) are copied into
 /// its request, over its facts. Taken as the library's, they read the library's relation without them, and
-/// clippy-decimal-literal-representation found nothing in a pack. PR #508's 363b91c0b (t47).
+/// clippy-decimal-literal-representation found nothing in a pack. PR #508's 363b91c0b (t47). The library's own
+/// `lit_repr_threshold`, which its own rules still read, is stated empty: a run constant, not a relation of no location
+/// that would take every reader through it to the cross-file part (decision 0677, node-trace's `module_global`).
 #[test]
 fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
@@ -1284,6 +1286,7 @@ fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
     assert!(!read.iter().any(|r| r == "dec_lit_repr"), "p0_hit reads the library's dec_lit_repr: {read:?}");
     let threshold = copy.replace("_dec_lit_repr", "_lit_repr_threshold");
     assert_eq!(v.fact_rows(&threshold).len(), 1, "{threshold}: {:?}", v.fact_names().into_iter().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
+    assert!(v.fact_names().iter().any(|k| k == "lit_repr_threshold") && v.fact_rows("lit_repr_threshold").is_empty(), "the shared one stated empty: {:?}", v.fact_names().into_iter().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
 }
 
 /// match-frames' `mf_def` (the innermost def around a node, read off the tree per node) has the rows of the climb it
@@ -3723,9 +3726,9 @@ fn a_finding_no_file_holds_is_refused_naming_its_clause() {
     let text = ".policy \"p\" revision 1\n.language python\n.violation Assert(at: node) \"an assert\"\nAssert(n) :- kind(n, \"assert_statement\").\n";
     let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
     let shown = v.show();
-    // The finding's node by its clause, and the program's one rule refusing those of no file's document.
-    let found = crate::code_rule_dsl::logic::rr::FOUND_NODE;
-    assert!(shown.contains(&format!("{found}(\"Assert\", ")) && shown.contains(&format!("rr_unplaced($rr_clause) :- {found}(")) && shown.contains("!doc("), "the lowering writes R9's rule:\n{shown}");
+    // The nodes of no file's document, and the finding's rule refusing one of them by its clause.
+    let unplaced = crate::code_rule_dsl::logic::rr::UNPLACED_NODE;
+    assert!(shown.contains(&format!("rr_unplaced(\"Assert\") :- ")) && shown.contains(&format!("{unplaced}($rr_n) :- ")) && shown.contains("!doc("), "the lowering writes R9's rules:\n{shown}");
     assert!(v.output_names().iter().any(|o| o == crate::code_rule_dsl::logic::rr::UNPLACED));
     let out = dir.join("out");
     let run = |text: &str, out: &std::path::Path| super::run(text, &dir.join("ws"), None, out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);

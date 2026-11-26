@@ -382,7 +382,7 @@ fn print_written(v: &Version) -> Result<String, Error> {
         if let Some(k) = lattice.and_then(|l| l.widen) {
             write!(out, " widen {k}").expect("a string");
         }
-        for q in qualifiers.get(&name).into_iter().flatten().filter(|q| crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q.as_str())) {
+        for q in qualifiers.get(&name).into_iter().flatten().filter(|q| crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q.as_str()) || *q == "extensible") {
             write!(out, " {q}").expect("a string");
         }
         out.push('\n');

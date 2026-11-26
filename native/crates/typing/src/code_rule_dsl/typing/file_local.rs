@@ -217,30 +217,35 @@ pub fn option_input(rel: &str) -> bool {
 /// `package.json`'s name and string fields, its exports, each tsconfig's base and paths, the package and tsconfig a
 /// file is under) and the run's environment (`env`), the same beside every chunk. A source file's edit changes none of
 /// them. Placeless to the split, as the options are: a per-file rule joins them and stays per-file. Bound whole beside
-/// every chunk, a setting keyed by a file's path (`SETTINGS_BY_PATH`) holds every file's row, so its path places no
-/// document; which rows a file's results can read, and so its memo entry's key, is `corpus::memo::settings_scopes`'.
-/// An earlier phase's export is placeless too (decision 0675, `plan::phased::is_probed`), its readers' memo entries
-/// keyed by the rows of it their probes read (`memo::StageDigests`): `tsx_names`' module resolution among them.
-/// `npm_ignored(path)` is a package's too: the paths npm leaves out of it, by its package.json `files` and its
-/// .npmignore (lib/tsx/node-package.rerail). Read with no place, node's unpublished checks carried the importing
-/// files' nodes into the cross-file part (decision 0677).
+/// every chunk, a setting keyed by a file's path holds every file's row, so its path places no document; which rows a
+/// file's results can read, and so its memo entry's key, is `corpus::memo::settings_scopes`'.
+/// A phase's export declared with a key (`.export target_at by_path 2, exports by_key`, decision 0705) is read so
+/// too: `tsx_names`' module resolution, `py_names`' interfaces, `points_to`'s answers. A source file's edit can change
+/// them, but only the files whose own rows, or their keys' rows, changed read a change: a file's memo entry is keyed
+/// by those rows (`settings_scopes`), as one under a `package.json` is by its package's, and the phase, run again
+/// first, hands on the new rows (0083 §2.3's every-file miss is a read of every file's rows, which this is not).
+///
+/// Which relations are settings, and how each is keyed, is their makers' to declare (`phased::declared_key`): the
+/// library's `core.rerail` for the project's (`.keyed package_for by_path 1, package by_key, env`), each phase for
+/// its exports. No list here names them.
 pub fn setting_input(rel: &str) -> bool {
-    matches!(rel, "package" | "package_field" | "package_export" | "tsconfig" | "tsconfig_path" | "package_for" | "tsconfig_for" | "env" | "npm_ignored")
-        || SETTINGS_BY_PATH.iter().any(|(r, _)| *r == rel)
-        || SETTINGS_BY_FOLDER.contains(&rel)
+    crate::code_rule_dsl::logic::plan::phased::declared_key(rel).is_some()
 }
 
-/// The settings with a row per file (decision 0665), keyed by its path in column 0, and the column that names the
-/// folder (`package_for(path, dir)`, `tsconfig_for(path, dir)`) whose rows it reads. `SETTINGS_BY_FOLDER` holds those
-/// keyed by such a folder, in column 0. A phase's exports (`tsx_names`, `py_names`, `points_to`) are none of these: a
-/// file's entry is keyed by the rows of them its rules read, at its probes (decision 0675).
-pub const SETTINGS_BY_PATH: [(&str, Option<usize>); 2] = [("package_for", Some(1)), ("tsconfig_for", Some(1))];
-pub const SETTINGS_BY_FOLDER: [&str; 4] = ["package", "package_field", "tsconfig", "tsconfig_path"];
-
-/// The folder column of a setting keyed by a file's path (`SETTINGS_BY_PATH`): `None` when the relation is not one,
-/// `Some(None)` when it is and names none.
+/// The folder, target, module or key column of a setting keyed by a file's path in column 0 (declared `by_path C`):
+/// `None` when the relation is not one, `Some(None)` when it is and names none (`points_to`'s answers, decision 0677,
+/// note t55: each row is about a node of the file at its path, and that file reads its own rows alone).
 pub fn setting_by_path(rel: &str) -> Option<Option<usize>> {
-    SETTINGS_BY_PATH.iter().find(|(r, _)| *r == rel).map(|(_, c)| *c)
+    match crate::code_rule_dsl::logic::plan::phased::declared_key(rel) {
+        Some(crate::code_rule_dsl::logic::plan::phased::Keyed::ByPath(c)) => Some(c),
+        _ => None,
+    }
+}
+
+/// Whether `rel` is a setting keyed by a folder, target, module or key in column 0 (declared `by_key`), read where a
+/// row of the file's own path names it.
+pub fn setting_by_folder(rel: &str) -> bool {
+    crate::code_rule_dsl::logic::plan::phased::declared_key(rel) == Some(crate::code_rule_dsl::logic::plan::phased::Keyed::ByKey)
 }
 
 /// The column of a base relation that holds a file's path (decision 0665): `doc`'s. A path names one document (a guest
@@ -306,7 +311,7 @@ pub fn push_equal_columns() -> bool {
 pub use crate::code_rule_dsl::logic::front::document_column;
 
 /// Base relations whose rows a chunk makes for itself and that name no document (decision 0058 §4).
-const CHUNK_VALUES: [&str; 3] = ["parse_of", "unparse_of", "splice_of"];
+pub const CHUNK_VALUES: [&str; 3] = ["parse_of", "unparse_of", "splice_of"];
 
 use std::collections::BTreeMap;
 
