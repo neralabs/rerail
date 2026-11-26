@@ -236,3 +236,16 @@ statements and blocks end.
 49. **A match's subjects and a keyword pattern's union**: `match a, b:` has a `subject` field on each, and a
     keyword pattern's value may be a union, its `as` wrapping the keyword pattern. `match` before its `:`
     (`match: int = 1`) is an annotation's name (`unless before "match" ":"`).
+50. **Octal and binary numbers** (`0o7`, `0b1`) are an `integer`, their letter after their `0`; a digit past
+    the base, or no digit, is an escape.
+51. **A quadruple quote is a triple's own**: the escape for a triple closed by four quotes asks only a
+    triple-quoted string of that quote (`"a''''b"` is text).
+52. **Braces in an f-string's text pair from the first of each run** (`escaped()`, as backslashes do): `{{{a}}}`
+    is an `escape_interpolation`, an interpolation and another; an odd run's last `{` opens the interpolation.
+    The tail's `}` opener is no text's, so a run after it pairs from the next.
+53. **A raw f-string's tails are raw too**: from its opener to the next f-string's that is not raw.
+54. **An interpolation's braces are brackets**: the depth counts its `{` and its tail's `}`, so a line break in
+    it (a triple-quoted f-string's) is a blank. A comment or a brace in it is still an escape.
+55. **A class pattern's trailing comma** keeps `,` and `)` as leaves (`trail_paren`).
+56. What is left of Python's escapes is the regions' walk's: an interpolation's code holds no bracket count (a
+    `:` in its brackets, a brace in it) and no second f-string (a nested one ends the outer one's template).

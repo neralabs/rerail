@@ -138,6 +138,21 @@ fn targets_slices_lambdas_yields_and_concatenations_are_the_lean_parsers() {
 }
 
 #[test]
+fn octal_and_binary_numbers_and_quotes_in_strings_are_the_lean_parsers() {
+    same(&["x = 0o600\n", "x = 0o17\n", "x = 0b101 + 0O7 + 0B1\n", "x = 0o1_7\n", "x = \"a\'\'\'\'b\"\n", "x = \'a\"\"\"\"b\'\n", "x = \"\"\"a\'\'\'\'b\"\"\"\n"]);
+    refused(&["x = 0o8\n", "x = 0b2\n", "x = 0o\n"]);
+}
+
+#[test]
+fn braces_raw_f_strings_and_line_breaks_in_interpolations_are_the_lean_parsers() {
+    same(&["x = f\"{{{a}}}\"\n", "x = f\"a {{{b}}} c\"\n", "x = f\"{{{{a}}}}\"\n", "x = f\"{{a}}\"\n"]);
+    same(&["x = rf\"a\\\\d{b}\\\\w\"\n", "x = fr\'{a}\\\\n\'\n", "x = rf\"{a}\\\\n{b}\\\\t\"\n", "x = rf\"{a}\" + f\"{b}\\\\n\"\n"]);
+    same(&["x = f\"\"\"{\n    a\n}\"\"\"\n", "x = f\"\"\"a{\n  b(\n    c,\n  )\n}d\"\"\"\n", "def f():\n    x = f\"\"\"{\n        a\n    }\"\"\"\n    y\n"]);
+    same(&["match a:\n    case X(b, c,):\n        d\n", "match a:\n    case X(\n        b=1,\n    ):\n        d\n"]);
+    refused(&["x = f\"a}}}\"\n"]);
+}
+
+#[test]
 fn match_statements_are_the_lean_parsers() {
     same(&["match a:\n    case 1:\n        b\n    case _:\n        c\n", "match a.b:\n    case X.Y:\n        b\n    case None:\n        c\n"]);
     same(&["match a:\n    case list() | tuple():\n        b\n    case str(x):\n        c\n", "match a:\n    case [b, *c]:\n        d\n    case {\"k\": v, **r}:\n        e\n"]);
@@ -205,7 +220,7 @@ fn f_strings_are_the_lean_parsers() {
     same(&["def f():\n    return f\"{a}\"\n", "x = {'a': f'{b}'}\n"]);
     // Not read yet: a nested spec, a raw f-string, `=`, a `:` in brackets, braces in code, an
     // empty interpolation or spec, a `}` alone.
-    refused(&["x = f\"{x:}\"\n", "x = f\"{b:{w}}\"\n", "x = rf\"a{b}\"\n", "x = f\"{b=}\"\n", "x = f\"{a[1:2]}\"\n", "x = f\"{ {a} }\"\n", "x = f\"{}\"\n", "x = f\"a}\"\n"]);
+    refused(&["x = f\"{x:}\"\n", "x = f\"{b:{w}}\"\n", "x = f\"{b=}\"\n", "x = f\"{a[1:2]}\"\n", "x = f\"{ {a} }\"\n", "x = f\"{}\"\n", "x = f\"a}\"\n"]);
 }
 
 #[test]
@@ -225,7 +240,7 @@ fn operators_are_the_lean_parsers() {
 
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
-    refused(&["x.5\n", "x\\\n", "\tx\n", "x = 0o17\n", "x = 1L\n", "x = 1e5e3\n", "x = 1__0\n", "x = 0x\n"]);
+    refused(&["x.5\n", "x\\\n", "\tx\n", "x = 1L\n", "x = 1e5e3\n", "x = 1__0\n", "x = 0x\n"]);
     // A template string, a `\N{…}`, a raw string of backslashes only (its end starts at them), an open
     // string, a triple closed by four quotes, a three-letter prefix, `\u` in bytes.
     refused(&["t'{x}'\n", "u\"\\N{DASH}\"\n", "r'\\\\'\n", "r'\\''\n", "'a\n", "'''a''''\n", "rbu'x'\n", "b'\\u1234'\n"]);
@@ -268,7 +283,12 @@ fn corpus() {
                     let tables = Default::default();
                     let w = match ::bitlex::eval::Ev::run(&stmts, text.as_bytes(), &tables) {
                         Ok(out) => match out.errors.first() {
-                            Some(e) => e.split(" (byte").next().unwrap_or(e).to_string(),
+                            Some(e) => {
+                                if std::env::var_os("RERAIL_PYTHON_PATHS").is_some() {
+                                    eprintln!("refused-at {e} :: {}", p.display());
+                                }
+                                e.split(" (byte").next().unwrap_or(e).to_string()
+                            }
                             None => match c.refused_at(&text) {
                                 Some(a) => {
                                     let a = a as usize;
@@ -283,6 +303,10 @@ fn corpus() {
                         },
                         Err(e) => format!("eval: {e:?}"),
                     };
+                    // `RERAIL_PYTHON_PATHS`: each refused file's path beside its reason.
+                    if std::env::var_os("RERAIL_PYTHON_PATHS").is_some() {
+                        eprintln!("refused-path {w} :: {}", p.display());
+                    }
                     *why.entry(w).or_default() += 1;
                 }
             }

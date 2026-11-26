@@ -54,6 +54,10 @@ class us        = '_'
 class sign      = '+' '-'
 class zero      = '0'
 class x_any     = 'x' 'X'
+class o_any     = 'o' 'O'
+class b_any     = 'b' 'B'
+class not_oct   = '8' '9'
+class not_bin   = '2'..'9'
 class exp_l     = 'e' 'E'
 class imag_l    = 'j' 'J'
 class punct     = '(' ')' '[' ']' '{' '}' ',' ':' ';' '.' '=' '+' '-' '*' '/' '%' '&' '|' '^' '~' '<' '>' '@' '!'
@@ -77,7 +81,9 @@ mask dq3_c      = dq3 & ~next(dq, 3) & ~escaped(bslash)
 # A quote after a prefix with an `f`: an f-string's opener.
 mask fq         = quote & (prev(p1 & f_l) | prev(p2 & f_l, 2) | prev(f_l & prev(p2)))
 # An interpolation's `{`: one alone (`{{` is text).
-mask i_open     = lbrace & ~next(lbrace) & ~prev(lbrace)
+# The last of a run of them the pairs from its start leave over (`{{{a` is `{{` and an
+# interpolation's `{`), as the lean lexer reads `{{` from the run's first.
+mask i_open     = lbrace & ~next(lbrace) & ~escaped(lbrace)
 # A raw string closes as any does (a quote no backslash escapes); only its escapes differ, so it
 # is a region of its quotes' kind, and `in_raw` says which strings are raw.
 # An f-string closes at its quote or at an interpolation's `{` (`or i_open`), as Kotlin's at a
@@ -107,7 +113,8 @@ mask f_f        = f_fs1 | f_fd1 | f_fs3 | f_fd3
 mask f_t        = f_ts1 | f_td1 | f_ts3 | f_td3
 mask o_str      = o_s1 | o_d1 | o_s3 | o_d3 | o_f
 mask f_str      = f_s1 | f_d1 | f_s3 | f_d3 | f_f | f_t
-mask in_raw     = fill(raw_q & o_str, ~f_str)
+# A raw f-string's tails too: from its opener to the next f-string's that is not raw.
+mask in_raw     = fill(raw_q & o_str, ~f_str) | f_t & fill(raw_q & o_f, o_f & ~raw_q)
 mask code       = ~hidden & ~o_cmt & ~o_str & ~o_t & ~o_spec
 
 # --- Strings -----------------------------------------------------------------------------------
@@ -119,7 +126,6 @@ mask s_body     = f_str & ~o_str & ~o_t & ~t_more
 mask body       = s_body & ~in_raw
 mask r_body     = s_body & in_raw
 escape "a template string" when o_str & (prev(p1 & t_l) | prev(p2 & t_l, 2) | prev(t_l & prev(p2)))
-escape "a raw f-string" when o_f & raw_q
 escape "a string prefix of three letters or more" when code & pw & next(pfx) & next(pfx, 2) & (next(quote, 3) | next(pfx, 3) & next(quote, 4))
 escape "a string open at the end of the file" when f_str & ~next(~empty)
 escape "a line break in a one-line string that no backslash escapes" when (f_s1 | f_d1 | f_fs1 | f_fd1 | f_ts1 | f_td1) & lf & ~escaped(bslash)
@@ -127,7 +133,7 @@ escape "a carriage return in a string" when f_str & cr
 # A triple opened by four quotes or more (but the empty triple's six), or closed by four or more
 # not after a backslash: the lean lexer closes at the first three.
 escape "a triple-quoted string opened by four quotes or more" when t_open & next(quote, 3) & ~(next(quote, 4) & next(quote, 5) & ~next(quote, 6))
-escape "a triple-quoted string closed by four quotes or more" when (body | r_body) & quote & ~escaped(bslash) & (next(sq3_c) | next(dq3_c))
+escape "a triple-quoted string closed by four quotes or more" when (body | r_body) & ~escaped(bslash) & (f_s3 & sq & next(sq3_c) | f_d3 & dq & next(dq3_c) | (f_fs3 | f_ts3) & sq & next(sq3_c) | (f_fd3 | f_td3) & dq & next(dq3_c))
 # An escape: a backslash no backslash escapes, and what it escapes (lean's `escape`).
 mask esc        = body & bslash & ~escaped(bslash)
 escape "a `\\N{…}` escape" when esc & next(nn_l)
@@ -160,15 +166,17 @@ escape "a backslash" when code & bslash
 mask fb         = f_f & ~o_f & ~t_more | f_t & ~o_t
 mask i_at       = i_open & prev(f_f | f_t)
 mask icode      = fill(prev(i_at), o_t | o_spec)
-# `{{` and `}}` in the text: one brace each (lean's `escape_interpolation`).
-mask esc_ib     = fb & (lbrace & next(lbrace) & ~prev(lbrace & fb) | rbrace & next(rbrace) & ~prev(rbrace & fb))
+# `{{` and `}}` in the text: one brace each (lean's `escape_interpolation`), paired from the
+# first of each run of the text's braces (a tail's `}` opener is no text's).
+mask lb_t       = fb & lbrace
+mask rb_t       = fb & rbrace
+mask esc_ib     = lb_t & next(lb_t) & ~escaped(lb_t) | rb_t & next(rb_t) & ~escaped(rb_t)
 # `!r`, `!s`, `!a` before the interpolation's end or spec.
 mask conv_at    = code & bang & next(conv_l) & next(o_t | o_spec, 2)
 escape "an empty interpolation" when (o_t | o_spec) & prev(i_at)
 escape "an empty format spec" when o_spec & next(rbrace)
-escape "a run of three braces in an f-string" when fb & (lbrace & next(lbrace) & next(lbrace, 2) | rbrace & next(rbrace) & next(rbrace, 2))
 escape "a `}` alone in an f-string's text" when fb & rbrace & ~esc_ib & ~prev(esc_ib)
-escape "a brace, a line break or a comment in an interpolation" when icode & (lbrace | rbrace | lf | hash)
+escape "a brace or a comment in an interpolation" when icode & (lbrace | rbrace | hash)
 escape "a `{` or a line break in a format spec" when f_spec & (lbrace | lf)
 # A `:` in the interpolation's brackets is no spec's (a slice's, a lambda's); one after nested
 # brackets, where one fill can not say whether they are closed, is not read.
@@ -198,19 +206,25 @@ mask e_sign0    = code & sign & prev(exp_l & fill(num0, ~w)) & next(digit)
 mask int_start  = num0 & ~prev(dot) & ~prev(e_sign0)
 mask n_word     = fill(int_start, ~w)
 mask hex_n      = fill(int_start & zero & next(x_any), ~w)
+# An octal or a binary number (`0o7`, `0b1`): its letter after its `0`, then digits of its base.
+mask oct_n      = fill(int_start & zero & next(o_any), ~w)
+mask bin_n      = fill(int_start & zero & next(b_any), ~w)
+mask ob_n       = oct_n | bin_n
 mask dot_start  = code & dot & next(digit) & ~prev(w)
-mask n_dot      = code & dot & prev(n_word & ~hex_n) | dot_start
+mask n_dot      = code & dot & prev(n_word & ~hex_n & ~ob_n) | dot_start
 mask f_word     = fill(prev(n_dot) & w, ~w)
-mask d_word     = n_word & ~hex_n | f_word
+mask d_word     = n_word & ~hex_n & ~ob_n | f_word
 mask n_sign     = code & sign & prev(d_word & exp_l) & next(digit)
 mask e_word     = fill(prev(n_sign) & w, ~w)
 mask number     = n_word | n_dot | f_word | n_sign | e_word
 mask exp_at     = d_word & exp_l & (next(digit) | next(n_sign))
-# The letters a number takes: a hex number's `x` and digits, an exponent's `e`, a last `j`.
-# Octal and binary numbers, `L`, and the rest are not read yet.
-mask n_letter   = hex_n & (hex | x_any & prev(int_start)) | exp_at | imag_l & (d_word | e_word) & ~next(number)
+# The letters a number takes: a hex number's `x` and digits, an octal's `o`, a binary's `b`,
+# an exponent's `e`, a last `j`. `L` and the rest are not read yet.
+mask n_letter   = hex_n & (hex | x_any & prev(int_start)) | ob_n & (o_any | b_any) & prev(int_start) | exp_at | imag_l & (d_word | e_word) & ~next(number)
 escape "a number with a letter it does not take" when number & letter & ~n_letter
-escape "a number with an `_` not between digits" when number & us & ~(prev(digit) & next(digit) & ~hex_n | hex_n & prev(hex | x_any) & next(hex))
+escape "a number with an `_` not between digits" when number & us & ~(prev(digit) & next(digit) & ~hex_n & ~ob_n | hex_n & prev(hex | x_any) & next(hex) | ob_n & prev(digit | o_any | b_any) & next(digit))
+escape "an octal or a binary number with a digit past its base" when oct_n & not_oct | bin_n & not_bin
+escape "an octal or a binary number with no digits" when ob_n & (o_any | b_any) & prev(int_start) & ~next(digit | us)
 escape "a number with more after its exponent" when (exp_at | n_dot) & fill(prev(exp_at) & number, ~number)
 escape "a hex number with no digits" when hex_n & x_any & prev(int_start) & ~next(hex | us)
 
@@ -284,8 +298,9 @@ error "a byte no token takes" by tokens when code & ~blank & ~lf & ~word & ~punc
 # --- Layout ------------------------------------------------------------------------------------
 
 # The bracket depth over code: a line break inside brackets is a blank.
-scan depth      = count(code & opens, code & closes) max 31
-mask in_br      = depth.frame(code & opens)
+# An interpolation's `{` and its tail's `}` are brackets too: a line break in it is a blank.
+scan depth      = count(code & opens | i_at, code & closes | o_t) max 31
+mask in_br      = depth.frame(code & opens | i_at)
 # A line break of code outside brackets, and the file's end: a statement's end.
 mark newline    = lf & code & ~in_br, end, settles, ends
 # The next line deeper than the level's indent: a block's start, after its header's `:`. Less
@@ -358,7 +373,7 @@ tree python {
   choice case_item      = case_pattern [wrap case_pattern _ wrap as_pattern _ 'as' identifier]
   node case_pattern     = '_' | kw_pat keyword_pattern | case_simple [wrap union_pattern _ ('|' case_simple)+]
   node keyword_pattern  = identifier '=' case_simple [wrap union_pattern _ ('|' case_simple)+]
-  choice case_simple    = dotted_name [wrap class_pattern _ '(' [case_item (',' case_item)*] ')']
+  choice case_simple    = dotted_name [wrap class_pattern _ '(' (')' | case_item (',' case_item)* (trail_paren | ')'))]
                         | '-' (real integer as float | integer) | real integer as float | integer
                         | string [wrap concatenated_string _ string+]
                         | 'None' as none | 'True' as true | 'False' as false
