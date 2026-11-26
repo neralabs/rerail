@@ -409,7 +409,7 @@ describe("record writes while another process holds the write lock", () => {
   // A holder of a moment in another process gives the lock back between two calls of one turn on this thread, before
   // the lock wait's answer can arrive here: the reads below come in that gap. Before, the claim found no session row
   // and the session failed to open, the verdict found no audit and called the scan unrecorded, and the work-link answer
-  // left out the link it had just been asked to add.
+  // left out the link it had just been asked to add. The claim, a record write itself, now waits behind the row.
   it("are made before a session's owner claim reads the session's row, when the holder gave the lock back", async () => {
     const { path, sessions } = await stores();
     const controls = new SqliteAuditControlStore(path);
@@ -419,6 +419,7 @@ describe("record writes while another process holds the write lock", () => {
     holder.exec("COMMIT");
 
     const claim = controls.registerOwner(session.sessionId, "background");
+    await settled(path);
 
     expect(controls.holdsOwner(session.sessionId, claim)).toBe(true);
     expect(rows(path, "SELECT session_id, ended_at FROM sessions")).toEqual([[session.sessionId, null]]);
@@ -463,23 +464,54 @@ describe("record writes while another process holds the write lock", () => {
     expect(sessions.workLinks(session.sessionId).map(link => link.reference)).toEqual(["ABC-1"]);
   }, 30_000);
 
-  // Main's open of a session failed with the lock's own error when its row's write waited out the bound, which the
-  // engine service answers by trying the open again once the lock is given back.
-  it("fail the session's owner claim as a held lock does while its row still waits past the bound, claiming nothing", async () => {
+  // A session that starts while another process holds the lock, as `rerail scrub` or `rerail reset` does for seconds:
+  // its row waits for the lock. Before, its owner claim made the row on this thread first, waiting up to 5 s, then
+  // failed with the lock's error, so the session opened without its start note.
+  it("keep a session's owner claim behind its row while the lock is held, without waiting, and make both once it is given back", async () => {
     const { path, sessions } = await stores();
     const controls = new SqliteAuditControlStore(path);
     closers.push(() => controls.close());
     const holder = holderHere(path);
-    const clock = boundClock();
     sessions.openSession(session, 1_000);
-    clock.pastTheBound();
 
-    expect(thrown(() => controls.registerOwner(session.sessionId, "background"))).toMatchObject({ code: "SQLITE_BUSY" });
+    let claim: PolicyOwnerClaim | undefined;
+    expect(msOf(() => { claim = controls.registerOwner(session.sessionId, "background"); })).toBeLessThan(1_000);
 
     holder.exec("COMMIT");
     await settled(path);
-    expect(rows(path, "SELECT session_id FROM sessions")).toEqual([[session.sessionId]]);
-    expect(rows(path, "SELECT session_id FROM policy_session_owners")).toEqual([]);
+    expect(controls.holdsOwner(session.sessionId, claim!)).toBe(true);
+    expect(rows(path, "SELECT session_id, ended_at FROM sessions")).toEqual([[session.sessionId, null]]);
+  }, 30_000);
+
+  // A session that ends while its claim still waits: made first, the release found no row of the claim, and the claim,
+  // made after it, left the session held by a runtime that had let it go.
+  it("make a session's release behind its claim, when both wait for the lock", async () => {
+    const { path, sessions } = await stores();
+    const controls = new SqliteAuditControlStore(path);
+    closers.push(() => controls.close());
+    const holder = holderHere(path);
+    sessions.openSession(session, 1_000);
+
+    const claim = controls.registerOwner(session.sessionId, "background");
+    expect(msOf(() => controls.releaseOwner(session.sessionId, claim))).toBeLessThan(1_000);
+
+    holder.exec("COMMIT");
+    await settled(path);
+    expect(rows(path, "SELECT session_id, active FROM policy_session_owners")).toEqual([[session.sessionId, 0]]);
+  }, 30_000);
+
+  // A session's open reads its last recorded event to find what a power cut took. Before, that read made the session's
+  // waiting row on this thread first, waiting up to 5 s for the lock while every other session's hooks waited too.
+  it("leave a session's open reading its last recorded event at once while its row waits for the lock", async () => {
+    const { path, sessions } = await stores();
+    const holder = holderHere(path);
+    sessions.openSession(session, 1_000);
+
+    let recorded: string | undefined = "unread";
+    expect(msOf(() => { recorded = sessions.lastRecordedEvent(session.sessionId, new Set(["call"])); })).toBeLessThan(1_000);
+
+    expect(recorded).toBeUndefined();
+    holder.exec("COMMIT");
   }, 30_000);
 
   // The lock wait learns that the lock is free by taking it and giving it back on a connection of its thread's own.
@@ -500,6 +532,7 @@ describe("record writes while another process holds the write lock", () => {
 
     const claimed = thrown(() => controls.registerOwner(session.sessionId, "background"));
     lockWaitTry.release();
+    await settled(path);
 
     expect(claimed).toBeUndefined();
     expect(rows(path, "SELECT session_id FROM policy_session_owners")).toEqual([[session.sessionId]]);
@@ -658,16 +691,22 @@ describe("record writes while another process holds the write lock", () => {
   }, 30_000);
 
   // A session reopened while its earlier rows still waited read an older event as the last recorded, and its open
-  // counted the rows after it as lost.
-  it("are made before the last recorded event is read, when the holder gave the lock back", async () => {
+  // counted the rows after it as lost. The read answers what is on disk without waiting for them; the record of lost
+  // events, made behind them, counts again.
+  it("count no event lost at a session's reopen while its earlier rows wait, when the holder gave the lock back", async () => {
+    const [one, two, three] = [callEvent("one", 1), callEvent("two", 2), callEvent("three", 3)];
     const { path, sessions } = await stores();
     sessions.openSession(session, 1_000);
-    sessions.append(callEvent("one", 1).event, session);
+    sessions.append(one.event, session);
     const holder = holderHere(path);
-    sessions.append(callEvent("two", 2).event, session);
-    sessions.append(callEvent("three", 3).event, session);
+    sessions.append(two.event, session);
+    sessions.append(three.event, session);
     holder.exec("COMMIT");
 
+    reopen(sessions, [one, two, three]);
+    await settled(path);
+
+    expect(lostRecords(path)).toEqual([]);
     expect(sessions.lastRecordedEvent(session.sessionId, new Set(["call"]))).toBe("three");
   }, 30_000);
 
