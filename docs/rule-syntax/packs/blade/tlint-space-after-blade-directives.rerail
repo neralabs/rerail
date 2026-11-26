@@ -13,7 +13,8 @@
 // The control directives are @if, @elseif, @unless, @for, @foreach, @forelse and @while; one followed by a tab
 // or a space is fine, anything else right after the name is reported, as the policy's `($|[^ \t\w])` says: `(`,
 // or nothing (`@if` whose arguments Blade cannot see, on the next line). Directives inside an attribute value
-// count too: <div class="@if($a) on @endif">.
+// count too: <div class="@if($a) on @endif">. So does a directive Blade leaves unpaired, as tlint reads lines, not
+// structures: `Lead @foreach($xs) Trail` with no @endforeach is reported (the JSON, reading compiled loops, is not).
 .violation space_after(at: node) code "SpaceAfterBladeDirectives"
     "Put a space between blade control structure names and the opening paren: `@if(` -> `@if (`"
 space_after(d) :- blade_directive(d, x), control(x), text(d, t), !match("@[A-Za-z]+[ \\t][\\s\\S]*", t).
