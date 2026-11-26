@@ -6,21 +6,68 @@
 
 // Ruff RUF060: `x in c` or `x not in c`, one operator, where c is empty: an empty display or string, or a
 // call of list, tuple, set, frozenset, dict, str, bytes or bytearray with no arguments, or with one that is
-// itself empty.
+// itself empty. In string annotations too (`x: "1 in []"`, `cast("1 in ()", y)`): Ruff parses and checks them.
 //   1 in []                   ← RUF060
 //   1 in set(set())           ← RUF060
 //   1 in set(set([1]))        not reported
-#include "python/ruff.rerail"
+// An f-string is empty as Ruff's is_empty_f_string sees it: each of its literal parts empty, and each field
+// without conversion, spec or `=` holding an empty str, where a nested implicit concatenation with an f-string in
+// it counts its f-string parts only (Ruff's FStringValue::elements skips the plain literals):
+//   1 in f"{''}"              ← RUF060
+//   1 in f"{'x' f''}"         ← RUF060: Ruff reads only the `f''`
+//   1 in rf"\<newline>"       not reported: a raw string keeps the backslash and the newline
+#include "python/python-04.rerail"
 
 .violation RUF060(at: node, msg: symbol) code "RUF060" "{msg}"
     suppress ruff "RUF060"
 RUF060(c, "`in` on an empty collection is always False, except an empty string in an empty str or bytes; replace it with `False` and simplify, or fill the collection if items were meant.") :-
-    cmp(c, "in", _, r), empty_coll(r).
+    in_empty(c, "in").
 RUF060(c, "`not in` on an empty collection is always True, except an empty string against an empty str or bytes; replace it with `True` and simplify, or fill the collection if items were meant.") :-
-    cmp(c, "not in", _, r), empty_coll(r).
+    in_empty(c, "not in").
+.decl in_empty(c: node, o: symbol)
+in_empty(c, o) :- cmp(c, o, _, r), (o = "in" ; o = "not in"), empty_coll(r).
+// In the tree of a string Ruff reads as a type, nested strings too (ann_tree, python/python-04).
+in_empty(c, o) :- in_ann_tree(c), cmp(c, o, _, r), (o = "in" ; o = "not in"), empty_coll(r).
 
 .decl empty_coll(e: node)
-empty_coll(e) :- empty_literal(e, _).
-empty_coll(e) :- unparen(e, m), call_q(m, "builtins.bytearray"), call_nargs(m, 0), call_nkwargs(m, 0).
-empty_coll(e) :- unparen(e, m), call_q(m, q), (empty_ctor(q, _) ; q = "builtins.bytearray"), call_only(m, a),
+empty_coll(e) :- empty_literal(e, _), unparen(e, m), !str_node(m), !kind(m, "call").
+empty_coll(e) :- unparen(e, m), str_node(m), !tstring_lit(m), !str_nonempty(m).
+empty_coll(e) :- unparen(e, m), ann_call_q(m, q), (empty_ctor(q, _) ; q = "builtins.bytearray"), no_args(m).
+empty_coll(e) :- unparen(e, m), ann_call_q(m, q), (empty_ctor(q, _) ; q = "builtins.bytearray"), only_arg(m, a),
     empty_coll(a).
+// no_args(m), only_arg(m, a): call m has no arguments, or the one positional a; in a string annotation's tree
+// through python/python-04's ann_ helpers, as call_nargs and call_only see no arguments there.
+.decl no_args(m: node)
+no_args(m) :- call_nargs(m, 0), call_nkwargs(m, 0), !in_ann_tree(m).
+no_args(m) :- ann_nitems(m, 0).
+.decl only_arg(m: node, a: node)
+only_arg(m, a) :- call_only(m, a), !in_ann_tree(m).
+only_arg(m, a) :- ann_nitems(m, 1), ann_arg(m, 0, a).
+
+// str_nonempty(m): str, bytes or f-string literal m (adjacent ones too) has a character: one of its pieces does.
+.decl str_nonempty(m: node)
+str_nonempty(m) :- str_piece(m, s), piece_nonempty(s).
+.decl str_piece(m: node, s: node)
+str_piece(m, m) :- kind(m, "string").
+str_piece(m, s) :- kind(m, "concatenated_string"), child(m, s, _), kind(s, "string").
+// piece_nonempty(s): one literal s has a character: text (a `\` + newline in a non-raw literal is none), a field
+// with a conversion, spec or `=`, or a field whose value is not empty to Ruff's inner test (field_nonempty).
+.decl piece_nonempty(s: node)
+piece_nonempty(s) :- kind(s, "string"), child(s, c, _), kind(c, k), k != "string_start", k != "string_end",
+    k != "string_content", k != "interpolation".
+piece_nonempty(s) :- kind(s, "string"), child(s, c, _), kind(c, "string_end"), text(c, t), !match("[\"']{1,3}", t).
+piece_nonempty(s) :- kind(s, "string"), child(s, c, _), kind(c, "string_content"), strprefix(s, p),
+    (contains("r", p) ; text(c, t), !match("(\\\\\\r?\\n)+", t)).
+piece_nonempty(s) :- kind(s, "string"), child(s, c, _), kind(c, "interpolation"),
+    (field(c, "type_conversion", _) ; field(c, "format_specifier", _) ; op(c, "=")).
+piece_nonempty(s) :- kind(s, "string"), child(s, c, _), kind(c, "interpolation"), field(c, "expression", x),
+    unparen(x, y), field_nonempty(y).
+// field_nonempty(y): Ruff's inner test of a field's value fails: y is no str literal, is bytes or a t-string, or
+// has a character, counting only its f-string pieces when it has one.
+.decl field_nonempty(y: node)
+field_nonempty(y) :- kind(i, "interpolation"), field(i, "expression", x), unparen(x, y), !str_node(y).
+field_nonempty(y) :- str_node(y), (bytes_lit(y) ; tstring_lit(y)).
+field_nonempty(y) :- str_node(y), !has_fpiece(y), str_nonempty(y).
+field_nonempty(y) :- str_node(y), str_piece(y, s), fstring(s), piece_nonempty(s).
+.decl has_fpiece(y: node)
+has_fpiece(y) :- str_piece(y, s), fstring(s).

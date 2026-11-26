@@ -18,8 +18,10 @@ RUF058(c, "Replace `starmap(f, zip(a, b))` with `map(f, a, b)` (`map(f, [])` for
 RUF058(c, "Replace `starmap(f, zip(a, b, strict=...))` with `map(f, a, b, strict=...)`; `map` accepts `strict=` on Python 3.14+. Keep it if `map` is shadowed in this scope.") :-
     starmap_zip(c, z), call_nkwargs(z, 1), call_kwarg(z, "strict", _), targets(14).
 // starmap_zip(c, z): starmap c has two positional arguments (the first may be `*fs`), the second the zip call
-// z, whose positional arguments are not all `*xs` (none at all is fine).
+// z, whose positional arguments are not all `*xs` (none at all is fine, and a lone generator, `zip(x for x in y)`,
+// is one).
 .decl starmap_zip(c: node, z: node)
 starmap_zip(c, z) :- call_q(c, "itertools.starmap"), call_nargs(c, 2), call_nkwargs(c, 0), call_item(c, a, j),
     pos_item(a), count : { call_item(c, b, i), i < j, pos_item(b) } = 1, unparen(a, z), call_q(z, "builtins.zip"),
-    (call_nargs(z, 0) ; call_item(z, p, _), pos_item(p), !kind(p, "list_splat")).
+    (call_nargs(z, 0) ; call_item(z, p, _), pos_item(p), !kind(p, "list_splat") ;
+     field(z, "arguments", g), kind(g, "generator_expression")).
