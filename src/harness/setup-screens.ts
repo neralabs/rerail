@@ -459,7 +459,9 @@ export function readRepoQuestion(input: ReadRepoInput): QuestionForm {
       "  ✓ It also reads the ESLint, oxlint or Ruff config at the repo’s root:",
       "    rules that config turns off start off in Rerail too.",
       "  ✓ Nothing is installed or turned on until you say yes.",
-      "  ✓ Consider keeping Rerail on and turning off linter rules it duplicates.",
+      "",
+      "Tip: Rerail can enforce your linter rules as your agent writes. We",
+      "recommend turning those rules off in your linter to avoid duplicate checks.",
     ],
     choices: [
       { answer: "yes", label: `Yes, scan ${repo}`, args: [SETUP_FLAGS.answer, "yes", ...repoFlag] },

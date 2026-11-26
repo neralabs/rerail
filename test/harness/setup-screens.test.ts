@@ -241,7 +241,9 @@ describe("T3 / C3 ask before reading", () => {
     ].join("\n"));
     expect(text).toContain([
       "  ✓ Nothing is installed or turned on until you say yes.",
-      "  ✓ Consider keeping Rerail on and turning off linter rules it duplicates.",
+      "",
+      "Tip: Rerail can enforce your linter rules as your agent writes. We",
+      "recommend turning those rules off in your linter to avoid duplicate checks.",
     ].join("\n"));
     expect(text).toContain("1. Yes, scan acme-web");
     expect(text).toMatch(/2\. Scan a different repo… +e\.g\. ~\/code\/landing-page/);
