@@ -111,10 +111,10 @@ jobs:
     # `reviewer_ref` is where the called workflow loads the reviewer's own code from, so it is the same commit:
     # Dependabot moves `uses:` alone, and `npm run check:pins` fails until `npm run deps:sync` brings `reviewer_ref`
     # along (scripts/deps/sync-pins.mjs).
-    uses: neralabs/reviewer/.github/workflows/review.yml@6b393dd3c809fd695a034d96067c471b17dca79f # v0.1.3
+    uses: neralabs/reviewer/.github/workflows/review.yml@969f6c29ba6a1feb0b55fb07b46e1b8e552d7d9c # v0.1.4
     with:
       app_client_id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
-      reviewer_ref: 6b393dd3c809fd695a034d96067c471b17dca79f
+      reviewer_ref: 969f6c29ba6a1feb0b55fb07b46e1b8e552d7d9c
       allow_approve: true
       handle: "@neralabs-reviewer"
       bot_login: neralabs-reviewer[bot]
@@ -130,13 +130,11 @@ jobs:
       # approved there. It marks each violation new or existing. A separate rules pass recommends which new
       # violations to post; a new violation of a steer rule can be a blocker that names its rule. The review itself
       # never sees the scan. The scan result is sent to the Rerail remote (send_results), in a job that holds only
-      # the remote's URL and token. To turn it off, remove these three inputs and the two RESULTS_SINK secrets.
-      # rerail_package: the published Rerail to scan with. packs/rerail's rules use `dimensions`, which 0.2.2 is the
-      # first to read; an older Rerail leaves the pack out, and approving it fails. This repo's packs can run ahead of
-      # the release the reviewer pins by default, so this input stays: move it to the release main's packs need. No
-      # rerail_packs or rerail_repo_packs: either would replace the file's packs.
+      # the remote's URL and token. To turn it off, remove these two inputs and the two RESULTS_SINK secrets.
+      # The scan runs the Rerail release the reviewer pins (0.2.2 at v0.1.4). packs/rerail's rules use `dimensions`,
+      # which 0.2.2 is the first to read; when main's packs need a newer Rerail, move `uses:` to a reviewer release
+      # that pins it. No rerail_packs or rerail_repo_packs: either would replace the file's packs.
       modules: rerail
-      rerail_package: "@neralabs/rerail@0.2.2"
       send_results: true
     # Named, not `secrets: inherit`: the reviewer gets these and nothing else this repo can see.
     secrets:
