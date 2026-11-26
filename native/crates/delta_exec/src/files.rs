@@ -30,7 +30,7 @@ use crate::answer::{AnswerOps, Ask, READ_ANYWAY, answer_load, code, parse_source
 use crate::op::Registry;
 use crate::trace::{Trace, TraceOps};
 use rerail_blocks::bistate::{ColumnIndex, Read};
-use rerail_blocks::layer::{ColType, Shape};
+use rerail_blocks::layer::{ColType, Runs, Shape};
 use rerail_blocks::block::kind;
 use rerail_observe::content_store::observe;
 use rerail_store::content_store::ContentStore;
@@ -230,29 +230,99 @@ pub enum AnswerKind {
     SubRun,
 }
 
+/// An answer (P§12 item 7): a row, a blob, or a miss (a world reader's key with nothing there).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Answer {
+    Row(Vec<i64>),
+    Blob(BlobId),
+    Miss,
+}
+
 /// An answerer (P§12 item 7): maps a request's key to its answer, a row or a blob. Its kind says what can change the
 /// answer between runs.
 pub trait Answerer {
     const KIND: AnswerKind;
+    /// One key. A world reader writes every leaf it read, misses too (D3), into `leaves`, the run's layer of the
+    /// world's leaves; a pure answerer reads no leaf.
+    fn answer(&mut self, key: &[i64], leaves: &mut LeavesW) -> Result<Answer, String>;
 }
 
-/// The load answerer (B§7's `load`: path → bytes): a world reader.
-pub struct Load;
-impl Answerer for Load {
+/// What an answerer reaches: the world, the registry, the trace's operations, the directory and the blobs.
+pub struct Reach<'a> {
+    pub world: &'a mut World,
+    pub reg: &'a Registry,
+    pub ops: &'a TraceOps,
+    pub dir: &'a mut Directory,
+    pub blobs: &'a mut BlobRows,
+}
+
+/// The load answerer (B§7's `load`: path → bytes), a world reader: key `[d]`, a document `named` names (its path, its
+/// module, the blobs it was last answered with); its answer, its source's blob, read through Δanswer's operations
+/// (`World::answer`), or a miss. Its leaf is written, misses too.
+pub struct Load<'a> {
+    pub at: Reach<'a>,
+    pub named: &'a [Load1],
+}
+
+impl Answerer for Load<'_> {
     const KIND: AnswerKind = AnswerKind::World;
+    fn answer(&mut self, key: &[i64], leaves: &mut LeavesW) -> Result<Answer, String> {
+        let a = self.named.iter().find(|a| a.d == key[0]).ok_or_else(|| format!("a load of document {}, which no request names", key[0]))?;
+        let Reach { world, reg, ops, dir, blobs } = &mut self.at;
+        match world.answer(reg, ops, dir, blobs, std::slice::from_ref(a), leaves)?.pop().expect("one answer")? {
+            Some(doc) => Ok(Answer::Blob(doc.after.source)),
+            None => Ok(Answer::Miss),
+        }
+    }
 }
 
-/// The parse answerer ((content, grammar) → tape): pure.
-pub struct Parse;
-impl Answerer for Parse {
-    const KIND: AnswerKind = AnswerKind::Pure;
+/// The parse answerer ((content, grammar) → tape), pure: key a source's four words; its answer, the tape's blob, from
+/// a home that holds it (the residency, else the store's objects), else the source parsed where it lies (the `parse`
+/// operation) and put in the store's objects; a miss when no home holds the source either.
+pub struct Parse<'a> {
+    pub at: Reach<'a>,
 }
 
-/// The intern answerer ((tape, path, module) → symbols): pure, over the store's atoms, which never give an id out
-/// again.
-pub struct Intern;
-impl Answerer for Intern {
+impl Answerer for Parse<'_> {
     const KIND: AnswerKind = AnswerKind::Pure;
+    fn answer(&mut self, key: &[i64], _: &mut LeavesW) -> Result<Answer, String> {
+        let Reach { world, reg, ops, dir, blobs } = &mut self.at;
+        let g = BlobId::of_words(&key[..4]);
+        if let Some(ids) = world.by_content(reg, ops, dir, blobs, g)? {
+            return Ok(Answer::Blob(ids.tape));
+        }
+        let Some(src) = blobs.get(dir, &g)? else { return Ok(Answer::Miss) };
+        let tape = parse_sources(reg, &world.ops, dir, src.block, &[(src.at, src.len)])?.pop().expect("one");
+        dir.seal(src.block)?;
+        world.asked.parses += 1;
+        Ok(Answer::Blob(world.parsed(reg, ops, dir, blobs, src.block, g, src, tape)?.tape))
+    }
+}
+
+/// The intern answerer ((tape, path, module) → symbols), pure over the store's atoms, which never give an id out again:
+/// key `[d, source's four words, tape's four words]`, a document `named` names; its answer, the symbols' blob.
+pub struct Intern<'a> {
+    pub at: Reach<'a>,
+    pub iops: &'a crate::intern::InternOps,
+    pub atoms: crate::sym::Atoms,
+    pub named: &'a [Load1],
+}
+
+impl Answerer for Intern<'_> {
+    const KIND: AnswerKind = AnswerKind::Pure;
+    fn answer(&mut self, key: &[i64], _: &mut LeavesW) -> Result<Answer, String> {
+        let a = self.named.iter().find(|a| a.d == key[0]).ok_or_else(|| format!("an intern of document {}, which no request names", key[0]))?;
+        let Reach { world, reg, ops, dir, blobs } = &mut self.at;
+        let doc = Doc { path: a.path.clone(), module: a.module.clone(), before: a.before, after: DocIds { source: BlobId::of_words(&key[1..5]), tape: BlobId::of_words(&key[5..9]) } };
+        Ok(Answer::Blob(world.intern_answer(reg, ops, self.iops, dir, blobs, self.atoms, &doc)?))
+    }
+}
+
+/// A run's layer of the world's leaves (P§12's `leaves: &mut LayerW`): each leaf a world reader read, `(d, digest,
+/// found)`, against the row the committed trace holds for its key, pushed as its change into a δ runs block, and
+/// committed as the run's layer (`World::commit_leaves`). A key's leaf is written once a run (its answer is).
+pub struct LeavesW {
+    runs: BlockId,
 }
 
 /// The leaves' rows (P§11.4: "leaves read: path, digest, hit or miss", the world's before): `(d, digest's four words,
@@ -385,18 +455,53 @@ impl World {
     }
 
     /// Leaf `d`'s row as read now: `digest` (`None`: a miss), written when it changed (D3: every leaf, misses too).
-    fn leaf(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, d: i64, digest: Option<[u8; 32]>) -> Result<(), String> {
+    fn leaf(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, leaves: &mut LeavesW, d: i64, digest: Option<[u8; 32]>) -> Result<(), String> {
         let w = digest.map_or([0; 4], |g| BlobId(g).words());
         let row = vec![d, w[0], w[1], w[2], w[3], i64::from(digest.is_some())];
-        put_row(reg, ops, dir, &mut self.leaves, &[d], Some(row))
+        let old = probe(dir, &self.leaves, &[d])?;
+        if old.as_ref() == Some(&row) {
+            return Ok(());
+        }
+        let (len, cap) = {
+            let l = dir.read("the run's leaves", &[leaves.runs])?;
+            let r = Runs::new(l.block(0));
+            (r.len(), r.head.cap as usize)
+        };
+        // Past its room: the layer so far committed, and the run's next leaves in a runs block twice the size.
+        if len + 2 > cap {
+            self.commit_leaves(reg, ops, dir, LeavesW { runs: leaves.runs })?;
+            leaves.runs = self.leaves.open(dir, 2 * cap);
+        }
+        let b = dir.block(leaves.runs).ok_or("the run's leaves, held by nothing")?;
+        let pin = rerail_blocks::region::pin_block(&b, "the run's leaves", true)?;
+        let w = rerail_blocks::layer::RunsW::new(&pin);
+        for (r, diff) in old.map(|r| (r, -1)).into_iter().chain([(row, 1)]) {
+            w.push(&r, diff).ok_or("the run's leaves, full")?;
+        }
+        Ok(())
     }
 
-    /// The load answer (`Load`, a world reader) for document `d` at `path`, `before` the blobs it was last answered
-    /// with (`answer`, for one).
+    /// A run's layer of its leaves, open (`LeavesW`).
+    pub fn leaves_w(&self, dir: &mut Directory) -> LeavesW {
+        LeavesW { runs: self.leaves.open(dir, 64) }
+    }
+
+    /// The run's leaves committed as a layer of the leaves trace (none when it read nothing new).
+    pub fn commit_leaves(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, leaves: LeavesW) -> Result<(), String> {
+        let n = Runs::new(dir.read("the run's leaves", &[leaves.runs])?.block(0)).len();
+        if n == 0 {
+            dir.release(leaves.runs);
+            return Ok(());
+        }
+        self.leaves.commit(reg, ops, dir, leaves.runs, crate::op::Tiling::WHOLE).map(drop)
+    }
+
+    /// Document `d` at `path` through Δanswer, `before` the blobs it was last answered with (`answer`, for one), its
+    /// leaf written in `leaves`: a miss refused, naming the path.
     #[allow(clippy::too_many_arguments)]
-    pub fn load(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, blobs: &mut BlobRows, d: i64, path: &str, module: &str, before: Option<DocIds>) -> Result<Doc, String> {
+    pub fn load(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, blobs: &mut BlobRows, leaves: &mut LeavesW, d: i64, path: &str, module: &str, before: Option<DocIds>) -> Result<Doc, String> {
         let ask = Load1 { d, path: path.to_string(), module: module.to_string(), before };
-        self.answer(reg, ops, dir, blobs, std::slice::from_ref(&ask))?.pop().expect("one answer")
+        self.answer(reg, ops, dir, blobs, std::slice::from_ref(&ask), leaves)?.pop().expect("one answer")?.ok_or_else(|| format!("{path}: not a readable file"))
     }
 
     /// The load answers for `asks` (Δanswer, *Operations* §10: `answer_load`, then `parse` for the contents no home
@@ -404,9 +509,9 @@ impl World {
     /// identity while its digest is unchanged. A file the observer answers by its stat is not read; one whose content
     /// a home holds (the residency, else the store's objects) is not parsed (a hit skips the parse, §6.2); only a new
     /// content is parsed, its source and tape then put in the store's objects. An ask's refusal names its path.
-    pub fn answer(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, blobs: &mut BlobRows, asks: &[Load1]) -> Result<Vec<Result<Doc, String>>, String> {
-        let doc = |a: &Load1, after| Doc { path: a.path.clone(), module: a.module.clone(), before: a.before, after };
-        let mut out: Vec<Option<Result<Doc, String>>> = vec![None; asks.len()];
+    pub fn answer(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, blobs: &mut BlobRows, asks: &[Load1], leaves: &mut LeavesW) -> Result<Vec<Result<Option<Doc>, String>>, String> {
+        let doc = |a: &Load1, after| Some(Doc { path: a.path.clone(), module: a.module.clone(), before: a.before, after });
+        let mut out: Vec<Option<Result<Option<Doc>, String>>> = vec![None; asks.len()];
         // (ask, its flags), and the room the next pass's slab needs.
         let mut pending: Vec<(usize, i64)> = (0..asks.len()).map(|k| (k, 0)).collect(); // copy: derived (the asks left)
         let mut need = room(0);
@@ -429,21 +534,21 @@ impl World {
                         next.push((k, 0));
                         continue;
                     }
-                    code::UNREAD => self.leaf(reg, ops, dir, a.d, None)?,
-                    _ => self.leaf(reg, ops, dir, a.d, g.map(|g| g.0))?,
+                    // Known by its digest, no home holds it: read it, its leaf written when it is.
+                    code::KNOWN if self.by_content(reg, ops, dir, blobs, g.expect("a known digest"))?.is_none() => {
+                        next.push((k, READ_ANYWAY));
+                        continue;
+                    }
+                    code::UNREAD => self.leaf(reg, ops, dir, leaves, a.d, None)?,
+                    _ => self.leaf(reg, ops, dir, leaves, a.d, g.map(|g| g.0))?,
                 }
                 out[k] = match (f[1], g) {
-                    (code::MISS, _) => Some(Err(format!("{}: not a readable file", a.path))),
+                    (code::MISS, _) => Some(Ok(None)),
                     (code::UNREAD, _) => Some(Err(format!("{}: could not be read", a.path))),
                     (code::SAME, _) => Some(Ok(doc(a, a.before.expect("its digest was its last answer's")))),
                     (code::READ, Some(g)) if a.before.is_some_and(|b| b.source == g) => Some(Ok(doc(a, a.before.expect("kept")))),
                     (code::KNOWN | code::READ, Some(g)) => match self.by_content(reg, ops, dir, blobs, g)? {
                         Some(ids) => Some(Ok(doc(a, ids))),
-                        // Known by its digest, no home holds it: read it.
-                        None if f[1] == code::KNOWN => {
-                            next.push((k, READ_ANYWAY));
-                            None
-                        }
                         None => {
                             parse.push((k, g, f[7] as usize, f[8] as usize));
                             None
@@ -485,7 +590,7 @@ impl World {
     /// The parse answer for content `source` (`Parse`, pure: (content, grammar) → tape), when a home holds it: the
     /// residency (its blobs resident), else the store's objects (its source and tape loaded into a slab room, a load,
     /// not a parse). `None`: a content no home holds, to read and parse.
-    fn by_content(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, blobs: &mut BlobRows, source: BlobId) -> Result<Option<DocIds>, String> {
+    pub fn by_content(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, blobs: &mut BlobRows, source: BlobId) -> Result<Option<DocIds>, String> {
         let key = parse_key(source, self.grammar_word());
         if let Some(row) = probe(dir, &self.answers, &key)? {
             let tape = BlobId::of_words(&row[7..11]);

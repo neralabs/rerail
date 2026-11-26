@@ -510,6 +510,20 @@ def b6(failures: list) -> None:
         failures.append("l1.rs: L1 keeps no cache, or reads none (Bootstrap, Figure 2: k0_pass rw L1's cache)")
     if not re.search(r'SlotSpec \{ name: "cache", mode: Mode::ReadWrite, kind: kind::CACHE \}', k0h):
         failures.append("k0.rs: k0_pass has no read-write slot for L1's cache")
+    # The answerers (P§12 item 7): `answer(key, leaves) -> Answer`, a world reader's leaves into the run's layer; the
+    # document set reads through all three.
+    files = strip_rust((CRATE / "src/files.rs").read_text())
+    if not re.search(r"pub trait Answerer \{\s*const KIND: AnswerKind;\s*fn answer\(&mut self, key: &\[i64\], leaves: &mut LeavesW\) -> Result<Answer, String>;", files):
+        failures.append("files.rs: the Answerer trait is not P§12's (answer(key, leaves) -> Answer)")
+    for n in ("Load", "Parse", "Intern"):
+        if not re.search(rf"impl Answerer for {n}<'_>", files):
+            failures.append(f"files.rs: {n} is not an answerer")
+    if re.search(r"put_row\([^;]*&mut self\.leaves", files):
+        failures.append("files.rs: a leaf committed on its own, not into the run's layer (LeavesW)")
+    boot_code = strip_rust((CRATE / "src/boot.rs").read_text())
+    for n in ("Load", "Parse", "Intern"):
+        if not re.search(rf"\({n} \{{[^\n]*?\}}\)\.answer\(", boot_code):
+            failures.append(f"boot.rs: the document set does not read through the {n} answerer")
     # Demand (P§7.1): L1 asks of its tape port (its only rows written in Rust: the demand on its input), restricts its
     # work to the want, and the boot's run answers only what is asked.
     if "const ASKED: &'static [usize] = &[0];" not in l1 or "asks.writer(cx.dir, L1Ports::TAPE)" not in l1 or "want_rows(" not in l1:

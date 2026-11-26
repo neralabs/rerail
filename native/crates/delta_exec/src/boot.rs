@@ -34,7 +34,7 @@
 use crate::contract::{Bench, Global, GlobalIn, Instance, Work};
 use crate::dir::{BlockId, Directory};
 use crate::drop::{DropOps, drop_parts};
-use crate::files::{Doc, World, key_of, probe};
+use crate::files::{Answer, Answerer, Doc, DocIds, Intern, Load, Load1, LeavesW, Parse, Reach, World, key_of, probe};
 use crate::intern::InternOps;
 use crate::kform::RELATIONS;
 use crate::l1::{L1, L1Ports, TAPE_PATH, row_blobs, tape_row, tape_shape};
@@ -103,22 +103,46 @@ impl DocSet {
         self.world.place(&bench.reg, &bench.traces, &mut bench.dir, d, None)
     }
 
-    /// Reads document `path` as module `module` (B§8's first line; the engine's load names both): its load answer;
-    /// when it changed, its symbols (the intern answer, into `atoms`), its places, and the document set's next
-    /// state, its old row retracted where the set keeps it (`drop_parts`) and its new row added; an unchanged document
-    /// is the identity (no layer).
-    pub fn read(&mut self, bench: &mut Bench, atoms: Atoms, path: &str, module: &str) -> Result<Doc, String> {
+    /// Reads document `path` as module `module` (B§8's first line; the engine's load names both) through the three
+    /// answerers (P§12 item 7), its leaf into the run's layer `leaves`: the load answer (its source; a miss refused,
+    /// naming the path); when it changed, the parse answer (its tape) and the intern answer (its symbols, into
+    /// `atoms`), its places, and the document set's next state, its old row retracted where the set keeps it
+    /// (`drop_parts`) and its new row added; an unchanged document is the identity (no layer).
+    pub fn read(&mut self, bench: &mut Bench, leaves: &mut LeavesW, atoms: Atoms, path: &str, module: &str) -> Result<Doc, String> {
         let kept = self.row_at(&bench.dir, atoms, path)?;
         let d = match &kept {
             Some(r) => r[0],
             None => self.key(&bench.dir, atoms, path)?,
         };
         let before = kept.as_ref().map(|r| row_blobs(r).0);
-        let doc = self.world.load(&bench.reg, &bench.traces, &mut bench.dir, &mut bench.blobs, d, path, module, before)?;
+        let named = [Load1 { d, path: path.to_string(), module: module.to_string(), before }];
+        let Bench { reg, traces, dir, blobs, .. } = &mut *bench;
+        macro_rules! reach {
+            () => {
+                Reach { world: &mut self.world, reg, ops: traces, dir, blobs }
+            };
+        }
+        let source = match (Load { at: reach!(), named: &named }).answer(&[d], leaves)? {
+            Answer::Blob(s) => s,
+            Answer::Miss => return Err(format!("{path}: not a readable file")),
+            a => return Err(format!("{path}: the load answer is {a:?}")),
+        };
+        let blob = |a: Answer, what: &str| match a {
+            Answer::Blob(b) => Ok(b),
+            a => Err(format!("{path}: the {what} answer is {a:?}")),
+        };
+        let doc = match before {
+            Some(b) if b.source == source => Doc { path: path.to_string(), module: module.to_string(), before, after: b },
+            _ => {
+                let tape = blob((Parse { at: reach!() }).answer(&source.words(), leaves)?, "parse")?;
+                Doc { path: path.to_string(), module: module.to_string(), before, after: DocIds { source, tape } }
+            }
+        };
         if doc.is_identity() {
             return Ok(doc);
         }
-        let syms = self.world.intern_answer(&bench.reg, &bench.traces, &self.iops, &mut bench.dir, &mut bench.blobs, atoms, &doc)?;
+        let key: Vec<i64> = std::iter::once(d).chain(doc.after.source.words()).chain(doc.after.tape.words()).collect(); // copy: derived (the intern answer's key)
+        let syms = blob((Intern { at: reach!(), iops: &self.iops, atoms, named: &named }).answer(&key, leaves)?, "intern")?;
         self.world.place(&bench.reg, &bench.traces, &mut bench.dir, d, Some(doc.after.source))?;
         let p = atoms.find(&bench.dir, path).ok_or("the path, interned")?;
         let runs = self.tape.open(&mut bench.dir, 4);
@@ -263,6 +287,7 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
         None => inst.clear(&mut bench.dir),
     }
     docs.world.begin();
+    let mut leaves = docs.world.leaves_w(&mut bench.dir);
     let ran = (|| {
         // The blobs of slabs the residency retired or dropped since, forgotten (their documents load again).
         bench.blobs.forget_dead(&bench.reg, &mut bench.dir)?;
@@ -296,7 +321,7 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
                 if k != d {
                     return Err(format!("a request for document {k}, which the run names no path for"));
                 }
-                doc = Some(docs.read(bench, globals, l0, module)?);
+                doc = Some(docs.read(bench, &mut leaves, globals, l0, module)?);
                 answered.insert(k);
             }
             if docs.tape.head() == from.0 && u64::from(globals.count(&bench.dir)) == count {
@@ -310,7 +335,10 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
         let doc = doc.ok_or("l0 was not asked")?;
         Ok::<_, String>((doc, work, from.1.unwrap_or(0)))
     })();
+    // The leaves the run read, its layer of the world's leaves (D3: misses too).
+    let committed = docs.world.commit_leaves(&bench.reg, &bench.traces, &mut bench.dir, leaves);
     docs.world.end();
+    let ran = committed.and(ran);
     // An execution ended: the residency drops everything `DROP_AFTER` from now, unless another run comes first.
     bench.dir.executed();
     let (doc, work, count) = ran?;

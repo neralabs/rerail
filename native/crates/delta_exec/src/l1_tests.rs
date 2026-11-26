@@ -50,7 +50,10 @@ impl Disk {
 
     /// l0 read by the file layer (B§8's run, its first line).
     fn answer(&mut self, bench: &mut Bench) -> Doc {
-        self.docs.read(bench, self.atoms, PATH, MODULE).unwrap()
+        let mut leaves = self.docs.world.leaves_w(&mut bench.dir);
+        let doc = self.docs.read(bench, &mut leaves, self.atoms, PATH, MODULE).unwrap();
+        self.docs.world.commit_leaves(&bench.reg, &bench.traces, &mut bench.dir, leaves).unwrap();
+        doc
     }
 
     /// B§8's run, its first two lines, from `last`: its pins.

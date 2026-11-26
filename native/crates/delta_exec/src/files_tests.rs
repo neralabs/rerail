@@ -46,7 +46,10 @@ impl W {
         let d = key_of(path, |_| false);
         let module = path.strip_suffix(".rerail").unwrap_or(path);
         let before = self.last.get(path).copied();
-        let doc = self.world.load(&self.reg, &self.traces, &mut self.dir, &mut self.blobs, d, path, module, before)?;
+        let mut leaves = self.world.leaves_w(&mut self.dir);
+        let doc = self.world.load(&self.reg, &self.traces, &mut self.dir, &mut self.blobs, &mut leaves, d, path, module, before);
+        self.world.commit_leaves(&self.reg, &self.traces, &mut self.dir, leaves)?;
+        let doc = doc?;
         self.last.insert(path.to_string(), doc.after);
         Ok(doc)
     }
@@ -236,6 +239,57 @@ fn every_leaf_read_is_recorded_misses_too() {
     write(&w.root.join("missing.rerail"), "e(1, 2).\n", 30);
     w.answer("missing.rerail").unwrap();
     assert_eq!(probe(&w.dir, &w.world.leaves, &[gone]).unwrap().unwrap()[5], 1, "found now");
+}
+
+/// The three answerers (P§12 item 7), one key each, through `Answerer::answer`. Load (a world reader) gives a path's
+/// source, or a miss, and writes both leaves into the run's one layer of the leaves (D3: misses too). Parse (pure)
+/// gives the tape of a source a home holds, the same at a second ask and with no second parse, and a miss for a
+/// content no home holds. Intern (pure) gives the same symbols blob at every ask of its key.
+#[test]
+fn each_answerer_answers_one_key_its_leaves_one_layer_a_run() {
+    let mut w = W::new("answerers");
+    let iops = crate::intern::InternOps::declare(&mut w.reg).unwrap();
+    let atoms = crate::sym::Atoms::new(&mut w.dir);
+    let (l0, gone) = (key_of("bootstrap-l0.rerail", |_| false), key_of("missing.rerail", |_| false));
+    let named = [
+        Load1 { d: l0, path: "bootstrap-l0.rerail".into(), module: "bootstrap-l0".into(), before: None },
+        Load1 { d: gone, path: "missing.rerail".into(), module: "missing".into(), before: None },
+    ];
+    assert!(matches!((Load::KIND, Parse::KIND, Intern::KIND), (AnswerKind::World, AnswerKind::Pure, AnswerKind::Pure)));
+    let mut leaves = w.world.leaves_w(&mut w.dir);
+    let head = w.world.leaves.head();
+    let W { world, reg, traces, dir, blobs, .. } = &mut w;
+    macro_rules! at {
+        () => {
+            Reach { world: &mut *world, reg, ops: traces, dir: &mut *dir, blobs: &mut *blobs }
+        };
+    }
+    let source = match (Load { at: at!(), named: &named }).answer(&[l0], &mut leaves).unwrap() {
+        Answer::Blob(s) => s,
+        a => panic!("{a:?}"),
+    };
+    assert_eq!(source, BlobId::of(crate::L0.as_bytes()));
+    assert_eq!((Load { at: at!(), named: &named }).answer(&[gone], &mut leaves).unwrap(), Answer::Miss);
+    assert_eq!(world.leaves.head(), head, "the leaves wait for the run's end");
+    let parses = world.asked.parses;
+    let tape = (Parse { at: at!() }).answer(&source.words(), &mut leaves).unwrap();
+    assert!(matches!(tape, Answer::Blob(_)));
+    assert_eq!((Parse { at: at!() }).answer(&source.words(), &mut leaves).unwrap(), tape, "pure: the same tape");
+    assert_eq!(world.asked.parses, parses, "a content Load answered is not parsed again");
+    assert_eq!((Parse { at: at!() }).answer(&BlobId::of(b"no home holds this").words(), &mut leaves).unwrap(), Answer::Miss);
+    let Answer::Blob(t) = tape else { unreachable!() };
+    let key: Vec<i64> = std::iter::once(l0).chain(source.words()).chain(t.words()).collect();
+    let syms = (Intern { at: at!(), iops: &iops, atoms, named: &named }).answer(&key, &mut leaves).unwrap();
+    assert!(matches!(syms, Answer::Blob(_)));
+    assert_eq!((Intern { at: at!(), iops: &iops, atoms, named: &named }).answer(&key, &mut leaves).unwrap(), syms, "pure: by its key");
+    world.commit_leaves(reg, traces, dir, leaves).unwrap();
+    let layers = |w: &W| {
+        let l = w.dir.read("t", &[w.world.leaves.head().unwrap()]).unwrap();
+        rerail_blocks::layer::Layer::new(l.block(0)).unwrap().below().is_some()
+    };
+    assert!(!layers(&w), "the run's leaves are one layer: {:?}", w.world.leaves.head());
+    assert_eq!(probe(&w.dir, &w.world.leaves, &[gone]).unwrap().expect("the miss's leaf")[5], 0);
+    assert_eq!(probe(&w.dir, &w.world.leaves, &[l0]).unwrap().expect("l0's leaf")[5], 1);
 }
 
 /// The parse answer is pure, keyed by (content, grammar) (*Operations* §5, §6.2: "a hit skips the read and the

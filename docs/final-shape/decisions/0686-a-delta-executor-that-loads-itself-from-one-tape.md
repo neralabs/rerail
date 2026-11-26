@@ -1631,3 +1631,38 @@ Checks (Relax, local, 90 of 90):
   - its "a row written by L1's Rust" pattern is narrowed to the output's writer, because asks are demand rows that
     P§12 has the operator write.
 - Clippy is clean on `delta_exec`.
+
+### The answerers answer: `Answerer::answer` (P§12 item 7)
+
+The trait is P§12's: `fn answer(&mut self, key: &[i64], leaves: &mut LeavesW) -> Result<Answer, String>`, where an
+`Answer` is a row, a blob or a miss.
+
+- **`LeavesW`** is P§12's `leaves: &mut LayerW`, the run's layer of the world's leaves. A world reader pushes each leaf
+  it read, misses too (D3), as its change against the committed row. The run commits them once, as one layer
+  (`World::commit_leaves`), where before each leaf was a layer of its own.
+- **`Load`** (World) takes key `[d]` for a document the request names. It answers the source's blob through Δanswer's
+  operations (`World::answer`), or a miss.
+- **`Parse`** (Pure) takes key the source's four words. It answers the tape's blob from a home that holds it (the
+  residency, else the store's objects). Otherwise it parses the source where it lies, with the `parse` operation, and
+  puts it in the store. A content no home holds is a miss.
+- **`Intern`** (Pure) takes key `[d, source, tape]` and answers the symbols' blob, by its key.
+- **Who calls them.** `DocSet::read` reads through all three. The boot's run holds the run's `LeavesW` from the
+  observer's `begin` to its `end`.
+- **`World::answer`** now gives a miss as `Ok(None)` rather than an error string. A digest known by stat that no home
+  holds writes its leaf once, when it is read.
+
+Checks (Relax, local, 91 of 91):
+
+- `each_answerer_answers_one_key_its_leaves_one_layer_a_run`:
+  - Load gives l0's source, and a miss for a missing path;
+  - both leaves wait for the run's end, then land as one layer;
+  - Parse gives the same tape twice with no parse, and a miss for a content no home holds;
+  - Intern gives the same symbols blob for its key;
+  - the kinds are World, Pure and Pure.
+- Every earlier check passes through the answerers.
+- The shape script requires:
+  - P§12's trait;
+  - each of the three as an answerer;
+  - the document set reading through each;
+  - no leaf committed on its own.
+- Clippy is clean on `delta_exec`.
