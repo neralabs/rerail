@@ -142,6 +142,19 @@ impl<'p> Prepared<'p> {
     }
 
     /// A file's start: every carry zero.
+    /// The interpreter's order: `Ok(op)`, or `Err(group)` for a group's rounds.
+    pub(crate) fn order_ops(&self) -> impl Iterator<Item = Result<usize, usize>> + '_ {
+        self.order.iter().map(|s| match *s {
+            Step::Op(x) => Ok(x),
+            Step::Group(g) => Err(g),
+        })
+    }
+
+    /// Op `x`'s place in a start's `ops` or `backs`.
+    pub(crate) fn slot_of(&self, x: usize) -> usize {
+        self.slot[x]
+    }
+
     pub fn zero(&self) -> Start {
         Start { ops: vec![0; self.carried.len()], groups: self.groups.iter().map(|g| vec![0; g.members.len()]).collect(), backs: vec![0; self.backs.len()] }
     }
