@@ -2976,7 +2976,7 @@ fn run_observed_within(
             m => format!("moved to the cross-file part, their rows naming no document (decision 0290): {m:?}"),
         }),
         (Err(blocked), _) => format!("off: rows of {blocked:?} name no document"),
-        _ => format!("off ({})", if memo.is_none() { "no persistent store" } else if t.is_some() { "T's facts" } else if unlocated.is_empty() { "typing, RERAIL_CORPUS_MEMO=off or the run's `memo: off`" } else { "a relation without a location column" }),
+        _ => format!("off ({})", if memo.is_none() { "no persistent store" } else if t.is_some() { "T's facts" } else if unlocated.is_empty() { "typing, RERAIL_CORPUS_MEMO=off or the run's `memo: off`" } else { return format!("off (relations without a location column: {unlocated:?})") }),
     });
     // A revision's module names read its package markers (`package_root_modules`): each consulted one is an input.
     if crate::git_workspace::snapshot::contains(root) {

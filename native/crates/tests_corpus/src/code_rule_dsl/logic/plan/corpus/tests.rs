@@ -2498,6 +2498,64 @@ fn a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule() {
     let _ = std::fs::remove_dir_all(&fresh);
 }
 
+/// A count below a bound over a relation of values (decision 0680): p297's `refers` (UP032), a format string's `{}`
+/// field takes the positional argument of its place among the string's `{}` fields. `brace_arg` is a relation of the
+/// strings' values, read by file-local rules too, so its rank (`rr_rank`, `rank_form`) is the cross part's.
+const RANK_OF_VALUES: &str = r#"
+#include "core.rerail"
+#include "python/upgrade-format.rerail"
+.decl refers(c: node, k: number, e: node)
+refers(c, k, e) :- format_call(c, v), brace_arg(v, k, ""), r = count : { brace_arg(v, k2, ""), k2 < k }, call_pos(c, r, e).
+.decl place(c: node, k: number, e: symbol)
+place(c, k, x) :- refers(c, k, e), text(e, x).
+.output place
+"#;
+
+/// A run of `RANK_OF_VALUES` over `ws` in the store and output of `dir`: its report and `place`'s rows.
+fn rank_of_values_run(dir: &std::path::Path) -> (super::Report, Vec<Vec<String>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, RANK_OF_VALUES).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("place").map(|r| r.shown()).unwrap_or_default();
+    rows.sort();
+    (report, rows)
+}
+
+/// Decision 0680: a cross-file rank's native reads of a relation of values read its located form. Its asked rows
+/// (`rr_rankq`) left naming the unlocated relation, they made it an export without a location column, and the
+/// memo was off for the whole run: on the 300-file bench, every file was evaluated again after one file's edit.
+#[test]
+fn a_cross_file_rank_of_values_keeps_the_memo_on() {
+    let files = [("a.py", "x = \"{} {}\".format(a, b)\n"), ("b.py", "y = \"{0} {x}\".format(c, x=d)\n"), ("c.py", "z = \"{} {}\".format(e, f)\n")];
+    let make = |name: &str| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("ws")).unwrap();
+        for (path, text) in files {
+            std::fs::write(dir.join("ws").join(path), text).unwrap();
+        }
+        dir
+    };
+    let dir = make("rank-values");
+    let (_, first) = rank_of_values_run(&dir);
+    // Each `{}` field's argument: b.py's `{0}` and `{x}` are no `{}` fields.
+    let mut fields: Vec<[&str; 2]> = first.iter().map(|row| [row[1].as_str(), row[2].as_str()]).collect();
+    fields.sort();
+    assert_eq!(fields, [["0", "a"], ["0", "e"], ["1000", "b"], ["1000", "f"]], "a cold run's fields and their arguments: {first:?}");
+    std::fs::write(dir.join("ws/b.py"), "# an edit\ny = \"{0} {x}\".format(c, x=d)\n").unwrap();
+    let (edited, rows) = rank_of_values_run(&dir);
+    assert_eq!(edited.memo.0, 2, "a.py and c.py are read from the memo: {:?}", edited.memo);
+    let fresh = make("rank-values-fresh");
+    std::fs::write(fresh.join("ws/b.py"), "# an edit\ny = \"{0} {x}\".format(c, x=d)\n").unwrap();
+    let (_, want) = rank_of_values_run(&fresh);
+    assert_eq!(rows, want, "the edited run's ranks are a fresh run's");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fresh);
+}
+
 /// A program whose per-file rule reads the project's settings (decision 0665): a function of a file under a package
 /// of `"type": "module"`.
 const SETTINGS_READ: &str = r#"

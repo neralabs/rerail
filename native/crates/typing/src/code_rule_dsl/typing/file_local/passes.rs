@@ -7,7 +7,7 @@ use crate::code_rule_dsl::logic::program_image::Builder;
 use crate::code_rule_dsl::logic::program_image::build::T;
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::plan::body;
-use crate::code_rule_dsl::logic::program_image::{Lit as L, LitRef, RuleRef, Slot, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{Cell, Lit as L, LitRef, RuleRef, Slot, TermRef, Version};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 mod factorize;
@@ -449,6 +449,54 @@ impl ProgramPass for Locate {
                     b.rule().head(rel.as_str(), &vars).atom(ats[at].0.as_str(), &args).finish()?;
                 }
             }
+        }
+        // A cross-file rank's native reads (`native_rank`: its asked rows and its counted rows) are the cross part's
+        // reads too (decision 0680): one of a relayed target reads its located form, through a projection of the
+        // cross part's own (`<target>_of_at`), as a cross-file rule's atom reads it. Left naming the target, the rank
+        // kept it an export without a location column, and the run's memo was off: p297's `rr_rankq29` on the
+        // 300-file bench, a relation of the format strings' values (`brace_arg(v, k, "")`, `v` a symbol).
+        let ranks = b.about_rows("native_rank");
+        let mut projected: HashMap<String, String> = HashMap::new();
+        let mut out = crate::code_rule_dsl::logic::program_image::Rows::new();
+        let mut changed = false;
+        for row in ranks.as_ref().iter() {
+            let mut row = row.to_vec();
+            let rank_local = match row.get(1) {
+                Some(Cell::Str(a)) => local.contains(b.text(*a)),
+                _ => true,
+            };
+            for c in [2, 3].into_iter().filter(|_| !rank_local) {
+                let Some(Cell::Str(a)) = row.get(c) else { continue };
+                let read = b.text(*a).to_owned();
+                let Some(&k) = relayed.get(&read) else { continue };
+                let through = match projected.get(&read) {
+                    Some(p) => p.clone(),
+                    None => {
+                        let mut p = format!("{read}_of_at");
+                        while names.contains(&p) {
+                            p.push('_');
+                        }
+                        names.insert(p.clone());
+                        let cols = f.columns(&read).ok_or_else(|| format!("{read}: a relayed target's columns"))?;
+                        b.fields().declare(&p, &cols);
+                        let vars: Vec<String> = (0..cols.len()).map(|i| format!("__c{i}")).collect();
+                        let vars: Vec<T<'_>> = vars.iter().map(|c| T::Var(c.as_str())).collect();
+                        let mut args = vec![T::Wild];
+                        args.extend(vars.iter().cloned());
+                        b.rule().head(p.as_str(), &vars).atom(ats[k].0.as_str(), &args).finish()?;
+                        // It stays in the cross part, as a target read back from its located form does (decision 0665).
+                        b.fields().add_qualifiers(&[(p.as_str(), super::READ_LOCATED)]);
+                        projected.insert(read.clone(), p.clone());
+                        p
+                    }
+                };
+                row[c] = Cell::Str(b.atom(&through));
+                changed = true;
+            }
+            out.push(&row);
+        }
+        if changed {
+            b.fields().set_about_rows("native_rank", out);
         }
         Ok(())
     }

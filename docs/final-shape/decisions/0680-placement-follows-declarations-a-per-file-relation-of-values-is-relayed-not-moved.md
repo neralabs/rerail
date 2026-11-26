@@ -80,6 +80,19 @@ Two faults that the new placement exposed on the 300-file bench, each fixed at i
   literal, each negated: `@prefix(v, "__") != 1`. `prefix` is no native function, so the general `!=` arm could not
   make it, and B010's per-file stratum fell to SQL. A test's value is 0 or 1, so `!= 1` is `= 0`, and both string
   test arms now take it.
+- **A cross-file rank read its asked rows unlocated** (`Locate`, 2026-11-25). A rank (`rank_form`) is a native
+  node. Its asked and counted rows are named in `native_rank`'s row, not read by a rule's atom. `Locate` rewrote
+  the cross part's atoms of a relayed target into reads of its located form, but not those names. So p297's
+  `rr_rank29` kept reading `rr_rankq29`, a relation of the format strings' values made in the per-file part. That
+  made it an export without a location column, and the per-file memo was off for the whole run (`per-file memo:
+  off`). A native row's read of a relayed target now reads a projection of its located form,
+  `rr_rankq29_of_at(…) :- rr_rankq29_at(_, …)`, kept in the cross part (`read_located`), as the cross part's own
+  readback is. The memo line names the relations when it is off.
+
+  On the 300-file bench (M1 Max, CPU), the memo is on for every program (299 relations given a document column),
+  and all 661 output relations are identical, row for row, to the parent's, cold and warm. A run after one file's
+  edit, against the parent built alike: 5.4 s wall and 5.5 s user CPU, against 19.9 s and 63.0 s. The parent
+  evaluated all 300 files again; this reads 299 from the memo. One run each.
 
 ## Measured
 
@@ -121,6 +134,10 @@ Tests whose programs met the new placement:
 - `a_stratum_whose_rules_join_nothing_keeps_its_facts`: `e` is declared `cross_file`.
 - `a_text_read_left_as_rows_says_why_its_node_is_not_known`: `d(x) :- kind(_, x)` is per-file now, its reason that
   column 0 is filled with a kind. A new case keeps a cross-file chain's reason (`d` joining two documents).
+
+In `tests_corpus`, `a_cross_file_rank_of_values_keeps_the_memo_on`: p297's `refers` over three files. After one
+file's edit, the other two are read from the memo, and the rows are a fresh run's. Without the fix there are no memo
+hits.
 
 In `tests_corpus`, `a_string_tests_inequality_runs_natively`: a strict run, in a process of its own, of a
 negated `inline` view of two string tests. Before the fix it stopped on "a stratum the native engine declined".
