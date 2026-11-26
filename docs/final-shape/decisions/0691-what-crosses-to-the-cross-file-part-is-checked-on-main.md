@@ -1,6 +1,6 @@
 # 0691: What crosses to the cross-file part is checked on main, against lists that only shrink
 
-Status: building
+Status: built (2026-11-26). The data layer's entries are left to its own pull request.
 
 ## Context
 
@@ -473,6 +473,12 @@ The constants fold that phase 1 now runs (0665 §5, ported in 9699816b84, gives 
 of about 16 ms on a cold store, which keeps it. Phase 1 needs those constants: `library` resolves through
 `py_site`, `py_stub_dir` and `py_version`. The complexity pack's remaining difference with the merge base (31.5 G
 against 29.5 G over 762 files) is that run, plus small per-program costs spread over the run.
+
+## Pages
+
+The pages written while this was worked out are in [0691/](0691/README.md): the survey of the two branches, main's
+offenders before the port, the rule authors' explainer, and the two choices the port needed. That folder's README
+also holds the runtime of every pack against the merge base, at the end of the work.
 
 ## Consequences
 
