@@ -1257,11 +1257,18 @@ impl WaveRoom {
 
     /// `n` slots in a row, claimed for one writer: their region and its first row there.
     pub fn claim(&self, n: u32) -> (u8, u32) {
+        self.claim_room(n, n)
+    }
+
+    /// `claim`, with room reserved for the first `room` of the `n` slots alone: the writer reserves the rest as its
+    /// rows reach them (`Part::reserve_room`), within its region's block. The slots are its either way.
+    pub fn claim_room(&self, n: u32, room: u32) -> (u8, u32) {
         let mut cur = self.cursor.lock().unwrap_or_else(|e| e.into_inner());
         let r = cur.region;
         let reg = self.region(r as u8);
         let end = u64::from(reg.at) + u64::from(cur.used) + u64::from(n);
-        if end <= u64::from(u32::MAX) && reg.part.reserve(end) {
+        let reserve = u64::from(reg.at) + u64::from(cur.used) + u64::from(room.min(n));
+        if end <= u64::from(u32::MAX) && reg.part.could_hold(end) && reg.part.reserve(reserve) {
             let row = reg.at + cur.used;
             cur.used += n;
             *cur.ends.last_mut().expect("a region") = cur.used;
@@ -1271,7 +1278,9 @@ impl WaveRoom {
         assert!(r + 1 < WAVE_REGIONS, "a wave's rows past {WAVE_REGIONS} regions");
         let before: u32 = cur.ends.iter().sum();
         let rows = (n as usize).max(before as usize);
-        let part = Part::for_writes_with_room(self.k, rows, 8 * self.k.max(1) * rows).unwrap_or_else(|e| panic!("a wave's rows past their block: {e}"));
+        // Its block has room for all `n` slots; its first `room` reserved now.
+        let first = (room.min(n) as usize).max(before as usize).min(rows);
+        let part = Part::for_writes_with_room(self.k, first, 8 * self.k.max(1) * rows).unwrap_or_else(|e| panic!("a wave's rows past their block: {e}"));
         let _ = self.regions[r + 1].set(Region { part, at: 0, first: before, lent: None });
         cur.region = r + 1;
         cur.used = n;
@@ -2197,6 +2206,11 @@ impl Part {
         self.rel().rows.resident()
     }
 
+    /// The bytes of its indexes in memory now (`Relation::index_resident`).
+    fn index_resident_bytes(&self) -> usize {
+        self.rel().index_resident()
+    }
+
     /// The bytes its chunks hold.
     fn capacity_bytes(&self) -> usize {
         self.rel().rows.reserved() as usize * self.rel().rows.ncols as usize * 8
@@ -2443,6 +2457,11 @@ impl Rows {
     /// The bytes of the chunks in memory now, the frozen segments' and the tail's: a profile's measure.
     pub fn resident_bytes(&self) -> usize {
         self.segs.iter().map(|(_, p)| p.resident_bytes()).sum::<usize>() + self.tail.as_ref().map_or(0, Part::resident_bytes)
+    }
+
+    /// The bytes of their indexes in memory now, the frozen segments' and the tail's: a profile's measure.
+    pub fn index_resident_bytes(&self) -> usize {
+        self.segs.iter().map(|(_, p)| p.index_resident_bytes()).sum::<usize>() + self.tail.as_ref().map_or(0, Part::index_resident_bytes)
     }
 
     /// The bytes the chunks hold: the frozen segments' and the tail's.
@@ -3144,6 +3163,26 @@ mod tests {
             assert_eq!(got, want, "held {held}: in the order laid out");
             assert_eq!(rows.to_vec(0, held, k), (0..held as i64).flat_map(|i| [i, -i, 7]).collect::<Vec<_>>(), "held {held}: the rows before kept");
         }
+    }
+
+    /// `claim_room`: a writer's `n` slots are its (the next claim comes past them), but room is reserved for its first
+    /// `room` alone, in a region's block that can hold them all; the rest are reserved as its rows reach them
+    /// (`Part::reserve_room`). A head's bound reserved whole was memory of the run's blocks (their free lists' chunks).
+    #[test]
+    fn a_claim_reserves_its_first_room_alone() {
+        let k = 2;
+        let rows = Rows::new(k);
+        let room = WaveRoom::open(&rows, k, true);
+        let n = 1u32 << 20;
+        let (r, row) = room.claim_room(n, 64);
+        let part = room.part(r);
+        let reserved = part.rel().rows.reserved();
+        assert!(reserved >= row + 64 && reserved < row + (n >> 4), "room for its first rows alone: {reserved} reserved past row {row}");
+        assert!(part.could_hold(u64::from(row + n)), "its block holds all its slots");
+        let (r2, row2) = room.claim(16);
+        assert!(room.global(r2, row2) >= room.global(r, row) + n, "the next claim past its slots");
+        assert!(part.reserve_room(u64::from(row + n)), "reserved as its rows reach them");
+        assert!(part.rel().rows.reserved() >= row + n);
     }
 
     /// `permute`: slot `t` takes the row `src[t]` held; the rest keep the other rows; each moved along its cycle.

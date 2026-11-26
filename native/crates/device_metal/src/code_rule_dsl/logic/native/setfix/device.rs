@@ -2749,7 +2749,9 @@ fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize, room: u
     // where its block has room, else regions of its own, nothing moved. Its bound's slots claimed (the relation
     // bound for the writes holds them), its memory mapped as its rows reach it (`place_growth`).
     let wave = rel.wave_room();
-    let (r, row) = wave.claim(u32::try_from(bound).map_err(|_| format!("{bound} rows of a head"))?);
+    // Its first room's memory reserved alone where its rows are mapped as reached (`place_growth`), as a tail's is.
+    let slots = u32::try_from(bound).map_err(|_| format!("{bound} rows of a head"))?;
+    let (r, row) = wave.claim_room(slots, n as u32);
     let dst = mj::DevRel::in_block(&wave.part(r).in_block(row + bound as u32), k).map_err(|e| format!("{e:?}: a head's wave room in its block"))?;
     crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into their wave's room", 1);
     // `n`: the slots claimed, until the rows written are known (`written`).

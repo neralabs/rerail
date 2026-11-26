@@ -5306,12 +5306,15 @@ const PROGRAM_DISPATCHES: u32 = 1024;
 /// rooms: `Batch::gate_rooms`): where a mapped page is real memory (`rerail_device::device::map_commits`), its rows
 /// past its rows now and twice a round's (0); a test build's `RERAIL_ROOMS_MAPPED=N` maps them on any device, `N`
 /// rows past its rows first, so the CPU backend's tests run the mechanism.
+/// On the host too: a room reserved whole is chunks of the run's blocks taken from their free lists, whose pages were
+/// written before (or given back, and counted again as they are taken), so its bound was real memory there as well
+/// (heads' rooms: about 900 MB of the `all` corpus's peak on the M3, 3.9-4.2 GB, 3.5-3.6 without).
 pub(in crate::code_rule_dsl) fn rooms_mapped() -> Option<usize> {
     #[cfg(any(test, feature = "test-hooks"))]
     if let Some(n) = crate::code_rule_dsl::logic::profile::var("RERAIL_ROOMS_MAPPED").ok().and_then(|v| v.parse::<usize>().ok()) {
         return Some(n);
     }
-    rerail_accel_gpu::gpu::join::device().is_ok_and(rerail_device::device::map_commits).then_some(0)
+    (rerail_accel_gpu::gpu::join::device().is_ok_and(rerail_device::device::map_commits) || rerail_accel::gpu::shared::is_on_host()).then_some(0)
 }
 
 /// Whether mapping a reserved arena's pages commits real memory on this run's device (Metal's do;
