@@ -1554,25 +1554,28 @@ describe("CodeRuleBridge", () => {
   });
 
   // The walk reads each entry's ids whole and makes its other numbers as `lstat` without `bigint` gives them: a stamp
-  // that differed would make the walk read again every file a tool read stamped. Node's `utimes` on Windows 11 left a
-  // file's modified time at or after 1970 when given one before, so that row runs on the other systems.
-  it.each<[string, number | undefined]>([
-    ["it was written", undefined],
-    ...(process.platform === "win32" ? [] : [["before 1970", -86_400.123_456] as [string, number]]),
-  ])("stamps a file it walks as lstat gives its numbers, with its modified time as %s", async (_name, at) => {
+  // that differed would make the walk read again every file a tool read stamped. For a time before 1970 Node adds the
+  // nanoseconds past the whole second to that second taken downward: on Linux it gives a file modified 0.1234567 s
+  // before 1970 as -123.45669999999996 ms, where the same sum from seconds and nanoseconds both cut toward zero gives
+  // -123.4567. Node's `utimes` takes a negative number of seconds as now, and on Windows Node reads a time before 1970 as
+  // one after 2106, so the row hands that time to every `lstat` of the file through `discovery.stamps`.
+  it.each<[string, number | undefined, bigint | undefined]>([
+    ["it was written", undefined, undefined],
+    ["0.1234567 s before 1970", -123.45669999999996, -123_456_700n],
+  ])("stamps a file it walks as lstat gives its numbers, with its modified time as %s", async (_name, at, nanoseconds) => {
     const root = await workspace();
     const file = join(root, "src", "a.py");
     await writeFile(file, "a = 1\n");
-    if (at !== undefined) await utimes(file, at, at);
+    if (at !== undefined) discovery.stamps.set(file, at);
     const observations: SourceObservationCache = new Map();
     const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
       discoveryWaitMs: Number.POSITIVE_INFINITY, observations,
     });
     await bridge.openWorkspace("session-1");
     await bridge.checkpoint("turn");
-    const info = await lstat(file);
-    expect(info.mtimeMs < 0).toBe(at !== undefined);
-    expect(observations.get(root)?.get("src/a.py")?.stamp).toBe(fileStamp(info));
+    const { mtimeNs } = await lstat(file, { bigint: true });
+    expect(mtimeNs < 0n ? mtimeNs : undefined).toBe(nanoseconds);
+    expect(observations.get(root)?.get("src/a.py")?.stamp).toBe(fileStamp(await lstat(file)));
   });
 
   // A tool's read takes a file only while its real path still names the file it opened: a link swapped in for a folder
