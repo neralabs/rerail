@@ -167,7 +167,7 @@ describe("a read of the recorded checkouts that records many worktrees", () => {
       const before = refreshes.mock.calls.length;
 
       expect(await listing).toBeUndefined();
-      // The two groups left were recorded after the close, each in a read of the recorded checkouts.
+      // The two groups left are not recorded after the interrupt: no further read of the recorded checkouts.
       expect(refreshes.mock.calls.length - before).toBe(0);
     } finally {
       refreshes.mockRestore();
