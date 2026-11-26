@@ -1114,30 +1114,6 @@
         }
       }
     },
-    "ruff-c420-unnecessary-dict-comprehension-for-iterable": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-c901-complex-structure": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        },
-        "samples-python": {
-          "originalOnly": 0,
-          "translationOnly": 9
-        }
-      }
-    },
     "ruff-com818-trailing-comma-on-bare-tuple": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
