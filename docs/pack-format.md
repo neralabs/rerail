@@ -93,9 +93,10 @@ packs/<id>/
 
 - **`peerDependencies`**: the core range. A pack has no `dependencies`. A pack that ships a rule in a language core first
   reads in a later release (`LANGUAGE_SINCE` in `scripts/release/core.mjs`), whose ast rule uses a key core first
-  reads in a later release (`RULE_KEY_SINCE` there), or that ships a rule written in `.rerail` (`RERAIL_DOCUMENTS_SINCE`:
-  0.2.1), leaves older cores out from that release on, as for `heldOff` below: they refuse the document and would drop
-  the whole pack. Once core is at that release the pack validation fails a range that admits them, and the Release pull
+  reads in a later release (`RULE_KEY_SINCE` there), that ships a rule written in `.rerail` (`RERAIL_DOCUMENTS_SINCE`:
+  0.2.1), or that gives a rule `dimensions` (`DIMENSIONS_SINCE`: 0.2.2), leaves older cores out from that release on,
+  as for `heldOff` below: they refuse the document, or `pack.json` for `dimensions`, and would drop the whole pack.
+  Once core is at that release the pack validation fails a range that admits them, and the Release pull
   request raises the range of each such pack it releases ([release](release.md#release-pull-request)). The Release pull
   request also has each released core from 0.1.5 check the pack's rules, so a rule an older core refuses for any other
   reason raises the range too; the pack validation reads only the maps.
@@ -162,8 +163,8 @@ packs/<id>/
 - **`honourSuppressionComments`** (optional, default `true`): whether its rules honour their linters' suppression
   comments.
 - **`rules`**: the pack's rules. Each entry has an `id` ([Rule ids](#rule-ids)), a `document` (required,
-  `rules/<id>.json` or `rules/<id>.rerail`), a `title` and `group`, and optional `mode`, `on`, `heldOff` and
-  `examples`.
+  `rules/<id>.json` or `rules/<id>.rerail`), a `title` and `group`, and optional `mode`, `on`, `heldOff`, `examples`
+  and `dimensions`.
 
 <details>
 <summary>Field details</summary>
@@ -213,6 +214,12 @@ packs/<id>/
     pair per rule. An example of a rule written in `.rerail` may add `with`: `[{ "path", "text" }, …]`, the other
     files of the repository it is read in, for a rule that reads across files. Each `with` path is relative, stays
     inside that repository and is not the example's own `path`; JSON and conversation rules take no `with`.
+  - `dimensions` is `{ "risk", "layer", "severity", "hazard"? }`: what goes wrong when the rule is broken, where the
+    code it reads lives, the worst realistic outcome, and the hazard id packs share when they catch the same thing in
+    different stacks ([rule dimensions](rule-dimensions.md), which lists the values). The dashboard filters a pack's
+    rules by risk, and the rule packs API returns them. Rerail's own rules give it; a port may. Cores before 0.2.2
+    refuse the field, so once core is at 0.2.2 the pack validation fails a pack using it whose core range admits an
+    older core, and the Release pull request raises the range of each such pack it releases to `>=0.2.2-0`.
 
 **Conversation rules.** A pack may also ship a conversation rule: the rule object of
 [rule-schema.ts](../src/engine/catalog/rule-schema.ts) (`id`, `mode`, `match`, `sample`, `action`, optional `repeat`)
@@ -269,8 +276,8 @@ survives shipping. Check 1 enforces this; the pack tests reject an id two docume
 A code rule may be a `.rerail` file instead of a JSON document: `"document": "rules/<id>.rerail"`. The file is the
 rule. Its `.policy` id is its file name and the entry's `id`. Core asks the engine to read it, with every file it
 includes, and takes from it what it says: its revision, `.description`, `.mode`, `.language`, `.scope` and the
-violation codes it reports. `pack.json` restates none of it; `title`, `group`, `mode`, `on`, `heldOff` and `examples`
-are given there as for every rule.
+violation codes it reports. `pack.json` restates none of it; `title`, `group`, `mode`, `on`, `heldOff`, `examples` and
+`dimensions` are given there as for every rule.
 
 ```json
 { "id": "django-practice-count-not-len", "document": "rules/django-practice-count-not-len.rerail", "title": "Use count() instead of len() on a queryset", "group": "Django", "examples": { "caught": { "path": "shop/views.py", "text": "…" }, "passes": { "path": "shop/views.py", "text": "…" } } }
@@ -796,7 +803,7 @@ conformance check (`npm run test:conformance`), not here.
    - `files` publishes `pack.json`, `rules`, `LICENSE` and, when present, `licenses`. No entry may cover
      `conformance.json`, `divergences.json`, `upstream` or `candidates`.
    - Once core is at the release that first reads what the pack ships (`heldOff`, a language added since 0.1.0, a rule
-     written in `.rerail`), the core range leaves every older core out.
+     written in `.rerail`, `dimensions`), the core range leaves every older core out.
    - Some way to satisfy `license` names exactly Apache-2.0 plus, per `licenses/<project>/UPSTREAM.md`, one way to
      satisfy the SPDX expression its `License:` line records. An `OR` there lets the package elect either side
      (`MIT OR Apache-2.0` with `Apache-2.0 AND MIT`); an `AND` must be named whole.

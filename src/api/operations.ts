@@ -328,7 +328,8 @@ const nextCursorSchema = z.string().nullable().describe("Pass as `cursor` for th
  * What the catalog knows about one rule's effect over a time range. Conversation rules never write an
  * audit, so they carry no evidence either way: `measured: false` says so rather than
  * reporting a zero that reads as "never triggered". A code rule kept
- * inactive (`inactive`) is not measured either: it is never evaluated.
+ * inactive (`inactive`) is not measured either: it is never evaluated. A conversation rule is inactive while the daemon
+ * runs without conversation rules.
  */
 const ruleActivitySchema = z.object({
   measured: z.boolean(),
@@ -355,7 +356,7 @@ interface RuleActivityCounts {
 
 /**
  * A catalog rule's activity. Every rule is reported, so a caller never has to infer absence from a missing key; a
- * conversation rule writes no audit (so nothing of it is steered or declined) and an inactive code rule is never
+ * conversation rule writes no audit (so nothing of it is steered or declined) and an inactive rule is never
  * evaluated, so neither is measured.
  */
 function catalogRuleActivity(
@@ -536,7 +537,7 @@ export const operations: readonly Operation[] = [
     id: "rule_packs_list",
     method: "GET",
     path: "/api/rule-packs",
-    summary: "List every rule pack installed on this machine: what it covers, its version, its npm package and publisher (rerail, or a third party Rerail has not reviewed) and its rules, each with a title, a group and the mode it starts in, and every installed pack left out with the reason. With a checkout (an MCP call defaults to the calling agent's), that checkout's own rules in .rerail/rules are listed too, as the pack worktree (publisher worktree), and every rule document there left out with the reason. Add a pack to a repository with repository_attachments_set.",
+    summary: "List every rule pack installed on this machine: what it covers, its version, its npm package and publisher (rerail, or a third party Rerail has not reviewed) and its rules, each with a title, a group, the mode it starts in and, where its pack gives them, its dimensions (risk, layer, severity, hazard), and every installed pack left out with the reason. With a checkout (an MCP call defaults to the calling agent's), that checkout's own rules in .rerail/rules are listed too, as the pack worktree (publisher worktree), and every rule document there left out with the reason. Add a pack to a repository with repository_attachments_set.",
     query: z.object({ checkout: targetShape.checkout }).strict(),
     output: rulePackListSchema,
     handler: (stores, input, caller) => {
@@ -769,7 +770,7 @@ export const operations: readonly Operation[] = [
         codeRulesPendingBoundaries: z.number().int().nonnegative().describe("Boundaries that answered before the session's code rules were running."),
         ignoredEdits: z.number().int().nonnegative().describe("Tool edits of files no rule checked because Git ignores them (`ignored-edit` events name each file and the ignore file, line and pattern)."),
         ignoreRuleChanges: z.number().int().nonnegative().describe("Changes to Git's ignore rules seen during the session that can make them ignore more: a pattern added, a negation (`!pattern`) removed, or, in a file with a negation, its patterns reordered or repeated. Each `ignore-rules-changed` event names the file and those patterns; comments, blank lines and duplicates in a file without a negation are not changes."),
-        discoveryGaps: z.number().int().nonnegative().describe(`Places the session's shell-write check could not fully check, in the session's folder or the repository's other worktrees: a folder or file Rerail cannot read; a file over 1,000,000 bytes that a rule would read; a source or text file holding binary data, such as UTF-16 text; a walk that fails. Shell writes in such a place went unchecked. Each place is counted once in the session, by its path and its error's code, however many boundaries met it, across a reopened session and a daemon restart; its \`source-discovery-gap\` event holds the path, the reason and the first boundary, and is withheld from coding agents. The check records at most a bound of places in one session; this counts the places recorded, and \`discoveryGapsMore\` says whether it met more.`),
+        discoveryGaps: z.number().int().nonnegative().describe(`Places the session's shell-write check could not fully check, in the session's folder or the repository's other worktrees: a folder or file Rerail cannot read; a file over 1,000,000 bytes that a rule would read; a source or text file holding binary data, such as UTF-16 text; a walk that fails; another worktree whose first read found a file changed since the session opened that Git did not write and no rule checked, under the code \`UNCHECKED_FIRST_READ\`. Shell writes in such a place went unchecked. Each place is counted once in the session, by its path and its error's code, however many boundaries met it, across a reopened session and a daemon restart; its \`source-discovery-gap\` event holds the path, the reason and the first boundary, and is withheld from coding agents. The check records at most a bound of places in one session; this counts the places recorded, and \`discoveryGapsMore\` says whether it met more.`),
         discoveryGapsMore: z.boolean().describe("Whether the shell-write check met more places it could not fully check than the session's record takes: `discoveryGaps` counts those recorded, the first it met, and one more record says the rest went unrecorded."),
         discoveryGapPlaces: z.array(z.object({
           path: z.string().optional().describe("The place as the session folder names it (`.` for the folder itself, `../other/src` in another worktree); absent when a walk failed whole."),

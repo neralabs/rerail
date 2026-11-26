@@ -1228,18 +1228,18 @@ export function renderWslNote(input: WslNoteInput, lane: SetupLane): string {
   ]);
 }
 
-// ── E3 · No repo here ──────────────────────────────────────────────────────
+// ── E3 · No Git repository here ────────────────────────────────────────────
 
 export interface NoRepoInput {
   readonly setupCommand?: SetupCommand;
 }
 
-/** E3: no repo where set-up ran; ask which project to start with. Choosing a folder is the go-ahead to read it. */
+/** E3: no Git repository where set-up ran; ask which project to start with. Choosing a folder is the go-ahead to read it. */
 export function noRepoQuestion(input: NoRepoInput, lane: SetupLane): QuestionForm {
   const style = styleFor(lane);
   return {
     id: "no-repo",
-    lead: [`${style.yellow("△")} No repo found here.  ${style.dim("Rerail needs one project to read.")}`],
+    lead: [`${style.yellow("△")} No Git repository here.  ${style.dim("Rerail needs one project to read.")}`],
     prompt: "Which project do you want to start with?",
     trail: ["Rerail reads it on this computer only, to suggest rule packs."],
     choices: [

@@ -382,11 +382,14 @@ function workspaceStatus(workspace: string): string {
   return `Rerail is on in ${name}.\n`;
 }
 
-/** What `rerail status` says outside a repo: that there is none, or that it found no Git to tell. */
+/**
+ * What `rerail status` says outside a Git repository: that Rerail works in one, and how to start it in one from here;
+ * or that it found no Git to tell.
+ */
 function noRepoStatus(workspace: string): string {
   const git = gitLookup();
   return git.found
-    ? `No repo found here (${workspace}). Run rerail status inside your project.\n`
+    ? `No Git repository here (${workspace}). Rerail works in a Git repository: run rerail status inside one, or start Rerail in one with rerail start --repo <folder>.\n`
     : `Rerail needs Git to tell whether this is a repo, and found none where it looks: ${git.looked.join(", ")}. Install Git, then run rerail status again.\n`;
 }
 

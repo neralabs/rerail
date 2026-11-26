@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { changeScope, toStoredRules, type StoredRule } from "../../ui/poll.js";
 import { data, ui } from "../../ui/state.js";
-import { catalogKinds, catalogPacks, packSwitch, pageRules, sheetRules, shownRules, sortPageRules, startGroups, suggestedReason, suggestedSplit, switchTurnsOn } from "../../ui/pack-model.js";
+import { catalogEntries, catalogKinds, catalogPacks, catalogSuggestions, installCommand, packSwitch, pageRiskFilters, pageRules, sheetRules, shownRules, sortPageRules, startGroups, suggestedReason, suggestedSplit, switchTurnsOn } from "../../ui/pack-model.js";
 import { packSwitchWrites, settingWrites } from "../../ui/settings-writes.js";
-import { isFromPack, publisherLabel, worktreeLeftOut } from "../../ui/derive.js";
+import { isFromPack, publisherLabel, RISK_LABELS, worktreeLeftOut } from "../../ui/derive.js";
+import { RULE_RISKS } from "../../src/engine/index.js";
 import { packKind } from "../../ui/render/pack-panel.js";
 import { changeOwner } from "../../ui/shell.js";
 
@@ -265,6 +266,30 @@ describe("a pack page's rules", () => {
     expect(shown("all", "ts:b")).toEqual(["ts:b"]);
     expect(shown("on", "ts:b")).toEqual([]);
   });
+
+  it("offers the risks its rules have, in the risks' order with counts, and filters and searches by them", () => {
+    const [typescript] = data.packs as { rules: { id: string; dimensions?: unknown }[] }[];
+    typescript!.rules[0]!.dimensions = { risk: "data-safety", layer: "jobs", severity: "critical" };
+    typescript!.rules[2]!.dimensions = { risk: "security", layer: "server", severity: "high", hazard: "auth.mutation-without-auth" };
+    data.packs = [...data.packs];
+    const all = pageRules("pack:typescript")!;
+    const shown = (filter: string, query = "") => { Object.assign(ui2, { filter, query, sort: "az" }); return shownRules(all).map(r => r.rule.id); };
+
+    expect(pageRiskFilters(all)).toEqual([["risk:security", "Security (1)"], ["risk:data-safety", "Data safety (1)"]]);
+    expect(pageRiskFilters(pageRules("pack:next")!)).toEqual([]);
+    expect(shown("risk:security")).toEqual(["ts:c"]);
+    expect(shown("risk:data-safety")).toEqual(["ts:a"]);
+    expect(shown("risk:performance")).toEqual([]);
+    // A risk is found by its label and by its id as pack.json and the API write it.
+    expect(shown("all", "data safety")).toEqual(["ts:a"]);
+    expect(shown("all", "data-safety")).toEqual(["ts:a"]);
+    expect(shown("all", "critical")).toEqual(["ts:a"]);
+    expect(shown("all", "mutation-without-auth")).toEqual(["ts:c"]);
+  });
+
+  it("names every risk a pack may give", () => {
+    expect(RISK_LABELS.map(([risk]) => risk)).toEqual([...RULE_RISKS]);
+  });
 });
 
 describe("the catalog", () => {
@@ -304,6 +329,58 @@ describe("the catalog", () => {
     expect(suggestedReason(recommendations, "python")).toBe("");
     expect(suggestedReason(recommendations, "next")).toBeNull();
     expect(suggestedReason(null, "vue")).toBeNull();
+  });
+
+  describe("with the packs published on npm", () => {
+    /** One entry of `GET /api/rule-packs/published`. */
+    const published = (id: string, name: string, category: string, fields: Record<string, unknown> = {}) => ({
+      id, name, category, covers: `${name} rules.`, publisher: "rerail", packageName: `@neralabs/rerail-pack-${id}`,
+      version: "0.1.12", ruleCount: 32, installedVersion: null, ...fields,
+    });
+    const installed = [pack("python", "Python", "language", ["p"]), pack("typescript", "TypeScript", "language", ["t"])];
+    const npm = {
+      packs: [
+        published("react", "React", "framework", { reason: "matches the react dependency in package.json", folder: "" }),
+        published("django", "Django", "framework", { version: "0.2.0", ruleCount: 25 }),
+        // Installed already: the installed one is listed, not this.
+        published("python", "Python", "language", { installedVersion: "0.2.0" }),
+        published("acme", "Acme", "language", { publisher: "@acme", packageName: "@acme/rerail-pack-acme", version: "1.0.0" }),
+      ],
+      unread: null,
+    };
+
+    it("lists a pack not installed under Other rule packs, after the installed ones, with its version on npm and rule count", () => {
+      const entries = catalogPacks(catalogEntries(installed, npm), "all");
+      expect(entries.map(p => [p.id, "published" in p])).toEqual([
+        ["python", false], ["typescript", false], ["acme", true], ["django", true], ["react", true],
+      ]);
+
+      const split = suggestedSplit(entries, catalogSuggestions([{ packId: "typescript", reason: "matches *.ts files" }], entries));
+      expect(split?.suggested.map(p => p.id)).toEqual(["typescript", "react"]);
+      expect(split?.others.map(p => p.id)).toEqual(["python", "acme", "django"]);
+      expect(split?.others.find(p => p.id === "django")).toMatchObject({ version: "0.2.0", ruleCount: 25, published: true });
+    });
+
+    it("offers the kinds the published packs have too", () => {
+      expect(catalogKinds(catalogEntries(installed, npm))).toEqual([["all", "All"], ["language", "Language"], ["framework", "Framework"]]);
+    });
+
+    it("suggests a published pack that fits before the recommendations are read, and stays one list while neither is", () => {
+      const entries = catalogEntries(installed, npm);
+      expect(catalogSuggestions(null, entries)).toEqual([{ packId: "react", reason: "matches the react dependency in package.json" }]);
+      expect(catalogSuggestions(null, installed)).toBeNull();
+      expect(catalogSuggestions(null, catalogEntries(installed, null))).toBeNull();
+    });
+
+    it("lists the installed packs alone while the published ones are not read, or could not be", () => {
+      expect(catalogEntries(installed, null)).toEqual(installed);
+      expect(catalogEntries(installed, { packs: [], unread: "could not reach the npm registry" })).toEqual(installed);
+    });
+
+    it("installs one of Rerail's own packs by its id, and any other by its package, at the version npm has", () => {
+      expect(installCommand(published("react", "React", "framework"))).toBe("rerail packs add react@0.1.12");
+      expect(installCommand(npm.packs[3]!)).toBe("rerail packs add @acme/rerail-pack-acme@1.0.0");
+    });
   });
 
   it("groups a pack not added by how its rules start, keeping their order", () => {

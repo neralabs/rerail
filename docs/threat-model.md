@@ -159,8 +159,10 @@ a secret token sent as `x-rerail-access`, on every request.
     `RERAIL_ENGINE_SOCKET`, they use the home's `daemon.json` if it names the same socket (`engineEndpointAt`). On
     Windows they send neither the capability nor the event until Windows names the process holding the pipe's server
     end as the daemon `daemon.json` records (its pid, started no later than it recorded itself), which wrote that
-    capability itself, or else the engine on that pipe gives the proof T2 describes for the capability `daemon.json`
-    records.
+    capability itself, or else, only where Windows says no pipe of that name exists or cannot be asked, the engine on
+    that pipe gives the proof T2 describes for the capability `daemon.json` records. Their lookup sends nothing, not
+    even the proof's challenge, to a pipe Windows names as another process's, or to one that refuses to let Windows
+    say which process serves it; the start check's proof is under "What remains" (T14).
 - **Cross-site requests.** The capability is a header, not a cookie, so a browser cannot send it cross-origin without
   a preflight, which the daemon never answers. Defence in depth: a foreign `Origin` on an `/api` write gets `403`;
   `/native/session` and `/native/shutdown` refuse any `Origin`.
@@ -376,6 +378,10 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600 (ex
 - A steer's receipt the daemon took while another process held the database waits in `rerail.sqlite-receipts/`
   beside it, 0700 with files 0600, until its record is made; the next daemon records what is left
   (`keepReceipt` in `src/runtime/session-store.ts`).
+- An event a hook left while the daemon ran but did not read (a prompt, a reply or a tool's input, its recognized
+  secrets redacted and a tool's output left out) waits in `untaken-events/` in the home, 0700 with files 0600, until
+  the daemon takes it (`src/engine/storage/untaken-events.ts`). A process that can write there can already read
+  `daemon.json`'s capability and send events itself.
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch, and a
@@ -1062,6 +1068,17 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
   as long). If the daemon ends in that time and another user creates a pipe of that name, that user gets the event and
   the capability. The other user cannot end the daemon to open that window. What would close it: the same check on
   the connection that carries the event.
+- On Windows a hook still writes the proof's challenge (T2) to a pipe no one has shown to be the home's daemon in two
+  places: its start check asks the pipe `daemon.json` names, as every reader of `daemon.json` does before it sends the
+  capability (`windowsRecordedDaemon`), and the lookup of the pipe `RERAIL_ENGINE_SOCKET` names asks it where Windows
+  cannot be asked, as when the native engine does not load in the hook's process or predates that question, or where
+  no pipe of that name was there when Windows was asked and one is there by the proof. Node opens a pipe without
+  `SECURITY_SQOS_PRESENT`, so a process serving that pipe that holds `SeImpersonatePrivilege`, as a service account
+  does, can act as the person's account once it reads that write. The challenge carries no secret. The lookup sends
+  nothing, not even the challenge, to a pipe Windows names as another process's, or to one that refuses to let Windows
+  say which process serves it; it opens the pipe asking only to read its attributes, which every open of Node's client
+  asks too, so no pipe a hook could write to refuses it. What would close the start check's part: asking Windows first
+  there too, as the lookup does.
 - `/native/session` still returns `error.message` in its `400`s.
 - A `.git` gitlink in an archive (not a clone) can point at another repository's common directory and inherit its
   `rerail-repository-id`, rules and start state when a session starts in that folder. A path a tool call names gets no

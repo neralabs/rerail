@@ -30,9 +30,12 @@ const evaluationSchema = z.object({
   failures: z.array(z.unknown()).default([]),
 });
 
+/** Every rule document of packs/python and its candidates, read once for the file rather than once for each rule. */
+const PYTHON_DOCUMENTS = loadPackRuleDocuments([repositoryPath("packs", "python"), repositoryPath("packs", "python", "candidates")]);
+
 function compile(ruleId: string): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  const document = loadPackRuleDocuments([repositoryPath("packs", "python"), repositoryPath("packs", "python", "candidates")]).find(candidate => candidate.rule.id === ruleId);
+  const document = PYTHON_DOCUMENTS.find(candidate => candidate.rule.id === ruleId);
   if (document === undefined) throw new Error(`${ruleId} is not in packs/python or its candidates`);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }

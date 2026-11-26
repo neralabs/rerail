@@ -65,11 +65,24 @@ export function worktreeLeftOut(skipped, checkoutPath) {
 const CATEGORY_LABEL = { language: "Language", framework: "Framework", repository: "Repository" };
 export const categoryLabel = category => CATEGORY_LABEL[category] ?? "";
 
+/** A pack rule's risk (`dimensions.risk`, `RULE_RISKS` in src/engine/catalog/rule-packs.ts) as the dashboard names it, in that order. */
+export const RISK_LABELS = [
+  ["security", "Security"],
+  ["data-safety", "Data safety"],
+  ["availability", "Availability"],
+  ["correctness", "Correctness"],
+  ["performance", "Performance"],
+  ["maintainability", "Maintainability"],
+  ["test-quality", "Test quality"],
+];
+const RISK_LABEL = Object.fromEntries(RISK_LABELS);
+export const riskLabel = risk => RISK_LABEL[risk] ?? risk;
+
 /**
  * Whether the rule runs: switched on, its options apply to its document, and Rerail runs that document. A rule whose
  * stored options no longer apply (`configError`), or that Rerail keeps but never evaluates (`inactive`: a language not
- * read yet, or a pack version's form this Rerail no longer runs), is left out of the compiled set, so it is not counted
- * as on.
+ * read yet, a pack version's form this Rerail no longer runs, or a conversation rule while the daemon runs without
+ * them), is left out of the compiled set, so it is not counted as on.
  */
 export const isRunning = stored => stored.enabled && !stored.configError && !stored.inactive;
 
