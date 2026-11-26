@@ -32,6 +32,7 @@ use rerail_blocks::gens::Table;
 use rerail_blocks::region::BlockPin;
 
 #[cfg(any(test, feature = "test-hooks"))]
+pub mod cache;
 pub mod samples;
 pub mod sort;
 pub mod trace;

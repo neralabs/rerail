@@ -36,6 +36,8 @@ pub mod kind {
     pub const DESC: u32 = 9;
     /// An operation's control words: work, flags, measured work, needed sizes, refusals (Operations §7).
     pub const CONTROL: u32 = 10;
+    /// An operator cache's header (P§11.3): the state it describes and its open mark, mutated in place.
+    pub const CACHE: u32 = 11;
 }
 
 structure! {

@@ -178,15 +178,16 @@ impl Shape {
                 self.placement
             ));
         }
-        match self.retention {
-            Retention::Run => {}
-            Retention::Cache => {
-                return Err("retention Cache is the operator cache's (P§11.3), B3's: one state mutated in place, not a trace".into());
-            }
+        let retention = match self.retention {
+            Retention::Run => RETAIN_RUN,
+            // P§11.3: one state, folded into one layer at each commit, its header naming the state.
+            Retention::Cache => RETAIN_CACHE,
             Retention::History => {
-                return Err("retention History keeps named frontiers; a trace has two states (the user, 2026-11-25)".into());
+                return Err("retention History keeps named frontiers, and a trace holds two states: \"no Frontier, at, \
+                            between, fork or pins\" (the user's answer, 2026-11-25, in the rebuild plan)"
+                    .into());
             }
-        }
+        };
         if self.indexes.len() > MAX_IX {
             return Err(format!("at most {MAX_IX} indexes beside the canonical order"));
         }
@@ -196,7 +197,7 @@ impl Shape {
             levels: u32::from(self.levels),
             encoding: 0,
             placement: 0,
-            retention: 0,
+            retention,
             nidx: self.indexes.len() as u32,
             pad: 0,
             types: [0; MAX_COLS],
@@ -245,6 +246,11 @@ pub const IX_PRINTS: u32 = 4;
 pub const IX_HASH: u32 = 8;
 pub const IX_BLOOM: u32 = 16;
 
+/// A shape's retention, as its blocks hold it: run data (two states during a run, one at rest), or a cache (one
+/// state, mutated: P§11.3).
+pub const RETAIN_RUN: u32 = 0;
+pub const RETAIN_CACHE: u32 = 1;
+
 /// One index of a shape, as its blocks hold it.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -289,6 +295,11 @@ impl ShapeW {
 
     pub fn order(&self) -> &[u8] {
         &self.order[..self.arity()]
+    }
+
+    /// Whether the trace is a cache (P§11.3): one state, its header naming it.
+    pub fn is_cache(&self) -> bool {
+        self.retention == RETAIN_CACHE
     }
 
     /// A recursive relation's level column (0364): its last.

@@ -966,7 +966,8 @@ fn seal<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         set_word::<u64>(ctl, BODY_AT + 16, n_out);
         set_word::<u64>(ctl, BODY_AT + 24, added);
         set_word::<u64>(ctl, BODY_AT + 32, gone);
-        let due = if refused == 0 { due_to_merge(c.table, O::below(c.params), added + gone) } else { 0 };
+        let cache = O::src(c.read(SRC), c.table, c.params).shape().is_cache();
+        let due = if refused == 0 { due_to_merge(c.table, O::below(c.params), added + gone, cache) } else { 0 };
         let ([], [ctl]) = c.views([], [CTL]);
         set_word::<u64>(ctl, BODY_AT + 40, due);
     } else {
@@ -979,12 +980,14 @@ fn seal<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
 /// due to merge into one. From the newest down, a layer joins while what is merged so far is more than half its size;
 /// so after the merge every layer is at most half the one below it, and a trace of `n` rows has O(log n) layers. 0 or
 /// 1: none due. Read from the layers' headers, through the descriptor table.
-pub fn due_to_merge(table: &Table<'_>, below: u32, size: u64) -> u64 {
+///
+/// A cache's trace (P§11.3, one state) folds every layer into one: all are due.
+pub fn due_to_merge(table: &Table<'_>, below: u32, size: u64, cache: bool) -> u64 {
     let (mut acc, mut k, mut id) = (size, 1u64, below);
     while id != NONE {
         let l = Layer::new(table.block(id).expect("a layer below, reached by reference")).expect("committed");
         let n = u64::from(l.head.added) + u64::from(l.head.ngone);
-        if 2 * acc <= n {
+        if !cache && 2 * acc <= n {
             break;
         }
         acc += n;

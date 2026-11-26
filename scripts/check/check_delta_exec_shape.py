@@ -185,8 +185,8 @@ def b2(failures: list) -> None:
     code = strip_rust(trace.read_text())
     hits(trace, code, r"\bVec<\s*(Layer|Chain|BlockId)\b|\bVec<Vec<i64>>\s*[,;)]", "the host holding layers or rows", failures)
     tstruct = re.search(r"pub struct Trace \{(.*?)\}", code, flags=re.S)
-    if not tstruct or re.sub(r"\s+", " ", tstruct.group(1)).strip() != "shape: ShapeW, head: Option<BlockId>, roll: RollUp,":
-        failures.append(f"{trace.relative_to(ROOT)}: a Trace is its shape, its head's block id and its roll-up policy")
+    if not tstruct or re.sub(r"\s+", " ", tstruct.group(1)).strip() != "shape: ShapeW, head: Option<BlockId>, roll: RollUp, cache: Option<BlockId>,":
+        failures.append(f"{trace.relative_to(ROOT)}: a Trace is its shape, its head's block id, its roll-up policy and its cache header's block id")
     # O5: the geometric roll-up runs from commit, by the count consolidate's seal reads from the layers' headers.
     twins = (CRATE.parent / "delta_twins/src/trace.rs").read_text()
     if "fn due_to_merge(" not in twins or "due_to_merge(c.table" not in twins:

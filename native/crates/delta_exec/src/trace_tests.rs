@@ -375,7 +375,6 @@ fn a_shape_the_plan_puts_elsewhere_is_refused_saying_where() {
     refused(&|s| s.encoding = Encoding::Packed, "leaves its run");
     refused(&|s| s.placement = Placement::KeptFile, "kept stores");
     refused(&|s| s.placement = Placement::PinnedSlab, "device executor");
-    refused(&|s| s.retention = Retention::Cache, "operator cache");
     refused(&|s| s.retention = Retention::History, "two states");
     refused(&|s| s.indexes = vec![rerail_blocks::layer::IndexSpec::Perm(vec![2])], "packed's permutation");
     let s = Shape::run(vec![ColType::I32, ColType::I64], vec![1, 0], Some(0));
@@ -807,4 +806,59 @@ fn levels_are_a_column_one_live_a_key() {
         assert_eq!(found, vec![vec![k % 5, k, if k < 100 { 2 } else { 0 }]], "key {k}: its one live level");
     }
     assert_eq!(rows_of(&st).len(), 301);
+}
+
+/// P§11.3, a cache: one state, mutated, its header naming it. A run opens the header before its first write and
+/// commits the state it made, last; a commit of a run that did not open it is refused. Every commit folds the cache
+/// into one layer. A reader asking for another state, or finding the header open (a run that died part-way), reads
+/// it as ∅; the next run then starts from ∅. A cache exposes no bistate.
+#[test]
+fn a_cache_is_one_state_its_header_names() {
+    let mut s = shape();
+    s.retention = rerail_blocks::layer::Retention::Cache;
+    let mut reg = Registry::default();
+    let ops = TraceOps::declare(&mut reg).unwrap();
+    let mut dir = Directory::default();
+    let mut t = Trace::new(&s).unwrap();
+    let mut r = rng(5);
+    // Without an open header, nothing is written.
+    let id = runs(&mut dir, &t, &[(vec![1, 2, 3], 1)]);
+    assert!(t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).err().unwrap().contains("cache_open"));
+    assert!(t.open_cache(&reg, &ops, &mut dir, 0).unwrap(), "a new cache holds ∅, state 0");
+    let mut set = Rows::new();
+    for step in 0..6u64 {
+        let (pairs, next) = random_run(&mut r, &set);
+        let id = runs(&mut dir, &t, &pairs);
+        t.commit(&reg, &ops, &mut dir, id, Tiling { tile: 3, seed: step }).unwrap();
+        set = next;
+        let l = t.read(&dir, &[t.head()]).unwrap();
+        let table = l.table();
+        let st = t.state(&table, t.head()).unwrap();
+        assert_eq!(st.layers().count(), 1, "step {step}: a cache is one layer");
+        assert_eq!(rows_of(&st), set, "step {step}");
+        assert!(t.change(&table, None, t.head()).err().unwrap().contains("no bistate"));
+    }
+    // Open: a reader reads ∅ until the run commits.
+    assert!(t.cached(&dir, 0).is_err(), "open: ∅");
+    t.commit_cache(&reg, &ops, &mut dir, 0xd1).unwrap();
+    let head = t.cached(&dir, 0xd1).unwrap();
+    assert_eq!(head, t.head());
+    assert!(t.cached(&dir, 0xd2).is_err(), "another state's: ∅");
+    // The next run, from the state it holds: kept.
+    assert!(t.open_cache(&reg, &ops, &mut dir, 0xd1).unwrap());
+    let (pairs, next) = random_run(&mut r, &set);
+    let id = runs(&mut dir, &t, &pairs);
+    t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).unwrap();
+    set = next;
+    // It dies before its commit: the header stays open, and the run after it starts from ∅.
+    assert!(t.cached(&dir, 0xd1).is_err());
+    assert!(!t.open_cache(&reg, &ops, &mut dir, 0xd1).unwrap(), "a run that died part-way costs the cache");
+    assert_eq!(t.head(), None, "and its layers are let go");
+    let _ = set;
+    let id = runs(&mut dir, &t, &[(vec![4, 5, 6], 1)]);
+    t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).unwrap();
+    t.commit_cache(&reg, &ops, &mut dir, 0xd3).unwrap();
+    let l = t.read(&dir, &[t.cached(&dir, 0xd3).unwrap()]).unwrap();
+    let table = l.table();
+    assert_eq!(rows_of(&t.state(&table, t.head()).unwrap()), [vec![4, 5, 6]].into_iter().collect::<Rows>());
 }

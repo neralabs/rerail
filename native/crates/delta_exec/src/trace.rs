@@ -21,6 +21,7 @@ use rerail_blocks::gens::{BODY_AT, Table, word};
 use rerail_blocks::layer::{Layer, NONE, Runs, Shape, ShapeW, init_runs, layer_room, runs_bytes};
 use rerail_blocks::relation::View;
 use rerail_delta_twins::Params;
+use rerail_delta_twins::cache::{self as cache_twin, CACHE_BYTES, CacheP};
 use rerail_delta_twins::trace::{CONTROL_BYTES, ConsolidateP, MergeP, due, out_bytes, refused};
 
 const fn ph(name: &'static str, found: Found, unit: Unit, inside: Inside, across: Across, output: Output, bounds: &'static [Bound]) -> Phase {
@@ -91,6 +92,35 @@ pub static MERGE: Signature = Signature::new(
     facts_of,
 );
 
+/// A cache header's operations: one phase each, one item, the header written in place.
+static OPEN_PHASE: [Phase; 1] = [ph("open", Found::Fixed, Unit::Threadgroup, Inside::Nothing, Across::Nothing, Output::InPlace, &[])];
+static COMMIT_PHASE: [Phase; 1] = [ph("commit", Found::Fixed, Unit::Threadgroup, Inside::Nothing, Across::Nothing, Output::InPlace, &[])];
+
+/// `cache_open` (P§11.3): rw the cache's header: marked open, before a run's first write.
+pub static CACHE_OPEN: Signature = Signature::new(
+    "cache_open",
+    &[SlotSpec { name: "header", mode: Mode::ReadWrite, kind: kind::CACHE }],
+    ParamsLayout::of::<CacheP>(),
+    &OPEN_PHASE,
+    Independence::Along("one header"),
+    header_facts,
+);
+
+/// `cache_commit` (P§11.3): rw the cache's header: the new state's digest, then the mark cleared, last.
+pub static CACHE_COMMIT: Signature = Signature::new(
+    "cache_commit",
+    &[SlotSpec { name: "header", mode: Mode::ReadWrite, kind: kind::CACHE }],
+    ParamsLayout::of::<CacheP>(),
+    &COMMIT_PHASE,
+    Independence::Along("one header"),
+    header_facts,
+);
+
+/// A cache header's facts: its state, open mark and what the last open found.
+pub fn header_facts(_: &Table<'_>, _: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
+    vec![vec![cache_twin::state(bytes) as i64, i64::from(cache_twin::is_open(bytes)), i64::from(cache_twin::held(bytes))]]
+}
+
 /// A layer's facts by meaning (F1), each a tagged row: its rows (id, values), its kills, its partitions' change, its
 /// kills by partition, each index (an order's ids, fences and prints by its key; a Bloom filter's words), each
 /// column's statistics, its counts and the layer below; a control block's words. Where the block put each structure
@@ -140,6 +170,8 @@ pub fn facts_of(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
 pub struct TraceOps {
     pub consolidate: OpId,
     pub merge: OpId,
+    pub cache_open: OpId,
+    pub cache_commit: OpId,
 }
 
 impl TraceOps {
@@ -148,7 +180,11 @@ impl TraceOps {
         reg.register_reference(Version::twin(consolidate, "consolidate twin", rerail_delta_twins::trace::CONSOLIDATE, &PIPELINE))?;
         let merge = reg.declare(&MERGE)?;
         reg.register_reference(Version::twin(merge, "merge twin", rerail_delta_twins::trace::MERGE, &PIPELINE))?;
-        Ok(TraceOps { consolidate, merge })
+        let cache_open = reg.declare(&CACHE_OPEN)?;
+        reg.register_reference(Version::twin(cache_open, "cache_open twin", cache_twin::CACHE_OPEN, &OPEN_PHASE))?;
+        let cache_commit = reg.declare(&CACHE_COMMIT)?;
+        reg.register_reference(Version::twin(cache_commit, "cache_commit twin", cache_twin::CACHE_COMMIT, &COMMIT_PHASE))?;
+        Ok(TraceOps { consolidate, merge, cache_open, cache_commit })
     }
 }
 
@@ -162,17 +198,18 @@ pub enum RollUp {
     Never,
 }
 
-/// A trace on the host: its shape, its newest layer's block id, and its roll-up policy.
+/// A trace on the host: its shape, its newest layer's block id, its roll-up policy, and a cache's header block (P§11.3).
 pub struct Trace {
     shape: ShapeW,
     head: Option<BlockId>,
     roll: RollUp,
+    cache: Option<BlockId>,
 }
 
 impl Trace {
     /// An empty trace of `shape`; refused when the shape cannot be stored (P§11.2's grouping, what is not built).
     pub fn new(shape: &Shape) -> Result<Trace, String> {
-        Ok(Trace { shape: shape.encode()?, head: None, roll: RollUp::Geometric })
+        Ok(Trace { shape: shape.encode()?, head: None, roll: RollUp::Geometric, cache: None })
     }
 
     /// The trace with roll-up policy `roll`.
@@ -202,6 +239,10 @@ impl Trace {
     /// are merged (`roll_up`), and the merged layer is the head. The runs block is let go. Refused, with the head as it was, when
     /// the runs overflowed (rerun at the size it names) or `consolidate` refused the change.
     pub fn commit(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, runs: BlockId, tiling: Tiling) -> Result<BlockId, String> {
+        if self.shape.is_cache() && !self.cache_is_open(dir)? {
+            dir.release(runs);
+            return Err("a cache is written by a run that opened it (cache_open, P§11.3)".into());
+        }
         let (n, needed) = {
             let l = dir.read("commit", &[runs])?;
             let r = Runs::new(l.block(0));
@@ -281,6 +322,50 @@ impl Trace {
         Ok(out)
     }
 
+    /// A cache's run begins (P§11.3): its header marked open before the run's first write, by `cache_open`. True
+    /// when the cache held `from`, the state the run starts from; else it reads as ∅, and its layers are let go.
+    pub fn open_cache(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, from: u64) -> Result<bool, String> {
+        if !self.shape.is_cache() {
+            return Err("a trace of run data has no cache header (its retention is Run)".into());
+        }
+        let h = match self.cache {
+            Some(h) => h,
+            None => *self.cache.insert(dir.make(kind::CACHE, CACHE_BYTES)),
+        };
+        let mut params = vec![0u8; CacheP::SIZE];
+        CacheP { state: from }.write(&mut params);
+        run_cpu(reg, dir, ops.cache_open, &[h], &params, Tiling::WHOLE)?;
+        let held = cache_twin::held(dir.read("cache", &[h])?.block(0));
+        if !held && let Some(head) = self.head.take() {
+            dir.release(head);
+        }
+        Ok(held)
+    }
+
+    /// A cache's run ends (P§11.3): the state it made, `to`, written to its header, and the mark cleared, last.
+    pub fn commit_cache(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, to: u64) -> Result<(), String> {
+        let h = self.cache.ok_or("a cache committed before it was opened")?;
+        let mut params = vec![0u8; CacheP::SIZE];
+        CacheP { state: to }.write(&mut params);
+        run_cpu(reg, dir, ops.cache_commit, &[h], &params, Tiling::WHOLE)
+    }
+
+    /// A cache's state, when its header names `state` and is not open: its one layer (`None`: the empty state).
+    /// `Err` when the cache reads as ∅ for `state`.
+    pub fn cached(&self, dir: &Directory, state: u64) -> Result<Option<BlockId>, String> {
+        let h = self.cache.ok_or("a cache never opened reads as ∅")?;
+        if cache_twin::holds(dir.read("cache", &[h])?.block(0), state) {
+            Ok(self.head)
+        } else {
+            Err(format!("the cache does not hold state {state:#x}: open, or another state's"))
+        }
+    }
+
+    fn cache_is_open(&self, dir: &Directory) -> Result<bool, String> {
+        let Some(h) = self.cache else { return Ok(false) };
+        Ok(cache_twin::is_open(dir.read("cache", &[h])?.block(0)))
+    }
+
     /// A launch reading the trace's layers from `heads` down: each pinned to read, with the descriptor table of them.
     pub fn read(&self, dir: &Directory, heads: &[Option<BlockId>]) -> Result<Launch, String> {
         dir.read("read", &heads.iter().flatten().copied().collect::<Vec<_>>())
@@ -293,6 +378,9 @@ impl Trace {
 
     /// The change from the state at `before` to the state at `after` (`before` below `after` in the chain).
     pub fn change<'t>(&self, table: &'t Table<'t>, before: Option<BlockId>, after: Option<BlockId>) -> Result<Bistate<View<'t>>, String> {
+        if self.shape.is_cache() {
+            return Err("a cache exposes no bistate: one state, mutated in place (P§11.3)".into());
+        }
         let a = self.state(table, after)?;
         Ok(match before {
             None => Bistate::cold(a),
