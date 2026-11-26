@@ -122,7 +122,8 @@ pub enum StructuralOperation {
     /// The token's bytes against a string: refuse where they differ, or with `test`, skip the
     /// next word.
     Word { string: u16, test: bool },
-    Open { kind: u16 },
+    /// `attached` (`OPEN m=1`): at the end of the record before the token, an `attached` rule's.
+    Open { kind: u16, attached: bool },
     /// At the end of this token (`this`), or of the one before.
     /// `deep`: an indented level's node, which keeps the extras pending at least as deep as the
     /// level's indent (`CLOSE m=2`).
@@ -250,7 +251,7 @@ impl StructuralOperation {
             Self::Switch { table } => (SWITCH, 0, table),
             Self::Span { last, len } => (SPAN, u8::from(last), len),
             Self::Word { string, test } => (WORD_IS, u8::from(test), string),
-            Self::Open { kind } => (OPEN, 0, kind),
+            Self::Open { kind, attached } => (OPEN, u8::from(attached), kind),
             Self::Close { this, deep } => (CLOSE, u8::from(this) | u8::from(deep) << 1, 0),
             Self::Leaf { kind, deferred, extra } => (LEAF, if extra { 2 } else { u8::from(deferred) }, kind),
             Self::Settle { kind } => (LEAF, 3, kind),
@@ -517,7 +518,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             SWITCH => StructuralOperation::Switch { table: operand },
             SPAN => StructuralOperation::Span { last: mode != 0, len: operand },
             WORD_IS => StructuralOperation::Word { string: operand, test: mode != 0 },
-            OPEN => StructuralOperation::Open { kind: operand },
+            OPEN => StructuralOperation::Open { kind: operand, attached: mode == 1 },
             CLOSE => StructuralOperation::Close { this: mode & 1 != 0, deep: mode & 2 != 0 },
             LEAF if mode == 3 => StructuralOperation::Settle { kind: operand },
             LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode == 1, extra: mode == 2 },

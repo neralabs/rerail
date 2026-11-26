@@ -1308,8 +1308,9 @@ impl<'a> Ev<'a> {
             _ => true,
         });
         let is = |t: Option<usize>, e: &[TokenElem]| match (e, t) {
-            ([TokenElem::Not(inner)], Some(t)) => !inner.iter().any(|c| one(t, c)),
-            ([TokenElem::Not(_)], None) => false,
+            // A run's `~` with marks (`(~(C) without M)*`): none of the choices, each mark's question.
+            ([TokenElem::Not(inner), marks @ ..], Some(t)) => !inner.iter().any(|c| one(t, c)) && without(t, marks),
+            ([TokenElem::Not(_), ..], None) => false,
             (_, None) => e.contains(&TokenElem::End),
             (_, Some(t)) => e.iter().any(|c| one(t, c)) && without(t, e),
         };

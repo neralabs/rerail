@@ -113,8 +113,8 @@ fn comprehensions_are_the_lean_parsers() {
     same(&["x = [a for a in b]\n", "x = [a for a in b if c if d for e in f]\n", "x = {a: b for a, b in c}\n", "x = {a for a in b}\n"]);
     same(&["f(a for a in b)\n", "x = (a for a in b)\n", "x = [a.b for a in c if not a.d]\n", "x = [a for a in b if c and d or e]\n"]);
     same(&["x = [a if b else c for a in d]\n", "x = [*a, *b]\n", "x = [*a, b]\n", "x = [a, *b]\n", "x = []\n", "f()\n", "x = [a async for a in b]\n"]);
-    // A list whose one item is a splat: tree-sitter's splat is a primary there. Not read yet.
-    refused(&["x = [a for s in [*b]]\n", "x = [a for s in [*b.c()]]\n", "for s in [*b]:\n    a\n"]);
+    // A list whose one item is a splat: tree-sitter's splat is a primary there (`star_item`).
+    same(&["x = [a for s in [*b]]\n", "x = [a for s in [*b.c()]]\n", "for s in [*b]:\n    a\n"]);
 }
 
 #[test]
@@ -138,6 +138,26 @@ fn targets_slices_lambdas_yields_and_concatenations_are_the_lean_parsers() {
 }
 
 #[test]
+fn match_statements_are_the_lean_parsers() {
+    same(&["match a:\n    case 1:\n        b\n    case _:\n        c\n", "match a.b:\n    case X.Y:\n        b\n    case None:\n        c\n"]);
+    same(&["match a:\n    case list() | tuple():\n        b\n    case str(x):\n        c\n", "match a:\n    case [b, *c]:\n        d\n    case {\"k\": v, **r}:\n        e\n"]);
+    same(&["match a:\n    case (b, c) if b > c:\n        d\n    case B(x=1) as y:\n        e\n", "match a:\n    case b:\n        c\n", "match a:\n    case 1 | 2 as b:\n        c\n"]);
+    same(&["match (a, b):\n    case (1, 2):\n        c\n", "match a:\n    case \"x\" | \"y\":\n        b\n    case [1, 2, *_]:\n        c\n", "match a:\n    case -1:\n        b\n    case {\"k\": [x, y]}:\n        c\n"]);
+    same(&["match a:\n    case X(b=c, d=e):\n        f\n    case X(1, 2):\n        g\n", "def f():\n    match a:\n        case 1:\n            b\n    return c\n"]);
+    // The body from the end of the record before its first `case`: the `:`'s, or a comment's.
+    same(&["match a:   \n    case 1: b\n", "match a:  # c\n    case 1:\n        b\n"]);
+    // `match` as a name.
+    same(&["match = 1\n", "match(a)\n", "match.group(1)\nif a:\n    b\n", "x = match\n", "for _ in a:\n    b\n", "_ = 1\n"]);
+}
+
+#[test]
+fn star_items_type_aliases_and_small_forms_are_the_lean_parsers() {
+    same(&["x = [*a]\n", "x = [*a.b()]\n", "x = [*a, *b]\n", "x = [*f(a, b), c]\n", "x = *a, b\n", "x = a, *b\n", "return *a, b\n", "for x in *a, *b:\n    c\n"]);
+    same(&["*a, b = c\n", "((), b) = c\n", "try:\n    a\nexcept* E as e:\n    b\n", "f(lambda a, *, b=None: c)\n"]);
+    same(&["type X = int\n", "type X[T] = list[T]\n", "type = 1\n", "type(a)\n", "x = type\n"]);
+}
+
+#[test]
 fn walrus_bodies_splats_patterns_and_type_parameters_are_the_lean_parsers() {
     same(&["if (a := b):\n    c\n", "if a := b:\n    c\n", "x = [y for z in w if (y := f(z))]\n", "while (a := f()) is not None:\n    b\n"]);
     same(&["def f(): ...\n", "def f() -> int: ...\n", "class A: pass\n", "if a: b\n", "while a: b; c\n", "if a: b\nelse: c\n", "class A:\n    def f(self): ...\n    x = 1\n"]);
@@ -146,7 +166,7 @@ fn walrus_bodies_splats_patterns_and_type_parameters_are_the_lean_parsers() {
     same(&["x = (a) == b\n", "(a)\n", "[a, b]\n", "(a).b = c\n"]);
     same(&["class A[T]:\n    pass\n", "def f[T](a: T) -> T:\n    pass\n"]);
     // Not read yet: a statement's splat target, a splat in an expression list, a tuple pattern before a comma.
-    refused(&["*a, b = c\n", "x = *a, b\n", "(a, b), c = d\n", "match a:\n    case 1:\n        b\n", "type X = int\n"]);
+    refused(&["(a, b), c = d\n"]);
 }
 
 #[test]

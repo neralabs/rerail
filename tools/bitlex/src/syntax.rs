@@ -801,8 +801,10 @@ pub enum Stmt {
     /// root. `nested`: it may contain itself, and runs on a stack frame (doc 18 §1).
     /// `whole`: the root spans the whole file, from byte 0, and may hold no token. `whole
     /// padded`: from its first token or comment (none: the file's end), as tree-sitter's root
-    /// starts past the file's leading blanks, its padding.
-    Node { kind: String, nested: bool, whole: bool, padded: bool, body: Gram },
+    /// starts past the file's leading blanks, its padding. `attached`: it starts where the record
+    /// before its first token ends (a comment's included), not at that token, as tree-sitter's
+    /// match body starts at its `:`'s end.
+    Node { kind: String, nested: bool, attached: bool, whole: bool, padded: bool, body: Gram },
     /// `choice NAME [supertype S] = A | B …`: no node of its own; each alternative's node has
     /// supertype `S`.
     /// `choice N [supertype S] [nested] = …`: `nested`, a level of its own, called where it is
@@ -1276,12 +1278,13 @@ impl P {
         if self.eat_p("(") {
             let inner = self.token_choices()?;
             // `with M`, `without M`: each token of the run with or without mark `M`, as the lean parser's
-            // `on_line` asks of each word it reads.
-            let inner = if matches!(inner.as_slice(), [TokenElem::Not(_)]) { inner } else { self.with_marks(inner)? };
+            // `on_line` asks of each word it reads (a `~`'s too: any other token without it).
+            let inner = self.with_marks(inner)?;
             self.want_p(")")?;
             self.want_p("*")?;
             // Kinds and words, or one `~` of them: a run of any other tokens.
-            let not = matches!(inner.as_slice(), [TokenElem::Not(_)]);
+            let marks = |c: &[TokenElem]| c.iter().all(|x| matches!(x, TokenElem::With(_) | TokenElem::Without(_)));
+            let not = matches!(inner.as_slice(), [TokenElem::Not(_), rest @ ..] if marks(rest));
             if !not && inner.iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::With(_) | TokenElem::Without(_))) {
                 return self.err("a run of kinds and words (`with`, `without` a mark), or of a `~` of them");
             }
@@ -1367,7 +1370,9 @@ impl P {
             } else {
                 return Ok(c);
             };
-            if !c.iter().all(|x| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_))) {
+            // A run's `~(…)` takes them too (`(~("def") without newline)*`).
+            let first_not = matches!(c.first(), Some(TokenElem::Not(_)));
+            if !c.iter().enumerate().all(|(i, x)| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_)) || (i == 0 && first_not)) {
                 return self.err("`with` or `without` after an element of kinds and words");
             }
             let m = self.ident()?;
@@ -2243,10 +2248,11 @@ impl P {
             "node" => {
                 let kind = self.kind()?;
                 let nested = self.eat_kw("nested");
+                let attached = self.eat_kw("attached");
                 let whole = self.eat_kw("whole");
                 let padded = whole && self.eat_kw("padded");
                 self.want_p("=")?;
-                Stmt::Node { kind, nested, whole, padded, body: self.gram()? }
+                Stmt::Node { kind, nested, attached, whole, padded, body: self.gram()? }
             }
             "choice" => {
                 let name = self.ident()?;
@@ -2846,7 +2852,7 @@ pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
     let mut out = Vec::new();
     for s in stmts {
         out.push(match s {
-            Stmt::Node { kind, nested, whole, padded, body } => Stmt::Node { kind: kind.clone(), nested: *nested, whole: *whole, padded: *padded, body: leaves_in(body, &mut todo, &name)? },
+            Stmt::Node { kind, nested, attached, whole, padded, body } => Stmt::Node { kind: kind.clone(), nested: *nested, attached: *attached, whole: *whole, padded: *padded, body: leaves_in(body, &mut todo, &name)? },
             Stmt::Choice { name: n, supertype, nested, body } => Stmt::Choice { name: n.clone(), supertype: supertype.clone(), nested: *nested, body: leaves_in(body, &mut todo, &name)? },
             s => s.clone(),
         });
@@ -2975,12 +2981,15 @@ mod tier2_tests {
             Ok((vec![(false, vec![vec![word("@")], vec![TokenElem::Many(vec![TokenElem::Not(vec![word("{")])], vec![paren.clone()], vec![name.clone(), word(")")])], vec![TokenElem::Not(vec![word(".")])]])], false))
         );
         assert!(mark("mark k = lf, before \"@\" (name)* ending (~name) \".\"").is_err());
-        // Each token of a run without a mark (decision 0673 step 4); not after a `~`.
+        // Each token of a run without a mark (decision 0673 step 4); after a `~` too (decision 0698).
         assert_eq!(
             mark("mark k = lf, before \"{\" (name | \",\" without k)* \"}\""),
             Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![name.clone(), word(","), TokenElem::Without("k".into())], vec![], vec![])], vec![word("}")]])], false))
         );
-        assert!(mark("mark k = lf, before \"{\" (~name without k)* \"}\"").is_err());
+        assert_eq!(
+            mark("mark k = lf, before \"{\" (~name without k)* \"}\""),
+            Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![TokenElem::Not(vec![name.clone()]), TokenElem::Without("k".into())], vec![], vec![])], vec![word("}")]])], false))
+        );
     }
 
     /// A settling mark's `drops` (decision 0416, its questions 0451): parsed with `settles`,

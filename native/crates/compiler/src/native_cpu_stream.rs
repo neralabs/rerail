@@ -534,7 +534,8 @@ enum EndAt {
 enum WordFn {
     /// `by_word`: a keyword's leaf, its kind its token's word's (`WORD_KIND`).
     Leaf { deferred: bool, extra: bool, end: EndAt, by_word: bool },
-    Open,
+    /// `attached`: at the end of the record before the token (`OPEN m=1`).
+    Open { attached: bool },
     Close { this: bool, end: EndAt, deep: bool },
     Wrap,
     /// `RETAG m=1`: the node the last wrap moved.
@@ -544,7 +545,7 @@ enum WordFn {
     /// `RETAG`: the innermost open node.
     Here,
     /// A direct format 16 run's (`Table::direct`): a node's word, its supertypes' key bits; a leaf's, its end.
-    Open16 { classes: u32 },
+    Open16 { classes: u32, attached: bool },
     Leaf16 { end: EndAt, by_word: bool, classes: u32 },
     Close16 { this: bool, end: EndAt },
     /// `MERGE m=1`.
@@ -1701,13 +1702,13 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
     f.block_params(done)[0]
 }
 
-/// Whether the token marks of one order hold (`program::patterns_hold`), from entry `first` of
-/// `marks`: each entry's `token_pattern`, none of the `unless` ones and, where there are others,
-/// one of them. 1 or 0.
-fn token_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::program::TokenMark], first: usize, extra_bit: Option<u8>, lazy: Option<&Lazy<'_>>, code: Option<Value>, heads: &mut Vec<(Block, Step)>) -> Value {
-    let order = marks[first].order;
+/// Whether the token marks of one order hold (`program::patterns_hold`), from the first of
+/// `marks` (the program's from that order's first entry): each entry's `token_pattern`, none of
+/// the `unless` ones and, where there are others, one of them. 1 or 0.
+fn token_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::program::TokenMark], extra_bit: Option<u8>, lazy: Option<&Lazy<'_>>, code: Option<Value>, heads: &mut Vec<(Block, Step)>) -> Value {
+    let order = marks[0].order;
     let (mut none_of, mut one_of): (Option<Value>, Option<Value>) = (None, None);
-    for m in marks[first..].iter().take_while(|m| m.order == order) {
+    for m in marks.iter().take_while(|m| m.order == order) {
         let v = token_pattern(f, e, m, extra_bit, lazy, code, heads);
         if m.unless {
             none_of = Some(none_of.map_or(v, |a| f.ins().bor(a, v)));
@@ -2472,11 +2473,12 @@ fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
 /// its key `kf` (its kind, its field above it) and its supertypes' bits, then `w_open` at the token's start (and open
 /// on the stack of open nodes) or, a leaf's (`end`), `w_leaf` with the token's bytes; then `w_commit`. No row. A key
 /// with no number is the ops' failure (`fail::NUMBER`); an op's failure is the writer's, which the host reads.
-fn node16_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kf: Value, classes: u32, end: Option<EndAt>) {
+/// `attached`: a node's start at the end of the record before the token (`OPEN m=1`).
+fn node16_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kf: Value, classes: u32, end: Option<EndAt>, attached: bool) {
     let s = t.fns.sixteen.as_ref().expect("a format 16 run's");
     let zero = f.ins().iconst(types::I64, 0);
     (e.set)(f, Mem::Pending, zero);
-    let (nodes, start) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Start));
+    let (nodes, start) = ((e.get)(f, Mem::Nodes), (e.get)(f, if attached { Mem::LastEnd } else { Mem::Start }));
     let kind = f.ins().band_imm(kf, 0x3ff);
     let field = f.ins().ushr_imm(kf, 16);
     let field = f.ins().band_imm(field, 0x3f);
@@ -2529,10 +2531,11 @@ fn close16_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, this
 }
 
 /// `OPEN`: its row (its key, its field above its kind or none; its start), its offset; open.
-fn open_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value, wrapping: bool) {
+/// `attached` (`OPEN m=1`): its start the end of the record before the token.
+fn open_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value, wrapping: bool, attached: bool) {
     let zero = f.ins().iconst(types::I64, 0);
     (e.set)(f, Mem::Pending, zero);
-    let (nodes, start, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Start), (e.get)(f, Mem::Open));
+    let (nodes, start, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, if attached { Mem::LastEnd } else { Mem::Start }), (e.get)(f, Mem::Open));
     let rows = (e.ctx)(f, ROWS);
     let row = NodeCol::row(f, rows, nodes);
     f.ins().istore32(MemFlags::trusted(), kind, row, AT_KIND);
@@ -4396,7 +4399,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
         if !matches!(words.get(restart).map(|w| w.operation), Some(Op::Token { .. })) || !flagged && phase_of[restart] != crate::stream::TAKEN {
             return Err(Error::UnsupportedFeature("statements that recover, with no root head that takes a token"));
         }
-        if words.iter().any(|w| matches!(w.operation, Op::Leaf { kind, .. } | Op::Open { kind } | Op::Wrap { kind } if kind == crate::native_cpu_tape::ERROR_ROW)) {
+        if words.iter().any(|w| matches!(w.operation, Op::Leaf { kind, .. } | Op::Open { kind, .. } | Op::Wrap { kind } if kind == crate::native_cpu_tape::ERROR_ROW)) {
             return Err(Error::UnsupportedFeature("a kind that is the ERROR row's"));
         }
         let mut limit = |v: usize| limits[v / 64] |= 1 << (v % 64);
@@ -5986,7 +5989,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                                         let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
                                         let lazy = native.block_programs.first().and_then(Lazy::of);
                                         let code = taken_code.then(|| (env.get)(g, Mem::Taken));
-                                        let v = token_patterns(g, &env, &marks, first, bit, lazy.as_ref(), code, hs);
+                                        let v = token_patterns(g, &env, &marks[first..], bit, lazy.as_ref(), code, hs);
                                         g.ins().return_(&[v]);
                                     })?;
                                     word_fns.insert(key, made);
@@ -5997,7 +6000,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                             } else {
                                 let lazy = native.block_programs.first().and_then(Lazy::of);
                                 let code = taken_code.then(|| mget(&mut f, Mem::Taken));
-                                token_patterns(&mut f, &env, &marks, first, bit, lazy.as_ref(), code, &mut heads)
+                                token_patterns(&mut f, &env, &marks[first..], bit, lazy.as_ref(), code, &mut heads)
                             };
                             f.ins().brif(r, follows, &[], skip, &[]);
                             f.switch_to_block(follows);
@@ -6080,17 +6083,17 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                     let bit = f.ins().band_imm(bit, 1);
                     f.ins().brif(bit, fall, &[], skip, &[]);
                 }
-                Op::Open { kind } if table.direct.is_some() => {
+                Op::Open { kind, attached } if table.direct.is_some() => {
                     let (code, next) = with_field(kind);
                     let (field, classes) = table.direct.expect("direct")[pc];
                     let kf = if field != 0 { code & 0xffff | i64::from(field) } else { code };
                     let k = f.ins().iconst(types::I64, kf);
-                    word!(WordFn::Open16 { classes }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| node16_word(g, e, table, q[0], classes, None), next);
+                    word!(WordFn::Open16 { classes, attached }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| node16_word(g, e, table, q[0], classes, None, attached), next);
                 }
-                Op::Open { kind } => {
+                Op::Open { kind, attached } => {
                     let (code, next) = with_field(kind);
                     let k = f.ins().iconst(types::I64, code);
-                    word!(WordFn::Open, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| open_word(g, e, table, q[0], wrapping), next);
+                    word!(WordFn::Open { attached }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| open_word(g, e, table, q[0], wrapping, attached), next);
                 }
                 Op::Close { deep: true, .. } if table.direct.is_some() => return Err(Error::UnsupportedBackend),
                 Op::Close { this, .. } if table.direct.is_some() => {
@@ -6118,7 +6121,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                         } else {
                             q[0]
                         };
-                        node16_word(g, e, table, k, classes, Some(end))
+                        node16_word(g, e, table, k, classes, Some(end), false)
                     }, next);
                 }
                 Op::Leaf { kind, deferred, extra } => {

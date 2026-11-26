@@ -274,7 +274,7 @@ keywords identifier {
   "except" "finally" "for" "from" "global" "if" "import" "in" "is" "lambda" "nonlocal" "not" "or"
   "pass" "raise" "return" "try" "while" "with" "yield"
 } soft {
-  "async" "await" "match" "case" "type" "print" "exec" "__future__"
+  "async" "await" "match" "case" "type" "print" "exec" "__future__" "_"
 }
 keywords punct { "(" ")" "[" "]" "{" "}" "," ":" ";" "." "=" "+" "-" "*" "/" "%" "&" "|" "^" "~" "<" ">" "@" "!" "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>=" } required
 
@@ -310,6 +310,15 @@ mark w_paren    = tokens after "with" "(" (~("def"))* nest ("(" | "[" | "{" to "
 # A statement's first `(` or `[` whose closer an `=` follows: a tuple or list target (a
 # `tuple_pattern`, `list_pattern`), not an expression.
 mark target_paren = tokens "(" | "[" (~("def"))* nest ("(" | "[" | "{" to ")" | "]" | "}") ")" | "]" "="
+# A list's first splat with a comma after it at its depth: a `list_splat` among the list's items.
+# Alone (`[*a]`) it is a primary's, as an expression list's (tree-sitter reads it so).
+mark l_many     = tokens after "[" "*" (~("def"))* nest ("(" | "[" | "{" to ")" | "]" | "}") ","
+# `match` before an expression and a `:` on its line: a match statement's soft word, not a name.
+mark m_stmt     = tokens "match" (~("def") without newline)* nest ("(" | "[" | "{" to ")" | "]" | "}") ":"
+# A name before `=` in a class pattern's arguments: a keyword pattern's.
+mark kw_pat     = tokens identifier "="
+# `type` before a name: a type alias's keyword, not a name.
+mark t_alias    = tokens "type" identifier
 # A `*` alone in a parameter list: a keyword separator (a leaf), not a splat's.
 mark kw_sep     = tokens "*" "," | ")"
 
@@ -318,7 +327,7 @@ tree python {
   choice statement      = simple_statements | compound_statement
   choice simple_statements nested = simple_statement (';' [simple_statement])* newline
   choice compound_statement = if_statement | while_statement | for_statement | try_statement | with_statement
-                        | function_definition | class_definition | decorated_definition
+                        | function_definition | class_definition | decorated_definition | match_statement
   node if_statement     = 'if' condition: expression ':' consequence: suite (alternative: elif_clause)* [alternative: else_clause]
   node elif_clause      = 'elif' condition: expression ':' consequence: suite
   node else_clause      = 'else' ':' body: suite
@@ -329,7 +338,7 @@ tree python {
   choice for_target     = pattern [wrap pattern_list _ in pattern (',' target_item)+]
   # `try`'s handlers: the `except` and its `:` are leaves, its block and `finally`'s have no field.
   node try_statement    = 'try' ':' body: suite (except_clause+ [else_clause] [finally_clause] | finally_clause)
-  node except_clause    = 'except' [value: as_value] ':' suite
+  node except_clause    = 'except' ['*'] [value: as_value] ':' suite
   node finally_clause   = 'finally' ':' suite
   # `with`: its keyword a leaf, its items a clause.
   node with_statement   = 'with' with_rest
@@ -339,6 +348,27 @@ tree python {
   # An expression, or one bound by `as` (an `as_pattern` in the expression's slot).
   choice as_value supertype expression = expression [wrap as_pattern _ in expression 'as' alias: as_pattern_target]
   node as_pattern_target = primary_expression
+  # `match`: its soft word no leaf (`m_stmt`), its `:` a leaf; its body a block from the end of
+  # the record before its first `case` (`attached`), as tree-sitter's.
+  node match_statement  = m_stmt 'match' subject: expression ':' indent body: match_block
+  node match_block nested attached = retag block (alternative: case_clause)+
+  node case_clause      = 'case' case_item (',' case_item)* [guard: if_clause] ':' consequence: suite
+  # A case's pattern, in a `case_pattern` (a union's alternatives not); `p as x`: a
+  # `case_pattern` around an `as_pattern` of the pattern's and the name. `_` alone: none inside.
+  choice case_item      = case_pattern [wrap case_pattern _ wrap as_pattern _ 'as' identifier]
+  node case_pattern     = '_' | kw_pat keyword_pattern | case_simple [wrap union_pattern _ ('|' case_simple)+]
+  node keyword_pattern  = identifier '=' case_simple
+  choice case_simple    = dotted_name [wrap class_pattern _ '(' [case_item (',' case_item)*] ')']
+                        | '-' (real integer as float | integer) | real integer as float | integer
+                        | string [wrap concatenated_string _ string+]
+                        | 'None' as none | 'True' as true | 'False' as false
+                        | case_list | case_tuple | dict_pattern | splat_pattern
+  node splat_pattern    = '*' ('_' | identifier) | '**' identifier
+  node case_list        = retag list_pattern '[' [case_item (',' case_item)*] ']'
+  node case_tuple       = retag tuple_pattern '(' [case_item (',' case_item)*] ')'
+  node dict_pattern     = '{' [dict_entry (',' dict_entry)*] '}'
+  choice dict_entry     = key: case_key ':' value: case_item | splat_pattern
+  choice case_key       = string [wrap concatenated_string _ string+] | '-' integer | integer | 'None' as none | 'True' as true | 'False' as false
   # --- Definitions
   # `async`: a leaf before `def`, `for` or `with`, the node retagged by the word after it.
   node function_definition = 'async' ('def' def_rest | retag for_statement 'for' for_rest | retag with_statement 'with' with_rest)
@@ -349,12 +379,12 @@ tree python {
   choice definition     = function_definition | class_definition
   node decorator        = '@' expression newline
   node parameters       = '(' [parameter (',' parameter)*] (trail_paren | ')')
-  choice parameter supertype parameter = identifier [param_tail] | splat_pattern [wrap typed_parameter _ ':' type: types]
+  choice parameter supertype parameter = identifier [param_tail] | param_splat [wrap typed_parameter _ ':' type: types]
                         | keyword_separator | positional_separator
   # `a: int`'s name has no field, `a: int = 1`'s is `name`: the `=` decides, past the type.
   choice param_tail     = wrap default_parameter name '=' value: expression
                         | wrap typed_parameter _ ':' type: types [retag typed_default_parameter inner name ('=' value: expression)]
-  choice splat_pattern  = list_splat_pattern | dictionary_splat_pattern
+  choice param_splat    = list_splat_pattern | dictionary_splat_pattern
   node list_splat_pattern = '*' identifier
   node dictionary_splat_pattern = '**' identifier
   node keyword_separator = kw_sep '*'
@@ -367,7 +397,8 @@ tree python {
   choice suite          = indent block | inline_block
   node inline_block     = retag block simple_statements
   indented block
-  choice simple_statement = expression_statement | pass_statement | return_statement | raise_statement
+  indented match_block
+  choice simple_statement = type_alias_statement | expression_statement | pass_statement | return_statement | raise_statement
                         | delete_statement | assert_statement | global_statement | nonlocal_statement
                         | break_statement | continue_statement | import_statement | import_from_statement
                         | future_import_statement
@@ -377,6 +408,7 @@ tree python {
   # not read yet, refused).
   node expression_statement = expression [assign_tail | target_list wrap assignment left '=' right: rhs] | yield
                         | target_paren target_item wrap assignment left in pattern '=' right: rhs
+                        | list_splat_pattern target_list wrap assignment left '=' right: rhs
   choice target_list    = wrap pattern_list _ in pattern ',' [target_item (',' target_item)* [trail_eq]]
   choice trail_eq       = trail ','
 
@@ -386,8 +418,9 @@ tree python {
   choice assign_tail    = wrap assignment left in pattern assign_rest
                         | wrap augmented_assignment left in pattern operator: aug_op right: rhs
   choice assign_rest    = '=' right: rhs | ':' type: types ['=' right: rhs]
-  choice rhs nested     = expression [wrap expression_list _ in expression (',' [expression])+
+  choice rhs nested     = expression [wrap expression_list _ in expression (',' [list_part])+
                                     | wrap assignment left in pattern '=' right: rhs]
+                        | star_item wrap expression_list _ in expression (',' [list_part])+
                         | yield
   choice aug_op         = '+=' | '-=' | '*=' | '/=' | '%=' | '&=' | '|=' | '^=' | '@=' | '**=' | '//=' | '<<=' | '>>='
   # A type: a generic type, or an expression. A union over a generic (`list[int] | None`) is a
@@ -397,6 +430,8 @@ tree python {
   node type             = generic_type | expression
   node generic_type     = generic identifier type_parameter
   node type_parameter   = '[' types (',' types)* (trail_bracket | ']')
+  # `type X = ...`: the soft word before a name (`t_alias`); its word and `=` no leaves.
+  node type_alias_statement = t_alias 'type' left: type '=' right: types
   node pass_statement   = 'pass'
   node return_statement = 'return' [expressions]
   node raise_statement  = 'raise' [expressions] ['from' cause: expression]
@@ -407,7 +442,14 @@ tree python {
   node break_statement  = 'break'
   node continue_statement = 'continue'
   # One expression, or a list of them (tree-sitter-python's `_expressions`).
-  choice expressions nested = expression [wrap expression_list _ in expression (',' [expression])+]
+  choice expressions nested = expression [wrap expression_list _ in expression (',' [list_part])+]
+                        | star_item wrap expression_list _ in expression (',' [list_part])+
+  # An expression list's item, or a list's only one: an expression, or a splat read as a
+  # primary (`*a.b()`, the splat the attribute's object), its name in no slot.
+  choice list_part      = expression | star_item
+  choice star_item supertype expression = star_primary
+  choice star_primary supertype primary_expression = star_splat postfix*
+  node star_splat       = retag list_splat '*' identifier
   # --- Imports
   node import_statement = 'import' import_name (',' import_name)*
   choice import_name    = name: dotted_name [wrap aliased_import name 'as' alias: identifier]
@@ -429,6 +471,7 @@ tree python {
   node lambda           = 'lambda' [parameters: lambda_parameters] ':' body: expression
   node lambda_parameters = lambda_param (',' lambda_param)*
   choice lambda_param supertype parameter = identifier [wrap default_parameter name '=' value: expression] | list_splat_pattern | dictionary_splat_pattern
+                        | keyword_separator
   # Its operators a level of their own: the comparison ends at a line break after some uses only.
   choice comparison     = wrap comparison_operator _ in primary_expression compare_rest
   # `a := b`: a `named_expression` in the expression's slot, its name with none.
@@ -476,7 +519,7 @@ tree python {
   # The patterns an assignment's target is in (tree-sitter-python's `pattern`), and a loop's
   # target read as one: a name, its attributes and subscripts.
   choice pattern supertype pattern = identifier pattern_postfix* | tuple_pattern | list_pattern
-  node tuple_pattern    = '(' target_item (',' target_item)* (trail_paren | ')')
+  node tuple_pattern    = '(' (')' | target_item (',' target_item)* (trail_paren | ')'))
   node list_pattern     = '[' target_item (',' target_item)* (trail_bracket | ']')
   choice pattern_postfix = wrap attribute object in primary_expression '.' attribute: identifier
                         | wrap subscript value in primary_expression '[' subscript: sub_item (',' subscript: sub_item)* (trail_bracket | ']')
@@ -489,7 +532,7 @@ tree python {
   # A list whose one item is a splat (`[*b]`) tree-sitter reads otherwise (the splat a primary's):
   # not read yet, refused.
   node list             = '[' (']' | expression (relabel body retag list_comprehension comprehension ']' | (',' list_item)* (trail_bracket | ']'))
-                              | list_splat (',' list_item)+ (trail_bracket | ']'))
+                              | l_many list_splat (',' list_item)+ (trail_bracket | ']') | star_item ']')
   choice list_item      = expression | list_splat
   # A comprehension: its first item the `body:` of the node it is retagged to, then its clauses.
   choice comprehension  = for_in_clause (for_in_clause | if_clause)*
@@ -526,7 +569,7 @@ tree python {
   # A backslash that starts no escape is a leaf of its own (lean's `Backslash`); a raw string's
   # are its text.
   node string_content   = (str_text | escape_sequence | '\\' | escape_interpolation)+
-  hidden newline indent dedent trail future generic kw_sep real w_paren target_paren
+  hidden newline indent dedent trail future generic kw_sep real w_paren target_paren l_many t_alias m_stmt kw_pat
   # The tokens tree-sitter's grammar implies: no leaf on the tape.
   implied pass_statement 'pass'
   implied string_content str_text
@@ -573,6 +616,17 @@ tree python {
   implied argument_list '(' ')' ','
   implied argument '='
   implied list_splat '*'
+  implied star_splat '*'
+  implied type_alias_statement 'type' '='
+  implied match_statement 'match'
+  implied case_clause 'case' ','
+  implied case_item 'as'
+  implied case_pattern '_' '|'
+  implied case_simple '(' ')' ','
+  implied case_list '[' ']' ','
+  implied case_tuple '(' ')' ','
+  implied dict_pattern '{' '}' ','
+  implied dict_entry ':'
   implied dictionary_splat '**'
   implied list '[' ']' ','
   implied type_parameter '[' ']' ','

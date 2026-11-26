@@ -215,3 +215,21 @@ statements and blocks end.
     `tuple_pattern` too, as the lean parser's.
 41. **A parenthesized tuple takes splats** (`paren_item`), first or after a comma.
 42. **Type parameters** (`[T]`) after a class's or a function's name are a `type_parameter`, as a generic's.
+43. **A splat that begins an unbracketed expression list, or is a list's only item, is a primary** (`star_item`):
+    `list_splat` around a bare name, its postfixes after it (`[*a.b()]` an attribute of the splat), as the lean
+    parser reads `x = *a, b`, `return *a, b` and `[*a]`. A list's first splat stays a `list_splat` among its items
+    where a token mark (`l_many`) finds a comma after it at its depth.
+44. **`*a, b = c`**: a statement's first `*` is a `list_splat_pattern` in a `pattern_list`. `()` is an empty
+    `tuple_pattern`; `except*` has its `*` a leaf; a lambda's lone `*` is a `keyword_separator`.
+45. **`type X = …`** is a `type_alias_statement` where `type` comes before a name (`t_alias`), its word and `=`
+    no leaves, each side a `type`.
+46. **`match`** is a statement where its word comes before a `:` on its line at its depth (`m_stmt`, a run of
+    tokens `without newline`); else it is a name. Its body is a `block` of `alternative: case_clause`s, and the
+    patterns are the lean parser's: each pattern in a `case_pattern` (a union's alternatives not), `_` alone an
+    empty one, names `dotted_name`s, `p as x` a `case_pattern` around an `as_pattern`.
+47. **A node may start at the end of the record before its first token** (`node K attached`, a comment's
+    included), as the lean parser's match body starts at its `:`'s end. `Act::Open`'s `attached`, `OPEN m=1`:
+    the interpreter's `last_end`, the JIT's `Mem::LastEnd`. The Rust writer refuses an `attached` node, not
+    lowered there yet.
+48. **A run's `~(…)` takes `with M` and `without M`** (syntax, evaluator and tier 2): any other token, with or
+    without the mark. Decision 0673 step 4 had them on a run of kinds and words only.

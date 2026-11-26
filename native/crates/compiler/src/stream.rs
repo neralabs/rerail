@@ -44,7 +44,8 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // The word is the record's (its code), so the program's strings are the records' words.
         WORD_IS => mode <= 1 && program.strings.get(usize::from(operand)).is_some_and(|s| !s.is_empty() && s.len() <= 64) && records.is_some_and(|r| r.words == program.strings),
         // A level's word's kind (`REMEMBERED`) only as a moved or relabelled node's.
-        OPEN => mode == 0 && operand != REMEMBERED,
+        // `m=1`: at the end of the record before the token (an `attached` rule's).
+        OPEN => mode <= 1 && operand != REMEMBERED,
         // `m=1`: the moved node's slot, after a `WRAP`.
         NODE_SUPER => mode <= 1 && operand != 0 && operand != REMEMBERED,
         // `m=1`: an extra's leaf, deferred; `m=2`: an extra's leaf placed now, never the node
@@ -982,6 +983,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 open.push(nodes.len());
                 bases.push(nodes.len());
                 lasts_made.push(None);
+                let start = if mode == 1 { last_end } else { start };
                 nodes.push(Node { kind: operand, field: 0, supers: vec![], start, end: 0, size: 0 });
             }
             CLOSE => {

@@ -66,8 +66,9 @@ pub enum Act {
     /// Close the innermost open node, at the end of the token before.
     Close,
     /// Open a node of `kind` at the token's start, with a field (0: none) and supertypes
-    /// (outermost first).
-    Open { kind: u16, field: u16, supers: Vec<u16> },
+    /// (outermost first); `attached`, at the end of the record before the token (an `attached`
+    /// rule's).
+    Open { kind: u16, field: u16, supers: Vec<u16>, attached: bool },
     /// The token's leaf node, of the token's kind, or of `kind` when it is not 0 (`A as K`).
     Leaf { field: u16, supers: Vec<u16>, kind: u16 },
     /// A token the grammar implies (`implied`): no node; the extras pending before it stay where
@@ -165,8 +166,8 @@ pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
         for act in &arm.acts {
             match act {
                 Act::Close => acts.push_str(" close"),
-                Act::Open { kind, field, supers } => {
-                    let _ = write!(acts, " open {kind}{}", marks(*field, supers));
+                Act::Open { kind, field, supers, attached } => {
+                    let _ = write!(acts, " open {kind}{}{}", if *attached { " attached" } else { "" }, marks(*field, supers));
                 }
                 Act::Leaf { field, supers, kind } => {
                     let as_kind = if *kind == 0 { String::new() } else { format!(" as {kind}") };
@@ -773,7 +774,7 @@ impl Pending {
                 Wrap::Unless(flag) => acts.push(Act::Unless { flag }),
                 Wrap::Node(kind) => {
                     let p = std::mem::take(self);
-                    acts.push(Act::Open { kind, field: p.field, supers: p.supers });
+                    acts.push(Act::Open { kind, field: p.field, supers: p.supers, attached: false });
                 }
             }
         }
@@ -957,7 +958,7 @@ pub fn desugared(stmts: &[Stmt], tokens: &[String]) -> Vec<Stmt> {
     let mut out: Vec<Stmt> = stmts
         .iter()
         .map(|s| match s {
-            Stmt::Node { kind, nested, whole, padded, body } => Stmt::Node { kind: kind.clone(), nested: *nested, whole: *whole, padded: *padded, body: desugar(body, &mut balanced, tokens) },
+            Stmt::Node { kind, nested, attached, whole, padded, body } => Stmt::Node { kind: kind.clone(), nested: *nested, attached: *attached, whole: *whole, padded: *padded, body: desugar(body, &mut balanced, tokens) },
             Stmt::Choice { name, supertype, nested, body } => Stmt::Choice { name: name.clone(), supertype: supertype.clone(), nested: *nested, body: desugar(body, &mut balanced, tokens) },
             s => s.clone(),
         })
@@ -1617,7 +1618,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                         arms_from(levels, positions, level_of_rule, child, None, Vec::new(), Pending::default(), Vec::new(), depth + 1, by_rules, marks, returned, specials, &mut firsts)?;
                         let through = !field_after && !levels[child].own && (p.field != 0 || !p.supers.is_empty() || levels[child].supertype.is_some());
                         if !through {
-                            acts.extend(levels[child].own.then(|| Act::Open { kind: levels[child].kind, field: p.field, supers: p.supers.clone() }));
+                            acts.extend(levels[child].own.then(|| Act::Open { kind: levels[child].kind, field: p.field, supers: p.supers.clone(), attached: false }));
                             let Some(acts) = settled(acts) else { continue };
                             let mut tokens: Vec<u16> = firsts.iter().map(|f| f.0).collect();
                             tokens.sort_unstable();
@@ -1631,7 +1632,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                     // A nested choice opens no node: the call's field and supertypes go to its
                     // first node, as an inlined choice's do.
                     let inner = if levels[child].own {
-                        acts.push(Act::Open { kind: levels[child].kind, field: p.field, supers: p.supers });
+                        acts.push(Act::Open { kind: levels[child].kind, field: p.field, supers: p.supers, attached: false });
                         Pending::default()
                     } else {
                         p.supers.extend(levels[child].supertype);
@@ -1677,7 +1678,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
         k += 1;
         let mut arms = Vec::new();
         // The root's start opens the root node first.
-        let prefix = if k == 1 && !whole { vec![Act::Open { kind: levels[0].kind, field: 0, supers: vec![] }] } else { vec![] };
+        let prefix = if k == 1 && !whole { vec![Act::Open { kind: levels[0].kind, field: 0, supers: vec![], attached: false }] } else { vec![] };
         arms_from(&levels, &positions, &level_of_rule, level, from, prefix, pending, Vec::new(), 0, marks, ids.marks, &mut returned, &mut specials, &mut arms)?;
         let mut arms: Vec<_> = arms.into_iter().map(|(t, a, q, push, call)| (t, a, to_state(q), push.into_iter().map(state_of).collect::<Vec<_>>(), call)).collect();
         let end = match from {
@@ -1800,6 +1801,16 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
         states.push(StateRow { level: levels[level].kind, own: levels[r.level].own, end: r.end, refuses: levels[r.level].refuses.clone(), follows: levels[r.level].follows.clone(), split: levels[r.level].split.clone(), rule: level as u16, returned_field: r.returned_field, indented: levels[r.level].indented, endings: levels[r.level].endings.clone() });
         for (token, acts, q, p, call) in &r.arms {
             arms.push(ArmRow { from: s as u16, token: *token, acts: acts.clone(), to: number[&class[*q]], push: p.iter().map(|&p| number[&class[p]]).collect(), call: *call });
+        }
+    }
+    // An `attached` rule's node: each open of its kind, which names that rule alone.
+    let attached: Vec<u16> = stmts.iter().filter_map(|s| match s {
+        Stmt::Node { kind, attached: true, .. } => Some((ids.kind)(kind)),
+        _ => None,
+    }).collect::<Result<_, _>>()?;
+    for a in arms.iter_mut().flat_map(|a| a.acts.iter_mut()) {
+        if let Act::Open { kind, attached: at, .. } = a {
+            *at = attached.contains(kind);
         }
     }
     refusing(&states, &arms)?;

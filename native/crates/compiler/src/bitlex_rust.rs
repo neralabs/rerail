@@ -1676,6 +1676,8 @@ impl<'a> G<'a> {
             return Ok(Block::new());
         }
         let (body, node, nested, whole, padded) = match self.rules[name] {
+            // An `attached` node's start, the record's before its first token: not written in this Rust yet.
+            Stmt::Node { attached: true, .. } => return Err(format!("`{name}`: an `attached` node, not lowered to Rust yet")),
             Stmt::Node { body, nested, whole, padded, .. } => (body, true, *nested, *whole, *padded),
             Stmt::Choice { body, nested, .. } => (body, false, *nested, false, false),
             _ => unreachable!(),

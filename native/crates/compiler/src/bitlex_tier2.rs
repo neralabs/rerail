@@ -581,8 +581,9 @@ impl Emit<'_> {
                     self.push("CLOSE", 0, Arg::None);
                     continue;
                 }
-                Act::Open { kind, field, supers } => {
-                    self.push("OPEN", 0, Arg::Kind(kind));
+                Act::Open { kind, field, supers, attached } => {
+                    // `m=1`: at the end of the record before the token (an `attached` rule's).
+                    self.push("OPEN", u8::from(attached), Arg::Kind(kind));
                     (supers, field)
                 }
                 Act::Leaf { field, supers, kind } => {
@@ -1597,14 +1598,14 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                 let (mut kinds, mut words, mut end, mut without) = (Vec::new(), Vec::new(), false, Vec::new());
                 let none_nest = Vec::new();
                 let none_ending = Vec::new();
-                let (not, run, choices, nests, ending) = match choices.as_slice() {
-                    [::bitlex::syntax::TokenElem::Not(inner)] => (true, false, inner.as_slice(), &none_nest, &none_ending),
-                    // A run of tokens none of the choices.
+                let (not, run, choices, nests, ending): (bool, bool, Vec<::bitlex::syntax::TokenElem>, _, _) = match choices.as_slice() {
+                    [::bitlex::syntax::TokenElem::Not(inner)] => (true, false, inner.clone(), &none_nest, &none_ending),
+                    // A run of tokens none of the choices, each with or without the marks after them.
                     [::bitlex::syntax::TokenElem::Many(inner, nests, ending)] => match inner.as_slice() {
-                        [::bitlex::syntax::TokenElem::Not(none)] => (true, true, none.as_slice(), nests, ending),
-                        _ => (false, true, inner.as_slice(), nests, ending),
+                        [::bitlex::syntax::TokenElem::Not(none), marks @ ..] => (true, true, none.iter().chain(marks).cloned().collect(), nests, ending),
+                        _ => (false, true, inner.clone(), nests, ending),
                     },
-                    c => (false, false, c, &none_nest, &none_ending),
+                    c => (false, false, c.to_vec(), &none_nest, &none_ending),
                 };
                 // The run's `ending` (Q342).
                 let ending_row = if ending.is_empty() {
@@ -1635,7 +1636,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                         nest_rows.push((k as u8, open, ks, ws));
                     }
                 }
-                for c in choices {
+                for c in &choices {
                     match c {
                         ::bitlex::syntax::TokenElem::Kind(name) => kinds.push(name.clone()),
                         ::bitlex::syntax::TokenElem::Word(w) => words.push(e.string(w)),
