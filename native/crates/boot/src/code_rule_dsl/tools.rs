@@ -678,7 +678,11 @@ pub fn run_policies(
     let (texts, groups) = if packed {
         invocation.evaluate(|root| {
             let paths: Vec<_> = paths.iter().map(|p| p.as_path()).collect();
-            let texts = program_texts(&paths).unwrap_or_default();
+            // A batch whose texts do not read runs each policy alone: said, as a failed pack is (`run_pack`).
+            let texts = program_texts(&paths).unwrap_or_else(|e| {
+                eprintln!("rerail: the batch's policies run one by one, their texts not read together: {e}");
+                Vec::new()
+            });
             let groups = policy_groups(&texts, root, options);
             Ok((texts, groups))
         })?
@@ -701,7 +705,8 @@ pub fn run_policies(
                     failed[k] = Some(e.to_string());
                 }
             }
-            _ => {}
+            Err(e) => eprintln!("rerail: a pack of {} policies runs them one by one, as its run failed: {e}", group.members.len()),
+            Ok(None) => {}
         }
     }
     let mut succeeded = true;
@@ -848,6 +853,8 @@ fn run_pack(
         if std::env::var("RERAIL_BATCH_PACK").as_deref() == Ok("strict") {
             Err(ProgramRunError::Evaluation(format!("combined run of {} policies ({}) failed: {reason}", texts.len(), group.ids.join(", "))))
         } else {
+            // Its policies run one by one, each a run of its own: many times the pack's time, so said.
+            eprintln!("rerail: a pack of {} policies runs them one by one, as its combined run failed: {reason}", texts.len());
             Ok(None)
         }
     };
