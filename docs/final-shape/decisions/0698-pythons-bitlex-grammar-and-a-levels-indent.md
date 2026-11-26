@@ -295,3 +295,28 @@ statements and blocks end.
     418 at 7 and 379 at 6. The counts barely change the rounds: on the corpus, 2.49 rounds a block before, 2.53
     after; 6.10 and 6.33 where 32 blocks round together, as Metal's SIMD group does. At 7 the corpus reads every file
     it read at 15.
+62. **Python as Rust: `rerail-python-aot`**, as Kotlin's crate: `tier1.rs` from `bitlex_lex_rust`, `tier2.rs` from
+    `bitlex_rust`, checked by python_parser's `rust_is_current` (`RERAIL_BLESS=1` writes them). Every Python test
+    compares it with the interpreter and the lean parser: tier 1's records (`tier1_differs`), then the tape, and a
+    refusal where the interpreter refuses. What the lowerings lacked, and how each is lowered now:
+    - **A level** (item 58 refused it). The token loop keeps `level`, `frames` and `depth` as the walk does, and the
+      walk's `frame(…)` masks are one pass over the count's bytes. A template opened inside another pushes the outer
+      one's kind, level and held record first, then becomes the template: the other order pushed the new kind, and
+      the outer template never came back after an f-string in a dict's braces.
+    - **The walk's `deep`** is the escape, not one of the hidden set's parts: a string or comment is not refused for it.
+      A walk a refusal reads is never gated to test builds.
+    - **Supertypes**, as the interpreter's `NODE_SUPER`. A node's slot is in its key's bits from `CLASS_SHIFT` while tier 2
+      parses: a call to a `supertype` choice sets the slot of the node made last (`slot_made`, the outermost call
+      last); a wrap takes the moved node's slot, and the moved node takes the wrap's `in S` (`slot_moved`). A kind its
+      slot does not hold refuses the file there (`f() = 1`, `(a, b), c = d`). At the end `Writer::map_code_keys` maps
+      each code's key to its classes by slot and kind (`classes`, from `super_classes`). The tests read the format's
+      key, not the lean parser's layout.
+    - **`indented` levels and `, deeper`/`, shallower` marks**: a level's function saves its caller's indent and takes
+      its first token's column; a mark's column question is asked at each ask, past the token's cache; the node
+      closes with the comments pending at least as deep as its indent (`close_indented`).
+    - **A closer's record kind** where the records keep it at one reader only (`interp_open`, in both of a string's
+      readers): that piece's kind in the other reader, not its byte's (`{` is punct).
+    - **`at starts` assumes must hold in the token loop**, which test builds check at every start. Python's two were
+      false: a name's start excludes a string prefix's first letter, and an operator's excludes an ellipsis's and a
+      conversion's second byte. The token loop asks the rows whose start reads a region's `open` first, so a tail's
+      `}` is a tail and not punct.

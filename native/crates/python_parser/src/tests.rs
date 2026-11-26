@@ -27,6 +27,11 @@ fn same(texts: &[&str]) {
         let interp = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, text.as_bytes());
         assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
         assert_eq!(rounds_differ(text.as_bytes()), None, "the regions as rounds, Metal's form, against the walk, {text:?}");
+        if let Some(why) = tier1_differs(c, text) {
+            panic!("tier 1 as Rust, {text:?}: {why}");
+        }
+        let aot = aot_text(text).unwrap_or_else(|at| panic!("the parser as Rust refuses {text:?} at byte {at}"));
+        assert_eq!(aot, want, "the parser as Rust, {text:?}");
     }
 }
 
@@ -47,6 +52,10 @@ fn refused(texts: &[&str]) {
     let c = compiled().expect("compiles");
     for &text in texts {
         assert!(c.image(text).is_none(), "accepted {text:?}");
+        assert!(aot_text(text).is_err(), "the parser as Rust accepts {text:?}");
+        if let Some(why) = tier1_differs(c, text) {
+            panic!("tier 1 as Rust, {text:?}: {why}");
+        }
     }
 }
 
@@ -390,4 +399,98 @@ fn corpus() {
     eprintln!("python corpus: {same} the same, {refused} refused, {differ} differ ({lean_refused} the lean parser refuses); {rounds_off} whose rounds differ from the walk");
     assert_eq!(differ, 0);
     assert_eq!(rounds_off, 0);
+}
+
+/// `rerail-python-aot`'s tiers are the compiler's output (`RERAIL_BLESS=1` writes them again).
+#[test]
+fn rust_is_current() {
+    let (tier1, tier2) = compiled().expect("compiles").tiers_rust.clone().unwrap_or_else(|e| panic!("the parser as Rust: {e}"));
+    for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2)] {
+        let path = format!("{}/../python_aot/src/{file}", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("RERAIL_BLESS").is_some() {
+            std::fs::write(&path, &rust).expect("writes");
+        }
+        assert!(std::fs::read_to_string(&path).is_ok_and(|have| have == rust), "python_aot's {file} is not the compiler's: RERAIL_BLESS=1");
+    }
+}
+
+/// Where tier 1 as Rust (`rerail_python_aot::lex`) is not the interpreter's tier 1: whether it
+/// sends the file to tree-sitter, and where neither does, each token's first and last byte and
+/// code.
+fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
+    let run = c.program.block_programs[0].run(text.as_bytes());
+    let lx = rerail_python_aot::lex(text.as_bytes());
+    let refused = run.totals.first().is_some_and(|&t| t != 0);
+    // An escape of `A & ~L` the lowering makes a local check of tier 2's at `A`'s token
+    // (`pending_checks`): the interpreter refuses the file there, tier 1 as Rust where it reads
+    // the escape. Either way the file is refused.
+    if lx.refused && !refused && c.parser.image(text.as_bytes()).is_err() {
+        return None;
+    }
+    if refused != lx.refused {
+        return Some(format!("refused: the interpreter {refused}, tier 1 as Rust {}", lx.refused));
+    }
+    if refused {
+        return None;
+    }
+    let (starts, lasts) = (&run.positions[0], &run.positions[1]);
+    // Tier 1 as Rust keeps the comments apart from the tokens (as the lean lexer); the interpreter's records hold both,
+    // by where they start.
+    let mut recs: Vec<_> = lx.recs.iter().chain(&lx.extras).copied().collect();
+    recs.sort_by_key(|r| r.start);
+    let n = starts.len().max(recs.len());
+    for k in 0..n {
+        let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
+        let rec = recs.get(k);
+        let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), rec.map(|r| &r.code));
+        if theirs != ours {
+            let at = |s: Option<&u32>| s.map_or(String::new(), |&s| text[s as usize..].chars().take(16).collect::<String>().replace('\n', "⏎"));
+            return Some(format!("record {k}: the interpreter {theirs:x?} `{}`, tier 1 as Rust {ours:x?} `{}`", at(theirs.0), at(ours.0)));
+        }
+    }
+    None
+}
+
+/// `text`'s tape from the parser as Rust (`rerail_python_aot`: tier 1, then tier 2), as text: its keys the tape
+/// format's, read as `image_text` reads an image's code table.
+fn aot_text(text: &str) -> Result<String, u32> {
+    use rerail_tape_format::{CLASS_SHIFT, CODE_EXTRA, KIND_BITS, TAIL_FROM_START};
+    let t = rerail_python_aot::parse(text.as_bytes())?;
+    let cell = |column: &[u8], width: u8, i: usize| -> u32 {
+        let w = usize::from(width & 0x7f);
+        let b = &column[i * w..i * w + w];
+        if w == 2 { u32::from(u16::from_le_bytes([b[0], b[1]])) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) }
+    };
+    let start = |i: usize| {
+        let b = i / rerail_tape_format::CHECKPOINT_STRIDE;
+        u32::from_le_bytes(t.base[4 * b..4 * b + 4].try_into().expect("a base")) + cell(&t.off, t.widths[1], i)
+    };
+    let mut out = String::new();
+    let mut open: Vec<usize> = Vec::new();
+    for i in 0..t.code.len() / 2 {
+        while open.last().is_some_and(|&end| end <= i) {
+            open.pop();
+        }
+        let key = t.keys[usize::from(u16::from_le_bytes([t.code[2 * i], t.code[2 * i + 1]]))];
+        let (kind, field) = (key & ((1 << KIND_BITS) - 1), key >> KIND_BITS & 0x3f);
+        let mut classes: Vec<&str> = (0..rerail_python_aot::SUPERS.len())
+            .filter(|j| key >> (CLASS_SHIFT + *j as u32) & 1 != 0)
+            .map(|j| rerail_python_aot::SUPERS[j].checked_sub(SUPERTYPE_IDS).and_then(|c| SUPERTYPES.get(usize::from(c))).copied().unwrap_or("?"))
+            .collect();
+        classes.sort_unstable();
+        let size = cell(&t.size, t.widths[0], i) as usize;
+        let s = start(i);
+        let from = if t.widths[2] & TAIL_FROM_START != 0 { s } else { start(i + size - 1) };
+        let end = from + cell(&t.tail, t.widths[2], i);
+        out.push_str(&format!(
+            "{}{}{}{}{} [{s}..{end}]\n",
+            "  ".repeat(open.len()),
+            lean::KINDS.get(kind as usize).map_or("?", |k| k.0),
+            if field == 0 { String::new() } else { format!(" {}:", lean::FIELDS.get(field as usize).copied().unwrap_or("?")) },
+            if (key >> 16) as u8 & CODE_EXTRA != 0 { " flags=1" } else { "" },
+            if classes.is_empty() { String::new() } else { format!(" {{{}}}", classes.join(",")) },
+        ));
+        open.push(i + size);
+    }
+    Ok(out)
 }

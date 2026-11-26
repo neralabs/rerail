@@ -1419,6 +1419,16 @@ impl<L: Layout> Writer<L> {
         Ok((base, off))
     }
 
+    /// Each code's key given to `f`, after the last edit: a parser that holds a node's slot in the bits from
+    /// `CLASS_SHIFT` while it parses and its classes from its slot and kind once its kind is final (the
+    /// interpreter's code table, decision 0698). Edits the code table, not the nodes.
+    pub fn map_code_keys(&mut self, f: impl Fn(u32) -> u32) {
+        self.commit();
+        for c in &mut self.codes {
+            c.0 = f(c.0);
+        }
+    }
+
     /// The keys of the codes the nodes use, by code id (numbered by first use): what a caller maps to a language's
     /// format 16 numbers for `finish_16`.
     pub fn code_keys(&mut self) -> Vec<u32> {

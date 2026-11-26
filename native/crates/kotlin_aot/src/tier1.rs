@@ -2194,12 +2194,12 @@ pub fn lex(src: &[u8]) -> Lexed {
                         Some(c) => {
                             close = c;
                             if bit(&m_t_dollar, c) {
-                                template = 3;
                                 if held.is_some() {
                                     refused = true;
                                     break 'tokens;
                                 }
                                 held = Some(len);
+                                template = 3;
                             }
                             {
                             let last = if bit(&m_t_dollar, c) { c + 1 } else { c + 0 };
@@ -2264,12 +2264,12 @@ pub fn lex(src: &[u8]) -> Lexed {
                         Some(c) => {
                             close = c;
                             if bit(&m_t_dollar, c) {
-                                template = 2;
                                 if held.is_some() {
                                     refused = true;
                                     break 'tokens;
                                 }
                                 held = Some(len);
+                                template = 2;
                             }
                             {
                             let last = if bit(&m_t_dollar, c) { c + 1 } else { if bit(&m_t_dollar, c) { c + 0 } else { c + 2 } };

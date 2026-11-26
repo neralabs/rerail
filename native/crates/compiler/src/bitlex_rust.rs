@@ -54,6 +54,9 @@ pub struct Mark<'a> {
     pub hidden: bool,
     /// `, passes M`: the marks after it that taking it passes too, a bit each by order.
     pub passes: u64,
+    /// `, deeper`, `, shallower` (decision 0698): it holds only where its token's column is past, or less than, the
+    /// asking level's indent.
+    pub column: Option<::bitlex::syntax::Column>,
 }
 
 /// What the generator reads: the tree's rules and the compiler's tables.
@@ -83,6 +86,8 @@ pub struct Input<'a> {
     pub kinds: &'a [u8],
     /// The last bytes of the language's line terminators: `recover`'s `first` asks for only blanks back to one.
     pub terminators: &'a [u8],
+    /// The supertypes of a node in a slot (`grammar::super_classes`): slot, kind, its classes.
+    pub super_classes: &'a [(u16, u16, Vec<u16>)],
 }
 
 /// What a decision tests at the token.
@@ -363,6 +368,15 @@ impl<'a> G<'a> {
     }
 
     /// A kind's constant, `k::NAME`, its id named as the code reads it.
+    /// A leaf's kind: its tape kind's constant, or for a kind of the grammar's own (no tape kind: a token a `merge`
+    /// folds into the next leaf, `str_prefix` before `string_start`), `UNSET` until that leaf retypes it.
+    fn leaf_kind(&self, name: &str) -> Result<String, String> {
+        match (self.x.kind)(name) {
+            Some(id) if id > 0x3fe => Ok("UNSET".to_owned()),
+            _ => self.kind_const(name),
+        }
+    }
+
     fn kind_const(&self, name: &str) -> Result<String, String> {
         let id = (self.x.kind)(name).ok_or_else(|| format!("no kind `{name}`"))?;
         let c = upper(name);
@@ -1163,7 +1177,35 @@ impl<'a> G<'a> {
     }
 
     /// `g`'s code, `rest` the rule's elements after it.
+    /// Supertype `id`'s slot number in a key's bits from `CLASS_SHIFT` (from 1), where a row of `super_classes`
+    /// names it.
+    fn slot_no(&self, id: u16) -> Option<usize> {
+        let mut slots: Vec<u16> = self.x.super_classes.iter().map(|r| r.0).collect();
+        slots.sort_unstable();
+        slots.dedup();
+        slots.iter().position(|&s| s == id).map(|i| i + 1)
+    }
+
     fn code(&self, g: &Gram, rest: &[&Gram], rule: &str) -> Result<Block, String> {
+        let mut out = self.code_of(g, rest, rule)?;
+        // A call to a supertype's choice: the node it made is in the slot (its classes the slot's and its kind's once
+        // the parse ends, `classes`), the outermost's last, as the interpreter's `NODE_SUPER` (decision 0698).
+        if let Gram::Sym(n) = g
+            && let Some(Stmt::Choice { supertype: Some(s), .. }) = self.rules.get(n.as_str())
+            && !self.recognizers.contains(rule)
+            && self.mark_of(n).is_none()
+            && !self.remember.contains(n)
+            && self.anon_choice(n).is_none()
+        {
+            let id = (self.x.kind)(s).ok_or_else(|| format!("no supertype `{s}`"))?;
+            if let Some(no) = self.slot_no(id) {
+                out.push(line(format!("self.slot_made({no});")));
+            }
+        }
+        Ok(out)
+    }
+
+    fn code_of(&self, g: &Gram, rest: &[&Gram], rule: &str) -> Result<Block, String> {
         Ok(match g {
             // A token a `leaf`'s rule reads: into the leaf, no leaf of its own.
             Gram::Lit(_) | Gram::Sym(_) | Gram::As(_, _) | Gram::Merge(_, _) if self.recognizers.contains(rule) && self.token_of(g).or_else(|| if let Gram::As(_, a) | Gram::Merge(_, a) = g { self.token_of(a) } else { None }).is_some() => {
@@ -1423,18 +1465,27 @@ impl<'a> G<'a> {
                 out.push(Op::Field(self.field_const(f)?));
                 out
             }
-            Gram::Inner { .. } => return Err("`retag K inner G`: not in the Rust tier 2".into()),
+            // `retag K inner G A`: on entering `A`, the node the open wrap holds first takes field `G`.
+            Gram::Inner { field, body } => {
+                let mut out = vec![line(format!("self.inner_field({})?;", self.field_const(field)?))];
+                out.extend(self.code(body, rest, rule)?);
+                out
+            }
             Gram::Retag(k, a) => {
                 let mut out = vec![line(format!("self.retag({});", self.kind_const(k)?))];
                 out.extend(self.code(a, rest, rule)?);
                 out
             }
-            Gram::Wrap { kind, field, moved, body, .. } => {
+            Gram::Wrap { kind, field, moved, slot, body } => {
                 let f = match field {
                     Some(f) if f != "_" => self.field_const(f)?,
                     _ => "0".to_owned(),
                 };
                 let mut out = vec![line(format!("self.wrap({}, {f})?;", self.kind_const(kind)?))];
+                // The wrap took the moved node's slot; the moved node is in the wrap's (`in S`).
+                if let Some(no) = slot.as_deref().and_then(|s| (self.x.kind)(s)).and_then(|id| self.slot_no(id)) {
+                    out.push(line(format!("self.slot_moved({no})?;")));
+                }
                 if let Some(m) = moved {
                     out.push(line(format!("self.retype_moved({});", self.moved_kind(m)?)));
                 }
@@ -1530,7 +1581,7 @@ impl<'a> G<'a> {
                     _ if tests.len() == 1 => self.token_cond(&tests[0]),
                     _ => Cond::Or(tests.iter().map(|t| self.token_cond(t)).collect()),
                 };
-                return Ok(vec![moves::take(Take::Leaf { test: cond, kind: self.kind_const(k)?, field: "0".into() })]);
+                return Ok(vec![moves::take(Take::Leaf { test: cond, kind: self.leaf_kind(k)?, field: "0".into() })]);
             }
         }
         let mut arms = Vec::new();
@@ -1615,9 +1666,9 @@ impl<'a> G<'a> {
     /// lean parser's `expect`: by its word, else by its kind's test.
     fn take_token(&self, t: &Test, kind: Option<&str>) -> Result<Block, String> {
         let take = match (t, kind) {
-            (Test::Word(w), Some(k)) => Take::WordLeaf { word: format!("w::{}", self.word_const(*w)), kind: self.kind_const(k)? },
+            (Test::Word(w), Some(k)) => Take::WordLeaf { word: format!("w::{}", self.word_const(*w)), kind: self.leaf_kind(k)? },
             (Test::Word(w), None) => Take::WordSkip { word: format!("w::{}", self.word_const(*w)) },
-            (_, Some(k)) => Take::Leaf { test: self.token_cond(t), kind: self.kind_const(k)?, field: "0".into() },
+            (_, Some(k)) => Take::Leaf { test: self.token_cond(t), kind: self.leaf_kind(k)?, field: "0".into() },
             (_, None) => Take::Skip { test: self.token_cond(t) },
         };
         Ok(vec![moves::take(take)])
@@ -1675,17 +1726,21 @@ impl<'a> G<'a> {
         if self.anon_choice(name).is_some() {
             return Ok(Block::new());
         }
-        let (body, node, nested, whole, padded) = match self.rules[name] {
-            // An `attached` node's start, the record's before its first token: not written in this Rust yet.
-            Stmt::Node { attached: true, .. } => return Err(format!("`{name}`: an `attached` node, not lowered to Rust yet")),
-            Stmt::Node { body, nested, whole, padded, .. } => (body, true, *nested, *whole, *padded),
-            Stmt::Choice { body, nested, .. } => (body, false, *nested, false, false),
+        // `attached`: the node starts where the record before its first token ends (`open_attached`).
+        let (body, node, nested, whole, padded, attached) = match self.rules[name] {
+            Stmt::Node { body, nested, whole, padded, attached, .. } => (body, true, *nested, *whole, *padded, *attached),
+            Stmt::Choice { body, nested, .. } => (body, false, *nested, false, false, false),
             _ => unreachable!(),
         };
         let root = self.order.first() == Some(&name);
         let mut out = format!("    /// `{name}`.\n    fn {}(&mut self) -> R {{\n", rule_fn(name));
         if nested && self.counts_depth(name) {
             out.push_str("        self.deeper()?;\n");
+        }
+        // An `indented` level's indent: its first token's column, its caller's again where it ends (decision 0698).
+        let indented = self.x.tree.iter().any(|s| matches!(s, Stmt::Indented(ns) if ns.iter().any(|n| n == name)));
+        if indented {
+            out.push_str("        let indent = self.indent;\n        self.indent = self.column();\n");
         }
         // A level that may set the level's word (`remember`) gives its caller's back where it ends, as the machine's
         // `PUSH` keeps it: one save, here, not one at each call.
@@ -1706,10 +1761,11 @@ impl<'a> G<'a> {
             if node {
                 // A kind of the grammar's own (no tape kind, always retagged inside): a placeholder until its retag.
                 let id = (self.x.kind)(name).ok_or_else(|| format!("no kind `{name}`"))?;
+                let open = if attached { "open_attached" } else { "open" };
                 if id > 0x3ff {
-                    out.push_str("        self.open(UNSET);\n");
+                    let _ = writeln!(out, "        self.{open}(UNSET);");
                 } else {
-                    let _ = writeln!(out, "        self.open({});", self.kind_const(name)?);
+                    let _ = writeln!(out, "        self.{open}({});", self.kind_const(name)?);
                 }
             }
             let mut c = self.code(body, &[], name)?;
@@ -1717,7 +1773,7 @@ impl<'a> G<'a> {
             // Its code where its one caller calls it (`inlined`): the node opened and closed there, as the lean
             // parser's `statement` opens `Include` in place. Not a level's that counts the depth or keeps the caller's word:
             // that state is its method's. (A call that saves the caller's marks asked is no plain call: none is written in.)
-            if !(nested && (self.counts_depth(name) || keeps_word)) {
+            if !(nested && (self.counts_depth(name) || keeps_word)) && !attached && !indented {
                 let open = if node { Some(if (self.x.kind)(name).is_some_and(|id| id > 0x3ff) { "UNSET".to_owned() } else { self.kind_const(name)? }) } else { None };
                 let mut inl: Block = open.iter().map(|k| Op::Open(k.clone())).collect();
                 inl.extend(c.iter().cloned());
@@ -1732,7 +1788,11 @@ impl<'a> G<'a> {
             }
             code(&mut out, c);
             if node {
-                out.push_str("        self.close()?;\n");
+                // An indented level's node keeps the comments pending at least as deep as its indent (`close_indented`).
+                out.push_str(if indented { "        self.close_indented()?;\n" } else { "        self.close()?;\n" });
+            }
+            if indented {
+                out.push_str("        self.indent = indent;\n");
             }
             if keeps_word {
                 out.push_str("        self.word = word;\n");
@@ -2981,7 +3041,14 @@ impl<'a> G<'a> {
             guards.insert(n.clone(), firsts.clone());
             // A test of the tokens alone (no state the rules set): `open_mark` asks it afresh, not through the cache.
             let body = holds.join(" || ");
-            let pure = ["self.flags", "self.asks", "self.word ", "self.word)", "self.refusing", "self.taken", "self.marked"].iter().all(|s| !body.contains(s));
+            // Its column's question, against the asking level's indent: asked at each ask, past the token's cache.
+            let column = match self.x.marks.iter().filter(|x| x.name == m.name).map(|x| x.column).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>().as_slice() {
+                [None] => String::new(),
+                [Some(::bitlex::syntax::Column::Deeper)] => " && self.column() > self.indent".to_owned(),
+                [Some(::bitlex::syntax::Column::Shallower)] => " && self.column() < self.indent".to_owned(),
+                _ => return Err(format!("tier 2 as Rust: mark `{}`: its definitions ask different columns", m.name)),
+            };
+            let pure = column.is_empty() && ["self.flags", "self.asks", "self.word ", "self.word)", "self.refusing", "self.taken", "self.marked"].iter().all(|s| !body.contains(s));
             direct.insert(n.clone(), pure.then_some(order));
             let guard = match firsts {
                 Some(mut ws) if !ws.is_empty() => {
@@ -2991,7 +3058,7 @@ impl<'a> G<'a> {
                 }
                 _ => String::new(),
             };
-            let _ = writeln!(out, "    /// Mark `{}` holds at the token, not taken there; once a token (`held`).\n    #[inline]\n    fn m_{n}(&mut self) -> bool {{\n        {guard}self.taken >> {order} & 1 == 0 && self.held({order}, Self::h_{n})\n    }}\n\n    #[inline]\n    fn h_{n}(&self) -> bool {{\n        {}\n    }}\n", m.name, holds.join(" || "));
+            let _ = writeln!(out, "    /// Mark `{}` holds at the token, not taken there; once a token (`held`).\n    #[inline]\n    fn m_{n}(&mut self) -> bool {{\n        {guard}self.taken >> {order} & 1 == 0 && self.held({order}, Self::h_{n}){column}\n    }}\n\n    #[inline]\n    fn h_{n}(&self) -> bool {{\n        {}\n    }}\n", m.name, holds.join(" || "));
             // Taken: `refuses taken` asked; the extras before its bit settled; `drops` asked.
             let qs = |f: fn(&Mark<'a>) -> &'a [::bitlex::syntax::GapPattern]| -> Vec<::bitlex::syntax::GapPattern> { defs.iter().flat_map(|(_, d)| f(d).iter().cloned()).collect() };
             let mut take = String::new();
@@ -3416,6 +3483,44 @@ impl<'a> G<'a> {
             out.push_str(&used.join("\n"));
             out.push_str("}\n");
         }
+        // The supertypes (decision 0698): a node's slot in its key's bits from `CLASS_SHIFT` while tier 2 parses (`slot_made`,
+        // `slot_moved`, a wrap taking the moved node's), and its classes from its slot and kind once the parse ends
+        // (`classes`), as the interpreter's code table.
+        if rules.contains("self.slot_made(") || rules.contains("self.slot_moved(") {
+            let mut supers: Vec<u16> = self.x.super_classes.iter().flat_map(|r| r.2.iter().copied()).collect();
+            supers.sort_unstable();
+            supers.dedup();
+            let mut slots: Vec<u16> = self.x.super_classes.iter().map(|r| r.0).collect();
+            slots.sort_unstable();
+            slots.dedup();
+            if supers.len() > 4 || slots.len() >= 1 << supers.len() {
+                return Err(format!("tier 2 as Rust: {} supertype classes and {} slots, past the writer's bits", supers.len(), slots.len()));
+            }
+            let _ = write!(
+                out,
+                "\n/// The supertypes a node's classes name, ascending (`Writer::classes`).\npub const SUPERS: &[u16] = &[{}];\n\n/// A key's slot while tier 2 parses: its bits from `CLASS_SHIFT`.\nconst SLOT: u32 = !0 << rerail_tape_format::CLASS_SHIFT;\n\n/// A code's key once the parse ends: its slot's bits its classes, by its slot and kind (`super_classes`), as\n/// `SUPERS` names them.\nfn classes(key: u32) -> u32 {{\n    let bits: u32 = match (key >> rerail_tape_format::CLASS_SHIFT, key & 0x3ff) {{\n",
+                supers.iter().map(|c| format!("{c:#x}")).collect::<Vec<_>>().join(", ")
+            );
+            for (slot, kind, cs) in self.x.super_classes {
+                let bits = cs.iter().fold(0u32, |a, c| a | 1 << supers.iter().position(|s| s == c).expect("a class"));
+                if bits != 0 {
+                    let no = slots.iter().position(|s| s == slot).expect("a slot") + 1;
+                    let _ = writeln!(out, "        ({no}, {kind}) => {bits:#x},");
+                }
+            }
+            out.push_str("        _ => 0,\n    };\n    key & !SLOT | bits << rerail_tape_format::CLASS_SHIFT\n}\n");
+            // Whether a kind is one a slot holds (`slot_moved`): a row of its table.
+            let mut rows: Vec<(usize, u16)> = self.x.super_classes.iter().map(|(slot, kind, _)| (slots.iter().position(|s| s == slot).expect("a slot") + 1, *kind)).collect();
+            rows.sort_unstable();
+            let _ = write!(out, "\n/// Whether a node of `kind` stands in slot `no` (a row of `super_classes`).\nfn in_slot(no: u32, kind: u16) -> bool {{\n    matches!((no, kind), {})\n}}\n", rows.iter().map(|(n, k)| format!("({n}, {k})")).collect::<Vec<_>>().join(" | "));
+            let w = "w: Writer::new(0, widths, n + n / 2 + xs.len() + 8),";
+            if out.matches(w).count() != 1 {
+                return Err("tier 2 as Rust: the writer's place in the runtime".into());
+            }
+            out = out.replace(w, "w: Writer::new(0, widths, n + n / 2 + xs.len() + 8).classes(SUPERS),");
+            // The wraps take the moved node's slot with its field.
+            out = out.replace("self.w.wrap(at, 0x3f << 10, ", "self.w.wrap(at, 0x3f << 10 | SLOT, ");
+        }
         // No mark drops or loses an extra (`drops`, `loses`, decision 0623 step 7): tier 2 keeps no extra gone or
         // lost, and a taken token checks none.
         if ["self.drop_pending()", "self.lose_pending()", "self.move_first()"].iter().all(|c| !out.contains(c)) {
@@ -3438,6 +3543,8 @@ impl<'a> G<'a> {
                 }
                 out = out.replace(a, b);
             }
+            // An attached node's start past the extra before it: no extra is moved, so its bytes' end.
+            out = out.replace("Some(j) => self.last_end.max(self.extra_span(j).1),", "Some(j) => self.last_end.max(self.xs[j].last + 1),");
         }
         let _ = stack;
         // No region read in parts (decision 0619, as 0586's): tier 1 gives no mask, and tier 2 holds none, splits no
@@ -3484,6 +3591,20 @@ impl<'a> G<'a> {
         }
         let masks = if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() { "" } else { " and masks (those a region's parts are found by)" };
         let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code){masks}, finished by `finish` (the\n/// image, or the columns, as the grammar's lean parser finishes), or the byte it was refused at.\npub fn parse<F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, finish: &mut F) -> Result<F::Out, u32> {{\n    // Where tier 1 sends the file to tree-sitter.\n    if lx.refused {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        // Nearly every file is parsed at the narrow widths, fixed in the parser's code, as the lean parser's.\n        let at = if widths == Narrow::WIDTHS {{ parse_at(src, lx, Narrow, finish)? }} else {{ parse_at(src, lx, widths, finish)? }};\n        match at {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}\n\n/// `parse` at `layout`'s widths: the tape `finish` makes of the writer, or the widths to parse at again; or the byte\n/// it was refused at.\nfn parse_at<L: Layout, F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, layout: L, finish: &mut F) -> R<Result<F::Out, rerail_tape_format::Redo>> {{\n    let mut p = P::new(src, lx, layout)?;\n    p.{entry}()?;\n    Ok(finish.finish(p.w))\n}}");
+        // The asking level's indent (decision 0698), where a level or a mark reads it.
+        if out.contains("self.indent") {
+            let (f, i) = ("    strings: usize,\n}\n", "strings: 0");
+            if out.matches(f).count() != 1 || !out.contains(i) {
+                return Err("tier 2 as Rust: the indent's place in the runtime".into());
+            }
+            out = out.replacen(f, "    strings: usize,\n    /// The asking level's indent: an `indented` level's first token's column, else its caller's (the root's 0).\n    indent: u32,\n}\n", 1);
+            out = out.replacen(i, "strings: 0, indent: 0", 1);
+        }
+        // The codes' keys their classes once the parse ends (`classes`).
+        if out.contains("\nfn classes(key: u32) -> u32 {") {
+            let at = format!("    p.{entry}()?;\n    Ok(finish.finish(p.w))\n}}");
+            out = out.replace(&at, &format!("    p.{entry}()?;\n    p.w.map_code_keys(classes);\n    Ok(finish.finish(p.w))\n}}"));
+        }
         let (take, takes) = self.take_helpers(&out);
         if out.matches("@TAKE\n").count() != 1 || out.matches("@TAKES\n").count() != 1 {
             return Err("tier 2 as Rust: the takes' place in the runtime".into());
@@ -3661,6 +3782,101 @@ const MORE: &[(&str, &str)] = &[
     fn made_is(&self, kind: u16) -> bool {
         let at = self.top.1;
         at != NONE && self.w.key(at as usize) & 0x3ff == u32::from(kind)
+    }
+"#,
+    ),
+    (
+        "open_attached",
+        r#"    /// A node of `kind`, open where the record before the token ends (a comment's included), as an
+    /// `attached` node starts: the lean parser's match body, at its `:`'s end.
+    fn open_attached(&mut self, kind: u16) {
+        self.flush();
+        // The comments before the token are written: the last of them may end after the last token.
+        let from = match self.pend.checked_sub(1) {
+            Some(j) => self.last_end.max(self.extra_span(j).1),
+            None => self.last_end,
+        };
+        let at = self.w.push(u32::from(kind), from);
+        self.levels.push(std::mem::replace(&mut self.top, (at as u32, NONE)));
+    }
+"#,
+    ),
+    (
+        "column",
+        r#"    /// The token's column, the bytes back to its line's start (the file's end: 0), as the interpreter's `column`.
+    fn column(&self) -> u32 {
+        if self.i >= self.n {
+            return 0;
+        }
+        let s = self.recs[self.i].start as usize;
+        (s - self.src[..s].iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1)) as u32
+    }
+"#,
+    ),
+    (
+        "close_indented",
+        r#"    /// An `indented` level's node closed: the comments pending at its close at least as deep as its indent are its
+    /// own (tree-sitter's scanner dedents only past the comments as deep as the block), the rest after it.
+    fn close_indented(&mut self) -> R {
+        while self.pend < self.xi {
+            let (s, e) = (self.xs[self.pend].start, self.xs[self.pend].last + 1);
+            let c = s as usize - self.src[..s as usize].iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+            if (c as u32) < self.indent {
+                break;
+            }
+            self.pend += 1;
+            self.w.push_leaf(u32::from(extra_kind(self.xs[self.pend - 1].code)) | 1 << 16, s, e);
+            self.last_end = self.last_end.max(e);
+        }
+        self.close()
+    }
+"#,
+    ),
+    (
+        "slot_made",
+        r#"    /// A call to a supertype's choice made the node made last at this level: it is in slot `no` (`classes`), the
+    /// outermost call's, which sets it last.
+    fn slot_made(&mut self, no: u32) {
+        let at = self.top.1;
+        if at == NONE {
+            return;
+        }
+        let k = self.w.key(at as usize);
+        if k & SLOT != no << rerail_tape_format::CLASS_SHIFT {
+            self.w.set_key(at as usize, k & !SLOT | no << rerail_tape_format::CLASS_SHIFT);
+        }
+    }
+"#,
+    ),
+    (
+        "slot_moved",
+        r#"    /// The node the open wrap moved is in slot `no` (`wrap … in S`): one of the slot's kinds, else the grammar read as
+    /// the slot's what tree-sitter reads as another kind (a call as an assignment's target), and the file is refused,
+    /// as the interpreter's `NODE_SUPER`.
+    fn slot_moved(&mut self, no: u32) -> R {
+        let at = self.top.0 as usize + 1;
+        let k = self.w.key(at);
+        if !in_slot(no, (k & 0x3ff) as u16) {
+            return self.refuse();
+        }
+        self.w.set_key(at, k & !SLOT | no << rerail_tape_format::CLASS_SHIFT);
+        Ok(())
+    }
+"#,
+    ),
+    (
+        "inner_field",
+        r#"    /// `retag … inner G`: the node the open node, a wrap, holds first takes field `G`.
+    fn inner_field(&mut self, field: u16) -> R {
+        let at = self.top.0;
+        // Open: its size is not yet known, but the node it holds is after it.
+        if at == NONE || at as usize + 1 >= self.w.len() {
+            return self.refuse();
+        }
+        let at = at as usize + 1;
+        let k = self.w.key(at);
+        self.w.set_key(at, k & !(0x3f << 10) | u32::from(field) << 10);
+        Ok(())
     }
 "#,
     ),

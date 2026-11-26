@@ -23,3 +23,6 @@ bitlex = { path = "../../../tools/bitlex", default-features = false }
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-python-parser = { path = ".", features = ["test-hooks"] }
+# The parser as Rust, as the Bitlex compiler writes it (`tiers_rust`): every text the tests check is read through
+# it too.
+rerail-python-aot = { path = "../python_aot" }

@@ -960,7 +960,7 @@ pub(crate) fn known_takes(b: &mut Block) {
                     facts = facts.into_iter().filter(|(a, _)| *a > 0).map(|(a, f)| (a - 1, f)).collect();
                 }
                 Op::Open(_) | Op::Field(_) => {}
-                Op::Line(l) if ["let kind", "self.retag(", "self.marked", "self.deeper()", "self.leaf_open()", "self.open(", "self.field_made(", "self.wrap(", "self.relabel_"].iter().any(|p| l.trim_start().starts_with(p)) => {}
+                Op::Line(l) if ["let kind", "self.retag(", "self.marked", "self.deeper()", "self.leaf_open()", "self.open(", "self.field_made(", "self.slot_made(", "self.slot_moved(", "self.wrap(", "self.relabel_"].iter().any(|p| l.trim_start().starts_with(p)) => {}
                 Op::If { arms, els } => {
                     // A test the code before it asked (each of its parts a fact that holds): its code the `else`, the
                     // arms after it gone, as the lean parser asks a token once (the first: its code alone).
@@ -1219,7 +1219,7 @@ pub(crate) fn joined(b: &mut Block) {
                     Cond::Or(cs) => cs.iter().map(|c| bare(&c.print()).to_owned()).collect(),
                     c => vec![bare(&c.print()).to_owned()],
                 };
-                let quiet = |o: &Op| matches!(o, Op::Field(_)) || matches!(o, Op::Line(l) if l.trim_start().starts_with("self.relabel_") || l.trim_start().starts_with("self.retag("));
+                let quiet = |o: &Op| matches!(o, Op::Field(_)) || matches!(o, Op::Line(l) if l.trim_start().starts_with("self.relabel_") || l.trim_start().starts_with("self.slot_made(") || l.trim_start().starts_with("self.retag("));
                 let Some((Op::Match { subject, arms: m, default }, pre)) = body.split_last_mut() else { continue };
                 if subject != "self.word()" || !matches!(default.as_slice(), [Op::Refuse]) || !pre.iter().all(quiet) {
                     continue;

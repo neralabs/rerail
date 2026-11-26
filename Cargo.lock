@@ -5545,6 +5545,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-python-aot"
+version = "0.1.0"
+dependencies = [
+ "rerail-python-aot",
+ "rerail-python-lean",
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-python-lean"
 version = "0.1.0"
 dependencies = [
@@ -5563,6 +5573,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-cpu-block",
  "rerail-cpu-stream",
+ "rerail-python-aot",
  "rerail-python-lean",
  "rerail-python-parser",
  "rerail-rir",
