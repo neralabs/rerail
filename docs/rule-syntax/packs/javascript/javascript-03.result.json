@@ -1,0 +1,26 @@
+[
+  {
+    "id": "eslint-no-useless-call",
+    "status": "same"
+  },
+  {
+    "id": "eslint-prefer-exponentiation-operator",
+    "status": "same"
+  },
+  {
+    "id": "eslint-prefer-object-has-own",
+    "status": "same"
+  },
+  {
+    "id": "eslint-prefer-spread",
+    "status": "same"
+  },
+  {
+    "id": "eslint-sort-imports",
+    "status": "same"
+  },
+  {
+    "id": "eslint-sort-keys",
+    "status": "same"
+  }
+]
