@@ -144,6 +144,18 @@ On `all` (m1max, load 7–10, two runs each, same rows): 18.9 M rows in 139,778 
 129.6 / 127.6 s before, 124.3 / 124.1 s after; instructions 1,408 / 1,409 G before, 1,368 / 1,367 G after; peak
 2,319 / 2,350 MB before, 2,291 / 2,341 MB after. W: 48.8 s, 477 G.
 
+### Step 2 (E1's node texts), as built
+
+- `Source::node_text_atom`: `LongTexts` gives `rr_node_text_any`'s value as its leaf's term's atom (`text_atom`,
+  decision 0656: interned at the term's first read in its document, read after with no hash of the text). The Func
+  step reads it where the value is a symbol and the walk has deferred no text (an atom interned then is what every
+  read of the text gives). Test: `node_texts_read_as_term_atoms_give_the_texts_rows`.
+
+On `all` (m1max, two runs each, same rows): 9.75 M of the run's 10 M node texts read as term atoms; CPU 121.1 / 121.3
+s before, 121.8 / 120.2 s after; instructions 1,337 / 1,339 G before, 1,336 / 1,331 G after: no change. The text's
+hash was not the step's cost (315 ns a call): the node's document found by key, its local id and its rank select,
+through the values wrapper, are, with the step's own.
+
 ### Step 3 (E3, grouped aggregates), as built
 
 What the scalar steps did on `all` (`RERAIL_SCALAR_TRACE`): almost every probe missed the pool's memo and folded
