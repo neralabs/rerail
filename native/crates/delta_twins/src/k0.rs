@@ -172,6 +172,8 @@ pub const ATOMS: usize = 1;
 pub const CONTROL: usize = 2;
 pub const RUNS: usize = 3;
 const R: usize = 8;
+/// L1's cache (read-write): each document's sizes, the rows it was given by relation (`cache::keep_sizes`).
+pub const CACHE: usize = RUNS + R;
 
 /// A docs block's words, at `BODY_AT`: its body's length, its documents' count, the next docs block (`NO_NEXT`:
 /// none); then each document's: its module, its source's, its tape's and its symbols' blocks, where its source and
@@ -270,19 +272,30 @@ pub const REFUSED_NODE: usize = BODY_AT;
 pub const REFUSED_WHY: usize = BODY_AT + 8;
 pub const REFUSED_DOC: usize = BODY_AT + 12;
 pub const PLACED: usize = BODY_AT + 16;
-const PLACES: usize = BODY_AT + 24;
+/// The documents gone from L1's tape port (their cache entries let go): their count, then their modules.
+const GONE_N: usize = BODY_AT + 24;
+/// Each relation's end in its runs block after `scan` (its first place past the run's rows; `UNCLAIMED`: none).
+const ENDS: usize = BODY_AT + 32;
+const GONE: usize = ENDS + 4 * R;
+
+/// Where control's statement places start, past its gone documents.
+fn places_at(control: &[u8]) -> usize {
+    GONE + (4 * word::<u64>(control, GONE_N) as usize).next_multiple_of(8)
+}
 /// A relation whose places could not be claimed (its runs block too small: the driver runs again).
 const UNCLAIMED: u32 = u32::MAX;
 
-/// Control's body bytes for documents of `n` nodes in all (at most `n` statements).
-pub fn control_bytes(n: usize) -> usize {
-    PLACES - BODY_AT + 4 * R * n.max(1)
+/// Control's body bytes for documents of `n` nodes in all (at most `n` statements), and `gone` documents gone.
+pub fn control_bytes(n: usize, gone: usize) -> usize {
+    GONE - BODY_AT + (4 * gone).next_multiple_of(8) + 4 * R * n.max(1)
 }
 
-/// Control laid out before a run: no refusal, no row placed.
-pub fn init_control(bytes: &mut [u8]) {
+/// Control laid out before a run: no refusal, no row placed, and the documents gone.
+pub fn init_control(bytes: &mut [u8], gone: &[u32]) {
     set_word::<u64>(bytes, REFUSED_NODE, u64::MAX);
     set_word::<u64>(bytes, PLACED, 0);
+    set_word::<u64>(bytes, GONE_N, gone.len() as u64);
+    words_mut::<u32>(bytes, GONE, gone.len()).copy_from_slice(gone);
 }
 
 /// The run's refusal, if any, the first by document and node order: its document's place, its node, and why.
@@ -328,8 +341,9 @@ fn count(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
             set_word::<u32>(control, REFUSED_DOC, k as u32);
         }
     }
+    let at = places_at(control);
     for (i, n) in tile.items().zip(counts) {
-        words_mut::<u32>(control, PLACES + 4 * R * i, R).copy_from_slice(&n);
+        words_mut::<u32>(control, at + 4 * R * i, R).copy_from_slice(&n);
     }
 }
 
@@ -343,9 +357,10 @@ fn scan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     if word::<u64>(control, REFUSED_NODE) != u64::MAX {
         return;
     }
+    let at = places_at(control);
     let mut total = [0u32; R];
     for i in 0..items {
-        let n = words_mut::<u32>(control, PLACES + 4 * R * i, R);
+        let n = words_mut::<u32>(control, at + 4 * R * i, R);
         for r in 0..R {
             let k = n[r];
             n[r] = total[r];
@@ -358,11 +373,13 @@ fn scan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     }
     let control = &mut *v[0];
     for i in 0..items {
-        let n = words_mut::<u32>(control, PLACES + 4 * R * i, R);
+        let n = words_mut::<u32>(control, at + 4 * R * i, R);
         for r in 0..R {
             n[r] = if base[r] == UNCLAIMED { UNCLAIMED } else { base[r] + n[r] };
         }
     }
+    let ends: [u32; R] = std::array::from_fn(|r| if base[r] == UNCLAIMED { UNCLAIMED } else { base[r] + total[r] });
+    words_mut::<u32>(control, ENDS, R).copy_from_slice(&ends);
     let placed: u32 = (0..R).filter(|&r| base[r] != UNCLAIMED).map(|r| total[r]).sum();
     set_word::<u64>(control, PLACED, u64::from(placed));
 }
@@ -374,8 +391,9 @@ fn place(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
         return;
     }
     let ([atoms, control], mut runs) = c.views([ATOMS, CONTROL], std::array::from_fn::<usize, R, _>(|r| RUNS + r));
+    let places = places_at(control);
     each(&docs, tile.items(), &mut |_, d, s, i| {
-        let mut at: [u32; R] = words::<u32>(control, PLACES + 4 * R * i, R).try_into().expect("a statement's places");
+        let mut at: [u32; R] = words::<u32>(control, places + 4 * R * i, R).try_into().expect("a statement's places");
         let walked = statement(&d.t, d.module, d.syms, atoms, s, &mut |r, row| {
             if at[r] != UNCLAIMED {
                 runs_set_in(runs[r], at[r], row, p.diff as i32);
@@ -386,9 +404,45 @@ fn place(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
     });
 }
 
-/// `k0_pass`'s phases: count, scan, place.
+/// `keep`: one item. L1's cache: the documents gone let go of their entries, and each document's sizes, the rows it
+/// was given by relation (its statements' places, end to start), kept for L1's next run, which opens its runs at the
+/// room they name (Operations §6.1: what an operator reads to go fast and could make again). A run refused, or one
+/// whose runs were too small (the driver runs it again from a cache read as ∅), keeps no size.
+fn keep(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+    let (_, docs) = launch_docs(c);
+    let control = c.read(CONTROL);
+    if word::<u64>(control, REFUSED_NODE) != u64::MAX {
+        return;
+    }
+    let gone: Vec<u32> = words::<u32>(control, GONE, word::<u64>(control, GONE_N) as usize).to_vec(); // copy: not block data (this item's list of the gone)
+    let ends: [u32; R] = words::<u32>(control, ENDS, R).try_into().expect("the relations' ends");
+    let (places, items) = (places_at(control), docs.iter().map(|d| d.n).sum::<usize>());
+    let start = |i: usize, r: usize| if i == items { ends[r] } else { word::<u32>(control, places + 4 * (R * i + r)) };
+    let mut sizes = Vec::with_capacity(docs.len()); // copy: derived (each document's sizes, written once into the cache)
+    if ends.iter().all(|&e| e != UNCLAIMED) {
+        let mut first = 0;
+        for d in &docs {
+            sizes.push((d.module as u32, std::array::from_fn::<u32, R, _>(|r| start(first + d.n, r) - start(first, r))));
+            first += d.n;
+        }
+    }
+    {
+        let ([], [cache]) = c.views([], [CACHE]);
+        for &g in &gone {
+            crate::cache::forget(cache, g);
+        }
+    }
+    for (d, n) in sizes {
+        if !crate::cache::keep_sizes(c, CACHE, d, &n) {
+            return;
+        }
+    }
+}
+
+/// `k0_pass`'s phases: count, scan, place, keep.
 pub const K0_PASS: &[TwinPhase] = &[
     TwinPhase { name: "count", items: statement_items, run: count, again: None },
     TwinPhase { name: "scan", items: |_| 1, run: scan, again: None },
     TwinPhase { name: "place", items: statement_items, run: place, again: None },
+    TwinPhase { name: "keep", items: |_| 1, run: keep, again: None },
 ];

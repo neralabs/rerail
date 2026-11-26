@@ -137,6 +137,15 @@ pub fn facts_of(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     out
 }
 
+/// A δ runs block of rows of `shape`, with room for `cap` of them, empty.
+pub fn open_runs(dir: &mut Directory, shape: &ShapeW, cap: usize) -> BlockId {
+    let id = dir.make(kind::SCRATCH, runs_bytes(shape, cap));
+    let b = dir.block(id).expect("just made");
+    let mut w = rerail_blocks::region::pin_block(&b, "open", true).expect("a new block is unused");
+    init_runs(w.bytes_mut().expect("a write pin"), shape, cap);
+    id
+}
+
 /// The trace operations, declared and their twins registered as references.
 #[derive(Clone, Copy)]
 pub struct TraceOps {
@@ -207,11 +216,7 @@ impl Trace {
 
     /// A δ runs block for a run's writers: room for `cap` pairs.
     pub fn open(&self, dir: &mut Directory, cap: usize) -> BlockId {
-        let id = dir.make(kind::SCRATCH, runs_bytes(&self.shape, cap));
-        let b = dir.block(id).expect("just made");
-        let mut w = rerail_blocks::region::pin_block(&b, "open", true).expect("a new block is unused");
-        init_runs(w.bytes_mut().expect("a write pin"), &self.shape, cap);
-        id
+        open_runs(dir, &self.shape, cap)
     }
 
     /// Commits the run's δ runs as the trace's new layer: `consolidate` writes it into a new block over the head,

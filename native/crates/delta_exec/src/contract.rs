@@ -148,6 +148,26 @@ impl Out {
         self.kept[port]
     }
 
+    /// Port `port`'s runs with room for `cap` rows: opened again at that room when it has less and nothing is pushed
+    /// yet. An operator that knows the room its run needs (its cache's) asks for it before its first write, and the
+    /// run does not outgrow its runs and run again.
+    pub fn room(&mut self, dir: &mut Directory, port: usize, cap: usize) -> Result<(), String> {
+        let r = self.runs[port];
+        let h = {
+            let l = dir.read("room", &[r])?;
+            Runs::new(l.block(0)).head
+        };
+        if h.cap as usize >= cap {
+            return Ok(());
+        }
+        if h.claimed != 0 {
+            return Err(format!("port {port}'s room asked after a write"));
+        }
+        self.runs[port] = crate::trace::open_runs(dir, &h.shape, cap);
+        dir.release(r);
+        Ok(())
+    }
+
     /// A writer of port `port`, pinned to write while it lives.
     pub fn writer(&self, dir: &Directory, port: usize) -> Result<Writer, String> {
         let b = dir.block(self.runs[port]).ok_or("an output's runs, held by nothing")?;
@@ -236,6 +256,9 @@ fn inputs_digest(dir: &Directory, ports: &[(&Trace, Option<BlockId>)], globals: 
 /// The room a port's runs block is first opened with; a run past it runs again at the size it needed.
 const FIRST_RUNS: usize = 256;
 
+/// The excess of a run that outgrew its runs: its attempts past the first.
+pub const OUTGROWN: &str = "attempts past the first, the runs outgrown";
+
 /// An operator's instance: its output traces and its cache, kept across its runs.
 pub struct Instance {
     pub outs: Vec<Trace>,
@@ -270,6 +293,7 @@ impl Instance {
         let (gb, ga): (Vec<Global>, Vec<Global>) = (globals.iter().map(|g| g.side(false)).collect(), globals.iter().map(|g| g.side(true)).collect());
         let (from, to) = (inputs_digest(cx.dir, &befores, &gb)?, inputs_digest(cx.dir, &afters, &ga)?);
         let mut cap = vec![FIRST_RUNS; self.outs.len()];
+        let mut again = 0;
         loop {
             let runs: Vec<BlockId> = self.outs.iter().zip(&cap).map(|(t, &c)| t.open(cx.dir, c)).collect();
             let mut out = Out { runs, kept: self.heads() };
@@ -309,6 +333,7 @@ impl Instance {
             }
             if over {
                 out.runs.iter().for_each(|&r| cx.dir.release(r));
+                again += 1;
                 continue;
             }
             for (t, &r) in self.outs.iter_mut().zip(&out.runs) {
@@ -324,6 +349,10 @@ impl Instance {
             }
             if cache.begun() {
                 self.cache.commit(cx.reg, cx.caches, cx.dir, to)?;
+            }
+            let mut work = work;
+            if again > 0 {
+                work.excess.push((OUTGROWN, again));
             }
             return Ok(work);
         }

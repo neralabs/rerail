@@ -469,6 +469,14 @@ def b6(failures: list) -> None:
     files = (CRATE / "src/files.rs").read_text()
     if not re.search(r"pub struct Blobs \{[^}]*\brows: Trace\b[^}]*\}", files) or re.search(r"pub struct Blobs \{[^}]*HashMap", files):
         failures.append("files.rs: the blobs are not rows in a trace, as the store's objects are (P§12 item 1)")
+    l1 = (CRATE / "src/l1.rs").read_text()
+    k0h = (CRATE / "src/k0.rs").read_text()
+    if not re.search(r"fn delta\([^)]*\bcache: &mut CacheW", l1) or "cache.write(cx)" not in l1 or "cache_twin::sizes(" not in l1:
+        failures.append("l1.rs: L1 keeps no cache, or reads none (Bootstrap, Figure 2: k0_pass rw L1's cache)")
+    if not re.search(r'SlotSpec \{ name: "cache", mode: Mode::ReadWrite, kind: kind::CACHE \}', k0h):
+        failures.append("k0.rs: k0_pass has no read-write slot for L1's cache")
+    if re.search(r"for drop_at in \[", (CRATE / "src/l1_tests.rs").read_text()):
+        failures.append("l1_tests.rs: L5's cache dropped at fixed steps, not random ones")
     interned = (TWINS / "src/intern.rs").read_text()
     if re.search(r"is_leaf\(n\)\s*\{\s*put\(", interned):
         failures.append("delta_twins/src/intern.rs: every leaf interned (intern names only identifiers and strings)")

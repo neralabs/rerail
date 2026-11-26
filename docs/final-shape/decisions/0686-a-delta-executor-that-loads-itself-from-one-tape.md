@@ -1122,7 +1122,8 @@ traces".
 - L1 keeps no cache. P§3's cache holds a wave's plans and compiled code, and L1 has neither. The user's goal asked
   that L1 keep its rows in its cache, so that the cache and L5 checks test something real. That would make the
   file's last result cache, which P§3 and §11.3 rule out. So the kept rows are read from the output traces, and L5
-  stays vacuous for L1: its first operator with plans will exercise it.
+  stays vacuous for L1: its first operator with plans will exercise it. (Superseded by "L1's cache" below: the
+  kept rows stay in the output traces, and the cache holds each document's sizes.)
 
 Checks (Relax, local, `rerail-delta-exec --lib` 69 of 69):
 
@@ -1276,6 +1277,41 @@ it.
   trace's before": L1 retracts a gone document from the rows its output keeps.
 - **`asks` is an `Out`**, a runs block an input port, where P§12 has one `LayerW`.
 
-P§3 and §11.3 give the cache plans and compiled code only: the last result is the output trace's before, not a cache
-entry. So L1's cache stays empty, and L5's check (a cache read as ∅ unless it names the run's before) passes for L1
-without testing anything; the toy operator's tests are the ones that exercise it.
+P§3 and §11.3 keep the last result out of the cache: it is the output trace's before. L1's cache holds something
+else, below.
+
+**L1's cache**. The Bootstrap page's Figure 2 gives `k0_pass` a read-write slot for L1's cache, between
+`cache_open` and `cache_commit`. L1 had no cache, so B6's "the cache is unchanged" check and L5 passed without
+testing anything. The kept rows cannot go in the cache: P§3 makes them the output trace's before, and Operations
+§6.1 keeps out of a cache anything an answer reads. §6.1 says what does go in: what an operator reads to go fast and
+could make again, partitioned by file for a per-file operator, a file that goes taking its entries with it. For L1
+that is each document's sizes:
+
+- **What is cached:** the rows `k0_pass` gave each document, by relation. It is a cache entry with no columns (an
+  order has one to four), keyed by the module (`cache::sizes`).
+- **Written by** `k0_pass`'s fourth phase, `keep`, which grows the cache within its reservation:
+  - the sizes come from the statements' places, end to start;
+  - the gone documents' entries are let go first (`forget`; their modules are listed in control);
+  - a new document takes a let-go entry's room.
+  - A run that is refused, or whose runs were too small, keeps no sizes.
+- **Read by** L1's delta, before it writes the cache. The room its runs need is each gone document's kept rows plus
+  each added document's rows as they were, an eighth more. `Out::room` opens a port's runs at that room before the
+  first write.
+- **What it saves:** l0 gives 270 `k_arg` rows, past the first room of 256. An edit retracts 270 and adds about as
+  many, so without the sizes every edit's run outgrew its runs and ran again, `k0_pass` and `drop_parts` included.
+  The driver now names each such attempt as excess in `Work` (`OUTGROWN`).
+- **L5:** dropped, the cache costs the next run an attempt, and its rows are the same.
+
+The plain function (`run`) reads no cache; `k0_pass` keeps its sizes in a block of the launch's own.
+
+Checks (Relax, local, 76 of 76):
+- `k0_pass_keeps_each_documents_sizes_and_a_gone_one_takes_its_entry`: two documents' sizes equal the rows each gives
+  alone. A gone module's entry is let go with no document read, and the next module takes its room (the cache's
+  bytes unchanged).
+- `l1s_cache_sizes_its_runs_and_dropped_costs_an_attempt_not_an_answer`:
+  - a cold run outgrows its runs; the cache then holds l0's sizes, equal to its rows by relation;
+  - an edit's run is one attempt;
+  - with the cache dropped, the next edit's run takes an attempt more, and its change is the reference's.
+- L1's harness now drops the cache at a random step for each of three seeds, not at steps 1, 3 and 5. Its L4 check
+  ("the cache is unchanged") now compares the sizes too.
+- The shape script refuses an L1 with no cache or none read, a `k0_pass` with no cache slot, and fixed drop steps.

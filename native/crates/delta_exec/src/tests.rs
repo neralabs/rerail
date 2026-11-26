@@ -377,7 +377,7 @@ fn k0_doc(fx: &Fx, d: &D, module: i64) -> crate::k0::K0Doc {
 /// `k0_pass`'s rows over `docs`, one call, by relation: each `(row, diff)`, sorted.
 fn k0_rows(fx: &mut Fx, docs: &[crate::k0::K0Doc]) -> Result<Vec<Vec<Vec<i64>>>, crate::kform::Refused> {
     let runs: Vec<crate::dir::BlockId> = (0..RELATIONS.len()).map(|k| Trace::new(&crate::kform::shape(k)).unwrap().open(&mut fx.dir, 4096)).collect();
-    let ran = crate::k0::k0_pass(&fx.reg, &fx.k0, &mut fx.dir, fx.atoms.0, docs, 1, &runs);
+    let ran = crate::k0::k0_pass(&fx.reg, &fx.k0, &mut fx.dir, fx.atoms.0, docs, &[], 1, &runs, None);
     let got = runs
         .iter()
         .enumerate()
@@ -399,7 +399,7 @@ fn one_k0_pass_launch_reads_every_document() {
     assert!(docs.len() > rerail_delta_twins::k0::DOCS_PER_BLOCK, "past one docs block");
     let all: Vec<crate::k0::K0Doc> = docs.iter().enumerate().map(|(i, d)| k0_doc(&fx, d, i as i64 + 1)).collect();
     let one = k0_rows(&mut fx, &all).unwrap();
-    assert_eq!(fx.dir.launches(), 3, "count, scan, place: one launch");
+    assert_eq!(fx.dir.launches(), 4, "count, scan, place, keep: one launch");
     let mut each = vec![Vec::new(); RELATIONS.len()];
     for d in &all {
         for (k, r) in k0_rows(&mut fx, std::slice::from_ref(d)).unwrap().into_iter().enumerate() {
@@ -416,4 +416,36 @@ fn one_k0_pass_launch_reads_every_document() {
     let e = k0_rows(&mut fx, &with_bad).unwrap_err();
     assert_eq!(e.module, 99, "{e}");
     assert!(e.why.contains("not K0"), "{e}");
+}
+
+/// `k0_pass` keeps each document's sizes in L1's cache, the rows it gave it by relation, and lets go of a gone
+/// document's entry; the next document takes its room (Operations §6.1: a file that goes takes its entries with it).
+#[test]
+fn k0_pass_keeps_each_documents_sizes_and_a_gone_one_takes_its_entry() {
+    use rerail_delta_twins::cache as c;
+    let mut fx = Fx::new();
+    let a = fx.doc("e(1, 2).\np(x) :- e(x, _), !q(x).\n", "a.rerail");
+    let b = fx.doc("e(3, 4).\n", "b.rerail");
+    let cache = crate::cache::OpCache::new(&mut fx.dir).0;
+    let runs: Vec<crate::dir::BlockId> = (0..RELATIONS.len()).map(|k| Trace::new(&crate::kform::shape(k)).unwrap().open(&mut fx.dir, 4096)).collect();
+    let pass = |fx: &mut Fx, docs: &[crate::k0::K0Doc], gone: &[i64]| crate::k0::k0_pass(&fx.reg, &fx.k0, &mut fx.dir, fx.atoms.0, docs, gone, 1, &runs, Some(cache)).unwrap();
+    let (da, db) = (k0_doc(&fx, &a, 7), k0_doc(&fx, &b, 8));
+    pass(&mut fx, &[da, db], &[]);
+    let rows = |fx: &mut Fx, d: crate::k0::K0Doc| -> Vec<u32> { k0_rows(fx, &[d]).unwrap().iter().map(|r| r.len() as u32).collect() };
+    let (want_a, want_b) = (rows(&mut fx, da), rows(&mut fx, db));
+    let read = |fx: &Fx| fx.dir.read("t", &[cache]).unwrap().block(0).to_vec(); // copy: not block data (the test's look at the cache)
+    let bytes = read(&fx);
+    assert_eq!(c::sizes(&bytes, 7).unwrap(), &want_a[..]);
+    assert_eq!(c::sizes(&bytes, 8).unwrap(), &want_b[..]);
+    let used = c::used(&bytes);
+    // Module 7 gone, with no document read: its entry let go; then module 9 takes its room.
+    pass(&mut fx, &[], &[7]);
+    let bytes = read(&fx);
+    assert!(c::sizes(&bytes, 7).is_none() && c::sizes(&bytes, 8).is_some());
+    let d9 = k0_doc(&fx, &a, 9);
+    pass(&mut fx, &[d9], &[]);
+    let bytes = read(&fx);
+    assert_eq!(c::sizes(&bytes, 9).unwrap(), &want_a[..]);
+    assert_eq!(c::used(&bytes), used, "the gone document's room, taken");
+    runs.into_iter().for_each(|r| fx.dir.release(r));
 }

@@ -9,6 +9,10 @@
 //!   fences, when the cache does not hold them already; a reader finds them by the layer's block id and the columns.
 //! - `cache_commit` writes the after state's digest and clears the mark, last.
 //!
+//! A per-file operator's entries are partitioned by file (Operations §6.1): a document's sizes, the rows its operator
+//! wrote for it last by output port (`sizes`, `keep_sizes`), so its next run opens its outputs' runs at the room it
+//! will need; a document that goes takes its entry with it (`forget`), and its room goes to the next.
+//!
 //! So dropping a cache is always correct, and a run that dies part-way costs the next run the cache and nothing else.
 //! The cache holds row ids and keys, never rows: an index in it is a derived fact, not a copy (0353).
 //!
@@ -137,6 +141,57 @@ pub fn order<'a>(cache: &'a [u8], layer: u32, cols: &[u16]) -> Option<Order<'a>>
     let ids = words::<u32>(cache, at + ENTRY_BYTES, n);
     let fences = words::<i64>(cache, at + ENTRY_BYTES + (4 * n).next_multiple_of(8), nf);
     Some(Order { ids, fences })
+}
+
+/// A sizes entry's layer word when its document went: room for the next document's.
+pub const DEAD: u32 = u32::MAX;
+
+/// Document `d`'s sizes, if the cache holds them: the rows its operator wrote for it, by output port. A sizes entry
+/// has no columns (an order has one to four); its layer word is the document.
+pub fn sizes(cache: &[u8], d: u32) -> Option<&[u32]> {
+    let e = entries(cache).find(|e| e.cols.is_empty() && e.layer == d)?;
+    Some(words::<u32>(cache, e.at + ENTRY_BYTES, e.n))
+}
+
+/// Document `d`'s entry let go, if the cache holds one (a document that goes takes its entry with it).
+pub fn forget(cache: &mut [u8], d: u32) {
+    let at = entries(cache).find(|e| e.cols.is_empty() && e.layer == d).map(|e| e.at);
+    if let Some(at) = at {
+        set_word::<u32>(cache, at, DEAD);
+    }
+}
+
+/// Writes document `d`'s sizes into slot `slot`'s cache: over its entry, or a let-go one of the same length, in
+/// place; else appended at the cursor. False past the cache's capacity, room asked (`Ctx::reach`): the phase runs
+/// again over the grown block, and writes the same.
+pub fn keep_sizes(c: &mut Ctx<'_, '_, '_>, slot: usize, d: u32, counts: &[u32]) -> bool {
+    let (own, dead) = {
+        let b = c.read(slot);
+        let fits = |e: &Entry| e.cols.is_empty() && e.n == counts.len();
+        (entries(b).find(|e| fits(e) && e.layer == d).map(|e| e.at), entries(b).find(|e| fits(e) && e.layer == DEAD).map(|e| e.at))
+    };
+    let (at, append) = match own.or(dead) {
+        Some(at) => (at, false),
+        None => (ENTRIES_AT + used(c.read(slot)), true),
+    };
+    let len = entry_len(counts.len(), 0);
+    if append && !c.reach(slot, at + len) {
+        return false;
+    }
+    let ([], [b]) = c.views([], [slot]);
+    set_word::<u32>(b, at + 4, 0);
+    for i in 0..4 {
+        set_word::<u16>(b, at + 8 + 2 * i, 0);
+    }
+    set_word::<u32>(b, at + 24, counts.len() as u32);
+    set_word::<u32>(b, at + 28, 0);
+    words_mut::<u32>(b, at + ENTRY_BYTES, counts.len()).copy_from_slice(counts);
+    // The document named last, and an appended entry counted last: a reader never finds one half written.
+    set_word::<u32>(b, at, d);
+    if append {
+        set_word::<u64>(b, USED_AT, (at + len - ENTRIES_AT) as u64);
+    }
+    true
 }
 
 /// How many entries the cache holds.

@@ -15,10 +15,18 @@
 //! documents added are read whole by one `k0_pass` launch into the outputs' δ runs; a document gone has its kept rows retracted, read in
 //! its output traces where they lie (`drop_parts`, P§3: "the file's last result is its output trace's before, not
 //! cache"), never its old tape; and `consolidate` nets the two, so the δ is the diff against the rows it kept. An
-//! unchanged tape is L4's identity: no operation runs. L1 keeps no cache: P§3's cache holds plans and compiled code,
-//! and L1 has neither. Its Rust beyond `k0_pass` and `drop_parts` is the wiring of these ports.
+//! unchanged tape is L4's identity: no operation runs, and the cache is as it was.
+//!
+//! Its cache (Bootstrap, Figure 2: `k0_pass` rw L1's cache; Operations §6.1) holds what it reads to go fast and could
+//! make again, partitioned by document: each document's sizes, the rows `k0_pass` gave it by relation. A run reads
+//! them, before it writes the cache, for the room its outputs' runs need: the gone documents' kept rows, and the
+//! added ones' as they were. Its runs opened at that room, it does not outgrow them and run again. `k0_pass` keeps
+//! the sizes of the documents it reads and lets go of the gone ones'. The kept rows are not in it: they are the
+//! output traces' before (P§3). Dropped, the cache costs the next run an attempt; its rows are the same (L5).
+//! Its Rust beyond `k0_pass` and `drop_parts` is the wiring of these ports.
 
 use crate::contract::{At, CacheW, Cx, DeltaOp, In, Out, Port, Ports, Work};
+use rerail_delta_twins::cache as cache_twin;
 use crate::dir::{BlockId, Directory};
 use crate::drop::{DropOps, drop_parts};
 use crate::files::{BlobId, Blobs, DocIds};
@@ -67,12 +75,13 @@ fn live<'v>(v: &'v View<'_>) -> impl Iterator<Item = RowId> + 'v {
 }
 
 impl L1 {
-    /// `k0_pass` over the documents of tape rows `ids`, one launch, into the outputs' runs (+1).
-    fn pass(&self, cx: &mut Cx<'_>, atoms: BlockId, tape: &View<'_>, ids: impl Iterator<Item = RowId>, out: &Out, work: &mut Work) -> Result<(), String> {
-        let docs = ids.map(|id| doc_at(cx.blobs, cx.dir, tape, id)).collect::<Result<Vec<_>, _>>()?; // copy: derived (the documents' places, from their blobs)
+    /// `k0_pass` over documents `docs`, one launch, into the outputs' runs (+1), their sizes kept in `cache` where the
+    /// modules `gone` let go of theirs.
+    #[allow(clippy::too_many_arguments)]
+    fn pass(&self, cx: &mut Cx<'_>, atoms: BlockId, docs: &[K0Doc], gone: &[i64], out: &Out, cache: Option<BlockId>, work: &mut Work) -> Result<(), String> {
         let runs: Vec<BlockId> = (0..RELATIONS.len()).map(|k| out.block(k)).collect();
         work.rows_read += docs.len() as u64;
-        work.rows_written += k0_pass(cx.reg, &self.ops, cx.dir, atoms, &docs, 1, &runs).map_err(|e| e.to_string())?;
+        work.rows_written += k0_pass(cx.reg, &self.ops, cx.dir, atoms, docs, gone, 1, &runs, cache).map_err(|e| e.to_string())?;
         Ok(())
     }
 }
@@ -86,31 +95,50 @@ impl DeltaOp for L1 {
         }
     }
 
-    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_>, _: Option<&Bistate<View<'_>>>, _: &mut CacheW, out: &mut Out, _: &mut Out) -> Result<Work, String> {
+    fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_>, _: Option<&Bistate<View<'_>>>, cache: &mut CacheW, out: &mut Out, _: &mut Out) -> Result<Work, String> {
         let mut work = Work::default();
         if ins.is_identity() {
             return Ok(work);
         }
         let (tape, atoms) = (&ins.ports[TAPE], ins.globals[ATOMS].block);
-        if let Some(tb) = tape.before() {
-            let mut parts: Vec<i64> = tape.gone().map(|id| cell(tb, id, 0)).collect(); // copy: derived (the gone documents' ids)
-            parts.sort_unstable();
-            parts.dedup();
-            work.rows_read += parts.len() as u64;
-            for k in 0..RELATIONS.len() {
-                if let Some(kept) = out.kept(k) {
-                    work.rows_written += drop_parts(cx.reg, &self.drops, cx.dir, kept, &parts, -1, out.block(k))?;
+        let mut parts: Vec<i64> = tape.before().map_or_else(Vec::new, |tb| tape.gone().map(|id| cell(tb, id, 0)).collect()); // copy: derived (the gone documents' ids)
+        parts.sort_unstable();
+        parts.dedup();
+        let docs = tape.added().map(|id| doc_at(cx.blobs, cx.dir, tape.after(), id)).collect::<Result<Vec<_>, _>>()?; // copy: derived (the documents' places, from their blobs)
+        // The room the run needs, from the cache's sizes: each gone document's kept rows, and each added one's as they
+        // were, an eighth more for an edit that grew.
+        if let Some(c) = cache.read(cx)? {
+            let need: Vec<usize> = {
+                let l = cx.dir.read("L1's cache", &[c])?;
+                let sizes = |d: i64| cache_twin::sizes(l.block(0), d as u32);
+                let mut need = vec![0usize; RELATIONS.len()];
+                for d in parts.iter().copied().chain(docs.iter().map(|d| d.module)) {
+                    for (k, &n) in sizes(d).unwrap_or(&[]).iter().enumerate() {
+                        need[k] += n as usize;
+                    }
                 }
+                need
+            };
+            for (k, n) in need.into_iter().enumerate() {
+                out.room(cx.dir, k, n + n / 8)?;
             }
         }
-        self.pass(cx, atoms, tape.after(), tape.added(), out, &mut work)?;
+        let cache = cache.write(cx)?;
+        work.rows_read += parts.len() as u64;
+        for k in 0..RELATIONS.len() {
+            if let Some(kept) = out.kept(k) {
+                work.rows_written += drop_parts(cx.reg, &self.drops, cx.dir, kept, &parts, -1, out.block(k))?;
+            }
+        }
+        self.pass(cx, atoms, &docs, &parts, out, Some(cache), &mut work)?;
         Ok(work)
     }
 
     fn run(&self, cx: &mut Cx<'_>, ins: &At<'_>, out: &mut Out) -> Result<(), String> {
         let (tape, atoms) = (&ins.ports[TAPE], ins.globals[ATOMS].block);
         let mut work = Work::default();
-        self.pass(cx, atoms, tape, live(tape), out, &mut work)?;
+        let docs = live(tape).map(|id| doc_at(cx.blobs, cx.dir, tape, id)).collect::<Result<Vec<_>, _>>()?; // copy: derived (the documents' places, from their blobs)
+        self.pass(cx, atoms, &docs, &[], out, None, &mut work)?;
         Ok(())
     }
 }

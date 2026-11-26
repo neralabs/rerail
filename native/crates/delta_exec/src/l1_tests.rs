@@ -94,7 +94,9 @@ fn the_harness_passes_l1_over_edits_of_l0_on_disk() {
     }
     assert_eq!(heads[1], heads[2], "an unchanged file is the identity");
     let Disk { l1, mut docs, .. } = disk;
-    for drop_at in [1, 3, 5] {
+    // L5: the cache dropped at a random step of the chain, a seed each.
+    for seed in 1..=3u64 {
+        let drop_at = 1 + (rerail_blocks::layer::mix(seed) % (heads.len() as u64 - 1)) as usize;
         harness_on(&l1, &mut bench, std::slice::from_mut(&mut docs.tape), &heads, &globals, drop_at).unwrap_or_else(|b| panic!("{b:?}"));
     }
 }
@@ -197,4 +199,44 @@ fn k0_pass_refuses_an_aggregate_through_l1() {
     let e = disk.run(&mut bench).unwrap_err();
     assert!(e.contains("not K0") && e.contains(" rule "), "{e}");
     assert!(disk.inst.heads().iter().all(Option::is_none), "a refused document writes no row");
+}
+
+/// L1's cache (Operations §6.1; Bootstrap, Figure 2): each document's sizes, kept by `k0_pass`. A cold run, from ∅,
+/// outgrows l0's runs and runs again; the cache then names l0's sizes, and an edit's run opens its runs at the room
+/// they name, in one attempt. With the cache dropped, the edit's run costs an attempt more and its change is the
+/// same, the reference's (L5).
+#[test]
+fn l1s_cache_sizes_its_runs_and_dropped_costs_an_attempt_not_an_answer() {
+    use crate::contract::OUTGROWN;
+    let outgrown = |w: &Work| w.excess.iter().find(|e| e.0 == OUTGROWN).map_or(0, |e| e.1);
+    let mut bench = Bench::new().unwrap();
+    let mut disk = Disk::new(&mut bench, "b6-cache");
+    let (_, cold) = disk.run(&mut bench).unwrap();
+    assert!(outgrown(&cold) > 0, "l0's k_arg rows outgrow a first room: {cold:?}");
+    let d = disk.atoms.find(&bench.dir, "bootstrap-l0").unwrap() as u32;
+    {
+        let l = bench.dir.read("t", &[disk.inst.cache.0]).unwrap();
+        let sizes = rerail_delta_twins::cache::sizes(l.block(0), d).expect("l0's sizes");
+        let rows: Vec<u32> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap().len() as u32).collect();
+        assert_eq!(sizes, &rows[..], "the rows k0_pass gave l0, by relation");
+    }
+    let [added, changed, _] = edits();
+    disk.edit(&added, 30);
+    let (_, work) = disk.run(&mut bench).unwrap();
+    assert_eq!(outgrown(&work), 0, "the runs opened at the room the cache names: {work:?}");
+    // Dropped: the next edit's run costs an attempt, and its change is the reference's.
+    disk.edit(&changed, 20);
+    disk.inst.drop_cache(&mut bench.dir);
+    let (tape0, atoms0) = (disk.docs.tape.head(), disk.globals(&bench).count);
+    let before: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap()).collect();
+    let (_, work) = disk.run(&mut bench).unwrap();
+    assert!(outgrown(&work) > 0, "from ∅, the edit outgrows a first room: {work:?}");
+    let ins = [(&disk.docs.tape, tape0, disk.docs.tape.head())];
+    let g = [crate::contract::GlobalIn { block: disk.atoms.0, before: Some(atoms0), after: disk.globals(&bench).count }];
+    let want = reference(&disk.l1, &mut bench.cx(), &ins, &g).unwrap();
+    for (k, t) in disk.inst.outs.iter().enumerate() {
+        let a = rows_at(&bench.dir, t, t.head()).unwrap();
+        let got = (a.difference(&before[k]).cloned().collect::<BTreeSet<_>>(), before[k].difference(&a).cloned().collect::<BTreeSet<_>>());
+        assert_eq!((&got.0, &got.1), (&want[k].added, &want[k].gone), "{}", RELATIONS[k].0);
+    }
 }
