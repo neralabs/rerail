@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { engineSources, isEngineInput } from "../../../scripts/check/ci/engine-inputs.mjs";
 import { affected, namedPaths, names, outputs, SHARDS, seen, select, shards, stringLiterals } from "../../../scripts/check/ci/test-selection.mjs";
 import { fixturesPath } from "../../support/oracles.ts";
+import { removeFolderSync } from "../../support/platform/remove-folder.ts";
 import { assignShards, platformTimes, runMs } from "../../support/shards/shard-split.ts";
 import { UNIT_TEST_TIMES } from "../../support/shards/unit-test-times.generated.ts";
 
@@ -187,7 +188,9 @@ describe("shards and outputs", () => {
   // unlike vitest, finds no .ts file for a .js import: an import it cannot find fails the script, and the job's fallback
   // runs every shard.
   it("come from the script under plain Node as CI starts it, for a change of prose alone", ON_THE_REPOSITORY, () => {
-    const list = join(mkdtempSync(join(tmpdir(), "rerail-test-selection-")), "changed.txt");
+    const dir = mkdtempSync(join(tmpdir(), "rerail-test-selection-"));
+    onTestFinished(() => removeFolderSync(dir));
+    const list = join(dir, "changed.txt");
     writeFileSync(list, "CHANGELOG.md\n");
     const run = spawnSync(process.execPath, ["scripts/check/ci/test-selection.mjs", list, "--github"], { cwd: ROOT, encoding: "utf8" });
     const said = `exit status ${run.status}, signal ${run.signal}, start error ${run.error?.message ?? "none"}, stderr:\n${run.stderr}`;
