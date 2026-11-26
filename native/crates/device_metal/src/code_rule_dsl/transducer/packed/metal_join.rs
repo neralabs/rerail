@@ -399,9 +399,23 @@ pub(in crate::code_rule_dsl) fn run_view_format() -> u32 {
 /// On Metal it is call-free: its rare and once-only bodies (`UKL_COLD`, `UKL_ONCE`) inlined, not called. On the M3,
 /// an indirect dispatch of a pipeline that makes calls (a call stack) hung the GPU at its second group, even when
 /// every thread returned first (decision 0641). Inlined, its chain runs indirectly, as on every backend.
+///
+/// On the host it is the program's Rust (`rerail_ukl_rust::join_program`), which runs for the texts it was written
+/// from (`JOIN_PROGRAM`). Another text is fatal: it ran as the vector path's build, or, refused there, the strata's
+/// seeds ran on the scalar joins, each with no word (the hm runs of 2026-11-25).
 fn program_pipe(format: u32) -> Result<Arc<rerail_accel_gpu::gpu::join::Pipe>, String> {
-    let inline = if rerail_device::device::is_metal() { "#define UKL_COLD static inline\n#define UKL_ONCE static inline\n" } else { "" };
-    pipeline(&format!("joinprog{format}"), "join_run", || format!("{inline}#define JOIN_PROGRAM 1\n#define CLIF_BLOCKS_COHERENT 1\n{}", view_source(format)))
+    let host = rerail_accel::gpu::shared::is_on_host();
+    let inline = if !host && rerail_device::device::is_metal() { "#define UKL_COLD static inline\n#define UKL_ONCE static inline\n" } else { "" };
+    pipeline(&format!("joinprog{format}"), "join_run", || {
+        let text = format!("{inline}#define JOIN_PROGRAM 1\n#define CLIF_BLOCKS_COHERENT 1\n{}", view_source(format));
+        if host && !rerail_ukl_rust::kernels(&text, &[]).iter().any(|(name, _)| *name == "join_run") {
+            panic!(
+                "join_stages.uglykl (views of format {format}) is not the text rerail_ukl_rust::join_program was written from ({:#018x}, not of JOIN_PROGRAM): bring the program to it, then its digests",
+                rerail_ukl_rust::digest(&text, &[])
+            );
+        }
+        text
+    })
 }
 
 /// The tape format of the views `rels` read (`ViewInPlace::format`), one for them all: a relation reads none, and with

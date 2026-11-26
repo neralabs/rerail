@@ -228,7 +228,7 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
     }
     device()?;
     let function = match host {
-        true => rerail_accel::score::phase("compile", || super::kernels::host_function(&source(), name))?,
+        true => rerail_accel::score::phase("compile", || super::kernels::host_function(&source(), name)),
         false => rerail_accel::score::phase("compile", || super::kernels::function_fixed(&source(), name, None)),
     };
     // Launched at `GROUP` threads a group: a pipeline that allows fewer (its registers, its group's memory) is fatal,

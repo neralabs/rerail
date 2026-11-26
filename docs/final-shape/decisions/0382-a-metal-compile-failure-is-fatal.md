@@ -27,6 +27,11 @@ not compile. Its guard, `the_label_kernels_compile_for_every_format`, was a test
    - `rerail_accel::gpu::join` (`compile`, `pipeline`, `library`) and the relational lane's kernels (`gpu::Gpu::new`).
      Before, the lane's failure printed a line and the lane was off: its work ran on the CPU.
    - `rerail_blocks::gpu::Gpu::on`, the blocks' join kernels.
+   - *Added 2026-11-26:* the join kernels on the host as a device (`kernels::host_function`). The vector path's
+     refusal of a kernel was an error there, and a device stratum ran its seeds on the scalar joins with no word
+     (`join_stages.uglykl`'s text stage on the hm runs of 2026-11-25). The join program on the host is its Rust
+     (`rerail_ukl_rust::join_program`), which runs for the texts it was written from (`JOIN_PROGRAM`); `program_pipe`
+     stops the run on any other text, which ran as another build of the kernel with no word too.
 2. **Having no Metal device is not a compile failure.** A machine without a device runs on the CPU, as before.
 3. **A CPU JIT compile that fails stops the run too** (the user, 2026-11-18: "JIT compilation failures should crash
    the program"). Each Cranelift step (the builder, a declaration, a function's definition, the module's
