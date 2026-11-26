@@ -1,4 +1,4 @@
-.policy "complexity-cyclomatic-vue" revision 2
+.policy "complexity-cyclomatic-vue" revision 3
 .description "Keep the functions of a Vue component's scripts at cyclomatic complexity 6 or below, counting each if, loop, catch, switch, ternary and && or ||; branch-heavy functions are hard to follow and test."
 .language vue
 .mode steer
@@ -7,14 +7,23 @@
 .scope exclude "**/coverage/**", "**/generated/**", "**/__generated__/**", "**/*.test.*", "**/*.spec.*", "**/__tests__/**"
 
 #include "complexity/ecma.rerail"
-#include "vue/component.rerail"
 //   cc_report(f, msg)   function f has cyclomatic complexity over 6 (lizard's decision points; nested ones apart)
-//   vscript(p, setup)   p is the program of a <script> block (setup "true" for <script setup>)
+#include "vue/view.rerail"
+//   the component's view: its scripts, then its template as code, one guest program (decision 0222)
 
 // The complexity pack's ceiling for the functions of a component's <script> and <script setup> blocks, counted as
-// the TypeScript and JavaScript rules count them. The template's expressions and directives (v-if, v-for,
-// @click="() => …") run in no function of the scripts, so they are never scored:
+// the TypeScript and JavaScript rules count them. They are read in the component's view, the one program the
+// engine builds from the scripts and the template, in the dialect the scripts' `lang` names. The template's part
+// of the view (a block standing at the <template> element) runs in no function of the scripts, so its functions
+// (@click="() => …") are never scored:
 //   <script setup> function grade(s) { if … else if (a && b) … for … while … switch (s) { case 1: … } } </script>
 //   -> `grade` has cyclomatic complexity 7, over the ceiling of 6.
+// Each body names the view's dialects itself: the engine specialises the libraries' kinds to a guest's grammar only
+// where `guest` stands in the rule that reads them (decision 0222, 7); through a helper relation nothing matches.
 .violation complexity(at: node, msg: symbol) code "CYCLOMATIC_COMPLEXITY" "{msg}"
-complexity(f, msg) :- cc_report(f, msg), vscript(p, _), within(f, p).
+complexity(f, msg) :- docof(f, g), (guest(g, _, _, "typescript") ; guest(g, _, _, "tsx") ; guest(g, _, _, "javascript")),
+    cc_report(f, msg), !cc_vue_template_fn(f).
+.decl cc_vue_template_fn(f: node)  // f is in the view's template part: a block standing at the <template> element
+cc_vue_template_fn(f) :- docof(f, g), (guest(g, _, _, "typescript") ; guest(g, _, _, "tsx") ;
+    guest(g, _, _, "javascript")), within(f, b), kind(b, "statement_block"), host_node(b, h),
+    kind(h, "template_element").
