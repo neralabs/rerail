@@ -648,3 +648,31 @@ fn a_k1_rule_lowered_by_p3_gives_the_rows_of_its_hand_ordered_k0_form() {
     let e = r.try_run().unwrap_err();
     assert!(e.contains("module ask.rerail") && e.contains("a load that is not a fact"), "{e}");
 }
+
+/// The planner's memo is its module's operator cache, kept from one run of a level to the next (Operations §6.1: "in
+/// memory across runs"): a line planned in one run takes its kept order under the budget in the next (0122), and the
+/// rows are a cold run's.
+#[test]
+fn a_levels_memo_lasts_from_one_run_to_the_next() {
+    let mut r = Run::new("phase-memo");
+    let base = |extra: &str| format!("{}{extra}", (0..6).map(|i| format!("e({i}, {}).\nf({}, {i}).\n", i + 1, i + 1)).collect::<String>());
+    r.write("base.rerail", &base(""), 50);
+    r.write("rule.rerail", "p(x, z) :- e(x, y), f(y, w), e(w, z).\n", 50);
+    r.names(&["base.rerail", "base", "rule.rerail", "rule", "rr"]);
+    let (pb, mb, pr, mr, rr) = (r.s("base.rerail"), r.s("base"), r.s("rule.rerail"), r.s("rule"), r.s("rr"));
+    r.fact("load", &[vec![pb, mb, rr], vec![pr, mr, rr]]);
+    r.fact("boot", &[vec![pb, 1], vec![pr, 2]]);
+    let cold = r.run();
+    assert!(cold.planned.priced > 0, "{:?}", cold.planned);
+    // Two edits of the same shape: the first prices its delta's line, the second takes it kept.
+    r.write("base.rerail", &base("e(7, 8).\n"), 40);
+    let first = r.run();
+    assert!(first.planned.priced > 0, "{:?}", first.planned);
+    r.write("base.rerail", &base("e(7, 8).\ne(8, 9).\n"), 30);
+    let second = r.run();
+    assert!(second.planned.kept > 0, "the memo the run before left: {:?}", second.planned);
+    let warm = r.rows(1, "p");
+    r.last = None;
+    r.run();
+    assert_eq!(r.rows(1, "p"), warm, "cold");
+}

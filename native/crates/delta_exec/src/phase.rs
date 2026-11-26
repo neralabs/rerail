@@ -996,6 +996,9 @@ pub struct Level {
     tapes_start: Option<BlockId>,
     /// `load`'s symbol: the level's asks, kept out of its facts out.
     load: Option<i64>,
+    /// Each module's operator cache, its planner's memo (Operations §6.1: "in memory across runs"): kept from one
+    /// run of the level to the next, let go with its module.
+    caches: BTreeMap<i64, crate::cache::OpCache>,
 }
 
 /// A level's run: its work, and whether it exported a program.
@@ -1010,7 +1013,7 @@ impl Level {
     /// An empty level, its layers placed at `place`.
     pub fn new(place: u32) -> Result<Level, String> {
         let tapes = Trace::new(&tape_shape())?.with_roll_up(RollUp::Never).resumed(place, None);
-        Ok(Level { place, rels: BTreeMap::new(), ran: Program::default(), tapes, seen: BTreeMap::new(), start: BTreeMap::new(), tapes_start: None, load: None })
+        Ok(Level { place, rels: BTreeMap::new(), ran: Program::default(), tapes, seen: BTreeMap::new(), start: BTreeMap::new(), tapes_start: None, load: None, caches: BTreeMap::new() })
     }
 
     /// Its relation `rel`'s trace between this run's start and now.
@@ -1054,12 +1057,19 @@ impl Level {
         Ok(rows_at(dir, &self.tapes, self.tapes.head())?.into_iter().map(|r| r[0]).collect())
     }
 
-    /// Its traces let go (a cold run's start).
+    /// Its traces let go (a cold run's start), and its modules' caches.
     pub fn clear(&mut self, dir: &mut Directory) {
         for r in self.rels.values_mut() {
             r.clear(dir);
         }
         self.tapes.clear(dir);
+        self.let_caches_go(dir);
+    }
+
+    fn let_caches_go(&mut self, dir: &mut Directory) {
+        for (_, c) in std::mem::take(&mut self.caches) {
+            dir.release(c.0);
+        }
     }
 
     /// Its relations let go and its program forgotten, its documents kept: the next run of it is from ∅ but for them.
@@ -1068,6 +1078,7 @@ impl Level {
             r.clear(dir);
         }
         self.rels.clear();
+        self.let_caches_go(dir);
         self.ran = Program::default();
         self.seen.clear();
         self.start.clear();
@@ -1170,6 +1181,7 @@ impl Level {
     fn run_module(&mut self, ops: PhaseOps, bench: &mut Bench, atoms: Atoms, known: &Known, m: i64, before: Vec<Rule>, after: Vec<Rule>, facts: &[FactIn<'_>]) -> Result<Work, String> {
         let mut shapes: BTreeMap<i64, Shape> = facts.iter().map(|f| (f.rel, f.shape.clone())).collect();
         shapes.extend(self.rels.iter().map(|(&r, t)| (r, t.shape.clone())));
+        let after_empty = after.is_empty();
         let st = {
             let l = bench.dir.read("atoms", &[atoms.0])?;
             Stratum::new(ops, m, before, after, known.clone(), &shapes, l.block(0)).map_err(|e| format!("rule {}: {}", e.rule, e.why))?
@@ -1199,9 +1211,18 @@ impl Level {
             let count = u64::from(atoms.count(&bench.dir));
             let globals = [GlobalIn { block: atoms.0, before: Some(count), after: count }];
             let outs: Vec<Trace> = taken.iter_mut().flat_map(|(_, r)| std::iter::once(std::mem::replace(&mut r.head, placeholder())).chain(r.counts.as_mut().map(|c| std::mem::replace(c, placeholder())))).collect();
-            let mut inst = Instance { outs, cache: crate::cache::OpCache::new(&mut bench.dir), want: placeholder(), asks: (0..ins.len()).map(|_| None).collect() };
+            let cache = match self.caches.remove(&m) {
+                Some(c) => c,
+                None => crate::cache::OpCache::new(&mut bench.dir),
+            };
+            let mut inst = Instance { outs, cache, want: placeholder(), asks: (0..ins.len()).map(|_| None).collect() };
             let w = inst.step(&st, &mut bench.cx(), &ins, &globals, None);
-            bench.dir.release(inst.cache.0);
+            // A module gone lets its cache go; any other keeps it for its next run.
+            if after_empty {
+                bench.dir.release(inst.cache.0);
+            } else {
+                self.caches.insert(m, inst.cache);
+            }
             let mut outs = inst.outs.into_iter();
             for (_, r) in &mut taken {
                 r.head = outs.next().expect("a head's trace");

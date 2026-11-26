@@ -835,6 +835,10 @@ def k1(failures: list) -> None:
     phase = strip_rust((CRATE / "src" / "phase.rs").read_text())
     if "r.head == load" not in phase or "self.load != Some(" not in phase:
         failures.append("phase.rs: a level answers no load facts of its program, or passes its asks on as facts out")
+    if "self.caches.insert(m, inst.cache);" not in phase:
+        failures.append("phase.rs: a level's module does not keep its operator cache, the planner's memo, across runs (Operations §6.1)")
+    if "fn a_levels_memo_lasts_from_one_run_to_the_next" not in (CRATE / "src" / "phase_tests.rs").read_text():
+        failures.append("the test that a level's memo lasts across runs is missing")
     if "fn a_k1_rule_lowered_by_p3_gives_the_rows_of_its_hand_ordered_k0_form" not in (CRATE / "src" / "phase_tests.rs").read_text():
         failures.append("B§10 step 7's test is missing")
 

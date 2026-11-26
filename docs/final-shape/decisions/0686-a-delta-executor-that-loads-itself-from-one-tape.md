@@ -1921,3 +1921,16 @@ Checks (Relax, local, `rerail-delta-exec --lib` 112 of 112):
 - `load(` stays refused in the crate's `.rerail` files: the kernel's files load nothing, and the test's `ask.rerail`
   is the test's.
 - Clippy is clean on `delta_exec` and `delta_twins`; `check_no_block_copies.py` and `check_dev_features.py` pass.
+
+### A level's memo lasts across runs (Operations §6.1; 2026-11-26)
+
+A level's module ran each stratum with a new operator cache and let it go after. So the planner's memo lived for one
+stratum's run, its rounds included, and the next run planned from nothing. 0122's budget never kept an order at a
+level, and 0203's ratios and notes never reached a second run. Operations §6.1 has the cache "in memory across
+runs". A level now keeps each module's cache from one run to the next (`Level::caches`). A module gone lets its
+cache go, as does a level that is reset or cleared.
+
+Checks (Relax, local, 113 of 113): `a_levels_memo_lasts_from_one_run_to_the_next`. Of two edits of the same shape,
+the first prices its delta's line and the second takes it kept, with the rows a cold run gives. With a new cache each
+run, the second run keeps none (`kept: 0`), and the test fails. The shape script's K1 section requires the kept cache
+and the test.
