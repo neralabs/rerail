@@ -1,7 +1,7 @@
 # 0566: A shift outside the regions is of the masks' outside values
 
 Status: decided (the user, 2026-11-21: "… After those, nothing reads the regions' walk and it can go (step D)",
-the instruction "do this"). The first part of 0551's step D. Follows 0564 (the loop keeps the gap masks and the
+the instruction "do this"). The first part of 0556's step D. Follows 0564 (the loop keeps the gap masks and the
 semicolon's fills).
 
 ## Intro

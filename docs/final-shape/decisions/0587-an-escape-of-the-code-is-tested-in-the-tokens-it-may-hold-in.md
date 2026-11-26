@@ -1,12 +1,12 @@
 # 0587: An escape of the code is tested in the tokens it may hold in
 
 Status: decided (the user, 2026-11-21: "maybe compare the rust code", on choosing the next step by the lean
-parser's Rust). Follows 0586 and 0585 (the stretch escape).
+parser's Rust). Follows 0609 and 0608 (the stretch escape).
 
 ## Intro
 
 **The problem.** Compared with `kotlin_lean`'s lexer, two things in tier 1's Rust were not the lean form:
-- "a `0x` or `0b` with no digit" was tested over each stretch of code between region tokens (`code_from`, 0585).
+- "a `0x` or `0b` with no digit" was tested over each stretch of code between region tokens (`code_from`, 0608).
   The lean lexer decides `0x` in `number()`, at the number token's first byte.
 - An escape outside the regions (`code_checks`: this one, "a `$` outside a string") was `any_in(&v, s, l)`
   in every row of code, the punctuation's and the names' included. The lean lexer tests each in the one token

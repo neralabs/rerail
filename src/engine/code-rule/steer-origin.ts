@@ -1,5 +1,5 @@
 import type { RuleSourceKind } from "../catalog/repository-model.js";
-import { loadRulePacks, RERAIL_PUBLISHER, rulePackIdOf } from "../catalog/rule-packs.js";
+import { loadRulePacks, RERAIL_PUBLISHER, rulePackIdOf, type RulePack } from "../catalog/rule-packs.js";
 import { WORKTREE_PACK_ID } from "../catalog/worktree-pack.js";
 
 /*
@@ -7,10 +7,45 @@ import { WORKTREE_PACK_ID } from "../catalog/worktree-pack.js";
  * `session-presentation.js` reader must not carry.
  */
 
-/** Where a rule was added from, as a rule's provenance records it. */
+/** Where a rule was added from, as a rule's provenance records it, and the title its document gives it. */
 export interface SteerRuleSource {
   readonly kind: RuleSourceKind;
   readonly packId: string | null;
+  /** The rule document's own `title`; absent when it has none (a pack's rule takes its pack's). */
+  readonly title?: string | undefined;
+}
+
+/**
+ * The words the person's line names the rule by: its own title (`own`, its document's, as `source` records it), else
+ * the title its rule pack lists for it among `packs` (looked up by rule id without a recorded source, as
+ * `steerOrigin` does); undefined when it has neither, and the id stands in. A rule of your library is in no pack.
+ */
+export function steerTitle(
+  ruleId: string,
+  source?: SteerRuleSource,
+  own: string | undefined = source?.title,
+  packs: () => readonly RulePack[] = loadRulePacks,
+): string | undefined {
+  if (own !== undefined) return own;
+  const loaded = packs();
+  const packId = source === undefined || source.kind === "rerail_rule" ? rulePackIdOf(ruleId, loaded) : source.packId;
+  return loaded.find(found => found.id === packId)?.rules.find(rule => rule.id === ruleId)?.title;
+}
+
+/**
+ * `steerOrigin` and `steerTitle` for the rules of one steer, as `sourceOf` records them: the installed packs are read
+ * once for all of them, when a rule first needs them.
+ */
+export function steerNaming(sourceOf: (ruleId: string) => SteerRuleSource | undefined): {
+  origin: (ruleId: string) => string | undefined;
+  title: (ruleId: string) => string | undefined;
+} {
+  let read: readonly RulePack[] | undefined;
+  const packs = () => (read ??= loadRulePacks());
+  return {
+    origin: ruleId => steerOrigin(ruleId, sourceOf(ruleId), packs),
+    title: ruleId => steerTitle(ruleId, sourceOf(ruleId), undefined, packs),
+  };
 }
 
 /**
@@ -19,10 +54,10 @@ export interface SteerRuleSource {
  * or tarball, who does or where it came from; the checkout's own rules; or the library it was added from. Without a
  * recorded source the pack is looked up by rule id, as it is for a pack's rule added on its own; undefined when unknown.
  */
-export function steerOrigin(ruleId: string, source?: SteerRuleSource): string | undefined {
-  const packs = loadRulePacks();
-  const packId = source === undefined || source.kind === "rerail_rule" ? rulePackIdOf(ruleId, packs) : source.packId;
-  const pack = packs.find(found => found.id === packId);
+export function steerOrigin(ruleId: string, source?: SteerRuleSource, packs: () => readonly RulePack[] = loadRulePacks): string | undefined {
+  const loaded = packs();
+  const packId = source === undefined || source.kind === "rerail_rule" ? rulePackIdOf(ruleId, loaded) : source.packId;
+  const pack = loaded.find(found => found.id === packId);
   if (pack !== undefined && (pack.publisher !== RERAIL_PUBLISHER || pack.localSource !== undefined)) {
     const by = pack.publisher === RERAIL_PUBLISHER ? "" : ` by ${pack.publisher}`;
     const from = pack.localSource === undefined ? "" : `, installed from a ${pack.localSource.kind}`;

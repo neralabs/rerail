@@ -2,9 +2,10 @@
 
 Numbered 0124 where it was written (Typing-support, phased facts); 0132 in the hub, as the trunk's 0124 is lattice relations.
 
-Status: draft (2026-11-12). §1 and §2 are built. §3 is a spike behind a switch, off by default. §4 and §5 size
-work that is not built. Numbered 0121 on its branch, renumbered at the merge with phased-facts, whose 0121 (node
-order keys) came first. It works under 0122 and 0123 (§6).
+Status: partly built (audited 2026-11-23). Left: greedy-order spike off by default; classifier/approximation planning
+and batched, scoreboarded bulk planning not built. Draft (2026-11-12). §1 and §2 are built. §3 is a spike behind a
+switch, off by default. §4 and §5 size work that is not built. Numbered 0121 on its branch, renumbered at the merge
+with phased-facts, whose 0121 (node order keys) came first. It works under 0122 and 0123 (§6).
 
 ## Intro
 
@@ -127,7 +128,7 @@ What would make it safe is a bound on actual regret, not estimated: §4.
 
 ## 4. Classifiers and approximations
 
-**What the `cost-classifier` worktree has** (branch `jeremybarnes/cost-classifier-metal-rf`, decision 0100 §14):
+**What the `cost-classifier` worktree has** (branch `cost-classifier-metal-rf`, decision 0100 §14):
 - MLDB's random forest, in Rust and Metal. Two regression forests predict an executor job's wall time and CPU from
   `lane, forms, launches, units, cold, load, threads`. Held out, the model's wall error is ×1.94, against ×3.29 for
   medians and ×6.50 for prices.

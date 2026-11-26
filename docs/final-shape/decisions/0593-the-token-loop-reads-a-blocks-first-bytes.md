@@ -1,7 +1,7 @@
 # 0593: The token loop reads a block's first bytes
 
 Status: decided (the user, 2026-11-21: "please address these", of four differences from the lean lexer found by
-comparing the Rust; this is the first). Follows 0591.
+comparing the Rust; this is the first). Follows 0610.
 
 ## Intro
 

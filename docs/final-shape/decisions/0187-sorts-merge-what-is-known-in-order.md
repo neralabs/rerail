@@ -1,6 +1,6 @@
 # 0187: A wave's batch, a scan's order and a re-sorted order merge what is known in order
 
-(Numbered 0184 on its branch, jeremybarnes/final-rerail-shape-phased-facts; renumbered at the roll-up.)
+(Numbered 0184 on its branch, final-rerail-shape-phased-facts; renumbered at the roll-up.)
 
 Status: built (2026-11-13), `setfix.rs` (`Fresh::offer`, `Fresh::settle`, `scan_order`) and `setfix/runs.rs`
 (`sort_pieces`, `merge_pieces`, `Sorted::within_key`, `Index::reorder`). It extends decision 0180 past an order's

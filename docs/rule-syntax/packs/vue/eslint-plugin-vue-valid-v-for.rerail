@@ -21,7 +21,7 @@ valid_v_for(m, "'v-for' directives require no modifier.") :- vfor_dir(_, a), vmo
 valid_v_for(a, "'v-for' directives require that attribute value.") :- vfor_dir(_, a), !has_value(a).
 valid_v_for(v, msg) :- alias_text(a, s), vval(a, v), !option("allowEmptyAlias", "true"), empty_alias(s, w),
     empty_message(w, msg).
-valid_v_for(p, cat("Invalid alias '", t, "'.")) :- slot(a, p, n), (n = 1 ; n = 2), !kind(p, "identifier"), text(p, t).
+valid_v_for(p, cat("Invalid alias '", t, "'.")) :- invalid_alias(p, t).
 valid_v_for(t, "Custom elements in iteration require 'v-bind:key' directives.") :- checked(_, e), vcustom(e),
     !vhas_dir(e, "bind", "key"), vel_tag(e, t).
 valid_v_for(k, "Expected 'v-bind:key' directive to use the variables which are defined by the 'v-for' directive.") :-
@@ -53,10 +53,17 @@ checked(a, e) :- vfor_dir(e, a).
 checked(a, c) :- checked(a, e), vel_name(e, "template"), !vhas_dir(e, "bind", "key"), vel_parent(c, e),
     !child_for_uses(a, c).
 .decl child_for_uses(a: node, c: node)
-child_for_uses(a, c) :- vfor_dir(e, a), vfor_dir(c, b), tref(_, x, b), tvar(e, x, _, "v-for").
+// c is in e, as its reader's child is: without it, every v-for of the corpus naming x (decision 0652).
+child_for_uses(a, c) :- vfor_dir(e, a), vfor_dir(c, b), within(c, e), tref(_, x, b), tvar(e, x, _, "v-for").
 .decl key_uses(k: node, a: node)
 key_uses(k, a) :- checked(a, e), vdir(e, k, "bind", "key"), tref(_, x, k), vfor_dir(f, a), tvar(f, x, _, "v-for").
 
+// invalid_alias(p, t): alias p, the key's or the index's, is no plain name; t is its text. It and the slots read the
+// alias's tree and tokens, in the context `expression`: they are its nodes (decision 0597).
+.decl invalid_alias(p: node, t: symbol)
+invalid_alias(p, t) :- slot(_, p, n), (n = 1 ; n = 2), !kind(p, "identifier"), text(p, t).
+.context expression of vue roots vexpr_root exports invalid_alias
+.from expression invalid_alias
 // slot(a, p, n): alias p is written in slot n of v-for a, holes counted: in `(v, , {i})`, {i} is in slot 2. The slot
 // is the number of commas before p at the top of the alias list: the commas between each item and the one before.
 .decl slot(a: node, p: node, n: number)

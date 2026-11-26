@@ -1,6 +1,8 @@
 # 0104: Everything kept is facts, on the same fact path
 
-Status: decided (2026-11-10). The checks are built; the moves are in the order below.
+Status: partly built (audited 2026-11-23; steps 1-8 done 2026-11-23, t33). Left: an unchanged run's fixed cost, so
+the kept frames can go, and the kept entries read in place (t33, "K4: what is left"). `logic::facts_only` lists no
+table and no map not yet facts. Decided (2026-11-10). The checks are built; the moves are in the order below.
 
 ## Intro
 
@@ -36,7 +38,7 @@ key, a table, a map or a validity test of its own.
 
 ## Prior work consulted
 
-- **ast-index-spike design index, the linter survey (LA 6, F3).** The Python linters' fact store
+- **SQL index prototype design index, the linter survey (LA 6, F3).** The Python linters' fact store
   was content-hash cached, and suffered "all-or-nothing cache invalidation".
   - **Agrees.** Here a key is facts, so an edit retracts only the results whose keys it changed.
 - **Lessons ledger row 10.** A stale fact store showed 0, then 9, then 16 findings for one input.

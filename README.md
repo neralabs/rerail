@@ -114,6 +114,7 @@ Packs that port a linter are [linter-equivalent](docs/rule-packs.md#linter-equiv
 | `blade` | Bladestan v0.11, tlint v9, stillat/blade-parser v2 |
 | `php` | PHP_CodeSniffer v4, PHPStan v2, Psalm v6 |
 | `complexity` | none: counts like lizard v1, for cyclomatic complexity above 6 in Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue and Java |
+| `django` | none: Rerail's own rules for Django models, querysets, transactions, views and settings, from the Django docs and maintainers' review advice |
 
 A ported rule ships only once it passes the conformance check: it is scored against the original tool's own findings on the tool's tests, at the exact release the pack pins, and on real-code samples. Ports that are not ready yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md), the [pack format](docs/pack-format.md) and [the conformance check](conformance/README.md#the-gate).
 
@@ -121,7 +122,7 @@ Set-up reads the repository's own linter config, as data, and turns pack rules o
 
 A worktree can also carry rules of its own: each rule document in its `.rerail/rules/` folder runs in that worktree only, with nothing to install or add, and `rerail packs list` there shows what loaded ([a rule for one worktree only](docs/writing-rules.md#a-rule-for-one-worktree-only)). `/rerail-create` writes a rule there when you ask for this worktree only.
 
-Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL, Vue, Java, C, C++ and Go; regex rules and `file` rules read every text file in their scope, `Justfile`, `LICENSE` and lock files included ([Writing path and text rules](docs/path-and-text-rules.md)). Move your own rules between machines with `rerail rules export` and `rerail rules import`.
+Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL, Vue, Java, C, C++, C#, Go, HTML, CSS, Markdown and JSON; regex rules and `file` rules read every text file in their scope, `Justfile`, `LICENSE` and lock files included ([Writing path and text rules](docs/path-and-text-rules.md)). Move your own rules between machines with `rerail rules export` and `rerail rules import`.
 
 ## Supported coding agents
 

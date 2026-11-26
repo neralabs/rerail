@@ -1,8 +1,8 @@
 # 0066: Block programs run a batch of files in one launch
 
-Status: accepted (user, 2026-11-07: "the vast majority of our launches will launch a batch of
-files, with potentially different languages, against a group of bitlex programs (one for each
-file). This is the shape that we should implement.")
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-07: "the vast majority of our launches will launch a batch
+of files, with potentially different languages, against a group of bitlex programs (one for each file). This is the
+shape that we should implement.")
 
 ## Intro
 
@@ -19,7 +19,7 @@ groups:   [a a a][b b][c][d d d d][e e]     one file per group; each group runs 
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike ran no GPU experiments (prior-work `README.md`, "Known
+- **SQL index prototype indexes:** the spike ran no GPU experiments (prior-work `README.md`, "Known
   differences"), so there is no direct evidence on device batches.
 - **Lessons ledger #9** (batch sharing across a union scope loses, re-learned three times; "a
   heterogeneous batch took 935 vs 118 ms"). **Agrees:** a batch shares the launch, never the

@@ -1,5 +1,5 @@
 import { inArray, sql, type SQL } from "drizzle-orm";
-import { blob, check, index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
+import { blob, check, index, integer, primaryKey, sqliteTable, text, unique, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { ADAPTER_CAPABILITIES, type RerailHost, type SteerStrategy } from "../adapter-contract.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import {
@@ -421,12 +421,17 @@ export const steerFeedback = sqliteTable(
  * Durable audit bookkeeping. This deliberately has no session foreign key:
  * evaluation can begin before a host has recorded its session row, and a
  * reset must not make a live evaluator unable to finish its run.
+ *
+ * An audit belongs to the session whose work it checked, or, with no `session_id`, to the repository `repository_id`
+ * names: a change the walk of a repository's other worktrees found that no session made (`WorktreeWalks`). Such an
+ * audit is in the repository's history, never in a session's.
  */
 export const audits = sqliteTable(
   "audits",
   {
     auditId: text("audit_id").primaryKey(),
-    sessionId: text("session_id").notNull(),
+    /** The session whose work the audit checked; null for an audit the repository owns. */
+    sessionId: text("session_id"),
     workspaceRoot: text("workspace_root").notNull(),
     scope: text("scope", { enum: AUDIT_SCOPES }).$type<AuditScope>().notNull(),
     mode: text("mode", { enum: AUDIT_MODES }).$type<AuditMode>().notNull(),
@@ -453,9 +458,20 @@ export const audits = sqliteTable(
     status: text("status", { enum: AUDIT_STATUSES }).$type<AuditStatus>().notNull(),
     violations: text("violations_json", { mode: "json" }).$type<CodeRuleViolation[]>().notNull(),
     failures: text("failures_json", { mode: "json" }).$type<AuditFailure[]>().notNull(),
+    /**
+     * Of an audit no session owns, the repository that does: `checkouts.repository_key` of its `workspace_root`, which
+     * the repository's reads match as they match its sessions' `repository_id`. Null for a session's audit.
+     */
+    repositoryId: text("repository_id"),
+    /**
+     * Of an audit no session owns, the session whose evaluator ran it, so that session's next open marks it interrupted
+     * if it was left running. Null for a session's audit.
+     */
+    recordedBy: text("recorded_by"),
   },
   table => [
     index("audits_session_started").on(table.sessionId, table.startedAt, table.auditId),
+    index("audits_repository_started").on(table.repositoryId, table.startedAt, table.auditId).where(sql`${table.sessionId} IS NULL`),
     index("audits_status").on(table.status),
     index("audits_scope").on(table.scope),
     index("audits_mode").on(table.mode),
@@ -527,22 +543,25 @@ export const auditResultPages = sqliteTable(
 /**
  * One row per distinct violation an audit reported: `(rule_id, violation_key)` once per audit, at the `ordinal` of
  * its first copy in `audits.violations_json`, where its payload stays. `logged`: the coding agent was not told, because
- * the audit ran in Log mode or some copy's rule was in Log mode.
+ * the audit ran in Log mode or some copy's rule was in Log mode. `session_id` and `repository_id` are the audit's owner
+ * (`audits`).
  */
 export const auditViolations = sqliteTable(
   "audit_violations",
   {
     auditId: text("audit_id").notNull(),
     ordinal: integer("ordinal").notNull(),
-    sessionId: text("session_id").notNull(),
+    sessionId: text("session_id"),
     startedAt: integer("started_at").notNull(),
     ruleId: text("rule_id"),
     violationKey: text("violation_key").notNull(),
     logged: integer("logged", { mode: "boolean" }).notNull(),
+    repositoryId: text("repository_id"),
   },
   table => [
     primaryKey({ columns: [table.auditId, table.ordinal] }),
     index("audit_violations_session_started").on(table.sessionId, table.startedAt),
+    index("audit_violations_repository_started").on(table.repositoryId, table.startedAt).where(sql`${table.sessionId} IS NULL`),
     index("audit_violations_started").on(table.startedAt),
     index("audit_violations_rule_started").on(table.ruleId, table.startedAt),
     // An append looks up the audit's own rows by (rule, key).
@@ -550,24 +569,30 @@ export const auditViolations = sqliteTable(
     // The rollup's maxima: a key's latest sighting, and its latest logged, each one index probe.
     index("audit_violations_key").on(table.sessionId, table.ruleId, table.violationKey, table.startedAt),
     index("audit_violations_key_logged").on(table.sessionId, table.ruleId, table.violationKey, table.startedAt).where(sql`${table.logged} = 1`),
+    // The same maxima for a repository's own audits, whose rows share the null session.
+    index("audit_violations_repository_key").on(table.repositoryId, table.ruleId, table.violationKey, table.startedAt).where(sql`${table.sessionId} IS NULL`),
   ],
 );
 
 /**
- * Per session, rule and violation key: the latest audit start that reported it, and the latest that reported it
- * `logged` (`audit_violations`). A range `[since, now)` holds the violation exactly when `last_seen_at >= since`.
+ * Per owner (a session, or with no session the repository `repository_id` names), rule and violation key: the latest
+ * audit start that reported it, and the latest that reported it `logged` (`audit_violations`). A range `[since, now)`
+ * holds the violation exactly when `last_seen_at >= since`.
  */
 export const ruleViolationRollup = sqliteTable(
   "rule_violation_rollup",
   {
-    sessionId: text("session_id").notNull(),
+    sessionId: text("session_id"),
     ruleId: text("rule_id").notNull(),
     violationKey: text("violation_key").notNull(),
     lastSeenAt: integer("last_seen_at").notNull(),
     lastLoggedAt: integer("last_logged_at"),
+    repositoryId: text("repository_id"),
   },
   table => [
-    primaryKey({ columns: [table.sessionId, table.ruleId, table.violationKey] }),
+    // One row per owner, rule and key: a session's, or with no session the repository's.
+    uniqueIndex("rule_violation_rollup_session").on(table.sessionId, table.ruleId, table.violationKey).where(sql`${table.sessionId} IS NOT NULL`),
+    uniqueIndex("rule_violation_rollup_repository").on(table.repositoryId, table.ruleId, table.violationKey).where(sql`${table.sessionId} IS NULL`),
     index("rule_violation_rollup_last_seen").on(table.lastSeenAt),
   ],
 );
@@ -593,9 +618,10 @@ export const auditRuleSetUses = sqliteTable(
   "audit_rule_set_uses",
   {
     auditId: text("audit_id").primaryKey(),
-    sessionId: text("session_id").notNull(),
+    sessionId: text("session_id"),
     startedAt: integer("started_at").notNull(),
     ruleSetId: integer("rule_set_id").notNull(),
+    repositoryId: text("repository_id"),
   },
   table => [
     index("audit_rule_set_uses_session_started").on(table.sessionId, table.startedAt, table.ruleSetId),
@@ -613,16 +639,17 @@ export const auditViolationsStaging = sqliteTable(
   {
     auditId: text("audit_id").notNull(),
     ordinal: integer("ordinal").notNull(),
-    sessionId: text("session_id").notNull(),
+    sessionId: text("session_id"),
     startedAt: integer("started_at").notNull(),
     ruleId: text("rule_id"),
     violationKey: text("violation_key").notNull(),
     logged: integer("logged", { mode: "boolean" }).notNull(),
+    repositoryId: text("repository_id"),
   },
   table => [primaryKey({ columns: [table.auditId, table.ordinal] })],
 );
 
-/** The derived audit history keyed by session: the triggers on `audits` clear it along with the audits it came from. */
+/** The derived audit history keyed by owner (a session, or the repository): the triggers on `audits` clear it along with the audits it came from. */
 export const DERIVED_AUDIT_HISTORY_TABLES = [auditViolations, auditViolationsStaging, ruleViolationRollup, auditRuleSetUses] as const;
 
 /**

@@ -1,0 +1,28 @@
+[package]
+name = "rerail-ukl-aot"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "UKL kernels as Rust ahead of time (decision 0567 step 3): rerail-ukl-vec's Rust of a kernel's vector tape, checked in, beside the kernel vectorized by hand and as scalar code, to compare them."
+
+[features]
+# The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
+test-hooks = ["rerail-tape-format/test-hooks", "rerail-json-aot/test-hooks", "rerail-clif/test-hooks"]
+
+[dependencies]
+# Format 16's tapes, written by the engine's writer, and the host's reads of them: `f16_parent`'s documents and its
+# scalar reference (`reads::f16::parent`).
+rerail-tape-format = { path = "../tape_format" }
+# The view a tape's reads are told where it lies by (`TapeView`, the kernel's `view`), without the reads' IR.
+rerail-clif = { path = "../clif", default-features = false }
+# JSON's parser as Rust, which writes format 16 through the engine's writer: real documents for `f16_parent`.
+rerail-json-aot = { path = "../json_aot" }
+# The engine's kernels as Rust (`label_parents`), and the launch every kernel's Rust here takes.
+rerail-ukl-rust = { path = "../ukl_rust" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-ukl-aot = { path = ".", features = ["test-hooks"] }
+# The process's GPU (Metal, CUDA; the UKL CPU backend): `f16_parent`'s kernels compiled from their UKL and timed
+# there (`examples/parent_gpu`).
+rerail-gpu = { path = "../../../gpu" }

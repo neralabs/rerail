@@ -1,14 +1,13 @@
 # 0156: Tape format 16, a byte tape read in place, in fixed blocks at rest (draft)
 
-Status: the run's default format since 2026-11-17 (0340, the user: "Switch to format 16"); the tradeoffs below
-are still open. Draft (2026-11-13), a design pass for the user's review. Nothing is built. Revised the same
-day after the user's answers: open choices are written as tradeoffs to measure, not as bars to meet
-("Tradeoffs", below).
-Revised 2026-11-15: sections 1–4 rewritten as the form the lab measured
-([t39](../notes/t39-tape-primitives.md) steps 7–16). The event stream, the literal-pool codec and
-the content-defined blocks of the first version are in Departures.
-Replaces, if accepted: 0025 (v9np), 0140's writer, and parts of 0026 and 0032.
-Survey: `notes/t35-tape-format-issues.md` (cited below as "t35 n").
+Status: partly built (audited 2026-11-23). Left: §6 text as a stream of pieces (load without source); §5
+algorithm-tagged digests and a second hash; tradeoffs T1-T9 still open. The run's default format since 2026-11-17
+(0340, the user: "Switch to format 16"); the tradeoffs below are still open. Draft (2026-11-13), a design pass for the
+user's review. Nothing is built. Revised the same day after the user's answers: open choices are written as tradeoffs
+to measure, not as bars to meet ("Tradeoffs", below). Revised 2026-11-15: sections 1–4 rewritten as the form the lab
+measured ([t39](../notes/t39-tape-primitives.md) steps 7–16). The event stream, the literal-pool codec and the
+content-defined blocks of the first version are in Departures. Replaces, if accepted: 0025 (v9np), 0140's writer, and
+parts of 0026 and 0032. Survey: `notes/t35-tape-format-issues.md` (cited below as "t35 n").
 
 ## Fixed: the tape is read in place, never decoded (the user, 2026-11-14)
 
@@ -494,7 +493,7 @@ There are three levels, each loading without the source:
 - **Structure:** the node stream alone. Spans, shapes, kinds.
 - **Names:** plus the leaf pieces. Identifier and literal text: what most text tests read. The leaf
   pieces are the deduplicated leaf vocabulary the spike's value index requires
-  (`ast-index-spike-history-index.md` §11), so a leaf piece id can be that index's value id.
+  (`sql-index-prototype-history-index.md` §11), so a leaf piece id can be that index's value id.
 - **Source:** plus the gap pieces. The exact bytes: CRLF, BOM and invalid UTF-8 alike, since pieces
   are bytes. Hashing them gives the source's hash.
 

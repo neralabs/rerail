@@ -27,17 +27,19 @@ fn tokens(text: &str) -> Vec<String> {
 }
 
 /// clang's `-E` of `main` under the same backend: no predefines but the language's (`-undef`), no system
-/// headers, the same search order (the forest, then the carried headers' directories on disk).
+/// headers, the same search order (the forest, then this crate's carried headers' directories on disk).
 fn clang(backend: Backend, main: &str) -> Option<String> {
     let f = forest();
     let mut c = Command::new("clang");
-    if backend == Backend::OpenCl {
+    if backend.is_c() {
         c.args(["-x", "c", "-std=gnu99", "-undef", "-nostdinc", "-E", "-P", "-w"]);
     } else {
         c.args(["-x", "c++", "-std=gnu++20", "-undef", "-nostdinc", "-E", "-P", "-w"]);
     }
-    c.arg(format!("-I{f}")).arg(format!("-I{f}/mldb/builtin/{}/ukl", backend.dir())).arg(format!("-I{f}/mldb/block/ukl"));
-    c.arg(format!("-I{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")));
+    // The carried headers' directories on disk: this crate's (`carried.rs`).
+    let here = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    c.arg(format!("-I{f}")).arg(format!("-I{here}/mldb/builtin/{}/ukl", backend.dir())).arg(format!("-I{here}/mldb/block/ukl"));
+    c.arg(format!("-I{here}/lib")).arg(format!("-I{here}"));
     for (n, v) in backend.predefines() {
         c.arg(format!("-D{n}={}", v.unwrap_or_default()));
     }
@@ -66,7 +68,8 @@ fn same_as_clang(backend: Backend, main: &str, min_tokens: usize) {
 #[test]
 fn every_library_header_stands_alone_on_every_backend() {
     let dir = format!("{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Cpu, Backend::OpenCl] {
+    let backends = [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Hip { wave: 32 }, Backend::Hip { wave: 64 }, Backend::Cpu, Backend::OpenCl, Backend::Vec];
+    for backend in backends {
         // A body is included by its header, with its parameters, and refuses to stand alone.
         for (name, _) in LIBRARY.iter().filter(|(n, _)| !n.starts_with("ukl/body/")) {
             // The shim's tokens, at least, and the header's own.
@@ -98,6 +101,48 @@ fn every_library_header_is_opencl_c_1_2() {
     std::fs::remove_dir_all(&tmp).ok();
 }
 
+/// The library's functions, preprocessed for each C++ GPU backend, are each defined once: a name and its parameters'
+/// tokens at file scope before a body. Two merged branches each gave CUDA the coherent word's atomics, in its section
+/// and after the sections; NVRTC refused every kernel, and preprocessing alone passed.
+#[test]
+fn each_library_function_is_defined_once_on_every_backend() {
+    let k = "#include <ukl/backend.h>\n#include <ukl/memory.h>\n#include <ukl/simd.h>\n#include <ukl/group.h>\n";
+    for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Hip { wave: 32 }, Backend::Hip { wave: 64 }] {
+        let t = tokens(&Preprocess::new(backend).file("/mem/k", k).run("/mem/k").unwrap_or_else(|e| panic!("{backend:?}: {e}")));
+        let mut seen = std::collections::HashSet::new();
+        let (mut depth, mut i) = (0usize, 0);
+        while i < t.len() {
+            match t[i].as_str() {
+                "{" => depth += 1,
+                "}" => depth = depth.saturating_sub(1),
+                "(" if depth == 0 && i > 0 && t[i - 1].starts_with("ukl_") => {
+                    let (from, mut paren, mut j) = (i - 1, 0usize, i);
+                    while j < t.len() {
+                        paren = match t[j].as_str() {
+                            "(" => paren + 1,
+                            ")" => paren - 1,
+                            _ => paren,
+                        };
+                        j += 1;
+                        if paren == 0 {
+                            break;
+                        }
+                    }
+                    if t.get(j).is_some_and(|b| b == "{") {
+                        let sig = t[from..j].join(" ");
+                        assert!(seen.insert(sig.clone()), "{backend:?}: {sig} is defined twice");
+                    }
+                    i = j;
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        assert!(seen.iter().any(|s| s.starts_with("ukl_atomic_add (")), "{backend:?}: the atomics were found");
+    }
+}
+
 /// A kernel reaches the library by `<ukl/...>`, from memory as from disk: the carried copy.
 #[test]
 fn a_kernel_includes_the_library() {
@@ -109,6 +154,11 @@ fn a_kernel_includes_the_library() {
     assert!(!old.contains("__reduce_add_sync"), "sm 7.0: the reference sum, by shuffles");
     let metal = Preprocess::new(Backend::Metal { version: 310 }).file("/mem/k", k).run("/mem/k").unwrap();
     assert!(metal.contains("simd_prefix_inclusive_sum"), "Metal's native scan");
+    // HIP: CUDA's kernels and rows, AMD's maskless shuffles, none of CUDA's `*_sync` nor its PTX.
+    let hip = Preprocess::new(Backend::Hip { wave: 32 }).file("/mem/k.hip", k).run("/mem/k.hip").unwrap();
+    assert!(hip.contains("ukl_scan_u32_tiles__ukl_params"), "HIP: the scan's kernels, with their rows");
+    assert!(hip.contains("__shfl_xor(") && hip.contains("__ballot("), "HIP's shuffles and ballot");
+    assert!(!hip.contains("_sync(") && !hip.contains("__CUDA_ARCH__") && !hip.contains("asm("), "nothing of CUDA's own");
 }
 
 /// The random forest's kernels for Metal, as `forest/build.rs` preprocesses them.
@@ -154,14 +204,28 @@ fn an_in_memory_kernel_gets_its_backends_shim() {
 #[test]
 fn a_metal_kernel_takes_the_tapes_reads() {
     let k = "#include <metal_stdlib>\nusing namespace metal;\n#define CLIF_VIEW_SPACE device\n#define clif_view(v, a) the_kernels_view(v, a)\n#include <ukl/reads/tape.h>\nkernel void k() {}\n";
-    let out = crate::metal_source("k.metal", k).unwrap_or_else(|e| panic!("{e}"));
+    let out = crate::metal_source(&crate::Target::named("apple7").unwrap(), "k.metal", k).unwrap_or_else(|e| panic!("{e}"));
     let squeezed: String = out.chars().filter(|c| !c.is_whitespace()).collect();
     assert!(squeezed.contains("clif_tape_number(deviceconstuint8_t*t,deviceconstuint32_t*v"), "the view where the kernel reads it");
     assert!(out.contains("the_kernels_view(v,") || out.contains("the_kernels_view(v ,"), "the kernel's load of the view");
     assert!(!out.contains("metal_stdlib"), "the front end's own header, left to it");
     assert!(crate::takes_library(k) && !crate::takes_library("#include <metal_stdlib>\n"));
     let both = "#include <ukl/reads/tape.h>\n#include <ukl/reads/tape_z.h>\n";
-    assert!(crate::metal_source("both.metal", both).is_err(), "one set of the tape's reads");
+    assert!(crate::metal_source(&crate::Target::named("apple7").unwrap(), "both.metal", both).is_err(), "one set of the tape's reads");
+}
+
+/// Windows' LLP64: an integer literal's `long` suffix is written `long long`, so `(1ul << 39) - 1` and `~0ul` are the
+/// 64-bit values UKL means; other literals are as written.
+#[test]
+fn a_long_literal_is_long_long_where_long_is_32_bits() {
+    let w = |t: &str| super::long_long(t.as_bytes()).map(|v| String::from_utf8(v).unwrap());
+    assert_eq!(w("1ul").as_deref(), Some("1ull"));
+    assert_eq!(w("0x8000000000000000UL").as_deref(), Some("0x8000000000000000ull"));
+    assert_eq!(w("7lu").as_deref(), Some("7ull"));
+    assert_eq!(w("3L").as_deref(), Some("3ll"));
+    for same in ["1ull", "2ll", "5u", "9", "1.0", "1e5", "0x1p3", "x1ul", "2.5l"] {
+        assert_eq!(w(same), None, "{same}");
+    }
 }
 
 /// The fingerprint computed when the crate is compiled is the hash it was computed as at each call: FNV-1a over each
@@ -175,4 +239,51 @@ fn the_fingerprint_is_fnv_over_the_carried_files() {
         }
     }
     assert_eq!(fingerprint(), h);
+}
+
+/// Decision 0645: each backend's names give their targets, the same every time; other names give none.
+#[test]
+fn targets_are_their_names() {
+    use crate::Target;
+    let m5 = Target::named("apple10").unwrap();
+    assert_eq!(m5.backend, Backend::Metal { version: 400 });
+    assert_eq!(m5.defines, [("UKL_HAS_MATMUL2D".to_string(), "1".to_string())]);
+    assert_eq!(Target::named("apple7").unwrap().defines, []);
+    // The M1s' tier (decision 0672): apple7's version, its large bodies called.
+    let g13 = Target::named("apple7-g13").unwrap();
+    assert_eq!((g13.backend, g13.defines), (Backend::Metal { version: 310 }, vec![("UKL_METAL_G13".to_string(), "1".to_string())]));
+    assert_eq!(Target::named("sm_121").unwrap().backend, Backend::Cuda { sm: 121 });
+    assert_eq!(Target::named("gfx90a").unwrap().backend, Backend::Hip { wave: 64 });
+    let rdna2 = Target::named("gfx1035").unwrap();
+    assert_eq!((rdna2.backend, rdna2.defines.len()), (Backend::Hip { wave: 32 }, 1));
+    assert_eq!(Target::named("gfx11-generic").unwrap().defines, []);
+    assert!(Target::named("gfx1035").unwrap().shippable() && !Target::local(Backend::Cpu, Vec::new()).shippable());
+    for bad in ["apple8", "sm_", "sm_x", "sm_30", "gfx", "gfx-generic", "cpu"] {
+        assert!(Target::named(bad).is_none(), "{bad}");
+    }
+    assert_eq!(Target::named("sm_80"), Target::named("sm_80"));
+}
+
+/// Decision 0645 step 2: the targets whose code a device runs, best first; the forms they ship as.
+#[test]
+fn a_target_runs_its_own_and_its_compatible_targets_code() {
+    let runs = |n: &str| Target::named(n).unwrap().runs();
+    assert_eq!(runs("apple10"), ["apple10", "apple7"]);
+    assert_eq!(runs("apple7"), ["apple7"]);
+    // A G13's text is its own: it runs no other tier's code, and no other tier runs its.
+    assert_eq!(runs("apple7-g13"), ["apple7-g13"]);
+    assert_eq!(runs("sm_86"), ["sm_86", "sm_80", "compute_80", "compute_70"]);
+    assert_eq!(runs("sm_121"), ["sm_121", "sm_120", "compute_80", "compute_70"]);
+    assert_eq!(runs("sm_70"), ["sm_70", "compute_70"]);
+    assert_eq!(runs("gfx1035"), ["gfx1035", "gfx10-3-generic"]);
+    assert_eq!(runs("gfx942"), ["gfx942", "gfx9-4-generic"]);
+    assert_eq!(Target::named("compute_80").unwrap().backend, Backend::Cuda { sm: 80 });
+    let form = |n: &str| Target::named(n).unwrap().form();
+    assert_eq!((form("apple7"), form("sm_70"), form("compute_80"), form("gfx11-generic")), (Some("metallib"), Some("cubin"), Some("ptx"), Some("hsaco")));
+    assert_eq!(Target::local(Backend::OpenCl, Vec::new()).form(), None);
+    assert!(Target::named("gfx10-3-generic").unwrap().defines.is_empty(), "the generic RDNA2 target takes no dot products");
+    assert_eq!(Target::named("gfx9-4-generic").unwrap().backend, Backend::Hip { wave: 64 });
+    for n in crate::target::SHIPPED {
+        assert!(Target::named(n).is_some_and(|t| t.form().is_some()), "{n} ships");
+    }
 }

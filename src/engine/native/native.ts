@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { PACKAGE_ROOT } from "../package-root.js";
 import type { MatchOperator, SampleBoundary, SampleSource } from "../catalog/rule-schema.js";
 import type { EngineGitExit, EngineGitRun, EngineStartedGit } from "../git-start.js";
+import type { CodeRuleSourceSpan } from "../code-rule/code-rule.js";
 
 export interface NativeHealth {
   ok: boolean;
@@ -102,6 +103,13 @@ export interface NativeCompiledCodeRuleDsl {
   readsServerGraph(): boolean;
   /** Whether the code rule reads text: some clause, however nested, is a `regex` or `file` query, so files no language lists are read for it. */
   readsText(): boolean;
+  /**
+   * Whether a finding of the code rule in one file can depend on another file's text: a clause the engine evaluates over
+   * many files (any but a `regex`, `ast` or `file` forbid, and an `llm` clause, which reads no file), a `calls` or
+   * `importTarget` term, or a `report_when` gate.
+   * The engine routes each clause by the same predicates, so the answer cannot drift from what it evaluates.
+   */
+  readsOtherFiles(): boolean;
 }
 
 export interface NativeCodeRuleDslEditor {
@@ -272,6 +280,13 @@ export interface NativeGitIgnoreMatcher {
    * ignored folder names the folder's pattern. Null when Git does not ignore it; throws as `ignored` does.
    */
   ignoredBy(relativePath: string, isDirectory: boolean): NativeGitIgnoreMatch | null;
+  /**
+   * Whether a matcher opened now at this root would read the rules this one read: the configuration, read again as Git
+   * reads it (the system, global and repository files, their includes and conditions), chooses the same excludes file
+   * and pattern case, and the root `.gitignore`, `info/exclude` and the excludes file are as this matcher read them.
+   * When it would, each folder's `.gitignore` is read again as the next path enters the folder.
+   */
+  sourcesUnchanged(): boolean;
 }
 
 /** A pattern of Git's exclude stack that ignores a path (`NativeGitIgnoreMatcher.ignoredBy`). */
@@ -352,10 +367,77 @@ export interface NativeCodeRuleDslRuntimeConstructor {
   pythonAstBatch(documentsJson: string): string;
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
   /**
+   * `compile` on a thread of Node's worker pool, so the JS thread runs other work while a rule compiles. An engine built
+   * before it lacks it.
+   */
+  compileAsync?(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): Promise<NativeCompiledCodeRuleDsl>;
+  /**
    * The tests the `.rerail` files under `pathsJson` (a JSON array of files and directories) carry, each run: a JSON array of
    * `NativeRrTestResult` (`rerail-engine test-rr`).
    */
   testRr(pathsJson: string, filter?: string | null): string;
+  /**
+   * Each `.rerail` file of `pathsJson` (a JSON array of paths) read with its includes and checked, nothing run: a JSON
+   * array of `RrDescription`. A file that does not read or check is a row with its error; it never throws for one.
+   */
+  describeRr(pathsJson: string): string;
+  /** The policies of `requestJson` (a JSON `RrRunRequest`) run over its root, off the JavaScript thread: a JSON `RrRunResult`. */
+  runRr(requestJson: string): Promise<string>;
+}
+
+/** What a `.rerail` rule file states of itself, as the engine reads it (`describeRr`). */
+export type RrDescription =
+  | {
+      path: string;
+      ok: true;
+      id: string;
+      revision: number;
+      description: string | null;
+      mode: "block" | "steer" | "log";
+      language: string | null;
+      /** The files it reads, as its run selects them: `text` names those read as text whatever their language. */
+      scope: { include: string[]; exclude: string[]; text: string[]; toolCalls: boolean };
+      /** The codes its findings can have, sorted. */
+      codes: string[];
+      /** How many `.test` blocks it holds. */
+      tests: number;
+      /** Whether a `.violation` carries a `suppress` line. */
+      suppresses: boolean;
+      /** Whether a `.violation` carries a `fix` line. */
+      fixes: boolean;
+      /** The rule file, then each file it includes: canonical path and the SHA-256 (hex) of its bytes. */
+      files: { path: string; sha256: string }[];
+    }
+  | { path: string; ok: false; error: string };
+
+/** A `runRr` request: the policies (absolute paths) over the corpus at `root`, written into the empty directory `out`. */
+export interface RrRunRequest {
+  root: string;
+  policies: string[];
+  out: string;
+  /** Root-relative files the run reads alone; omitted: the whole corpus. */
+  inputFiles?: string[];
+}
+
+/** A finding of a `.rerail` run. `span` has `CodeRuleViolation.span`'s bases; null only for a finding in no file. */
+export interface RrFinding {
+  policy: string;
+  clause: string;
+  code: string;
+  message: string;
+  path: string;
+  line: number;
+  span: CodeRuleSourceSpan | null;
+  tag: string | null;
+  parameters: Record<string, string>;
+}
+
+/** A `runRr` result. A failure's `policy` is the path of the policy whose run failed; the others ran without it. */
+export interface RrRunResult {
+  findings: RrFinding[];
+  failures: { policy: string | null; message: string }[];
+  /** The files the largest of the run's runs read. */
+  files: number;
 }
 
 /** One test of a `.rerail` file, as `testRr` reports it. */
@@ -478,7 +560,12 @@ export interface NativeTreeWatcher {
    * network or remote file system, a WSL path, past Linux's watch budget, Windows with no oplock, an OS with no
    * adapter). Watching a root already watched replaces its folder set.
    */
-  watch(root: string, folders: string[]): boolean;
+  watch(root: string, folders: readonly string[]): boolean;
+  /**
+   * Watches `root` as `watch` does, but only with room the Linux watch budget has left: a root `watch` asks for that
+   * needs the room takes it, and this root's watch ends. Elsewhere, as `watch`. An engine built before it lacks it.
+   */
+  watchSpare?(root: string, folders: readonly string[]): boolean;
   /** Stops watching `root` and releases every handle on it, so `git worktree remove` and renames work at once. */
   unwatch(root: string): void;
   /** Takes every notice since the last take, at most one per root. Never blocks on the OS. */
@@ -498,6 +585,16 @@ export interface NativeAnalysisScopeRun {
 
 export interface NativeLoadedRrPolicies {
   load(path: string, source?: NativeGitRevisionSource): string;
+  /** The policy a failed `load` of `path` names: the one `.policy` its own text declares, read without lowering it. */
+  failedPolicy(path: string, source?: NativeGitRevisionSource): string | null;
+}
+
+/** The process holding the server end of a Windows named pipe ({@link NativeBinding.namedPipeServer}). */
+export interface NativeNamedPipeServer {
+  /** Absent when other clients kept every instance of the pipe taken until the wait ran out. */
+  pid?: number | null;
+  /** When it started, epoch ms; absent where this user may not ask. */
+  startedAt?: number | null;
 }
 
 export interface NativeBinding {
@@ -571,7 +668,13 @@ export interface NativeBinding {
    * other platform. A binary built before it lacks it.
    */
   pathsOwnedByCurrentUser?(paths: string[]): boolean;
-  /** The content-store file name this binary's store schema owns (`content-v9.sqlite` at store floor 9). */
+  /**
+   * Windows only: the process holding the server end of the named pipe `path` and when it started, opening again while
+   * other clients hold every instance until `timeoutMs` has passed, on a thread of the worker pool; null where no pipe
+   * of that name takes a connection, and on every other system. A binary built before it lacks it.
+   */
+  namedPipeServer?(path: string, timeoutMs: number): Promise<NativeNamedPipeServer | null>;
+  /** The content-store file name this binary's store schema owns (`content-v10.sqlite` at store floor 10). */
   contentStoreFileName(): string;
   deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string, expectedStore?: string, recorded?: boolean): void;
   releaseNamedAnalysisScope(store: string, name: string, expectedIdentities: string[]): { identity: string; hadMembers: boolean } | null;

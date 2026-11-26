@@ -436,7 +436,7 @@ above and lost about as much in strata that check the same nodes again, where th
 made (`tscope` 0.21 → 1.62 s, `rf_fcond` 0.10 → 1.42 s). The projection's `size` opens no reader, and that loss is
 gone.
 
-On `all` (m1max, both sides in one session, rows unchanged), instructions retired went 3.677 T → 3.538 T and the
+On `all` (M1 Max, both sides in one session, rows unchanged), instructions retired went 3.677 T → 3.538 T and the
 rules' own CPU 312.9 → 272.0 s. By stratum: `rf_in` 6.56 → 4.32 s, `rf_fn_in` 2.24 → 0.86 s, and the generated
 `pre_379` 10.57 → 2.82 s, `pre_380` 6.23 → 1.29 s, `pre_378` 4.81 → 2.67 s. On s1000: 371.1 G → 349.6 G
 instructions. The hosts were loaded (load 4 to 31 on 10 cores), so wall and CPU moved by 10–40% from one run to the
@@ -503,7 +503,8 @@ agree. One thread, a million probes or more each; ns per probe:
   ids are too sparse for offsets. It would need the projection's locals (`Batch::node`).
 - One 3-column tagged order of 79 K rows (`look-3:s1`) built at 1,838 ns a row once, against 34 the next time.
 
-**Decision (user, 2026-11-21): no sorted hash.** Its memory (twice today's, 7–13× for hashbrown) is not wanted, and
+**Decision (user, 2026-11-21): no sorted hash.** (Allowed for a test's whole key on 2026-11-23, measured: "Step 5,
+third part" below.) Its memory (twice today's, 7–13× for hashbrown) is not wanted, and
 faster probes would save at most 5–6% of the run's CPU. The data stays here; the structure is not built. The next
 measure is the join's per-row work (`any(…)`, `flush`, the view probes).
 
@@ -528,6 +529,135 @@ at 90–140 ns a row: the cost is the executor's per row, spread over every rule
 
 And by size: `st_pos` (a position for every node of every document, from `node` and `doc`) is 70 M rows of work,
 4.97 s, the largest rule.
+
+**`st_pos` read in place.** `st_pos` is the stage harness's, not the graph's: its outputs put each row at (path,
+start, end) to compare with W's. It made a row for every node, a view's rows made (decision 0353). Each output rule
+now reads `node` keyed by the node it holds, then `doc`. On `all`, same host: `st_pos` (4.97 s) and `st_open` (1.20 s
+for 23 K rows, the index over `st_pos` built on its first probe) are gone, the outputs 13.1 → 8.3 s; 3.382 →
+3.264 T instructions, user 293.5 → 284.8 s, peak 12.3 → 10.0 GB. The rows that differ are the ones listed below,
+unchanged.
+
+### The per-file growth: `pre_152` and `pre_227` asked every parsed string of their file (2026-11-23)
+
+`pre_152` (`nameref`'s split) and `pre_227` (`rf_read`'s) had grown about 2.9 s each against 0483. Their step
+clocks on `all` put it on two probes: `nameref`'s `text($n, $x)` at 1.5 µs a row (2,240 ms over 1.54 M; 0483's
+0.27 µs) and `rf_read`'s `!guest_of($i, _)` at 2.0 µs (2,627 ms over 1.29 M). s1000 showed the same, and its sample
+put 91% of `View::find_keyed` in `values::Layered::lookup`, most of that in `Parts::of`.
+
+The cause: a chunk's admitted tape values (decision 0431 §8) were found by their own document's key and by each
+host's key their places are in, so that a probe by a host node a value's rows name (`guest_of`'s string,
+`host_node`'s host) reaches it. Keyed by the host's document, every probe of any node of a file with parsed strings
+asked every value of that file, and since `admit_many` a value's part is a whole round's. Now a part is found by its
+own keys, and by each node of another document its rows name, read off its rows once when it is added
+(`Parts::hosted`). A relation made on lookup, with no rows when added, keeps the hosts' keys. The same narrowing ends
+a latent error: `Values::source_of` gave a host's node a value's batch, whose node reads find none.
+
+On `all` (m1max; against the sorted hash's run): rows unchanged; own CPU 168.8 → 155.1 s, instructions 1,884 →
+1,691 G; `pre_227` 4.21 → 1.66 s, `pre_152` 3.85 → 2.39 s (its `text` step 2,240 → 946 ms), `rf_named` 5.11 →
+2.86 s; peak 2,474 → 2,455 MB.
+
+### Step 5, third part: a test's whole key by a sorted hash (2026-11-23)
+
+The user allowed the sorted hash for these probes, measured (2026-11-23, reversing 2026-11-21's decision for this
+use). A test of a derived input's whole key (`cands::holds`: `bound_in(s, x)`, `cls_late(n, x, s)`,
+`gbefore(n, x, s)` in the climb, and every other test so asked) reads its index's sorted hash
+(`setfix/sorted_hash.rs`, made at the index's first test): the row ids in the order of a 64-bit hash of the key, the
+hashes beside them, a probe placed by the hash's high bits and galloped to; each candidate's key checked against its
+row where it lies. `RERAIL_SORTED_HASH=off` asks the index runs, as before.
+
+On `all` (m1max, profiling, cold; the same binary off and on; the host at load 28–31, so CPU and wall are noisy):
+rows the same both ways; instructions 1,923 → 1,884 G; `look` 4.67 → 3.58 s, `rf_in` 4.45 → 2.63 s, `wstart`
+3.30 → 3.23 s. Its memory: 12.0 MB of sorted hashes over the run (`setfix.sorted_hash.bytes`), peak 2,487 → 2,474
+MB. Kept.
+
+### Step 5, first part: the walk runs as a keyed closure, in one wave (decision 0570)
+
+The recursive `walk` line cost 968 ns a row on `all`. On s1000 its step clocks covered 63 of its 388 ms, so the guess
+was the waves: a scope level a wave, each with its runs and lazily built indexes. 0098's closure form now takes a
+walk whose rest reads the row's other columns, and several recursive probes along one column. It runs them as a
+worklist by depth in one wave. Rows are unchanged on `all`. The gain is small: 3.264 → 3.253 T instructions, the
+lookup 12.92 → 12.61 s. The keyed steps take about what the recursive line took (422 ms on s1000). So the cost is the
+climb's probes (`bound_in`, `gbefore`, the nearest axis, about 200 ns each), not the waves. The operator's second
+part, answering a read at the climb's end without making `walk`'s rows, is next.
+
+### Step 5: what `wstart` pays a row (2026-11-21)
+
+`wstart` took 5.4 s on `all`, its first rule about 800 ns a `nameref` row over six steps. The step clocks put
+most of it on the nearest axis (161 ms on s1000 past its 61 ms solve, about 330 ns a probe). A measurement
+(`an_axis_probes_cost`, ignored; on an M1 Max) says otherwise. The solved axis's probe costs 17 ns through
+`Within::lookup_read`. A join over a held axis costs 17.4 ns a row more than the same join without it.
+
+| What (8 documents' nodes, ~2 M probes) | ns a probe |
+|---|---|
+| `Batch::node` (an id to its document and node) | 10.5 |
+| `Within::lookup`, then `value` (the rows path) | 36.3 |
+| `Within::lookup_read` (in place) | 17.0 |
+| the same probe through the set engine's join | 17.4 |
+
+A sample of the s1000 run agrees: the axis's reads are 35 ms past the solve. The join's probes (`candidates`, all
+strata) went to the index runs' `find_at` (40%), the views' reads (19%, half of it an id's translation: `local_of`'s
+`num_number_of`, then `select` back to the tape node), the step's own work (16%), and 4% to a fresh list and `Arc` for
+each probe's rows. So there is no one cost in `wstart`: it is the executor's per-step work on each of its steps.
+
+Two changes:
+
+- **A probe's rows held as found.** A read probe of no row or one row (the usual answer of a node's view or axis)
+  holds it in place (`Found::One`). A list and its `Arc` are made only for more rows.
+- **A test reads in place too.** A step that reads no column (`need` 0) took `find_keyed`, which for the axis is
+  its mutex-and-map rows path. It now takes `lookup_read` with no columns.
+
+On s1000, rows unchanged: 338.6 → 321.9 G instructions; `wstart` 0.755 → 0.697 s, `walk` 0.767 → 0.603 s (own
+CPU; the wall times are noisy between runs). On `all`, against 0570's run: 3.253 → 3.165 T instructions, the
+lookup stage 12.61 → 11.74 s, `wstart` 5.06 s; every stage's rows as before (t50's known `ref` and `open_name`
+differences). The views' id translation and the index runs' probes are left.
+
+### Step 5, second part: the climb's readers in the climb, each test once (decision 0561)
+
+Where `walk`'s time went on s1000: its seed join about 0.1 s, the keyed climb 458 ms of probes. Storing its rows was
+a small part. `look` (about 0.1 s) asked again what the climb had asked: it scanned `bound_in` and probed `walk`, then
+asked `cls_late` once more. So the second part puts `look` and `miss` in the walk's stratum. Their rules run in the
+climb at each depth. A row's tests (`bound_in(s, x)`, `cls_late(n, x, s)`, `gbefore(n, x, s)`) are asked once,
+shared by every rest and sign. Readers alone, without the shared tests, were slower (lookup 1.65 s): they asked each
+row again. With them, s1000's lookup went 1.48 → 1.18 s and 321.9 → 311.0 G instructions, rows unchanged. On `all`
+it is even: 3.165 → 3.159 T instructions, lookup 11.74 → 12.19 s, peak memory 9.89 → 9.14 GB, rows unchanged.
+The shared tests cost about 260 ns each. `walk` is read only in its stratum now, and released after it.
+
+**A test asked directly (the spike, 0561).** A shared test is asked as its index's probe alone (`cands::holds`), not as
+a join of one atom (`RERAIL_DIRECT_TESTS=off`). On s1000 the readers went 271 → 244 ms and 309.8 → 306.2 G
+instructions, rows unchanged. So the executor's frames were about a tenth of it, not most of it, as written above. The
+readers' 240 ms is now 191 ms of tests and 47 ms of pushing `look`'s rows. The tests' cost is the probes themselves, the
+probe structure's job (step 5's spike, above).
+
+### The stage run's memory, after the hub's merge (2026-11-21, f25f01dab1)
+
+Before the merge, `all` peaked at 6.5 GB, once the harness kept row digests, not texts. After it, the same run passed
+16 GB and was stopped, and s1000 went from 727 MB to 2.36 GB of footprint. Found with the heap sampler
+(`RERAIL_HEAP_SAMPLE=1`) and the engine's ceiling (`RERAIL_MEMORY_MAX_MB`, which stops a run and names it). Fixed
+(4b650debdb, c44ab79f97):
+
+- A chunk binds every source as `values::Layered`, which forwarded neither `holds` nor the composite probe. `within`
+  with both sides bound (step 4) made every ancestor's row again: `def_outside` 4.6 → 1.8 s and 880 → 167 MB on
+  s1000.
+- A base relation's statistics were counted off every row (48 bytes a row), `within`'s through a `len` that made all
+  of its rows: now its structure's (`Source::statistics`). Counts over 1 M rows go a window of whole documents at a
+  time.
+- A CPU run's axis solve made the batch's device chunk block before checking the binding: `rf_crossing`'s morsels
+  raised the peak 7.9 → 2.4 GB.
+
+`all` now: peak 16.8 GB (resident, both sides), the engine's footprint 14.0 GB at most, rows unchanged. At the peak,
+in the cross part's `rf_crossing`: heap live 6.1 GB, host blocks 7.2 GB (the Metal driver's 6.2 GB is the same
+blocks, counted by Metal). Of the live heap (sampled, 5.7 GB):
+
+- the inputs' kept frames, 1.67 GB, and the writer's queue at 2.3 GB: every input's frames are gathered into the run's
+  wave and written in its one transaction (0104), so on a cold run they are held until the run ends;
+- the outputs, 0.71 GB writing and 0.63 GB in the cross part;
+- the harness's W side and digests, 0.84 GB.
+
+The host blocks grow through the per-file part, steadily: 10 MB at 2 s, 2.4 GB at 163 s, 7.2 GB at the peak. The
+cross part makes every document's projection again (the lazy corpus batch, 0494), 2.56 GB, where `rf_crossing`'s
+pair statistics (0203) solve `rf_fnl` for the whole corpus. And `def_outside`'s plan reads `nearest` by its scope
+(1.6 M rows on s1000) where it read the demand's `pre_` relations before (0.03 s). These are the hub's mechanisms,
+left for now.
 
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 
@@ -554,7 +684,422 @@ reaches no edge and no open definition. It is W's scope model departing from Pyt
   - a class annotation naming a class the function binds later.
 - `open_name` (1 row).
 
+## The product run, 2026-11-22: W's Rust, 0483's rules and this branch's head on one host
+
+Every step above was measured in the stage harness. The product run, `rerail-engine logic` with `internal_dead_code`
+on `all`, was last measured at 0483's end. Here are the three binaries on one farm host (M1 Max), cold, profiling
+builds, `RERAIL_PROFILE` on, one after another (load 3–7). Each old binary was given its own commit's library and
+phase programs. The findings are the same in all three runs, apart from 0483's `rr_embed_req`:
+
+| Run | CPU s | wall s | instructions | peak |
+|---|---|---|---|---|
+| W's Rust (`6970a3e539`) | 51.1 | 14.7 | 486 G | 1.2 GB |
+| 0483's rules (`fbd029a20b`) | 151.0 | 43.6 | 1,572 G | 1.9 GB |
+| head (`55a8000980`) | 265.0 | 100.8 | 2,607 G | 4.8 GB |
+
+The head is 1.7 times 0483's end, and 5.2 times W's. CPU by phase (the run's thread plus the pool's), 0483 → head:
+
+| Phase | 0483 s | head s | What grew |
+|---|---|---|---|
+| `wait` (the chunks) | 89 | 111 | |
+| `local` | 23 | 48 | the run's thread: `hold the export` 9.7 s, `totals` 5.9 s, `attribute to files` 3.1 s |
+| `stats` | 0.7 | 42 | new, and 33 s of it serial: `measure the base rows held` (0458's base relations for the cross part): the matcher wave again over the corpus 8.3 s, `the nodes the exports hold` 7.5 s, `docof` and `node_order` at the held nodes 7.1 s, node rows 2.3 s |
+| `cross` | 28 | 52 | |
+
+The stage harness's gains (steps 1–5) are real, but on this run the merges since 0483 cost more than they removed. The
+`stats` phase and the export's serial work are the first things to fix, before the plan's remaining operators.
+
+Script: `tmp/refs/three/three.sh` (run with `--tree` for each binary, library and programs directory).
+
+### The same run after the fixes (2026-11-22)
+
+Each step was measured on the same host and corpus, cold, profiling builds (`tmp/refs/three/head.sh`; the rows check
+on s1000, `check.sh`). Every run's rows are the first head's (all 17 relations), and s1000's are the same throughout.
+Loads were 5–27; at load 16 and over, the wall is not comparable (time ready with no core is in the profile).
+
+| Step | CPU s | wall s | instructions | peak | Load |
+|---|---|---|---|---|---|
+| head before (`55a8000980`) | 265.0 | 100.8 | 2,607 G | 4.78 GB | 3 |
+| the export's serial work on the workers (item 2) | 266.8 | 82.5 | 2,745 G | 3.99 GB | 6 |
+| the cross part's statistics from the chunks (item 1) | 262.1 | 67.1 | 2,711 G | 3.78 GB | 7 |
+| the batch's matcher wave by parts on the cores | 247.5 | 66.6 | 2,571 G | 3.76 GB | 14 |
+| a matcher's projection exported, not read off the batch | 226.8 | 59.8 | 2,376 G | 3.71 GB | 5 |
+| a text test takes the chunks' passing strings | 237.8 | 84.5 | 2,384 G | 3.65 GB | 17 |
+| `text` is a node's attribute in the file-local push | 182.7 | 55.2 | 1,819 G | 3.23 GB | 11 |
+
+What each step found:
+
+1. **The export (item 2).** Each chunk now measures its own exports' rows on its worker
+   (`Totals::measure_rows`), and the run merges the results. A row of the chunk's own documents is held unchecked;
+   only another chunk's go through the once-only table (`Exports::add_owned`). File attribution runs on the pool.
+   `local` on the run's thread went from 25.5 to 8–10 s.
+2. **Statistics (item 1).** Each chunk counts the base relations the cross part reads, over its own files' rows
+   where they lie. A semi-join's are counted at the nodes its own exports hold. A text test's are its distinct
+   passing strings, unioned across chunks. The stats phase merges the counts (`RelStats::merge`) and walks no corpus
+   batch: 32.5 → 1.5 s on the run's thread. Counted both ways in one run (`RERAIL_CHUNK_COUNTS_CHECK`), they are
+   equal on s100 and s1000, except for `node.start`'s within-document sum. That column's exact map is given up past
+   256 values, so the chunks take each document's own squares, and the batch each window's.
+3. **The second matcher wave.** With the statistics gone, the batch was still made whole, now in `cross`. Its
+   reader was `raw_all_name`, a file-local relation whose one rule reads a matcher's relation (`rr_ast_15_2`). The
+   split took it for a projection of an input and derived it in the cross part from the batch, which ran the
+   matcher wave again over every file and made every document's node rows for it. A matcher's relation is no
+   longer a projection's input (`on_version::crossing`), so the relation is exported: 21 s of CPU gone. The
+   batch's wave on the cores also runs by parts of 256 tapes or more. Making the batch's groups side by side
+   (`complete`) was tried and taken out: a maker that runs a pool job reading the batch makes what that job reads,
+   and one run grew past 20 GB.
+4. **A text test's whole read** (`export_names` reads `strtest_4`) made every document for the batch's vocabulary.
+   It now takes the chunks' union of passing strings (`Batch::give_passed`). The next whole read was `text`,
+   which the planner's empty-relation check (`native_stratum`, `len()`) asks for. Giving the batch the chunks' row
+   counts avoided that read, but the joins' probes then made the documents in groups, at +411 G instructions. So
+   the whole read stays, and its cost (node rows and annotations, 3.5 s on the run's thread) is still open.
+5. **The per-file `rf_ref` (item 3).** The doubling was `fl812190886_rf_ref`, `fl59458866_rf_unq_bare` and
+   `xd_…_rf_ref`: the file-local push made, for `rf_ref`'s `rf_named(e, t), text(e, x), docof(e, d),
+   rf_module(d, m)`, a component of everything but `rf_named`. That is a row for every node with text, 4.3 M on
+   `all`, which every chunk made, exported, measured and remembered. `text` is a node's attribute (a row a node,
+   read by its key), and the push already declines a component of attributes alone. With `text` in `ATTRIBUTES`,
+   the per-file strata fell from 145 to 117 s of CPU.
+
+Against 0483's end (151 s CPU, 1,572 G), the head now takes 183 s and 1,819 G. Its spans' own CPU by part: per-file
+strata 99.9 → 117.2 s, cross 24.8 → 36.8 s, the rest 18.1 → 14.4 s. Next by size:
+
+- `pre_401` and `pre_402` (2.4 and 2.6 s per file): `field(f, _, p), kind(f, K), rr_nearest_lscope(n, f),
+  within(n, p), nameref(n, _)`. The plan expands each scope to every node under it, 29 k → 3.1 M rows, before
+  `nameref` narrows them. A node has one nearest scope, so the plan should start from the name references.
+- `look`, `parsed`, `pre_227`, `pre_152` (3–4 s each): the converted rules' per-file strata, not yet examined.
+- `rf_unq_bare` in the cross part (5.2 s), now reading `text` at the named nodes there.
+- The batch's whole read for `text` (above).
+
+### `pre_401`, `pre_402` and step 7, measured (2026-11-23)
+
+- **A named part is priced at its own size.** `within($n, $p)` read from `field($f, "parameters", $p)` was priced at
+  the function's whole size (219 nodes): t50 step 4's bound for a part whose kind is unknown. So the plan expanded
+  every scope to its nodes (3.1 M rows) before testing its few parameters. The tree's fielded edges know a field's
+  children's kinds (`Fielded::joint`), so a part by a named field is priced at their mean size
+  (`Fielded::part_size`; test `within_read_from_a_named_part_is_priced_by_the_parts_own_size`). On `all` (m1max,
+  CPU): `pre_401` and `pre_402` 4.76 → 1.20 s of CPU, every relation's rows the same.
+- **Step 7 is no longer worth an operator.** The prefix walk's stratum (`rf_hit`, `rf_walk` and their readers)
+  takes 0.44 s of CPU at the head (`rf_walk`/`rf_hit`'s own probes 0.07 s), against the 3.7 s t50 measured before
+  steps 1–4. The cross part's cost is spread thin: no stratum over 1.5 s (`rf_named` 1.5, `rf_ref` 1.2, `rf_target`
+  0.57).
+
+### Step 7, built: a name's parent is its split at the last "." (2026-11-23)
+
+The prefix walk climbs a dotted name one segment at a time (`rf_walk(q, p2, h) :- rf_walk(q, p, h), !rf_binder(p),
+split_dot(p, p2, _)`) until a prefix is bound (`rf_hit`). It already ran as one wave (decision 0570), so the plan's
+keyed nearest over the name forest was in place but for the step itself. `split_dot(p, m, x)` lowers to
+`p = @cat(m, x), @contains(x, ".") = 0`, and the `Split` step ran the `@cat` backward at every "." of `p`, interning
+both parts of each split, before the test kept the one at the last ".". So a walk up a name of k segments made about
+k² symbols, where the forest's parent edge is one split, a function of the name.
+
+`last_splits` (setfix) finds a split whose second part only a later no-"." test reads, and runs it at the last "."
+alone (`Step::Split::last`). The test is true by construction and is left `Unused`. The part nothing else reads is
+unread, so no atom is made for it. Only the prefix the row carries is interned, which the forest's table would hold.
+The rule needs no annotation: the shape is the step's own. Tests: `a_split_whose_second_part_holds_no_dot_is_the_last_split`
+(the pass, and the three cases it must leave), `a_prefix_walk_splits_at_the_last_dot` (a walk over names with a
+leading, doubled and trailing ".", none, and five levels, against rows written by hand; `split_dot`'s other uses as
+before).
+
+On `all` (M3, CPU), every export's rows are the same. In `rf_walk`'s recursive rule the split now gives 5,024 rows
+for 5,024 in, and the test passes each at 4 ns. The stratum: 0.266 → 0.255 s. That is the size step 7 had left after
+steps 1–5 (3.7 s when t50 was written); the change is the shape the plan named.
+
+### The strata against 0483's, and a round's tape values admitted together (2026-11-23)
+
+0483's rules run again on m1max (`tmp/refs/three/r0483.sh`: 152.6 s CPU, load 6), their spans' own CPU beside the
+head's (`strata.py`; head30, load 20, so somewhat high): per-file 101.8 → 125.6 s, cross 24.4 → 43.3 s. The two
+programs differ (0483's `internal_dead_code_rules`, the head's `idc_head`), so a stratum renamed shows as one gone
+and one new. By size:
+
+- cross `rf_unq_bare` +6.1 s: the cross part's `text` read (above, "The cross part's `text`").
+- the chunks' statistics, item 1's: `count docof` 2.3, `count node_order` 2.2, `count node` 1.4, `count text`
+  0.8, `the exports measured` 2.4 s, on the workers.
+- per-file `look` +4.6 s (step 5), `parsed` +4.0 s, `pre_152` and `pre_227` +2.9 s each (step 6's), against
+  `walk` −2.5, `pre_173` −2.4, `tp_decl` −1.5 and others gone.
+
+**`parsed`.** Its 4.0 s was 4,323 parsed fragments admitted one at a time (`Grower::admit`): a projection, a nearest
+pass and identity maps each, about 0.9 ms a fragment, where their parse took 0.03 s. A round's answers are now
+admitted together (`Grower::admit_many`), one part of each source under all their keys. On `all` (m1max, CPU, load
+6): `parsed` 4.03 → 1.44 s, every relation's rows the same. `pre_227` and `pre_152`, which read inside guests, were
+4.24 and 3.83 s against 2.8–3.5 s in the runs before: some of that is likely the larger parts (an axis made on lookup
+solves its part), so the net is about −1.5 s.
+
+**The cross part's `text`, probed, not made whole.** It was made whole by no join: the planner's test for an empty
+input (`native_stratum_`, a rule over an empty relation is left out) asked the corpus batch's `text` its `len`, which
+a cold run's batch (no kept counts, `give_totals`) answers by making every document. The test now asks
+`may_hold_rows`, which an unmade batch relation answers making nothing. The joins then probe `text` by node, and a
+probe reads its group's rows by value (`Group::rows_with`, the group's row ids ordered by the probed column, made at
+its first probe), where it filtered the group's every row per probe (without it, cross `rf_ref` 3.3 → 55.8 s). On
+`all` (m1max, load 7): 2,419 of 4,121 documents made, one at a time in the joins' morsels, where all were made in one
+serial make; CPU 170.4 → 169.2 s, rows the same. Most documents are still made, because the probes reach them: the
+next step is the tape view, `text` read off a probed node's tape and no document's node rows made.
+
+**Then the tape view** (decision 0353 step 3). A probe of the batch's `text` by a node whose document is not made reads
+the node's row off its document's tape (`Batch::tape_text`): the condition `node` makes the row by
+(`CoreRows::keeps_text`, `token_like`, `text_row`), written once, read with the batch's own `CoreRows`
+(`core_rows_for`), its text interned, each node read once (row ids from `made::TAPE_ROWS`). No document's node rows
+or string annotations are made in the cross part. On `all` (m1max, load 7): rows the same; peak 2,837 → 2,474 MB;
+cross 19.6 → 15.5 s wall; `rf_unq_bare` 5.16 → 1.45 s; CPU 169.2 → 164.8 s; instructions 1,950 → 1,899 G.
+`text_probed_by_node_is_read_off_the_tape_as_its_rows_hold_it` compares every node's tape read with its made rows.
+
+### Step 6 in part: parent edges, label formulas and field captures in the matcher wave (2026-11-22)
+
+Three changes, each with its rows checked (s1000's digest, `all`'s 17 relations) and its own switch:
+
+- **A root's negated parent edge is the matcher's.** `Absorb` (0106 §4) takes `!field(_, "F", r)` into the root's
+  matcher as `{"not": {"inside": {"pattern": "$_P", "field": "F", "stopBy": "neighbor"}}}`
+  (`RERAIL_AST_PART_PARENTS=off`), but only in a rule it rewrites for its fields anyway. Taken alone, it made
+  `nameref` (a kind and two parent edges) a matcher, and `pre_227` and `pre_152` (6.1 s) were gone. That lost every
+  read inside a guest: a quoted annotation's nodes have no tape in the wave. Two typing oracle tests failed
+  (`quoted_annotations_are_read_as_their_code`, `leg_083_typed_counts_resolve_by_the_receivers_type`). So `nameref`
+  stays a join until the wave runs over guests' trees; that is the change that gets the 6 s back.
+- **A root program of label reads is their AND** (`LoweredMatcher::label_formula`). `KIND k; SUPERTYPE L…; CAPTURE;
+  EMIT` has as roots the entry's nodes in every label, the labels' words ANDed, where it ran a program at each
+  candidate (measured with `nameref` a matcher: its 2.7 M and 2.5 M roots had cost 0.57 µs each, and the root walks
+  went 11.1–12.3 s → 8.8 s). On the CPU; Metal keeps `label_copy` (step 9).
+- **A capture that is the root's field child is read from the tape** (`ast_wave::field_captures`,
+  `RERAIL_AST_DIRECT_CAPTURES=off`): `Absorb`'s capture matchers (`attribute`'s `attribute` and `object`, `call`'s
+  `function`, …) took 1.2 s of W's matcher at each root, now 0.13 s. `field_captures_read_from_the_tape_are_ws`.
+
+The run (m1max, profiling, cold), as committed: instructions 1,819 → 1,806 G, CPU 178.7 s at load 12 (182.7 s
+before); rows the same. With `nameref` a matcher it was 1,786 G.
+The profile now names each matcher's root walks and W's captures (`wave.roots_us.<rel>`, `wave.captures_us.<rel>`).
+
+Left, by size:
+
+- **The wave's interpreter**, about 9 s of root walks and 3–6 s of label passes over 9.6 M nodes and 27 matchers. Its
+  CPU form has no Cranelift form (`cpu-jit-form` missing); the authored `inside … argument_list` (`rr_ast_24`) runs its
+  program at every node, 0.66 s, for a parent's kind.
+- **W's captures of authored matchers**, 2.5 s: `rr_ast_21_2` (1.1 s), `rr_ast_9_2` (0.8 s), `rr_ast_20_1`,
+  `rr_ast_6_1`, `rr_ast_19_1`, `rr_ast_5_1`. Each captures through `inside … stopBy end` with `any` alternatives, so a
+  root's captures need the root programs' own capture output (0106 §3, Open). `rr_ast_6_1` is `nearest` to a
+  function definition, an axis.
+
+### Step 6, the rest: `nameref` a matcher, its guests' nodes from `guest_of` (2026-11-23)
+
+`nameref` stayed a join because a matcher runs over a file's tape, and a quoted annotation's nodes have none in the
+wave. They do not need the wave: a guest's nodes are what `guest_of` binds (decision 0431). So `Absorb` now takes a
+root of only a kind and its negated parent edges where the program has `guest_of`, and writes the rule twice: as the
+matcher (the tape's nodes), and as written, led by `guest_of(r, _)` (a guest's). A node both reach is one row.
+`quoted_annotations_are_read_as_their_code` and `leg_083_typed_counts_resolve_by_the_receivers_type`, the two oracle
+tests the matcher alone failed, pass.
+
+Two reads went with it, each made a list of ids at every probe of a chunk with a parsed string:
+
+- `Layered::lookup_read` refused whenever the chunk had parts. It now reads the base in place and then the parts that
+  may hold the value (`Parts::of`, narrowed to the exact host nodes above), numbered past the base's rows
+  (`a_layered_read_in_place_is_its_lookups_rows`).
+- `Relation` had no `lookup_read` (the trait's default refuses). It reads its column's order where it lies.
+
+On `all` (m1max; against the parts' fix): rows unchanged. `pre_152` and `pre_227` (4.05 s) are gone. Their places
+are `pre_306` (the matcher's `nameref`, 1.46 s) and `pre_309` (`rf_read` led by the matcher's relation, 1.60 s).
+Instructions 1,691 → 1,648 G, own CPU 155.1 → 152.5 s. What is left in each is one probe at about 0.5 µs a row
+(`text($n, $x)`, 882 ms; `rr_ast_35($i)`, 754 ms).
+
+### Step 8, the writing: entries encoded in parallel (2026-11-23)
+
+Both of step 8's remaining costs were on the run's thread in the local phase, under `memo remember`: writing a
+chunk's entries into their segments (1.05 s over 36 chunks) and counting each file's entry into the kept
+statistics (0.94 s over 3,089 files). Each entry's image is now encoded in parallel and written in order. Each
+relation's statistics, which are its rows' alone, are counted in parallel, 16 relations a task (in order when
+traced). On `all` (m1max at load 21): rows unchanged; on the run's thread the writing went 1.05 → 0.27 s and the
+statistics 0.94 → 0.73 s, the local phase's own time 4.72 → 3.71 s. Its wall did not fall (5.32 → 5.45 s), on a host
+whose cores were taken (16 s of "no core" in the phase). A file's entry is too small to split well; counting a
+chunk's files relation by relation would be the next form.
+
+### A run's exit waited on idle upkeep (2026-11-23; cause not confirmed)
+
+Three runs on `all` (two Metal, one CPU) took 304–340 s of wall at a 17–18 GB peak, where the same binary takes
+42–70 s at 2.5 GB. In the CPU one (gm2), the profile closed at 07:54:19 after 41.5 s of run. The tape cache's files
+and the log closed at 07:58:41. Its process CPU was 435 s against about 170 s. So the time was at the run's end,
+after its report. `upkeep::finish_soon` holds the exit for any step the scheduler's thread has under way, and that
+thread starts idle work (the cost model's fit, the kernels' compiles) when the machine looks idle, as a run's
+single-threaded tail does. A fit stopped only for a run beginning, never for one finishing. Now a run finishing
+stops a background job's step at its next check, and none starts. The fit checks between its four forests
+(`CostModel::train_unless`, `compare_unless`). Its work stays due (`a_run_finishing_stops_a_background_step_not_a_utility_one`).
+That such a step was what the slow runs waited for is not shown. No run saved a model, and a forest over about
+1,000 samples is unlikely to take 265 s and 15 GB. The product runs now log upkeep's steps
+(`RERAIL_UPKEEP_LOG=1`), so the next one names its job.
+
+### Steps 5 and 8, where they stand (2026-11-22)
+
+- **Step 5.** The climb runs in one wave (0570) with its readers in it (0561); what is left is its probes, about
+  200–260 ns each into the index runs (`look`'s stratum 3.9 s, `wstart`'s 3.3 s). The structure that would answer
+  them faster, a sorted hash, was declined for its memory (2026-11-21, above). So step 5 is as far as that decision
+  lets it go; the rest is the executor's per-row work, spread over every rule.
+- **Step 8.** Already holds: a file's memo entry keeps its exports (93) and its file-local outputs, and the cross
+  part keeps 4 relations for the next run. What is left is the writing of them: the entries into their segments
+  (1.0 s) and their statistics (0.9 s, `keptstats`).
+- **The cross part's `text`.** Five cross rules read `rf_named($e, $t), text($e, $x)` (`rf_unq_bare`, `rf_ref`'s four
+  cross rules), `rf_named` cross-file itself, so no chunk can join them. The first stratum to read `text` has the
+  corpus batch make every document's node rows and string annotations again: 3.3 s on one thread (`rf_unq_bare`'s
+  `node rows` 2.15 s, `produced rows: string annotations` 1.18 s), where the chunks made them already. That is the
+  site marked `copy (0353 step 3)`: core.rerail's per-node rows, which become tape views. It is the largest serial
+  item left in the run, and the largest single holder at the run's peak (323 MB of heap, 0622).
+- **Not the fix: a file-local identifier text.** `rf_ident_text(e, x) :- rf_expr(_, e, _), kind(e, "identifier"),
+  text(e, x)`, read by the cross rules in place of `text(e, x)` (2026-11-22, m1max). The batch's node rows went from
+  the cross part, and the peak fell 2.99 → 2.59 GB, with rows the same. But `rf_expr` is cross-file, so the planner
+  inlined the relation and factored its file-local atoms: every identifier's text in each chunk
+  (`xd_fz…_fl…_rf_ref` 6.2 s, `fl…_rf_ref` 6.0 s, `fl…_rf_unq_bare` 5.1 s). Instructions went 1,819 → 2,131 G.
+  Not kept. The fix is the tape view: `text(e, x)` in the cross part read from `e`'s document tape for the `e` bound,
+  a few hundred thousand reads, not 9.6 M nodes' rows.
+
+### Step 9, measured: Metal at 512 MB loses rows (2026-11-22)
+
+Q379's cause, the run's row blocks leased from the Metal budget, is gone: a block the device may read is host memory
+the device reads through a wrap of its used extent (decision 0435 §1, `accel/src/blocks.rs`). Step 9's test is the
+`all` run at the default 512 MB with rows equal. It fails (m1max, `--metal --metal-mb 512`):
+
+- **Wrong rows.** 59,588 findings against 20,046 (a second run: 20,487). `mn_class`, `mn_class_body`,
+  `mn_dec_class`, `mn_dec_fn` and `mn_function` come out short, by different amounts in each run. The device's
+  budget refuses 170 to 293 leases ("a device path failed: device budget: a lease of N MB past the Metal budget").
+- **Where it shows first.** `mn_class`'s seed (`raw_module_name($w, $d, _), docof($w, $d), rr_ast_3($w)`, on the
+  CPU) keeps 225,217 of 239,695 rows at the `docof` test. At 4 GB, every row passes. The matcher wave's counters
+  are equal in both runs, so `raw_module_name`'s values, or the documents `docof` reads, are wrong after the
+  refusals.
+- **Not the cause:** 0622's sealing. With `RERAIL_SEAL_CHUNKS=off`, the rows are still short. Nor the small corpus:
+  s1000 at 64 MB, with 37 refusals, gives its digest (`373cea39`).
+- **At 4 GB** the run is right (rows equal, no refusal) at a peak of 8.4 GB.
+- **Also seen:** an abort at exit at 512 MB ("cannot access a Thread Local Storage value during or after
+  destruction"), once. And twice, in this and an earlier CPU run, a stall after the run in `keep_image`'s write
+  to the content store (`write_back::queue`): 290–500 s and 18 GB, not reproduced by a rerun of the same binary.
+
+### Step 9, narrowed (2026-11-23)
+
+`all` on the dead-code program with two debugging outputs (`dbg_rd`, `dbg_cls`), m1max, `--metal --metal-mb 512`.
+Wrong in 17 of 18 runs after the fixes below, a different set of relations each time.
+
+- **Fixed on the way, not the loss.** A seed the device refused at run time was parsed again by relation name on
+  the run's thread, after other chunks' jobs had rebound or dropped those names: s1000 at 32 MB stopped with "no
+  native relation" every run (`510780dd8d`). A taken in-flight index gave its room back; a witness stage's 16z
+  views went unchecked (`b5d3983148`).
+- **The device makes the short rows.** Each device run of a stratum's seeds, run again on the CPU into a scratch
+  `Fresh` and compared: the device's rows are a subset of the CPU's (`dbg_rd` 8 of 11,656; `mn_class` 7 of 9,015;
+  `rf_forward` 46 of 5,897), the head holding none before (`place`'s anti-join reads nothing), and once two rows
+  the CPU does not make. Every large loss ends in `docof($w, $d)` probed by both columns, read in place.
+- **The trigger is the `Loc` views read in place.** With their in-place reads off (their rows made on the device
+  from the chunk block), both runs are right: `finding` 20,046, `mn_class` 266,996, `dbg_rd` 480,367.
+- **Each view's home, shared by its chunk's strata, takes part.** With every probe of a view building its index in
+  a fresh home of its batch, `docof`'s losses go in both runs; `finding` is still wrong, and `rf_forward` (a
+  relation in its block) still loses rows.
+- **The indexes are right.** Every index's rows are its relation's rows once, when marked built and when found
+  (all checked). 3,751 view indexes found built were checked on the CPU, each row's key hashed from the view's
+  values (`key_hash`) and looked for in its bucket: none wrong, in a run that lost rows. A stage binds the
+  index's own buffer (`DevIndex::bound`, taken after the block's growth).
+- **Not the cause (one run or more each):** the device waves (`RERAIL_DEVICE_WAVES=off` loses rows); the 16z
+  cache (no failure counted); room given back (none given back, still lost); a borrowed index used before its
+  builder completed (waited for, still lost).
+
+What is left is what a stage reads through the views' directory at its run, against what the CPU reads at the same
+rows: the next instrument is the failed probes' keys dumped by the device, and the view's values at their rows read
+back from the device and from the host.
+
+Then, step by step (each device run's step counts against a CPU run of the same seeds, `JoinRule::counts`; m1max,
+512 MB, `RERAIL_DEVICE_WAVES=off`):
+
+- **The first probe after a scan loses almost every binding.** `mn_class`: 15,490 scanned, 95 found in
+  `docof($w, $d)` where the CPU finds all; `mn_dec_fn` 4,041 → 63; `rf_edge` 2,347 → 17; `rf_annot_head`
+  8,322 → 38. Every losing view is a `Loc` view (`docof`, kind 9, format 16, no 16z cache, its reads reaching the
+  chunk's block and three slabs). The tape views (`node`, `child`, `field`) lose nothing beyond `tp_ident`'s few.
+  A relation in its block loses the same way when it is the probed side: `mn_dec_class` finds none of 4,442 in
+  `raw_module_name`.
+- **The host reads those relations right where the device binds them.** `raw_module_name`, `rf_def`, `rf_qn` and
+  `rf_pydoc`, read by id in the block and descriptor the device binds (`InRel::in_block`), equal the CPU's rows.
+- **The budget is still the trigger.** At 4 GB, on the same head, every relation is right, with no refusal; at
+  512 MB 145 leases are refused, one slab is retired, two tapes get no slab room, and some batches' `docof` is made
+  on the device.
+- **Not the cause (one or two runs each):** freed pages given back to the OS (`MADV_FREE_REUSABLE`; kept, still
+  short); the GPU pool's recycling (every lease released to Metal, still short); the row blocks' wraps (a
+  `Device::May` block is host memory read through a wrap at either budget); a CPU-built index in a view's home
+  (the `Loc` views' source builds none); lease give-back on a refusal (`mj::give_back` drops only idle buffers).
+- **Not the cause either (2026-11-23, one pair of runs each):** a slab retired under a directory that reads it
+  (`State::retire` refused: no slab retired, no view refused, `mn_class` 259,514 still short); a block's wrap
+  remade at a new device address while a directory holds the old one (`Block::device_buffer`: 959 remakes at 512
+  MB, 1,122 at 4 GB, where every relation is right). So neither the residency nor the wraps make 512 MB differ; the
+  device-side dump of the failed probes' keys (above) is the next instrument.
+- **Two chunks at once on the device are needed (2026-11-23).** With one chunk at a time (`RERAIL_CHUNKS_AT_ONCE=1`)
+  the 512 MB run is right (`finding` 20,046, `mn_class` 266,996, `dbg_rd` 480,367, `mn_dec_fn` 116,511), where 17 of
+  18 runs with eight at once were short. Nor is a rerun after an overflow the cause (every overflowing run
+  encoded again from its first stage: still short). No smaller corpus shows it: s1000 at 4 GB, 64 MB and 32 MB (and
+  in chunks of 20,000 nodes), and `big1` at 4 GB, 256 and 128 MB, give the same rows. So the loss is between
+  chunks sharing the device under the budget: what one chunk's run can take or change of another's while both are
+  in flight (the pool's admission and leases, the device lane's submissions), not a chunk's own reads. Two of the
+  runs (one of each kind) took 310–340 s at a peak of 18 GB, a mode of their own, not yet looked at.
+- **Not command buffers overlapping on the GPU (2026-11-23).** A block's device wrap is remade as it grows, and
+  Metal tracks hazards per buffer object, so a builder and a probe in two command buffers can name two wraps of the
+  same memory with nothing ordering them. A temporary switch made every commit wait for the last command buffer's
+  work first (no two ever overlapped), at 512 MB with eight chunks at once: one run right but for 3 extra findings
+  (20,049), the next short as before (`mn_class` 256,643, `dbg_rd` 461,349, `finding` 20,697). So the loss is made
+  on the host side of the hand-off between chunks (what one chunk's batch encodes reading what another's left, or
+  refused), not by the GPU running two submissions at once. The device-side dump of the failed probes' keys is still
+  the next instrument.
+- **The probes' own counts, read back (2026-11-23).** A temporary dump waited for each keyed probe of a view and read
+  its bindings and per-binding counts back on the host (no kernel change: both are shared memory). At 512 MB the run
+  lost `dbg_rd` rows (470,445) while `docof` (kind 9) found a row for every one of its 1.5 M bindings, so the loss
+  moves between runs and relations. Against the 4 GB run, probes can not be matched one to one: the chunks differ
+  with the budget (their views' row counts differ), and where a probe's group is in both runs its counts are the same.
+  So the next instrument has to judge each empty probe within its own run: the binding's key read against the view's
+  values on the host (the index check's `key_hash`), not against another run.
+- **Not the stages' screens (2026-11-23).** A probe drops each binding its relation's kept filter says it cannot
+  hold (decision 0488) before reading the index, a step none of the index checks covered. With every read of the kept
+  filters off (`RERAIL_KEPT_KEYS=off`) the 512 MB run is still short (`mn_class` 259,514, `dbg_rd` 469,019); and a
+  view's rows, where most of the loss is, take no screen.
+- **Not a freed chunk reused (2026-11-23).** With the ledger never freeing a chunk (each one leaked live, the peak
+  5.2 GB), the 512 MB run is still short (`mn_class` 257,388, `dbg_rd` 455,996): no host write into a chunk freed
+  and handed out again, under work that still reads it, makes the loss.
+- **Not the directory's offsets (2026-11-23).** In-place `Loc` reads go through the views' directory, whose first
+  row of each document comes from the batch's offsets (the documents' table's counts, else the projection's); rows
+  made by `expand_view` walk the chunk's root instead, and those were right. Every document's offsets were checked
+  against its projection's own counts where the directory is made (7,210 documents at 512 MB): none differs.
+
+### Step 9, done (2026-11-23, decision 0660)
+
+There was no single cause: ten defects, most in the hand-off between batches that share the device. Each was found
+by comparing, stage by stage, what the device made against a CPU run of the same seeds and relations. The fixes,
+from decision 0660:
+
+- An index is found again by each batch that encodes a stage. A rerun read a slot given back as a duplicate.
+- A taker binds the buffer its builder wrote through. A grown block's new wrap is another `MTLBuffer`.
+- An index whose 16z reads found no cache room is not marked built, and its takers fail.
+- A batch that lost a submission fails whole.
+- A view is read in place only with its home.
+- A head's new rows exclude every lot placed for it.
+- A refused seed's aggregates get the CPU's index.
+- The views' directory holds its documents' order by key (`ViewDir::by_key`): a value admitted with a key below
+  the chunk's was never found by `by_parent`, giving `tp_ident`/`tp_list`'s −9 at every budget.
+- A search's walk counts and draws a source's candidates where the source holds them (`Source::lookup_seq`). This
+  was the slow mode: 195 s, 36 s at 18 GB, or 15 s after the run, in the end-of-run drain.
+- A phase counted in a thread's teardown is dropped: the abort at exit.
+
+Measured (M3, `--metal --metal-mb 512`, ten runs of the final head): every run's exports equal the CPU run's,
+`finding` 20,046, `mn_class` 266,996, `dbg_rd` 480,367, `mn_dec_fn` 116,511; 0.7 s after the run; peak about
+3.5 GB; wall about 33 s; exit 0.
+
+### The goal's items, measured at the head (2026-11-23, M3, `all`, the dead-code program)
+
+A CPU run (`RERAIL_GPU=cpu`) at the head showed one regression left: the cross part took 87–90 s of wall at a
+parallelism of 1.3. 77 s of it was the run's thread waiting on the heavy values (decision 0209 §6) of `rf_names`,
+`rf_fn_follows` and `rf_target`. Their rounds passed `gpu_pays`'s row threshold and went to the device's radix
+sorts, and under `RERAIL_GPU=cpu` the device's kernels run on the CPU, at a parallelism of about one. Fixed:
+- `gpu_pays` never sends a round to a device whose kernels run on the CPU (`SolverDevice::kernels_on_cpu`);
+- the CPU's batch counts each relation by morsels of its rows across the pool, the morsels' counts merged as a tree.
+
+The same run after the fix, every export's rows equal to the earlier CPU run's:
+
+| Item | Was | Now |
+|---|---|---|
+| 1. The stats phase | 42 s, mostly serial | 1.12 s |
+| 2. The export's work in local | about 19 s on the run's thread | 3.15 s wall, the run's thread 2.6 s, 14.8 s on the other threads |
+| 3. Cross | 28 → 52 s (and 87.6 s on the CPU backend) | 12.5 s, parallelism 3.1 |
+| 3. Per-file (`wait`) | 89 → 111 s | 8.6 s of wall, 71 s on the workers |
+| 5. Peak | 4.8 GB | 2.40 GB |
+| The run | | 29.9 s wall, 139.5 s CPU, 1,626 G instructions |
+
+Metal at 512 MB, ten runs: 0.7 s after the run, peak about 3.5 GB, wall about 33 s, every export the CPU's (above).
+
 ## Open
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.
 - `public_best_len` (1.1 s cross) and `reach_edges` belong to the program, not to the graph.
+
+- **Memory.** The run lets go of 10.1 GB of columns on `all`: t52 traces them (the export copy, the narrow twins,
+  8-byte columns) and plans their removal.

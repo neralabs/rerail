@@ -1,7 +1,9 @@
 # 0316: A store's atoms are read whole within a share of the memory budget, else mapped
 
-Status: decided (the user, 2026-11-16). Built on a side branch, not merged: it raises the peak of a run over its
-own corpus, whose atoms are its working set (below). It pays only over a store whose atoms are mostly not the run's. Numbered 0306 on final-rerail-shape until the hub's merge (the hub's 0306, a run's small writes as one record, was written first, at 16:50 against 17:22); its side branch keeps the old number.
+Status: superseded by 0401 (audited 2026-11-23). Decided (the user, 2026-11-16). Built on a side branch, not merged:
+it raises the peak of a run over its own corpus, whose atoms are its working set (below). It pays only over a store
+whose atoms are mostly not the run's. Numbered 0306 on final-rerail-shape until the hub's merge (the hub's 0306, a
+run's small writes as one record, was written first, at 16:50 against 17:22); its side branch keeps the old number.
 
 ## Intro
 
@@ -21,7 +23,7 @@ ids mapped at the store (decisions 0160 and 0170): the run holds only the atoms 
 - At a 4 GB budget the line is 256 MB, so 0171's reads come back for a large budget.
 - 0171's rule on segment size goes: the budget sets the line.
 
-## How (side branch `jeremybarnes/final-rerail-shape-0306`)
+## How (side branch `final-rerail-shape-0306`)
 
 - `Atoms::over_share`: set before the outermost run would take the lease, when the stored text is past
   `read_whole()`. It is kept for the store's life, since a store's atoms only grow.

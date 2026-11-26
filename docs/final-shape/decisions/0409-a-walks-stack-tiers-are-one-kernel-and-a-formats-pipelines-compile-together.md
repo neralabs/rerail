@@ -1,6 +1,6 @@
 # 0409. A walk's stack tiers are one kernel, and a format's label pipelines compile together
 
-Status: accepted (2026-11-18)
+Status: built (audited 2026-11-23). Accepted (2026-11-18)
 
 ## Intro
 

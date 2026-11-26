@@ -387,6 +387,35 @@ describe("the migration path", () => {
     expect(stampOf(baseline)).toEqual(stampOf(fresh));
   });
 
+  // `audits-repository-owner` drops `audits.session_id`'s NOT NULL in place: rebuilding `audits` would cascade its
+  // children away, and copying its rows held the open's write lock for 18 s on a 1.5 GB history.
+  it("keeps a baseline file's audits and their result pages, and takes an audit with no session after it", async () => {
+    const baseline = await baselineFile(`
+      INSERT INTO audits (audit_id, session_id, workspace_root, scope, mode, revision, rule_revisions_json, rule_provenance_json,
+        paths_json, started_at, status, violations_json, failures_json)
+        VALUES ('kept', 's1', '/w', 'repository', 'log', 1, '[]', '[]', '[]', 1, 'running', '[{"ruleId":"r","clauseId":"c","path":"a.ts","code":"x"}]', '[]');
+      INSERT INTO audit_result_pages (audit_id, page_index, violations_json, failures_json) VALUES ('kept', 0, '[]', '[]');
+    `);
+    openRerailDatabase(baseline).$client.close();
+    const database = new Database(baseline);
+    try {
+      expect(database.prepare("SELECT audit_id, session_id, repository_id, recorded_by FROM audits").all())
+        .toEqual([{ audit_id: "kept", session_id: "s1", repository_id: null, recorded_by: null }]);
+      expect(database.prepare("SELECT audit_id, page_index FROM audit_result_pages").all()).toEqual([{ audit_id: "kept", page_index: 0 }]);
+      expect(database.prepare("SELECT \"notnull\" FROM pragma_table_info('audits') WHERE name = 'session_id'").pluck().get()).toBe(0);
+      expect(database.pragma("integrity_check", { simple: true })).toBe("ok");
+      database.prepare(`INSERT INTO audits (audit_id, session_id, workspace_root, scope, mode, revision, rule_revisions_json,
+        rule_provenance_json, paths_json, started_at, status, violations_json, failures_json, repository_id, recorded_by)
+        VALUES ('owned', NULL, '/w', 'ai-output', 'log', 1, '[]', '[]', '[]', 2, 'completed', '[{"ruleId":"r","clauseId":"c","path":"a.ts","code":"x"}]', '[]', 'repo', 's1')`).run();
+      expect(database.prepare("SELECT audit_id, session_id, repository_id FROM audit_violations ORDER BY audit_id").all()).toEqual([
+        { audit_id: "kept", session_id: "s1", repository_id: null },
+        { audit_id: "owned", session_id: null, repository_id: "repo" },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
   // Review of #49 (F12): the guard sees a constraint a step should have changed, not only columns and indexes.
   it("tells a table whose CHECK differs from a new file's apart", async () => {
     const path = await temporaryDatabase();
@@ -485,7 +514,7 @@ describe("the migration path", () => {
       // Twice: the first refusal must not change the file's mode so that the next reader upgrades it after all.
       for (let attempt = 0; attempt < 2; attempt += 1) {
         expect(() => listRepositoryRules(openRerailDatabase(path, { readonly: true }), loadRuleCatalog(), "repo"))
-          .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables, repositories-follow-gitignore, rule-approvals, audit-violations-logged-by-audit-mode, audit-rule-provenance-once, repositories-merge-assist, rule-settings-origin, audits-origin, rules-title, analysis-scope-release-retry, analysis-scope-probe-failures\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
+          .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables, repositories-follow-gitignore, rule-approvals, audit-violations-logged-by-audit-mode, audit-rule-provenance-once, repositories-merge-assist, rule-settings-origin, audits-origin, rules-title, audits-repository-owner, analysis-scope-release-retry, analysis-scope-probe-failures\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
         expect(statSync(path).mode).toBe(mode);
       }
     } finally {

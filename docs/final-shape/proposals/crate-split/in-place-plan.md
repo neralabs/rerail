@@ -1,7 +1,8 @@
 # Plan: the engine in crates, without moving files
 
-Status: plan, revision 2. Code surveyed: the hub, `jeremybarnes/final-shape-serverplan-quality` at 251f0b85f
-(2026-11-11 06:43). This builds on Tim's proposal (`../crate-split.md`, the seam map at 91c2df886).
+Status: built (the split landed; `incremental-plan.md` builds on it). Left: the questions of §7. Plan revision 2.
+Code surveyed: the hub, `final-shape-serverplan-quality` at 251f0b85f
+(2026-11-11 06:43). This builds on the crate-split proposal (`../crate-split.md`, the seam map at 91c2df886).
 
 Requirements:
 
@@ -16,7 +17,7 @@ Requirements:
 ## Intro
 
 `rerail-engine` compiles all of `native/src` as one crate: about 400k lines of production files and 185k lines of
-test files. Any edit recompiles all of it (Tim's baseline: 86–90 s warm, 750–840 s CPU, on 32 cores).
+test files. Any edit recompiles all of it (the proposal's baseline: 86–90 s warm, 750–840 s CPU, on 32 cores).
 
 The engine is also closed over its devices and languages:
 
@@ -120,7 +121,7 @@ What changes in the core:
 |---|---:|---|
 | `with_adapter!(family, A => …)` | 141 | `pack(family).…`. 83 single-line sites in 70 shapes (`A::LABEL`, `<<A as Adapter>::Scope as ScopeRules>::resolve(…)`) are rewritten by script; the rest by hand |
 | `GrammarDialect::<Lang>` in production | 80 in 32 files | a pack hook (most are in `facts`, `language`, `tape`, `literal`, `logic`) |
-| references into language modules | 164 | registered hooks: Tim's I1 (tape building), I2 (per-language semantics), I3 (adapter constants) and I10 (CPython facts) are this seam |
+| references into language modules | 164 | registered hooks: the proposal's I1 (tape building), I2 (per-language semantics), I3 (adapter constants) and I10 (CPython facts) are this seam |
 | grammars' C build | `native/build.rs` | each pack's build script builds its own grammars (a small `build.rs` per pack that includes the shared build module) |
 
 Packs, one per family (about 71k production lines in all):
@@ -212,11 +213,11 @@ whatever stands on it, and the engine. The remaining wide paths are `lang` and `
 
 | work | count at HEAD | how |
 |---|---:|---|
-| references across the crate DAG (`seams-at-head.txt`) | 286 | as in Tim's seam map. I1, I2, I3, I8 and I10 are §2's registrations. Logic → transducer's `packed::block` (10) is `rerail_compiler::block` read directly |
+| references across the crate DAG (`seams-at-head.txt`) | 286 | as in the proposal's seam map. I1, I2, I3, I8 and I10 are §2's registrations. Logic → transducer's `packed::block` (10) is `rerail_compiler::block` read directly |
 | Metal arms and `cfg(macos)` sites in the core | ~300 | §2.1 |
 | language couplings | 385 + the grammar build | §2.2 |
 | `#[napi]` class in `sql_executor.rs` (S5) | 19 items | into an engine file; sessions mounts the rest |
-| build ids (`env!("RERAIL_ENGINE_BUILD_ID")`, 9 files) | 9 | set once at boot, read from a `OnceLock` (Tim's M4) |
+| build ids (`env!("RERAIL_ENGINE_BUILD_ID")`, 9 files) | 9 | set once at boot, read from a `OnceLock` (the proposal's M4) |
 | `env!("CARGO_MANIFEST_DIR")` | 18 production files, 50 in all | one `native_dir()` helper |
 | widen to `pub` the items another crate reads | ~910 items, ~160 modules (+ methods and fields) | by script, from compiler diagnostics (§5) |
 | test files that reach a higher crate | 87 (~95k lines) | mounted by the engine's test host; privates they read get `cfg(any(test, feature = "test-hooks"))` |
@@ -225,7 +226,7 @@ whatever stands on it, and the engine. The remaining wide paths are `lang` and `
 
 ### Before the stop (no stop needed)
 
-All of this happens on `jeremybarnes/Cratification`, which merges the hub in daily so the final merge stays small.
+All of this happens on `Cratification`, which merges the hub in daily so the final merge stays small.
 
 1. **Hand-written changes, as a few large commits:**
    - the device traits and registry;
@@ -343,7 +344,7 @@ From `rebuild2.py`, with the packs and Metal as their own crates:
 | W (without its languages) | 94k | 45% | W, packs, engine |
 | facts, lang, prof, rr-syntax | 2k–20k | 96–100% | everything above |
 
-These are lines, not seconds. The rehearsals measure warm-rebuild wall and CPU against Tim's baseline.
+These are lines, not seconds. The rehearsals measure warm-rebuild wall and CPU against the proposal's baseline.
 
 ## 7. Open
 
@@ -352,7 +353,7 @@ These are lines, not seconds. The rehearsals measure warm-rebuild wall and CPU a
   build selects. Making them runtime-open (packs loaded at run time) is a larger change and not needed for
   separable packages.
 - **Linux check:** one CI run on the prep branch.
-- **Tim's scripts:** his analysis scripts (`seams.py` and the rest) resolve imported aliases more precisely than
+- **The proposal's scripts:** its analysis scripts (`seams.py` and the rest) resolve imported aliases more precisely than
   `in-place/graph.py`, which would help the guard.
 
 `in-place/` regenerates the counts:

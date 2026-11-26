@@ -399,7 +399,7 @@ fn the_compiled_words_are_the_interpreters() {
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
     let (mut same, mut differ) = (0, Vec::new());
     {
-        let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+        let c = rerail_cpu_pp::native_cpu_pp::compile(program().unwrap()).unwrap();
         let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
         // One compiled program; the dialect is the run's.
         for (cpp, (name, files)) in [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))) {
@@ -417,7 +417,7 @@ fn the_compiled_words_are_the_interpreters() {
 /// The words on the process's device (`clif_ukl`'s UKL of the same IR, decisions 0348 stage 5, 0440 step D) are the
 /// interpreter's, on every example and TU, in C and C++: on Metal, OpenCL and the CPU's backend (`RERAIL_GPU`), all of
 /// them one batch a round (`expand_tus_with`, 0408 L3), and the host evaluates nothing meanwhile (`host_runs`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_device_words_are_the_interpreters() {
     if rerail_metal::lane::device().is_err() {
@@ -455,39 +455,14 @@ fn the_device_words_are_the_interpreters() {
     assert!(differ.is_empty(), "{} of {} differ:\n{}", differ.len(), same + differ.len(), differ.join("\n"));
 }
 
-/// The compiled words translate to Rust (`clif_rust`, the `generated` feature's source), each
-/// function's nesting shallow enough for rustc. `RERAIL_PP_AOT_DIR` set: written there.
-#[test]
-fn the_words_translate_to_rust() {
-    {
-        let src = rerail_compiler::native_cpu_pp::rust_source(program().unwrap()).unwrap();
-        let (mut depth, mut deepest) = (0usize, 0usize);
-        for c in src.bytes() {
-            match c {
-                b'{' => {
-                    depth += 1;
-                    deepest = deepest.max(depth);
-                }
-                b'}' => depth -= 1,
-                _ => {}
-            }
-        }
-        eprintln!("{} KB, {} lines, nesting {deepest}", src.len() >> 10, src.lines().count());
-        if let Ok(dir) = std::env::var("RERAIL_PP_AOT_DIR") {
-            std::fs::write(std::path::Path::new(&dir).join("pp.rs"), &src).unwrap();
-        }
-    }
-}
-
 /// The run's function as Cranelift compiles it: its instructions, its accesses
 /// relative to the stack pointer (the register allocator's spills and reloads, and the frame's),
 /// its branches by kind (before emission: a jump to the next block still there); its text and
-/// its emitted bytes written to `RERAIL_PP_DISASM` (and `.bin`) where set (Q184: beside rustc's code of the
-/// same IR, `the_aot_words_are_the_interpreters`' builds).
+/// its emitted bytes written to `RERAIL_PP_DISASM` (and `.bin`) where set (Q184).
 #[test]
 #[ignore = "a report (Q184)"]
 fn the_compiled_words_code_counted() {
-    let c = rerail_compiler::native_cpu_pp::disassemble(program().unwrap()).unwrap();
+    let c = rerail_cpu_pp::native_cpu_pp::disassemble(program().unwrap()).unwrap();
     let text = &c.disasm[0];
     let insts: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.ends_with(':') && !l.starts_with(';')).collect();
     let count = |f: &dyn Fn(&str) -> bool| insts.iter().filter(|l| f(l)).count();
@@ -500,42 +475,9 @@ fn the_compiled_words_code_counted() {
     eprintln!("Cranelift, C, k 0, the run's function: {} instructions, {sp} at sp ({ldr_sp} loads, {str_sp} stores), {b} jumps, {bcond} conditional branches, {br} indirect, {mov} moves", insts.len());
     if let Ok(path) = std::env::var("RERAIL_PP_DISASM") {
         std::fs::write(&path, text).unwrap();
-        // Its bytes as emitted (jumps to the next block dropped), to disassemble beside rustc's.
+        // Its bytes as emitted (jumps to the next block dropped).
         std::fs::write(format!("{path}.bin"), &c.code[0]).unwrap();
     }
-}
-
-/// The words' code built ahead of time (`clif_rust`, the `generated` feature) gives the
-/// interpreter's tokens on every example and TU, for each build; each build is the source the
-/// words translate to now (its fingerprint), so it is the JIT's code compiled by rustc.
-#[cfg(all(feature = "generated", target_arch = "aarch64"))]
-#[test]
-fn the_aot_words_are_the_interpreters() {
-    let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
-    let mut tus: Vec<Tu<'_>> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
-    tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
-    let (mut same, mut differ) = (0, Vec::new());
-    if let Some(rerail_pp_aot::Build { run: entry, source, structured: (structured, functions), .. }) = rerail_pp_aot::BUILD {
-        // The CPU path takes it: made from these words.
-        assert!(aot_build().is_some(), "the build is not of the words' text");
-        // Each function structured control, as rustc compiles it best (not a loop over a `match`).
-        assert_eq!(structured, functions);
-        let now = rerail_compiler::native_cpu_pp::rust_source(program().unwrap()).unwrap();
-        let fp = now.lines().find_map(|l| l.strip_prefix("pub const SOURCE: u64 = ")).unwrap();
-        assert_eq!(fp.trim_end_matches(';'), format!("{source:#x}"), "the build is not the words' code now; rebuild with the feature");
-        // SAFETY: `entry` is `rust_source`'s `pp_run` for this program (the fingerprint).
-        let aot = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| unsafe { rerail_compiler::native_cpu_pp::run_aot(entry, w, f, e, b) };
-        for (cpp, (name, files)) in [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))) {
-            let want = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &pp_words::run);
-            let got = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &aot);
-            match got {
-                got if got == want => same += 1,
-                got => differ.push(format!("{name} (cpp {cpp}): AOT {got:?}\n interpreter {want:?}")),
-            }
-        }
-    }
-    assert!(differ.is_empty(), "{} of {} differ:\n{}", differ.len(), same + differ.len(), differ.join("\n"));
-    eprintln!("{same} runs equal");
 }
 
 /// The corpus's files, each a TU of its own: the compiled words' tokens equal the interpreter's
@@ -550,7 +492,7 @@ fn the_corpus_compiled_is_the_interpreters() {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
         let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
         paths.sort();
-        let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+        let c = rerail_cpu_pp::native_cpu_pp::compile(program().unwrap()).unwrap();
         let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
         for p in paths {
             let src = std::fs::read(&p).unwrap();
@@ -587,7 +529,7 @@ fn the_corpus_compiled_is_the_interpreters() {
 fn the_compiled_words_have_their_shape() {
     use rerail_compiler::native_cpu_shape::Step;
     let p = program().unwrap();
-    let c = rerail_compiler::native_cpu_pp::compile(p).unwrap();
+    let c = rerail_cpu_pp::native_cpu_pp::compile(p).unwrap();
     eprintln!("code {:?} bytes, {} CLIF instructions", c.code_bytes, c.clif.lines().filter(|l| l.starts_with("    ") && !l.trim_end().ends_with(':')).count());
     let mut by: Vec<(usize, usize)> = c.word_insts.iter().copied().enumerate().map(|(pc, n)| (n, pc)).collect();
     by.sort_unstable_by(|a, b| b.cmp(a));
@@ -610,7 +552,7 @@ fn the_compiled_words_have_their_shape() {
     assert!(!c.clif.contains("call_indirect") && !c.clif.contains("return_call"));
     // No speculation barrier in Cranelift's code (`csdb`, which its Arm jump tables carry):
     // its tables are trees of compares (`native_cpu_codegen::switch_trees`).
-    let kept = rerail_compiler::native_cpu_pp::disassemble(p).unwrap();
+    let kept = rerail_cpu_pp::native_cpu_pp::disassemble(p).unwrap();
     let csdb = kept.code.iter().flat_map(|f| f.as_chunks::<4>().0).filter(|w| u32::from_le_bytes(**w) == 0xd503_229f).count();
     assert!(kept.code.len() == c.code_bytes.len() && kept.code.iter().all(|f| !f.is_empty()));
     if cfg!(target_arch = "aarch64") {
@@ -626,7 +568,7 @@ fn the_compiled_words_have_their_shape() {
 }
 
 /// The corpus's TUs expanded by the words' interpreter, by the compiled words as Cranelift
-/// compiles them and as rustc does (the `generated` feature: `rerail-pp-aot`, the same IR), and
+/// compiles them, and
 /// by the lean pass: each's instructions retired, cycles and wall time on this thread, the runs
 /// warmed first. The words' runs are their runs alone (the grammars' reads are tier 1's and mode
 /// (a)'s); the lean pass's lexes too. A benchmark: through `scripts/dev/quiet-run`, at
@@ -651,18 +593,17 @@ fn the_corpus_timed() {
         cost.set(Cost { instructions: c.instructions + (i1 - i0), cycles: c.cycles + (c1 - c0), wall: c.wall + (t1 - t0) });
     };
     let (words, jit, lean_pass) = (Cell::new(Cost::default()), Cell::new(Cost::default()), Cell::new(Cost::default()));
-    let aot = Cell::new(Cost::default());
-    // Each timed run: its cycles, the interpreter's and Cranelift's, what it did (tokens in, `#`
-    // at a line's start, tokens out, expansions), and rustc's cycles.
-    let runs: std::cell::RefCell<Vec<[u64; 7]>> = Default::default();
-    let last = Cell::new([0u64; 7]);
+    // Each timed run: its cycles, the interpreter's and Cranelift's, and what it did (tokens in, `#`
+    // at a line's start, tokens out, expansions).
+    let runs: std::cell::RefCell<Vec<[u64; 6]>> = Default::default();
+    let last = Cell::new([0u64; 6]);
     let mut tus = 0;
     for (dir, cpp) in [("c", false), ("cpp", true)] {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
         let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
         paths.sort();
         let srcs: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap()).collect();
-        let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+        let c = rerail_cpu_pp::native_cpu_pp::compile(program().unwrap()).unwrap();
         for pass in 0..2 {
             let on = Cell::new(pass == 1);
             let run_words = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
@@ -697,30 +638,13 @@ fn the_corpus_timed() {
             };
             for src in &srcs {
                 let files = [("main.c", src.as_slice())];
-                last.set([0; 7]);
+                last.set([0; 6]);
                 let want = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &run_words);
                 if want.is_err() {
                     continue;
                 }
                 let got = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &run_jit);
                 assert_eq!(got, want);
-                // By rustc (where built).
-                let at0 = |cost: &Cell<Cost>, slot: usize, run: &crate::expand::Runner<'_>| {
-                    let g = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &|w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
-                        let mut r = None;
-                        let before = cost.get().cycles;
-                        if on.get() { timed(cost, &mut || r = Some(run(w, f, e, b))) } else { r = Some(run(w, f, e, b)) }
-                        let mut x = last.get();
-                        x[slot] += cost.get().cycles - before;
-                        last.set(x);
-                        r.unwrap()
-                    });
-                    assert_eq!(g, want);
-                };
-                if let Some(rerail_pp_aot::Build { run: entry, .. }) = rerail_pp_aot::BUILD {
-                    // SAFETY: `entry` is `rust_source`'s `pp_run` for the words (`BUILD`).
-                    at0(&aot, 6, &|w, f, e, b| unsafe { rerail_compiler::native_cpu_pp::run_aot(entry, w, f, e, b) });
-                }
                 if pass == 1 {
                     runs.borrow_mut().push(last.get());
                 }
@@ -734,9 +658,6 @@ fn the_corpus_timed() {
         }
     }
     let mut rows = vec![("the words' interpreter", words.get()), ("Cranelift", jit.get())];
-    if aot.get().cycles > 0 {
-        rows.push(("rustc (same IR)", aot.get()));
-    }
     rows.push(("the lean pass (lexing too)", lean_pass.get()));
     for (name, c) in rows {
         eprintln!("{name:28} {:>8.1} M instructions {:>8.1} M cycles {:>10.3?}", c.instructions as f64 / 1e6, c.cycles as f64 / 1e6, c.wall);
@@ -744,10 +665,10 @@ fn the_corpus_timed() {
     eprintln!("over {tus} TUs");
     // The compiled words' cycles over the interpreter's, by what the runs do: a bucket's sums.
     let runs = runs.borrow();
-    let ratio = |rs: &[&[u64; 7]], i: usize| rs.iter().map(|r| r[i]).sum::<u64>() as f64 / rs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
-    let share = |rs: &[&[u64; 7]]| rs.iter().map(|r| r[0]).sum::<u64>() as f64 / runs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
+    let ratio = |rs: &[&[u64; 6]], i: usize| rs.iter().map(|r| r[i]).sum::<u64>() as f64 / rs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
+    let share = |rs: &[&[u64; 6]]| rs.iter().map(|r| r[0]).sum::<u64>() as f64 / runs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
     for (name, key) in [("tokens out a token in", 0usize), ("expansions a token in", 1), ("directives a token in", 2), ("tokens in", 3)] {
-        let v = |r: &[u64; 7]| -> f64 {
+        let v = |r: &[u64; 6]| -> f64 {
             let toks = r[2].max(1) as f64;
             match key {
                 0 => r[4] as f64 / toks,
@@ -756,12 +677,12 @@ fn the_corpus_timed() {
                 _ => r[2] as f64,
             }
         };
-        let mut sorted: Vec<&[u64; 7]> = runs.iter().collect();
+        let mut sorted: Vec<&[u64; 6]> = runs.iter().collect();
         sorted.sort_by(|a, b| v(a).total_cmp(&v(b)));
         let q = sorted.len() / 4;
         let parts: Vec<String> = (0..4).map(|i| {
             let part = &sorted[i * q..if i == 3 { sorted.len() } else { (i + 1) * q }];
-            format!("{:.3}..{:.3}: Cranelift x{:.2}, rustc x{:.2} ({:.0}% of the interpreter's)", v(part[0]), v(part[part.len() - 1]), ratio(part, 1), ratio(part, 6), 100.0 * share(part))
+            format!("{:.3}..{:.3}: Cranelift x{:.2} ({:.0}% of the interpreter's)", v(part[0]), v(part[part.len() - 1]), ratio(part, 1), 100.0 * share(part))
         }).collect();
         eprintln!("by {name}, quarters: {}", parts.join("; "));
     }
@@ -789,7 +710,7 @@ fn the_compiled_ifs_have_the_interpreters_values() {
     ];
     let words = |v: &[Out]| v.iter().map(|t| String::from_utf8_lossy(&t.2).into_owned()).collect::<String>();
     let mut unlexed = Vec::new();
-    let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+    let c = rerail_cpu_pp::native_cpu_pp::compile(program().unwrap()).unwrap();
     for cpp in [false, true] {
         let mut differ = Vec::new();
         for case in CASES {
@@ -820,7 +741,7 @@ fn the_compiled_ifs_have_the_interpreters_values() {
 /// The device's rungs (0348, stage L1): a TU whose expansion outgrows the smallest rung's rooms
 /// (a macro of 8 macros of 8 macros: 4,096 tokens from 60) is run again at larger rungs, and
 /// its tokens are the interpreter's.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_device_rungs_run_a_tu_again_past_its_room() {
     if rerail_metal::lane::device().is_err() {
@@ -831,7 +752,7 @@ fn the_device_rungs_run_a_tu_again_past_its_room() {
     let rungs = std::cell::Cell::new([0usize; pp_words::RUNGS]);
     let source = crate::expand::ukl().unwrap();
     let device = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
-        let ran = rerail_metal::pp_on::run_batch(source, &[(w, f, e, b)], 1).expect("the batch");
+        let ran = rerail_metal_programs::pp_on::run_batch(source, &[(w, f, e, b)], 1).expect("the batch");
         rungs.set(ran.rungs);
         ran.results.into_iter().next().expect("one result")
     };
@@ -844,7 +765,7 @@ fn the_device_rungs_run_a_tu_again_past_its_room() {
 
 /// Stage 5's spike (0348): each round of `TUS` run on the device as batches of 1 to 128 copies
 /// of itself, against the Cranelift JIT on one core. It prints; it asserts nothing.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 #[ignore = "a measurement: run alone, on an idle Mac"]
 fn the_device_words_time_against_the_jit() {
@@ -853,7 +774,7 @@ fn the_device_words_time_against_the_jit() {
     let translate = t0.elapsed();
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
     let ns = [1usize, 32, 64, 128];
-    let jit = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+    let jit = rerail_cpu_pp::native_cpu_pp::compile(program().unwrap()).unwrap();
     let cpu = std::cell::Cell::new(0f64);
     let gpu = std::cell::RefCell::new([0f64; 4]);
     let calls = std::cell::Cell::new(0usize);
@@ -865,7 +786,7 @@ fn the_device_words_time_against_the_jit() {
         for (k, &n) in ns.iter().enumerate() {
             let jobs = vec![(w, fl, e, b); n];
             let t = std::time::Instant::now();
-            let ran = match rerail_metal::pp_on::run_batch(src, &jobs, n) {
+            let ran = match rerail_metal_programs::pp_on::run_batch(src, &jobs, n) {
                 Ok(r) => r,
                 Err(err) => {
                     eprintln!("SPIKE n={n} refused ({err:?}) after {} bytes a run", bytes.get());
@@ -915,7 +836,7 @@ fn the_device_words_time_against_the_jit() {
 fn the_corpus_through_the_rungs() {
     use pp_words::RUNGS;
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
-    let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+    let c = rerail_cpu_pp::native_cpu_pp::compile(program().unwrap()).unwrap();
     let by_buffer = std::cell::RefCell::new(Vec::<usize>::new());
     let bytes_at = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
         let (mut n, mut k) = (0usize, 0usize);
@@ -996,12 +917,12 @@ fn the_corpus_through_the_rungs() {
 
 /// What `corpus_on_metal` hands on for each chunk: its TUs (each one's path, and whether C++), and each
 /// one's expansion or why it failed.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 type Chunk<'a> = dyn FnMut(&[(std::path::PathBuf, bool)], Vec<Result<Vec<Out>, String>>) + 'a;
 
 /// The corpus's TUs (C and C++), `RERAIL_PP_CHUNK` at a time (512 by default), each chunk one
 /// `expand_tus_with` whose rounds are the device's batches (0408, L4).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn corpus_on_metal(each: &mut Chunk<'_>, batch: &crate::expand::BatchRunner<'_>) {
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
     let mut tus = Vec::new();
@@ -1023,7 +944,7 @@ fn corpus_on_metal(each: &mut Chunk<'_>, batch: &crate::expand::BatchRunner<'_>)
 }
 
 /// The device's batches' totals: GPU seconds, dispatches, the largest arena, the runs by rung.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[derive(Default)]
 struct OnMetal {
     gpu: f64,
@@ -1034,10 +955,10 @@ struct OnMetal {
     batches: usize,
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn counted_batch<'a>(totals: &'a std::cell::RefCell<OnMetal>) -> impl Fn(&[crate::expand::Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> + 'a {
     move |jobs| {
-        let ran = rerail_metal::pp_on::run_batch(crate::expand::ukl().unwrap(), jobs, jobs.len()).expect("the device's batch");
+        let ran = rerail_metal_programs::pp_on::run_batch(crate::expand::ukl().unwrap(), jobs, jobs.len()).expect("the device's batch");
         let mut t = totals.borrow_mut();
         (t.gpu, t.dispatches, t.arena, t.jobs, t.batches) = (t.gpu + ran.gpu_seconds, t.dispatches + ran.dispatches, t.arena.max(ran.arena_bytes), t.jobs + jobs.len(), t.batches + 1);
         for (r, n) in ran.rungs.iter().enumerate() {
@@ -1048,7 +969,7 @@ fn counted_batch<'a>(totals: &'a std::cell::RefCell<OnMetal>) -> impl Fn(&[crate
 }
 
 /// The corpus on Metal (0408, L4): each TU the interpreter's, its rounds the device's batches.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 #[ignore = "the corpus (~/orca/rerail-shared/lean-corpus, or RERAIL_C_CORPUS)"]
 fn the_corpus_on_metal_is_the_interpreters() {
@@ -1080,9 +1001,8 @@ fn the_corpus_on_metal_is_the_interpreters() {
 }
 
 /// The corpus on Metal timed (0408, L4): the device's batches' GPU seconds, warmed first, against
-/// the CPU's compiled words (`expand::native`: rustc's build where it is the process's words,
-/// else Cranelift's) on the same jobs on this thread. A benchmark: through `quiet-run`.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+/// the CPU's compiled words (`expand::native`, Cranelift's) on the same jobs on this thread. A benchmark: through `quiet-run`.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 #[ignore = "a benchmark of the corpus on Metal"]
 fn the_corpus_on_metal_timed() {
@@ -1109,6 +1029,6 @@ fn the_corpus_on_metal_timed() {
     let wall = wall.elapsed();
     let t = totals.borrow();
     let (i, c, w) = cpu.get();
-    eprintln!("ON_METAL_TIMED aot {:?}: {} batches, {} jobs, {} dispatches, runs by rung {:?}, the largest arena {} MB", crate::expand::aot_build().is_some(), t.batches, t.jobs, t.dispatches, t.rungs, t.arena >> 20);
+    eprintln!("ON_METAL_TIMED: {} batches, {} jobs, {} dispatches, runs by rung {:?}, the largest arena {} MB", t.batches, t.jobs, t.dispatches, t.rungs, t.arena >> 20);
     eprintln!("ON_METAL_TIMED GPU {:.1} ms; CPU words {:.1} M instructions, {:.1} M cycles, {:.1} ms; the whole pass {:.0} ms", t.gpu * 1e3, i as f64 / 1e6, c as f64 / 1e6, w.as_secs_f64() * 1e3, wall.as_secs_f64() * 1e3);
 }

@@ -3,8 +3,8 @@
 //! The flow, per captured file:
 //!
 //! ```text
-//! capture (engine: source + format-15 image)
-//!   -> v15::read            the tree as neutral nodes (kind, field, flags, supertypes, span)
+//! capture (engine: source + format 16 tape)
+//!   -> captured::read       the tree as neutral nodes (kind, field, flags, supertypes, span)
 //!   -> events::encode       format 16's open and close records          (1.1 of 0156)
 //!   -> blocks::cut          content-defined blocks + placement           (T3)
 //!   -> layout::lay          byte planes / field planes / records         (T2)
@@ -31,6 +31,8 @@ pub mod disk;
 pub mod edits;
 pub mod huff;
 pub mod inplace;
+/// Each tag's kind and field ids (`kinds.tsv`).
+pub mod ids;
 pub mod prim;
 pub mod ralz;
 pub mod events;
@@ -44,8 +46,8 @@ pub mod solution;
 pub mod span;
 pub mod text;
 pub mod tree;
-pub mod v15;
 pub mod writer;
+pub mod captured;
 #[cfg(target_os = "macos")]
 pub mod f16_gpu;
 #[cfg(target_os = "macos")]

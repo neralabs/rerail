@@ -1,6 +1,7 @@
 # 0464: A program image is written once, and read where it is held
 
-Status: accepted (2026-11-19). Q26 (handed off by 0295 §6.1). Follows 0173, 0244, 0353, 0394; decides 0295 §6.3–4. Numbered 0473 on Typing-support-final-shape; 0464 here (roll-up 14).
+Status: built (audited 2026-11-23). Accepted (2026-11-19). Q26 (handed off by 0295 §6.1). Follows 0173, 0244, 0353,
+0394; decides 0295 §6.3–4. Numbered 0473 on Typing-support-final-shape; 0464 here (roll-up 14).
 
 ## Intro
 

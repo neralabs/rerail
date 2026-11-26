@@ -1,11 +1,12 @@
 //! A time limit for each test of the engine's test binary, enforced from inside it.
 //!
 //! libtest runs each test on its own thread, named after the test (`code_rule_dsl::…::name`). A watchdog thread,
-//! started before `main`, lists the process's threads once a second and times each test thread from when it first
-//! sees it. A test past its limit is named on stderr and the process exits with status 124, as `timeout` does: a
+//! started before `main`, lists the process's threads once a second (an eighth of the limit, when that is less:
+//! `tick`) and times each test thread from when it first sees it. A test past its limit is named on stderr and the process exits with status 124, as `timeout` does: a
 //! hung test (a deadlock, a run that never ends) fails in minutes, not hours.
 //!
-//! - The limit is `DEFAULT` (10 minutes) unless `RERAIL_TEST_TIMEOUT=<seconds>` sets another; `0` turns it off.
+//! - The limit is `DEFAULT` (10 minutes) unless `RERAIL_TEST_TIMEOUT=<seconds>` sets another (a fraction too: `0.5`);
+//!   `0` turns it off.
 //! - A test that is known to run longer asks for more with `allow`, as its first line. The environment variable,
 //!   when set, still caps it.
 //!
@@ -14,6 +15,10 @@
 //! A segmentation fault or bus error kills the process with no word of which test it was in. The watchdog's handler
 //! of both writes the faulting thread's name and the tests running then, and hands the fault on to the handler it
 //! replaced (Rust's, which reports a stack overflow, or the default one).
+
+// The warning on a macOS whose allocator aborts the engine's work, given as every test binary loads.
+#[path = "os_warning.rs"]
+mod os_warning;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -27,7 +32,7 @@ static ALLOWED: Mutex<Option<HashMap<Key, Duration>>> = Mutex::new(None);
 
 /// How an allowance knows its test's thread. Linux cuts a thread's name to 15 bytes, `code_rule_dsl::` for nearly
 /// every test, so a name there would grant one test's allowance to every test: the key is the thread's system id. On
-/// macOS the name (63 bytes) is the test's path.
+/// macOS the name (63 bytes) is the test's path, and on Windows (a thread's description, uncut) all of it.
 #[cfg(target_os = "linux")]
 type Key = u64;
 #[cfg(not(target_os = "linux"))]
@@ -55,10 +60,13 @@ fn key(thread: &(u64, String)) -> &Key {
     &thread.1
 }
 
-/// The longest thread name the system reports (macOS: 64 bytes with its NUL; Linux: 16).
+/// The longest thread name the system reports (macOS: 64 bytes with its NUL; Linux: 16; Windows: a thread's
+/// description, whole).
 #[cfg(target_os = "macos")]
 const MAX_NAME: usize = 63;
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+const MAX_NAME: usize = usize::MAX;
+#[cfg(not(any(target_os = "macos", windows)))]
 const MAX_NAME: usize = 15;
 
 /// Lets the calling test run for up to `limit` (capped by `RERAIL_TEST_TIMEOUT` when it is set).
@@ -78,17 +86,27 @@ fn short(name: &str) -> String {
 /// The limit from the environment: `None` when unset, `Some(None)` when off (`0`).
 fn configured() -> Option<Option<Duration>> {
     let v = std::env::var("RERAIL_TEST_TIMEOUT").ok()?;
-    let secs: u64 = v.trim().parse().ok()?;
-    Some((secs > 0).then(|| Duration::from_secs(secs)))
+    let secs: f64 = v.trim().parse().ok().filter(|s: &f64| s.is_finite() && *s >= 0.0)?;
+    Some((secs > 0.0).then(|| Duration::from_secs_f64(secs)))
+}
+
+/// How often the watchdog lists the threads under limit `env` (the environment's): once a second, or an eighth of a
+/// shorter limit (at least 50 ms), so a limit under a few seconds is kept to within an eighth of it. The watchdog's
+/// own tests ran a child to a 2 s limit and a fault past the first 1 s listing, 5.8 s of the suite between them.
+fn tick(env: Option<Duration>) -> Duration {
+    env.map_or(Duration::from_secs(1), |l| (l / 8).clamp(Duration::from_millis(50), Duration::from_secs(1)))
 }
 
 // Started before `main`, so every run of the test binary has it, whatever the filter.
 #[used]
 #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
 #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+// The C runtime's initializers, which it calls before `main` (MSVC).
+#[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
 static START: extern "C" fn() = start;
 
 extern "C" fn start() {
+    os_warning::warn();
     // `--list` and the like start no test; a watchdog then is harmless, but `Some(None)` turns it off.
     if matches!(configured(), Some(None)) {
         return;
@@ -103,8 +121,9 @@ fn watch() {
     std::thread::sleep(Duration::from_millis(200));
     #[cfg(unix)]
     faults::install();
+    let every = tick(env);
     loop {
-        std::thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(every);
         let now = Instant::now();
         let threads = threads();
         // A thread's id may be reused once it ends: its allowance ends with it. (Only threads seen before: one that
@@ -142,9 +161,9 @@ fn watch() {
 /// Names the test and exits at once: `exit` would run atexit handlers, which may wait on a lock a hung thread holds.
 fn fail(name: &str, ran: Duration, limit: Duration) -> ! {
     let msg = format!(
-        "\ntest watchdog: `{name}` ran {} s, past its limit of {} s (RERAIL_TEST_TIMEOUT, or the test's `test_watchdog::allow`); exiting with status 124\n",
-        ran.as_secs(),
-        limit.as_secs()
+        "\ntest watchdog: `{name}` ran {:.1} s, past its limit of {:.1} s (RERAIL_TEST_TIMEOUT, or the test's `test_watchdog::allow`); exiting with status 124\n",
+        ran.as_secs_f64(),
+        limit.as_secs_f64()
     );
     #[cfg(unix)]
     unsafe {
@@ -200,7 +219,13 @@ fn threads() -> Vec<(u64, String)> {
         .collect()
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// Windows: the process's threads, each named by its description (`rerail_prof::windows_threads`).
+#[cfg(windows)]
+fn threads() -> Vec<(u64, String)> {
+    rerail_prof::windows_threads().into_iter().map(|(id, name)| (u64::from(id), name)).collect()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn threads() -> Vec<(u64, String)> {
     Vec::new()
 }
@@ -248,12 +273,13 @@ mod tests {
         let out = std::process::Command::new(exe)
             .args(["test_watchdog::tests::a_test_past_its_limit_ends_the_run", "--exact", "--nocapture"])
             .env("RERAIL_WATCHDOG_CHILD", "1")
-            .env("RERAIL_TEST_TIMEOUT", "2")
+            .env("RERAIL_TEST_TIMEOUT", "0.4")
             .output()
             .unwrap();
         let err = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(124), "{err}");
-        // Named as the system reports the thread (`MAX_NAME` bytes: all of it on macOS, `test_watchdog::` on Linux).
+        // Named as the system reports the thread (`MAX_NAME` bytes: all of it on macOS and Windows, `test_watchdog::`
+        // on Linux).
         assert!(err.contains(&format!("`{}` ran", short("test_watchdog::tests::a_test_past_its_limit_ends_the_run"))), "{err}");
         assert!(t0.elapsed() < Duration::from_secs(20));
     }
@@ -264,8 +290,16 @@ mod tests {
     #[test]
     fn a_segmentation_fault_names_the_test() {
         if std::env::var_os("RERAIL_WATCHDOG_CHILD").is_some() {
-            // Past the watchdog's first listing of the tests.
-            std::thread::sleep(Duration::from_millis(1500));
+            // Past the watchdog's first listing of the tests (200 ms after `main`, then every 125 ms under the
+            // parent's limit of 1 s).
+            std::thread::sleep(Duration::from_millis(500));
+            // Its fault writes no core: where the kernel hands cores to a program (a `|` core pattern, which no core
+            // limit stops), the dump was most of the test's time. Still ended by the signal.
+            // SAFETY: a flag of this process alone.
+            #[cfg(target_os = "linux")]
+            unsafe {
+                libc::prctl(libc::PR_SET_DUMPABLE, 0);
+            }
             // SAFETY: none: the fault is the test.
             unsafe { std::ptr::null_mut::<u64>().write_volatile(1) };
             return;
@@ -274,6 +308,7 @@ mod tests {
         let out = std::process::Command::new(exe)
             .args(["test_watchdog::tests::a_segmentation_fault_names_the_test", "--exact", "--nocapture"])
             .env("RERAIL_WATCHDOG_CHILD", "1")
+            .env("RERAIL_TEST_TIMEOUT", "1")
             .output()
             .unwrap();
         let err = String::from_utf8_lossy(&out.stderr);
@@ -330,7 +365,41 @@ mod faults {
         }
     }
 
-    extern "C" fn handler(sig: libc::c_int, _: *mut libc::siginfo_t, _: *mut libc::c_void) {
+    /// `v` in hex, into a buffer of the handler's stack (a handler allocates nothing).
+    fn hex(v: usize, out: &mut [u8; 18]) -> &[u8] {
+        out[0] = b'0';
+        out[1] = b'x';
+        for i in 0..16 {
+            let d = (v >> ((15 - i) * 4)) & 0xf;
+            out[2 + i] = b"0123456789abcdef"[d];
+        }
+        &out[..]
+    }
+
+    /// The faulting instruction's address and its return address (the caller's), where the platform's context names
+    /// them: a fault in JIT code has no symbols, and these place it.
+    #[allow(unused_variables)]
+    fn pc_lr(ctx: *mut libc::c_void) -> Option<(usize, usize)> {
+        if ctx.is_null() {
+            return None;
+        }
+        // SAFETY: the kernel's context for this signal (`SA_SIGINFO`), read where each platform lays it out.
+        unsafe {
+            let uc = ctx as *const libc::ucontext_t;
+            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+            return Some(((*uc).uc_mcontext.pc as usize, (*uc).uc_mcontext.regs[30] as usize));
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            return Some(((*(*uc).uc_mcontext).__ss.__pc as usize, (*(*uc).uc_mcontext).__ss.__lr as usize));
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            return Some(((*uc).uc_mcontext.gregs[libc::REG_RIP as usize] as usize, 0));
+            #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+            return Some(((*(*uc).uc_mcontext).__ss.__rip as usize, 0));
+            #[allow(unreachable_code)]
+            None
+        }
+    }
+
+    extern "C" fn handler(sig: libc::c_int, info: *mut libc::siginfo_t, ctx: *mut libc::c_void) {
         let write = |b: &[u8]| unsafe {
             libc::write(2, b.as_ptr().cast(), b.len());
         };
@@ -340,7 +409,20 @@ mod faults {
         let end = name.iter().position(|&b| b == 0).unwrap_or(name.len());
         write(if sig == libc::SIGBUS { b"\ntest watchdog: a bus error on thread `" } else { b"\ntest watchdog: a segmentation fault on thread `" });
         write(&name[..end]);
-        write(b"`; the tests running:\n");
+        let mut buf = [0u8; 18];
+        write(b"`");
+        if !info.is_null() {
+            write(b" at address ");
+            // SAFETY: the kernel's siginfo for a fault, which names its address.
+            write(hex(unsafe { (*info).si_addr() } as usize, &mut buf));
+        }
+        if let Some((pc, lr)) = pc_lr(ctx) {
+            write(b", instruction ");
+            write(hex(pc, &mut buf));
+            write(b", return address ");
+            write(hex(lr, &mut buf));
+        }
+        write(b"; the tests running:\n");
         let len = LEN.load(std::sync::atomic::Ordering::Acquire);
         // SAFETY: reads what the watchdog wrote (see `Buffer`).
         write(unsafe { &(&*RUNNING.0.get())[..len] });

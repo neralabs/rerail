@@ -6,24 +6,25 @@
 //! - `stage1`: `json_structural_indexer::index<64>` and what it calls (simdjson 5.0.5's
 //!   `simd.h`, `json_character_block::classify`, the escape, string and JSON scanners, the UTF-8
 //!   checker, arm64's own `bit_indexer::write`);
-//! - `stage2`: `kernel.inc`'s `walk`, which writes the v9np tape;
+//! - `stage2`: `kernel.inc`'s `walk`, which gives the tape's nodes as format 16's events;
 //! - `number`: `kernel.inc`'s `number_end`, simdjson's number check;
 //! - `tables`: simdjson's own tables, copied by `scripts/json_lean/tables.py`.
 //!
-//! `Parser::tape` is `kernel.inc`'s `rerail_v9np::tape` without the source's hash, and
+//! `Parser::walk` is `kernel.inc`'s `rerail_v9np::tape` without the source's hash, and
 //! `Parser::stage1` its `stage1_only` (simdjson's stage 1): each copies the source into its padded
 //! buffer first, as the kernel does. JSONC is left out.
 //!
-//! arm64 only (the implementation translated); elsewhere the crate is empty.
+//! arm64 only (the implementation translated), and not on MSVC, where its references are empty
+//! (`rerail-simdjson`); elsewhere the crate is empty.
 
-#![cfg(target_arch = "aarch64")]
+#![cfg(all(target_arch = "aarch64", not(all(windows, target_env = "msvc"))))]
 
 mod number;
 mod stage1;
 mod stage2;
 mod tables;
 
-pub use rerail_simdjson::{Error, Kinds, Refusal, Tape};
+pub use rerail_simdjson::{Error, Kinds, Refusal, Walk};
 
 use stage2::{DEFAULT_MAX_DEPTH, SLOTS, Sink, walk};
 
@@ -53,16 +54,18 @@ pub enum Code {
 /// simdjson's `SIMDJSON_PADDING`.
 const PADDING: usize = 64;
 
-/// A thread's parser (`kernel.inc`'s `Thread`): the padded source, stage 1's index and the depth
-/// stacks, kept from file to file.
+/// A thread's parser (`kernel.inc`'s `Thread`): the padded source, stage 1's index, the depth
+/// stack and the events' window, kept from file to file.
 pub struct Parser {
     buffer: Vec<u8>,
     indexes: Vec<u32>,
     capacity: usize,
-    container: Box<[u32]>,
-    pair: Box<[u32]>,
     objects: Box<[bool]>,
+    ev: Vec<u32>,
 }
+
+/// The events a walk holds before it passes them on: 4,096 nodes' (as `rerail_simdjson`'s).
+const EVENT_WORDS: usize = 3 * 4096;
 
 impl Default for Parser {
     fn default() -> Self {
@@ -77,9 +80,8 @@ impl Parser {
             buffer: Vec::new(),
             indexes: Vec::new(),
             capacity: 0,
-            container: vec![0; depth].into_boxed_slice(),
-            pair: vec![0; depth].into_boxed_slice(),
             objects: vec![false; depth].into_boxed_slice(),
+            ev: vec![0; EVENT_WORDS],
         }
     }
 
@@ -141,16 +143,18 @@ impl Parser {
         &self.indexes[..count]
     }
 
-    /// `src`'s tape, as `kernel.inc`'s `tape` writes it (no digest): stage 1, then the walk at the
-    /// widths predicted, again at the widths a walk shows where it was wrong.
-    pub fn tape(&mut self, src: &[u8], kinds: &Kinds) -> Result<Tape, Refusal> {
+    /// `src`'s walk, as `kernel.inc`'s `tape` gives it (no digest): stage 1, then the walk, each
+    /// node's event given to `on` a window at a time. The codes the events number, in first-use
+    /// order: kind, field, and whether in a value's place.
+    pub fn events(&mut self, src: &[u8], kinds: &Kinds, on: &mut dyn FnMut(&[u32])) -> Result<Vec<(u16, u16, bool)>, Refusal> {
         if src.len() >= u32::MAX as usize / 2 {
             return Err(Refusal::TooLarge);
         }
         let k = kinds;
+        let mut ev = std::mem::take(&mut self.ev);
         let mut sink = Sink {
-            col: Default::default(),
-            width: [2; 3],
+            ev: &mut ev,
+            flush: on,
             kind: [k.document, k.pair, k.string_content, k.escape_sequence, k.object, k.array, k.string, k.number, k.true_, k.false_, k.null, k.comment],
             key_field: k.key_field,
             value_field: k.value_field,
@@ -160,22 +164,22 @@ impl Parser {
             code_value: [0; 36],
         };
         let code = self.tape_into(src, &mut sink);
+        let codes = (0..sink.codes as usize).map(|i| (sink.code_kind[i], sink.code_field[i], sink.code_value[i] != 0)).collect();
+        self.ev = ev;
         if code != 0 {
             return Err(Refusal::Simdjson(Error(code)));
         }
-        for v in &mut sink.col {
-            // The buffers were made for the most nodes a file of its length can have: what the tape
-            // does not use is given back (as `rerail_simdjson::tape_with`).
-            if v.capacity() > v.len() + v.len() / 2 + 64 {
-                v.shrink_to_fit();
-            }
-        }
-        let codes = (0..sink.codes as usize).map(|i| (sink.code_kind[i], sink.code_field[i], sink.code_value[i] != 0)).collect();
-        let [code, size, off, tail, base] = sink.col;
-        Ok(Tape { code, codes, size, base, off, tail, widths: sink.width, digest: None })
+        Ok(codes)
     }
 
-    /// `tape`'s body: 0, or simdjson's error code.
+    /// `events`' walk of `src`, held (a test's): as `rerail_simdjson::walk_unhashed_with` gives the kernel's.
+    pub fn walk(&mut self, src: &[u8], kinds: &Kinds) -> Result<Walk, Refusal> {
+        let mut events = Vec::new();
+        let codes = self.events(src, kinds, &mut |w| events.extend_from_slice(w))?;
+        Ok(Walk { codes, events, digest: None })
+    }
+
+    /// `events`' body: 0, or simdjson's error code.
     #[inline(never)]
     fn tape_into(&mut self, src: &[u8], sink: &mut Sink) -> i32 {
         let len = src.len();
@@ -189,39 +193,10 @@ impl Parser {
             Ok(n) => n,
             Err(e) => return e as i32,
         };
-        // `size` 4 bytes wide where the nodes, about one and a quarter a structural, pass 2 bytes;
-        // `off` and `tail` 2. A prediction a walk shows wrong is walked again at the widths it showed.
-        let mut wide: u32 = if count > 52000 { 1 } else { 0 };
-        for _ in 0..3 {
-            let r = self.walk_at(wide, buf, count, shift, len as u32, sink);
-            if r < 0 {
-                return -r;
-            }
-            if r == 0 {
-                return 0;
-            }
-            wide = (wide | (r as u32 & 7)) & !(if r & 8 != 0 { 1 } else { 0 });
-        }
-        Code::UnexpectedError as i32
-    }
-
-    /// `walk_at`: a walk at the widths `wide` names (bit 1 size, 2 off, 4 tail: 4 bytes).
-    fn walk_at(&mut self, wide: u32, buf: *const u8, count: u32, shift: u32, len: u32, sink: &mut Sink) -> i32 {
-        let index = self.indexes.as_ptr();
-        let (c, p, o) = (self.container.as_mut_ptr(), self.pair.as_mut_ptr(), self.objects.as_mut_ptr());
-        // SAFETY: `buf` and the index are stage 1's; the stacks hold `DEFAULT_MAX_DEPTH + 1`.
-        unsafe {
-            match wide {
-                0 => walk::<u16, u16, u16>(buf, index, count, shift, len, sink, c, p, o),
-                1 => walk::<u32, u16, u16>(buf, index, count, shift, len, sink, c, p, o),
-                2 => walk::<u16, u32, u16>(buf, index, count, shift, len, sink, c, p, o),
-                3 => walk::<u32, u32, u16>(buf, index, count, shift, len, sink, c, p, o),
-                4 => walk::<u16, u16, u32>(buf, index, count, shift, len, sink, c, p, o),
-                5 => walk::<u32, u16, u32>(buf, index, count, shift, len, sink, c, p, o),
-                6 => walk::<u16, u32, u32>(buf, index, count, shift, len, sink, c, p, o),
-                _ => walk::<u32, u32, u32>(buf, index, count, shift, len, sink, c, p, o),
-            }
-        }
+        let object = self.objects.as_mut_ptr();
+        // SAFETY: `buf` and the index are stage 1's; `object` holds `DEFAULT_MAX_DEPTH + 1`.
+        let r = unsafe { walk(buf, self.indexes.as_ptr(), count, shift, len as u32, sink, object) };
+        if r < 0 { -r } else { 0 }
     }
 }
 

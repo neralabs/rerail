@@ -3,7 +3,7 @@
 //! host), its format, its widths. One definition: the device's `DocView` is this, and its MSL is
 //! written from it ([`ukl`]), with each field's offset asserted against Rust's.
 
-/// A document's view (128 bytes, u32s; the device's `DocView`, `device_tape.h`).
+/// A document's view (136 bytes, u32s; the device's `DocView`, `device_tape.h`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TapeView {
@@ -13,32 +13,30 @@ pub struct TapeView {
     pub at: u32,
     pub nodes: u32,
     pub node_base: u32,
-    /// The tape's format: 15, 16, or `F16Z_FORMAT` (a 16z tape as stored, read through a cache of its decoded
+    /// The tape's format: 16, or `F16Z_FORMAT` (a 16z tape as stored, read through a cache of its decoded
     /// blocks, decision 0353 step 4b).
     pub format: u32,
-    /// Format 15: `size`'s, `off`'s and `tail`'s widths in bytes, at bits 0, 4 and 8; bit 12: tails
-    /// measured from the node's own start. Format 16: the slot, gap and length widths at bits 0, 4
-    /// and 8, the checkpoints' at 12, and the four side lists' value widths at 16, 20, 24 and 28.
+    /// The slot, gap and length widths at bits 0, 4 and 8, the checkpoints' at 12, and the four side
+    /// lists' value widths at 16, 20, 24 and 28.
     pub widths: u32,
-    /// Format 15's columns (code, size, base, off, tail). Format 16 (block-major, decision 0434): block
-    /// 0's start, then the bytes a row holds before the slots, the gaps, the lengths and the checkpoints
-    /// (a block of R rows holds column r at `R * columns[r]` from its start).
+    /// Block-major (decision 0434): block 0's start, then the bytes a row holds before the slots, the gaps, the
+    /// lengths and the checkpoints (a block of R rows holds column r at `R * columns[r]` from its start).
     pub columns: [u32; 5],
-    /// Format 16: the blocks' stride, in bytes (a block is `F16_PART` nodes).
+    /// The blocks' stride, in bytes (a block is `F16_PART` nodes).
     pub stride: u32,
-    /// Format 16: the four side lists (codes' low parts, escaped slots, gaps, lengths), and each
-    /// one's part starts (u32s, a part a 1,024 nodes).
+    /// The four side lists (codes' low parts, escaped slots, gaps, lengths), and each one's part starts
+    /// (u32s, a part a 1,024 nodes).
     pub side: [u32; 4],
     pub parts: [u32; 4],
-    /// Format 16: its language's cutoff and the numbers a prefix byte covers.
+    /// Its language's cutoff and the numbers a prefix byte covers.
     pub cut: u32,
     pub per: u32,
-    /// The code table (the device's `DeviceCode`s; format 16's: the language's).
+    /// The code table (its language's).
     pub codes: u32,
     pub source: u32,
     pub source_len: u32,
-    /// Format 15: line starts (u32, document-local bytes), the first 0. Format 16: its newline index
-    /// (`rerail_tape_format::newlines`). And how many lines.
+    /// The document's line index (`rerail_tape_format::newlines`, decision 0612), in its tape or placed beside it. And
+    /// how many lines.
     pub lines: u32,
     pub line_count: u32,
     /// The code table's length.
@@ -48,14 +46,20 @@ pub struct TapeView {
     pub line_base: u32,
     /// Where the stored tape starts.
     pub tape: u32,
-    /// Format 16 and 16z: the tape's presence (decision 0434 §4, step 6), in its home after the tape: `[u32 kind words,
-    /// u32 field words, u32 presences, u32 0]`, then the document's words and each block's (`tape_has_kind`). 0 where
-    /// it has none (format 15, or a tape stored without one).
+    /// The tape's presence (decision 0434 §4, step 6), in its home after the tape: `[u32 kind words, u32 field words,
+    /// u32 presences, u32 0]`, then the document's words and each block's (`tape_has_kind`). 0 where it has none (a
+    /// tape stored without one).
     pub presence: u32,
     /// `at`'s high word (`at` and this, an i64: `TapeView::offset`).
     pub at_high: u32,
+    /// `source`'s high word: `source` and this, an i64 from the document's first byte (`source_offset`). A source in
+    /// a room of its own (decision 0353 step 7, row 13: loaded there, read where it lies) may be in another slab, before
+    /// the document or past 4 GiB of it, reached by the slabs' GPU addresses as a document in another slab is.
+    pub source_high: u32,
+    /// Unused: the view is a whole number of words (8 bytes), as its high words make it.
+    pub spare: u32,
 }
-const _: () = assert!(std::mem::size_of::<TapeView>() == 128);
+const _: () = assert!(std::mem::size_of::<TapeView>() == 136);
 
 impl TapeView {
     /// The document's first byte from its batch's bound block: `at` and `at_high`, an i64.
@@ -67,13 +71,23 @@ impl TapeView {
     pub fn set_offset(&mut self, offset: i64) {
         (self.at, self.at_high) = (offset as u32, (offset >> 32) as u32);
     }
+
+    /// The source's first byte from the document's: `source` and `source_high`, an i64.
+    pub fn source_offset(&self) -> i64 {
+        (u64::from(self.source_high) << 32 | u64::from(self.source)) as i64
+    }
+
+    /// Sets the source's first byte from the document's (`source_offset`).
+    pub fn set_source_offset(&mut self, offset: i64) {
+        (self.source, self.source_high) = (offset as u32, (offset >> 32) as u32);
+    }
 }
 
 /// The view in UKL: `struct TapeView`, `DocView` its name in the kernels, and each field's offset and
 /// the size asserted against this definition's, so the kernels cannot read a layout of their own.
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 22] = [
+    let fields: [(&str, &str, usize); 24] = [
         ("uint32_t", "at", offset_of!(TapeView, at)),
         ("uint32_t", "nodes", offset_of!(TapeView, nodes)),
         ("uint32_t", "node_base", offset_of!(TapeView, node_base)),
@@ -96,6 +110,8 @@ pub fn ukl() -> String {
         ("uint32_t", "tape", offset_of!(TapeView, tape)),
         ("uint32_t", "presence", offset_of!(TapeView, presence)),
         ("uint32_t", "at_high", offset_of!(TapeView, at_high)),
+        ("uint32_t", "source_high", offset_of!(TapeView, source_high)),
+        ("uint32_t", "spare", offset_of!(TapeView, spare)),
     ];
     let mut s = String::from("#include <ukl/backend.h>\ntypedef struct TapeView {\n");
     for (ty, name, _) in fields.iter() {
@@ -136,7 +152,7 @@ pub const F16Z_PIECES: u32 = 4;
 /// copies past its end).
 pub mod z {
     pub const SLOT_VIEW: i32 = 16;
-    pub const SLOT_BYTES: i32 = 144;
+    pub const SLOT_BYTES: i32 = 160;
     /// The room past a block's bytes: its side lists' parts (32 bytes) and the decode's copies past its end.
     pub const SLACK: usize = 64;
     const _: () = assert!(SLOT_VIEW as usize + std::mem::size_of::<super::TapeView>() <= SLOT_BYTES as usize);
@@ -154,12 +170,13 @@ pub mod z {
 /// generations, `gens - 1` are live at an epoch `E` (the head, `E`, and the frozen ones behind it, `E - 1` ...) and
 /// one, `E + 1`, is a spare, cleared ahead. A lookup looks in the live ones, head first; a miss computes its entry
 /// into the head; a full head makes the spare the head (one compare-and-swap of the epoch) and the thread that
-/// turned it clears the next spare, the oldest live one; a hit in the oldest is copied into the head. A miss waits
-/// for no thread: two that miss one key both compute it. Every loop is bounded; a lookup that finds no room
+/// turned it clears the next spare, the oldest live one; a hit in the oldest is copied into the head. A lookup that
+/// finds its entry being written waits for its writer, `SPIN` times at most (its writer waits for nothing, so it is
+/// running), then computes an entry of its own (decision 0540). Every loop is bounded; a lookup that finds no room
 /// counts a failure (`FAILED`) and reads the dead entry, so a caller that shares the cache refuses its work.
 pub mod cache {
     mod lookup;
-    pub use lookup::{FAILS, NO, PASSES, UNKNOWN, YES, done, text_find, text_open, verdict_get, verdict_put};
+    pub use lookup::{FAILS, NO, PASSES, UNKNOWN, YES, done, failed, get, is_dead, key, ready, still, text_find, text_open, verdict_get, verdict_put};
 
     /// The header's u32s, from the cache's first byte.
     pub const EPOCH: i32 = 0;
@@ -181,8 +198,8 @@ pub mod cache {
     pub const PROMOTED: i32 = 40;
     pub const ROTATED: i32 = 44;
     /// The statistics mode (1: the counts below kept too, for tuning a cache's size), and its counts: lookups that
-    /// found their entry complete, ones that found it being written and waited for it, and blocks decoded while
-    /// another thread decoded the same one (a wait run out, or an index lost to it).
+    /// found their entry complete, ones that found it being written and waited for it, and blocks decoded into an
+    /// entry of their own while another thread decoded the same one (a wait run out).
     pub const STATS: i32 = 48;
     pub const HITS: i32 = 52;
     pub const WAITED: i32 = 56;
@@ -222,9 +239,15 @@ pub mod cache {
     pub const TRIES: u32 = 4;
     pub const SPIN: u32 = 1 << 16;
     /// An index slot's u32: its key's tag (16 bits, never 0) above its entry's number + 1 (0 while its writer has
-    /// claimed the slot and not yet an entry), so a generation holds at most `NUMBER` entries.
+    /// claimed the slot and not yet an entry), so a generation holds at most `NUMBER` entries. A number with no tag
+    /// is an entry given back (not filled): its slot no key's.
     pub const TAG_SHIFT: u32 = 16;
     pub const NUMBER: u32 = (1 << TAG_SHIFT) - 1;
+    /// Index slots a generation at most: `Spec::new`'s for the most entries. A slot's index is masked by it too, on
+    /// every backend, so the offset of a slot's compare-and-swap has a bound the compiler sees. On the M3 Max's GPU a
+    /// swap at an index masked only by the header's count did not act on the slot: two threads both won one
+    /// (decision 0540).
+    pub const SLOTS_MAX: u32 = (2 * NUMBER).next_power_of_two();
     /// The room past the dead entry: an entry's masked loads reach at most an entry and a word past it.
     pub const SLACK: usize = 256;
     /// A guard after the slack, of `GUARD_BYTE`s: no read or write of the cache reaches it (decision 0463), and
@@ -318,7 +341,7 @@ pub mod cache {
             let max = word(MAX)?;
             let mut spec = Spec { gens: word(GENS)?, entries: word(ENTRIES)?, arena: 0, max, slots: word(SLOTS)?, stats: word(STATS)? != 0 };
             spec.arena = u32::try_from(stride.saturating_sub(first)).unwrap_or(0);
-            if spec.gens < 3 || max == 0 || !(max as usize).is_multiple_of(ALIGN) || spec.arena < max || !spec.slots.is_power_of_two() || spec.entries == 0 || spec.entries >= NUMBER || spec.slots < 2 * spec.entries {
+            if spec.gens < 3 || max == 0 || !(max as usize).is_multiple_of(ALIGN) || spec.arena < max || !spec.slots.is_power_of_two() || spec.entries == 0 || spec.entries >= NUMBER || spec.slots < 2 * spec.entries || spec.slots > SLOTS_MAX {
                 return Err(format!("a cache's shape overwritten: {spec:?}"));
             }
             let stated = [(GEN_STRIDE, spec.gen_stride()), (FIRST_ENTRY, spec.first_entry()), (DEAD, spec.dead())];
@@ -344,7 +367,7 @@ pub mod cache {
         /// `init` of a `buf` whose bytes are zero already (fresh anonymous memory): only the header, the stamps and
         /// the guard written, so the pages of entries never taken are never touched (decision 0478 step 2d).
         pub fn init_zeroed(&self, buf: &mut [u8]) -> Result<(), String> {
-            if buf.len() < self.bytes() || !self.slots.is_power_of_two() || self.gens < 3 {
+            if buf.len() < self.bytes() || !self.slots.is_power_of_two() || self.slots > SLOTS_MAX || self.gens < 3 {
                 return Err(format!("a cache of {} bytes for {self:?}", buf.len()));
             }
             let word = |v: usize| u32::try_from(v).map_err(|_| format!("a cache past 4 GiB: {self:?}"));
@@ -413,73 +436,6 @@ pub mod cache {
     }
 }
 
-/// A reader's view of a tape (decision 0353 step 4b): the view, and for a 16z tape a cache of its own after it,
-/// which its reads write: one thread reads through a reader at a time.
-pub struct Reader {
-    words: *mut u128,
-    len: usize,
-}
-
-/// Where a reader's cache starts, from its view.
-const READER_CACHE: usize = 128;
-
-impl Reader {
-    /// `view`'s reader over `tape` (the bytes its offsets count from): the view alone for format 15 or 16; for 16z,
-    /// a cache of two live generations of two blocks after it, which the view names.
-    pub fn new(view: &TapeView, tape: *const u8) -> Reader {
-        let spec = (view.format == F16Z_FORMAT).then(|| cache::Spec::new(3, 2, view.columns[3] as usize));
-        let bytes = READER_CACHE + spec.map_or(0, |s| s.bytes());
-        let len = bytes.div_ceil(16);
-        let words = Box::into_raw(vec![0u128; len].into_boxed_slice()).cast::<u128>();
-        let mut view = *view;
-        if let Some(spec) = spec {
-            // SAFETY: the cache's bytes, after the view, in the buffer just made.
-            let buf = unsafe { std::slice::from_raw_parts_mut(words.cast::<u8>().add(READER_CACHE), spec.bytes()) };
-            spec.init(buf).expect("a reader's cache");
-            let rel = (buf.as_ptr() as i64).wrapping_sub(tape as i64);
-            (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32);
-            view.columns[4] = 0;
-        }
-        // SAFETY: the buffer is at least `READER_CACHE` bytes, 16-aligned; the view is plain words.
-        unsafe { words.cast::<TapeView>().write(view) };
-        Reader { words, len }
-    }
-
-    /// The view the reads take: its address, its cache after it.
-    pub fn view(&self) -> *const TapeView {
-        self.words.cast()
-    }
-
-    /// Its 16z cache's counts (`None` for another format), checked (`cache::Spec::check`).
-    pub fn counts(&self) -> Option<cache::Counts> {
-        (16 * self.len > READER_CACHE).then(|| {
-            // SAFETY: the cache's bytes after the view, in the buffer `new` made; no read runs while this borrows it.
-            cache::Counts::checked(unsafe { std::slice::from_raw_parts(self.words.cast::<u8>().add(READER_CACHE), 16 * self.len - READER_CACHE) })
-        })
-    }
-}
-
-impl Drop for Reader {
-    fn drop(&mut self) {
-        // A 16z reader's cache checked as its reads leave it (decision 0463).
-        if 16 * self.len > READER_CACHE {
-            // SAFETY: the cache's bytes after the view, in the buffer `new` made, which no read uses now.
-            let cache = unsafe { std::slice::from_raw_parts(self.words.cast::<u8>().add(READER_CACHE), 16 * self.len - READER_CACHE) };
-            if let Err(e) = cache::Spec::check(cache) {
-                panic!("a 16z reader's block cache (decision 0463): {e}");
-            }
-        }
-        // SAFETY: the buffer `new` made, of `len` words.
-        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(self.words, self.len)) });
-    }
-}
-
-// SAFETY: a reader owns its buffer; it is read (and its cache written) by one thread at a time.
-unsafe impl Send for Reader {}
-
-/// Format 15's checkpoint stride (`base`'s, a u32 every 16 nodes) and its tails-from-start flag.
-pub const F15_STRIDE_SHIFT: u32 = 4;
-pub const F15_TAIL_FROM_START: u32 = 1 << 12;
 
 /// A field's byte offset in a view.
 pub mod at {
@@ -514,3 +470,20 @@ mod ukl_tests {
         assert_eq!(4 * words, std::mem::size_of::<super::TapeView>(), "{msl}");
     }
 }
+
+/// The auxiliary index's numbers `tape_place` (`reads`) reads by: `aux_index::Kind`'s and `aux_index::K`, which the tape crate
+/// holds equal to these (it depends on this crate, not this on it).
+pub mod aux {
+    /// SIBLINGS' kind and version: every 8th named child.
+    pub const SIBLINGS: u16 = 4;
+    pub const SIBLINGS_VERSION: u16 = 2;
+    /// NAMED's kind and version.
+    pub const NAMED: u16 = 7;
+    pub const NAMED_VERSION: u16 = 1;
+    /// COMMENTS' kind and version: the comment codes, and the comments before each SIBLINGS entry.
+    pub const COMMENTS: u16 = 8;
+    pub const COMMENTS_VERSION: u16 = 1;
+    /// Every `K`-th named child is in SIBLINGS.
+    pub const K: u32 = 8;
+}
+

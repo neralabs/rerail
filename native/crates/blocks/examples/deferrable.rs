@@ -46,7 +46,7 @@ DEFINE_KERNEL2(deferrable, fill, RWBUFFER, uint32_t, p, "[block]", ARGS, FillP, 
     // SAFETY: `#[repr(C)]` u32s.
     unsafe impl rerail_gpu::Pod for FillP {}
     let dir = std::path::PathBuf::from(std::env::args().nth(1).expect("a directory for the slabs' files"));
-    std::fs::create_dir_all(&dir).unwrap();
+    rerail_blocks::mapped::make_folder(&dir).unwrap();
     // MSYNC=0: no msync, the OS writes back alone; RELEASE=0: the wrap is kept until the block is unmapped.
     let msync = std::env::var("MSYNC").map_or(true, |v| v != "0");
     let release = std::env::var("RELEASE").map_or(true, |v| v != "0");

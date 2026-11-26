@@ -1,17 +1,18 @@
 # 0431. No guest documents: strings the rules parse are tape values; programs the grammar holds are the file's
 
-Status: decided (2026-11-18), by the user: "there are no guest documents. The CPU and GPU run on exactly the same
-data"; "parsed strings are only for annotations and maybe format strings, not all strings; the rules decide them";
-"if the rules say 'here is an embedded string, here is its sha and here is its tape', then why can't that be kept in
-the facts that the program produces and not changed next time it's run?". On a guest's node ids: (a), a node of a
-parsed string is named by its tape ("do a"); and the split below ("okay, I agree with that"). Supersedes 0055's guest
-documents (§4, "What was built" 3–4) and 0391 (guest keys) but for a file's programs (§4). On a program's node ids,
-§4's second choice, a key of its own from 0391's registry (2026-11-19, the user: "okay, let's try b"). On how a
-rule names a program, by its file and place (§4, Q324's first choice; 2026-11-19, the user: "pick a for the decision").
-Step 3 done (2026-11-19). Step 5 done (2026-11-19): guests 32.1 s and 34.4 s to 0.16 s and 0.33 s, instructions
-2,476 to 2,421 G (CPU) and 2,071 to 1,800 G (Metal), findings unchanged. Keeps 0055's model of a tape as content, 0058 (hiding,
-normalized strings, `@parse`), 0104 (no SQL in the waves), 0353 (blocks never copied), 0434 (format 16, unchanged).
-Work queue Q306.
+Status: partly built (audited 2026-11-23). Left: @parse of computed strings checked against packs' use; embed_value
+placement; queued-tape programs record; publication.rs program count. Decided (2026-11-18), by the user: "there are no
+guest documents. The CPU and GPU run on exactly the same data"; "parsed strings are only for annotations and maybe
+format strings, not all strings; the rules decide them"; "if the rules say 'here is an embedded string, here is its
+sha and here is its tape', then why can't that be kept in the facts that the program produces and not changed next
+time it's run?". On a guest's node ids: (a), a node of a parsed string is named by its tape ("do a"); and the split
+below ("okay, I agree with that"). Supersedes 0055's guest documents (§4, "What was built" 3–4) and 0391 (guest keys)
+but for a file's programs (§4). On a program's node ids, §4's second choice, a key of its own from 0391's registry
+(2026-11-19, the user: "okay, let's try b"). On how a rule names a program, by its file and place (§4, Q324's first
+choice; 2026-11-19, the user: "pick a for the decision"). Step 3 done (2026-11-19). Step 5 done (2026-11-19): guests
+32.1 s and 34.4 s to 0.16 s and 0.33 s, instructions 2,476 to 2,421 G (CPU) and 2,071 to 1,800 G (Metal), findings
+unchanged. Keeps 0055's model of a tape as content, 0058 (hiding, normalized strings, `@parse`), 0104 (no SQL in the
+waves), 0353 (blocks never copied), 0434 (format 16, unchanged). Work queue Q306.
 
 ## Intro
 
@@ -334,6 +335,27 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
      answer whose produced relation is an input (one the chunk's sources hold parts of: `parsed`, `parse_of`) is no
      candidate now (`demand::split_negations`). A load's answer (`loaded`) is no input and keeps its demand.
    - Measured: PostHog unchanged, 29,747 findings (fa0efeaed6ff); see "Measured (step 7)".
+
+## Measured (R9's placement, once a program)
+
+2026-11-21. A finding placed through a string (R9) joined `guest_place`, `node` and `doc` in its own diagnostic and
+violation rules: on corpus0 × B-now (one pack) 346 diagnostics each made every guest's placement, each split apart by
+the file-local factorizing. The placement is now one relation a program's findings read, `rr_placed_line(n, line, col,
+path)` (`findings::PLACED_LINE`), and `rr_placed_at` reads it. One pack 1.114 T to 1.089 T instructions, the normal
+packs 2.756 T to 2.723 T (off, one thread, an M1 Max); 463 findings, the same set. Test:
+`findings_placed_through_a_string_read_one_placement`.
+
+## Measured (R9's refusal, once a pack)
+
+2026-11-21. Each finding refused its unplaced rows in a rule of its own (`rr_unplaced(clause) :- F(…), node(d, n, …),
+!doc(d, _, _)`, and `tape_of`, `!rr_placed_at` where placed through a string): with its negated reads, each was a
+negation split, a demand and a join of its own, three strata a finding (470 of one pack's on corpus0 × B-now). A
+finding now writes its clause and node alone, a positive projection (`rr_found_node`, `rr_found_through`), and a
+program refuses them in one rule over it. Those relations, `rr_placed_at` and `rr_placed_line` are a pack's, as
+`violation` is (`corpus::own_names`): the same rules in every program, one of each in a pack, not one a program.
+One pack's strata 6,660 to 5,832, their calls 63,651 to 54,606; instructions 0.947 T to 0.939 T, the normal packs
+2.158 T to 2.157 T (off, one thread, an M1 Max); 463 findings, the same set. Tests:
+`a_program_refuses_its_unplaced_findings_in_one_rule`, `a_packs_programs_share_their_unplaced_findings_relations`.
 
 ## Measured (step 7)
 

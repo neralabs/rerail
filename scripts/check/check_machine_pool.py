@@ -28,7 +28,7 @@ BASES = ["native/src", "native/crates", "accel/src", "forest/src"]
 POOLS = {
     "native/crates/context/src/lib.rs": "the machine's pool itself (`Cores`)",
     "accel/src/exec.rs": "the device lanes' host pool and the submissions' slots: the machine's (`Pools`)",
-    "native/src/code_rule_dsl/logic/costs.rs": "the cost model's training, a few threads at a low priority, for one fit",
+    "native/crates/costs/src/code_rule_dsl/logic/costs.rs": "the cost model's training, a few threads at a low priority, for one fit",
     "forest/src/mldb/plugins/jml/randomforest_procedure.rs": "the forest's training bounds the bags trained at once, inside the cost model's training pool",
 }
 

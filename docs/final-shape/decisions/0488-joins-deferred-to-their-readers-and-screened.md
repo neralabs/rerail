@@ -4,9 +4,9 @@
 renumbered 0488 here when roll-up 24 merged it (Q419), and 0500 on investigate-bend-vs-datalog, which roll-up 26
 merged (Q445).)
 
-Status: accepted (2026-11-19). Ported from the Release-debugging worktree's uncommitted work (its session of
-2026-11-17 to 2026-11-19), adapted to decision 0281's version path and decision 0442. The user asked for the port;
-the adaptations are the agent's, and the user may overrule them.
+Status: built (audited 2026-11-23). Accepted (2026-11-19). Ported from the Release-debugging worktree's uncommitted
+work (its session of 2026-11-17 to 2026-11-19), adapted to decision 0281's version path and decision 0442. The user
+asked for the port; the adaptations are the agent's, and the user may overrule them.
 
 ## Intro
 

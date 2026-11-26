@@ -1,7 +1,7 @@
 # 0085: The tree section is a grammar; tier 2 is its state machine
 
-Status: accepted (user, 2026-11-07: "yes, please make that change, then complete all of the
-updates to all of the artifacts, designs and plans that it entails"). The design is
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-07: "yes, please make that change, then complete all of
+the updates to all of the artifacts, designs and plans that it entails"). The design is
 `docs/parser-generators/18-tree-as-grammar.md`.
 
 ## Intro
@@ -21,7 +21,7 @@ the states nor the grammar check. It now states each node's content, as tree-sit
   forward, and the stack carry is the depth (closes matched by nearest smaller value,
   `01-branch-free-design.md` §3). Its plan stores, barriers and verifier stay. Metal comes
   after the CPU.
-- **Lessons ledger, ast-index-spike indexes:** no grammar or parser lessons; #28 (CPU and GPU
+- **Lessons ledger, SQL index prototype indexes:** no grammar or parser lessons; #28 (CPU and GPU
   time only) holds for the cost ratchet.
 
 ## Decision

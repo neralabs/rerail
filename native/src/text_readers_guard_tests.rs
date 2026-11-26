@@ -12,13 +12,14 @@ use crate::executors_guard_tests::{product_lines, repo, sources};
 const SPLITS: [&str; 7] = ["split('\\t')", "split_once('\\t')", "rsplit_once('\\t')", "rsplit('\\t')", "split(\"\\t\")", "split_once(\"\\t\")", ", '\\t')"];
 
 /// The files that may split on a tab, how many times, and why.
-const ALLOWED: [(&str, usize, &str); 7] = [
-    ("native/src/code_rule_dsl/logic/plan/corpus/inputs.rs", 2, "a `.input` file's text (a repository file the rule declares as input), and a consulted read's key (revision, path)"),
-    ("native/src/code_rule_dsl/logic/plan/coverage.rs", 2, "the coverage ledger, a hand-kept document: its pack gaps, and its cells compared without a device"),
-    ("native/src/code_rule_dsl/typing/rounds.rs", 8, "the typing spike's fact dumps (T's research inputs), not a run's outputs"),
-    ("native/src/code_rule_dsl/facts/ygraph/mod.rs", 2, "the y-graph's member lists and its recorded edges (fixtures of the replay)"),
+const ALLOWED: [(&str, usize, &str); 8] = [
+    ("native/crates/rr_root/src/code_rule_dsl/logic/plan/corpus/inputs.rs", 1, "a `.input` file's text (a repository file the rule declares as input)"),
+    ("native/crates/rr_root/src/code_rule_dsl/logic/plan/corpus/leaves.rs", 1, "a consulted read's key (revision, path), in the table of leaf readers (K4, 06bc84f2fa)"),
+    ("native/crates/tests_corpus/src/code_rule_dsl/logic/plan/coverage.rs", 1, "the coverage ledger and matrix, hand-kept documents, their lines split in one place (`ledger_cells`)"),
+    ("native/crates/typing/src/code_rule_dsl/typing/rounds.rs", 8, "the typing spike's fact dumps (T's research inputs), not a run's outputs"),
+    ("native/crates/ygraph/src/code_rule_dsl/facts/ygraph/mod.rs", 2, "the y-graph's member lists and its recorded edges (fixtures of the replay)"),
     ("native/crates/tape_format/src/f16.rs", 1, "a language's format 16 code table, as the lab ships it (`Table::from_text`)"),
-    ("native/src/code_rule_dsl/logic/plan/prepared.rs", 1, "the sizes log a measurement aid writes (`RERAIL_SIZES_LOG`), read back by Q290's oracle (`RERAIL_SIZES_FROM`)"),
+    ("native/crates/plan_search/src/code_rule_dsl/logic/plan/prepared.rs", 1, "the sizes log a measurement aid writes (`RERAIL_SIZES_LOG`), read back by Q290's oracle (`RERAIL_SIZES_FROM`)"),
     ("accel/src/upkeep.rs", 2, "the upkeep jobs' last finish times, a record of the job's own (`.upkeep`)"),
 ];
 
@@ -32,7 +33,8 @@ fn no_rule_or_fact_is_read_from_text() {
     let mut bad = Vec::new();
     let mut seen = Vec::new();
     for f in sources() {
-        let rel = f.strip_prefix(&root).unwrap_or(&f).display().to_string();
+        // With `/` on every OS, as the allowances name files.
+        let rel = f.strip_prefix(&root).unwrap_or(&f).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
         let Ok(text) = std::fs::read_to_string(&f) else { continue };
         let at: Vec<usize> = product_lines(&text)
             .into_iter()

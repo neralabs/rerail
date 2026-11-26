@@ -15,7 +15,8 @@ import { loadNativeBinding } from "../native/native.js";
 import { catalogDigest } from "./rule-catalog.js";
 import { parseRuleDocument, readJsonDocument } from "./rule-documents.js";
 import { compareRulePacks, type LoadedRulePack, type RulePack, type RulePackRule } from "./rule-packs.js";
-import type { RuleDocument } from "./rule-store.js";
+import { RERAIL_DOCUMENT_EXTENSION } from "./rerail-rules/rerail-rule.js";
+import { ruleKindOf, type RuleDocument } from "./rule-store.js";
 
 /** Where a checkout keeps its own rules, relative to its top level. */
 export const WORKTREE_RULES_FOLDER = ".rerail/rules";
@@ -51,16 +52,16 @@ interface RuleFile {
 type RuleFileEntry = Omit<RuleFile, "stamp">;
 
 /**
- * The `.json` entries directly in the checkout's rules folder, by name; undefined when there is no such folder. A
- * symbolic link is never followed, for the folder or a file, so the rules a checkout runs are files inside it.
+ * The `.json` and `.rerail` entries directly in the checkout's rules folder, by name; undefined when there is no such
+ * folder. A symbolic link is never followed, for the folder or a file, so the rules a checkout runs are files inside it.
  */
-function ruleFiles(checkoutRoot: string, extension = ".json"): readonly RuleFile[] | undefined {
+function ruleFiles(checkoutRoot: string): readonly RuleFile[] | undefined {
   const parent = join(checkoutRoot, ".rerail");
   const directory = worktreeRulesDirectory(checkoutRoot);
   try {
     if (!lstatSync(parent).isDirectory() || !lstatSync(directory).isDirectory()) return undefined;
     return readdirSync(directory)
-      .filter(name => name.endsWith(extension))
+      .filter(name => name.endsWith(".json") || name.endsWith(RERAIL_DOCUMENT_EXTENSION))
       .sort(compareDeterministicStrings)
       .map(name => {
         const path = join(directory, name);
@@ -83,9 +84,17 @@ function documentProblem(error: unknown): string {
 
 /** The pack's entry for one of its rules: titled by its title, else its description, else its id; on, in its document's mode. */
 function packRuleOf(document: RuleDocument): RulePackRule {
-  const described = document.kind === "code" ? document.rule.description?.trim() : undefined;
-  const title = document.rule.title?.trim() || described || document.rule.id;
-  return { id: document.rule.id, kind: document.kind, title, group: "This worktree", mode: document.rule.mode, on: true };
+  const described = document.kind === "conversation" ? undefined : document.rule.description?.trim();
+  const titled = document.kind === "rerail" ? undefined : document.rule.title?.trim();
+  const title = titled || described || document.rule.id;
+  return { id: document.rule.id, kind: ruleKindOf(document), title, group: "This worktree", mode: document.rule.mode, on: true };
+}
+
+/** Each `.rerail` file among `files`, left out: a rule written in `.rerail` runs only from a rule pack for now. */
+function leftOutRerailFiles(files: readonly RuleFile[]): SkippedRulePack[] {
+  return files
+    .filter(file => file.name.endsWith(RERAIL_DOCUMENT_EXTENSION))
+    .map(file => ({ path: file.path, packageName: null, version: null, reason: `a rule written in .rerail is not supported yet in ${WORKTREE_RULES_FOLDER}; it runs from a rule pack` }));
 }
 
 /**
@@ -191,6 +200,7 @@ function withWorktreePack(installed: RuleCatalog, loaded: LoadedRulePack | undef
     sources: new Map([...installed.sources, ...loaded.sources]),
     digest: `sha256:${createHash("sha256").update(`${installed.digest}\0${catalogDigest([loaded])}`).digest("hex")}`,
     skipped: [...installed.skipped, ...skipped],
+    notRun: installed.notRun,
   };
 }
 
@@ -211,8 +221,8 @@ export function worktreeRuleCatalog(installed: RuleCatalog, checkoutRoot: string
   const stamp = files.map(file => `${file.name}\0${file.stamp}`).join("\n");
   const cached = worktreeCatalogs.get(checkoutRoot);
   if (cached !== undefined && cached.installed === installed && cached.stamp === stamp) return cached.catalog;
-  const { loaded, skipped } = readWorktreePack(installed, worktreeRulesDirectory(checkoutRoot), files);
-  const catalog = withWorktreePack(installed, loaded, skipped);
+  const { loaded, skipped } = readWorktreePack(installed, worktreeRulesDirectory(checkoutRoot), files.filter(file => file.name.endsWith(".json")));
+  const catalog = withWorktreePack(installed, loaded, [...skipped, ...leftOutRerailFiles(files)]);
   worktreeCatalogs.set(checkoutRoot, { installed, stamp, catalog });
   return catalog;
 }
@@ -232,10 +242,13 @@ export function worktreeScanCatalog(installed: RuleCatalog, root: string, fromRe
     const { loaded, skipped } = readWorktreePack(installed, WORKTREE_RULES_FOLDER, fromRef.json, fromRef.readJson);
     return withWorktreePack(installed, loaded, skipped);
   })();
-  const files = fromRef?.rr ?? ruleFiles(root, ".rerail");
+  const files = fromRef?.rr ?? ruleFiles(root)?.filter(file => file.name.endsWith(RERAIL_DOCUMENT_EXTENSION));
   if (!files?.length) return base;
   const rrPolicies: RrPolicySource[] = [];
-  const skipped = [...base.skipped];
+  // The checkout's catalog leaves its `.rerail` files out (`leftOutRerailFiles`); a scan runs them, so each is
+  // skipped only for why it could not be read here.
+  const running = new Set(files.map(file => file.path));
+  const skipped = base.skipped.filter(entry => !running.has(entry.path));
   for (const file of files) {
     try {
       if (!file.regular || file.size > MAX_RULE_DOCUMENT_BYTES) throw new Error("expected a regular policy file of at most 1 MiB");
@@ -250,7 +263,7 @@ export function worktreeScanCatalog(installed: RuleCatalog, root: string, fromRe
       const mode = configured === "steer" || configured === "block" ? configured : "log";
       rrPolicies.push({ id: policy.id, path: file.path, payloadHash: rrPayloadHash(programInputs), mode, inputs: programInputs });
     } catch (error) {
-      skipped.push({ path: file.path, packageName: null, version: null, reason: String(error) });
+      skipped.push({ path: file.path, packageName: null, version: null, reason: error instanceof Error ? error.message : String(error) });
     }
   }
   return { ...base, rrPolicies, skipped };

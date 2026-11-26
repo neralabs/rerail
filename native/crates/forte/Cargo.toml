@@ -1,0 +1,23 @@
+# Written by hand for the crate split (step 7e): its sources are where they were, mounted in place (src/lib.rs).
+[package]
+name = "rerail-forte"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Blade's Forte parser (blade::forte): its lexer, parser, directives and trees, under the PHP pack."
+
+[features]
+default = ["rerail-adapters/default", "rerail-lang/default"]
+test-hooks = ["rerail-adapters/test-hooks", "rerail-lang/test-hooks"]
+
+[dependencies]
+ast-grep-core = "=0.51.0"
+indexmap = "=2.14.2"
+serde_json = "1.0"
+rerail-lang = { path = "../lang", default-features = false }
+# The literal trees' ids (`literal::{ID_FLAG, NEXT_TREE, TREE_MASK}`), which Forte's trees share.
+rerail-adapters = { path = "../adapters", default-features = false }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-forte = { path = ".", features = ["test-hooks"] }

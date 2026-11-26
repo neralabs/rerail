@@ -1,6 +1,6 @@
 # 0056: Bounded cross-file rounds are a program's declaration; typing answers are shared facts
 
-Status: proposed (2026-11-07)
+Status: superseded by 0065 / 0276 §9 (audited 2026-11-23). Proposed (2026-11-07)
 
 ## Intro
 
@@ -68,7 +68,7 @@ own namespace, so two rules reading the same answers held two copies.
 
 ## Prior work consulted
 
-- **ast-index-spike:** design index §17 scopes cross-file facts out. It offers no prior form for bounded rounds,
+- **SQL index prototype:** design index §17 scopes cross-file facts out. It offers no prior form for bounded rounds,
   as 0035 and 0047 record.
 - **The ledger's row 20** (partition by file; global machinery only where needed): rounds now run only where a
   program asks for them.

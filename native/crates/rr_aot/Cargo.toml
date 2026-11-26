@@ -3,31 +3,24 @@ name = "rerail-rr-aot"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Deprecated (decision 0550). Tier 2 for .rerail built ahead of time: the JIT's Cranelift IR as Rust, compiled by rustc, run on the JIT's harness, to compare the two compilers' code."
+description = "The .rerail parser as Rust, written by the Bitlex compiler from the grammar (rr_parser/rr.bitlex): tier 1 from its lexer statements (`bitlex_lex_rust`), tier 2 from its tree rules (`bitlex_rust`); rerail-rr-parser's tests check it against the JIT."
 
 [features]
 # The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
-test-hooks = ["rerail-context/test-hooks", "rerail-compiler/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks", "rerail-tape-format/test-hooks"]
-# The generated tiers: the build script writes the parser's code as Rust (about 700 KB) and this
-# crate compiles it. Off by default, so a workspace build or test leaves them out:
-# `cargo test -p rerail-rr-aot --features generated --profile profiling`.
-generated = ["dep:rerail-compiler", "dep:rerail-rr-parser", "dep:rerail-context"]
+test-hooks = ["rerail-tape-format/test-hooks", "rerail-rr-syntax?/test-hooks"]
+# The speed tool (`rr-aot-speed`): it writes each tape through the `.rerail` parser's own sink (`lean::Sink16`).
+speed = ["dep:rerail-rr-syntax"]
 
 [dependencies]
-rerail-context = { path = "../context" }
-rerail-compiler = { path = "../compiler" }
-rerail-rr-parser = { path = "../rr_parser" }
-rerail-rr-syntax = { path = "../rr_syntax" }
-# The language the format 16 source is generated for (`lang`, decision 0535).
+# Stage 1 of tier 1 on simdjson's backends, as the lean lexer's (`bitlex_lex_rust`).
+rerail-simd8 = { path = "../simd8" }
 rerail-tape-format = { path = "../tape_format" }
+rerail-rr-syntax = { path = "../rr_syntax", optional = true }
 
-[build-dependencies]
-rerail-context = { path = "../context", optional = true }
-rerail-compiler = { path = "../compiler", optional = true }
-rerail-rr-parser = { path = "../rr_parser", optional = true }
-rerail-tape-format = { path = "../tape_format" }
+[[bin]]
+name = "rr-aot-speed"
+required-features = ["speed"]
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-rr-aot = { path = ".", features = ["test-hooks"] }
-libc = "0.2.189"

@@ -2,8 +2,11 @@
 
 (Was 0460 on Go-C-and-C-support; renumbered at its roll-up into rr-align, roll-up 12, past 0474.)
 
-Status: accepted (2026-11-19); being built in the steps below. Revises 0448 (§2's memory, §3's
-passes) and 0436 (R1, the tape's format). Numbered past the highest in any worktree then (0459).
+Status: built (audited 2026-11-23). Accepted (2026-11-19); being built in the steps below. Revises 0448 (§2's memory,
+§3's passes) and 0436 (R1, the tape's format). Numbered past the highest in any worktree then (0459).
+
+> **Superseded in part by 0653 (2026-11-23):** §4's persistent grid is gone; the setup is a program of phases on a
+> work queue, a fixed handful of launches still (`PP_LAUNCHES` of `pp_run` and `pp_rebase` a command).
 
 The user, on 0448 as built:
 
@@ -153,7 +156,7 @@ with the unit, because each primitive's number of levels was chosen by its capac
 | R1 | The preprocessor tape is a format 16 image with its newline index, and its reads give the lean writer's nodes | `the_pp_tape_is_a_format_16_image` |
 | R2 | The evaluator reads its files where the residency placed them: no copy of a source or a tape | a guard over `pp_eval.rs`; `the_names_pass_reads_the_tapes_in_place` |
 | R3 | `__LINE__` is the tape's newline index's | `line_and_file_are_the_serial_passes` |
-| R4 | One block a batch, leased within the budget: no `MappedBuffer` of the arena | a guard over `pp_expand.rs` and `pp_eval.rs`; `a_unit_past_its_room_runs_again_larger` |
+| R4 | One block a batch, leased within the budget: no `MappedBuffer` of the arena | a guard over `pp_expand.rs` and `pp_eval.rs`; `a_unit_past_its_token_room_runs_again_larger` |
 | R5 | Each persistent-grid primitive equals a host reference from 1 to 10^6 elements, at G = 1, 8 and the device's G | the library's tests, on Metal and UKL's CPU backend |
 | R6 | The grid barrier: 10,000 in a row, each seeing every group's writes before it; past residency, `barrier` and no hang | the library's tests |
 | R7 | An evaluation is the same fixed handful of launches for the smallest and the largest unit | `an_evaluation_is_a_fixed_handful_of_launches` |
@@ -260,7 +263,9 @@ with the unit, because each primitive's number of levels was chosen by its capac
     of those stages.
   - The groups' sums are sized by the run's groups. A failed barrier sets `X_BARRIER`. The
     host sees it in the grid's failure word and runs again at half the groups (`fewer`), down
-    to 1.
+    to 1. Superseded by 0540 §3 (2026-11-21): `pp_setup` joins its grid (`ukl_grid_join`), so
+    the grid is the dispatched groups that run, a barrier waits only for them, and a failed one
+    is `BackendFailure`. `fewer` is gone; `Expanded::groups` is the count that joined.
   - Tests:
     - `an_evaluation_is_a_fixed_handful_of_launches` (R7): an empty unit, a unit of 800
       definitions and uses, and a unit that runs again at a larger rung, all at 4 launches. A

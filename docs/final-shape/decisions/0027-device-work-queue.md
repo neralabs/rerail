@@ -1,7 +1,7 @@
 # 0027: device-side enqueue is a work queue inside a persistent dispatch
 
-Status: accepted (2026-11-02, list step 17; reworked the same day at the user's direction, replacing
-a first version that limited device loops to one threadgroup's own loop)
+Status: built (audited 2026-11-23). Accepted (2026-11-02, list step 17; reworked the same day at the user's direction,
+replacing a first version that limited device loops to one threadgroup's own loop)
 
 ## Context
 
@@ -21,10 +21,10 @@ What Metal offers:
   group, so a worker must never wait on another without a bound.
 
 The evidence:
-- ast-index-spike: GPU work is absent (DI §19, "Nothing was designed or measured for GPU"), so
+- SQL index prototype: GPU work is absent (DI §19, "Nothing was designed or measured for GPU"), so
   this is new ground. The spike's structural acceptance rule applies: a bound must follow from the
   work, not be a fixed budget (lessons ledger row 26).
-- Tempo-metal's host-driven generations stopped at 595 dispatches (00-review), and one task row
+- Predecessor-metal's host-driven generations stopped at 595 dispatches (00-review), and one task row
   per tuple needed 1.99 GB (ledger row 1): work must not be planned per round by the host, nor
   stored per tuple.
 

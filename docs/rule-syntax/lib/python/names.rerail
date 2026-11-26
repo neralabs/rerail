@@ -23,6 +23,7 @@
 //
 // Precision: this is approximate, file-local name resolution, not a type checker. Lookup lands on a scope, and every
 // binding of the name in that scope is a candidate (may-precise); only straight-line rebinding (layer 5) prunes.
+#include "python/annotation.rerail"   // before imports: names and imports are one unit, listed after what it includes
 #include "python/imports.rerail"
 
 // Kind sets used with `nearest`/`within`. `scope` is every node that opens a Python scope.
@@ -209,8 +210,8 @@ bound_in(c, x) :- kind(c, "class_definition"), (x = "__qualname__" ; x = "__modu
 // assignment" check), which is why bound_in ignores statement order.
 .decl walk(n: node, x: symbol, s: node)
 walk(n, x, s) :- nameref(n, x), wstart(n, s), !tp_ref(n, x).
-walk(n, x, p) :- walk(n, x, s), !bound_in(s, x), !gbefore(n, x, s), nearest(s, p, lfscope).
-walk(n, x, p) :- walk(n, x, s), cls_late(n, x, s), nearest(s, p, lfscope).
+walk(n, x, p) :- walk(n, x, s), !bound_in(s, x), !gbefore(n, x, s), scope_up(s, p).
+walk(n, x, p) :- walk(n, x, s), cls_late(n, x, s), scope_up(s, p).
 // gbefore(n, x, s): s declares x `global` and binds it before read n. Ruff records that binding in s too (flagged
 // global), and a read after it stops there: the walk ends at s (look below), as W's does. A read before any such
 // binding sees only the `global` statement and continues in the module. A read in an assignment's own value is
@@ -232,15 +233,14 @@ cls_early(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x), 
 cls_early(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x), asg(s, x, _, a), a < n, !within(n, a).
 // wstart(n, s): where the lookup of n starts: its nearest scope or comprehension, except that a comprehension's
 // first iterable is looked up from the scope around the comprehension. (One level: an iterable nested in another
-// comprehension's first iterable starts at the outer comprehension.) A name parsed from a string annotation starts
-// where the string sits.
+// comprehension's first iterable starts at the outer comprehension.) A name in a string annotation's tree starts
+// where the string sits (`ann_start` below).
 .decl wstart(n: node, s: node)
 wstart(n, s) :- nameref(n, _), nearest(n, s, lscope), kind(s, k), scope(k), !def_outside(n, _).
 wstart(n, c) :- nameref(n, _), nearest(n, c, lscope), kind(c, k), comp_scope(k), !in_first_iter(n, c).
 wstart(n, s) :- def_outside(n, f), nearest(f, s, lscope).
 wstart(n, s) :- in_first_iter(n, c), nearest(c, s, lscope).
-wstart(n, s) :- nameref(n, _), parsed_in(n, h), nearest(h, s, lscope), kind(s, k), scope(k).
-wstart(n, c) :- nameref(n, _), parsed_in(n, h), nearest(h, c, lscope), kind(c, k), comp_scope(k).
+wstart(n, s) :- nameref(n, _), host_node(n, h), ann_start(h, s).   // a name of a string annotation's tree
 // def_outside(n, f): read n sits in function or lambda f's parameters (an annotation, a default) or its return
 // annotation, which run where the definition does: the lookup starts in the scope around f. One level: a lambda
 // default inside another definition's parameters starts at that definition.
@@ -286,6 +286,21 @@ miss(n, x) :- walk(n, x, m), kind(m, "module"), !bound_in(m, x).
 // e.g. `len(xs)` with no local `len` gives builtin_ref(<len>, "len").
 .decl builtin_ref(n: node, x: symbol)
 builtin_ref(n, x) :- miss(n, x), builtin(x), docof(n, d), modnode(d, m), !star(m).
+// A name in a string annotation's tree (python/annotation) is looked up from the string's place (`wstart`), and
+// steps through the host's scopes: the annotation context's instance of `walk`, `look` and `miss` is these rules over
+// its trees' names, reading the host's scopes and bindings finished. The host reads its lookups as ann_look and
+// ann_miss, where a host fact counts an annotation's names (`ref_site`; python/typing's `read_in`, python/pyflakes'
+// `unbound_ref`).
+//   ann_start(h, s)    the lookup of a name whose host node is h (`host_node`: the string's content, the same for
+//                      every node of its tree) starts at scope (or comprehension) s, the string's
+//   scope_up(s, p)     from scope s a lookup steps to p; a module has no step
+.decl ann_start(h: node, s: node)
+ann_start(h, s) :- ann_host(h, t), nearest(t, s, lscope).
+.decl scope_up(s: node, p: node)
+scope_up(s, p) :- kind(s, k), lscope(k), nearest(s, p, lfscope).
+.context annotation of python roots ann_tree exports look, miss
+.from python ann_start, scope_up, bound_in, defn, asg, otgt, ibind, gbind for annotation
+.from annotation ann_in, look as ann_look, miss as ann_miss
 
 // ---- unconditional rebinding --------------------------------------------------------------------------------------
 // A statement of a scope's own body (not inside an `if`, loop or `try`) binding x; a later one replaces an earlier one.
@@ -479,6 +494,7 @@ site_scope(st, k) :- del_site(s, _, st), kind(s, sk), scope_kind(sk, k).
 // e.g. `x = 1; if c: x = 2; print(x)`: the x in print has two ref_site rows. No flow pruning is done here.
 .decl ref_site(r: node, site: node)
 ref_site(r, site) :- look(r, x, s), binding(s, x, site, _), !bind_only(r).
+ref_site(r, site) :- ann_look(r, x, s), binding(s, x, site, _).   // a name an annotation's string reads
 // bind_only(n): identifier n binds a name and does not read it, so it is no reference to any site: the targets of
 // `x = 1`, `for x in`, `with … as x`, `except E as x`, match captures and `(x := v)`, a parameter's name, and the
 // names in import, global and nonlocal statements. `x += 1` reads x as well as binding it, so it is not here.
@@ -535,41 +551,11 @@ global_ref(n, x) :- builtin_ref(n, x).
 .decl annotation(n: node)
 annotation(t) :- ann_root(t).
 annotation(n) :- ann_root(t), within(n, t).                            // every node below an annotation root
-annotation(n) :- parsed_in(n, _).                                      // and the trees parsed from its strings
-annotation(r) :- string_annotation(s), parsed(s, "annotation", r).   // native sub-grammar parse of "Foo[int]"
-annotation(n) :- string_annotation(s), parsed(s, "annotation", r), within(n, r).
-// ann_root(t): the root of an annotation: a parameter's, a return's, an annotated assignment's.
+annotation(n) :- ann_in(n, _).                                         // and the trees of its strings (python/annotation)
+// ann_root(t) (python/annotation): the root of an annotation: a parameter's, a return's, an annotated assignment's.
 //   def f(x: int) -> str: ...      ann_root(<int>), ann_root(<str>)
-.decl ann_root(t: node)
-ann_root(t) :- kind(p, k), (k = "typed_parameter" ; k = "typed_default_parameter"), field(p, "type", t).
-ann_root(t) :- kind(f, "function_definition"), field(f, "return_type", t).
-ann_root(t) :- kind(a, "assignment"), field(a, "type", t).
-// parsed_in(e, s): e is in the tree parsed from string annotation s, or from a string nested in one; s is the
-// outermost string. The tree has no ancestors of its own, so s's place stands for it: lookup (wstart) starts at
-// s's scope. A string that is part of an implicit concatenation is parsed as the whole; strings in `Literal[...]`
-// are values, not types, and are not parsed.
-//   def f(x: "List['int']"): ...      parsed_in(<List>, <"List['int']">), parsed_in(<int>, <"List['int']">)
-.decl parsed_in(e: node, s: node)
-.decl ann_ctx(s: node)  // s is an annotation root or inside one: where a string annotation can stand
-ann_ctx(s) :- ann_root(a), (s = a ; within(s, a)).
-parsed_in(e, s) :- ann_ctx(s), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
-// s is a string inside a parsed annotation: only those are asked to be parsed again. parsed_in binds s inside a
-// parsed tree, so s is in a parsed string already; a test of its document's role (`d = @doc(s)` and the role
-// relation decision 0431 removed, once frag_str) was planned before the fragments existed and crossed each with
-// every string of the chunk (4.2 M rows on 859 posthog files, none kept).
-parsed_in(e, s0) :- parsed_in(s, s0), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
-.decl str_node(s: node)  // a string or an implicit concatenation: what a parse request may name
-str_node(s) :- kind(s, "string").
-str_node(s) :- kind(s, "concatenated_string").
-.decl ann_str(s: node)
-ann_str(s) :- (kind(s, "string") ; kind(s, "concatenated_string")), !concat_part(s), !literal_str(s).
-.decl concat_part(s: node)  // s is one of the strings of `"a" "b"`
-concat_part(s) :- kind(c, "concatenated_string"), child(c, s, _).
-.decl literal_str(s: node)  // s is inside the brackets of `Literal[...]` or `x.Literal[...]`
-literal_str(s) :- kind(l, "subscript"), field(l, "value", v), (kind(v, "identifier") ; kind(v, "attribute")),
-    text(v, t), (t = "Literal" ; suffix(".Literal", t)),
-    within(s, l), !within(s, v).
-literal_str(s) :- kind(l, "generic_type"), child(l, v, 0), text(v, "Literal"), within(s, l).
+// ann_ctx(s), str_node(s), ann_str(s) (python/annotation): where a string annotation can stand, what a parse request
+// may name, a string read as a type.
 // type_checking_block(b): b is the body of `if TYPE_CHECKING:` (from typing or typing_extensions). Code there never
 // runs, so imports in it do not count as import-time (see python/imports' import_time).
 .decl type_checking_block(b: node)

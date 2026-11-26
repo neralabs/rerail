@@ -1,7 +1,7 @@
 # 0596: The openers pick the rows
 
 Status: decided (the user, 2026-11-21: "please address these": the fourth, "strings and comments are opened as
-numbered regions with `plain` state; lean reads a string to its end"). Follows 0595 and 0588 (the dispatch).
+numbered regions with `plain` state; lean reads a string to its end"). Follows 0595 and 0614 (the dispatch).
 
 ## Intro
 

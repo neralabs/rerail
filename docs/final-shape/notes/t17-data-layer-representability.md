@@ -1,6 +1,6 @@
 # T17: the 60 data-layer rules in Rerail logic — representability
 
-Workstream C, branch `jeremybarnes/final-rerail-shape-dl-census` from `35c010235`. The question is 03 §12's: what of the
+Workstream C, branch `final-rerail-shape-dl-census` from `35c010235`. The question is 03 §12's: what of the
 60 data-layer rules (`packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/`, deferred to Phase 11) Rerail logic can say,
 what needs a named §12 extension, what needs facts that do not exist, and what is outside the fragment.
 

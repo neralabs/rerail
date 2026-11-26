@@ -1,6 +1,6 @@
 # 0042: One text layer: a regex costs what its best rewrite costs
 
-Status: proposed (2026-11-05)
+Status: built (audited 2026-11-23). Proposed (2026-11-05)
 
 ## Intro
 

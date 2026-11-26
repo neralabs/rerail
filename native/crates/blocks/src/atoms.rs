@@ -149,7 +149,7 @@ pub struct AtomsW {
     raw: Raw,
     /// Where it writes back without a shared mapping (WASI): the block lives in memory there. `None` for a block in
     /// anonymous memory.
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     file: Option<std::fs::File>,
     /// How its write-backs reach the disk (`sync`, decision 0481).
     flush: Flush,
@@ -163,14 +163,14 @@ impl AtomsW {
     /// A new block at `path` for ids from `first`, with room for `cap` atoms and `bytes_cap` bytes of strings.
     pub fn create(path: &Path, first: u32, tag: u64, cap: u32, bytes_cap: u64, flush: Flush) -> io::Result<AtomsW> {
         let need = Self::need(cap, bytes_cap);
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let block = Block::file(path, kind::ATOMS, need)?;
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let block = Block::anon(kind::ATOMS, need);
         let w = AtomsW {
             raw: Self::lay_out(&block, first, tag, cap, bytes_cap),
             block: std::sync::Arc::new(block),
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             file: Some(std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?),
             flush,
         };
@@ -185,7 +185,7 @@ impl AtomsW {
         AtomsW {
             raw: Self::lay_out(&block, first, 0, cap, bytes_cap),
             block: std::sync::Arc::new(block),
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             file: None,
             // Never written to a file: nothing to wait for.
             flush: Flush::None,
@@ -236,7 +236,7 @@ impl AtomsW {
         let mut w = AtomsW {
             block: std::sync::Arc::new(block),
             raw,
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             file: Some(std::fs::OpenOptions::new().read(true).write(true).open(path)?),
             flush,
         };
@@ -356,14 +356,17 @@ impl AtomsW {
     /// `Synced`, on the disk (the dirty pages written back, then the file flushed: a barrier on macOS, `fdatasync`
     /// elsewhere); otherwise the OS's to write. Without shared mappings, the block's bytes are written to its file.
     pub fn sync(&self) -> io::Result<()> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         return self.block.sync_mapped(self.flush);
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             use std::io::{Seek, Write};
             let Some(mut f) = self.file.as_ref() else { return Ok(()) };
             f.seek(io::SeekFrom::Start(0))?;
-            f.write_all(self.block.bytes(0, self.block.used()))?;
+            let bytes = self.block.bytes(0, self.block.used());
+            // The kernel reads and writes a reservation's pages without faulting them in (Windows: `crate::windows`).
+            crate::mem::commit(bytes.as_ptr().cast_mut(), bytes.len())?;
+            f.write_all(bytes)?;
             if self.flush.waits() { f.sync_data() } else { Ok(()) }
         }
     }
@@ -382,11 +385,15 @@ impl AtomsW {
             std::ptr::write_volatile(&mut h.state, FROZEN);
         }
         self.sync()?;
-        #[cfg(unix)]
-        if let Some(f) = self.block.mapped_file() {
-            f.set_len(len)?;
+        // The file cut once this writer's view is gone: Windows cuts no file a view maps (`block::cut`).
+        #[cfg(any(unix, windows))]
+        if let Some(f) = self.block.mapped_file().map(std::fs::File::try_clone).transpose()? {
+            drop(self);
+            crate::block::cut(&f, len)?;
+            // Frozen: read-only on disk too (`mapped`, decision 0574).
+            crate::mapped::mark_frozen(&f)?;
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         if let Some(f) = &self.file {
             f.set_len(len)?;
         }
@@ -490,11 +497,15 @@ pub struct Run {
     /// How many atoms and string bytes the block has room for (its spans' lengths).
     pub cap: u32,
     pub bytes_cap: u64,
+    /// The block's table from hash to id (`AtomsRoot::table`) and its slots (a power of two): a find by a string's
+    /// hash (`find_in`, the CLIF's `atoms_find`) probes it.
+    pub table: *const u64,
+    pub slots: u64,
 }
 
 impl Raw {
     fn run(&self, first: u32, end: u32) -> Run {
-        Run { first, end, from: self.first, ends: self.ends, strings: self.strings, cap: self.cap, bytes_cap: self.bytes_cap }
+        Run { first, end, from: self.first, ends: self.ends, strings: self.strings, cap: self.cap, bytes_cap: self.bytes_cap, table: self.table.cast(), slots: self.mask + 1 }
     }
 }
 
@@ -531,6 +542,8 @@ structure! {
         pub pad: u32,
         pub ends: Span<u64>,
         pub strings: Span<u8>,
+        /// The block's table from hash to id: a slot is the hash's high half, then the id plus one (`0` empty).
+        pub table: Span<u64>,
     }
 }
 
@@ -589,6 +602,7 @@ impl AtomsDir {
                 e.pad = 0;
                 set(std::ptr::from_ref(&e.ends).cast(), &e.ends.off, &e.ends.len, at(run.ends.cast()), u64::from(run.cap));
                 set(std::ptr::from_ref(&e.strings).cast(), &e.strings.off, &e.strings.len, at(run.strings), run.bytes_cap);
+                set(std::ptr::from_ref(&e.table).cast(), &e.table.off, &e.table.len, at(run.table.cast()), run.slots);
             }
         }
         block.set_root(root);
@@ -642,6 +656,49 @@ pub unsafe fn str_in<'a>(dir: *const u8, id: u32) -> Option<&'a [u8]> {
     }
 }
 
+/// The id of string `s`, whose hash (the store's, `hash_str`) is `h`, in the directory at `dir` (host addresses), as
+/// the CLIF's `atoms_find` finds it with its caller's compare (the kernels'): each run's table probed from `h`, a slot
+/// of `h`'s high half naming an atom of the run's own ids (`first..end`: one its block holds below them is another
+/// run's) whose string is `s`. Id 0 is the empty string; `None` where no run holds `s`.
+///
+/// # Safety
+/// As `str_in`'s.
+pub unsafe fn find_in(dir: *const u8, s: &[u8], h: u64) -> Option<u32> {
+    if s.is_empty() {
+        return Some(0);
+    }
+    // SAFETY: the caller's: a live directory, its spans in this address space, its runs' blocks mapped.
+    unsafe {
+        let root = &*dir.cast::<AtomsDirRoot>();
+        let entries = std::slice::from_raw_parts(root.entries.as_ptr(), root.n as usize);
+        let tag = h & 0xFFFF_FFFF_0000_0000;
+        for e in entries {
+            let (table, slots) = (e.table.as_ptr(), e.table.len.load(Relaxed));
+            if slots == 0 {
+                continue;
+            }
+            let mut i = h & (slots - 1);
+            for _ in 0..slots {
+                let v = *table.add(i as usize);
+                if v == 0 {
+                    break;
+                }
+                let id = (v as u32).wrapping_sub(1);
+                if v & 0xFFFF_FFFF_0000_0000 == tag && id >= e.first && id < e.end {
+                    let k = (id - e.from) as usize;
+                    let ends = e.ends.as_ptr();
+                    let (start, end) = (if k == 0 { 0 } else { *ends.add(k - 1) as usize }, *ends.add(k) as usize);
+                    if std::slice::from_raw_parts(e.strings.as_ptr().add(start), end - start) == s {
+                        return Some(id);
+                    }
+                }
+                i = (i + 1) & (slots - 1);
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// Decision 0478 step 2b: an id's string read through the directory, by the host's read (`str_in`, the CLIF's
@@ -674,6 +731,20 @@ mod tests {
             assert_eq!(str_in(dir.root(), 0), Some(&b""[..]), "id 0, the empty string");
             assert_eq!(str_in(dir.root(), 21), None, "past every run");
         }
+        // Found by its hash in its run's table: an id the directory holds; one below the second run's first, in its
+        // block but no run's, is not found there; a string no block holds is not.
+        for (k, w) in words.iter().enumerate() {
+            let id = k as u32 + 1;
+            // SAFETY: as above.
+            let got = unsafe { super::find_in(dir.root(), w.as_bytes(), k_hash(w)) };
+            assert_eq!(got, (!(9..12).contains(&id)).then_some(id), "{w}");
+        }
+        // SAFETY: as above.
+        unsafe {
+            assert_eq!(super::find_in(dir.root(), b"", 0), Some(0), "the empty string");
+            assert_eq!(super::find_in(dir.root(), b"absent", k_hash("absent")), None);
+            assert_eq!(super::find_in(dir.root(), b"w1", k_hash("w2z")), None, "another string's hash");
+        }
     }
 
     fn k_hash(s: &str) -> u64 {
@@ -690,7 +761,7 @@ mod tests {
     fn dir(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("rerail-atoms-block-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
+        crate::mapped::make_folder(&d).unwrap();
         d
     }
 
@@ -758,12 +829,19 @@ mod tests {
         for (s, id) in [("a", 0), ("b", 1), ("c", 2)] {
             assert_eq!(again.find(s, h(s)), Some(id));
         }
-        // Frozen: the file shrinks to what it holds, and still reads.
+        // (Windows cuts no file a view maps: the readers' views go first.)
+        drop((v, old));
+        // Frozen: the file is what it holds, and still reads. A mapped file (Unix, Windows) is the whole reservation
+        // until then, so it shrinks; elsewhere the file was written only to the block's end (`sync`).
         again.sync().unwrap();
         let before = std::fs::metadata(&path).unwrap().len();
         again.freeze().unwrap();
-        assert!(std::fs::metadata(&path).unwrap().len() < before);
+        let after = std::fs::metadata(&path).unwrap().len();
         let frozen = AtomsV::open(&path, 4).unwrap();
+        assert_eq!(after, frozen._block.header().length, "the frozen file is its header's length");
+        #[cfg(any(unix, windows))]
+        assert!(after < before, "the mapping's unwritten tail is given back");
+        let _ = before;
         assert_eq!(frozen.find("e", h("e")), Some(3));
         assert_eq!(frozen.str(0), Some("a"));
         assert!(AtomsW::reopen(&path, 4, Flush::Synced).is_err(), "a frozen block takes no appends");

@@ -1,1 +1,0 @@
-`rerail daemon stop` no longer fails with `kill ESRCH` when the daemon finishes shutting down just as the stop signals it. That can happen when the daemon spends about as long as the stop waits finishing a busy session's requests. The stop now counts that daemon as stopped and removes its records.

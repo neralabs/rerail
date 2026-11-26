@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { constants, type Stats } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
@@ -27,6 +27,7 @@ import {
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { claudeCodeReportedPreimage } from "../engine/code-rule/tool-result/reported-preimage.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
+import { GitIgnoreMatchers } from "../engine/native/git-ignore-matchers.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
@@ -58,10 +59,10 @@ import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-sch
 import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, steerShell, subagentSteer, type SteerShell } from "../engine/code-rule/rerail-steer.js";
-import { steerOrigin } from "../engine/code-rule/steer-origin.js";
+import { steerOrigin, steerTitle } from "../engine/code-rule/steer-origin.js";
 import { checkoutPathBoundary } from "../engine/path-boundary.js";
 import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
-import { isDefaultStorageRoot } from "./session-paths.js";
+import { isDefaultStorageRoot, sessionDirectory } from "./session-paths.js";
 import type {
   ContentItem,
   ContentSnapshot,
@@ -163,6 +164,37 @@ async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> 
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * The edit checks a boundary stopped waiting for, until they drain, by what it waited for: `all`, every edit (a turn
+ * end, a yield), or `steering`, the edits that may steer (a tool result).
+ */
+type OverdueEditChecks = { all?: Promise<void>; steering?: Promise<void> };
+
+/**
+ * Whether a wait for the edit checks `only` names would sit behind checks an earlier boundary stopped waiting for. A
+ * wait for every edit waits for those too. A `steering` wait does only behind an overdue `steering` wait: the evaluator
+ * checks an edit that may steer before a walk's `log` edits queued ahead of it, or with them in one engine call, so a
+ * `log` backlog an overdue wait for every edit stopped on holds it back no more than it held the earlier one. Where a
+ * `steering` wait waits for those edits too, an overdue wait for every edit holds it back as well (`overdueKinds`).
+ */
+function waitsBehind(overdue: OverdueEditChecks, only: "steering" | undefined): boolean {
+  return overdue.steering !== undefined || (only === undefined && overdue.all !== undefined);
+}
+
+/**
+ * The kinds of wait an overdue wait for `only` holds back: its own, and a `steering` one behind a wait for every edit
+ * where a `steering` wait waits for a walk's `log` edits too (`CodeRuleBridge.steeringWaitsForLog`).
+ */
+function overdueKinds(only: "steering" | undefined, steeringWaitsForLog: boolean): ReadonlyArray<keyof OverdueEditChecks> {
+  if (only !== undefined) return [only];
+  return steeringWaitsForLog ? ["all", "steering"] : ["all"];
+}
+
+/** Whether a boundary stopped waiting for edit checks that still drain. */
+function anyOverdue(overdue: OverdueEditChecks): boolean {
+  return overdue.all !== undefined || overdue.steering !== undefined;
 }
 
 /** The strategy a session steers with: the saved one only while the experimental switch is on, else `message`. */
@@ -377,6 +409,8 @@ const LedgerEntrySchema = z.union([
     })).optional(),
     // Absent for the session's own agent, and in a ledger written before calls recorded their subagent.
     agentId: z.string().optional(),
+    // The folder the call ran in, where its host said; absent too in a ledger written before calls recorded it.
+    cwd: z.string().optional(),
   }),
   z.object({ type: z.literal("policy-result"), toolCallId: z.string() }),
   z.object({ type: z.literal("secret-call"), toolCallId: z.string() }),
@@ -392,7 +426,7 @@ type LedgerEntry =
   | { type: "delivery"; delivery: AdapterDelivery }
   | { type: "rule-mutation"; mutation: RuleMutation }
   | { type: "rule-match"; ruleId: string; turn: number }
-  | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, Preimage>>; agentId?: string }
+  | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, Preimage>>; agentId?: string; cwd?: string }
   | { type: "policy-result"; toolCallId: string }
   | { type: "secret-call"; toolCallId: string }
   | { type: "secret-result"; toolCallId: string; eventId: string }
@@ -699,8 +733,8 @@ interface RuntimeSessionState {
    * (a permission prompt, a long command). The turn's end settles them all: a call the user refused gets no result.
    */
   callsAwaitingResult: Set<string>;
-  /** The edit checks a boundary stopped waiting for, until they drain; no later boundary waits for them again. */
-  overdueEditChecks: Promise<void> | undefined;
+  /** The edit checks a boundary stopped waiting for, until they drain, by what it waited for (`OverdueEditChecks`). */
+  overdueEditChecks: OverdueEditChecks;
   /**
    * The boundaries of this session waiting for its edit checks right now: a generated-edit steer that arrives while
    * one waits rides that boundary's answer, and one that arrives while none does is held for the yield digest.
@@ -789,6 +823,14 @@ export type IdleClose =
   | { readonly kind: "suspended"; readonly suspension: SessionSuspension }
   /** Its memory is freed and its record ended, as its end would (`end`); its next event opens it again. */
   | { readonly kind: "ended" };
+
+/**
+ * Whether the session of `state` records its rule coverage: published (unpublished sessions have no session row yet;
+ * the session-start ingest records coverage once they do) and not closed.
+ */
+function recordsCoverage(state: RuntimeSessionState | undefined): state is RuntimeSessionState {
+  return state !== undefined && !state.closed && state.ownerClaim !== undefined;
+}
 
 /** The bridge option that resumes the session's walks where `suspension` left them; none for a fresh open. */
 function walkResumeOption(suspension: SessionSuspension | undefined): { resume?: SessionWalkResume } {
@@ -922,10 +964,6 @@ async function appendJsonLine(path: string, value: unknown, state: JsonlAppendSt
   state.truncateTo = null;
 }
 
-function sessionDirectory(root: string, sessionId: string): string {
-  return join(root, createHash("sha256").update(sessionId).digest("hex"));
-}
-
 /**
  * What the session store keeps of a result whose call named a secret-like path: that its output was left out, and how
  * large it was. People read the transcript whole, but a `cat .env` output is a secret Rerail recognizes, so it is never
@@ -953,16 +991,98 @@ const SESSION_RECORDS_GITIGNORE = "# Created by Rerail: session records stay out
  * repository's own ignores. Only the default root is Rerail's alone: a custom one (`RERAIL_STORAGE_ROOT`) may hold the
  * person's own files, so it is left as it is. In Rerail's own folder the file is rewritten whenever it holds anything
  * else, or is no regular file: a repository that commits one with `!*` would otherwise have the person's next
- * `git add -A` commit their prompts and pre-edit source.
+ * `git add -A` commit their prompts and pre-edit source. It is written `0644` whatever the umask: it holds only
+ * Rerail's `*`, and every account that records there, whose Git reads it, may then read it whoever wrote it. A rewrite
+ * that fails fails the session, as one onto a `.gitignore` folder or onto a file another program holds open does,
+ * except where the file is another account's to write. One this account may not read is rewritten when this account
+ * owns it or owns the records folder, whose owner may rename over any entry in it, sticky or not; it is kept, not
+ * replaced, only when another account owns both the file and the folder, as that account's Rerail wrote it. On
+ * Windows, whose lstat names no owner, one this account may not read is rewritten too, and kept only when this account
+ * may not add a file to the folder, as in a records folder another account repaired. There, with no file at the path
+ * either, the account that may list the folder, the one whose Git could add what is in it, writes it. Each time this
+ * account leaves the file to another one, stderr names it.
  */
 async function ignoreInGit(storageRoot: string): Promise<void> {
   const path = join(storageRoot, ".gitignore");
-  const stats = await lstat(path).catch((error: unknown) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  });
-  if (stats?.isFile() === true && await readLedgerFile(path, storageRoot) === SESSION_RECORDS_GITIGNORE) return;
-  await writeLedgerFile(path, storageRoot, SESSION_RECORDS_GITIGNORE);
+  if (keptAsFound(await foundGitignore(path, storageRoot))) return;
+  try {
+    await writeLedgerFile(path, storageRoot, SESSION_RECORDS_GITIGNORE, 0o644);
+  } catch (error) {
+    if (!newFileRefused(error) || !leftToAnother(await foundGitignore(path, storageRoot))) throw error;
+    process.stderr.write(`rerail: left ${path} to the account that may add files to ${storageRoot}: this account may not, and that account's Rerail writes it\n`);
+  }
+}
+
+/** Whether a `.gitignore` found before any write is left as it is: Rerail's own, or another account's to write. */
+function keptAsFound(found: FoundGitignore): boolean {
+  return found.kind === "another account's" || (found.kind === "text" && found.text === SESSION_RECORDS_GITIGNORE);
+}
+
+/**
+ * Whether what is at a `.gitignore` this account may not add a file beside is another account's to write: nothing, a
+ * file another account keeps, or on Windows, where no owner is read, a file this account may not read.
+ */
+function leftToAnother({ kind }: FoundGitignore): boolean {
+  return kind === "missing" || kind === "another account's" || (kind === "unreadable" && process.platform === "win32");
+}
+
+/** Whether a file operation failed because this account may not do it there (EACCES, or EPERM as Windows reports it). */
+function accessRefused(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EACCES" || code === "EPERM";
+}
+
+/**
+ * Whether `error`, from `writeLedgerFile`, is the refusal to make its new file beside the one it replaces: this account
+ * may not add a file to the folder. That new file is the only one it opens; its rename fails with another call's error.
+ */
+function newFileRefused(error: unknown): boolean {
+  return accessRefused(error) && (error as NodeJS.ErrnoException).syscall === "open";
+}
+
+/**
+ * What is at a storage root's `.gitignore`: its text, nothing, something that is no regular file, a file this account
+ * may not read that another account keeps ({@link whoseUnreadable}), or one it may not read that this account may
+ * replace, not known. A file Windows refuses even to lstat, as one in a folder this account may not list, is one this
+ * account may not read.
+ */
+type FoundGitignore =
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "missing" | "not a file" | "another account's" | "unreadable" };
+
+async function foundGitignore(path: string, storageRoot: string): Promise<FoundGitignore> {
+  let stats: Stats;
+  try {
+    stats = await lstat(path);
+  } catch (error) {
+    return lstatRefusal(error);
+  }
+  if (!stats.isFile()) return { kind: "not a file" };
+  let text: string | undefined;
+  try {
+    text = await readLedgerFile(path, storageRoot);
+  } catch (error) {
+    if (!accessRefused(error)) throw error;
+    return { kind: await whoseUnreadable(stats, storageRoot) };
+  }
+  return text === undefined ? { kind: "missing" } : { kind: "text", text };
+}
+
+/** What a `.gitignore` whose lstat failed with `error` is: nothing, or one this account may not read; else it throws. */
+function lstatRefusal(error: unknown): FoundGitignore {
+  if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
+  if (accessRefused(error)) return { kind: "unreadable" };
+  throw error;
+}
+
+/**
+ * Whose to write a `.gitignore` this account may not read is, given its lstat `stats`: another account's when another
+ * account owns both it and the records folder `storageRoot`; this account's to replace when it owns either, since a
+ * folder's owner may rename over any entry in it, and on Windows, whose lstat names no owner (its uid is always 0).
+ */
+async function whoseUnreadable(stats: Stats, storageRoot: string): Promise<"another account's" | "unreadable"> {
+  if (process.platform === "win32" || stats.uid === process.getuid?.()) return "unreadable";
+  return (await lstat(storageRoot)).uid === process.getuid?.() ? "unreadable" : "another account's";
 }
 
 /** Replays a session ledger into its registry and returns the turn the session had reached. */
@@ -1056,6 +1176,11 @@ export interface RerailRuntimeOptions {
    * one to all its runtimes; a runtime makes its own otherwise, which its sessions share.
    */
   worktreeWalks?: RepositoryWorktreeWalks;
+  /**
+   * Git's ignore rules of each checkout, one matcher for every session (`GitIgnoreMatchers`): the engine service passes
+   * one to all its runtimes; a runtime makes its own otherwise, which its sessions share.
+   */
+  gitIgnoreMatchers?: GitIgnoreMatchers;
   /** Receives the timing lines of session start and slow turn ends (the daemon passes its log); without it they are not written. */
   timingLog?: (line: string) => void;
   /** The sessions an engine service suspended (`closeIdleSession`), which this runtime takes back as it opens one. */
@@ -1118,6 +1243,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #ingestLanes = new SessionLanes();
   readonly #sourceObservations: SourceObservationCache = new Map();
   readonly #worktreeWalks: RepositoryWorktreeWalks;
+  readonly #gitIgnoreMatchers: GitIgnoreMatchers;
   readonly #discoveryWaitMs: number | undefined;
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #startWatch: RepositoryStartWatch | undefined;
@@ -1145,6 +1271,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#auditSettings = { ...DEFAULT_AUDIT_SETTINGS, ...options.auditSettings };
     this.#discoveryWaitMs = options.discoveryWaitMs;
     this.#worktreeWalks = options.worktreeWalks ?? new RepositoryWorktreeWalks();
+    this.#gitIgnoreMatchers = options.gitIgnoreMatchers ?? new GitIgnoreMatchers();
     this.#timingLog = options.timingLog;
     this.#autostart = options.autostart ?? true;
     this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new CheckoutCodeRuleRouter({
@@ -1154,6 +1281,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       startingCheckout: startingCheckout(this.#owners, auditorOptions.workspaceRoot).checkoutRoot,
       owners: this.#owners,
       catalogs: this.#catalogs,
+      gitIgnoreMatchers: this.#gitIgnoreMatchers,
     }));
     if (options.embedder !== undefined) this.#embedder = options.embedder;
     else if (options.modelPath !== undefined) this.#embedder = new NativeSemanticEmbedder(options.modelPath);
@@ -1219,7 +1347,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const sourceSignature = this.#sessions.get(sessionId)?.ruleSync?.sourceSignature;
       const deliveries = await this.#ingestOrDropOwed(event);
       if (event.kind !== "assistant-delta" || event.final
-          || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) this.recordRuleCoverage(sessionId);
+          || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) {
+        await this.#sessionRulesBuilt(sessionId);
+        this.recordRuleCoverage(sessionId);
+      }
       return deliveries;
     });
   }
@@ -1358,7 +1489,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         await this.#waitingForEditChecks(state, false, async () => {
           await this.#finishCall(state, bridge, event);
           await this.#append(state, { type: "policy-result", toolCallId: call!.id });
-          await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
+          // The call's own edit may steer; a walk's `log` edits queued around it steer no one, so the result waits for none.
+          await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS, "steering");
         });
       } finally {
         if (window !== undefined) {
@@ -1405,18 +1537,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * A boundary's wait for the session's edit checks, capped at `capMs`. Checks run in order, so while a backlog an
-   * earlier boundary stopped waiting for is still draining, a later edit's check is behind it too: the boundary answers
-   * at once rather than spend the cap again, and those steers wait for the yield digest.
+   * A boundary's wait for the session's edit checks, capped at `capMs`; with `steering`, for those that may steer only.
+   * While checks an earlier boundary stopped waiting for still drain, a wait that would sit behind them answers at once
+   * rather than spend the cap again (`waitsBehind`), and those steers wait for the yield digest.
    */
-  async #awaitEditChecks(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, capMs: number): Promise<void> {
-    if (bridge === undefined || state.overdueEditChecks !== undefined) return;
-    const settled = bridge.settleGeneratedEdits();
+  async #awaitEditChecks(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, capMs: number, only?: "steering"): Promise<void> {
+    if (bridge === undefined || waitsBehind(state.overdueEditChecks, only)) return;
+    const settled = bridge.settleGeneratedEdits(only);
     if (await settledWithin(settled, capMs)) return;
+    const kinds = overdueKinds(only, bridge.steeringWaitsForLog());
     const overdue: Promise<void> = settled.catch(() => undefined).finally(() => {
-      if (state.overdueEditChecks === overdue) state.overdueEditChecks = undefined;
+      for (const kind of kinds) if (state.overdueEditChecks[kind] === overdue) delete state.overdueEditChecks[kind];
     });
-    state.overdueEditChecks = overdue;
+    for (const kind of kinds) state.overdueEditChecks[kind] = overdue;
   }
 
   /** A turn end that waits long holds the session's request lane: the daemon log says how long and on what; fast ones say nothing. */
@@ -1435,8 +1568,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     bridge: CodeRuleBridge | undefined,
     event: Extract<AdapterEvent, { kind: "call" }>,
   ): Promise<Readonly<Record<string, Preimage>> | undefined> {
-    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
-    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, event.toolName, event.input);
+    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input, undefined, event.cwd);
+    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, { toolName: event.toolName, input: event.input, cwd: event.cwd });
     return undefined;
   }
 
@@ -1452,7 +1585,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const paths = generatedEditPaths(event.toolName, event.input);
     await this.#append(state, {
       type: "policy-call", toolCallId: id, toolName: event.toolName, paths,
-      ...(preimages === undefined ? {} : { preimages }), ...agent,
+      ...(preimages === undefined ? {} : { preimages }), ...agent, ...(event.cwd === undefined ? {} : { cwd: event.cwd }),
     });
     state.pendingCodeRuleCalls.push({ id, toolName: event.toolName, ...agent });
     if (paths.length > 0) state.mergeAssistEdits.add(id);
@@ -1463,11 +1596,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * call's window, so its turn, from the prompt to the turn's end, is one: what is stamped then is the session's own.
    * A call opens it too, as a turn has one only at its prompt, which a daemon restart in the middle of the turn loses;
    * a window already open keeps its start. Two of its sessions' turns in one folder at once both take a change made
-   * then, as overlapping calls do.
+   * then, as overlapping calls do. It runs in the folder the hook names (Codex's `cwd`), as the turn's calls do.
    */
   async #noteTurnWindow(state: RuntimeSessionState, event: AdapterEvent): Promise<void> {
     if (ADAPTER_CAPABILITIES[state.descriptor.host].observedFileWrite !== "shell") return;
-    if (event.kind === "user-prompt" || event.kind === "call") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID);
+    if (event.kind === "user-prompt" || event.kind === "call") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID, { cwd: event.session?.cwd });
     else if (event.kind === "turn-end") await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
   }
 
@@ -1511,7 +1644,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   async #checkRestoredCall(state: RuntimeSessionState, bridge: CodeRuleBridge, call: RestoredCall, failed: boolean): Promise<void> {
     try {
-      await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
+      await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {}, call.cwd);
       await bridge.finish(call.toolCallId, failed);
     } catch (error) {
       // A session closed meanwhile closed its evaluator too.
@@ -1939,11 +2072,22 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
+  /**
+   * Settles once the rules of the session's checkout are built, compiled off the daemon's thread (`CheckoutCatalogs.prepare`):
+   * at once after the first time. The coverage this event records then reads them as built, and the answer that waits for
+   * it names the session's rules as before, while every other session's events run.
+   */
+  async #sessionRulesBuilt(sessionId: string): Promise<void> {
+    const state = this.#sessions.get(sessionId);
+    if (!recordsCoverage(state)) return;
+    // A build that fails here is the coverage's to report, as it builds the rules itself then.
+    await this.#catalogs.prepare(state.checkout.root).catch(() => undefined);
+  }
+
   /** Report loaded sources, never refresh enforcement for presentation metadata. */
   recordRuleCoverage(sessionId: string): void {
     const state = this.#sessions.get(sessionId);
-    // Unpublished sessions have no session row yet; the session-start ingest records coverage once they do.
-    if (state === undefined || state.closed || state.ownerClaim === undefined) return;
+    if (!recordsCoverage(state)) return;
     try {
       const { root } = state.checkout;
       const repositoryId = this.#repositoryKey(state.checkout);
@@ -1978,6 +2122,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    */
   async codeRulesOpened(sessionId: string): Promise<void> {
     await this.#sessions.get(sessionId)?.codeRuleWorkspace.catch(() => undefined);
+  }
+
+  /**
+   * Settles once the session's evaluator is open and has built the rules it builds ahead of any call: those of the
+   * repositories the session's earlier checks ran in.
+   */
+  async rulesBuiltAhead(sessionId: string): Promise<void> {
+    const bridge = await this.#sessions.get(sessionId)?.codeRuleWorkspace.catch(() => undefined);
+    await bridge?.rulesBuiltAhead();
   }
 
   async dispose(): Promise<void> {
@@ -2083,47 +2236,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         followGitignore: followsGitignore,
         steerShell: steerShell(session.host),
       });
-      bridge = new CodeRuleBridge(checkout.cwd, auditor, {
-        observations: this.#sourceObservations,
-        ...walkResumeOption(suspension),
-        heldCalls: heldCallsOf(opened.restoredCalls),
-        // Every checkout of a clone has its clone id; a checkout the catalog does not know walks on its own. The walk is
-        // looked up at the session's first walk, as one dropped when its last session left is no longer the repository's.
-        worktreeWalks: () => this.#worktreeWalks.of(this.#catalogs.checkout(checkout.root)?.cloneId ?? checkout.root),
-        ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
-        // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
-        onDiscoveryPending: boundary => this.#recordSessionFact(
-          session.sessionId,
-          (store, descriptor, attribution) => store.recordDiscoveryPending(descriptor, boundary, attribution),
-        ),
-        // A tool edit Git's ignore rules leave unchecked, and a change that makes them ignore more, go on the session's record.
-        onIgnoredEdit: edit => this.#recordSessionFact(
-          session.sessionId,
-          (store, descriptor, attribution) => store.recordIgnoredEdit(descriptor, edit, attribution),
-        ),
-        ...(followsGitignore ? {
-          onIgnoreRulesChanged: (change: IgnoreRulesChange) => this.#recordSessionFact(
-            session.sessionId,
-            (store, descriptor, attribution) => store.recordIgnoreRulesChanged(descriptor, change, attribution),
-          ),
-        } : {}),
-        onRevision: (sessionId, revision, paths) => {
-          const current = this.#sessions.get(sessionId);
-          if (current !== opened || current.closed || paths.length === 0) return;
-          current.codeRuleRevision = Math.max(current.codeRuleRevision, revision);
-          for (const path of paths) current.codeRuleSourceVersions.set(path, revision);
-          current.pendingSteers = current.pendingSteers.filter(pending => {
-            if (this.#isCurrentSteer(current, pending)) return true;
-            this.#recordUndelivered(current, pending);
-            return false;
-          });
-          current.missedFindings = current.missedFindings.filter(finding => {
-            if (this.#isCurrentSteer(current, finding)) return true;
-            this.#recordUndelivered(current, finding);
-            return false;
-          });
-        },
-      });
+      bridge = this.#codeRuleBridge({ session, checkout, auditor, opened, followsGitignore, suspension });
       opened.codeRuleBridge = bridge;
       await this.#beforeSessionPublish?.(session);
       this.#failWhileWriteLockedForScan(session.sessionId);
@@ -2175,6 +2288,65 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // waits for no rule to compile: the agent's next command may rewrite one, and is measured from that text.
     await bridge.heldTextsRead();
     return { processedEventIds: [...opened.processed] };
+  }
+
+  /**
+   * The code-rule bridge of `opened`, the session's state as it opens, over `auditor` in the session's folder. It goes on
+   * from where `suspension` left the session's walks, when the engine service suspended it. What its walks and its tool
+   * edits leave unchecked goes on the session's record; a revision drops what it makes stale.
+   */
+  #codeRuleBridge({ session, checkout, auditor, opened, followsGitignore, suspension }: {
+    session: AdapterSession; checkout: StartingCheckout; auditor: CodeRuleAuditor; opened: RuntimeSessionState;
+    followsGitignore: boolean; suspension: SessionSuspension | undefined;
+  }): CodeRuleBridge {
+    return new CodeRuleBridge(checkout.cwd, auditor, {
+      observations: this.#sourceObservations,
+      ...walkResumeOption(suspension),
+      heldCalls: heldCallsOf(opened.restoredCalls),
+      // Every checkout of a clone has its clone id; a checkout the catalog does not know walks on its own. The walk is
+      // looked up at the session's first walk, as one dropped when its last session left is no longer the repository's.
+      worktreeWalks: () => this.#worktreeWalks.of(this.#catalogs.checkout(checkout.root)?.cloneId ?? checkout.root),
+      ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
+      // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
+      onDiscoveryPending: boundary => this.#recordSessionFact(
+        session.sessionId,
+        (store, descriptor, attribution) => store.recordDiscoveryPending(descriptor, boundary, attribution),
+      ),
+      // What a boundary's walks could not check goes on the session's record, once per gap; the agent is not told of it.
+      onDiscoveryGaps: gaps => this.#recordSessionFact(
+        session.sessionId,
+        (store, descriptor, attribution) => store.recordDiscoveryGaps(descriptor, gaps, attribution),
+      ),
+      // Read as the workspace opens, so a reopened session or a restarted daemon goes on from what the record holds.
+      recordedDiscoveryGaps: (sessionId, limit) => this.#sessionStore.discoveryGaps(sessionId, limit),
+      // A tool edit Git's ignore rules leave unchecked, and a change that makes them ignore more, go on the session's record.
+      onIgnoredEdit: edit => this.#recordSessionFact(
+        session.sessionId,
+        (store, descriptor, attribution) => store.recordIgnoredEdit(descriptor, edit, attribution),
+      ),
+      ...(followsGitignore ? {
+        onIgnoreRulesChanged: (change: IgnoreRulesChange) => this.#recordSessionFact(
+          session.sessionId,
+          (store, descriptor, attribution) => store.recordIgnoreRulesChanged(descriptor, change, attribution),
+        ),
+      } : {}),
+      onRevision: (sessionId, revision, paths) => {
+        const current = this.#sessions.get(sessionId);
+        if (current !== opened || current.closed || paths.length === 0) return;
+        current.codeRuleRevision = Math.max(current.codeRuleRevision, revision);
+        for (const path of paths) current.codeRuleSourceVersions.set(path, revision);
+        current.pendingSteers = current.pendingSteers.filter(pending => {
+          if (this.#isCurrentSteer(current, pending)) return true;
+          this.#recordUndelivered(current, pending);
+          return false;
+        });
+        current.missedFindings = current.missedFindings.filter(finding => {
+          if (this.#isCurrentSteer(current, finding)) return true;
+          this.#recordUndelivered(current, finding);
+          return false;
+        });
+      },
+    });
   }
 
   /**
@@ -2232,9 +2404,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
   async #openLedger(session: AdapterSession, unrecorded: boolean): Promise<OpenedLedger> {
     const directory = sessionDirectory(this.#storageRoot, session.sessionId);
-    await makeLedgerFolder(directory);
-    keepFolderPrivate(directory);
+    // A root RERAIL_STORAGE_ROOT names elsewhere is the person's own and used as it is: no .gitignore is written there,
+    // and the folder below a `.rerail` on its path keeps its mode and ACL. In the default root the .gitignore is
+    // written before the folder's repair starts, so on Windows the new ACL Windows passes on reaches it too.
     if (this.#storageRootIsDefault) await ignoreInGit(this.#storageRoot);
+    await makeLedgerFolder(directory, { repair: this.#storageRootIsDefault });
+    keepFolderPrivate(directory);
     const path = join(directory, "events.jsonl");
     const { values, appendState } = await readLines(path);
     const entries = validatedLedger(values);
@@ -2291,7 +2466,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         id: call.toolCallId, toolName: call.toolName, ...(call.agentId === undefined ? {} : { agentId: call.agentId }),
       })),
       callsAwaitingResult: new Set(),
-      overdueEditChecks: undefined,
+      overdueEditChecks: {},
       editCheckWaits: 0,
       yieldWaits: 0,
       missedFindings: [],
@@ -2329,7 +2504,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         // A result that arrived while the evaluator opened went on without code rules: its call is not begun late, or
         // the bridge would hold it pending, and skip its paths in every later shell-write walk, for the session's life.
         if (!state.pendingCodeRuleCalls.some(pending => pending.id === call.toolCallId)) continue;
-        await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
+        await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {}, call.cwd);
       }
     } catch (error) {
       delete state.codeRuleBridge;
@@ -2499,7 +2674,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * end in a host that does not wait: a session left in memory checks it at once.
    */
   #owesAgent(state: RuntimeSessionState): boolean {
-    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined
+    return state.callsAwaitingResult.size > 0 || anyOverdue(state.overdueEditChecks)
       || ownSteers(state.pendingSteers).length > 0 || state.missedFindings.length > 0 || owedNow(state) > 0 || this.#owesScan(state);
   }
 
@@ -2654,20 +2829,27 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await this.#append(this.#session(delivery.sessionId), { type: "delivery", delivery });
   }
 
-  async acceptSample(sample: AdapterSample): Promise<void> {
-    const state = this.#session(sample.sessionId);
+  /**
+   * `sample` as the session's content source keeps it: a person's plain message under its event's id, any other sample
+   * under one that also names its boundary and its place in the session.
+   */
+  #sampleItem(state: RuntimeSessionState, sample: AdapterSample): ContentItem {
     const plainUserMessage = sample.source === "user-input" && sample.boundary === "message";
     const id = plainUserMessage ? sample.eventId : `${sample.eventId}:${sample.boundary}:${state.sampleSequence++}`;
-    const owner = sampleOwner(sample.source);
-    const item: ContentItem = {
+    return {
       ref: { source: "host:event", id },
       text: sample.text,
       metadata: {
-        owner,
+        owner: sampleOwner(sample.source),
         session: sample.sessionId,
         fields: { eventId: sample.eventId, sampleSource: sample.source, boundary: sample.boundary },
       },
     };
+  }
+
+  async acceptSample(sample: AdapterSample): Promise<void> {
+    const state = this.#session(sample.sessionId);
+    const item = this.#sampleItem(state, sample);
     state.source.append(item);
     // A result stored without its output leaves its text out of the ledger as well; matching still reads it.
     await this.#append(state, { type: "sample", item: state.withheldResults.has(sample.eventId) ? { ...item, text: "" } : item });
@@ -2677,6 +2859,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const matches = registry.match(sample, { turn: state.turn });
 
     if (matches.length === 0) return;
+    await this.#deliverMatches(state, sample, registry, matches);
+  }
+
+  /** A delivery for each of `matches` on `sample`, recorded and kept for the sample's event. */
+  async #deliverMatches(state: RuntimeSessionState, sample: AdapterSample, registry: ConversationRuleRegistry, matches: readonly RuleMatch[]): Promise<void> {
     const deliveries = state.eventDeliveries.get(sample.eventId) ?? [];
     for (const match of matches) {
       registry.markDelivered([match.ruleId], state.turn);
@@ -2689,7 +2876,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery[match.mode],
         content: steerBlock({ kind: "tool", tool: sampleTool(sample.source) }, findings, steerShell(state.descriptor.host)),
         ruleIds: [match.ruleId],
-        rules: steerRules(findings, steerOrigin),
+        rules: steerRules(findings, steerOrigin, ruleId => steerTitle(ruleId, undefined, match.title)),
       };
       await this.#append(state, { type: "delivery", delivery });
       deliveries.push(delivery);
@@ -3010,9 +3197,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  /** Whether the boundary that waited for this edit has already answered, so a steer now would reach the agent at some later step. */
+  /**
+   * Whether the boundary that waited for this edit has already answered, so a steer now would reach the agent at some
+   * later step: none waits, or the one that does skipped its wait behind an overdue `steering` wait (`waitsBehind`).
+   */
   #boundaryPassed(state: RuntimeSessionState): boolean {
-    return state.editCheckWaits === 0 || (state.overdueEditChecks !== undefined && state.yieldWaits === 0);
+    return state.editCheckWaits === 0 || (state.overdueEditChecks.steering !== undefined && state.yieldWaits === 0);
   }
 
   /**
@@ -3144,7 +3334,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const cwd = checkoutRealpath(session.cwd);
     recordCheckout(this.#catalogs.database, cwd);
     const start = startingCheckout(this.#owners, cwd);
-    this.#catalogs.refresh(start.checkoutRoot);
+    // The session's rule coverage reads the checkout's catalog before its evaluator opens. Other sessions' lanes in the
+    // checkout share that catalog and read it again only at their own use, so its rules are read here. A catalog not
+    // built yet is built off the daemon's thread before the coverage reads it (`#sessionRulesBuilt`).
+    if (this.#catalogs.refresh(start.checkoutRoot) !== "unrecorded") this.#catalogs.refreshCatalog(start.checkoutRoot);
     return { root: start.checkoutRoot, folder: start.path, cwd };
   }
 

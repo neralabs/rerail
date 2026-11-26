@@ -15,24 +15,34 @@ WASI filesystem in a Web Worker. No Node and no emscripten: clang, lld and wasi-
 `env.sh` joins Homebrew's libc and libc++ sysroots under `target/wasi-sysroot` and points cc-rs at clang.
 It also links that libc (newer than the copy Rust bundles) and libc++.
 
+On Linux, in place of `brew install`, unpack a [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) release
+(clang, llvm-ar, and one sysroot holding wasi-libc and libc++) and name it before sourcing `env.sh`:
+`export WASI_SDK_PATH=<its folder>`. CI runs the check above that way on every change to the engine, and
+checks the one-language build below too (`cargo check` with its arguments, which also checks the library the
+explorer builds with them), in the job `rust-wasm` of `.github/workflows/ci.yml`, since no other job builds this
+target.
+
 ## One build per language, without the Node addon
 
 A page needs one language's engine, not the addon's whole API:
 
     cargo build --release -p rerail-engine --bin rerail-engine --target wasm32-wasip1 \
-      --no-default-features --features headless,lang-python
+      --no-default-features --features headless,lang-python,lang-rr
 
 - `headless` compiles `#[napi]` items as plain Rust (napi-derive `noop`): nothing registers the addon's API, so
   the binary links only what `main` calls.
 - `lang-<id>` builds a registry language (`languages/<id>.json`); all are on by default. A language left out keeps
   its tables but has no grammar: no file is routed to it (`GrammarDialect::built`), nothing embeds it, and a
   family with none of its languages built dispatches to no adapter, so neither its grammar nor its adapter is
-  linked. `logic` refuses a corpus of a language that is not built.
+  linked. `logic` refuses a corpus of a language that is not built. `lang-rr` is the rules' own language: phase 0
+  reads the rule files as a corpus of it (a build without it refuses every rule: `unsupported corpus language
+  "rr"`).
 - Also on by default, and off in the build above:
   - `dump-cli`: the CLI's `dump`, which compiles rules in the earlier JSON/YAML form. Off, none of that compiler
     is linked.
-  - `tape-cache`: the runner's persistent store (`RERAIL_TAPE_CACHE`), its per-file memo, run records, `gc`,
-    and the zstd frames they write. Off, every run parses every file.
+  - `tape-cache`: the runner's own persistent store (`RERAIL_TAPE_CACHE`), `gc` and `upkeep`. Off, a run keeps no
+    store and parses every file, unless its caller selected one: a session's (`RERAIL_SESSION`, below) keeps its
+    per-file memo, tapes and kept facts in its store in every build, as the CLI's runs do.
   - `python-syntax-error`: `syntax_error` on Python from Ruff's parser, which follows CPython's grammar. Off,
     Python's verdict is tree-sitter's, as the other languages' are: it misses what tree-sitter accepts and
     CPython does not (Python 2's `print "x"`). Ruff brings a 0.8 MB Unicode name table.
@@ -47,7 +57,8 @@ Sizes (release, `wasm32-wasip1`, unstripped):
 | `headless,lang-python` + the three above | 14.0 MB | 4.7 MB  |
 | `headless,lang-python` alone            |  9.5 MB | 3.1 MB  |
 
-The last is 6.6 MB of code and 1.6 MB of data (the Python grammar's 0.44 MB, Python's `\N{…}` name table's
+(Measured before a build needed `lang-rr`, and before a session's store was linked in a build without
+`tape-cache`.) The last is 6.6 MB of code and 1.6 MB of data (the Python grammar's 0.44 MB, Python's `\N{…}` name table's
 0.42 MB, regex's Unicode tables).
 
 ## Run
@@ -60,7 +71,7 @@ The outputs land in `out` as for a native run (`outputs.rro`, decision 0239; `re
 unwinding; `unknown-imports-trap` stubs the few `napi_*` imports still linked (napi types' drops), which a
 CLI run never calls.
 `RERAIL_TAPE_CACHE` names the tape store, since WASI has no temporary directory (`off` keeps none); a build
-without `tape-cache` has no store and needs neither. A rule as written in the
+without `tape-cache` keeps no store of its own and needs neither. A rule as written in the
 library (`#include "python/…"`) runs too: mount `docs/rule-syntax/lib` and name it in `RERAIL_RR_LIB`
 (`--dir docs/rule-syntax/lib::/lib --env RERAIL_RR_LIB=/lib`); `logic` flattens its includes (`tools::flatten`).
 
@@ -73,7 +84,7 @@ reactor: instantiated once, `_initialize`d, then called once per command line (`
     . native/wasm/env.sh
     CARGO_TARGET_DIR=target/wasm-reactor \
     CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS="${CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS/crt1-command.o/crt1-reactor.o}" \
-      cargo build --release -p rerail-engine --lib --target wasm32-wasip1 --no-default-features --features headless,lang-python
+      cargo build --release -p rerail-engine --lib --target wasm32-wasip1 --no-default-features --features headless,lang-python,lang-rr
 
 The module is `target/wasm-reactor/wasm32-wasip1/release/rerail_engine.wasm`. Its own target directory keeps the
 command build's objects: the two link different start files, so they share nothing cargo can reuse.
@@ -82,9 +93,10 @@ command build's objects: the two link different start files, so they share nothi
   ended by NUL) into the buffer, runs them as the binary would (`tools::cli`) and reads stdout and stderr as it
   does for the command. The filesystem is the instance's for its life, so the host changes the files in place.
 - With `RERAIL_SESSION=<dir>` in the instance's environment, `logic` runs in a corpus session (decision 0063,
-  `corpus::session`): the store in `<dir>`, the last program as combined and compiled, and each file's
-  file-local rows are kept, so a run after an edit parses and evaluates the files that changed, then runs the
-  cross-file part. `logic … --full` runs outside the session (compiled and evaluated afresh, the session left as it
+  `corpus::session`): its runs are its store's (`<dir>/session.sqlite`, on the instance's filesystem), with or
+  without `tape-cache`. Each file's memo entry and tape, the cross-file part's relations and their statistics are
+  kept facts there, read in place, so a run after an edit parses and evaluates the files that changed, then
+  maintains the cross-file part from its kept rows (t33 step 3). `logic … --full` runs outside the session (compiled and evaluated afresh, the session left as it
   was), so its profile shows every step: the explorer's Full run button.
 - A trap (a Rust panic aborts) leaves the instance unusable: the host instantiates another.
 

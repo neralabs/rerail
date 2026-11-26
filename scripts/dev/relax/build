@@ -5,7 +5,9 @@
 # not a hard link of Relax; a closure built in a closure no longer fails E0310 behind an impl
 # Trait capturing two lifetimes; a build script's rerun key holds the native outputs it reaches,
 # not the receipt's path, so an engine edit reruns no other script; a cast whose source referent
-# is open is first a coercion, as rustc's: see the patch). rerail.patch is the fork's commits, kept on
+# is open is first a coercion, as rustc's; NEON's vqtbx1q; `relax check` takes the substituted smallvec's
+# `smallvec!` as the built-in it is, so a glob of its import is no E0659; edition 2024's
+# `#[unsafe(link_section = ..)]` places an item, so a crate's load hooks run: see the patch). rerail.patch is the fork's commits, kept on
 # the `rerail` branch of neralabs/relax (private) (git diff of the std commit to the last). It installs to ~/.local/share/rerail-relax, outside
 # every worktree:
 #

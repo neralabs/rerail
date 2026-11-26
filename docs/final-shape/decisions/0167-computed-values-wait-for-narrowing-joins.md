@@ -1,6 +1,6 @@
 # 0167: A computed value waits for the joins that narrow its arguments
 
-Status: decided (2026-11-13)
+Status: built (audited 2026-11-23). Decided (2026-11-13)
 
 ## Intro
 
@@ -55,4 +55,4 @@ demanded long text of every kind (`nodes with text: every node`). It now demands
 
 - 0038 (the join search and its greedy order), 0099 item 4 (an equality binds before the next join), 0108 §1 and
   0109 (long text read only for the nodes a rule binds), 0160 (the atoms past `READ_WHOLE`).
-- ast-index-spike: its plans computed no interned values inside joins.
+- SQL index prototype: its plans computed no interned values inside joins.

@@ -42,6 +42,8 @@ edit_cmd() {
     rule) local rf=${RULE_EDIT%% *} expr=${RULE_EDIT#* }; echo "sed -i.bak '$expr' '$out/rules/$rf' && rm -f '$out/rules/$rf.bak'" ;;
   esac
 }
+# time(1)'s resource report: BSD's `-l` (bytes), GNU's `-v` (kbytes, a line a field).
+timeflag=-l; [ "$(uname)" = Linux ] && timeflag=-v
 runs="cold warm append body comment import"
 [ -n "${RULE_EDIT:-}" ] && runs="$runs rule"
 
@@ -60,9 +62,9 @@ if [ "$mode" = oneshot ]; then
     [ "$r" != cold ] && [ "$r" != warm ] && eval "$(edit_cmd $r)"
     env=(RERAIL_TAPE_CACHE="$out/store.sqlite")
     [ -n "${PROFILE:-}" ] && { mkdir -p "$out/prof-$r"; env+=(RERAIL_PROFILE="$out/prof-$r"); }
-    env "${env[@]}" nice -n 19 /usr/bin/time -l "$engine" logic "$out/rules" "$out/corpus" "$out/out-$r" > "$out/$r.log" 2>&1
+    env "${env[@]}" nice -n 19 /usr/bin/time $timeflag "$engine" logic "$out/rules" "$out/corpus" "$out/out-$r" > "$out/$r.log" 2>&1
     rc=$?
-    awk -v r=$r -v rc=$rc -v f="$(findings $r)" -v m="$(memo_mb)" '/ real /{c=$3+$5; u=$3; s=$5} /maximum resident/{p=$1/1048576} END {printf "%-8s rc=%d %7.2f s CPU (%.2f user + %.2f sys), peak %5.0f MB, %s findings, memo %s MB\n", r, rc, c, u, s, p, f, m}' "$out/$r.log"
+    awk -v r=$r -v rc=$rc -v f="$(findings $r)" -v m="$(memo_mb)" '/ real /{u=$3; s=$5} /maximum resident/{p=$1/1048576} /^\tUser time \(seconds\)/{u=$NF} /^\tSystem time \(seconds\)/{s=$NF} /^\tMaximum resident set size \(kbytes\)/{p=$NF/1024} END {c=u+s; printf "%-8s rc=%d %7.2f s CPU (%.2f user + %.2f sys), peak %5.0f MB, %s findings, memo %s MB\n", r, rc, c, u, s, p, f, m}' "$out/$r.log"
     top_spans $r
   done
 else
@@ -74,7 +76,7 @@ else
       echo "# run $r"
       echo "logic $out/rules $out/corpus $out/out-$r"
     done; } > "$script"
-  nice -n 19 /usr/bin/time -l "$engine" repeat "$script" > "$out/session.log" 2>&1
+  nice -n 19 /usr/bin/time $timeflag "$engine" repeat "$script" > "$out/session.log" 2>&1
   echo "session rc=$?"
   set -- $runs
   grep "^repeat line" "$out/session.log" | while read -r line; do

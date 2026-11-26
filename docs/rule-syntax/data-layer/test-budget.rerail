@@ -44,7 +44,8 @@ test_class(c, b) :- test_module(m), stmt_def(m, c), kind(c, "class_definition"),
 .decl lb_method(c: node, x: symbol)
 lb_method(c, x) :- test_class(c, b), stmt_def(b, f), kind(f, "function_definition"), def_name(f, x),
     prefix("test", x).
-.decl static_tests(n: number)
+// Cross-file: the corpus's count (decision 0652).
+.decl static_tests(n: number) cross_file
 .output static_tests
 static_tests(n) :- n = count : { lb_function(_) } + count : { lb_method(_, _) }.
 

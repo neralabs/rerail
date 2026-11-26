@@ -1,6 +1,6 @@
 # 0039: Device scratch buffers come from pre-pinned blocks that are reused
 
-Status: accepted and built (2026-11-05, the user; list step 30)
+Status: built (audited 2026-11-23). Accepted and built (2026-11-05, the user; list step 30)
 
 ## Intro
 
@@ -86,7 +86,7 @@ the pool built here.
 
 ## What the prior work says
 
-- **The Tempo evidence in the PIAT spec, §20 preamble:** first-use Metal mapping cost 213 ms
+- **The predecessor's evidence in the PIAT spec, §20 preamble:** first-use Metal mapping cost 213 ms
   against 6.1 ms of GPU, and reused buffers cut the wait 30–60×. **Agrees:** buffers that are
   reused, not made per call. Here the cost per call is smaller (0.4–0.6 ms), because the buffers
   are 2 MB, not hundreds.
@@ -101,7 +101,7 @@ the pool built here.
   idle wake is the GPU's, not the buffers'.
 - **PIAT §20.12 Q-R7:** pin cost per MB. Fresh buffers of 1.7 MB cost 0.2–0.36 ms to make, which
   is 120–210 µs per MB including the copy.
-- **The AST-index spike's history index, T15:** position 1 pays the warm-up, so measure off/on/off/on.
+- **The SQL index prototype's history index, T15:** position 1 pays the warm-up, so measure off/on/off/on.
   **Agrees:** the corpus runs alternate fresh and blocks, at noted load.
 
 ## Decision

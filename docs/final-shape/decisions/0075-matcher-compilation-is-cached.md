@@ -95,9 +95,9 @@ win is that compiling happens once, outside the run, and is visible in the profi
 
 - **Lessons ledger 25:** restoring a stored derivation beats redoing it. Here the derivation is cheap for the
   pack's patterns, and the measurement says so.
-- **ast-index-spike history index L919-920:** key memoised analysis by what it is a function of. The key names the
+- **SQL index prototype history index L919-920:** key memoised analysis by what it is a function of. The key names the
   patterns, the regex library's version, the size limit and the byte order, not the rule.
-- **ast-index-spike design index S112 (the compiled artifact):** a compiled query is an artifact of its own. A
+- **SQL index prototype design index S112 (the compiled artifact):** a compiled query is an artifact of its own. A
   group's DFA is one, shared by every rule whose tests make that group.
 - **regex.md §1.1 (decision 0037):** one automaton for every pattern blows up (639 patterns, 676 s). Groups of 16
   stay small, and each is determinized once.

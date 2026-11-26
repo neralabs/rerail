@@ -1,7 +1,7 @@
 # 0134: JSON is read with simdjson
 
-Status: accepted (user, 2026-11-12: "please use the real SIMDJSON parser instead of tree-sitter-json
-or bitlex-json. The tree-sitter one is slow and the bitlex one is not ready")
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-12: "please use the real SIMDJSON parser instead of
+tree-sitter-json or bitlex-json. The tree-sitter one is slow and the bitlex one is not ready")
 
 ## Intro
 
@@ -22,7 +22,7 @@ after:  source -> simdjson (DOM: validate; stage 1 index) -> tree -> tape
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike parsed with tree-sitter alone and has no JSON
+- **SQL index prototype indexes:** the spike parsed with tree-sitter alone and has no JSON
   parser to compare; its rule of measuring against the real reference holds (0069: simdjson's own
   timings on this machine).
 - **Lessons ledger #28** (only end-to-end CPU time counts). **Agrees:** the measure is the

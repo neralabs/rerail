@@ -1,16 +1,17 @@
 use super::*;
 
-/// R1–R3 of decision 0436 on `src`: the tape is a v9np image whose root spans the file (R1); its
-/// leaves are the lexer's tokens, each once, in order (R2); its directives, their bytes and
-/// their groups are the lean scan's (R3).
+/// R1–R3 of decision 0436 on `src`: the tape is a format 16 tape whose root spans the file (R1); its leaves are the
+/// lexer's tokens, each once, in order (R2); its directives, their bytes and their groups are the lean scan's (R3);
+/// and its newline index gives each node's line (0468 R1).
 fn check(src: &[u8], opts: Options) -> Result<(), String> {
-    let image = image(src, opts);
-    let v = View::new(&image)?;
-    if (v.key(0) & 0x3ff) as u16 != PP || v.start(0) != 0 || v.end(0) as usize != src.len() || v.size(0) != v.len() {
+    use rerail_tape_format::tape::Tape;
+    let t = image(src, opts);
+    let v = t.reader(lang())?;
+    if v.table().entry(v.code(0)).kind != PP || v.start(0) != 0 || v.end(0) as usize != src.len() || v.subtree_end(0) != v.len() {
         return Err("the root is not the file's".into());
     }
     let want: Vec<_> = tokens(src, opts).iter().map(|t| (t.kind, t.start, t.end)).collect();
-    let got = leaves(&image)?;
+    let got = leaves(&t)?;
     if got != want {
         let k = got.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(got.len().min(want.len()));
         return Err(format!("leaf {k}: {:?} for the lexer's {:?}", got.get(k), want.get(k)));
@@ -20,34 +21,18 @@ fn check(src: &[u8], opts: Options) -> Result<(), String> {
         let (start, end) = d.file(x.span);
         Row { kind: x.kind.name(), start, end, parent: x.parent }
     }).collect();
-    let got = rows(&image)?;
+    let got = rows(&t)?;
     if got != want {
         let k = got.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(got.len().min(want.len()));
         return Err(format!("directive {k}: {:?} for the scan's {:?}", got.get(k), want.get(k)));
     }
-    sixteen(src, opts, &v)
-}
-
-/// The format 16 tape (0468 R1) has format 15's nodes, each its kind, field, bytes and subtree,
-/// and its newline index gives each node's line.
-fn sixteen(src: &[u8], opts: Options, v: &View<'_>) -> Result<(), String> {
-    use rerail_tape_format::tape::Tape;
-    let t = image_16(src, opts);
-    let r = t.reader(lang())?;
-    if r.len() != v.len() {
-        return Err(format!("{} nodes in format 16, {} in 15", r.len(), v.len()));
-    }
-    for i in 0..r.len() {
-        let e = r.table().entry(r.code(i));
-        let key = v.key(i);
-        let want = ((key & 0x3ff) as u16, (key >> rerail_tape_format::KIND_BITS & 0x3f) as u16, u64::from(v.start(i)), u64::from(v.end(i)), i + v.size(i));
-        let got = (e.kind, e.field, r.start(i), r.end(i), r.subtree_end(i));
-        if got != want {
-            return Err(format!("node {i}: {got:?} in format 16, {want:?} in 15"));
-        }
-        let line = src[..v.start(i) as usize].iter().filter(|&&b| b == b'\n').count() as u32;
-        if r.line(v.start(i)) != line {
-            return Err(format!("node {i}: line {} by the index, {line} counted", r.line(v.start(i))));
+    for i in 0..v.len() {
+        // C's line ends (`LINE_ENDS`) whose last byte is before the node.
+        let mut line = 0u32;
+        let start = v.start(i) as usize;
+        LINE_ENDS.each(src, |at, len| line += u32::from(at + len - 1 < start));
+        if v.line(start as u32) != line {
+            return Err(format!("node {i}: line {} by the index, {line} counted", v.line(start as u32)));
         }
     }
     Ok(())
@@ -72,13 +57,13 @@ fn the_pp_tape_kinds_are_numbered_as_named() {
     }
 }
 
-/// R1 (0468): the tape is a format 16 image with its newline index, the nodes format 15's
-/// (`image`, the Bitlex grammar's comparison), its root the file.
+/// R1 (0468): the tape is a format 16 tape with its newline index and each block's presence, its root the file.
 #[test]
 fn the_pp_tape_is_a_format_16_image() {
     let src = b"#include <a.h>\n#define F(a, ...) a + 1\nint x = F(3);\n// a\\\n b\n\n#if X\n  y\n#endif\n";
-    assert_eq!(&image(src, c())[..8], rerail_tape_format::MAGIC);
-    assert!(image_16(src, c()).placement().newlines > 0, "the newline index");
+    let t = image(src, c());
+    assert!(t.placement().newlines > 0, "the newline index");
+    assert!(t.presence_bytes().is_some(), "each block's presence");
     check(src, c()).unwrap();
 }
 
@@ -104,14 +89,15 @@ fn the_pp_tape_gives_mode_a_rows() {
         eprintln!("CHECK: {e}");
         panic!("{e}");
     }
-    let image = image(src, c());
-    let v = View::new(&image).unwrap();
-    let named = |kind: u16, f: &str| (0..v.len()).any(|i| v.key(i) & 0xffff == key(kind, field(f), 0) & 0xffff);
+    use rerail_tape_format::tape::Tape;
+    let t = image(src, c());
+    let v = t.reader(lang()).unwrap();
+    let named = |kind: u16, f: &str| (0..v.len()).any(|i| v.table().entry(v.code(i)).kind == kind && v.table().entry(v.code(i)).field == field(f));
     assert!(named(IDENTIFIER, "name") && named(IDENTIFIER, "param") && named(PUNCT, "variadic") && named(PARAMS, "params"));
     assert!(named(OPERANDS, "expr") && named(OPERANDS, "body") && named(PRAGMA_TEXT, "text") && named(IDENTIFIER, "first"));
     assert!(named(LINE_REST, "rest") && named(MARKER_REST, "rest") && named(NUMBER, "n") && named(LITERAL, "file"));
     // Two groups, the inner inside the outer.
-    assert_eq!((0..v.len()).filter(|&i| (v.key(i) & 0x3ff) as u16 == GROUP).count(), 2);
+    assert_eq!((0..v.len()).filter(|&i| v.table().entry(v.code(i)).kind == GROUP).count(), 2);
 }
 
 /// R1–R3 over every file of the C and C++ corpora (where they are here).

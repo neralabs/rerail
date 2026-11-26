@@ -1,6 +1,6 @@
 # 0067: A batch's files are read in place in residency slabs
 
-Status: accepted (user, 2026-11-07: the list item "Binding residency slabs as the source
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-07: the list item "Binding residency slabs as the source
 buffer; today the batch copies files into one leased block")
 
 ## Intro
@@ -18,7 +18,7 @@ after:   files --copy once, by hash--> slab (resident) --> kernel binds the slab
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike ran no GPU experiments (prior-work `README.md`, "Known
+- **SQL index prototype indexes:** the spike ran no GPU experiments (prior-work `README.md`, "Known
   differences"). Its mldb tape row ("per-entry tape over the source buffer, no text copy")
   **agrees**: the reader works over the source where it lies.
 - **Decision 0032 (slabs):**

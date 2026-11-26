@@ -1,7 +1,7 @@
 # 0402: Byte-pair rules are one lookup
 
-Status: decided (the user, 2026-11-18: "please work through these", the second being page 39's
-item 2, "the real gap to simdjson's UTF-8 check"). Follows 0389 and 0411.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: "please work through these", the second being page
+39's item 2, "the real gap to simdjson's UTF-8 check"). Follows 0389 and 0411.
 
 ## Intro
 

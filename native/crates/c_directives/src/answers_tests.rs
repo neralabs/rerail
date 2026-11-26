@@ -1,7 +1,7 @@
 //! The grammars' shipped answers (decision 0669): each file answers every question its grammar's
 //! compiles ask, C's and C++'s (`answers::check_shipped`; `RERAIL_BLESS_ANSWERS=1` writes them again).
 
-use rerail_compiler::answers::check_shipped;
+use rerail_bitlex::answers::check_shipped;
 use std::path::PathBuf;
 
 fn path(p: &str) -> PathBuf {

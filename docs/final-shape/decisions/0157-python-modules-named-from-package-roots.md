@@ -1,6 +1,6 @@
 # 0157: A corpus run names Python modules from their package roots
 
-Status: accepted (2026-11-13; bug 3 of the Django practice rules report, fixed with bug 4)
+Status: built (audited 2026-11-23). Accepted (2026-11-13; bug 3 of the Django practice rules report, fixed with bug 4)
 
 ## Intro
 
@@ -54,7 +54,7 @@ a/b/m.py                a.b.m           (a/ and a/b/ are packages up to the root
 
 ## Prior work consulted
 
-- ast-index-spike indexes: nothing on module naming (the spike named files by path).
+- SQL index prototype indexes: nothing on module naming (the spike named files by path).
 - 0052 (the per-file memo, keyed by path because a document key is a function of it), 0104 (phase 1's
   stated modules).
 - `model::python_module_path`: the hosts' naming (Ruff's `detect_package_root`), which this matches.

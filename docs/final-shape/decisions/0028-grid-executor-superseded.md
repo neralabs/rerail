@@ -1,6 +1,6 @@
 # 0028: G's grid executor is superseded; four of its ideas are kept
 
-Status: accepted (2026-11-02, user decision); closes O33
+Status: built (audited 2026-11-23). Accepted (2026-11-02, user decision); closes O33
 
 ## Context
 
@@ -12,7 +12,7 @@ Three Metal executors are in the tree:
 | Size | ~1,300 lines | ~36,000 lines (`metal_grid*`, `metal_successor*`, `metal_terminal*`, `metal_frontier_*`, `metal_output_*`, closure, ready-batch, typed output) | ~4,500 lines with the work queue (0027) |
 | On the audit path | the fallback 0024 names; roots stay on the CPU JIT (0017: Metal JIT roots compiled in 59 s against 0.8 s) | no (`UnsupportedBackend` there) | yes: 5,023 of S7's 5,028 (program, file) walks on the device |
 
-G designed the grid for the scale corpus: 82.9 M (file, program, root) tuples over 9.6 M distinct roots (`tempo/docs/metal-production-grid-cutover-design.md`). G measured two failures of the task-per-thread model there:
+G designed the grid for the scale corpus: 82.9 M (file, program, root) tuples over 9.6 M distinct roots (`<predecessor>/docs/metal-production-grid-cutover-design.md`). G measured two failures of the task-per-thread model there:
 - evaluation waves, which serialize a task's roots in one thread: 456 waves, 193 s;
 - one atomic reservation per result: 47 s, against 3.05 s for count, scan and scatter.
 
@@ -37,7 +37,7 @@ The larger gap is coverage: 2,033 of 3,327 matchers (61%) do not lower at all. T
 ## Decision
 
 1. **The grid executor is not ported to the work queue and is not put on the audit path.** The wave's shape (0024) covers 99.5% of lowered programs on the device with far less machinery. The executor stays in the tree, as a copy, until list step 31 removes it with the copies it belongs to.
-2. **What 0024 already took from G** (credited here): count, scan and scatter for outputs (G's 47 s against 3 s); work sized from compacted shared starts, not per-task records (G's 193 s evaluation waves; the ledger's "Tempo-metal's per-tuple task rows: about 16 days"); the corpus resident once (list step 28).
+2. **What 0024 already took from G** (credited here): count, scan and scatter for outputs (G's 47 s against 3 s); work sized from compacted shared starts, not per-task records (G's 193 s evaluation waves; the ledger's "Predecessor-metal's per-tuple task rows: about 16 days"); the corpus resident once (list step 28).
 3. **Four ideas are kept for the general remainder.** If the 71 programs grow (data-layer's harder 82 checks, see below), a small device executor is rebuilt from them on the work queue (0027). It replaces both the grid and N's per-thread backtracking:
    - **Order by branch digits, not by row order.** Each state carries the branch choices that produced it (a digits arena). The terminal sort orders matches by (task, digits) and rejects equal positions (`metal_position_order.metal`, `position_compare`; `metal_terminal.rs` `encode_terminals`; `metal_terminal_publication_sort.*`). States can then be produced in any order: by a work queue, or with atomics. This is what ast-grep's first-match semantics need under breadth-first execution. A global `DISTINCT` loses NFA identity (DI, quantifiers: SCPR cat7 L614-675), and ordered siblings need an NFA (ledger #22).
    - **Duplicate active states are dropped by exact equality, keeping the minimum position** (`metal_successor_active.metal:40-80`). This bounds the state pool on repetitions.

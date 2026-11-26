@@ -2,29 +2,51 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
-import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { CheckoutCatalogs, CheckoutCodeRuleCatalog, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { SqliteAuditReader } from "../../../src/engine/audit/audit-store.js";
+import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine/audit/audit.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
-import { setCheckoutStarted, setRepositoryStarted, RerailRuntime } from "../../../src/runtime/index.js";
+import { setCheckoutStarted, setRepositoryStarted, RerailRuntime, SqliteSessionReader } from "../../../src/runtime/index.js";
 import { setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import { PACKAGE_ROOT } from "../../../src/engine/package-root.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import { checkouts, repositoryAudits } from "../../../src/engine/storage/schema.js";
+import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { symlinkOrSkip } from "../../support/platform/links.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 import { GIT_OPEN_AGAIN_MS, nativeGitAccess } from "../../../src/engine/native/git-access.js";
+import type * as GitAccessModule from "../../../src/engine/native/git-access.js";
+import type { NativeGitAccess } from "../../../src/engine/native/native.js";
+import { GitIgnoreMatchers } from "../../../src/engine/native/git-ignore-matchers.js";
+
+/**
+ * The owner of Git reads `nativeGitAccess` hands out while a case swaps it, as a process does once Git answers an ask
+ * at last; the process's own otherwise.
+ */
+const swappedOwner = vi.hoisted(() => {
+  const swapped: { current: NativeGitAccess | undefined } = { current: undefined };
+  return swapped;
+});
+vi.mock("../../../src/engine/native/git-access.js", async importOriginal => {
+  const original = await importOriginal<typeof GitAccessModule>();
+  return {
+    ...original,
+    nativeGitAccess: (...args: Parameters<typeof original.nativeGitAccess>) => swappedOwner.current ?? original.nativeGitAccess(...args),
+  };
+});
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -53,6 +75,19 @@ async function temporaryRoot(): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-router-")));
   cleanups.push(() => removeFolder(root));
   return root;
+}
+
+/** The rule count the newest rule coverage of `sessionId` recorded, current or not; null where none was recorded. */
+function recordedRuleCount(databasePath: string, sessionId: string): number | null {
+  const database = openRerailDatabase(databasePath);
+  try {
+    const row = database.$client
+      .prepare("select json_extract(payload_json, '$.activeRuleCount') as count from events where session_id = ? and kind = 'rule-coverage' order by sequence desc limit 1")
+      .get(sessionId) as { count: number | null } | undefined;
+    return row?.count ?? null;
+  } finally {
+    database.$client.close();
+  }
 }
 
 /** A committed Git repository at `path`; returns its physical path. */
@@ -108,6 +143,7 @@ function router(
   ruleCatalog?: RuleCatalog,
   followGitignore = false,
   requestSteer: () => Promise<undefined> = async () => undefined,
+  gitIgnoreMatchers?: GitIgnoreMatchers,
 ): CheckoutCodeRuleRouter {
   const owners = new CheckoutOwners();
   const catalogs = new CheckoutCatalogs(databasePath, ruleCatalog === undefined ? {} : { ruleCatalog });
@@ -119,6 +155,7 @@ function router(
     steerDelivery: { requestSteer },
     audits: recorder,
     followGitignore,
+    gitIgnoreMatchers,
   });
   cleanups.push(async () => {
     await auditor.close();
@@ -277,6 +314,7 @@ describe("CheckoutCodeRuleRouter", () => {
           return matcher.ignored(path, directory);
         },
         ignoredBy: (path, directory) => matcher.ignoredBy(path, directory),
+        sourcesUnchanged: () => matcher.sourcesUnchanged(),
       };
     });
     cleanups.push(async () => { opens.mockRestore(); });
@@ -291,6 +329,26 @@ describe("CheckoutCodeRuleRouter", () => {
     expect(following.ignoresPath("api/x.py", false)).toBe(false);
     expect(opens).toHaveBeenCalledTimes(1);
     expect(errors.mock.calls.filter(([text]) => String(text).includes("cannot read Git ignore rules"))).toHaveLength(1);
+  });
+
+  it("takes the daemon's Git ignore matcher once for every walk question about a checkout that runs no rules", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    await writeFile(join(session, ".gitignore"), "scratch/\n*.log\n");
+    startTestRepository(session, databasePath);
+    const matchers = new GitIgnoreMatchers();
+    // Each take checks the shared matcher's sources: Git's configuration and three whole files read again.
+    const takes = vi.spyOn(matchers, "matcher");
+    const { recorder } = recordingAudits();
+    const following = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    await following.openWorkspace("walk-questions");
+
+    for (const view of [following.walkView(), following.walkView()]) {
+      const answers = [view.ignoresPath("scratch", true), view.ignoresPath("api", true), view.ignoresPath("api/x.py", false), view.ignoresPath("run.log", false)];
+      expect(answers).toEqual([true, false, false, true]);
+    }
+    expect(takes).toHaveBeenCalledTimes(1);
   });
 
   it("opens a checkout's Git ignore rules again once GIT_OPEN_AGAIN_MS has passed after a timeout, and reports the refusal that follows too", async () => {
@@ -627,6 +685,9 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     return { root, databasePath, session, worktree: await realpath(place(root, session)) };
   }
 
+  /** `path` in `worktree` as a walk of the session's folder names it: relative to the session folder, with `/`. */
+  const walked = (session: string, worktree: string, path: string) => relative(session, join(worktree, path)).split(sep).join("/");
+
   const nested = (_root: string, session: string) => join(session, ".claude", "worktrees", "w");
   const outside = (root: string) => join(root, "elsewhere", "w");
 
@@ -655,6 +716,374 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await edit(auditor, "outside-worktree", 1, absolute);
 
     expect(violations(audits)).toEqual([{ checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" }]);
+  });
+
+  it("answers a walk's questions about a worktree with the session checkout's rules without opening a lane there", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    await writeFile(join(worktree, "api", "x.py"), "seed\n");
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    const opened = vi.spyOn(NativeCodeRuleEnforcer.prototype, "openWorkspace");
+    cleanups.push(async () => { opened.mockRestore(); });
+
+    await auditor.openWorkspace("worktree-questions");
+    const view = auditor.walkView();
+    const asked = (path: string) => join(worktree, path);
+    const named = (path: string) => walked(session, worktree, path);
+    expect([view.ignoresPath(named("api"), true), view.acceptsPath(named("api/x.py")), view.acceptsPath(named("README.md"))]).toEqual([false, true, false]);
+    expect([auditor.acceptsPath(asked("api/x.py")), auditor.acceptsPath(asked("README.md"))]).toEqual([true, false]);
+    // A lane holds a native workspace and the checkout's index: only the session's own opened.
+    expect(opened).toHaveBeenCalledTimes(1);
+
+    // An edit there is judged by the worktree's own lane, which opens for it.
+    await edit(auditor, "worktree-questions", 1, asked("api/x.py"));
+    expect(violations(audits)).toEqual([{ checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" }]);
+    expect(opened).toHaveBeenCalledTimes(2);
+  });
+
+  it("answers a walk's questions about a worktree with rules of its own by them, opening its lane", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    // The worktree's own rules (`.rerail/rules`) read Markdown files too, which the session checkout's do not.
+    await mkdir(join(worktree, ".rerail", "rules"), { recursive: true });
+    await writeFile(join(worktree, ".rerail", "rules", "notes.json"), JSON.stringify({ ...needle("worktree:notes", "NOTES"), scope: { include: ["**/*.md"], exclude: [] } }));
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    const opened = vi.spyOn(NativeCodeRuleEnforcer.prototype, "openWorkspace");
+    cleanups.push(async () => { opened.mockRestore(); });
+
+    await auditor.openWorkspace("own-rules");
+    const view = auditor.walkView();
+    expect([view.acceptsPath("README.md"), view.acceptsPath(walked(session, worktree, "README.md")), view.acceptsPath(walked(session, worktree, "api/x.py"))]).toEqual([false, true, true]);
+    expect(opened).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds one Git ignore matcher for a worktree whether a walk's question or an edit reached it first", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    const opened = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
+    cleanups.push(async () => { opened.mockRestore(); });
+
+    await auditor.openWorkspace("one-matcher");
+    expect(auditor.walkView().ignoresPath(walked(session, worktree, "api"), true)).toBe(false);
+    await edit(auditor, "one-matcher", 1, join(worktree, "api", "x.py"));
+    expect(violations(audits)).toEqual([{ checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" }]);
+    // A matcher holds its checkout's index: the lane the edit opened takes the one the question opened.
+    expect(opened.mock.calls.filter(([root]) => root === worktree)).toHaveLength(1);
+  });
+
+  it("keeps the daemon's matcher its own lane took once a walk's question reaches a worktree with no lane", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const sessionRoot = await realpath(session);
+    for (const checkout of [session, worktree]) await mkdir(join(checkout, "api"), { recursive: true });
+    const matchers = new GitIgnoreMatchers();
+    const opened = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
+    cleanups.push(async () => { opened.mockRestore(); });
+    const opensIn = (checkout: string) => opened.mock.calls.filter(([root]) => root === checkout).length;
+    const { recorder } = recordingAudits();
+    const first = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    await first.openWorkspace("lane-first");
+    // The session checkout's own lane answers there and takes the daemon's matcher; then the walk reaches the worktree.
+    expect(first.walkView().ignoresPath("api", true)).toBe(false);
+    expect(first.walkView().ignoresPath(walked(session, worktree, "api"), true)).toBe(false);
+
+    const second = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    await second.openWorkspace("lane-first-second");
+    expect(second.walkView().ignoresPath("api", true)).toBe(false);
+    // One matcher per checkout for both sessions: the walk's question let go of none the lane took.
+    expect([opensIn(sessionRoot), opensIn(worktree)]).toEqual([1, 1]);
+  });
+
+  it("answers a walk's questions about a worktree another lane answers for by that worktree's own Git ignore rules", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    // Only the worktree ignores gen/: its .gitignore is not the session checkout's.
+    await writeFile(join(worktree, ".gitignore"), "gen/\n");
+    for (const checkout of [session, worktree]) {
+      await mkdir(join(checkout, "gen"), { recursive: true });
+      await writeFile(join(checkout, "gen", "x.py"), "seed\n");
+    }
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("worktree-ignores");
+    const view = auditor.walkView();
+    expect([view.acceptsPath("gen/x.py"), view.acceptsPath(walked(session, worktree, "gen/x.py"))]).toEqual([true, false]);
+  });
+
+  it("reads again the rules of a worktree another lane answers for, and answers by its own once they differ", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("worktree-rules-later");
+    const readme = walked(session, worktree, "README.md");
+    expect(auditor.walkView().acceptsPath(readme)).toBe(false);
+
+    // The worktree takes rules of its own that read Markdown, which the session checkout's do not.
+    await mkdir(join(worktree, ".rerail", "rules"), { recursive: true });
+    await writeFile(join(worktree, ".rerail", "rules", "notes.json"), JSON.stringify({ ...needle("worktree:notes", "NOTES"), scope: { include: ["**/*.md"], exclude: [] } }));
+    auditor.refreshCodeRules();
+    expect(auditor.walkView().acceptsPath(readme)).toBe(true);
+  });
+
+  it("stops answering for a worktree another lane answered for once that worktree is stopped", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    await writeFile(join(worktree, "api", "x.py"), "seed\n");
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("worktree-stopped-later");
+    const file = walked(session, worktree, "api/x.py");
+    expect(auditor.walkView().acceptsPath(file)).toBe(true);
+
+    const database = openRerailDatabase(databasePath);
+    try {
+      setCheckoutStarted(database, recordCheckout(database, worktree), false);
+    } finally {
+      database.$client.close();
+    }
+    auditor.refreshCodeRules();
+    expect(auditor.walkView().acceptsPath(file)).toBe(false);
+  });
+
+  it("answers a question after its close with a Git ignore matcher of its own, leaving the daemon's shared one dropped", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    const matchers = new GitIgnoreMatchers();
+    const opened = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
+    cleanups.push(async () => { opened.mockRestore(); });
+    const opensIn = () => opened.mock.calls.filter(([root]) => root === worktree).length;
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    await auditor.openWorkspace("late-question");
+    const view = auditor.walkView();
+    const api = walked(session, worktree, "api");
+    expect(view.ignoresPath(api, true)).toBe(false);
+    expect(opensIn()).toBe(1);
+
+    await auditor.close();
+    expect(matchers.size).toBe(0);
+    // A walk still running asks once more: the router no longer holds the shared matcher, nor takes it again.
+    expect(view.ignoresPath(api, true)).toBe(false);
+    expect([opensIn(), matchers.size]).toEqual([2, 0]);
+  });
+
+  /** A worktree whose own `.gitignore` ignores `gen/`, which holds a Python file, and the router of a session beside it. */
+  async function worktreeIgnoringGen(id: string) {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await writeFile(join(worktree, ".gitignore"), "gen/\n");
+    await mkdir(join(worktree, "gen"), { recursive: true });
+    await writeFile(join(worktree, "gen", "x.py"), "seed\n");
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace(id);
+    return { databasePath, session, worktree, audits, auditor, gen: walked(session, worktree, "gen") };
+  }
+
+  function setStarted(databasePath: string, checkout: string, started: boolean): void {
+    const database = openRerailDatabase(databasePath);
+    try {
+      setCheckoutStarted(database, recordCheckout(database, checkout), started);
+    } finally {
+      database.$client.close();
+    }
+  }
+
+  it("gives a worktree's lane, as it opens, Git's ignore rules as they are then, not those a walk's question read before they changed", async () => {
+    const { worktree, audits, auditor, gen } = await worktreeIgnoringGen("lane-reads-now");
+    expect(auditor.walkView().ignoresPath(gen, true)).toBe(true);
+
+    await writeFile(join(worktree, ".gitignore"), "other/\n");
+    // The edit opens the worktree's lane, which reads Git's ignore rules now, as a lane that opened its own did.
+    await edit(auditor, "lane-reads-now", 1, join(worktree, "gen", "x.py"));
+    expect(violations(audits)).toEqual([{ checkout: worktree, path: "gen/x.py", code: "SESSION", mode: "block" }]);
+    expect(auditor.ignoredEdit(join(worktree, "gen", "x.py"))).toBeUndefined();
+  });
+
+  it("reads a worktree's Git ignore rules again once it is started after a stop, as its new lane did", async () => {
+    const { databasePath, worktree, auditor, gen } = await worktreeIgnoringGen("started-again");
+    const view = () => auditor.walkView();
+    expect([view().ignoresPath(gen, true), view().acceptsPath(`${gen}/x.py`)]).toEqual([true, false]);
+
+    setStarted(databasePath, worktree, false);
+    auditor.refreshCodeRules();
+    await writeFile(join(worktree, ".gitignore"), "other/\n");
+    setStarted(databasePath, worktree, true);
+    auditor.refreshCodeRules();
+    expect([view().ignoresPath(gen, true), view().acceptsPath(`${gen}/x.py`)]).toEqual([false, true]);
+  });
+
+  it("lets go of the daemon's matcher of a worktree it drops once that worktree stops, which another router holding it keeps", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    const matchers = new GitIgnoreMatchers();
+    const opened = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
+    cleanups.push(async () => { opened.mockRestore(); });
+    const { recorder } = recordingAudits();
+    const first = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    const second = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    await first.openWorkspace("let-go-first");
+    await second.openWorkspace("let-go-second");
+    const api = walked(session, worktree, "api");
+    expect([first.walkView().ignoresPath(api, true), second.walkView().ignoresPath(api, true)]).toEqual([false, false]);
+    expect(opened.mock.calls.filter(([root]) => root === worktree)).toHaveLength(1);
+    const held = matchers.size;
+
+    setStarted(databasePath, worktree, false);
+    first.refreshCodeRules();
+    expect(matchers.size).toBe(held);
+    // The last router that held the worktree's matcher drops it: the daemon holds it, and its index, no longer.
+    second.refreshCodeRules();
+    expect(matchers.size).toBe(held - 1);
+    setStarted(databasePath, worktree, true);
+    second.refreshCodeRules();
+    expect(second.walkView().ignoresPath(api, true)).toBe(false);
+    expect(opened.mock.calls.filter(([root]) => root === worktree)).toHaveLength(2);
+  });
+
+  it("lets go of the daemon's matchers it holds once the process's Git owner changes, which another router holding them keeps until it asks too", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    const matchers = new GitIgnoreMatchers();
+    const { recorder } = recordingAudits();
+    const first = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    const second = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    await first.openWorkspace("owner-change-first");
+    await second.openWorkspace("owner-change-second");
+    const api = walked(session, worktree, "api");
+    expect([first.walkView().ignoresPath(api, true), second.walkView().ignoresPath(api, true)]).toEqual([false, false]);
+    const held = matchers.size;
+
+    // Git answered at last: the process has a new owner of Git reads, which opens matchers as the old one did.
+    const old = nativeGitAccess();
+    swappedOwner.current = {
+      systemConfig: old.systemConfig,
+      installationConfig: old.installationConfig,
+      openGitIgnoreMatcher: root => old.openGitIgnoreMatcher(root),
+    };
+    cleanups.push(async () => { swappedOwner.current = undefined; });
+    // Each router asks only about the session's checkout, through its lane, which takes the new owner's matcher: the
+    // worktree's old one goes once neither router holds it, not because one asked about the worktree again.
+    expect(first.ignoresPath("api", true)).toBe(false);
+    expect(matchers.size).toBe(held + 1);
+    expect(second.ignoresPath("api", true)).toBe(false);
+    expect(matchers.size).toBe(1);
+  });
+
+  it("keeps a worktree's refused Git ignore rules as none for the walk's questions and says it once, while its lane opens them as it opens", async () => {
+    const { worktree, audits, auditor, gen } = await worktreeIgnoringGen("open-again");
+    const access = nativeGitAccess();
+    const open = access.openGitIgnoreMatcher.bind(access);
+    let failures = 1;
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementation(root => {
+      if (root !== worktree || failures === 0) return open(root);
+      failures -= 1;
+      throw new Error("cannot read Git excludes: the configuration was being written");
+    });
+    cleanups.push(async () => { opens.mockRestore(); });
+    const errors = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    cleanups.push(async () => { errors.mockRestore(); });
+
+    // The walk's questions find no rules and leave the folder in, as rules Git refuses do, under the owner that tried.
+    expect([auditor.walkView().ignoresPath(gen, true), auditor.walkView().ignoresPath(gen, true)]).toEqual([false, false]);
+    // The edit opens the worktree's lane, which opens the rules as it opens and leaves the ignored file unchecked.
+    await edit(auditor, "open-again", 1, join(worktree, "gen", "x.py"));
+    expect(violations(audits)).toEqual([]);
+    expect(errors.mock.calls.filter(([text]) => String(text).includes("cannot read Git ignore rules"))).toHaveLength(1);
+  });
+
+  /**
+   * Has `root`'s rules fail to load while `failing()` says so, as a rule the catalog cannot represent makes them: its
+   * catalog's first read throws (no catalog is made), and a catalog made before throws as it reads them again.
+   */
+  function failingCatalogOf(root: string, failing: () => boolean): void {
+    const catalogOf = CheckoutCatalogs.prototype.catalog;
+    const ofRoot = new Set<CheckoutCodeRuleCatalog>();
+    const catalogs = vi.spyOn(CheckoutCatalogs.prototype, "catalog").mockImplementation(function (this: CheckoutCatalogs, asked: string) {
+      if (asked === root && failing() && ofRoot.size === 0) throw new Error("Policy worktree:notes is not JSON representable");
+      const catalog = catalogOf.call(this, asked);
+      if (asked === root) ofRoot.add(catalog);
+      return catalog;
+    });
+    const refresh = CheckoutCodeRuleCatalog.prototype.refresh;
+    const refreshes = vi.spyOn(CheckoutCodeRuleCatalog.prototype, "refresh").mockImplementation(function (this: CheckoutCodeRuleCatalog) {
+      if (ofRoot.has(this) && failing()) throw new Error("Policy worktree:notes is not JSON representable");
+      return refresh.call(this);
+    });
+    cleanups.push(async () => { catalogs.mockRestore(); refreshes.mockRestore(); });
+  }
+
+  /** The session checkout takes a rule that reads Markdown, so a lane that read its rules again accepts README.md. */
+  async function sessionReadsMarkdown(session: string): Promise<void> {
+    await mkdir(join(session, ".rerail", "rules"), { recursive: true });
+    await writeFile(join(session, ".rerail", "rules", "notes.json"), JSON.stringify({ ...needle("session:notes", "NOTES"), scope: { include: ["**/*.md"], exclude: [] } }));
+  }
+
+  it("refreshes every lane though the rules of a worktree another lane answers for fail to load, and records the failure as that worktree's lane", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    await writeFile(join(worktree, "api", "x.py"), "seed\n");
+    let broken = false;
+    failingCatalogOf(worktree, () => broken);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("answered-fails");
+    expect(auditor.walkView().acceptsPath(walked(session, worktree, "api/x.py"))).toBe(true);
+
+    broken = true;
+    await sessionReadsMarkdown(session);
+    expect(() => auditor.refreshCodeRules()).not.toThrow();
+    expect(auditor.acceptsPath("README.md")).toBe(true);
+    const edits = [{ path: "api/x.py", language: "python" as const, generatedText: "seed\n" }];
+    const response = await auditor.auditGeneratedEdits("answered-fails", { revision: 1, checkpoints: ["edit"], edits });
+    // The session's lane installs its new rules before the router closes, so no store of theirs is still opening then.
+    await auditor.settleGeneratedEdits();
+    expect(response.failures).toContainEqual(expect.objectContaining({ clauseId: "catalog", code: "adapter-error", message: expect.stringContaining("not JSON representable") }));
+  });
+
+  it("answers a walk by a worktree's last rules once they fail to load at an event that changed no rule, and records the failure once as that worktree's lane", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    await writeFile(join(worktree, "api", "x.py"), "seed\n");
+    let broken = false;
+    failingCatalogOf(worktree, () => broken);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("answered-fails-quiet");
+    const file = walked(session, worktree, "api/x.py");
+    expect(auditor.walkView().acceptsPath(file)).toBe(true);
+    // The session's first event reads every rule configuration; the next finds none changed, so only the walk's next
+    // question reads the worktree's rules again.
+    auditor.refreshCodeRules();
+
+    broken = true;
+    auditor.refreshCodeRules();
+    const view = auditor.walkView();
+    expect([view.acceptsPath(file), view.acceptsPath(file), view.acceptsPath(file)]).toEqual([true, true, true]);
+    const edits = [{ path: "api/x.py", language: "python" as const, generatedText: "seed\n" }];
+    const response = await auditor.auditGeneratedEdits("answered-fails-quiet", { revision: 1, checkpoints: ["edit"], edits });
+    await auditor.settleGeneratedEdits();
+    expect(response.failures.filter(failure => failure.clauseId === "catalog")).toEqual([
+      expect.objectContaining({ code: "adapter-error", message: expect.stringContaining("not JSON representable") }),
+    ]);
+  });
+
+  it("refreshes every lane after a walk asked about a worktree whose rules could not be read at all", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    let broken = true;
+    failingCatalogOf(worktree, () => broken);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("never-read");
+    // As when a lane opened for the question: the catalog's error reaches the walk.
+    expect(() => auditor.walkView().acceptsPath(walked(session, worktree, "api/x.py"))).toThrow("not JSON representable");
+
+    await sessionReadsMarkdown(session);
+    expect(() => auditor.refreshCodeRules()).not.toThrow();
+    expect(auditor.acceptsPath("README.md")).toBe(true);
+    // The session's lane installs its new rules before the router closes, so no store of theirs is still opening then.
+    await edit(auditor, "never-read", 1, "api/x.py");
+    broken = false;
   });
 
   it("judges a sibling worktree from a session that started in a worktree", async () => {
@@ -710,6 +1139,65 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await auditor.auditGeneratedEdits("log-batch", { revision: 2, checkpoints: ["edit"], edits });
     await auditor.settleGeneratedEdits();
     expect(requestSteer).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens one Git ignore matcher for a worktree that sessions in two other worktrees audit, and drops it when both close", async () => {
+    const { databasePath, session, worktree, root } = await repositoryWithWorktree(outside);
+    git(session, "worktree", "add", "--quiet", "-b", "second", join(root, "elsewhere", "second"));
+    const second = await realpath(join(root, "elsewhere", "second"));
+    const matchers = new GitIgnoreMatchers();
+    const opened = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
+    cleanups.push(async () => { opened.mockRestore(); });
+    const { recorder, audits } = recordingAudits();
+    const sessions = [
+      { id: "first", auditor: router(session, databasePath, recorder, undefined, true, undefined, matchers) },
+      { id: "second", auditor: router(second, databasePath, recorder, undefined, true, undefined, matchers) },
+    ];
+    const edits = [{ path: join(worktree, "api", "x.py"), language: "python" as const, generatedText: "NEEDLE\n" }];
+    for (const { id, auditor } of sessions) {
+      await auditor.openWorkspace(id);
+      await auditor.auditGeneratedEdits(id, { revision: 1, checkpoints: ["edit"], mode: "log", edits });
+      await auditor.settleGeneratedEdits();
+    }
+    expect(violations(audits)).toEqual([
+      { checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" },
+      { checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" },
+    ]);
+    // A matcher holds its checkout's index, and its answers are the checkout's: the two sessions share one.
+    expect(opened.mock.calls.filter(([path]) => path === worktree)).toHaveLength(1);
+    for (const { auditor } of sessions) await auditor.close();
+    expect(matchers.size).toBe(0);
+  });
+
+  it("passes a tool call's wait for the edits that may steer on to each lane's evaluator", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+    await auditor.openWorkspace("steering-wait");
+    const edits = [join(session, "api", "x.py"), join(worktree, "api", "y.py")].map(path => ({ path, language: "python" as const, generatedText: "NEEDLE\n" }));
+    await auditor.auditGeneratedEdits("steering-wait", { revision: 1, checkpoints: ["edit"], edits });
+    // What each lane's evaluator is asked is the subject, not how long its checks take: on a loaded Windows machine the
+    // two lanes' checks outlasted the case's 30 s limit. The router's clean-up ends them after the case.
+    const settle = vi.spyOn(NativeCodeRuleEnforcer.prototype, "settleGeneratedEdits").mockResolvedValue(undefined);
+    try {
+      await auditor.settleGeneratedEdits("steering");
+      // A walk's log edits in a lane steer no one: a lane told to wait for every edit would hold the result for them.
+      expect(settle.mock.calls).toEqual([["steering"], ["steering"]]);
+    } finally {
+      settle.mockRestore();
+    }
+  });
+
+  // In repository scope each lane checks every batch, a walk's `log` batch too, by one audit of the whole repository.
+  it("answers that a wait for the edits that may steer waits for a walk's log edits too only while its scope is the repository", async () => {
+    const { databasePath, session } = await repositoryWithWorktree(outside);
+    const auditor = router(session, databasePath, recordingAudits().recorder);
+    const answers = [auditor.steeringWaitsForLog()];
+    for (const scope of ["repository", "touched-files"] as const) {
+      auditor.updateSettings({ scope, mode: "steer" });
+      answers.push(auditor.steeringWaitsForLog());
+    }
+    expect(answers).toEqual([false, true, false]);
   });
 
   it("keeps the stopped value a worktree outside the checkout has of its own", async () => {
@@ -790,6 +1278,17 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await auditor.openWorkspace("roots");
 
     expect(auditor.worktreeRoots()).toEqual([worktree]);
+  });
+
+  it("names where Git registers the worktrees it named for the session's walk", async () => {
+    const { databasePath, session } = await repositoryWithWorktree(outside);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+    await auditor.openWorkspace("registry");
+
+    auditor.worktreeRoots();
+
+    expect(auditor.worktreeRegistry()).toBe(join(await realpath(session), ".git", "worktrees"));
   });
 
   it("names a worktree Git made, while the session is open, at a folder the session looked up while it was plain", async () => {
@@ -995,6 +1494,113 @@ describe("repository audit through the runtime", () => {
       reader.close();
     }
   }, 60_000);
+});
+
+describe("rules as they are at a scan and at a session's start", () => {
+  it("scans with the rules as they are when a scan starts, though no event came after a rule was turned off elsewhere", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const main = await repository(join(root, "main"));
+    await writeFile(join(main, "api", "a.py"), "NEEDLE\n");
+    const repositoryKey = setUpTestRepository(main, { library: [file(needle("test:main", "MAIN"))] }, databasePath);
+    const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, embedder: testEmbedder, autostart: false });
+    cleanups.push(() => runtime.dispose());
+    const controls = new SqliteAuditControlStore(databasePath);
+    cleanups.push(async () => { controls.close(); });
+    const reader = new SqliteAuditReader(databasePath);
+    cleanups.push(async () => { reader.close(); });
+    await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "omp", sessionId: "scan", cwd: main } });
+    await runtime.codeRulesOpened("scan");
+    // A scan the runtime's timer picks up, as `rerail scan` asks for one: the violations it records.
+    const scan = async () => {
+      const { id } = await controls.requestAudit("scan", { scope: "repository" });
+      const request = () => controls.listAuditRequests("scan").find(item => item.id === id)!;
+      await expect.poll(() => request().status, { timeout: 30_000 }).toBe("completed");
+      return request().auditIds.flatMap(auditId => reader.get(auditId)!.violations.map(violation => `${violation.path} ${violation.code}`));
+    };
+    expect(await scan()).toEqual(["api/a.py MAIN"]);
+    const database = openRerailDatabase(databasePath);
+    try {
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: "test:main", on: false, mode: null });
+    } finally {
+      database.$client.close();
+    }
+    expect(await scan()).toEqual([]);
+  }, 60_000);
+
+  it("reports a worktree's rules as they are when a session starts there, though another session's lane read them before a change", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const main = await repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "--detach", join(root, "w"), "HEAD");
+    const worktree = await realpath(join(root, "w"));
+    const repositoryKey = setUpTestRepository(main, { library: [file(needle("test:main", "MAIN"))] }, databasePath);
+    const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, embedder: testEmbedder, autostart: false });
+    cleanups.push(() => runtime.dispose());
+    const reader = new SqliteSessionReader(databasePath);
+    cleanups.push(async () => { reader.close(); });
+
+    await runtime.ingest({ kind: "session-start", eventId: "first-start", session: { host: "claude-code", sessionId: "first", cwd: main } });
+    await runtime.codeRulesOpened("first");
+    // Its edit in the worktree opens a lane there, which reads the worktree's one rule.
+    const edited = { sessionId: "first", toolCallId: "write", toolName: "Write" };
+    await runtime.ingest({ kind: "call", eventId: "write", ...edited, input: { file_path: join(worktree, "api", "x.py"), content: "x = 1\n" } });
+    await runtime.ingest({ kind: "result", eventId: "written", ...edited, output: "ok" });
+    // A setting made elsewhere turns that rule off. No walk reads a setting, and no event of the first session follows,
+    // so its lane in the worktree holds the rules as it read them when the second session starts there.
+    const database = openRerailDatabase(databasePath);
+    try {
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: "test:main", on: false, mode: null });
+    } finally {
+      database.$client.close();
+    }
+    await runtime.ingest({ kind: "session-start", eventId: "second-start", session: { host: "claude-code", sessionId: "second", cwd: worktree } });
+
+    // The count the start wrote, which an older read would leave at 1, and the one a person sees, null while stale.
+    expect(recordedRuleCount(databasePath, "second")).toBe(0);
+    expect(reader.hud("second").activeRuleCount).toBe(0);
+  }, 60_000);
+
+  it.runIf(process.platform === "win32")("leaves a nested checkout's files out of the folder around it, recorded under another spelling of that folder", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const stored = join(root, "workspace");
+    await mkdir(join(stored, "packages"), { recursive: true });
+    await writeFile(join(stored, "top.py"), "NEEDLE\n");
+    await writeFile(join(stored, "packages", "outer.py"), "NEEDLE\n");
+    const service = await repository(join(stored, "packages", "service"));
+    await writeFile(join(service, "api", "inner.py"), "NEEDLE\n");
+    // A session in VS Code names the drive in lower case, and a folder outside Git is recorded as named; Git names the
+    // nested checkout as the folder is stored.
+    const drive = stored[0]!;
+    const typed = `${drive === drive.toUpperCase() ? drive.toLowerCase() : drive.toUpperCase()}${stored.slice(1)}`;
+    setUpTestRepository(typed, { library: [file(needle("test:outer", "OUTER"))] }, databasePath);
+    setUpTestRepository(service, { library: [file(needle("test:service", "SERVICE"))] }, databasePath);
+    // As the runtime starts a session in a folder outside Git: the owners read the folder as recorded
+    // (`recordedPlainRoot`).
+    const catalogs = new CheckoutCatalogs(databasePath);
+    const owners = new CheckoutOwners(catalogs.database);
+    const { recorder, audits } = recordingAudits();
+    const auditor = new CheckoutCodeRuleRouter({
+      sessionRoot: typed, startingCheckout: startingCheckout(owners, typed).checkoutRoot, owners, catalogs,
+      steerDelivery: { requestSteer: async () => undefined }, audits: recorder,
+    });
+    cleanups.push(async () => {
+      await auditor.close();
+      catalogs.close();
+    });
+    expect(catalogs.recordedCheckoutsWithin(typed)).toContain(service);
+
+    await auditor.openWorkspace("spelling");
+    await auditor.audit("spelling", { scope: "touched-files", mode: "log", paths: ["packages"] });
+    await auditor.audit("spelling", { scope: "repository", mode: "log" });
+    await auditor.settle();
+
+    // The folder audit, then the repository audit, in the folder around the nested checkout, whichever spelling the
+    // audits name it by: none holds the nested checkout's file.
+    expect(violations(audits).filter(violation => violation.checkout !== service).map(violation => violation.path))
+      .toEqual(["packages/outer.py", "packages/outer.py", "top.py"]);
+  });
 });
 
 describe("CheckoutCodeRuleRouter lanes after review", () => {

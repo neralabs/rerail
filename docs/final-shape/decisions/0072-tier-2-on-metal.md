@@ -1,9 +1,8 @@
 # 0072: Tier 2 on Metal, from a dependency analysis
 
-Status: accepted (user, 2026-11-07: "go ahead"). The design is
-`docs/parser-generators/14-tier-2-design.md`. Superseded in part by 0085: the rows'
-conditions, backward keys and the 8-byte stack effect give way to a grammar, forward rules and
-a depth carry; Metal comes after the CPU.
+Status: superseded by 0085 (audited 2026-11-23). Accepted (user, 2026-11-07: "go ahead"). The design is
+`docs/parser-generators/14-tier-2-design.md`. Superseded in part by 0085: the rows' conditions, backward keys and the
+8-byte stack effect give way to a grammar, forward rules and a depth carry; Metal comes after the CPU.
 
 ## Intro
 
@@ -23,7 +22,7 @@ for JSON first, then generalised.
   ends with a threadgroup barrier. Nothing waits on another threadgroup.
 - **Lessons ledger:** no GPU parsing lessons. #28 (only CPU and GPU time count) holds: every
   choice the Bitlex file can set is measured.
-- **ast-index-spike indexes:** no GPU work.
+- **SQL index prototype indexes:** no GPU work.
 
 ## Decision
 

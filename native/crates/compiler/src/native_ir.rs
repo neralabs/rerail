@@ -142,6 +142,9 @@ pub enum StructuralOperation {
     /// The node made last at the innermost open node's level and the nodes inside it, read by
     /// reading `reading` (`RETAG m=3`, `reread`).
     Reread { reading: u16 },
+    /// A test: the node made last at the innermost open node's level is of `kind`: run the
+    /// next word; else skip it (`RETAG m=4`, `ending`).
+    MadeIs { kind: u16 },
     /// A node of `kind` around the node last made at this level, open: it takes that node's
     /// field and start (docs/parser-generators/24-rr-and-bitlex-plan.md §2.5).
     Wrap { kind: u16 },
@@ -183,6 +186,9 @@ pub enum StructuralOperation {
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
+    /// A statement starts (`STATEMENT`, decision 0650): the one before ends, and this one is marked, to be cut back to
+    /// where it fails by its syntax.
+    Statement,
 }
 
 /// What `FLAG` does with its flag.
@@ -241,6 +247,7 @@ impl StructuralOperation {
             Self::Row { mask } => (ROW, 0, mask),
             Self::Retag { kind, on } => (RETAG, on as u8, kind),
             Self::Reread { reading } => (RETAG, 3, reading),
+            Self::MadeIs { kind } => (RETAG, 4, kind),
             Self::Wrap { kind } => (WRAP, 0, kind),
             Self::Merge { kind, fold } => (MERGE, u8::from(fold), kind),
             Self::NodeField { field, on } => (NODE_FIELD, on as u8, field),
@@ -257,6 +264,7 @@ impl StructuralOperation {
             Self::MoveFirst { pattern, flag } => (crate::program::SETTLE, flag.map_or(crate::program::SETTLE_MOVE, |f| crate::program::SETTLE_MOVE + 1 + f as u8), pattern),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
+            Self::Statement => (crate::program::STATEMENT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
                 unreachable!("native lowering created an invalid function reference")
             }
@@ -377,7 +385,7 @@ pub struct Structure {
     pub has_repeats: bool,
     pub maximum_cursor_slot: u32,
     pub reservation_sites: Vec<ReservationSite>,
-    pub longs: Vec<u64>,
+    pub longs: rerail_blocks::vector::Vector<u64>,
     pub strings: Vec<Vec<u8>>,
     /// Tier 2's switch tables (`SWITCH`).
     pub switches: Vec<crate::stream_ir::ByteSwitch>,
@@ -385,13 +393,12 @@ pub struct Structure {
     /// Tier 2's rules (`Words::rules`): each rule's first place.
     /// Each keyword's node kind, by string (`Words::word_kinds`).
     pub word_kinds: Vec<(u16, u16)>,
-    /// The grammar's names of its kinds and fields (`Words::names`).
-    pub kind_names: Vec<(u16, String)>,
-    pub field_names: Vec<(u16, String)>,
     /// The extras a `TOKEN` takes (`Words::extras`): a code's mark bit and the leaf's kind.
     pub extras: Vec<(u8, u16)>,
     /// The token marks (`Words::token_marks`).
     pub token_marks: Vec<crate::program::TokenMark>,
+    /// Where a statement that fails resumes (`Words::recover`, decision 0650): empty where none recovers.
+    pub recover: Vec<crate::program::Recover>,
     /// The marks done where each mark is taken (`Words::taken`), by order: 64 at most.
     pub taken: Vec<u64>,
     /// The gap patterns (`Words::gap_patterns`).
@@ -510,6 +517,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             },
             ROW => StructuralOperation::Row { mask: operand },
             RETAG if mode == 3 => StructuralOperation::Reread { reading: operand },
+            RETAG if mode == 4 => StructuralOperation::MadeIs { kind: operand },
             RETAG => StructuralOperation::Retag { kind: operand, on: On::of(mode) },
             WRAP => StructuralOperation::Wrap { kind: operand },
             MERGE => StructuralOperation::Merge { kind: operand, fold: mode == 1 },
@@ -534,6 +542,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             crate::program::COUNT => StructuralOperation::Count { count: operand, up: mode == 0, max: program.counts[usize::from(operand)] },
             RETURN => StructuralOperation::Return { again: mode != 0 },
             ACCEPT => StructuralOperation::Accept,
+            crate::program::STATEMENT => StructuralOperation::Statement,
             _ => {
                 return Err(LoweringError::InvalidOpcode { position, opcode });
             }
@@ -580,10 +589,9 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         rules: program.rules.clone(),
         names: program.names.clone(),
         word_kinds: program.word_kinds.clone(),
-        kind_names: program.names.kinds.clone(),
-        field_names: program.names.fields.clone(),
         extras: program.extras.clone(),
         token_marks: program.token_marks.clone(),
+        recover: program.recover.clone(),
         taken: (0..64u8).map(|k| program.taken(k)).collect(),
         gap_patterns: program.gap_patterns.clone(),
         local_checks: program.local_checks.clone(),

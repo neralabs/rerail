@@ -10,9 +10,9 @@
 //   - stage 1 is simdjson's (its scanner, UTF-8 checker and indexer), each 64-byte block also
 //     hashed: the source's digest comes out with the index;
 //   - stage 2 walks the index itself, its state in locals, checking the document as simdjson's
-//     stage 2 does (structure, depth, escapes, numbers, atoms), and writes the v9np tape at each
-//     node's preorder slot into the tape's own buffers (the caller's), at their stored widths, with
-//     the tape's code table. No DOM tape, no string buffer, no number values, nothing copied after.
+//     stage 2 does (structure, depth, escapes, numbers, atoms), and gives each node in preorder as
+//     format 16's event (decision 0434) to the caller, which writes the tape. No DOM tape, no string
+//     buffer, no number values.
 //
 // Kernels by number (`rerail_simdjson_native::Kernel`), best first within a target:
 //   0 arm64, SHA-256 instructions    1 arm64
@@ -29,6 +29,12 @@
 #if defined(_MSC_VER) && !defined(__clang__)
 #define RERAIL_TARGET(T)
 #define simdjson_inline_lambda
+#elif defined(__clang__)
+// Clang's region (`RERAIL_TARGET_REGION`) reaches no lambda's call operator: a lambda in a region takes its target
+// itself, `RERAIL_LAMBDA_TARGET`, which each region names (an `always_inline` callee of the region's target is
+// inlined into no function without it).
+#define RERAIL_TARGET(T) __attribute__((target(T)))
+#define simdjson_inline_lambda __attribute__((always_inline, target(RERAIL_LAMBDA_TARGET)))
 #else
 #define RERAIL_TARGET(T) __attribute__((target(T)))
 #define simdjson_inline_lambda __attribute__((always_inline))
@@ -90,17 +96,9 @@ const uint8_t* padded(std::unique_ptr<char[]>& buffer, size_t& capacity, const c
 }
 }  // namespace
 
-// The tape's buffers, as the caller owns them: `code`, `size`, `off`, `tail` and `base`, each with
-// its bytes used (`len`) and allocated (`cap`). `grow` makes each buffer hold `need[i]` bytes, keeping
-// its first `len[i]`, and sets `col` and `cap` again.
+// What a walk gives its nodes to: the caller's, `ctx` its own.
 struct rerail_v9np_sink {
-  uint8_t* col[5];
-  size_t len[5];
-  size_t cap[5];
-  // `size`, `off` and `tail`'s widths: 2 or 4.
-  uint8_t width[3];
   void* ctx;
-  void (*grow)(rerail_v9np_sink* sink, const size_t* need);
   // The kind of each slot (document, pair, string_content, escape_sequence, object, array, string,
   // number, true, false, null, comment), and the `key` and `value` fields.
   uint16_t kind[12];
@@ -113,10 +111,10 @@ struct rerail_v9np_sink {
   uint8_t code_value[36];
   // The source's SHA-256.
   uint8_t digest[32];
-  // Format 16 (decision 0434): where `ev` is set, the walk writes no column. Each node is an event of three
-  // words appended to `ev` (`EV_OPEN | id << 8, start, 0`; `EV_LEAF | id << 8, start, end`; `EV_CLOSE, end, 0`,
-  // `id` the node's code), and `flush` is called with `ev_len` words when `ev_cap` are full and at the end: the
-  // caller gives them to format 16's ops. A walk never edits a node it wrote.
+  // Format 16 (decision 0434): each node is an event of three words appended to `ev` (`EV_OPEN | id << 8,
+  // start, 0`; `EV_LEAF | id << 8, start, end`; `EV_CLOSE, end, 0`, `id` the node's code), and `flush` is called
+  // with `ev_len` words when `ev_cap` are full and at the end: the caller gives them to format 16's ops. A walk
+  // never edits a node it gave.
   uint32_t* ev;
   uint32_t ev_len;
   uint32_t ev_cap;
@@ -334,12 +332,14 @@ bool cpu_has_sha() {
 
 #if SIMDJSON_IMPLEMENTATION_ARM64
 RERAIL_TARGET_REGION(RERAIL_ARM_SHA)
+#define RERAIL_LAMBDA_TARGET RERAIL_ARM_SHA
 namespace simdjson {
 namespace arm64 {
 namespace {
 #define RERAIL_IMPLEMENTATION "arm64"
 #include "kernel.inc"
 #undef RERAIL_IMPLEMENTATION
+#undef RERAIL_LAMBDA_TARGET
 }  // namespace
 }  // namespace arm64
 }  // namespace simdjson
@@ -348,12 +348,14 @@ RERAIL_UNTARGET_REGION
 
 #if SIMDJSON_IMPLEMENTATION_ICELAKE
 RERAIL_TARGET_REGION("avx512f,avx512dq,avx512cd,avx512bw,avx512vbmi,avx512vbmi2,avx512vl,avx2,bmi,bmi2,pclmul,lzcnt,popcnt," RERAIL_NI_SHA)
+#define RERAIL_LAMBDA_TARGET "avx512f,avx512dq,avx512cd,avx512bw,avx512vbmi,avx512vbmi2,avx512vl,avx2,bmi,bmi2,pclmul,lzcnt,popcnt," RERAIL_NI_SHA
 namespace simdjson {
 namespace icelake {
 namespace {
 #define RERAIL_IMPLEMENTATION "icelake"
 #include "kernel.inc"
 #undef RERAIL_IMPLEMENTATION
+#undef RERAIL_LAMBDA_TARGET
 }  // namespace
 }  // namespace icelake
 }  // namespace simdjson
@@ -362,12 +364,14 @@ RERAIL_UNTARGET_REGION
 
 #if SIMDJSON_IMPLEMENTATION_HASWELL
 RERAIL_TARGET_REGION("avx2,bmi,bmi2,pclmul,lzcnt,popcnt," RERAIL_NI_SHA)
+#define RERAIL_LAMBDA_TARGET "avx2,bmi,bmi2,pclmul,lzcnt,popcnt," RERAIL_NI_SHA
 namespace simdjson {
 namespace haswell {
 namespace {
 #define RERAIL_IMPLEMENTATION "haswell"
 #include "kernel.inc"
 #undef RERAIL_IMPLEMENTATION
+#undef RERAIL_LAMBDA_TARGET
 }  // namespace
 }  // namespace haswell
 }  // namespace simdjson
@@ -376,12 +380,14 @@ RERAIL_UNTARGET_REGION
 
 #if SIMDJSON_IMPLEMENTATION_WESTMERE
 RERAIL_TARGET_REGION("sse4.2,pclmul,popcnt," RERAIL_NI_SHA)
+#define RERAIL_LAMBDA_TARGET "sse4.2,pclmul,popcnt," RERAIL_NI_SHA
 namespace simdjson {
 namespace westmere {
 namespace {
 #define RERAIL_IMPLEMENTATION "westmere"
 #include "kernel.inc"
 #undef RERAIL_IMPLEMENTATION
+#undef RERAIL_LAMBDA_TARGET
 }  // namespace
 }  // namespace westmere
 }  // namespace simdjson
@@ -398,12 +404,11 @@ struct Kernel {
   int (*tape_unhashed)(const char*, size_t, rerail_v9np_sink*);
   int64_t (*stage1)(const char*, size_t, int);
   void (*release_above)(size_t);
-  uint64_t (*rewalks)();
 };
 constexpr uint32_t KERNELS = 8;
 
 #define RERAIL_KERNEL(ns, H, with_sha) \
-  Kernel { #ns, with_sha, &simdjson::ns::rerail_v9np::tape<H, false>, &simdjson::ns::rerail_v9np::tape<H, true>, &simdjson::ns::rerail_v9np::tape<sha256_none, false>, &simdjson::ns::rerail_v9np::stage1_only<H>, &simdjson::ns::rerail_v9np::release_above, &simdjson::ns::rerail_v9np::walked_again }
+  Kernel { #ns, with_sha, &simdjson::ns::rerail_v9np::tape<H, false>, &simdjson::ns::rerail_v9np::tape<H, true>, &simdjson::ns::rerail_v9np::tape<sha256_none, false>, &simdjson::ns::rerail_v9np::stage1_only<H>, &simdjson::ns::rerail_v9np::release_above }
 const Kernel* kernel(uint32_t k) {
   static const Kernel table[KERNELS] = {
 #if SIMDJSON_IMPLEMENTATION_ARM64
@@ -467,7 +472,7 @@ int rerail_simdjson_structurals(const char* src, size_t len, const uint32_t** in
 // Whether kernel `k` is in this build and runs on this CPU.
 int rerail_simdjson_kernel_runs(uint32_t k) { return runs(k) ? 1 : 0; }
 
-// 0 and the tape and the source's digest written to `sink` by kernel `k`, simdjson's error code, or -1
+// 0 and the tape's events and the source's digest given to `sink` by kernel `k`, simdjson's error code, or -1
 // where the kernel does not run here.
 int rerail_simdjson_v9np(uint32_t k, const char* src, size_t len, rerail_v9np_sink* sink) {
   if (!runs(k) || len >= 0xffffffffu / 2) { return -1; }
@@ -487,8 +492,6 @@ int rerail_simdjson_v9np_unhashed(uint32_t k, const char* src, size_t len, rerai
   if (!runs(k) || len >= 0xffffffffu / 2) { return -1; }
   return kernel(k)->tape_unhashed(src, len, sink);
 }
-// Kernel `k`'s walks made again at other widths, on this thread.
-uint64_t rerail_simdjson_v9np_rewalks(uint32_t k) { return runs(k) ? kernel(k)->rewalks() : 0; }
 
 // Stage 1 alone (a measurement's), kernel `k`'s implementation's or, `hashed`, ours with the digest:
 // the structural index's length, or simdjson's error code negated; -1 where the kernel does not run.

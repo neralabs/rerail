@@ -1,5 +1,8 @@
 # t32. The rest of t28: a plan, with every cache as two rules
 
+Status (2026-11-23): built but for 5.3. Stages 1–4, 5.1–5.2, 6 and 8 are done. Stage 7's searches were measured
+and not taken (0144). Left: 5.3, the other caches of 0103 §8, which is t33's plan.
+
 ## Intro
 
 t28 made Python typing three phases: P1 `struct.rr`, P2 `types.rr`, P3 `calls_p3.rr`. P3 now answers every call
@@ -57,7 +60,7 @@ exports against a full run; CPU and instructions retired, cold, warm and after t
 | 1.1 | `.cache C by K` linted (`front::caches`): the key rule has a version tag, the output rule reads the key | built, tested |
 | 1.2 | No engine special case: maintenance, retention and support counting treat a cache as any relation. A `cache_rows` table, a lookup hook and a key-only maintenance rewrite were built and removed | built, tested: rows equal a run with nothing kept; a version bump derives them again |
 | 1.3 | The `tape` column type: `core.rr`'s tape columns, checked before lowering (`rr::tape_type`), stored as before | built, tested |
-| 1.4 | `digest` and `blob` column types, when the first cache that needs one moves (0103 §3) | open |
+| 1.4 | `digest` and `blob` column types (0103 §3) | **done**, before any cache needs them: both stored as symbols (a digest its hex digits, a blob the content key of its bytes, as a tape), checked with the tape type (`rr::tape_type`): a value of one of the three stands in no column of another type. Tests: `rr::tape_type::tests`, `cache_tests::a_cache_keyed_by_a_digest_keeps_it_as_a_symbol` |
 | 1.5 | `corpus::cache_architecture`: the tables and freshness calls made before 0103 (may only shrink); no cache table, store, hook or lookup; only the lint knows a relation is a cache | built |
 
 ### Stage 2. P3 and P2 rules (this branch, now)
@@ -98,7 +101,7 @@ maintains it from the deltas instead.
 | 4.1 | **A new process maintains from the kept rows**, as a session does: the kept strata's rows are the `__old` rows of `maintain::rewrite`, and an input's delta is its kept rows against its new ones | **built** (`kept_strata::load`, `keep`): a run with no session takes the session's branch, its `Retained` read back from the store's frames (space `cross-maintained`, each relation under its identity) and written back after the run (only frames whose rows or inputs changed). A frame records the digests of the inputs it was derived from (its cone), and is read back only while those inputs' frames hold them: frames are shared by identity across programs. Not for a part whose requests the run answers (phase 0's loads). Test: `a_new_process_maintains_the_cross_file_part_from_the_kept_rows`. **Measured** below |
 | 4.2 | Measure what reading the kept rows costs, against the 3.8 s full run; keep fewer relations (0099) or read lazily if it is more | **done**, below: 0.06 to 0.09 s a run |
 
-Measured 2026-11-10 on 54 of the corpus's files (`_internal`, `l1100_exceptions`, `l2055_lazy_result`), the t28 spike
+Measured 2026-11-10 on 54 of the corpus's files (three of its packages), the t28 spike
 with `RERAIL_SPIKE_PROCESS=1` (no session; the process's own caches of programs and files stay warm). P2's CPU; the
 full run is the old per-stratum cut (`RERAIL_KEPT_PART=off`). Exports equal to the full run's after every edit.
 
@@ -163,7 +166,7 @@ kept relations' encoding, not a format of their own.
 |---|---|---|
 | 5.1 | Caches in the file-local part: plain rules there already; the per-file memo keeps their rows as any relation's | engine: **built** (0146, 472c8bfaa). An entry's relations are typed rows in its frame |
 | 5.2 | The per-file memo as a cache by `(document, content, program)` (0103 §8) | engine: **built** (0146). One frame per entry in the plan's space, its part keyed by content and path. **Measured** below |
-| 5.3 | Each other cache of 0103 §8 | its owner |
+| 5.3 | Each other cache of 0103 §8 | **this branch** (user, 2026-11-21): t33's plan, from K2 and its step 1 |
 
 **5.1 and 5.2 measured (2026-11-10, after 1515840af).** The test binary's P3 bench on the 54 files of `dl-sub40` used
 a new store. The machine was loaded at 63 to 98. Every run gave 4,815 agree.
@@ -185,6 +188,21 @@ this change, which kept the same key. In the P3 part, an edit's run maintains 44
 E1 maintains 92 of P2's 99 strata for a 3-row delta, 2.4 s against a full run's 2.9 s. 0101 §1 (skip a stratum
 whose deltas are all empty) is the fix, in `plan::run`'s stratum loop, built by the hub's owners. This branch
 re-runs `spike_t28_a_session_maintains_the_typing_phase` after it lands. Done when E1's P2 costs under 0.5 s.
+
+**Done** (2026-11-21, 0101 §1 and §2 merged from the hub). `spike_t28_a_session_maintains_the_typing_phase` over the
+84-file corpus with typeshed, in a session, on a farm Mac, debug; it now prints each phase's quiet strata too. P2's
+CPU, and its strata as reached of all, maintained from deltas (of them recursive), passed on as quiet:
+
+| Run | Session | Full run | Strata reached | Maintained | Quiet |
+|---|---|---|---|---|---|
+| cold | 0.29 s | | 58 of 58, derived | | |
+| unchanged | 0.08 s | | 0 | | |
+| E1 (a function added) | 0.20 to 0.22 s | 0.62 to 0.65 s | 52 | 27 (2) | 21 |
+| E2 (a comment) | 0.08 s | 0.13 s | 0 | | |
+| E3 (a line in a body) | 0.09 s | 0.13 s | 0 | | |
+
+The exports equal the full run's after each edit. The relations E1 holds as quiet with no column measured (7) each
+have 0 or 1 rows (`explicit`, `rr_ctx6`, the `rr_rank` relations), whose row count is all there is to measure.
 
 ### Stage 7. Searches (this branch, a decision first)
 
@@ -214,6 +232,11 @@ mro_found(c, x, d) :- mro_ask(c, x), <the search>.      // the output: where the
 That also gives the cross-file memo its finer key. This waits for per-definition node ids (Typing-support's
 `granules.rs`), so positions stay out of what is compared.
 
+| Step | Change | State |
+|---|---|---|
+| 8.1 | **No cross-file reach of P3's own.** A name another document binds (an import, a dotted name, a star import) is resolved by P2 (`pt_lres`: `types__binds`, `types__attr`) to the symbol that binds it, and its value read by that symbol (`pt_wres`, `pt_wkey`: `m.x#k` is a binding of `m.x`) from `qv`, `lqv`, `tqv`, `qopen`. "A workspace module" is `pt_wsmod`. Late-bound `self`, declared classes' values and subtyping reach every workspace subclass, not the reader's closure's. No rule reads `rr_cx_`, so `components.rerail` is no longer added to the program | **done** (2026-11-21). The 84-file corpus with typeshed, a farm Mac, debug: 6,090 agree, 2 another definition, 614 unknown where Jedi decided, before and after; 26.0 s to 25.1 s main-thread CPU, peak RSS 476 to 440 MB. (The recording was made again, from the same files, after the old one was lost: Jedi 0.19.2 on Python 3.14, 8,882 calls, 2,176 Jedi leaves undecided. Its agree count is not comparable with the 6,410 above.) |
+| 8.2 | **Targets as symbols** | **not needed as a step of its own.** P3's values are definition nodes (a function, a class, a module, a class's instance), and with per-definition ids such a node's id is the document's digest, the slot its granule's key hashes to, and index 0: as stable as its symbol, and no position. Targets are placed when the outputs are written. The memo the finer key was for went with 0450. Making values symbols would change `call_target`'s interface, which pack rules join with function nodes (`owner(c, f)`), for no change in what is compared |
+
 ## Order, and what each stage waits for
 
 | Stage | Waits for | Where |
@@ -223,9 +246,9 @@ That also gives the cross-file memo its finer key. This waits for per-definition
 | 3 | 3.1: nothing; 3.2: 5.1 | this branch |
 | 4 | Two-pass's "derive again" merged (same code) | this branch |
 | 5 | 1 | engine and the owners |
-| 6 | 0101 §1 in the hub | the hub's owners; measured here |
+| 6 | 0101 §1 in the hub | the hub's owners; measured here: done |
 | 7 | 1 | this branch |
-| 8 | 2.1, 7.2, per-definition node ids | this branch |
+| 8 | 2.1, 7.2, per-definition node ids | this branch: done (8.1) |
 
 ## What this branch must not do
 

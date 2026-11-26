@@ -1,6 +1,6 @@
 # 0060: A run's fixed costs are kept for the process; collection decides only when it can change something
 
-Status: proposed (2026-11-07)
+Status: built (audited 2026-11-23). Proposed (2026-11-07)
 
 ## Intro
 
@@ -93,7 +93,7 @@ The first run after this change pays a one-time decision that evicts the gone ro
 
 ## Prior work consulted
 
-- **ast-index-spike, design index L1131-1136 (LA 6 findings, F3):** "per-file fixed cost, repeated processing,
+- **SQL index prototype, design index L1131-1136 (LA 6 findings, F3):** "per-file fixed cost, repeated processing,
   all-or-nothing cache invalidation". The costs here are per run, and each cache is invalidated by its own inputs
   only.
 - **History index L919-920:** key by what a value is a function of, never by object identity, and make the language

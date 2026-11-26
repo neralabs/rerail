@@ -14,10 +14,24 @@ use cranelift_module::Module;
 /// the allocator, and a large one may lie anywhere, so a module whose code takes two chunks could not link
 /// (`compiled_blob`'s `Arm64Call`). Every module that compiles the reads is built from it.
 pub fn builder() -> Result<cranelift_jit::JITBuilder, String> {
-    let mut builder = cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names()).map_err(|e| format!("the JIT builder: {e}"))?;
+    let mut builder = cranelift_jit::JITBuilder::with_flags(&flags(&[]), cranelift_module::default_libcall_names()).map_err(|e| format!("the JIT builder: {e}"))?;
     let arena = cranelift_jit::ArenaMemoryProvider::new_with_size(CODE_RESERVE).map_err(|e| format!("the JIT's code reservation: {e}"))?;
     builder.memory_provider(Box::new(arena));
     Ok(builder)
+}
+
+/// A JIT module's Cranelift flags: the caller's `own`, then the host's. A function returns past its integer return
+/// registers (x86-64's two, AArch64's eight) only through an implicit return area (else "too many return values to
+/// fit in registers"), on every host: it changes no function whose results fit. On x86-64 Cranelift's tail calls
+/// also need frame pointers kept (`emit_return_call_common_sequence` asserts it). Every JIT module of the engine
+/// takes its flags from here.
+pub fn flags<'a>(own: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
+    let mut all = own.to_vec();
+    all.push(("enable_multi_ret_implicit_sret", "true"));
+    if cfg!(target_arch = "x86_64") {
+        all.push(("preserve_frame_pointers", "true"));
+    }
+    all
 }
 
 /// The address space a module's code is reserved (not committed): well within a `bl`'s reach.
@@ -74,6 +88,12 @@ impl Reads {
         self.fns[name]
     }
 
+    /// Every compiled read in `READS`' order (each through its exported function, `call_{name}`): the table a
+    /// kernel's Rust calls them through by their places (`rerail_ukl_rust::Launch::reads`).
+    pub fn table(&self) -> Vec<*const u8> {
+        crate::reads::READS.iter().map(|read| self.fns[read.name]).collect()
+    }
+
     pub fn one(&self, name: &str, tape: &[u8], view: &TapeView, i: usize) -> u32 {
         // SAFETY: the read's signature: the tape's base, its view, a node.
         let f: extern "C" fn(*const u8, *const TapeView, u32) -> u32 = unsafe { std::mem::transmute(self.fns[name]) };
@@ -98,7 +118,7 @@ pub struct Writer {
 impl Writer {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        // Its code in one reservation, so a call between the ops stays in a `bl`'s reach (`builder`).
+        // Its code in one reservation, so a call between the ops stays in a `bl`'s reach (`builder`): near.
         let mut module = cranelift_jit::JITModule::new(builder().unwrap());
         let ids = crate::writer::define_ops(&mut module, cranelift_module::Linkage::Export, true).unwrap();
         module.finalize_definitions().unwrap();

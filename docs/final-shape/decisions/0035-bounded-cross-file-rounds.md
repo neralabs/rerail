@@ -1,6 +1,6 @@
 # 0035: Cross-file rounds bound file crossings, not iterations
 
-Status: accepted (2026-11-04, list step 29; I11; O41)
+Status: superseded by 0065 (with 0276 §9) (audited 2026-11-23). Accepted (2026-11-04, list step 29; I11; O41)
 
 ## Intro
 
@@ -47,5 +47,5 @@ found($c, $a, $x) :- base($c, $b), !bound_in($c, $a), found__prev($b, $a, $x), @
   within k = 2. calls.rdl needs a third crossing (8 of 5,112 hop rows): O41.
 - The split into file-local and cross-file parts follows the ledger's row 20 (partition by
   file, and keep global machinery for the rules that need it).
-- The AST-index spike scoped cross-file resolution out (design index §17, "Data flow / name
+- The SQL index prototype scoped cross-file resolution out (design index §17, "Data flow / name
   resolution / cross-file facts"), so it offers no prior mechanism to reuse.

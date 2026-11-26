@@ -1,9 +1,11 @@
 # 0090: Cross-file maintenance costs what the delta reaches
 
-Status: accepted (2026-11-08). The direction, and its order of work. Step 1 (the profile) is built and measured;
-§1–§5 are not built yet. Aggregates by changed group (0077 §3) and Typing-support's three O125 fixes are in.
-Its order of work is revised by 0092 §6: steps 6 and 4 (definition node ids, per-file base deltas) come before
-steps 2, 3 and 5, because a delta wider than the edit (Intro, cause 2) multiplies every other cost.
+Status: partly built (audited 2026-11-23). Left: §1 kept relations read in place (held_rows copy remains); §2 per-file
+base deltas; step 6 per-definition delta; §4 cost estimate. Accepted (2026-11-08). The direction, and its order of
+work. Step 1 (the profile) is built and measured; §1–§5 are not built yet. Aggregates by changed group (0077 §3) and
+Typing-support's three O125 fixes are in. Its order of work is revised by 0092 §6: steps 6 and 4 (definition node ids,
+per-file base deltas) come before steps 2, 3 and 5, because a delta wider than the edit (Intro, cause 2) multiplies
+every other cost.
 
 ## Intro
 
@@ -509,9 +511,9 @@ counting scheme:
 
 | steps | change |
 | --- | --- |
-| 21, 22 | delete, then restore, `l1400_types/__init__.py` (47 importers) |
-| 23, 24 | delete, then restore, `purity.py` and `lazy_mixin.py` (51 importers each) |
-| 25, 26 | delete, then restore, the whole `l2055_lazy_result` package (24 of 78 files) |
+| 21, 22 | delete, then restore, the types package's `__init__.py` (47 importers) |
+| 23, 24 | delete, then restore, two modules with 51 importers each |
+| 25, 26 | delete, then restore, the whole lazy-result package (24 of 78 files) |
 
 **A fourth algorithm.** *Levels, checked*: levels without counts.
 - **What it keeps.** Each row keeps only its level, and every present row has a derivation from rows below it.
@@ -601,9 +603,9 @@ relation through `based`, compaction and hand-off, and with an output read back 
   | step | change | DRed | levels |
   | --- | --- | ---: | ---: |
   | 20 | an O125 edit (2 files) | 12.2 | **9.1** |
-  | 21 | delete `l1400_types/__init__.py` | 6.4 | 6.4 |
+  | 21 | delete the types package's `__init__.py` | 6.4 | 6.4 |
   | 22 | restore it | **6.1** | 7.0 |
-  | 23 | delete `purity.py`, `lazy_mixin.py` | **9.9** | 11.5 |
+  | 23 | delete the two modules with 51 importers each | **9.9** | 11.5 |
   | 24 | restore them | **10.7** | 12.8 |
   | 25 | delete a 24-file package | **10.0** | 12.3 |
   | 26 | restore it | **12.4** | 13.9 |

@@ -8,13 +8,16 @@
 //! which is its reference. A file the grammar refuses (a construct
 //! it does not read) goes to the lean scan, so a row is never wrong.
 
-use rerail_compiler::bitlex_masks as bitlex_compile;
-use rerail_compiler::bitlex_prove::{Answer, Key, Known};
-use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm as rir};
+use rerail_bitlex::bitlex_masks as bitlex_compile;
+use rerail_bitlex::bitlex_prove::{Answer, Key, Known};
+use rerail_compiler::native_ir;
+use rerail_rir::rir_asm as rir;
+use rerail_compiler::native_cpu_clusters;
+use rerail_cpu_stream::native_cpu_stream;
 
 /// A grammar lowered (`lower_kinds`): the assembled program, the native IR, tier 2's words and its
-/// state machine as text.
-pub(crate) type Lowered = (rerail_compiler::program::Words, native_ir::Structure, String, String);
+/// state machine as text, and how many of its names it numbered from `OWN_IDS`.
+pub(crate) type Lowered = (rerail_compiler::program::Words, native_ir::Structure, String, String, usize);
 
 /// The grammar.
 pub const GRAMMAR: &str = include_str!("../directives.bitlex");
@@ -62,6 +65,91 @@ pub struct Compiled {
     /// Tier 2's words and its state machine as text.
     pub words: String,
     pub machine: String,
+    /// The tape's format 16 table (decision 0631): the preprocessor tape's, or one of the grammar's names.
+    table: Table,
+    /// The table's numbers by tier 2's keys, made at the first tape.
+    numbers: std::sync::OnceLock<native_cpu_stream::Numbers>,
+}
+
+/// A compiled grammar's format 16 table: one shared with another writer of its tapes (the preprocessor tape's,
+/// `rerail_c_pp::tape::lang`), or its own, of its names (`table`).
+enum Table {
+    Shared(&'static rerail_tape_format::f16::Lang),
+    Own(rerail_tape_format::f16::Lang),
+}
+
+/// The format 16 table of a grammar's tape (decision 0631): each of its kinds (the `kinds` given, then the `own`
+/// names numbered from `OWN_IDS`) with no field, then with each of its `fields`; an extra's (`extras`) flagged one.
+/// Its numbers are its entries' places, the kinds with no field first: most of a tape's nodes.
+fn table(kinds: usize, own: usize, fields: usize, extras: &[u16]) -> rerail_tape_format::f16::Lang {
+    use rerail_tape_format::tape::{CodeTable, Entry};
+    let ids: Vec<u16> = (0..kinds as u16).chain(OWN_IDS..OWN_IDS + own as u16).collect();
+    let entry = |kind: u16, field: u16| Entry { kind, field, flags: if extras.contains(&kind) { rerail_tape_format::CODE_EXTRA } else { 0 }, alias: None, classes: Vec::new() };
+    let entries = (0..=fields as u16).flat_map(|f| ids.iter().map(move |&k| entry(k, f))).collect();
+    rerail_tape_format::f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).expect("a grammar's tape table")
+}
+
+/// The tapes' tag and their lines' terminators: the preprocessor tape's (`rerail_c_pp::tape`), C's.
+const TAG: u8 = rerail_c_pp::tape::TAG;
+const TERMINATORS: rerail_tape_format::newlines::Terminators = rerail_c_pp::tape::LINE_ENDS;
+
+/// A format 16 tape (16z is never asked for here).
+fn written(w: rerail_tape_format::f16::Written) -> Option<Tape16> {
+    match w {
+        rerail_tape_format::f16::Written::F16(t) => Some(t),
+        rerail_tape_format::f16::Written::F16Z(_) => None,
+    }
+}
+
+/// A compiled grammar's tape: format 16, with each block's presence.
+pub type Tape16 = rerail_tape_format::f16::Tape16;
+
+/// A tape read in place through format 16's reads (`f16::F16`): each node's key (its code's kind and field, `kind |
+/// field << KIND_BITS`), span and subtree.
+pub struct Nodes<'a>(rerail_tape_format::f16::F16<'a>);
+
+/// Where two tapes of one table differ: their first node of another key, span or subtree, or else their bytes'
+/// first difference (the line index, the presence). For a test's message.
+pub fn difference(a: &Tape16, b: &Tape16, lang: &rerail_tape_format::f16::Lang) -> String {
+    let (Ok(x), Ok(y)) = (Nodes::of(a, lang), Nodes::of(b, lang)) else { return "a tape that does not read".into() };
+    let node = |v: &Nodes<'_>, i: usize| (i < v.len()).then(|| (v.key(i), v.start(i), v.end(i), v.size(i)));
+    if let Some(i) = (0..x.len().max(y.len())).find(|&i| node(&x, i) != node(&y, i)) {
+        return format!("node {i} of {} / {}: {:?} / {:?}", x.len(), y.len(), node(&x, i), node(&y, i));
+    }
+    let (p, q) = (a.as_bytes(), b.as_bytes());
+    let k = p.iter().zip(q).position(|(u, v)| u != v).unwrap_or(p.len().min(q.len()));
+    format!("the same {} nodes; the bytes differ at {k} of {} / {}", x.len(), p.len(), q.len())
+}
+
+impl<'a> Nodes<'a> {
+    pub fn of(t: &'a Tape16, lang: &'a rerail_tape_format::f16::Lang) -> Result<Self, String> {
+        Ok(Nodes(t.reader(lang)?))
+    }
+    pub fn len(&self) -> usize {
+        use rerail_tape_format::tape::Tape as _;
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub fn key(&self, i: usize) -> u32 {
+        use rerail_tape_format::tape::Tape as _;
+        let e = self.0.table().entry(self.0.code(i));
+        u32::from(e.kind) | u32::from(e.field) << rerail_tape_format::KIND_BITS
+    }
+    pub fn start(&self, i: usize) -> u32 {
+        use rerail_tape_format::tape::Tape as _;
+        self.0.start(i) as u32
+    }
+    pub fn end(&self, i: usize) -> u32 {
+        use rerail_tape_format::tape::Tape as _;
+        self.0.end(i) as u32
+    }
+    /// Its subtree's nodes, itself counted.
+    pub fn size(&self, i: usize) -> usize {
+        use rerail_tape_format::tape::Tape as _;
+        self.0.subtree_end(i) - i
+    }
 }
 
 // SAFETY: nothing changes a compiled parser once it is made (as `rerail_rr_parser::Compiled`):
@@ -76,36 +164,43 @@ pub fn compiled() -> Result<&'static Compiled, &'static str> {
     PARSER.get_or_init(|| compile_text(GRAMMAR)).as_ref().map_err(String::as_str)
 }
 
-static LOWERED: std::sync::OnceLock<Result<rerail_compiler::program::Words, String>> = std::sync::OnceLock::new();
+static LOWERED: std::sync::OnceLock<Result<(rerail_compiler::program::Words, rerail_tape_format::f16::Lang), String>> = std::sync::OnceLock::new();
 
 /// `src`'s directives by the interpreter, the grammar lowered once a process (no Cranelift), or
 /// `None` where the grammar refuses it.
 pub fn interpreted_read(src: &[u8]) -> Option<Read> {
-    let program = LOWERED.get_or_init(|| lower_kinds(GRAMMAR, KINDS, FIELDS, SEED).map(|l| l.0)).as_ref().ok()?;
+    let (program, lang) = LOWERED.get_or_init(|| lower_kinds(GRAMMAR, KINDS, FIELDS, SEED).map(|l| { let lang = table(KINDS.len(), l.4, FIELDS.len(), &l.0.readings.extras); (l.0, lang) })).as_ref().ok()?;
     let run = program.block_programs[0].run(src);
     let nodes = rerail_compiler::stream::run(program, src, &run).ok()?;
-    read(&rerail_compiler::stream::image(&nodes, &program.readings.extras, 0, src)).ok()
+    let tape = written(rerail_compiler::stream::image16(&nodes, &program.readings.extras, lang, TERMINATORS, TAG, src).ok()?)?;
+    read(&Nodes::of(&tape, lang).ok()?).ok()
 }
 
 /// `grammar` compiled: a grammar's text.
 pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
-    compile_kinds(grammar, KINDS, FIELDS, SEED)
+    compile_kinds(grammar, KINDS, FIELDS, SEED, None)
 }
 
 /// `grammar` compiled with its tape's kinds and fields by id (`kinds`, `fields`: a field's id is
-/// its index plus one), the grammar's other names numbered from `OWN_IDS`.
-pub(crate) fn compile_kinds(grammar: &str, kinds: &[&str], fields: &[&str], seed: Seed) -> Result<Compiled, String> {
-    let (program, native, words, machine) = lower_kinds(grammar, kinds, fields, seed)?;
+/// its index plus one), the grammar's other names numbered from `OWN_IDS`, from its shipped answers (`seed`,
+/// decision 0669). Its tapes are numbered in `shared` where given (another writer's table of the same names), else
+/// in a table of its names (`table`).
+pub(crate) fn compile_kinds(grammar: &str, kinds: &[&str], fields: &[&str], seed: Seed, shared: Option<&'static rerail_tape_format::f16::Lang>) -> Result<Compiled, String> {
+    let (program, native, words, machine, own) = lower_kinds(grammar, kinds, fields, seed)?;
     let cut = native_cpu_clusters::by_rules(&native);
     let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, native: native.block_programs[0].clone(), program, words, machine })
+    let table = match shared {
+        Some(lang) => Table::Shared(lang),
+        None => Table::Own(table(kinds.len(), own, fields.len(), &program.readings.extras)),
+    };
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), program, words, machine, table, numbers: Default::default() })
 }
 
 /// `grammar` through the Bitlex compiler, assembled and lowered to the native IR: all but
-/// Cranelift's compile (`compile_kinds`); from the grammar's shipped answers and the machine's
-/// (decision 0669).
+/// Cranelift's compile (`compile_kinds`), and how many of the grammar's names it numbered from `OWN_IDS`; from the
+/// grammar's shipped answers and the machine's (decision 0669).
 pub(crate) fn lower_kinds(grammar: &str, kinds: &[&str], fields: &[&str], seed: Seed) -> Result<Lowered, String> {
-    rerail_compiler::answers::answered_shipped(seed.family, grammar.as_bytes(), seed.shipped, |known| lower_known(grammar, kinds, fields, known))
+    rerail_bitlex::answers::answered_shipped(seed.family, grammar.as_bytes(), seed.shipped, |known| lower_known(grammar, kinds, fields, known))
 }
 
 /// `lower_kinds` from the provers' answers `known`, and the answers its compile made.
@@ -124,14 +219,15 @@ pub(crate) fn lower_known(grammar: &str, kinds: &[&str], fields: &[&str], known:
         })
     };
     let field = |name: &str| fields.iter().position(|&f| f == name).map(|i| i as u16 + 1);
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::No)?;
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     for b in &mut native.block_programs {
-        b.pad = rerail_compiler::native_cpu_block::BACK as u16;
+        b.pad = rerail_cpu_block::native_cpu_block::BACK as u16;
     }
-    Ok(((program, native, compiled.words, compiled.machine), compiled.proofs))
+    let own = own.borrow().len();
+    Ok(((program, native, compiled.words, compiled.machine, own), compiled.proofs))
 }
 
 /// A directive as the tape gives it: `c_directive`'s kind and bytes (the file's).
@@ -147,15 +243,34 @@ pub struct Row {
 }
 
 impl Compiled {
-    /// `src`'s tape image, or `None` where the grammar refuses the file.
-    pub fn image(&self, src: &[u8]) -> Option<Vec<u8>> {
-        self.parser.image(src).ok()
+    /// Its tapes' format 16 table.
+    pub fn lang(&self) -> &rerail_tape_format::f16::Lang {
+        match &self.table {
+            Table::Shared(lang) => lang,
+            Table::Own(lang) => lang,
+        }
     }
 
-    /// `src`'s directives, read from its tape in place, or `None` where the grammar refuses it.
-    /// `src`'s directives and their operands (`read`), or `None` where the grammar refuses it.
+    /// The table's numbers by tier 2's keys, made once.
+    fn numbers(&self) -> &native_cpu_stream::Numbers {
+        self.numbers.get_or_init(|| self.parser.tier2.numbers(self.lang()))
+    }
+
+    /// `src`'s tape in format 16 as tier 2 writes it, or why the grammar refuses the file.
+    pub fn tape(&self, src: &[u8]) -> Result<Tape16, String> {
+        let w = self.parser.image16(src, TERMINATORS, self.lang(), self.numbers(), false)?;
+        written(w).ok_or_else(|| "a 16z tape where format 16 was asked for".into())
+    }
+
+    /// `src`'s tape, or `None` where the grammar refuses the file.
+    pub fn image(&self, src: &[u8]) -> Option<Tape16> {
+        self.tape(src).ok()
+    }
+
+    /// `src`'s directives and their operands, read from its tape in place (`read`), or `None` where the grammar
+    /// refuses it.
     pub fn read(&self, src: &[u8]) -> Option<Read> {
-        read(&self.image(src)?).ok()
+        read(&Nodes::of(&self.image(src)?, self.lang()).ok()?).ok()
     }
 
     /// `src`'s facts (`Facts::of` its tape's reading), or `None` where the grammar refuses it.
@@ -165,31 +280,32 @@ impl Compiled {
 
     /// The same, by the interpreter: its tier 1 and its tier 2, the program's meaning.
     pub fn interpreter_read(&self, src: &[u8]) -> Option<Read> {
-        read(&self.interpreter_image(src)?).ok()
+        read(&Nodes::of(&self.interpreter_image(src)?, self.lang()).ok()?).ok()
     }
 
-    /// `src`'s tape by the interpreter: its tier 1 and its tier 2, the program's meaning.
-    pub fn interpreter_image(&self, src: &[u8]) -> Option<Vec<u8>> {
+    /// `src`'s tape by the interpreter: its tier 1 and its tier 2, the program's meaning (`stream::image16`).
+    pub fn interpreter_image(&self, src: &[u8]) -> Option<Tape16> {
         let run = self.program.block_programs[0].run(src);
         let nodes = rerail_compiler::stream::run(&self.program, src, &run).ok()?;
-        Some(rerail_compiler::stream::image(&nodes, &self.program.readings.extras, 0, src))
+        written(rerail_compiler::stream::image16(&nodes, &self.program.readings.extras, self.lang(), TERMINATORS, TAG, src).ok()?)
     }
 
     /// The same for each of `files`, tier 1 on Metal and tier 2 over its buffers; `None` for a
     /// file refused, and for all where the device cannot run the batch.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn metal_read(&self, files: &[&[u8]]) -> Result<Vec<Option<Read>>, rerail_compiler::Error> {
-        Ok(self.metal_images(files)?.into_iter().map(|t| t.and_then(|t| read(&t).ok())).collect())
+        Ok(self.metal_images(files)?.into_iter().map(|t| t.and_then(|t| read(&Nodes::of(&t, self.lang()).ok()?).ok())).collect())
     }
 
-    /// Each of `files`' tapes, tier 1 on Metal and tier 2 over its buffers; `None` for a file
-    /// refused; the device's error where it cannot run the batch.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    pub fn metal_images(&self, files: &[&[u8]]) -> Result<Vec<Option<Vec<u8>>>, rerail_compiler::Error> {
-        use rerail_metal::block_program::serial::{Segments, run_resident};
+    /// Each of `files`' tapes, tier 1 on Metal and tier 2 over its buffers (`tier2_on::image16_on`); `None` for a
+    /// file refused; the device's error where it cannot run the batch.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub fn metal_images(&self, files: &[&[u8]]) -> Result<Vec<Option<Tape16>>, rerail_compiler::Error> {
+        use rerail_metal_programs::block_program::serial::{Segments, run_resident};
+        let numbers = self.numbers();
         let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f, program: 0 }).collect();
         match run_resident(&[&self.native], &batch, Segments { blocks: 29, warm: 1 }) {
-            Ok((_, run)) => Ok((0..files.len()).map(|i| rerail_metal::tier2_on::image_on(&self.parser, &run, i).ok()).collect()),
+            Ok((_, run)) => Ok((0..files.len()).map(|i| rerail_cpu_stream::tier2_on::image16_on(&self.parser, &run, i, TERMINATORS, self.lang(), numbers, false).ok().and_then(written)).collect()),
             Err(rerail_compiler::Error::BackendCapacity) if files.len() > 1 => {
                 let (a, b) = files.split_at(files.len() / 2);
                 let mut out = self.metal_images(a)?;
@@ -222,10 +338,9 @@ pub struct Read {
     pub first_expr: Vec<(&'static str, u32, u32)>,
 }
 
-/// A tape image as text, a node a line: its depth's indent, its field (`name:`), its kind (by
+/// A tape as text, a node a line: its depth's indent, its field (`name:`), its kind (by
 /// `kinds`, its id where `kinds` has none) and its bytes. For tests and for reading a tape.
-pub fn outline(image: &[u8], kinds: &[&str], fields: &[&str], src: &[u8]) -> Result<String, String> {
-    let v = rerail_tape_format::View::new(image)?;
+pub fn outline(v: &Nodes<'_>, kinds: &[&str], fields: &[&str], src: &[u8]) -> Result<String, String> {
     let mut out = String::new();
     let mut ends: Vec<usize> = Vec::new();
     for i in 0..v.len() {
@@ -243,11 +358,10 @@ pub fn outline(image: &[u8], kinds: &[&str], fields: &[&str], src: &[u8]) -> Res
     Ok(out)
 }
 
-/// A tape image read in place, in one walk: each directive (a node of a directive's kind, at the
+/// A tape read in place, in one walk: each directive (a node of a directive's kind, at the
 /// root or in a `group`), each field's node below it, and each group's chain (its own
 /// directives) and the parent it gives the directives inside it.
-pub fn read(image: &[u8]) -> Result<Read, String> {
-    let v = rerail_tape_format::View::new(image)?;
+pub fn read(v: &Nodes<'_>) -> Result<Read, String> {
     let kind = |k: usize| KINDS.get((v.key(k) & 0x3ff) as usize).copied().unwrap_or("");
     let field = |k: usize| FIELDS.get((((v.key(k) & 0xffff) >> rerail_tape_format::KIND_BITS) as usize).wrapping_sub(1)).copied();
     let mut out = Read { rows: Vec::new(), operands: Vec::new(), next: Vec::new(), top: Vec::new(), top_code: false, unmatched: Vec::new(), after_else: Vec::new(), word_ends: Vec::new(), first_expr: Vec::new() };
@@ -382,9 +496,8 @@ pub enum What {
 }
 
 
-/// A tape image as text: a node a line, indented by depth, with its span.
-pub fn image_text(image: &[u8]) -> Result<String, String> {
-    let v = rerail_tape_format::View::new(image)?;
+/// A tape as text: a node a line, indented by depth, with its span.
+pub fn image_text(v: &Nodes<'_>) -> Result<String, String> {
     let mut out = String::new();
     let mut open: Vec<usize> = Vec::new();
     for i in 0..v.len() {

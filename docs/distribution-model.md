@@ -77,18 +77,19 @@ beta    designated customer preview
 latest  stable customer release
 ```
 
-Merging the **Release** pull request publishes core and rule packs to `latest`. Previews come from a hand-pushed `v<version>-next.N` or `-beta.N` tag.
+Merging the **Release** pull request publishes core and rule packs to `next`. That is the release candidate: once it is tested, a person approves its promotion to `latest`, which the release run waits for ([release](release.md#promoting)). Previews come from a hand-pushed `v<version>-next.N` or `-beta.N` tag.
 
 <details>
 <summary>How a release runs</summary>
 
-Core (`0.1.0`, `0.1.1`, …) and rule packs publish plain versions straight to `latest`:
+Core (`0.1.0`, `0.1.1`, …) and rule packs publish plain versions to `next`, and a person promotes them to `latest`:
 
 1. `.github/workflows/release-pr.yml` keeps the **Release** pull request current with `main`. It bumps core's patch version if anything core ships changed since its last `v<version>` tag, beside the packs' changeset bumps.
 2. Merging it is the release: the workflow tags core's new version.
-3. `release.yml` builds and publishes core; `release-packs.yml` publishes packs. Each publish waits for a reviewer to approve the `release` environment. Each run then checks `latest` is the version it published ([release](release.md#release), [pack-format.md](pack-format.md#release)).
+3. `release.yml` builds and publishes core to `next`; `release-packs.yml` publishes packs to `next`. Each publish waits for a reviewer to approve the `release` environment. Each run then checks `next` is the version it published ([release](release.md#release), [pack-format.md](pack-format.md#release)).
+4. Each release run ends with its promotion, waiting for a person to approve it once the release is tested on `next`: core's, then the packs'. Each promotion moves the dist-tag, so `latest` gets the tested bytes; the packs' promotion refuses a pack the core on `latest` can't load ([release](release.md#promoting)).
 
-**GitHub Releases:** every released version, core's and each pack's, gets one on its tag, which comes first: neither the tag nor the Release waits on npm, and a failed publish is re-run for the same tagged version. Its notes are that version's section of its `CHANGELOG.md`: notes are written once, in the changelog, for the people who upgrade. Core's `latest` release is the repository's latest; its `next` and `beta` releases are pre-releases ([release](release.md#release)).
+**GitHub Releases:** every released version, core's and each pack's, gets one on its tag, which comes first: neither the tag nor the Release waits on npm, and a failed publish is re-run for the same tagged version. Its notes are that version's section of its `CHANGELOG.md`: notes are written once, in the changelog, for the people who upgrade. A Release is a pre-release while its version is on `next` or `beta`; promoted, core's becomes the repository's latest release ([release](release.md#release)).
 
 </details>
 
@@ -97,12 +98,12 @@ Core (`0.1.0`, `0.1.1`, …) and rule packs publish plain versions straight to `
 
 **`next` never trails `latest`,** so whoever follows `next` gets every stable release too:
 
-- A `latest` publish or promotion, core's or a pack's, also raises that package's `next`, unless `next` holds a newer preview (`scripts/release/raise-next.mjs`; `releasePacks`, `promotePacks`).
-- Each run's dist-tag check fails if a package it released under `latest` or `next` has a `next` unset or older than its `latest`.
-- A core `next` or `beta` preview older than `latest` is refused before it is built.
+- A promotion, core's or a pack's, also raises that package's `next`, unless `next` holds a newer version (`scripts/release/raise-next.mjs`; `promotePacks`).
+- Each run's dist-tag check fails if a package it released under `next`, or promoted to `latest`, has a `next` unset or older than its `latest`.
+- A core version older than `latest` is refused before it is built.
 - Previews leave `latest` alone; putting a version back leaves `next` where it is.
 
-**Rollback** moves only the dist-tag; bytes are never rebuilt between channels. `workflow_dispatch` with `latest` set on `release.yml` (core) or `release-packs.yml` (a pack) points `latest` at an earlier released version and holds it there. Both use npm trusted publishing, so no npm login is needed.
+**Promotion and rollback** move only the dist-tag; bytes are never rebuilt between channels. `workflow_dispatch` with `latest` set on `release.yml` (core) points `latest` at a released version, newer to promote it or earlier to put it back; `release-packs.yml` with no inputs promotes the packs, and with a pack and an earlier version puts it back and holds it there. Both use npm trusted publishing, so no npm login is needed.
 
 **Provenance:** every publish from CI carries an npm provenance attestation. Both workflows pass `--provenance`, so a publish npm cannot attest fails instead of going out without one.
 
@@ -121,7 +122,7 @@ rerail update status
 rerail events          # internal testing; experimental: needs RERAIL_EXPERIMENTAL_EVENT_STREAM=1
 ```
 
-Hooks, the daemon and `rerail events` never contact a registry. A new version arrives only via `rerail update`, and applies to newly started sessions.
+Hooks and `rerail events` never contact a registry. The daemon of an installed Rerail asks npm once a day for the newest version on the channel, only to say an update is out (`update-check.json`; `RERAIL_UPDATE_CHECK=0` turns it off). A new version arrives only via `rerail update`, and applies to newly started sessions.
 
 <details>
 <summary>Rerail home layout and rule packs</summary>
@@ -129,6 +130,7 @@ Hooks, the daemon and `rerail events` never contact a registry. A new version ar
 ```text
 ~/.rerail/
 |- update-state.json
+|- update-check.json
 |- current -> versions/<active>/node_modules/@neralabs/rerail
 |- bin/rerail
 |- daemon.json
@@ -144,6 +146,7 @@ Hooks, the daemon and `rerail events` never contact a registry. A new version ar
 - **Rule packs** are npm packages: Rerail's under `@neralabs`, a third party's as `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` ([rule packs](rule-packs.md#third-parties-packs)). They install with the same npm configuration into `packs/`, beside the versions, so `rerail update` keeps them.
 - **Pack compatibility** is `peerDependencies["@neralabs/rerail"]`. After an update, packs whose range excludes the new version leave the catalog, reported by `rerail packs list`, until a newer pack is installed.
 - **`update-state.json`** is the active-version pointer: selected dist-tag, current and previous known-good installs, last explicit check. It is written via a temporary file and atomic rename.
+- **`update-check.json`** is the daemon's daily update check: the channel, the newest version npm last named on it and when, and when the daemon last asked. It is written the same way, and only ever read to say an update is out.
 
 </details>
 
@@ -170,7 +173,10 @@ An update:
     - An agent that cannot be registered again fails alone; the update exits non-zero with the new version active.
     - Agents whose configuration cannot be read to tell whether they are connected are named and left alone.
     - The update that introduces this step runs the previous version's updater, which lacks it: run `rerail install --refresh` once after it.
-11. Lists each installed rule pack with a newer version that fits the active core, with the `rerail packs add` command that installs it. It installs none.
+11. Runs `rerail packs update` as the new CLI, once the refresh succeeds: each installed rule pack moves to the newest version on the channel that the new core accepts, checked by the new core's engine.
+    - Runs even with no newer core: packs are released without one.
+    - A pack that does not install or load is put back alone; the update exits non-zero with the new version active.
+    - The update that introduces this step runs the previous version's updater, which only lists the newer packs: run `rerail packs update` once after it.
 
 **Health gate:** the native entrypoint and a real `RERAIL-EVENTS/1` session-start exchange must pass, or the update is discarded without changing the active version.
 

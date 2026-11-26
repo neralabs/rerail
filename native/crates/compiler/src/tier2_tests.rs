@@ -1,8 +1,8 @@
 //! Tier 2 end to end in this crate: each of JSON's Bitlex grammars compiled (`bitlex_masks`),
 //! assembled and verified (`rir_asm`), lowered (`native_ir`) and run two ways, by the
 //! interpreters (tier 1's block program, then tier 2's words, `stream::run`) and by the
-//! Cranelift code (`native_cpu_stream::Parser`). Both give the same nodes, or the same
-//! refusal, for each document.
+//! Cranelift code (`native_cpu_stream::Parser`). Both give the same tape (the interpreter's nodes written by
+//! `stream::image16`), or the same refusal, for each document.
 //!
 //! The documents here are a fixed handful over JSON's constructs. `ladder_tests` draws many
 //! more from each grammar and checks them against the reference.
@@ -52,8 +52,8 @@ const DOCUMENTS: &[&str] = &[
     "// c\n[1]",
 ];
 
-/// Each of JSON's grammars: the compiled words equal the interpreters on every document, node for node, or refuse at
-/// the same word.
+/// Each of JSON's grammars: the compiled words equal the interpreters on every document, the tape byte for byte, or
+/// refuse at the same word.
 #[test]
 fn every_grammar_compiles_here_and_equals_the_interpreters() {
     let steps = crate::ladder::grammars();
@@ -64,7 +64,7 @@ fn every_grammar_compiles_here_and_equals_the_interpreters() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = Symbols { kind: &kind, field: &field };
+        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: compiles: {e}"));
         let text = compiled.text();
         let words = rir_asm::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
@@ -73,63 +73,22 @@ fn every_grammar_compiles_here_and_equals_the_interpreters() {
         let block = &words.block_programs[0];
         for doc in DOCUMENTS {
             let bytes = doc.as_bytes();
-            // The nodes, or the word that refused (the compiled code says only that it refused).
-            let pc = |r: Result<Vec<stream::Node>, stream::Refused>| r.map_err(|e| e.pc);
-            let want = pc(stream::run(&words, bytes, &block.run(bytes)));
+            // The tape, or the word that refused (the compiled code says only that it refused).
+            let (got, want) = parser.against(bytes, stream::run(&words, bytes, &block.run(bytes)));
             parsed += usize::from(want.is_ok());
-            assert_eq!(pc(parser.parse(bytes)), want, "{name}: {doc:?}");
+            assert!(got == want, "{name}: {doc:?}: {:?} against {:?}", got.as_ref().map(Vec::len), want.as_ref().map(Vec::len));
         }
     }
     // Not refusals alone: many documents parse, so the nodes are compared too.
     assert!(parsed >= 20, "{parsed} documents parsed");
 }
 
-/// A document whose tape does not fit 2-byte columns (70,000 blanks after its first separator: a
-/// later node's offset from its block's base past 64 KiB) is read again by the wide tier 2 (`Parser::wide`, at `Widths::WIDE`): its nodes
-/// are the interpreter's, and its image is the writer's: offsets at 4 bytes, the rest at 2.
-#[test]
-fn a_tape_past_two_byte_columns_is_read_at_four() {
-    let steps = crate::ladder::grammars();
-    let mut wide = 0;
-    for (name, source) in steps {
-        let stmts = ::bitlex::syntax::parse(&source).expect("parses");
-        let ids = Ids::default();
-        let kind = |n: &str| Some(ids.of(n));
-        let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = Symbols { kind: &kind, field: &field };
-        let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
-        let words = rir_asm::assemble(&compiled.text()).expect("assembles");
-        let structure = native_ir::lower(&words, 0, 0).expect("lowers");
-        let parser = Parser::new(&structure).expect("Cranelift compiles");
-        let block = &words.block_programs[0];
-        for doc in DOCUMENTS {
-            let Some(at) = doc.find([';', ',']) else { continue };
-            let big = format!("{}{}{}", &doc[..=at], " ".repeat(70_000), &doc[at + 1..]);
-            let bytes = big.as_bytes();
-            let Ok(want) = stream::run(&words, bytes, &block.run(bytes)) else { continue };
-            let image = parser.image(bytes).expect("an image");
-            assert_eq!(image, stream::image(&want, &words.readings.extras, structure.tag, bytes), "{name}: {doc:?} with the blanks: the writer's image");
-            assert_eq!(parser.parse(bytes).map_err(|e| e.pc), Ok(want), "{name}: {doc:?} with the blanks");
-            wide += usize::from(image[rerail_tape_format::header::WIDTHS + 1] == 4);
-        }
-    }
-    assert!(wide >= 6, "{wide} documents written at 4-byte offsets");
-}
-
 /// Decision 0434 §6, R17: tier 2 writes format 16 (and 16z) as it parses, passing its nodes to the writer's ops at
-/// its commit points (`Parser::image16`), with no format 15 image made, and its tape is the one the writer makes of
-/// tier 2's format 15 tape (`f16::write_from`), byte for byte: on every grammar's documents, long ones (blocks
-/// past the first, deep nesting) and ones with 70,000 blanks in them.
+/// its commit points (`Parser::image16`), and its tape is the one the writer makes of the interpreter's nodes
+/// (`stream::image16_by`), byte for byte, with each block's presence: on every grammar's documents, long ones (blocks
+/// past the first, deep nesting) and ones with 70,000 blanks in them (a node's start past 64 KiB from its block's).
 #[test]
 fn tier2_writes_format_16_by_the_ops() {
-    use rerail_tape_format::f16::{self, Lang, Written};
-    use rerail_tape_format::tape::{F15, Tape, f15_columns};
-    let bytes_of = |w: &Written| match w {
-        Written::F16(t) => t.as_bytes().to_vec(),
-        Written::F16Z(t) => t.as_bytes().to_vec(),
-    };
-    // The tape's home: the tape, then its presence (the document's and each block's).
-    let home_of = |w: &Written| w.extent().to_vec();
     let mut docs: Vec<String> = DOCUMENTS.iter().map(|d| d.to_string()).collect();
     for d in DOCUMENTS {
         if let Some(at) = d.find([';', ',']) {
@@ -142,41 +101,35 @@ fn tier2_writes_format_16_by_the_ops() {
     docs.push(format!("[{}]", vec!["{\"a\": [1, 2.5e3, true, null, \"x\\n\"]} // c\n"; 800].join(", ")));
     docs.push(format!("{}1{}", "[".repeat(400), "]".repeat(400)));
     let steps = crate::ladder::grammars();
-    let (mut written, mut long) = (0, 0);
+    let (mut written, mut long, mut far) = (0, 0, 0);
     for (name, source) in steps {
         let stmts = ::bitlex::syntax::parse(&source).expect("parses");
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = Symbols { kind: &kind, field: &field };
+        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
         let words = rir_asm::assemble(&compiled.text()).expect("assembles");
         let structure = native_ir::lower(&words, 0, 0).expect("lowers");
         let parser = Parser::new(&structure).expect("Cranelift compiles");
-        let sixteen = parser.sixteen().unwrap_or_else(|| panic!("{name}: a format 16 tier 2"));
+        let block = &words.block_programs[0];
         for doc in &docs {
             let bytes = doc.as_bytes();
             let shown = &doc[..doc.len().min(60)];
-            let Ok(image) = parser.image(bytes) else { continue };
-            let (columns, table) = f15_columns(&image).expect("a format 15 tape");
-            let t = F15::new(&image, columns, &table).expect("reads");
-            let lang = Lang::new(table.clone(), [1, 1, 1], 1).expect("a language");
-            let number = f16::numbers(&lang, &table).expect("numbers");
-            let numbers = sixteen.numbers(&lang);
+            let Ok(nodes) = stream::run(&words, bytes, &block.run(bytes)) else { continue };
             for z in [false, true] {
-                let want = f16::write_from_with_presence(&lang, &t, &number, bytes, structure.tag, z).expect("the writer's tape").tape;
-                let got = parser.image16(bytes, &lang, &numbers, z).unwrap_or_else(|e| panic!("{name}: {shown:?} (16z {z}): {e}"));
-                assert!(got.presence_bytes().is_some() && home_of(&got) == home_of(&want), "{name}: {shown:?} (16z {z}): the presence, the document's and each block's");
-                let (got, want) = (bytes_of(&got), bytes_of(&want));
+                let (got, want) = parser.against_z(bytes, Ok(nodes.clone()), z);
+                let (got, want) = (got.unwrap_or_else(|pc| panic!("{name}: {shown:?} (16z {z}): refused at {pc}")), want.expect("the interpreter's tape"));
                 let first = (0..got.len().min(want.len())).find(|&k| got[k] != want[k]);
                 assert!(got == want, "{name}: {shown:?} (16z {z}): format 16 by tier 2's passes: lengths {} and {}, first differing at {first:?}", got.len(), want.len());
             }
             written += 1;
-            long += usize::from(t.len() > 1024);
+            long += usize::from(nodes.len() > 1024);
+            far += usize::from(bytes.len() > 70_000);
         }
     }
     // 29 with the three steps, 3 past a block (decision 0422).
-    assert!(written >= 25 && long >= 3, "{written} documents, {long} past a block");
+    assert!(written >= 25 && long >= 3 && far >= 6, "{written} documents, {long} past a block, {far} past 64 KiB");
 }
 
 /// The crate's assembler takes a parser's program only: a matcher's rows are the engine's.
@@ -201,7 +154,7 @@ fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = Symbols { kind: &kind, field: &field };
+        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
         let words = rir_asm::assemble(&compiled.text()).expect("assembles");
         let structure = native_ir::lower(&words, 0, 0).expect("lowers");
@@ -226,8 +179,8 @@ fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
         for doc in DOCUMENTS {
             for cut in 0..=doc.len() {
                 let bytes = &doc.as_bytes()[..cut];
-                let want = stream::run(&words, bytes, &block.run(bytes)).map_err(|r| r.pc);
-                assert_eq!(parser.parse(bytes).map_err(|r| r.pc), want, "{name}: {:?}", String::from_utf8_lossy(bytes));
+                let (got, want) = parser.against(bytes, stream::run(&words, bytes, &block.run(bytes)));
+                assert!(got == want, "{name}: {:?}: {:?} against {:?}", String::from_utf8_lossy(bytes), got.as_ref().map(Vec::len), want.as_ref().map(Vec::len));
                 if let Err(pc) = want {
                     inside += usize::from([pc.wrapping_sub(1), pc].iter().any(|&pc| pc < shared.skipped.len() && shared.skipped[pc]));
                 }
@@ -302,10 +255,9 @@ fn a_numbers_check_runs_over_its_tokens_bytes() {
     for number in &numbers {
         for doc in [format!("[{number}]"), format!("{{\"k\": [1, {number}, 2]}}"), format!("{}{number}", " ".repeat(60))] {
             let bytes = doc.as_bytes();
-            let pc = |r: Result<Vec<stream::Node>, stream::Refused>| r.map_err(|e| e.pc);
-            let want = pc(stream::run(&c.program, bytes, &block.run(bytes)));
+            let (got, want) = c.parser.against(bytes, stream::run(&c.program, bytes, &block.run(bytes)));
             assert_eq!(want.is_ok(), rfc(number.as_bytes()), "the interpreter: {doc:?}");
-            assert_eq!(pc(c.parser.parse(bytes)), want, "the CPU: {doc:?}");
+            assert!(got == want, "the CPU: {doc:?}: {:?} against {:?}", got.as_ref().map(Vec::len), want.as_ref().map(Vec::len));
             if want.is_ok() { accepted += 1 } else { refused += 1 }
         }
     }
@@ -383,10 +335,9 @@ fn a_unicode_escapes_checks_run_at_its_u() {
             // test of the file's end).
             for (doc, closed) in [(format!("[\"{}{text}\"]", "a".repeat(pad)), true), (format!("{{\"{text}\": {}}}", "1".repeat(pad % 7 + 1)), true), (format!("\"{}{text}\"", " ".repeat(pad)), true), (format!("\"{}{text}", "b".repeat(pad)), false)] {
                 let bytes = doc.as_bytes();
-                let pc = |r: Result<Vec<stream::Node>, stream::Refused>| r.map_err(|e| e.pc);
-                let want = pc(stream::run(&c.program, bytes, &block.run(bytes)));
+                let (got, want) = c.parser.against(bytes, stream::run(&c.program, bytes, &block.run(bytes)));
                 assert_eq!(want.is_ok(), closed && valid(text.as_bytes()), "the interpreter: {doc:?}");
-                assert_eq!(pc(c.parser.parse(bytes)), want, "the CPU: {doc:?}");
+                assert!(got == want, "the CPU: {doc:?}: {:?} against {:?}", got.as_ref().map(Vec::len), want.as_ref().map(Vec::len));
                 if want.is_ok() { accepted += 1 } else { refused += 1 }
             }
         }
@@ -395,10 +346,9 @@ fn a_unicode_escapes_checks_run_at_its_u() {
     for text in [r"\uDC00", r"\uD800\uDC00", r"\uDC00\uDC00", r"a\uDC00", r"\uDBFF\uDFFF"] {
         for doc in [format!("\"{text}\""), format!("[\"{text}\"]"), format!(" \"{text}\"")] {
             let bytes = doc.as_bytes();
-            let pc = |r: Result<Vec<stream::Node>, stream::Refused>| r.map_err(|e| e.pc);
-            let want = pc(stream::run(&c.program, bytes, &block.run(bytes)));
+            let (got, want) = c.parser.against(bytes, stream::run(&c.program, bytes, &block.run(bytes)));
             assert_eq!(want.is_ok(), valid(text.as_bytes()), "the interpreter: {doc:?}");
-            assert_eq!(pc(c.parser.parse(bytes)), want, "the CPU: {doc:?}");
+            assert!(got == want, "the CPU: {doc:?}: {:?} against {:?}", got.as_ref().map(Vec::len), want.as_ref().map(Vec::len));
         }
     }
     assert!(accepted > 100 && refused > 100, "{accepted} accepted, {refused} refused");
@@ -670,11 +620,14 @@ fn a_mask_leaves_its_vector_where_it_is_read() {
         for (block, lines) in crate::clif_text::hot_loop(&c.parser.tier1.clif) {
             for (i, l) in lines.iter().enumerate() {
                 let Some((v, rest)) = l.split_once(" = ") else { continue };
-                if !rest.starts_with("extractlane ") || rest.starts_with("extractlane.i8x16") {
+                // A mask taken out: a lane of a reduced vector (Arm's), or its bytes' high bits (x86-64's
+                // `vhigh_bits`, a `pmovmskb`).
+                let taken = |rest: &str| (rest.starts_with("extractlane ") && !rest.starts_with("extractlane.i8x16")) || rest.starts_with("vhigh_bits");
+                if !taken(rest) {
                     continue;
                 }
                 // Past the others moved before the same reader (a vector's two halves, say).
-                let j = (i + 1..lines.len()).find(|&j| crate::clif_text::opcode(&lines[j]) != "extractlane").expect("a terminator");
+                let j = (i + 1..lines.len()).find(|&j| !matches!(crate::clif_text::opcode(&lines[j]), "extractlane" | "vhigh_bits")).expect("a terminator");
                 let next = &lines[j];
                 let reads = next.split(|ch: char| !ch.is_alphanumeric()).any(|w| w == v);
                 let last = j + 1 == lines.len() || matches!(crate::clif_text::opcode(next), "brif" | "jump" | "return");
@@ -686,27 +639,33 @@ fn a_mask_leaves_its_vector_where_it_is_read() {
     assert!(checked > 30, "{checked} masks");
 }
 
-/// Decision 0529: tier 1's newline output holds a bit at every `\n` of the file, short files (the edge path alone)
-/// too: the interpreter's always, the compiled tier 1's where it stores them (JSON's forms). A token loop's tier 1
-/// (`.rr`'s, 0177) makes no mask: it offers no newlines, and the index is the scan's.
+/// Decision 0529: tier 1's line-end output holds a bit at every byte a line terminator of the file can end with, the
+/// terminators its grammar's language reads (decision 0612: here `\r\n`, a lone `\r` and `\n`), and those kept by
+/// `ends_at` are their last bytes; short files (the edge path alone) too: the interpreter's always, the compiled tier
+/// 1's where it stores them (JSON's forms). A token loop's tier 1 (`.rr`'s, 0177) makes no mask: it offers no line
+/// ends, and the index is the scan's.
 #[test]
 fn the_newline_output_is_every_newline() {
     let rr = ("rr".to_owned(), include_str!("../../rr_parser/rr.bitlex").to_owned());
-    let docs: [&[u8]; 8] = [b"\n", b"\n\n", b"a\n", b" \n ", b"\r\n", b"// c\n", b"[1,\n2]\n", b"r(x).\n// c\n.decl r(a: number)\n"];
+    let docs: [&[u8]; 11] = [b"\n", b"\n\n", b"a\n", b" \n ", b"\r\n", b"a\rb", b"\n\r\r\r\n", b"\r", b"// c\n", b"[1,\r\n2]\r", b"r(x).\n// c\n.decl r(a: number)\n"];
     let mut differ = Vec::new();
     for (name, source) in crate::ladder::grammars().into_iter().chain([rr]) {
         let c = crate::ladder::compile_step(&name, &source);
         let o = c.parser.tier1.newlines;
-        assert_eq!(o.is_none(), name == "rr", "{name}: tier 1's newlines where its body stores them");
+        assert_eq!(o.is_none(), name == "rr", "{name}: tier 1's line ends where its body stores them");
         let program = &c.program.block_programs[0];
-        let po = program.newline_output().expect("the program's newline output");
+        let (po, set) = program.newline_output().expect("the program's line-end output");
+        assert_eq!(set, rerail_tape_format::newlines::Terminators::Newlines, "{name}: the grammar's terminators");
         for doc in docs {
             let long = [doc, &[b' '; 200][..], doc].concat();
             for d in [doc, &long[..]] {
-                let want: Vec<usize> = (0..d.len()).filter(|&p| d[p] == b'\n').collect();
+                let mut ends = Vec::new();
+                set.each(d, |at, length| ends.push(at + length - 1));
+                let want: Vec<usize> = (0..d.len()).filter(|&p| set.last_bytes().contains(&d[p])).collect();
+                assert_eq!(want.iter().copied().filter(|&p| set.ends_at(d, p)).collect::<Vec<_>>(), ends, "{name}: the candidates kept are the line ends");
                 let bits = |words: &[u64]| (0..d.len()).filter(|&p| words.get(p / 64).is_some_and(|w| w >> (p % 64) & 1 == 1)).collect::<Vec<usize>>();
                 let interpreted = bits(&program.run(d).outputs[po]);
-                let compiled = o.map_or(want.clone(), |o| bits(&c.parser.tier1.extract(d).outputs[o]));
+                let compiled = o.map_or(want.clone(), |(o, _)| bits(&c.parser.tier1.extract(d).outputs[o]));
                 if interpreted != want || compiled != want {
                     differ.push(format!("{name} {:?}: want {want:?}, interpreter {interpreted:?}, compiled {compiled:?}", String::from_utf8_lossy(d).chars().take(40).collect::<String>()));
                 }

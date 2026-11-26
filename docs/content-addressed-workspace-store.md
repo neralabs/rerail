@@ -53,7 +53,7 @@ applies the DDL; a new store also gets `auto_vacuum=INCREMENTAL`.
 `PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (7). A build refuses a store
 whose floor is newer than its own. Additive changes such as indexes never raise it.
 
-The renamed file is `STORE_FILE_NAME`, now `content-v9.sqlite`. The old file is neither migrated nor
+The renamed file is `STORE_FILE_NAME`, now `content-v10.sqlite`. The old file is neither migrated nor
 deleted.
 
 Tests: `newer_compatibility_floor_is_refused`,
@@ -83,13 +83,14 @@ reopens them.
 PRAGMA foreign_keys=ON;
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
-PRAGMA cache_size=-1024;          -- 1 MiB page cache per connection
-PRAGMA mmap_size=0;
+PRAGMA cache_size=-1024;          -- 1 MiB page cache per connection; the writer's is 32 MiB
+PRAGMA mmap_size=4294967296;      -- RERAIL_STORE_MMAP_MB: 4096 by default, 0 (off) on Windows
 PRAGMA journal_size_limit=16777216;
+PRAGMA temp_store=MEMORY;
 ```
 
-It also sets a 128-entry statement cache and a busy handler, `wait_for_writer`, waiting up to
-`BUSY_TIMEOUT` (250 ms) per attempt for the write lock.
+It also sets a 256-entry statement cache and a busy handler, `wait_for_writer`, waiting up to
+`BUSY_TIMEOUT` (250 ms) per attempt for the write lock. `RERAIL_STORE_MMAP_MB=0` turns the map off.
 
 </details>
 
@@ -135,7 +136,7 @@ signed 64-bit lanes, each eight digest bytes read with `i64::from_be_bytes`. SHA
 
 ## Objects
 
-Each source and tape is stored once, uncompressed, in segment files beside the store (`content-v9.sqlite.objects/`),
+Each source and tape is stored once, uncompressed, in segment files beside the store (`content-v10.sqlite.objects/`),
 and read in place; the row points at its range and holds no bytes. Check results, call summaries and tree pages are
 kept the same way (floor 8). A scan gathers its files into a few large
 segments; any other write (a publication, a snapshot, a single put) writes one segment of its own objects before its
@@ -242,7 +243,8 @@ A snapshot records what a commit holds; a workspace's overlay records what it ev
 
 Discovery skips:
 
-- built-in ignores (`BUILTIN_IGNORE`: `.git/`, `node_modules/`, `target/`, `tmp/`, `__pycache__/`);
+- built-in ignores (`BUILTIN_IGNORE`: `.git/`, `node_modules/`, `target/`, `tmp/`, `__pycache__/`, and Rerail's
+  session records folder `.rerail/sessions/` in any folder);
 - `.rerailignore` paths, in Git ignore syntax with negation. A negation cannot restore a built-in
   ignore.
 
@@ -282,8 +284,8 @@ most 64 paths).
 Rule results are cached per file content and context; completion records mark which clean trees may
 reuse them.
 
-- **Context results** (`context_check_results`): one file's results for one clause, keyed by source
-  and context.
+- **Workspace results:** one file's results for every clause under one context and one catalog, a
+  single entry of the store's per-file memo (`held::memo_pack`), keyed by content and context.
 - **Completion record:** `completeStorageRevisionAsync()` marks the clean trees a finished index
   covered.
 - **Restore:** a repository index restores a clean file only with results for every clause and its
@@ -293,27 +295,26 @@ Scan budgets: [Reference](reference.md#scan-and-settings-controls). Result pages
 `resultPageAsync()` pages an in-memory `ResultPageIndex`.
 
 <details>
-<summary>Catalog and result tables</summary>
+<summary>Result and completion entries</summary>
 
-- **`candidate_catalogs`:** a rule catalog's identity, a SHA-256 over the code-rule catalog, grammar
-  set, scanner version and tape format (`CandidateCatalogIdentity`).
-- **`candidate_checks`:** one clause of a catalog, by rule (policy hash) and clause key.
-- **`context_check_results(source_id, context_hash_id, check_id, seg, seg_at, seg_len)`:**
-  per-file results, a file's call summary among them. The result's bytes are in an object segment, as
-  they are, and read there. The context (`file_context`) is all non-content inputs: path, language,
-  Python module, nearest `package.json` and any calls-closure stamp (`result_context`). A result whose
-  segment is gone makes the file's results a miss.
+Results are kept as memo entries (`results.rs`, t33 step 8): each entry's bytes as they are in a
+memo segment, read there in place, and one `memo_entries` row finding it. The five tables that held
+them (`candidate_catalogs`, `candidate_checks`, `context_check_results`, `completed_directory_reuse`,
+`completed_workspace_revisions`) are dropped.
 
-`LocalResultCache` keeps up to 32 MiB of results per process, as the segments hold them.
-
-</details>
-
-<details>
-<summary>Completion records</summary>
-
-In a Git worktree, `completeStorageRevisionAsync()` writes
-`completed_directory_reuse(tree_hash_id, prefix, package_hash_id, catalog_hash_id)` per clean tree,
-plus the workspace's `completed_workspace_revisions` row (`complete_directories`).
+- **The catalog** (`CandidateCatalogIdentity`) is a SHA-256 over the code-rule catalog, grammar
+  set, scanner version and tape format. Nothing stores it alone: it is part of each entry's key and
+  image.
+- **A results entry** (`put_workspace_results`, `workspace_results`) holds one file's results under
+  one context: each clause's rule, clause key and result bytes, a file's call summary among them. Its
+  part is a digest of catalog, content and context, and its image names them again, so a read never
+  takes another's entry. It is written whole, restored results included, and replaces the entry it
+  had. The context (`file_context`) is all non-content inputs: path, language, Python module, nearest
+  `package.json`; a calls consumer's results go under the context with its calls-closure stamp
+  (`result_context`). An entry whose segment is gone is a miss.
+- **A directory entry** (`complete_directories`, `reusable_directory_prefixes`): in a Git worktree,
+  `completeStorageRevisionAsync()` records each clean tree's prefix, tree and package hash under the
+  catalog. Without a repository a completion records nothing.
 
 The package hash covers what the tree's files read outside it: ancestors' Python package markers and
 the inherited `package.json` of its ECMAScript files. If the write fails, the audit keeps its
@@ -329,7 +330,7 @@ A repository index (`index.rs`):
 1. Walks the host-selected files and finds clean trees with a completion record for the current
    catalog (`reusable_directory_prefixes`).
 2. Under those prefixes, bulk-resolves clean files' aliases (`stored_sources_by_alias`) and results
-   (`local_check_results_by_key`).
+   (`workspace_results`).
 3. Restores a file only with results for every clause and its blob's bytes still present. Listing
    and restoring evaluate nothing.
 4. Reads the rest in chunks of at most `INDEX_BATCH_FILES` (32) files, closing a chunk at
@@ -406,11 +407,10 @@ A pass needing over ten data statements fails. A fresh read then checks every ro
 collection between read and write can delete rows the pass relied on; the next pass rewrites them.
 Publication fails after eight incomplete passes.
 
-**Relationship pass.** It writes overlay rows, new result-context hashes and `context_check_results`,
-chunked to SQLite's variable limit, in at most ten statements. The results' bytes go first into one
-segment of the pass's, which its transaction numbers and which is named once it commits. Under the write lock it first checks
-every prepared path, source, tape, catalog and check ID is still current
-(`relationship_references_current`); otherwise the whole publication restarts, at most eight times.
+**Relationship pass.** It writes the overlay rows in one statement. Under the write lock it first
+checks every prepared path, source and tape ID is still current (`relationship_references_current`);
+otherwise the whole publication restarts, at most eight times. The files' results are written after
+the publication, as memo entries (`put_workspace_results`).
 
 Every pass runs under `retry_busy`. Cancellation is checked between passes and before commit: an
 uncommitted pass rolls back; committed passes stay valid. `PublicationResult` reports statement,
@@ -418,7 +418,7 @@ pass, retry and timing counts.
 
 Tests:
 
-- ten-statement budget: `overlay_publication_replaces_payload_and_candidates_atomically`;
+- ten-statement budget: `overlay_publication_replaces_payload_atomically`;
 - no hashing under the write lock:
   `relationship_revalidation_does_not_hash_payloads_under_write_lock`;
 - reconciliation: `reconciliation_reprepares_source_collected_after_the_read`,
@@ -471,19 +471,17 @@ Database relationships are the only liveness authority; there are no reference c
 
 1. Workspaces whose lease expired end (state 2), and a pin owner whose last pin lapsed ends; their
    sessions record when and how many bytes. Ended workspaces past the age budget are released
-   (state 3): their overlay rows go, then the workspace, its session and its
-   `completed_workspace_revisions` row.
+   (state 3): their overlay rows go, then the workspace and its session.
 2. Expired `object_pins`, except a source's or tape's whose owner is aged.
 3. The files of one snapshot no workspace references, then the snapshot once empty.
 4. Tapes no snapshot file, overlay, pin or `file_documents.document_tape_id` references. A deleted
    primary tape takes its `file_documents` rows, search index set and FTS document with it, so a
    later pass deletes the derived tapes no row names.
-5. Unreferenced sources, after their aliases and stored results.
-6. Checks without results, catalogs without checks, and `completed_directory_reuse` rows whose
-   catalog is gone.
-7. Git trees no snapshot reaches, each deleted whole with its entries, within the
+5. Unreferenced sources, after their aliases; then the results entries of a content no source
+   keeps, and the directory entries of a catalog with no results entry (`collect_workspace_results`).
+6. Git trees no snapshot reaches, each deleted whole with its entries, within the
    `GIT_TREE_BATCH_ENTRIES` budget (always at least one tree).
-8. Unreferenced paths, strings and hashes.
+7. Unreferenced paths, strings and hashes.
 
 Collection deletes only objects with `created_generation` older than the store's generation, then
 increments it, so objects published since the last pass survive. After commit it runs
@@ -501,10 +499,9 @@ caller.
 
 Each process bounds its caches and connections; `release_memory()` frees them.
 
-- **`LocalResultCache`:** up to 32 MiB of decoded results.
 - **Connections:** 1 MiB SQLite page cache each.
-- **`release_memory()`** clears the result cache and closes idle connections. Sources and tapes need no cache: they
-  are read where they lie in their segments.
+- **`release_memory()`** closes idle connections. Sources, tapes and results need no cache: they are read where
+  they lie in their segments.
 
 <details>
 <summary>How the read cache maps memory</summary>

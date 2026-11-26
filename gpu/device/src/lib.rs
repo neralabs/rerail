@@ -1,5 +1,7 @@
-//! The device layer (decision 0440): one interface over the backends, Metal on macOS, CUDA on Linux and OpenCL on Windows,
-//! an OpenCL GPU when `RERAIL_GPU=opencl`, or the CPU when `RERAIL_GPU=cpu` (`device`); MLDB's compute-kernel runtime (the
+//! The device layer (decision 0440): one interface over the backends, Metal on macOS and CUDA elsewhere (HIP's where
+//! there is no CUDA driver, or `RERAIL_GPU=hip`; OpenCL's GPU on Windows where neither is), an OpenCL GPU when
+//! `RERAIL_GPU=opencl`, or the CPU when `RERAIL_GPU=cpu`
+//! (`device`); MLDB's compute-kernel runtime (the
 //! argument types, the grid launcher that binds a kernel's parameters by name, and each backend's runtime, at their
 //! upstream paths under `mldb/`); and the process's shared device (`shared`).
 //!
@@ -13,10 +15,12 @@
 pub mod compute_kernel;
 #[path = "mldb/block/compute_kernel_grid.rs"]
 pub mod compute_kernel_grid;
+#[path = "mldb/builtin/metal/agx.rs"]
+pub mod agx;
 #[cfg(target_os = "macos")]
 #[path = "mldb/builtin/metal/compute_kernel_metal.rs"]
 pub mod compute_kernel_metal;
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "macos"))]
 #[path = "mldb/builtin/cuda/compute_kernel_cuda.rs"]
 pub mod compute_kernel_cuda;
 #[path = "mldb/builtin/cpu/compute_kernel_cpu.rs"]
@@ -24,11 +28,9 @@ pub mod compute_kernel_cpu;
 #[path = "mldb/builtin/opencl/compute_kernel_opencl.rs"]
 pub mod compute_kernel_opencl;
 pub mod device;
-mod rows;
+pub mod os;
+pub mod rows;
 pub mod store;
-mod sys;
-/// The system's page size (the unit drivers use host memory in place by).
-pub use sys::{monotonic_seconds, page_size, process_cpu_seconds, thread_cpu_seconds};
 
 /// A plain value a buffer can be viewed as: any bit pattern is a value, no padding read as data, no pointers.
 ///
@@ -92,15 +94,13 @@ pub mod shared {
 
     /// The OpenCL GPU, or none (why, on stderr: a process that asked for OpenCL says why it has no device).
     fn open_opencl() -> Option<Shared> {
+        opencl().map_err(|e| eprintln!("RERAIL_GPU=opencl: {e}")).ok()
+    }
+
+    fn opencl() -> Result<Shared, String> {
         use crate::compute_kernel_opencl::{ClDevice, ClQueueRoot};
-        let opened = ClDevice::open().and_then(|d| Ok((ClQueueRoot::new(&d)?, ClQueueRoot::new(&d)?, d)));
-        match opened {
-            Ok((queue, waiting, device)) => Some(Shared { device: Device::OpenCl(device), queue: QueueRoot::OpenCl(queue), waiting: QueueRoot::OpenCl(waiting) }),
-            Err(e) => {
-                eprintln!("RERAIL_GPU=opencl: {e}");
-                None
-            }
-        }
+        let (queue, waiting, device) = ClDevice::open().and_then(|d| Ok((ClQueueRoot::new(&d)?, ClQueueRoot::new(&d)?, d)))?;
+        Ok(Shared { device: Device::OpenCl(device), queue: QueueRoot::OpenCl(queue), waiting: QueueRoot::OpenCl(waiting) })
     }
 
     fn open_cpu() -> Option<Shared> {
@@ -120,14 +120,31 @@ pub mod shared {
         })
     }
 
-    /// Windows' GPU is OpenCL's: the default device and `RERAIL_GPU=opencl` are one.
+    /// Windows' GPU: CUDA's where the machine has a CUDA device, else HIP's (an AMD GPU with AMD's HIP runtime), else
+    /// OpenCL's (`OpenCL.dll`, the ICD loader every GPU driver installs): an Intel GPU, or an AMD one without HIP.
     #[cfg(windows)]
     fn open() -> Option<Shared> {
-        open_opencl()
+        open_cuda().or_else(|| opencl().ok()).or_else(say_needs)
     }
 
     #[cfg(target_os = "linux")]
     fn open() -> Option<Shared> {
+        open_cuda().or_else(say_needs)
+    }
+
+    /// A process left without a GPU says what the user must install for one, where it found a GPU it could not use
+    /// (decision 0645: no GPU compiler ships with Rerail; `compute_kernel_cuda::needs`). Once a process: the device
+    /// is opened once.
+    #[cfg(not(target_os = "macos"))]
+    fn say_needs() -> Option<Shared> {
+        if let Some(needs) = crate::compute_kernel_cuda::needs() {
+            eprintln!("rerail: GPU support: {needs}");
+        }
+        None
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn open_cuda() -> Option<Shared> {
         use crate::compute_kernel_cuda::{CudaDevice, CudaQueueRoot};
         let device = CudaDevice::system_default()?;
         // The waiting root first: its stream is the only one an armed wait holds (`CudaQueueRoot`).

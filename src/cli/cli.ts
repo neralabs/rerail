@@ -48,11 +48,13 @@ import {
   dashboardAccessLink,
   dashboardLink,
   daemonNotRunningMessage,
+  homeDaemonInStart,
   lookupDaemon,
   NOT_HOME_DAEMON_NOTE,
   openInBrowser,
   openDashboard,
   startDaemon,
+  startingDaemonNoticeTo,
   STOP_ANSWERS,
   stopDaemon,
   keepAutostartClaim,
@@ -71,7 +73,6 @@ import { runScrubCommand } from "./scrub-cli.js";
 import { lookupCheckout, parentCheckouts, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { installedPackDirectories, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
-import { RERAIL_PUBLISHER, rulePackPublisher, rulePackShortName } from "../engine/catalog/rule-packs.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
 import { deleteNamedAnalysisScope } from "../engine/native/analysis-scope.js";
@@ -105,8 +106,8 @@ import {
   type UpdateResult,
   type UpdateStatus,
 } from "../setup/updater.js";
-import { newerPackVersions, packsLeftOutByCore, type PackUpdate, type PackUpdateCheck } from "../setup/rule-pack-store.js";
-import { formatDuration, streamProgress, type Progress } from "../runtime/progress.js";
+import { packsLeftOutByCore } from "../setup/rule-pack-store.js";
+import { formatDuration, streamProgress } from "../runtime/progress.js";
 
 const MANAGED_CHILD_ARGUMENT = "--rerail-managed-child";
 
@@ -166,71 +167,18 @@ function leftOutPackLines(coreVersion: string, leftOut: readonly string[]): stri
   return [
     `Rerail ${coreVersion} leaves out ${one ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${one ? "it run none of its" : "them run none of their"} rules:`,
     ...leftOut.map(line => `  ${line}`),
-    // A pack is pinned to the version installed, so a bare package name keeps it, and a tag can name a version the pack
-    // does not have (one installed from `next`): the version is what moves it.
-    "Install a version that fits with `rerail packs add <package>@<version>`; the newer versions that fit are listed once the update is done.",
+    "Once your coding agents are refreshed, `rerail packs update` moves each rule pack to the newest version that fits; one with no such version stays left out.",
   ];
 }
 
 /**
- * The installed rule packs with a newer version that fits the core the update left active, each with the version to
- * move to, and the one command that installs them all; nothing when there is none.
+ * After an update, whether or not it changed core, since packs are released without it: the version `current` names
+ * moves each installed rule pack to the newest version it loads (`rerail packs update`), as its own CLI, so a pack made
+ * for that core is checked by that core's engine. Nothing to do with no pack installed.
  */
-function packUpdateLines({ updates }: PackUpdateCheck, channel: string): string[] {
-  if (updates.length === 0) return [];
-  const name = (packageName: string) => rulePackShortName(packageName);
-  return [
-    packUpdateHeader(updates, channel),
-    ...updates.map(pack => `  ${name(pack.packageName)} ${pack.installed} → ${pack.available}${packUpdateNotes(pack, channel)}`),
-    `A pack's new version changes the rules of every repository that adds it. To update ${updates.length === 1 ? "it" : "them"}:`,
-    `  rerail packs add ${updates.map(pack => `${name(pack.packageName)}@${pack.available}`).join(" ")}`,
-  ];
-}
-
-/** The line over the newer pack versions: it names the update's channel only when every version is on it. */
-function packUpdateHeader(updates: readonly PackUpdate[], channel: string): string {
-  const packs = updates.length === 1 ? "a rule pack" : `${updates.length} rule packs`;
-  return updates.every(pack => pack.tag === channel)
-    ? `Newer versions of ${packs} you installed are on ${channel}:`
-    : `Newer versions of ${packs} you installed:`;
-}
-
-/**
- * What a newer pack version's line adds, in parentheses: the tag npm has it under when that is not the update's
- * channel (`next`, for a pack the channel has no version of), and, for a third party's pack, that its new version waits
- * for a person's approval again.
- */
-function packUpdateNotes(pack: PackUpdate, channel: string): string {
-  const notes = [
-    ...pack.tag === channel ? [] : [`on ${pack.tag}`],
-    ...rulePackPublisher(pack.packageName) === RERAIL_PUBLISHER
-      ? []
-      : [`Rerail has not reviewed it: its rules run in Log until you approve this version, rerail rules approve ${pack.packageName}`],
-  ];
-  return notes.length === 0 ? "" : ` (${notes.join("; ")})`;
-}
-
-/**
- * After an update, whether or not it changed core, since packs are released without it: suggests the newer versions
- * of the installed rule packs, installing none. The update is done by then, so a check that fails only says so.
- */
-async function suggestPackUpdates(home: string, result: UpdateResult, progress: Progress): Promise<void> {
-  if (installedPackDirectories(home).length === 0) return;
-  let check: PackUpdateCheck;
-  try {
-    check = await progress.step(
-      "Checking your rule packs for newer versions",
-      async () => await newerPackVersions(home, result.channel, result.current.version),
-      { afterMs: 30_000, hint: "npm may be slow or stuck; each npm request about a pack stops at 1 min, and the update itself is done." },
-    );
-  } catch (error) {
-    check = { updates: [], problems: [error instanceof Error ? error.message : String(error)] };
-  }
-  if (check.problems.length > 0) {
-    process.stderr.write(`warning: could not check every rule pack for a newer version: ${check.problems.join("; ")}\n`);
-  }
-  const lines = packUpdateLines(check, result.channel);
-  if (lines.length > 0) process.stdout.write(`${lines.join("\n")}\n`);
+async function updatePacksWithActiveVersion(home: string, updater: ManagedUpdater): Promise<number> {
+  if (installedPackDirectories(home).length === 0) return 0;
+  return await runChild(process.execPath, [join(updater.currentLink, ENTRY_POINTS.cli), MANAGED_CHILD_ARGUMENT, "packs", "update"]);
 }
 
 function selectedChannel(args: readonly string[]): string | undefined {
@@ -262,12 +210,13 @@ function usage(): string {
     "  rerail packs [list]",
     "  rerail packs add <id[@version] | package[@version] | tarball | folder>...",
     "  rerail packs remove <id | package>...",
+    "  rerail packs update",
     "  rerail packs recommend [--repo <dir>]",
     "  rerail packs calibrate [--repo <dir>] [--dry-run] [--json]",
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json> [--approve]",
     "  rerail rules show <rule id> [--repo <dir>]",
-    "  rerail rules test <draft.json | rule.json | rule.rerail> [--repo <dir>] [--json]",
+    "  rerail rules test <draft.json | rule.json | rule.rerail> [--repo <dir>] [--json]   rule.rerail: from a Rerail checkout, or with RERAIL_SOURCE_ROOT naming one",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail rules approve [<rule id | pack> …] [--repo <dir>]",
@@ -324,7 +273,8 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
     argument => `Unknown daemon start option: ${argument}\n\n${usage()}`,
   );
   const launch = daemonStartLaunch(parsed);
-  const result = await startDaemon({ home, packageRoot }, launch);
+  // A daemon still in its start, one set-up or another start launched, is waited for; the person is told whose.
+  const result = await startDaemon({ home, packageRoot, onWaiting: startingDaemonNoticeTo(home) }, launch);
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
   process.stdout.write(`Logs: ${join(home, DAEMON_LOG_FILE)}\n`);
@@ -410,7 +360,7 @@ async function runStatusCommand(home: string): Promise<number> {
     return 3;
   }
   process.stdout.write(workspaceStatus(process.cwd()));
-  const code = printDaemonStatus(lookup);
+  const code = printStartingDaemon(home, lookup) ?? printDaemonStatus(lookup);
   for (const line of hookHealthLines(home)) process.stdout.write(`${line}\n`);
   printRemoteStatus(home);
   await printCodingAgentDataAccess(home);
@@ -451,11 +401,13 @@ function printRemoteStatus(home: string): void {
   }
 }
 
-/** For each connected coding agent, whether its tools can read Rerail's data on this computer. */
+/** For each connected coding agent, whether its tools can read Rerail's data on this computer, and the step that changes it where there is one. */
 async function printCodingAgentDataAccess(home: string): Promise<void> {
   for (const agent of await codingAgentStates(registrationRoot(home, packageRoot), codingAgentHome())) {
-    // Each sentence names its coding agent.
-    if (agent.connected) process.stdout.write(`${agent.rerailData.why}\n`);
+    // Each sentence names its coding agent, and its step follows it.
+    if (!agent.connected) continue;
+    process.stdout.write(`${agent.rerailData.why}\n`);
+    if (agent.rerailData.fix !== null) process.stdout.write(`${agent.rerailData.fix}\n`);
   }
 }
 
@@ -471,6 +423,20 @@ function hookHealthLines(home: string): string[] {
   const log = readHookFailures(home, Date.now() - HOOK_FAILURE_WINDOW_MS);
   const recorded = log.failures.length === 0 ? null : lastObservedEventAt(join(home, RERAIL_DATABASE_FILE));
   return [...registration, ...hookFailureLines(log, recorded)];
+}
+
+/**
+ * What `rerail status` says of a daemon still in its start that does not answer yet, with the exit code of a daemon that
+ * does not answer: that it is starting, never to stop it, after the note that the lookup removed a daemon.json naming
+ * another process when it did. Undefined when the lookup found it answering, or none is in its start.
+ */
+function printStartingDaemon(home: string, lookup: DaemonLookup): number | undefined {
+  if (lookup.status === "running" || lookup.status === "refused") return undefined;
+  const pid = homeDaemonInStart(home);
+  if (pid === undefined) return undefined;
+  if (lookup.status === "absent" && lookup.notDaemon !== undefined) process.stdout.write(`${NOT_HOME_DAEMON_NOTE}\n`);
+  process.stdout.write(`Rerail daemon (pid ${pid}) is still starting and does not answer yet. See ${join(home, DAEMON_LOG_FILE)}\n`);
+  return 4;
 }
 
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */
@@ -608,9 +574,9 @@ async function runUpdateCommand(
     "install",
     "--refresh",
   ]);
-  // The refresh's failure stays the last thing said.
-  if (refreshed === 0) await suggestPackUpdates(home, result, progress);
-  return refreshed;
+  // The refresh's failure stays the last thing said, and the packs wait for a refresh that worked.
+  if (refreshed !== 0) return refreshed;
+  return await updatePacksWithActiveVersion(home, updater);
 }
 
 /**

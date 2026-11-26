@@ -2,7 +2,7 @@
 """Runs a build or test command on another machine of the build farm, in this checkout's copy there;
 here when none is usable (docs/final-shape/notes/t37, §2; scripts/build/farm/README.md).
 
-    scripts/dev/test-remote [--host NAME] [--os macos|linux|windows|any] [--dir native] [--remote-only] [--tree DIR]... [--fetch PATH]... -- COMMAND...
+    scripts/dev/test-remote [--host NAME] [--os macos|linux|windows|any] [--arch arm64|x86_64] [--memory GB] [--cpu-feature F]... [--dir native] [--remote-only] [--tree DIR]... [--fetch PATH]... -- COMMAND...
 
 e.g. `scripts/dev/test-remote -- cargo nextest run --lib --profile gate` for the full suite,
 `scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'`, or
@@ -36,6 +36,15 @@ build and run, as CI's. It takes any command that does not need macOS: one namin
 (`metal-tests`, `rerail-device-metal`), sending a `--tree` (a program built here is a macOS one) or
 fetching a program (`--fetch`). `--os linux` sends it to a Linux host
 only, `--os any` lets any host take it, `--os macos` keeps it off Linux.
+
+`--arch arm64` or `--arch x86_64` takes only hosts of that CPU, and `--memory GB` only hosts whose
+command gets at least that much memory (a VM's own, not its machine's). Both are as each host's
+health probe last found them (`status` shows them); a host never probed (a guest not yet started)
+is left out unless its configuration says (`arch`, `memory_gb`). Without a usable one, COMMAND runs
+here only if this Mac fits too. `--cpu-feature F` (repeatable, or `F,G`) takes only hosts whose CPU
+has F, in the farm's names (`scripts/build/farm/features`: `sve2`, `sme2`, `i8mm`, `avx2`, ...).
+COMMAND is told its machine's CPU, there or here: RERAIL_FARM_CPU_MODEL, RERAIL_FARM_CPU_FEATURES
+(space-separated), RERAIL_FARM_SVE_BITS and RERAIL_FARM_SME_BITS (0: none).
 
 A Windows host (`"os": "windows"`: a Windows PC's or VM's Windows side, through its WSL) takes a
 command only with `--os windows` (or `--host`): COMMAND runs there as a Windows build (Windows'
@@ -85,13 +94,21 @@ def stop_on_signals():
         signal.signal(sig, stop)
 
 
+# What COMMAND needs of a machine (`Need`), set once parsed: here() runs it only if this Mac fits.
+NEED = None
+
+
 def here(argv, directory, why, remote_only):
     if remote_only:
         say(f"{why}; --remote-only: not run")
         sys.exit(UNAVAILABLE)
+    if NEED is not None and NEED.here():
+        say(f"{why}; {NEED.here()}: not run")
+        sys.exit(UNAVAILABLE)
     say(f"{why}: running it here, at nice 19")
+    cpu = farm.cpu_env(farm.local_cpu()) if "farm" in globals() else {}
     proc = subprocess.Popen(["nice", "-n", "19"] + argv, cwd=os.path.join(CHECKOUT, directory),
-                            env=dict(os.environ, RERAIL_FARM_TESTS_HERE="1"))
+                            env=dict(os.environ, RERAIL_FARM_TESTS_HERE="1", **cpu))
     try:
         sys.exit(proc.wait())
     except KeyboardInterrupt:
@@ -104,12 +121,55 @@ def needs_macos(argv, trees):
     return bool(trees) or "metal" in " ".join(argv).lower()
 
 
-def stopped_guests(oses):
-    """The guests (guest.py) of one of `oses` that take test commands and are stopped now: each one
-    machine, so a Windows host and its Linux side (`shares`) count once, the one of `oses`."""
+class Need:
+    """What COMMAND needs of a host: one of `oses`, the CPU `arch` (None: any) and at least
+    `memory_gb` (None: any)."""
+
+    def __init__(self, oses, arch=None, memory_gb=None, features=()):
+        self.oses, self.arch, self.memory_gb, self.features = oses, arch, memory_gb, list(features)
+
+    def lacks(self, cpu):
+        """Why a CPU record (`farm.host_cpu`) lacks what `--cpu-feature` asks, or None."""
+        if not self.features:
+            return None
+        if not cpu.get("features"):
+            return "its CPU features not yet known (--cpu-feature)"
+        missing = [f for f in self.features if f not in cpu["features"]]
+        return f"its CPU has no {', '.join(missing)} (--cpu-feature)" if missing else None
+
+    def why_not(self, host):
+        """Why `host` cannot take COMMAND, or None."""
+        if farm.host_os(host) not in self.oses:
+            return f"a {farm.host_os(host)} host, and this command runs on {' or '.join(self.oses)} (--os)"
+        if self.arch and farm.host_arch(host) != self.arch:
+            return f"{farm.host_arch(host) or 'of a CPU not yet known'}, not {self.arch} (--arch)"
+        if self.memory_gb and (farm.host_memory_gb(host) or 0) < self.memory_gb:
+            have = farm.host_memory_gb(host)
+            return f"{have} GB of memory, under {self.memory_gb} (--memory)" if have else f"its memory not yet known (--memory {self.memory_gb})"
+        return self.lacks(farm.host_cpu(host))
+
+    def fits(self, host):
+        return self.why_not(host) is None
+
+    def here(self):
+        """Why this Mac cannot take COMMAND, or None."""
+        # (Its system is not checked, as before: with no host of it, COMMAND runs here all the same.)
+        arch = farm.ARCHES.get(os.uname().machine, os.uname().machine)
+        if self.arch and arch != self.arch:
+            return f"this Mac is {arch}, not {self.arch} (--arch)"
+        memory = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") >> 30
+        if self.memory_gb and memory < self.memory_gb:
+            return f"this Mac has {memory} GB of memory, under {self.memory_gb} (--memory)"
+        lacks = self.lacks(farm.local_cpu())
+        return lacks and "this Mac: " + lacks
+
+
+def stopped_guests(need):
+    """The guests (guest.py) that fit `need`, take test commands and are stopped now: each one
+    machine, so a Windows host and its Linux side (`shares`) count once, the one that fits."""
     out, seen = [], set()
     for h in farm.hosts():
-        if not h.get("enabled", True) or not h.get("tests", True) or h.get("by_name") or farm.host_os(h) not in oses:
+        if not h.get("enabled", True) or not h.get("tests", True) or h.get("by_name") or not need.fits(h):
             continue
         base = farm.shared_base(h)
         if base.get("guest") and base["name"] not in seen and farm.health(h).get("guest") == "stopped":
@@ -141,23 +201,23 @@ def wait_for_guest(host):
     deadline = time.time() + guest.START_SECONDS + 60
     while time.time() < deadline:
         h = farm.health(host)
-        if h.get("ok") or h.get("guest") == "stopped":
+        if h.get("ok") or h.get("guest") in ("stopped", "unknown"):  # unknown: its provider did not answer
             return h
         time.sleep(3)
     return farm.health(host)
 
 
-def choose(named, oses, roots):
-    """A usable host of one of `oses`, its test slot and this checkout's copy there (`farm.CopyUse`
+def choose(named, need, roots):
+    """A usable host that fits `need`, its test slot and this checkout's copy there (`farm.CopyUse`
     of the tree `roots` hold), each held until exit; or (None, None, None, why)."""
     if named:
         host = next((h for h in farm.hosts() if h["name"] == named), None)
         if host is None:
             return None, None, None, f"{named} is not in the farm's configuration"
-        if farm.host_os(host) not in oses:
-            return None, None, None, f"{named} is a {farm.host_os(host)} host, and this command runs on {' or '.join(oses)} (--os)"
+        if need.why_not(host):
+            return None, None, None, f"{named} does not fit: {need.why_not(host)}"
         h = farm.health(host, fresh=True)
-        if not h.get("ok") and h.get("guest") in ("stopped", "starting") and guest.request_start(host):
+        if not h.get("ok") and h.get("guest") in ("stopped", "starting", "unknown") and guest.request_start(host):
             base = guest.spec(host)[0]
             what = "its guest " + base["name"] if base["name"] != named else "the guest"
             if farm.host_os(host) == "windows" and base["name"] != named:
@@ -172,23 +232,34 @@ def choose(named, oses, roots):
             return None, None, None, f"{named} is not usable: {h.get('why')}"
         candidates = [host]
     else:
-        candidates = [h for h in farm.usable("tests") if farm.host_os(h) in oses]
+        candidates = [h for h in farm.usable("tests") if need.fits(h)]
         if not candidates:
             # Every host is backed off: asked again now, together (a few seconds), before the command
             # runs here. A back-off is a guess about a host, and running here on a wrong one costs more.
-            hosts = [h for h in farm.hosts() if h.get("enabled", True) and h.get("tests", True) and farm.host_os(h) in oses]
+            hosts = [h for h in farm.hosts() if h.get("enabled", True) and h.get("tests", True) and need.fits(h)]
             with concurrent.futures.ThreadPoolExecutor(max(len(hosts), 1)) as pool:
                 list(pool.map(lambda h: farm.health(h, fresh=True), hosts))
-            candidates = [h for h in farm.usable("tests") if farm.host_os(h) in oses]
-        if not candidates and stopped_guests(oses):
+            candidates = [h for h in farm.usable("tests") if need.fits(h)]
+        if not candidates and stopped_guests(need):
             # No running host of these: a guest that can be one is started, and the command waits
             # for it (below), as for a slot.
             pass
         elif not candidates:
-            reasons = [f"{h['name']}: {farm.health(h).get('why') or 'not ' + ' or '.join(oses)}" for h in farm.hosts()
+            reasons = [f"{h['name']}: {need.why_not(h) or farm.health(h).get('why')}" for h in farm.hosts()
                        if h.get("enabled", True) and h.get("tests", True)]
             return None, None, None, "no usable host" + (f" ({'; '.join(reasons)})" if reasons else " (none configured)")
+    # Its place in the line (farm.SlotQueue): a slot goes to the earliest command that would take it.
+    queue = farm.SlotQueue(farm.shared_base(h)["name"] for h in candidates if farm.health(h).get("ok"))
+    try:
+        return wait_for_slot(named, need, roots, candidates, queue)
+    finally:
+        queue.leave()
+
+
+def wait_for_slot(named, need, roots, candidates, queue):
     said = False
+    deferred = set()
+    other_tree = []
     starting = []
     while True:
         # A guest started for this command (below) that is up now is a candidate too.
@@ -203,6 +274,11 @@ def choose(named, oses, roots):
         # frees on any host is taken, not only the first host's.
         free = []
         tree = mirror.fingerprint(roots)
+        # The machines it would take now: the usable ones, but not one where this checkout's copy ran
+        # another command from other files at the last look (that slot is for a command behind it).
+        queue.update(farm.shared_base(h)["name"] for h in candidates
+                     if farm.health(h).get("ok") and h["name"] not in other_tree)
+        ahead = queue.counts()
         other_tree = []
         for host in candidates:
             # Asked again while waiting: a host that started a fleet job meanwhile takes nothing more.
@@ -219,6 +295,16 @@ def choose(named, oses, roots):
                         got = lock
                         continue
                 lock.release()
+            machine = farm.shared_base(host)["name"]
+            earlier = ahead.get(machine, 0) + ahead.get("*", 0)
+            if got and earlier >= idle:
+                # Its free slots are for the commands that came first and would take them.
+                got.release()
+                got = None
+                if machine not in deferred:
+                    deferred.add(machine)
+                    say(f"{host['name']} has {idle} free test slot{'s' if idle > 1 else ''}, "
+                        f"and {earlier} earlier command{'s' if earlier > 1 else ''} wait{'' if earlier > 1 else 's'} for it: they go first")
             if got:
                 # This checkout's copy there: idle, or running from this very tree; else another
                 # command of this checkout runs there from other files, which this one would change.
@@ -245,12 +331,13 @@ def choose(named, oses, roots):
             best = free[0]
             best[6].used()
             return best[5], best[6], best[7], None
-        if not starting:
+        if not starting and not named:
             # It would wait: the stopped guests that can take it are started (guest.py), and it
-            # takes the first slot that frees, a running host's or a guest's once it is up.
+            # takes the first slot that frees, a running host's or a guest's once it is up. A
+            # named host (`--host`) waits for its own slot: another guest started would take it.
             # One a command: another machine's before this Mac's (where the edit loop runs), then the
             # most cores; a second command that would wait starts the next.
-            order = sorted(stopped_guests(oses), key=lambda g: (farm.shared_base(g)["guest"]["on"] == "local", -g.get("cores", 0)))
+            order = sorted(stopped_guests(need), key=lambda g: (farm.shared_base(g)["guest"]["on"] == "local", -g.get("cores", 0)))
             starting = next(([g] for g in order if guest.request_start(g)), [])
             if starting:
                 say("starting " + ", ".join(f"{g['name']} (a guest on {guest.placement(farm.shared_base(g)['guest']) or farm.shared_base(g)['guest']['on']})" for g in starting)
@@ -271,6 +358,7 @@ def parse(argv):
     """The options and COMMAND, checked before anything is sent: an unknown option or a missing
     COMMAND is refused here, never run on a host."""
     named, directory, remote_only, trees, os_choice, fetches = None, "native", False, [], None, []
+    arch, memory_gb, features = None, None, []
     while argv and argv[0] != "--":
         a = argv[0]
         if a in ("-h", "--help"):
@@ -294,6 +382,19 @@ def parse(argv):
             if len(argv) < 2 or argv[1] not in ("macos", "linux", "windows", "any"):
                 usage("--os takes macos, linux, windows or any")
             os_choice, argv = argv[1], argv[2:]
+        elif a == "--arch":
+            if len(argv) < 2 or argv[1] not in ("arm64", "aarch64", "x86_64", "amd64"):
+                usage("--arch takes arm64 or x86_64")
+            arch, argv = {"aarch64": "arm64", "amd64": "x86_64"}.get(argv[1], argv[1]), argv[2:]
+        elif a == "--cpu-feature":
+            if len(argv) < 2 or argv[1].startswith("-"):
+                usage("--cpu-feature takes a feature's name (scripts/build/farm/features lists them)")
+            features += [f.lower() for f in argv[1].split(",") if f]
+            argv = argv[2:]
+        elif a == "--memory":
+            if len(argv) < 2 or not argv[1].isdigit():
+                usage("--memory takes a whole number of GB")
+            memory_gb, argv = int(argv[1]), argv[2:]
         elif a in ("--host", "--dir"):
             if len(argv) < 2 or argv[1].startswith("-"):
                 usage(f"{a} needs a value")
@@ -313,7 +414,7 @@ def parse(argv):
         usage(f"--dir {directory}: no such directory in {CHECKOUT}")
     if fetches and os_choice not in (None, "macos"):
         usage("--fetch brings back a program for this Mac: it runs on a Mac (no --os)")
-    return named, directory, remote_only, trees, os_choice, fetches, argv
+    return named, directory, remote_only, trees, os_choice, fetches, arch, memory_gb, features, argv
 
 
 def fetch(host, paths):
@@ -350,7 +451,7 @@ def pack_data():
 
 
 def main(argv):
-    named, directory, remote_only, trees, os_choice, fetches, argv = parse(argv)
+    named, directory, remote_only, trees, os_choice, fetches, arch, memory_gb, features, argv = parse(argv)
     trees += [t for t in pack_data() if t not in trees]
     stop_on_signals()
     if not os.path.exists(os.path.join(SHARE, "farm.py")):
@@ -373,9 +474,11 @@ def main(argv):
         os_choice = "windows"
     if os_choice is None:
         os_choice = "macos" if needs_macos(argv, trees) or fetches else "any"
-    oses = ("macos", "linux") if os_choice == "any" else (os_choice,)
+    need = Need(("macos", "linux") if os_choice == "any" else (os_choice,), arch, memory_gb, features)
     roots = [[CHECKOUT, "checkout"]] + [[t, "tree"] for t in trees]
-    host, slot, use, why = choose(named, oses, roots)
+    global NEED
+    NEED = need
+    host, slot, use, why = choose(named, need, roots)
     if host is None:
         here(argv, directory, why, remote_only)
     name = host["name"]
@@ -403,7 +506,7 @@ def main(argv):
     # directory of its own (farm-agent's `exec`).
     # Its share of the host (farm.cpu_share), unless the caller set one.
     share = str(farm.cpu_share(host))
-    env = {"RUSTC_WRAPPER": ""}
+    env = {"RUSTC_WRAPPER": "", **farm.cpu_env(farm.host_cpu(host))}
     for k in ("CARGO_BUILD_JOBS", "NEXTEST_TEST_THREADS", "RUST_TEST_THREADS"):
         env[k] = os.environ.get(k) or share
     job = {"cwd": os.path.join(CHECKOUT, directory), "argv": argv, "map": [CHECKOUT] + [t for t in trees if not t.startswith(CHECKOUT + os.sep)],

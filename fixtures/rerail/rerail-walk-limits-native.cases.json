@@ -1,7 +1,7 @@
 {
   "caught": [
     {
-      "path": "native/src/code_rule_dsl/module_graph.rs",
+      "path": "native/crates/lang_ecma/src/code_rule_dsl/module_graph.rs",
       "content": "/// The folders a server graph does not read, beside hidden ones: the host's\n/// `IGNORED_DIRECTORIES` (code-rule-enforcer.ts), which its repository walk skips.\nconst IGNORED_DIRECTORIES: [&str; 14] = [\n    \".git\",\n    \".hg\",\n    \".svn\",\n    \".rerail\",\n    \".venv\",\n    \"__pycache__\",\n    \"node_modules\",\n    \"dist\",\n    \"build\",\n    \".next\",\n    \".turbo\",\n    \"coverage\",\n    \"target\",\n    \"vendor\",\n];\n"
     },
     {
@@ -13,7 +13,7 @@
       "content": "fn walk(folder: &Path, sources: &mut Vec<PathBuf>) -> bool {\n    for entry in std::fs::read_dir(folder).into_iter().flatten().flatten() {\n        let (path, name) = (entry.path(), entry.file_name());\n        let name = name.to_string_lossy();\n        let Ok(kind) = entry.file_type() else { continue };\n        if kind.is_dir() {\n            if name == \"node_modules\" || name.starts_with('.') || path.join(\"package.json\").exists()\n            {\n                continue;\n            }\n        }\n    }\n    true\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/tape/v9np.rs",
+      "path": "native/crates/lang/src/code_rule_dsl/tape/v9np.rs",
       "content": "fn walk(dir: &Path, out: &mut Vec<PathBuf>) {\n    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {\n        let p = e.path();\n        let name = e.file_name().to_string_lossy().into_owned();\n        if let Ok(ft) = e.file_type() {\n            if ft.is_dir() {\n                if !matches!(name.as_ref(), \"node_modules\" | \".git\" | \"target\" | \".venv\" | \"venv\" | \"__pycache__\" | \"dist\") {\n                    walk(&p, out);\n                }\n            }\n        }\n    }\n}\n"
     },
     {
@@ -39,19 +39,19 @@
       "content": "/// A package with more source files than this on disk gets no server graph.\nconst MAX_GRAPH_FILES: usize = 20_000;\n/// A source larger than this is not read for imports; it imports nothing.\nconst MAX_SOURCE_BYTES: u64 = 1024 * 1024;\n"
     },
     {
-      "path": "native/src/code_rule_dsl/import_target/resolver.rs",
+      "path": "native/crates/lang_ecma/src/code_rule_dsl/import_target/resolver.rs",
       "content": "let folder = join(&directory, \"node_modules\");\n"
     },
     {
-      "path": "native/src/git_workspace.rs",
+      "path": "native/crates/observe/src/git_workspace.rs",
       "content": "const BUILTIN_IGNORE: &[u8] = b\".git/\\nnode_modules/\\ntarget/\\ntmp/\\n__pycache__/\\n\";\nconst STATUS_EXCLUDES: &[&str] = &[\n    \":(glob,exclude)**/.git/**\",\n    \":(glob,exclude)**/node_modules/**\",\n];\n"
     },
     {
-      "path": "native/src/code_rule_dsl/transducer.rs",
+      "path": "native/crates/transducer_base/src/code_rule_dsl/transducer.rs",
       "content": "        if path.is_dir() {\n            if !matches!(\n                path.file_name().and_then(|s| s.to_str()),\n                Some(\".git\" | \".venv\" | \"node_modules\" | \"__pycache__\")\n            ) {\n                collect_python(&path, output);\n            }\n        }\n"
     },
     {
-      "path": "native/src/code_rule_dsl/calls/tests.rs",
+      "path": "native/crates/tests_calls/src/code_rule_dsl/calls/tests.rs",
       "content": "if !name.starts_with('.') && name != \"node_modules\" && name != \"__pycache__\" {\n    stack.push(path);\n}\n"
     },
     {

@@ -2,8 +2,8 @@
 
 Status: decided (the user, 2026-11-21: "Next: step C item 3, the escapes tested over code … Then the template
 masks, which need state kept in the loop, and the semicolon masks. After those, nothing reads the regions' walk
-and it can go (step D)", the instruction "do this"). Follows 0551 (tier 1's masks one pass over the blocks; its
-step 2, the regions read in the token loop), 0552 (a grammar states what the token loop knows) and 0562 (the
+and it can go (step D)", the instruction "do this"). Follows 0556 (tier 1's masks one pass over the blocks; its
+step 2, the regions read in the token loop), 0607 (a grammar states what the token loop knows) and 0562 (the
 loop keeps a template's code).
 
 ## Intro

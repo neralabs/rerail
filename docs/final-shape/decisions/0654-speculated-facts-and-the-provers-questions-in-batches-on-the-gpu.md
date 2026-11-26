@@ -3,7 +3,7 @@
 Status: in progress (the user, 2026-11-23: "1. please modify the solver to spike on: a. batch all of the
 questions it needs to ask a solver b. use the GPU via UKL to solve them in parallel c. use the GPU via UKL to
 refute them in parallel / 2. please implement speculate and figure out how we can use it to reduce the burden of
-proof on the compiler"). Follows 0414 (answers by content), 0552 (`assume`), 0646 and 0650 (the budget).
+proof on the compiler"). Follows 0414 (answers by content), 0552 (`assume`), 0646 and 0699 (the budget).
 
 ## Intro
 

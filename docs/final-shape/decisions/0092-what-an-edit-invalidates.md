@@ -1,7 +1,8 @@
 # 0092: What an edit invalidates: definition keys, symbol-keyed exports, and two classes of fact
 
-Status: accepted (2026-11-08). The frame that 0052, 0065, 0076, 0077, 0083 and 0090 are each a part of. Nothing new
-is built by this record; it orders the work of 0083 and 0090 (§6).
+Status: partly built (audited 2026-11-23). Left: Symbol-keyed exports and per-definition fact keys end to end; 0093's
+restriction on global facts. Accepted (2026-11-08). The frame that 0052, 0065, 0076, 0077, 0083 and 0090 are each a
+part of. Nothing new is built by this record; it orders the work of 0083 and 0090 (§6).
 
 ## Intro
 
@@ -18,18 +19,18 @@ whether the fact still holds?** The choices run from coarse to fine:
 
 Anything finer than the tree has the same two problems:
 
-- **Facts that depend on other files.** `greet`'s signature depends on what `Tim` is, in another file:
+- **Facts that depend on other files.** `greet`'s signature depends on what `Pet` is, in another file:
 
   ```python
   # bob.py
-  class Tim: ...
+  class Pet: ...
 
   # app.py
-  from bob import Tim          # a binding: Tim -> bob.Tim
-  def greet(who: Tim): ...      # greet's signature reads the binding and bob.Tim
+  from bob import Pet          # a binding: Pet -> bob.Pet
+  def greet(who: Pet): ...      # greet's signature reads the binding and bob.Pet
   ```
 
-  If `bob.Tim` changes, or the import line does, `greet`'s signature changes, though `greet`'s text did not.
+  If `bob.Pet` changes, or the import line does, `greet`'s signature changes, though `greet`'s text did not.
 - **Facts that depend on earlier parts of the same file**, such as the import line above, or a name an assignment
   higher up rebinds.
 
@@ -51,13 +52,13 @@ assignment). A fact computed from a definition depends on:
    their own (`struct.span`, 0083 §3), read only by findings.
 2. **The outputs it read from other definitions**: their exported rows, never their text.
 
-The second part gives the cutoff. A body edit inside one of `Tim`'s methods changes that method's content. `Tim`'s
-exported rows are derived again and come out the same, so nothing that read them is touched. A change to `Tim`'s
+The second part gives the cutoff. A body edit inside one of `Pet`'s methods changes that method's content. `Pet`'s
+exported rows are derived again and come out the same, so nothing that read them is touched. A change to `Pet`'s
 bases changes its exported rows, and `greet`'s signature is derived again. Whether `greet`'s own readers go on
 depends, in turn, on whether its exported rows changed.
 
 Earlier parts of a file are definitions too. An import or an assignment is a binding, with its own content and its
-own exported row (`Tim -> bob.Tim`). A changed import line changes that row, and only the facts that read it.
+own exported row (`Pet -> bob.Pet`). A changed import line changes that row, and only the facts that read it.
 
 This is "key every fact on its inputs", at the grain of a definition rather than of a fact. Definition deltas are
 14 times smaller than node-level ones and 25 times smaller than a file's (O126).

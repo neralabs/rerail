@@ -40,12 +40,19 @@ pub const GONE: u32 = 1;
 /// The rows are the newest older entry's of the same key; the reads are this entry's.
 pub const SAME: u32 = 2;
 
+/// `KeptEntry::atoms_max` of rows with no atom.
+pub const NO_ATOMS: i64 = i64::MIN;
+
 structure! {
     /// One kept relation.
     pub struct KeptEntry {
         pub ident: [u8; 32],
         pub part: i64,
         pub digest: u64,
+        /// `ROWS`: the greatest value its atom columns (type `s`) hold, `NO_ATOMS` when they hold none. Recorded as
+        /// its rows are packed, so a reader checks the store's numbering holds its atoms (decision 0170) without
+        /// reading them.
+        pub atoms_max: i64,
         pub rel_at: u32,
         pub rel_len: u32,
         pub reads_at: u32,
@@ -88,6 +95,8 @@ pub struct Kept<'b> {
     /// Each column's value type.
     pub types: &'b [u8],
     pub rows: &'b Packed,
+    /// The greatest atom its rows hold (`KeptEntry::atoms_max`), `None` when they hold none.
+    pub atoms_max: Option<i64>,
     reads: &'b [ReadDigest],
     strings: &'b [u8],
     /// The file its rows lie in, and their range there.
@@ -110,6 +119,29 @@ impl<'b> Kept<'b> {
     /// Row `i` (in canonical order).
     pub fn row(&self, i: usize) -> Vec<i64> {
         (0..self.rows.arity as usize).map(|c| self.rows.get(i, c)).collect()
+    }
+
+    /// Every row in canonical order, handed to `f` one at a time: each column resolved for reads once (`Col::dec`),
+    /// not per cell as `row` resolves it, and decoded a chunk of rows at a time as it goes (`ColDec::fill`, a run's
+    /// value once per run), the row read into one buffer the rows share.
+    pub fn each_row(&self, mut f: impl FnMut(&[i64])) {
+        use crate::packed::FILL;
+        let cols: Vec<crate::packed::ColDec<'_>> = (0..self.rows.arity as usize).map(|c| self.rows.col(c).dec()).collect();
+        let (k, n) = (cols.len(), self.rows.len());
+        let mut chunk = vec![0i64; k * FILL];
+        let mut row = vec![0i64; k];
+        for at in (0..n).step_by(FILL) {
+            let m = (n - at).min(FILL);
+            for (c, col) in cols.iter().enumerate() {
+                col.fill(at, &mut chunk[c * FILL..c * FILL + m]);
+            }
+            for i in 0..m {
+                for (c, v) in row.iter_mut().enumerate() {
+                    *v = chunk[c * FILL + i];
+                }
+                f(&row);
+            }
+        }
     }
 }
 
@@ -234,27 +266,55 @@ impl<B: Borrow<Block>> KeptFacts<B> {
             _ => {
                 let rows = e.rows.get().expect("a kept entry has rows");
                 let range = (e.rows_at as usize, e.rows_len as usize);
-                Found::Kept(Kept { key: self.key_of(e), digest: e.digest, types, rows, reads, strings: self.strings(), file: self.block(), range })
+                let atoms_max = (e.atoms_max != NO_ATOMS).then_some(e.atoms_max);
+                Found::Kept(Kept { key: self.key_of(e), digest: e.digest, types, rows, atoms_max, reads, strings: self.strings(), file: self.block(), range })
             }
         }
     }
 
+    /// An entry's relation name as bytes: what a search compares (`str`'s order is its bytes'), not checked as UTF-8
+    /// at each probe (`str_at` is, for the key it gives).
+    fn rel_bytes(&self, e: &KeptEntry) -> &[u8] {
+        &self.strings()[e.rel_at as usize..(e.rel_at + e.rel_len) as usize]
+    }
+
     fn find(&self, key: &FactKey) -> Option<(FactKey<'_>, Found<'_>)> {
-        let i = self.entries().binary_search_by(|e| self.key_of(e).cmp(key)).ok()?;
+        let rel = key.rel.as_bytes();
+        let i = self.entries().binary_search_by(|e| self.rel_bytes(e).cmp(rel).then_with(|| e.ident.cmp(key.ident)).then_with(|| e.part.cmp(&key.part))).ok()?;
         let e = &self.entries()[i];
+        Some((self.key_of(e), self.entry(e)))
+    }
+
+    /// The entries of `rel` under `ident`: their range, by one search of the name's bytes and the identity.
+    fn span(&self, rel: &str, ident: &[u8; 32]) -> (usize, usize) {
+        let (es, want) = (self.entries(), (rel.as_bytes(), ident));
+        let lo = es.partition_point(|e| (self.rel_bytes(e), &e.ident) < want);
+        (lo, lo + es[lo..].partition_point(|e| (self.rel_bytes(e), &e.ident) == want))
+    }
+
+    /// The entry of partition `part` among `span`'s (`span`), by its part alone.
+    fn find_in(&self, (lo, hi): (usize, usize), part: i64) -> Option<(FactKey<'_>, Found<'_>)> {
+        let es = &self.entries()[lo..hi];
+        let e = &es[es.binary_search_by_key(&part, |e| e.part).ok()?];
         Some((self.key_of(e), self.entry(e)))
     }
 
     /// The entries of `rel`, by a binary search for their range.
     fn range(&self, rel: &str) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
         let es = self.entries();
-        let lo = es.partition_point(|e| str_at(self.strings(), e.rel_at, e.rel_len) < rel);
-        let hi = lo + es[lo..].partition_point(|e| str_at(self.strings(), e.rel_at, e.rel_len) == rel);
+        let r = rel.as_bytes();
+        let lo = es.partition_point(|e| self.rel_bytes(e) < r);
+        let hi = lo + es[lo..].partition_point(|e| self.rel_bytes(e) == r);
         es[lo..hi].iter().map(move |e| (self.key_of(e), self.entry(e)))
     }
 
     fn every(&self) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
         self.entries().iter().map(move |e| (self.key_of(e), self.entry(e)))
+    }
+
+    /// The entries of partition `part`, in key order: the directory's entries tested by their part alone.
+    fn of_part(&self, part: i64) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
+        self.entries().iter().filter(move |e| e.part == part).map(move |e| (self.key_of(e), self.entry(e)))
     }
 }
 
@@ -365,6 +425,12 @@ impl<B: Borrow<Block>> KeptChain<'_, B> {
         out
     }
 
+    /// Every entry of partition `part`, across the files, each key's newest resolved, in key order: a partition's
+    /// read merges its own entries, not every one of the chain.
+    pub fn of_part(&self, part: i64) -> Vec<Kept<'_>> {
+        self.merged(move |f| f.of_part(part))
+    }
+
     /// The bytes of the files.
     pub fn bytes(&self) -> usize {
         self.files.iter().map(|f| f.bytes()).sum()
@@ -376,6 +442,21 @@ impl<'a, B: Borrow<Block>> KeptChain<'a, B> {
     pub fn entry(&self, key: &FactKey) -> Option<Kept<'a>> {
         let files: &'a [KeptFacts<B>] = self.files;
         let mut found = files.iter().rev().filter_map(|f| f.find(key));
+        let (own, first) = found.next()?;
+        resolve(own, first, found.map(|(_, f)| f))
+    }
+
+    /// The entries of `rel` under `ident` in each file, oldest first (`entry_in`): a reader of many of one
+    /// relation's partitions searches its name once a file, then each part by its number.
+    pub fn spans(&self, rel: &str, ident: &[u8; 32]) -> Vec<(usize, usize)> {
+        self.files.iter().map(|f| f.span(rel, ident)).collect()
+    }
+
+    /// The entry of partition `part` among `spans` (`spans`, of these files): `entry` of the key they are of.
+    pub fn entry_in(&self, spans: &[(usize, usize)], part: i64) -> Option<Kept<'a>> {
+        let files: &'a [KeptFacts<B>] = self.files;
+        debug_assert_eq!(files.len(), spans.len(), "the spans of another chain");
+        let mut found = files.iter().zip(spans).rev().filter_map(|(f, s)| f.find_in(*s, part));
         let (own, first) = found.next()?;
         resolve(own, first, found.map(|(_, f)| f))
     }
@@ -405,6 +486,7 @@ struct Pending {
     what: u32,
     /// Its rows' range in the file (`ROWS`).
     rows: (usize, usize),
+    atoms_max: i64,
 }
 
 /// What an entry records beside its rows.
@@ -433,7 +515,7 @@ pub struct KeptW {
     block: Block,
     root: usize,
     pending: Vec<Pending>,
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     path: std::path::PathBuf,
 }
 
@@ -449,9 +531,9 @@ impl KeptW {
     /// `reserve` bytes (its file is sparse: room not written takes no disk).
     pub fn create(path: &Path, tag: u64, reserve: usize) -> io::Result<KeptW> {
         assert_ne!(tag, 0, "a kept file's tag is not 0");
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let block = Block::file(path, kind::KEPT, reserve)?;
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let block = Block::anon(kind::KEPT, reserve);
         let root: *mut KeptRoot = block.try_alloc_t(1).ok_or_else(room)?;
         // SAFETY: the root just allocated in this open block, which has no other writer.
@@ -462,7 +544,7 @@ impl KeptW {
             block,
             root,
             pending: Vec::new(),
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             path: path.to_owned(),
         })
     }
@@ -473,9 +555,11 @@ impl KeptW {
         if self.block.reserved() - self.block.used() < rows.bytes() {
             return Err(room());
         }
+        // The greatest atom, as packing found each column's greatest value.
+        let atoms_max = meta.types.iter().enumerate().filter(|&(c, &t)| t == b's' && c < rows.arity()).filter_map(|(c, _)| rows.col_max(c)).max();
         let (packed, stats) = rows.place_in(&self.block);
         let at = self.block.offset_of(std::ptr::from_ref(packed));
-        self.pend(meta, ROWS, (at, self.block.used() - at));
+        self.pend(meta, ROWS, (at, self.block.used() - at), atoms_max.unwrap_or(NO_ATOMS));
         Ok(Put { rows: stats.rows, bytes: stats.bytes, in_order: rows.in_order })
     }
 
@@ -491,6 +575,18 @@ impl KeptW {
         })
     }
 
+    /// `rows`, read where they lie (decision 0353 step 8), packed as `put_cols` packs columns: nothing is read into
+    /// columns first.
+    pub fn put_rows(&mut self, meta: Meta, rows: &dyn crate::packed::RowsIn, levels: Option<&[u32]>, given: crate::packed::Order) -> io::Result<Put> {
+        let a = rows.arity();
+        let order = (0..a.min(MAX_ORDER) as u16).collect();
+        let spec = crate::relation::Spec { widths: vec![8; a], order, indexes: Vec::new(), min_log: 0 };
+        crate::scratch::with(|s| {
+            let prepared = crate::packed::prepare_rows(s, rows, &spec, levels, given);
+            self.put(meta, &prepared)
+        })
+    }
+
     /// An entry of another file of the chain, its rows copied whole (a roll-up, K4: one `memcpy`, nothing
     /// re-encoded), with `meta` in place of what it records when given (new reads, its rows the same).
     pub fn copy(&mut self, kept: &Kept, meta: Option<Meta>) -> io::Result<()> {
@@ -501,21 +597,21 @@ impl KeptW {
         unsafe { std::ptr::copy_nonoverlapping(kept.file.base_ptr().add(from), self.block.base_ptr().add(at), len) };
         let reads: Vec<(&str, u64)> = kept.reads().collect();
         let meta = meta.unwrap_or(Meta { key: kept.key, digest: kept.digest, reads: &reads, types: kept.types });
-        self.pend(meta, ROWS, (at, len));
+        self.pend(meta, ROWS, (at, len), kept.atoms_max.unwrap_or(NO_ATOMS));
         Ok(())
     }
 
     /// A reads-only entry: the relation's rows are the chain's as they are, its reads and digest these.
     pub fn same(&mut self, meta: Meta) {
-        self.pend(meta, SAME, (0, 0));
+        self.pend(meta, SAME, (0, 0), NO_ATOMS);
     }
 
     /// The relation is no longer kept.
     pub fn gone(&mut self, key: FactKey) {
-        self.pend(Meta { key, digest: 0, reads: &[], types: &[] }, GONE, (0, 0));
+        self.pend(Meta { key, digest: 0, reads: &[], types: &[] }, GONE, (0, 0), NO_ATOMS);
     }
 
-    fn pend(&mut self, meta: Meta, what: u32, rows: (usize, usize)) {
+    fn pend(&mut self, meta: Meta, what: u32, rows: (usize, usize), atoms_max: i64) {
         self.pending.push(Pending {
             rel: meta.key.rel.to_owned(),
             ident: *meta.key.ident,
@@ -525,6 +621,7 @@ impl KeptW {
             types: meta.types.to_vec(),
             what,
             rows,
+            atoms_max,
         });
     }
 
@@ -588,6 +685,7 @@ impl KeptW {
                 (*e).types_at = types_at;
                 (*e).ntypes = p.types.len() as u32;
                 (*e).what = p.what;
+                (*e).atoms_max = p.atoms_max;
                 if p.what == ROWS {
                     Ptr::set(&raw const (*e).rows, self.block.ptr::<Packed>(p.rows.0));
                     (*e).rows_at = p.rows.0 as u64;
@@ -598,18 +696,21 @@ impl KeptW {
             Span::set(&raw const (*root).reads, rs, reads.len());
             Span::set(&raw const (*root).strings, ss, strings.len());
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             self.block.sync_mapped(flush)?;
             let frozen = self.block.freeze();
             frozen.sync_mapped(flush)?;
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             use std::io::Write as _;
             let frozen = self.block.freeze();
             let mut f = std::fs::File::create(&self.path)?;
-            f.write_all(frozen.bytes(0, frozen.header().length as usize))?;
+            let bytes = frozen.bytes(0, frozen.header().length as usize);
+            // The kernel reads and writes a reservation's pages without faulting them in (Windows: `crate::windows`).
+            crate::mem::commit(bytes.as_ptr().cast_mut(), bytes.len())?;
+            f.write_all(bytes)?;
             if flush.waits() {
                 f.sync_data()?;
             }
@@ -625,7 +726,7 @@ mod tests {
     fn dir(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("rerail-kept-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
+        crate::mapped::make_folder(&d).unwrap();
         d
     }
 
@@ -675,6 +776,36 @@ mod tests {
         }
         assert!(chain.get(&FactKey { rel: "calls", ident: &B, part: 0 }).is_none());
         assert!(KeptFacts::open(&d.join("c1.blk"), 12).is_err(), "a file not the row's is refused");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// An entry records the greatest atom its rows hold, as their packing found it: of its atom columns (`s`) only,
+    /// none where it has no atom column or no rows, the same through a reads-only entry and a roll-up's copy.
+    #[test]
+    fn an_entry_records_its_greatest_atom() {
+        let d = dir("atoms");
+        let key = |rel, part| FactKey { rel, ident: &A, part };
+        let mut w = KeptW::create(&d.join("c1.blk"), 1, 16 << 20).unwrap();
+        // Column 1 an atom: its greatest 40, not column 0's 900 (sorted, the last row's), nor the first row's.
+        put(&mut w, Meta { types: b"is", ..meta(key("p", 0), 1) }, &[(900, 7), (5, 40), (6, 3)], None);
+        put(&mut w, Meta { types: b"ss", ..meta(key("p", 1), 2) }, &[(1, 2), (8, 0)], None);
+        put(&mut w, Meta { types: b"ii", ..meta(key("p", 2), 3) }, &[(1, 99)], None);
+        put(&mut w, Meta { types: b"ss", ..meta(key("p", 3), 4) }, &[], None);
+        w.finish(Flush::Synced).unwrap();
+        let mut w = KeptW::create(&d.join("c2.blk"), 2, 16 << 20).unwrap();
+        w.same(Meta { types: b"is", reads: &[("x", 9)], ..meta(key("p", 0), 10) });
+        w.finish(Flush::Synced).unwrap();
+        let files = [KeptFacts::open(&d.join("c1.blk"), 1).unwrap(), KeptFacts::open(&d.join("c2.blk"), 2).unwrap()];
+        let v = KeptChain { files: &files };
+        let maxes = |v: &KeptChain| -> Vec<Option<i64>> { (0..4).map(|p| v.get(&key("p", p)).unwrap().atoms_max).collect() };
+        assert_eq!(maxes(&v), [Some(40), Some(8), None, None]);
+        let mut w = KeptW::create(&d.join("c3.blk"), 3, 16 << 20).unwrap();
+        for k in v.all() {
+            w.copy(&k, None).unwrap();
+        }
+        w.finish(Flush::Synced).unwrap();
+        let rolled = [KeptFacts::open(&d.join("c3.blk"), 3).unwrap()];
+        assert_eq!(maxes(&KeptChain { files: &rolled }), [Some(40), Some(8), None, None]);
         let _ = std::fs::remove_dir_all(&d);
     }
 

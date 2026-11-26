@@ -38,8 +38,10 @@ pos_arg(al, i, a) :- kind(al, "argument_list"), child(al, a, j), !kind(a, "keywo
 .decl names_class(a: node, f: node)
 names_class(a, f) :- super_first(a, f), text(a, "__class__"), kind(a, "identifier"), run_scope(a, f, _),
     !local_class(f).
-names_class(a, f) :- super_first(a, f), class_path(f, p), text(a, p), (kind(a, "identifier") ; kind(a, "attribute")),
-    head_ref(a, h, x), look(h, x, s), binding(s, x, _, "class").
+// f's file is a's (decision 0652: a request for super_first's rows, made of the rest, paired every name with every
+// class path of the corpus).
+names_class(a, f) :- super_first(a, f), docof(a, d), docof(f, d), class_path(f, p), text(a, p),
+    (kind(a, "identifier") ; kind(a, "attribute")), head_ref(a, h, x), look(h, x, s), binding(s, x, _, "class").
 .decl super_first(a: node, f: node)
 super_first(a, f) :- kind(c, "call"), field(c, "function", fn), sym_at(fn, "builtins.super"),
     field(c, "arguments", al), pos_arg(al, 0, a), run_scope(c, f, _).

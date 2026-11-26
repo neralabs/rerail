@@ -1,7 +1,7 @@
 # 0068: The CPU tape writer: preorder from the masks, one packer
 
-Status: accepted (user, 2026-11-07: "complete all of this", the list item "The tape writer
-(steps 3–4)"; step 3 of `docs/parser-generators/13-tape-on-the-gpu.md` §7)
+Status: superseded by 0088 (audited 2026-11-23). Accepted (user, 2026-11-07: "complete all of this", the list item
+"The tape writer (steps 3–4)"; step 3 of `docs/parser-generators/13-tape-on-the-gpu.md` §7)
 
 ## Intro
 
@@ -17,7 +17,7 @@ masks (one bit per byte) --> starts and ends, a word at a time --> nodes in preo
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the mldb tape row (O(1) navigation from precomputed sizes over the
+- **SQL index prototype indexes:** the mldb tape row (O(1) navigation from precomputed sizes over the
   source buffer) and the spike's `TAPE_AST_GREP_RECONSTRUCTION`. **Agree:** the size column is
   the structure, and no parent or child table is written.
 - **Lessons ledger #1** (one row per node is fatal; the tape is the truth). **Agrees:** the

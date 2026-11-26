@@ -1,9 +1,9 @@
 # 0071: Two tiers, as simdjson's two stages
 
-Status: accepted (user, 2026-11-07: "the loop instructions needs to drop by at least an order of
-magnitude … You need to implement the essence"; the plan, "okay, I agree with that plan"; the
-tier-2 form, "Yes, this form"; numbers, "try them in tier 1 and tier 2. We should have a builtin
-set of validators that lower to good code for integers, floats, numbers, etc")
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-07: "the loop instructions needs to drop by at least an
+order of magnitude … You need to implement the essence"; the plan, "okay, I agree with that plan"; the tier-2 form,
+"Yes, this form"; numbers, "try them in tier 1 and tier 2. We should have a builtin set of validators that lower to
+good code for integers, floats, numbers, etc")
 
 ## Intro
 
@@ -32,7 +32,7 @@ tier 2 (token rules, every token):   kinds, text checks, nesting, roles, the tap
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike's tape writer works per node, from a parse. Tier 2 is
+- **SQL index prototype indexes:** the spike's tape writer works per node, from a parse. Tier 2 is
   the same per-node writer, fed by tier 1's token positions instead of a parse.
 - **Lessons ledger #28** (only CPU time counts). The guard counts instructions, which is a
   proxy. Every step is also timed against simdjson's full parse on the same files and load.

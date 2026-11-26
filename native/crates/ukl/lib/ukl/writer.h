@@ -25,6 +25,8 @@
 #define CLIF_W_HEAD16 120u
 #define CLIF_W_MAX_NODES 1073741824u
 #define CLIF_W_NONE 4294967295u
+// The state's flag: each node final as written (no retag or set_start), the frontier the count.
+#define CLIF_W_FINAL_AS_WRITTEN 4u
 #define CLIF_W_MAGIC16 0x3642504154504d54ul
 #define CLIF_W_MAGIC16Z 0x5a42504154504d54ul
 // An open node's entry: its index, its children so far, its last child (u32s), its start (a u64 at 16).
@@ -72,6 +74,7 @@
 #define CLIF_W_PART_SEEN 13u
 #define CLIF_W_PART_CKPT 14u
 #define CLIF_W_PART_LZ 15u
+#define CLIF_W_PART_ERRORS 16u
 
 // The state's fields: their byte offsets (`writer::at`).
 #define CLIF_W_AT_ESC 0u
@@ -919,12 +922,22 @@ UKL_COLD uint32_t clif_w_finalize(UKL_W_T, uint64_t s, uint32_t b, uint32_t rows
             number = cut + (byte - cut) * per + rest;
         }
         uint32_t kind_field = (uint64_t)number < numbers ? ukl_w_ld32(t, kinds + 4u * (uint64_t)number) : 0u;
-        uint32_t kind = kind_field & 0xffffu, field = kind_field >> 16;
+        // A MISSING code's word carries the fault bit (`presence::kind_word`): the presence's bit 0 (ERROR's kind).
+        uint32_t kind = kind_field & 0x7fffu, field = kind_field >> 16, fault = (kind_field >> 15) & 1u;
         ukl_w_set_bit(t, presence, 0u, kind);
         ukl_w_set_bit(t, presence, kw, field);
+        ukl_w_st64(t, presence, ukl_w_ld64(t, presence) | (uint64_t)fault);
         if (keep) {
             ukl_w_set_bit(t, mine, 0u, kind);
             ukl_w_set_bit(t, mine, kw, field);
+            ukl_w_st64(t, mine, ukl_w_ld64(t, mine) | (uint64_t)fault);
+        }
+        // An ERROR node (its kind 0) or a MISSING one listed in the ERRORS part, beside the fault bit it set.
+        if (kind == 0u || fault != 0u) {
+            uint64_t len = ukl_w_len(t, s, CLIF_W_PART_ERRORS);
+            UKL_W_TRY(ukl_w_room(t, s, CLIF_W_PART_ERRORS, len + 4u));
+            ukl_w_st32(t, ukl_w_part(t, s, CLIF_W_PART_ERRORS) + len, b * CLIF_W_Z + j);
+            ukl_w_set_len(t, s, CLIF_W_PART_ERRORS, len + 4u);
         }
     }
     for (uint32_t q = 0u; q < 4u; q++)
@@ -945,7 +958,8 @@ UKL_COLD uint32_t clif_w_finalize(UKL_W_T, uint64_t s, uint32_t b, uint32_t rows
 UKL_COLD uint32_t clif_w_settle(UKL_W_T, uint64_t s, uint32_t b)
 {
     uint32_t end = (b + 1u) * CLIF_W_Z;
-    if (ukl_w_final(t, s, b) || ukl_w_get32(t, s, CLIF_W_AT_N) <= end || ukl_w_get32(t, s, CLIF_W_AT_FRONTIER) < end)
+    if (ukl_w_final(t, s, b) || ukl_w_get32(t, s, CLIF_W_AT_N) <= end
+        || (ukl_w_get32(t, s, CLIF_W_AT_FRONTIER) < end && (ukl_w_get32(t, s, CLIF_W_AT_FLAGS) & CLIF_W_FINAL_AS_WRITTEN) == 0u))
         return 0u;
     // The open nodes' indices ascend: the last below the block's end is the one that may be in it.
     uint64_t opens = ukl_w_part(t, s, CLIF_W_PART_OPEN);
@@ -1048,7 +1062,7 @@ UKL_COLD uint32_t clif_w_commit(UKL_W_T, uint64_t s)
 // 0, or a failure unless node `i` is written and its block not final.
 UKL_INLINE uint32_t ukl_w_changeable(UKL_W_T, uint64_t s, uint32_t i)
 {
-    if (i >= ukl_w_get32(t, s, CLIF_W_AT_N) || ukl_w_final(t, s, i >> 10))
+    if (i >= ukl_w_get32(t, s, CLIF_W_AT_N) || (ukl_w_get32(t, s, CLIF_W_AT_FLAGS) & CLIF_W_FINAL_AS_WRITTEN) != 0u || ukl_w_final(t, s, i >> 10))
         return clif_w_fail(t, s, CLIF_W_FINAL, i);
     return 0u;
 }

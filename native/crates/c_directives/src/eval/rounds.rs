@@ -10,23 +10,43 @@
 use rerail_c_pp::Config;
 use rerail_c_pp::files::Files;
 use rerail_metal::pp_eval::{Unit, name_key, placement};
-use rerail_metal::pp_expand::{Expanded, Layout, NO_PARENT, NOT_FOUND, Part, PpNode, Request, Sizes, relex_options};
+use rerail_metal::pp_expand::{Expanded, Layout, NO_PARENT, NOT_FOUND, Part, PpNode, Request, Sizes, Tree, relex_options};
 use rerail_metal::slabs;
 
 /// A unit of `files` (each a source and whether it is C++), as the evaluator reads it: each file's
 /// format 16 tape and its source placed in the slab residency, where the device reads them
 /// (decision 0468 §1). A document already resident (by its digest) is not placed again.
 pub fn place(files: &[(&[u8], bool)]) -> Result<Unit, rerail_metal::Error> {
+    place_kept(files, &mut Vec::new()).map(|(u, _)| u)
+}
+
+/// `place`, where `kept` holds the digests of `files`' first ones from an earlier round (and gets
+/// the rest's): a round's unchanged files are not lexed again, their tapes built only where the
+/// residency let them go. Also the tapes it built.
+pub fn place_kept(files: &[(&[u8], bool)], kept: &mut Vec<[u8; 32]>) -> Result<(Unit, usize), rerail_metal::Error> {
     use sha2::{Digest as _, Sha256};
-    let tapes: Vec<_> = files.iter().map(|&(s, cpp)| rerail_c_pp::tape::image_16(s, crate::pp::options(cpp))).collect();
-    let digests: Vec<[u8; 32]> = files.iter().zip(&tapes).map(|(&(s, _), t)| Sha256::new().chain_update(t.as_bytes()).chain_update(s).finalize().into()).collect();
+    let image = |k: usize| rerail_c_pp::tape::image(files[k].0, crate::pp::options(files[k].1));
+    let mut tapes: Vec<Option<_>> = (0..files.len()).map(|_| None).collect();
+    kept.truncate(files.len());
+    for k in kept.len()..files.len() {
+        let t = image(k);
+        kept.push(Sha256::new().chain_update(t.as_bytes()).chain_update(files[k].0).finalize().into());
+        tapes[k] = Some(t);
+    }
+    let digests = kept.clone();
     let misses = slabs::misses(&digests)?;
+    for (k, d) in digests.iter().enumerate() {
+        if misses.contains(d) && tapes[k].is_none() {
+            tapes[k] = Some(image(k));
+        }
+    }
+    let built = tapes.iter().filter(|t| t.is_some()).count();
     let mut parts = Vec::new();
     for (k, d) in digests.iter().enumerate() {
         if !misses.contains(d) || parts.iter().any(|p: &slabs::Placement<'_>| p.0 == *d) {
             continue;
         }
-        let (tape, src) = (tapes[k].as_bytes(), files[k].0);
+        let (tape, src) = (tapes[k].as_ref().expect("a missing document's tape is built").as_bytes(), files[k].0);
         parts.push(placement(tape.len(), src.len(), *d, rerail_c_pp::tape::lang(), move |t: &mut [u8], s: &mut [u8]| {
             // The loader's write of a load (0353 step 4a): the room is the document's one place.
             t.copy_from_slice(tape);
@@ -34,7 +54,7 @@ pub fn place(files: &[(&[u8], bool)]) -> Result<Unit, rerail_metal::Error> {
         }));
     }
     slabs::insert(&digests, parts)?;
-    Unit::of(slabs::resident(&digests)?)
+    Ok((Unit::of(slabs::resident(&digests)?)?, built))
 }
 
 /// A string literal of `text`: its `"` and `\` escaped (the serial pass's `string_tok`).
@@ -152,21 +172,33 @@ struct Progress {
     loaded: Loaded,
     table: Vec<(u32, u64, u32)>,
     rounds: u32,
+    /// The rooms its last run settled at (decision 0486 §8): the next round's start.
+    sizes: Option<Sizes>,
+    /// Its files' documents' digests (`place_kept`), by the unit's file index: a round lexes only the
+    /// files the last one's answers loaded.
+    digests: Vec<[u8; 32]>,
+    /// The tree its last round's P1 settled at: the next round starts there (decision 0613 §3).
+    tree: Option<Tree>,
 }
 
 impl Progress {
     fn start(cfg: &Config, io: &mut dyn Files, main: &str) -> Result<Progress, Refused> {
         let src = io.read(main).ok_or(Refused::NoMain)?;
         let pre = rerail_c_pp::stream::parallel::predefined(cfg).0;
-        Ok(Progress { loaded: Loaded { files: vec![pre, src], paths: vec!["<built-in>".into(), main.to_string()], found_by: vec![NOT_FOUND, NOT_FOUND] }, table: Vec::new(), rounds: 0 })
+        Ok(Progress { loaded: Loaded { files: vec![pre, src], paths: vec!["<built-in>".into(), main.to_string()], found_by: vec![NOT_FOUND, NOT_FOUND] }, table: Vec::new(), rounds: 0, sizes: None, digests: Vec::new(), tree: None })
     }
 
     /// The unit as the next round reads it: its files placed, and its layout.
-    fn unit(&self, d: &Dialect<'_>, cpp: bool) -> Result<(Unit, Layout), rerail_metal::Error> {
+    fn unit(&mut self, d: &Dialect<'_>, cpp: bool) -> Result<(Unit, Layout), rerail_metal::Error> {
         let (cfg, loaded) = (d.cfg, &self.loaded);
-        let unit = place(&loaded.files.iter().map(|s| (s.as_slice(), cpp)).collect::<Vec<_>>())?;
+        let (unit, _) = place_kept(&loaded.files.iter().map(|s| (s.as_slice(), cpp)).collect::<Vec<_>>(), &mut self.digests)?;
+        let roots = || vec![PpNode { file: 0, parent: NO_PARENT, pdir: 0, depth: 0, unit: 0 }, PpNode { file: 1, parent: NO_PARENT, pdir: 1, depth: 0, unit: 0 }];
+        // `RERAIL_PP_FROM_ROOTS` (a measurement): every round from the roots, as before the tree was kept.
+        let tree = self.tree.clone().filter(|_| std::env::var_os("RERAIL_PP_FROM_ROOTS").is_none()).unwrap_or_default();
         let lay = Layout {
-            nodes: vec![PpNode { file: 0, parent: NO_PARENT, pdir: 0, depth: 0, unit: 0 }, PpNode { file: 1, parent: NO_PARENT, pdir: 1, depth: 0, unit: 0 }],
+            nodes: if tree.nodes.is_empty() { roots() } else { tree.nodes },
+            entered: tree.entered,
+            groups: tree.groups,
             table: self.table.clone(),
             found_by: loaded.found_by.clone(),
             max_depth: cfg.max_depth,
@@ -239,13 +271,13 @@ pub struct Settled {
 }
 
 /// The units `units` (each its files and its main file), of one configuration `cfg` (C++ where
-/// `cpp`), in rounds run as batches (decision 0486 §7): each round one run over the batch's
-/// units, the units that request answered between rounds, and the round with no requests every
-/// unit's expansion. A batch is split in halves where its documents are in more than one slab,
-/// where the budget refuses its arena, or where the device refuses it or P1 does: a refusal is
-/// then a unit's alone. `eval` is the device's run of a batch from the rooms it is given, which
-/// it leaves at the rooms it settled at.
-pub fn run_many(cfg: &Config, cpp: bool, units: &mut [(Box<dyn Files + '_>, String)], mut eval: impl FnMut(&Unit, &Layout, &mut Sizes) -> Result<Expanded, rerail_metal::Error>) -> Vec<Result<Settled, Refused>> {
+/// `cpp`), in rounds run as batches (decision 0486 §7): each round one run over the batch's units
+/// still running, their programs on one queue (decision 0653), the units that request answered between rounds,
+/// and a unit's round with no requests its expansion. A refusal is a unit's alone. A batch is split
+/// in halves where the budget refuses its arena, or its documents are where a batch cannot read
+/// them together. `eval` is the device's run of a batch's units, each from the rooms it is given,
+/// which it leaves at the rooms each settled at: each unit's answer, or the batch's refusal.
+pub fn run_many(cfg: &Config, cpp: bool, units: &mut [(Box<dyn Files + '_>, String)], mut eval: impl FnMut(&[(&Unit, &Layout)], &mut [Sizes]) -> Result<Vec<Result<Expanded, rerail_metal::Error>>, rerail_metal::Error>) -> Vec<Result<Settled, Refused>> {
     let d = Dialect::of(cfg, cpp);
     let mut out: Vec<Option<Result<Settled, Refused>>> = (0..units.len()).map(|_| None).collect();
     let mut live = Vec::new();
@@ -263,11 +295,10 @@ pub fn run_many(cfg: &Config, cpp: bool, units: &mut [(Box<dyn Files + '_>, Stri
 type Answers = [Option<Result<Settled, Refused>>];
 
 /// A batch's run from the rooms it is given (`run_many`'s `eval`).
-type Eval<'e> = dyn FnMut(&Unit, &Layout, &mut Sizes) -> Result<Expanded, rerail_metal::Error> + 'e;
+type Eval<'e> = dyn FnMut(&[(&Unit, &Layout)], &mut [Sizes]) -> Result<Vec<Result<Expanded, rerail_metal::Error>>, rerail_metal::Error> + 'e;
 
 /// `run_many`'s rounds for the units `live` (each its index in `units` and its rounds so far).
 fn batch_rounds(d: &Dialect<'_>, cpp: bool, units: &mut [(Box<dyn Files + '_>, String)], mut live: Vec<(usize, Progress)>, out: &mut Answers, eval: &mut Eval<'_>) {
-    let mut sizes: Option<Sizes> = None;
     loop {
         live.retain_mut(|(k, p)| {
             let past = p.rounds >= d.cfg.max_depth + 2;
@@ -281,7 +312,7 @@ fn batch_rounds(d: &Dialect<'_>, cpp: bool, units: &mut [(Box<dyn Files + '_>, S
         }
         // The round's units are placed only while it runs: the halves of a split run with none
         // of the batch's documents held.
-        match batch_round(d, cpp, units, &mut live, out, eval, &mut sizes) {
+        match batch_round(d, cpp, units, &mut live, out, eval) {
             Step::Again => {}
             Step::Done => return,
             Step::Split => return split(d, cpp, units, live, out, eval),
@@ -296,35 +327,27 @@ enum Step {
     Split,
 }
 
-/// One round of the batch `live`, from the rooms `sizes` (the batch's last round's).
-fn batch_round(d: &Dialect<'_>, cpp: bool, units: &mut [(Box<dyn Files + '_>, String)], live: &mut Vec<(usize, Progress)>, out: &mut Answers, eval: &mut Eval<'_>, sizes: &mut Option<Sizes>) -> Step {
+/// One round of the batch `live`: each unit from the rooms its last round settled at. A unit with
+/// requests has them answered and stays for the next round; every other one is answered.
+fn batch_round(d: &Dialect<'_>, cpp: bool, units: &mut [(Box<dyn Files + '_>, String)], live: &mut Vec<(usize, Progress)>, out: &mut Answers, eval: &mut Eval<'_>) -> Step {
     use rerail_metal::Error;
     let many = live.len() > 1;
-    let placed: Result<Vec<(Unit, Layout)>, Error> = live.iter().map(|(_, p)| p.unit(d, cpp)).collect();
+    let placed: Result<Vec<(Unit, Layout)>, Error> = live.iter_mut().map(|(_, p)| p.unit(d, cpp)).collect();
     let placed = match placed {
         Ok(placed) => placed,
         Err(_) if many => return Step::Split,
         Err(e) => {
+            if std::env::var_os("RERAIL_PP_WHY").is_some() {
+                eprintln!("pp: the unit's placement: {e:?}");
+            }
             out[live[0].0] = Some(Err(Refused::Device(format!("{e:?}"))));
             return Step::Done;
         }
     };
-    let joined = if many {
-        let batch = Unit::batch(&placed.iter().map(|(u, _)| u).collect::<Vec<_>>());
-        let lay = Layout::join(&placed.iter().map(|(u, l)| (l, u.len())).collect::<Vec<_>>());
-        match batch.zip(lay) {
-            Some(j) => Some(j),
-            None => return Step::Split,
-        }
-    } else {
-        None
-    };
-    let (unit, lay) = joined.as_ref().map_or((&placed[0].0, &placed[0].1), |(u, l)| (u, l));
-    let mut s = sizes.map_or_else(|| Sizes::first(unit, lay), |s| s.fit(unit, lay));
-    let x = eval(unit, lay, &mut s);
-    *sizes = Some(s);
-    let x = match x {
-        Ok(x) if many && (x.refused != 0 || x.p1_flags != 0) => return Step::Split,
+    let mut sizes: Vec<Sizes> = live.iter().zip(&placed).map(|((_, p), (u, l))| p.sizes.map_or_else(|| Sizes::first(u, l), |s| s.fit(u, l))).collect();
+    let pairs: Vec<(&Unit, &Layout)> = placed.iter().map(|(u, l)| (u, l)).collect();
+    let xs = match eval(&pairs, &mut sizes) {
+        Ok(xs) => xs,
         Err(Error::BackendCapacity) if many => return Step::Split,
         Err(e) => {
             for (k, _) in live.drain(..) {
@@ -332,33 +355,29 @@ fn batch_round(d: &Dialect<'_>, cpp: bool, units: &mut [(Box<dyn Files + '_>, St
             }
             return Step::Done;
         }
-        Ok(x) if x.p1_flags != 0 => {
-            out[live[0].0] = Some(Err(Refused::P1(x.p1_flags)));
-            return Step::Done;
-        }
-        Ok(x) => x,
     };
-    if !x.requests.is_empty() {
-        // The host's part: each unit's requests answered. A unit with none runs again with the
-        // batch, as it was.
-        let mut requests = x.requests;
-        for (u, (k, p)) in live.iter_mut().enumerate() {
-            let mine: Vec<Request> = requests.extract_if(.., |q| q.unit == u as u32).collect();
-            if !mine.is_empty() {
-                p.answer(units[*k].0.as_mut(), mine);
+    drop(pairs);
+    let mut again = Vec::new();
+    for (((k, mut p), (unit, lay)), (x, s)) in live.drain(..).zip(placed).zip(xs.into_iter().zip(sizes)) {
+        p.sizes = Some(s);
+        match x {
+            Err(e) => out[k] = Some(Err(Refused::Device(format!("{e:?}")))),
+            Ok(x) if x.p1_flags != 0 => out[k] = Some(Err(Refused::P1(x.p1_flags))),
+            // The host's part: the unit's requests answered, and the unit runs again.
+            Ok(x) if !x.requests.is_empty() => {
+                p.tree = x.tree;
+                p.answer(units[k].0.as_mut(), x.requests);
+                again.push((k, p));
+            }
+            Ok(x) => {
+                let n = x.out.len();
+                let part = Part { x: std::rc::Rc::new(x), files: 0..unit.len(), out: 0..n };
+                out[k] = Some(Ok(Settled { lay, loaded: p.loaded, rounds: p.rounds + 1, part }));
             }
         }
-        return Step::Again;
     }
-    let x = std::rc::Rc::new(x);
-    let mut file = 0;
-    for (u, ((k, p), (unit, lay))) in live.drain(..).zip(placed).enumerate() {
-        let out_range = if many { x.unit_out[u] as usize..x.unit_out[u + 1] as usize } else { 0..x.out.len() };
-        let part = Part { x: std::rc::Rc::clone(&x), files: file..file + unit.len(), out: out_range };
-        file += unit.len();
-        out[k] = Some(Ok(Settled { lay, loaded: p.loaded, rounds: p.rounds + 1, part }));
-    }
-    Step::Done
+    *live = again;
+    if live.is_empty() { Step::Done } else { Step::Again }
 }
 
 /// `batch_rounds` of each half of `live`, from where its rounds are.

@@ -1,6 +1,6 @@
 //! JSON: its Bitlex parser.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
 // under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
 // above read (the split's facades, not a design).
@@ -17,23 +17,20 @@ pub use rerail_store::content_store;
 pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
 extern crate self as rerail_lang_json;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
-    pub use rerail_w::code_rule_dsl::calls;
-    pub use rerail_w::code_rule_dsl::compile;
-    pub use rerail_w::code_rule_dsl::crypto;
+    pub use rerail_rules::code_rule_dsl::calls;
+    pub use rerail_rules::code_rule_dsl::compile;
+    pub use rerail_rules::code_rule_dsl::crypto;
     pub use rerail_transducer::code_rule_dsl::demand;
     pub use rerail_lang::code_rule_dsl::embed;
-    pub use rerail_w::code_rule_dsl::eval;
+    pub use rerail_rules::code_rule_dsl::eval;
     pub mod facts {
         pub use rerail_facts::code_rule_dsl::facts::*;
-        pub use rerail_w::code_rule_dsl::facts::facts_a;
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
-            #[cfg(any(test, feature = "test-hooks"))]
-            pub use rerail_w::code_rule_dsl::facts::vtab::p_table;
             #[allow(unused_imports)]
             use fallible_iterator::FallibleIterator;
             #[allow(unused_imports)]
@@ -61,11 +58,11 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, StoreResult};
     }
-    pub use rerail_w::code_rule_dsl::findings;
+    pub use rerail_rules::code_rule_dsl::file_input;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;
-    pub use rerail_w::code_rule_dsl::hooks;
-    pub use rerail_w::code_rule_dsl::identifier;
+    pub use rerail_rules::code_rule_dsl::hooks;
+    pub use rerail_rules::code_rule_dsl::identifier;
     pub use rerail_lang::code_rule_dsl::json;
     pub use rerail_lang::code_rule_dsl::regexes;
     #[path = "language"]
@@ -73,7 +70,7 @@ pub mod code_rule_dsl {
         pub use rerail_lang::code_rule_dsl::language::*;
         #[path = "adapter"]
         pub mod adapter {
-            pub use rerail_w::code_rule_dsl::language::adapter::*;
+            pub use rerail_rules::code_rule_dsl::language::adapter::*;
             pub mod json;
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::language::adapter::arguments::{ArgumentFeature, ArgumentRules};
@@ -100,7 +97,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::matcher::{file_index};
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
+            use crate::code_rule_dsl::file_input::python_module_path_on_disk;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::suppress::{Suppress, root};
             #[allow(unused_imports)]
@@ -148,7 +145,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use serde::{Deserialize, Serialize};
     }
-    pub use rerail_w::code_rule_dsl::literal;
+    pub use rerail_rules::code_rule_dsl::literal;
     pub mod logic {
         pub mod front {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
@@ -186,29 +183,24 @@ pub mod code_rule_dsl {
         pub use rerail_prof::code_rule_dsl::logic::profile;
         pub use rerail_facts::code_rule_dsl::logic::strings;
     }
-    pub use rerail_w::code_rule_dsl::matcher;
-    pub use rerail_w::code_rule_dsl::model;
+    pub use rerail_rules::code_rule_dsl::matcher;
+    pub use rerail_rules::code_rule_dsl::model;
     pub use rerail_lang::code_rule_dsl::module_path;
-    pub use rerail_w::code_rule_dsl::origin;
+    pub use rerail_rules::code_rule_dsl::origin;
     pub use rerail_prof::code_rule_dsl::phase_clock;
-    pub use rerail_w::code_rule_dsl::placement;
     pub use rerail_facts::code_rule_dsl::producers;
     pub use rerail_prof::code_rule_dsl::prof;
     #[cfg(feature="code-rule-profile")]
-    pub use rerail_w::code_rule_dsl::profile;
-    pub use rerail_w::code_rule_dsl::query;
+    pub use rerail_rules::code_rule_dsl::profile;
+    pub use rerail_rules::code_rule_dsl::query;
     pub use rerail_transducer::code_rule_dsl::residency;
-    pub use rerail_w::code_rule_dsl::resolution;
-    pub use rerail_w::code_rule_dsl::rule_api;
-    pub use rerail_w::code_rule_dsl::scope;
+    pub use rerail_rules::code_rule_dsl::resolution;
+    pub use rerail_rules::code_rule_dsl::scope;
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
-    pub use rerail_w::code_rule_dsl::soundness;
+    pub use rerail_rules::code_rule_dsl::soundness;
     pub use rerail_transducer::code_rule_dsl::space;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
-    pub use rerail_w::code_rule_dsl::stats;
-    pub use rerail_w::code_rule_dsl::suppress;
+    pub use rerail_rules::code_rule_dsl::suppress;
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
         #[allow(unused_imports)]
@@ -290,7 +282,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use rerail_compiler::native_cpu_codegen;
             #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use rerail_compiler::native_cpu_rows;
+            pub(in crate::code_rule_dsl) use rerail_cpu_block::native_cpu_rows;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::packed_batch::PackedExecution;
             #[allow(unused_imports)]
@@ -327,15 +319,14 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::search_index::persist_search_index_batch;
     }
     pub use rerail_lang::code_rule_dsl::tree;
-    pub use rerail_w::code_rule_dsl::value;
-    pub use rerail_w::code_rule_dsl::violations;
+    pub use rerail_rules::code_rule_dsl::value;
+    pub use rerail_rules::code_rule_dsl::violations;
     #[cfg(any(test, feature = "test-hooks"))]
-    pub use rerail_w::code_rule_dsl::walks;
+    pub use rerail_rules::code_rule_dsl::walks;
     pub mod waves {
         #[cfg(any(test, feature = "test-hooks"))]
-        pub use rerail_w::code_rule_dsl::waves::relational;
+        pub use rerail_rules::code_rule_dsl::waves::relational;
     }
-    pub use rerail_w::code_rule_dsl::workspace;
     #[allow(unused_imports)]
     use crate::code_rule_dsl::residency::admission::relational;
     #[allow(unused_imports)]
@@ -355,12 +346,28 @@ pub mod code_rule_dsl {
     use serde_json::Value;
     #[allow(unused_imports)]
     use std::sync::Arc;
-    #[allow(unused_imports)]
-    pub use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
-    #[allow(unused_imports)]
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) use crate::code_rule_dsl::rule_api::CodeRuleDslEditor;
 }
-pub use rerail_w::git_ignore;
-pub use rerail_w::panic_boundary;
 // cratify: mounts end
+
+/// This crate's own test binary, which the engine does not load: JSON's language pack is registered as the binary
+/// loads, as the engine registers it (`boot::install_languages`), so its tests read JSON's tree-sitter language, tape
+/// tag and terminators.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        use crate::code_rule_dsl::language::{self, Family, adapter::{json::Json, pack::{Pack, register}}};
+        register(Family::Json, &Pack::<Json>::NEW);
+        language::register_base(Family::Json, &Pack::<Json>::NEW);
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

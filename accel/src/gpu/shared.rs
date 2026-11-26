@@ -23,8 +23,9 @@
 //! - **Blocks in slabs** (`lease_block`): a block (`rerail_blocks`) whose memory is a pooled buffer, bound to the
 //!   device by that buffer: pinned once, recycled run after run. A block that outgrows its slab moves to a larger
 //!   one by one copy (`grow_block`); its references are self-relative, so the copy is the move.
-//! - **The guard.** A function the engine sets to its launch budget. Every submission checks it first, on the
-//!   submitting thread, so relational work is refused by the same budget as the rest of the engine's GPU work.
+//! - **The launch budget.** Every launch on the device is charged to its evaluation's ledger (`launch`) before it
+//!   is encoded, and every submission checked there: relational work is refused by the same budget as the rest of
+//!   the engine's GPU work.
 //!
 //! Everything here is safe to share between threads: Metal's device, queues and pipelines are, and the pool is
 //! behind a lock.
@@ -55,6 +56,37 @@ pub(crate) struct Memory {
     reserved: std::sync::atomic::AtomicUsize,
     /// Per thread: the bytes its bounded leases hold, and how many admissions on it wait now (`holder`).
     holders: Mutex<HashMap<u64, (usize, u32)>>,
+    /// What threads keep on the device between strata (`Kept`), now and at most, for the profile and a refusal.
+    kept: [std::sync::atomic::AtomicUsize; 1],
+    kept_peak: [std::sync::atomic::AtomicUsize; 1],
+}
+
+/// What a thread keeps on the device between its strata, past every admission (Q203): its device joins' sort scratch
+/// (`join::scratch`), given back as its outermost device stratum ends. Nothing else: no relation's copy outlives its
+/// stratum (decision 0478 steps 1 and 3).
+#[derive(Clone, Copy)]
+pub enum Kept {
+    Scratch = 0,
+}
+
+/// Notes that a thread's kept bytes of `kind` changed by `delta`.
+pub fn kept_change(kind: Kept, delta: isize) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let d = dev();
+    let k = kind as usize;
+    let now = if delta >= 0 {
+        d.kept[k].fetch_add(delta as usize, Relaxed) + delta as usize
+    } else {
+        d.kept[k].fetch_sub(delta.unsigned_abs(), Relaxed).saturating_sub(delta.unsigned_abs())
+    };
+    d.kept_peak[k].fetch_max(now, Relaxed);
+}
+
+/// What threads keep on the device (`Kept`): per kind, the bytes now and the most at once.
+pub fn kept() -> [(usize, usize); 1] {
+    use std::sync::atomic::Ordering::Relaxed;
+    let d = dev();
+    [0].map(|k| (d.kept[k].load(Relaxed), d.kept_peak[k].load(Relaxed)))
 }
 
 fn dev() -> std::sync::Arc<Memory> {
@@ -74,23 +106,36 @@ impl Memory {
         }
     }
 
-    /// The bytes idle buffers may hold, with `need` more about to be leased: what `budgets` leave past the ledger,
-    /// the live leases and the admissions' reservations. Never the driver's count, which counts every no-copy wrap
-    /// of host memory again (decision 0435 §2).
-    fn idle_room(&self, budgets: &crate::budget::Budgets, need: usize) -> usize {
-        budgets.metal().saturating_sub(other() + self.live.load(std::sync::atomic::Ordering::Relaxed) + self.reserved.load(std::sync::atomic::Ordering::Relaxed) + need)
+    /// The bytes idle buffers may hold, with `need` more about to be leased: what the budget leaves past the ledger
+    /// (`other`, its bytes now) and this memory's live leases and reservations. Never the driver's count, which counts
+    /// every no-copy wrap of host memory again (decision 0435 §2). It reads nothing of the thread's run: a lease
+    /// dropped on a thread with none (a pool's job after its run, decision 0442) asks it too.
+    fn idle_room(&self, budgets: &crate::budget::Budgets, other: usize, need: usize) -> usize {
+        budgets.metal().saturating_sub(other + self.live.load(std::sync::atomic::Ordering::Relaxed) + self.reserved.load(std::sync::atomic::Ordering::Relaxed) + need)
     }
 
     /// Releases idle buffers until they fit what `budgets` leave with `need` more leased (`Pool::trim`).
     fn trim(&self, budgets: &crate::budget::Budgets, need: usize) {
-        let room = self.idle_room(budgets, need);
+        let room = self.idle_room(budgets, other(), need);
         self.pool.lock().expect("the pool").trim(room, self.slab_idle_limit());
     }
 }
 
+/// What the ledger of `rerail-metal` reserves now: a launch's record of the application's buffers
+/// (`launch::DispatchRecord`).
+pub fn other_reserved() -> usize {
+    other()
+}
+
 /// What the ledger of `rerail-metal` reserves now.
 fn other() -> usize {
-    OTHER_RESERVED.get().map_or(0, |f| f())
+    other_ledger().map_or(0, |l| l.load(std::sync::atomic::Ordering::Acquire))
+}
+
+/// The ledger of `rerail-metal` this thread's run counts against (its machine's; a test thread's own), once its
+/// reader is set.
+fn other_ledger() -> Option<std::sync::Arc<std::sync::atomic::AtomicUsize>> {
+    OTHER_RESERVED.get().map(|f| f())
 }
 
 
@@ -150,10 +195,10 @@ pub struct Shared {
     pub max_buffer: u64,
 }
 
-/// The process's device as Metal's, once something opened it, without opening it (`rerail_forest::gpu::shared::opened`).
+/// The process's device as Metal's, once something opened it, without opening it (`rerail_device::shared::opened`).
 #[cfg(target_os = "macos")]
 pub fn opened_device() -> Option<&'static metal::DeviceRef> {
-    rerail_forest::gpu::shared::opened().and_then(|s| s.device.metal()).map(|d| &**d)
+    rerail_device::shared::opened().and_then(|s| s.device.metal()).map(|d| &**d)
 }
 
 /// The process's device in the device layer, whatever its backend (decision 0440 step C): what the pool leases
@@ -172,8 +217,13 @@ pub struct Layer {
 /// The process's device in the device layer: `None` without one. On Metal, `RERAIL_GPU=cpu` or `=opencl`.
 pub fn layer() -> Option<Layer> {
     crate::blocks::install();
-    let one = rerail_forest::gpu::shared::get()?;
+    let one = rerail_device::shared::get()?;
     Some(Layer { device: &one.device, queue: &one.queue, max_buffer: one.device.max_buffer_length() })
+}
+
+/// The process's device in the device layer, whatever its backend.
+pub fn device() -> Result<&'static rerail_device::device::Device, String> {
+    layer().map(|l| l.device).ok_or_else(|| "no device".to_owned())
 }
 
 /// Holds what a queue's work reaches: the block or pooled lease each buffer lies in (by its contents' address), on
@@ -281,7 +331,7 @@ pub fn get() -> Option<&'static Shared> {
             crate::blocks::install();
             objc::rc::autoreleasepool(|| {
                 // The forest's (the lowest crate that uses Metal): one device and one queue for the process.
-                let one = rerail_forest::gpu::shared::get()?;
+                let one = rerail_device::shared::get()?;
                 // None when the process's kernels run elsewhere (`RERAIL_GPU=cpu`): the engine's lanes stay on the host.
                 let (device, queue): (Device, CommandQueue) = (one.device.metal()?.clone(), one.queue.metal()?.clone());
                 let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize;
@@ -326,6 +376,9 @@ struct Pool {
     /// Leases made and served from the pool, for the profile.
     made: u64,
     reused: u64,
+    /// Idle buffers released (to fit the budget, or all at once): a returned block another lease of its class did
+    /// not take (`released_idle`).
+    released: u64,
     /// Idle deferrable files (archived segments) by directory and class, the oldest first, and how many in all.
     files: HashMap<(std::path::PathBuf, usize), Vec<(u64, std::path::PathBuf)>>,
     files_idle: usize,
@@ -362,6 +415,7 @@ impl Pool {
             .map(|(c, _)| *c);
         let Some(c) = oldest else { return false };
         self.idle.get_mut(&c).unwrap().remove(0);
+        self.released += 1;
         self.held -= c;
         if c >= SLAB_MIN {
             self.held_slabs -= c;
@@ -397,6 +451,9 @@ pub struct Pooled {
     /// return to the pool (`Back`) waits for that work, whoever holds the lease and whether or not they remember.
     /// None for a buffer whose memory the host cannot reach (it is no block's, and its command buffer retains it).
     held: Option<rerail_blocks::ledger::Tracked<Option<Back>>>,
+    /// The ledger of `rerail-metal` its lease counted against (`other_ledger`), which its return trims the pool by:
+    /// taken where it was leased, as `on` is, so a drop on a thread with no run reads no machine's.
+    other: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 /// A lease's buffer on its way back to the pool, once no queued work reaches it (`Pooled::held`).
@@ -404,6 +461,8 @@ struct Back {
     on: std::sync::Arc<Memory>,
     budgets: std::sync::Arc<crate::budget::Budgets>,
     buffer: DeviceBuffer,
+    /// Its lease's ledger (`Pooled::other`).
+    other: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 impl Drop for Back {
@@ -418,7 +477,7 @@ impl Drop for Back {
             p.held_slabs += class;
         }
         p.idle.entry(class).or_default().push((at, b));
-        let room = self.on.idle_room(&self.budgets, 0);
+        let room = self.on.idle_room(&self.budgets, self.other.as_ref().map_or(0, |l| l.load(std::sync::atomic::Ordering::Acquire)), 0);
         p.trim(room, self.on.slab_idle_limit());
     }
 }
@@ -428,7 +487,7 @@ impl Pooled {
     fn of(buffer: DeviceBuffer, keep: bool, fresh: bool) -> Pooled {
         let base = buffer.contents().cast::<u8>();
         let held = (!base.is_null()).then(|| rerail_blocks::ledger::Tracked::new(None, base, buffer.length() as usize));
-        Pooled { on: dev(), budgets: crate::budget::budgets(), buffer: Some(buffer), keep, fresh, owner: 0, held }
+        Pooled { on: dev(), budgets: crate::budget::budgets(), buffer: Some(buffer), keep, fresh, owner: 0, held, other: other_ledger() }
     }
 
     /// The lease's buffer as Metal's (the pool is Metal's while `get` is: the process's device is Metal).
@@ -526,14 +585,6 @@ pub(crate) fn lease_block_for_join(kind: u32, bytes: usize) -> Result<rerail_blo
     Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
 }
 
-/// A scratch region (`rerail_blocks::scratch`) in a pooled slab of at least `bytes`: freeze's and pack's
-/// temporaries counted in the one Metal budget, and readable by a kernel. Install it on a thread
-/// (`rerail_blocks::scratch::install`) for that thread's freezes; it goes back to the pool when dropped.
-pub fn lease_scratch(bytes: usize) -> Result<rerail_blocks::scratch::Scratch, String> {
-    let slab = lease_within(bytes.max(SLAB_MIN))?;
-    Ok(rerail_blocks::scratch::Scratch::over(Box::new(slab)))
-}
-
 /// Moves an open block into a pooled slab of at least `bytes`: one copy of what it holds. No command may be
 /// reading the block (it is moved between passes, as its chunks are made).
 pub fn grow_block(b: rerail_blocks::Block, bytes: usize) -> Result<rerail_blocks::Block, String> {
@@ -544,8 +595,6 @@ pub fn grow_block(b: rerail_blocks::Block, bytes: usize) -> Result<rerail_blocks
 /// Idle deferrable files the pool keeps at most, all classes (each beyond is removed): they hold disk, not memory.
 const IDLE_FILES: usize = 16;
 
-// Over a file's shared mapping (`rerail_blocks::deferrable`: POSIX's).
-#[cfg(unix)]
 /// A deferrable lease (decision 0295 §1): a block of `kind` in a file-backed shared mapping of at least `bytes` at
 /// `path`, wrapped for the device once. It counts in the one budget as a live lease until it is sealed
 /// (`Deferrable::seal`, at the wave's end) or dropped; then its pages are the OS's. A file the writer gave back
@@ -555,16 +604,12 @@ pub fn lease_deferrable(kind: u32, bytes: usize, path: &std::path::Path) -> Resu
     lease_file(kind, bytes, path, true)
 }
 
-// Over a file's shared mapping (`rerail_blocks::deferrable`: POSIX's).
-#[cfg(unix)]
 /// `lease_deferrable` for the host's writes alone (the store's writer): no wrap for the device, whose wire on the
 /// pages would hold their writeback some 200 ms (§7).
 pub fn lease_deferrable_host(kind: u32, bytes: usize, path: &std::path::Path) -> Result<rerail_blocks::deferrable::Deferrable, String> {
     lease_file(kind, bytes, path, false)
 }
 
-// Over a file's shared mapping (`rerail_blocks::deferrable`: POSIX's).
-#[cfg(unix)]
 fn lease_file(kind: u32, bytes: usize, path: &std::path::Path, for_device: bool) -> Result<rerail_blocks::deferrable::Deferrable, String> {
     let class = class(bytes.max(SLAB_MIN));
     let dir = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
@@ -598,8 +643,6 @@ fn lease_file(kind: u32, bytes: usize, path: &std::path::Path, for_device: bool)
     Ok(d)
 }
 
-// Over a file's shared mapping (`rerail_blocks::deferrable`: POSIX's).
-#[cfg(unix)]
 /// `lease_deferrable`, kept within the Metal budget (`lease_within`).
 pub fn lease_deferrable_within(kind: u32, bytes: usize, path: &std::path::Path) -> Result<rerail_blocks::deferrable::Deferrable, String> {
     let need = class(bytes.max(SLAB_MIN));
@@ -649,7 +692,7 @@ impl Drop for Pooled {
         }
         // Released to the device instead (`release`): its command buffers retain it. Else back to the pool once no
         // queued work reaches it: the next lease's host writes are never ordered before a queued kernel's reads.
-        let back = self.keep.then(|| Back { on: self.on.clone(), budgets: self.budgets.clone(), buffer: b });
+        let back = self.keep.then(|| Back { on: self.on.clone(), budgets: self.budgets.clone(), buffer: b, other: self.other.clone() });
         match self.held.take() {
             Some(mut held) => *held = back,
             None => drop(back),
@@ -686,7 +729,7 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
     }
     p.made += 1;
     // A new buffer: idle ones give way to it first, so the budget holds both.
-    p.trim(st_.idle_room(&crate::budget::budgets(), class), st_.slab_idle_limit());
+    p.trim(st_.idle_room(&crate::budget::budgets(), other(), class), st_.slab_idle_limit());
     drop(p);
     traced_new(class);
     let b = crate::score::phase("new buffer", || rerail_device::device::alloc_uninitialized_array_sync::<u8>(shared.device, class));
@@ -696,10 +739,11 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
 
 /// What else holds the device's budget beside relational work (the buffer pool's reservations, `rerail-metal`'s
 /// ledger): set by its owner, which this crate cannot depend on.
-static OTHER_RESERVED: OnceLock<fn() -> usize> = OnceLock::new();
+static OTHER_RESERVED: OnceLock<fn() -> std::sync::Arc<std::sync::atomic::AtomicUsize>> = OnceLock::new();
 
-/// Sets the reader of what else holds the Metal budget (`lease_within`).
-pub fn set_other_reserved(reader: fn() -> usize) {
+/// Sets the reader of what else holds the Metal budget (`lease_within`): the ledger the calling thread's run counts
+/// against, which a lease keeps (`Pooled`).
+pub fn set_other_reserved(reader: fn() -> std::sync::Arc<std::sync::atomic::AtomicUsize>) {
     let _ = OTHER_RESERVED.set(reader);
 }
 
@@ -753,11 +797,11 @@ pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
     }
     if !make_room(need) {
         let (live, idle) = held_bytes();
-        // What this thread's admission left it (none: no admission, or one spent), and what others reserve.
-        let left = RESERVE_LEFT.with(|r| r.get());
+        // What this thread's admission reserved and left it (none: no admission, or one spent), and what others reserve.
+        let (left, admitted) = (RESERVE_LEFT.with(|r| r.get()), ADMITTED.with(|a| a.get()));
         let why = format!(
-            "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool; this thread's reservation {} MB left, {} MB reserved in all)",
-            need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20, left >> 20, reserved() >> 20
+            "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool; this thread's admission {} MB, {} MB of it left, {} MB reserved in all; threads keep {} MB of join scratch)",
+            need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20, admitted >> 20, left >> 20, reserved() >> 20, kept()[0].0 >> 20
         );
         if let Some(hook) = REFUSAL_HOOK.get() {
             hook(&why);
@@ -803,6 +847,7 @@ pub fn admit(bytes: usize, patience: f64) -> Result<Admitted, String> {
         if fits {
             dev().reserved.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
             RESERVE_LEFT.with(|r| r.set(r.get() + bytes));
+            ADMITTED.with(|a| a.set(a.get() + bytes));
         }
         fits
     };
@@ -866,8 +911,10 @@ pub struct Admitted {
 }
 
 impl Drop for Admitted {
+    /// In the thread's teardown (a reservation a thread-local held) its counts are gone: what it reserved is not.
     fn drop(&mut self) {
-        let left = RESERVE_LEFT.with(|r| r.replace(0));
+        let left = RESERVE_LEFT.try_with(|r| r.replace(0)).unwrap_or(0);
+        let _ = ADMITTED.try_with(|a| a.set(0));
         dev().reserved.fetch_sub(left, std::sync::atomic::Ordering::Relaxed);
     }
 }
@@ -880,6 +927,8 @@ fn reserved() -> usize {
 thread_local! {
     /// This thread's reservation not yet leased.
     static RESERVE_LEFT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// What this thread's admissions under way reserved in all (a refusal's message: the room it came under).
+    static ADMITTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// This thread's number in the holders' count (`holder`).
     static HOLDER: u64 = {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -894,11 +943,13 @@ fn holder() -> u64 {
 /// `p`, counted as this thread's.
 fn held_here(mut p: Pooled) -> Pooled {
     let me = holder();
-    dev().holders.lock().expect("the holders").entry(me).or_default().0 += p.length() as usize;
+    p.on.holders.lock().expect("the holders").entry(me).or_default().0 += p.length() as usize;
     p.owner = me;
     p
 }
 
+/// A lease of `owner`'s back, through the memory it was leased from: a buffer dropped as its thread ends (a cache in a
+/// thread-local) reads no run context, which may be gone by then.
 fn released(on: &Memory, owner: u64, bytes: usize) {
     if let Some(e) = on.holders.lock().expect("the holders").get_mut(&owner) {
         e.0 = e.0.saturating_sub(bytes);
@@ -909,6 +960,11 @@ fn released(on: &Memory, owner: u64, bytes: usize) {
 /// ledger's), after it is made.
 pub fn trim_idle() {
     dev().trim(&crate::budget::budgets(), 0);
+}
+
+/// The idle buffers the pool has released so far (to fit the budget, or all at once: `drop_free`, `drop_idle`).
+pub fn released_idle() -> u64 {
+    dev().pool.lock().expect("the pool").released
 }
 
 thread_local! {
@@ -963,6 +1019,7 @@ pub fn pool_counts() -> (usize, u64, u64) {
 pub fn drop_idle() {
     let st_ = dev();
     let mut p = st_.pool.lock().expect("the pool");
+    p.released += p.idle.values().map(|v| v.len() as u64).sum::<u64>();
     p.idle.clear();
     p.held = 0;
     p.held_slabs = 0;
@@ -976,21 +1033,18 @@ pub fn drop_idle() {
 pub fn drop_free() {
     let st_ = dev();
     let mut p = st_.pool.lock().expect("the pool");
+    p.released += p.idle.values().map(|v| v.len() as u64).sum::<u64>();
     p.idle.clear();
     p.held = 0;
     p.held_slabs = 0;
 }
 
-static GUARD: OnceLock<fn() -> Result<(), String>> = OnceLock::new();
-
-/// Sets the check every submission makes first (once per process; a second call is ignored).
-pub fn set_guard(f: fn() -> Result<(), String>) {
-    let _ = GUARD.set(f);
-}
-
-/// The submission check: the engine's launch budget when it set one.
-pub fn guard() -> Result<(), String> {
-    GUARD.get().map_or(Ok(()), |f| f())
+/// Held by each test that leases from the pool, or counts its live leases: the budget tests count every live lease
+/// in the process (the crate's other tests' too: `crate::blocks`).
+#[cfg(test)]
+pub(crate) fn big_leases() -> std::sync::MutexGuard<'static, ()> {
+    static BIG: Mutex<()> = Mutex::new(());
+    BIG.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 #[cfg(test)]
@@ -1005,6 +1059,7 @@ mod tests {
         if layer().is_none() {
             return;
         }
+        let _big = big_leases();
         let p = lease(1 << 16).unwrap();
         let at = p.host() as usize;
         let q = Queue::new().unwrap();
@@ -1020,12 +1075,6 @@ mod tests {
         let at = p.host() as usize;
         drop(p);
         assert!(rerail_blocks::ledger::of_address(at).is_none());
-    }
-
-    /// Held by each test that leases tens of MB at once: the budget test counts every live lease in the process.
-    fn big_leases() -> std::sync::MutexGuard<'static, ()> {
-        static BIG: Mutex<()> = Mutex::new(());
-        BIG.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     /// A bounded lease is refused once relational work's leases would pass the Metal budget, and fits again once they
@@ -1215,41 +1264,6 @@ mod tests {
         assert!(unsafe { std::slice::from_raw_parts(b.ptr::<u8>(at), 1 << 20) }.iter().all(|&x| x == 0));
     }
 
-    /// A freeze whose temporaries come from a pooled scratch slab: the same relation as from the thread's own, and
-    /// the slab back in the pool after.
-    #[test]
-    fn a_freeze_takes_its_scratch_from_a_pooled_slab() {
-        use rerail_blocks::block::kind;
-        use rerail_blocks::relation::{self, RelW, Relation, Spec, View};
-        if layer().is_none() {
-            return;
-        }
-        let _big = big_leases();
-        set_slab_idle_limit(1 << 30);
-        let spec = Spec { widths: vec![4, 4], order: vec![0, 1], indexes: vec![vec![1]], min_log: 10 };
-        let rows: Vec<i64> = (0..200_000).flat_map(|i| [i % 3_000, i % 17]).collect();
-        let lock = Mutex::new(());
-        let digest = |scratch: Option<rerail_blocks::scratch::Scratch>| {
-            let was = scratch.map(rerail_blocks::scratch::install);
-            let b = rerail_blocks::Block::anon(kind::FACTS, 64 << 20);
-            let r = Relation::create(&b, &spec, None);
-            RelW { block: &b, rel: r, lock: &lock }.extend(&rows);
-            relation::freeze(&b, r, &spec, None);
-            if let Some(was) = was {
-                // Put the thread's own back; the pooled one drops here.
-                drop(was.map(rerail_blocks::scratch::install));
-            }
-            View::full(r).digest()
-        };
-        let own = digest(None);
-        // 29 MiB: a class (32 MiB) no other test leases.
-        let s = lease_scratch(29 << 20).unwrap();
-        assert_eq!(digest(Some(s)), own, "the same relation");
-        let back = dev().pool.lock().unwrap().idle.get(&class(29 << 20)).is_some_and(|v| !v.is_empty());
-        assert!(back, "the scratch slab went back to the pool");
-    }
-
-    /// A lease handed to a command buffer goes back to the pool when it completes.
     #[test]
     #[cfg(target_os = "macos")]
     fn a_lease_after_a_command_returns_when_it_completes() {
@@ -1302,7 +1316,7 @@ mod tests {
 
     /// A journal in a deferrable lease (decision 0295 §1): counted live until sealed, read in place once sealed,
     /// written back and frozen by the writer, and its file reused by the next lease of its class.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn a_deferrable_journal_is_handed_off_and_its_file_reused() {
         use rerail_blocks::block::kind;
@@ -1313,6 +1327,9 @@ mod tests {
         let _big = big_leases();
         let dir = std::env::temp_dir().join(format!("rerail-deferrable-pool-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        // The user's alone, whatever the umask (a mapped file's folder: decision 0574).
+        #[cfg(unix)]
+        std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
         let live = || dev().live.load(std::sync::atomic::Ordering::Relaxed);
         let before = live();
         let d = match lease_deferrable(kind::JOURNAL, 1 << 20, &dir.join("seg-1")) {

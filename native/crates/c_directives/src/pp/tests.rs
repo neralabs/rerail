@@ -10,20 +10,27 @@ fn check(src: &[u8], cpp: bool) -> Result<bool, String> {
     let image = c.image(src);
     let interp = c.interpreter_image(src);
     if interp != image {
-        return Err(format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()));
+        return Err(match (&interp, &image) {
+            (Some(i), Some(t)) => format!("the interpreter's tape differs: {}", crate::difference(i, t, c.lang())),
+            _ => format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()),
+        });
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
         let m = c.metal_images(&[src]).map_err(|e| format!("the device runs it: {e:?}"))?;
         if m[0] != image {
-            return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));
+            return Err(match (&m[0], &image) {
+                (Some(d), Some(t)) => format!("Metal's tape differs: {}", crate::difference(d, t, c.lang())),
+                _ => format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()),
+            });
         }
     }
     let Some(image) = image else { return Ok(false) };
     let lean = rerail_c_pp::tape::image(src, options(cpp));
     if image != lean {
-        let a = crate::outline(&image, KINDS, FIELDS, src)?;
-        let b = crate::outline(&lean, KINDS, FIELDS, src)?;
+        let lang = rerail_c_pp::tape::lang();
+        let a = crate::outline(&crate::Nodes::of(&image, lang)?, KINDS, FIELDS, src)?;
+        let b = crate::outline(&crate::Nodes::of(&lean, lang)?, KINDS, FIELDS, src)?;
         let k = a.lines().zip(b.lines()).position(|(x, y)| x != y).unwrap_or(a.lines().count().min(b.lines().count()));
         let around = |t: &str| t.lines().skip(k.saturating_sub(3)).take(8).collect::<Vec<_>>().join("\n");
         return Err(format!("the tape differs from the lean writer's at node {k}:\ngrammar:\n{}\nlean:\n{}", around(&a), around(&b)));
@@ -35,7 +42,7 @@ fn must(src: &[u8], cpp: bool) {
     match check(src, cpp) {
         Ok(true) => {}
         Ok(false) => {
-            let why = compiled(cpp).unwrap().parser.image(src).err();
+            let why = compiled(cpp).unwrap().tape(src).err();
             eprintln!("REFUSED: {:?}: {why:?}", String::from_utf8_lossy(src));
             panic!("refused");
         }
@@ -88,11 +95,11 @@ fn the_corpus_pp_tapes() {
         let c = compiled(cpp).unwrap();
         let files: Vec<(std::path::PathBuf, Vec<u8>)> = paths.into_iter().skip(skip).take(limit).filter_map(|p| std::fs::read(&p).ok().map(|s| (p, s))).collect();
         for batch in files.chunks(64) {
-            let images: Vec<_> = batch.iter().map(|(_, src)| c.parser.image(src)).collect();
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            let images: Vec<_> = batch.iter().map(|(_, src)| c.tape(src)).collect();
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             let metal = c.metal_images(&batch.iter().map(|(_, s)| s.as_slice()).collect::<Vec<_>>()).unwrap_or_else(|e| panic!("the device runs the batch: {e:?}"));
             for (k, ((p, src), image)) in batch.iter().zip(&images).enumerate() {
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                #[cfg(any(target_os = "macos", target_os = "linux", windows))]
                 if metal[k].as_ref() != image.as_ref().ok() {
                     differ.push(format!("{}: Metal's tape differs", p.display()));
                     continue;
@@ -103,14 +110,15 @@ fn the_corpus_pp_tapes() {
                     continue;
                 }
                 match image {
-                    Err(r) => *refused.entry(r.why.to_string()).or_default() += 1,
+                    Err(r) => *refused.entry(r.clone()).or_default() += 1,
                     Ok(image) => {
                         let lean = rerail_c_pp::tape::image(src, options(cpp));
                         if *image == lean {
                             same += 1;
                         } else {
-                            let a = crate::outline(image, KINDS, FIELDS, src).unwrap();
-                            let b = crate::outline(&lean, KINDS, FIELDS, src).unwrap();
+                            let lang = rerail_c_pp::tape::lang();
+                            let a = crate::outline(&crate::Nodes::of(image, lang).unwrap(), KINDS, FIELDS, src).unwrap();
+                            let b = crate::outline(&crate::Nodes::of(&lean, lang).unwrap(), KINDS, FIELDS, src).unwrap();
                             let at = a.lines().zip(b.lines()).position(|(x, y)| x != y).unwrap_or(0);
                             let around = |t: &str| t.lines().skip(at.saturating_sub(3)).take(7).collect::<Vec<_>>().join("\n");
                             differ.push(format!("{}: node {at}\ngrammar:\n{}\nlean:\n{}", p.display(), around(&a), around(&b)));
@@ -145,7 +153,7 @@ fn probe() {
     for src in all.split("|||") {
         let src = src.replace("\\n", "\n");
         let r = check(src.as_bytes(), true);
-        let why = compiled(true).unwrap().parser.image(src.as_bytes()).err();
+        let why = compiled(true).unwrap().tape(src.as_bytes()).err();
         eprintln!("PROBE {src:?}: {r:?} {why:?}");
     }
 }

@@ -1,4 +1,4 @@
-// Writes native/src/code_rule_dsl/scope/data/ts_lib_globals.generated.json: the global variables typescript-eslint's
+// Writes native/crates/adapters/src/code_rule_dsl/scope/data/ts_lib_globals.generated.json: the global variables typescript-eslint's
 // scope manager defines for each TypeScript `lib` (`parserOptions.lib`), with the namespaces each one is valid in, and
 // the libs each lib includes. Read from @typescript-eslint/scope-manager's generated lib definitions (dist/lib), which
 // typescript-eslint derives from TypeScript's lib files. Run offline, not in CI:
@@ -38,6 +38,6 @@ for (const name of [...lib.keys()].sort()) {
 }
 const table = { source: `@typescript-eslint/scope-manager@${version} dist/lib`, libs };
 writeFileSync(
-  join(import.meta.dirname, "../../../native/src/code_rule_dsl/scope/data/ts_lib_globals.generated.json"),
+  join(import.meta.dirname, "../../../native/crates/adapters/src/code_rule_dsl/scope/data/ts_lib_globals.generated.json"),
   `${JSON.stringify(table, null, 1)}\n`,
 );

@@ -19,6 +19,7 @@ UKL_INLINE int64_t pf_at(PpFile f) { return (int64_t)(((uint64_t)f.at_high << 32
 
 // The tape's kinds the passes read (`rerail_c_pp::tape`).
 #define K_IDENTIFIER (28u)
+#define K_PUNCT (31u)
 
 // --- A format 16 tape, read through the CLIF reads ---------------------------------------------
 
@@ -44,21 +45,24 @@ UKL_INLINE int64_t pf_src(PpFile f) { return pf_at(f) + (int64_t)f.source; }
 // A file's document's first byte, 16-byte aligned in its slab: where its names' words are read from.
 UKL_INLINE UKL_GLOBAL const uint64_t* pf_words(UKL_GLOBAL const uint8_t* data, PpFile f) { return (UKL_GLOBAL const uint64_t*)(data + pf_at(f)); }
 
+// The tape's reads are calls (`UKL_ONCE`), compiled once: inlined at each of their ~600 sites
+// (12 KB of code for a start, 46 KB for an end, the stated starts' decode), they made the setup
+// kernel 14 MB of code and its Metal back end's compile minutes.
+//
 // Node `i`'s key: its code's kind and field (`kind | field << 10`; a preprocessor tape's codes
 // have no flags), from its number in the language's table (`DeviceCode`s, 24 bytes each).
-UKL_INLINE uint32_t node_key(Tape t, uint32_t i) {
+UKL_ONCE uint32_t node_key(Tape t, uint32_t i) {
     UKL_GLOBAL const uint16_t* c = (UKL_GLOBAL const uint16_t*)(t.codes + 24u * clif_tape_number(t.d, (UKL_GLOBAL const uint32_t*)t.v, i));
     return ((uint32_t)(c[0])) | ((uint32_t)(c[1])) << 10;
 }
 UKL_INLINE uint32_t node_kind(Tape t, uint32_t i) { return node_key(t, i) & 0x3ffu; }
-UKL_INLINE uint32_t node_size(Tape t, uint32_t i) { return clif_tape_size(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
-UKL_INLINE uint32_t node_start(Tape t, uint32_t i) { return clif_tape_start(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
-UKL_INLINE uint32_t node_end(Tape t, uint32_t i) { return clif_tape_end(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
+UKL_ONCE uint32_t node_size(Tape t, uint32_t i) { return clif_tape_size(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
+UKL_ONCE uint32_t node_start(Tape t, uint32_t i) { return clif_tape_start(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
+UKL_ONCE uint32_t node_end(Tape t, uint32_t i) { return clif_tape_end(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
 // The line (from 0) of byte `x` of the file: by its tape's newline index.
 UKL_INLINE uint32_t tape_line_of(Tape t, uint32_t x) { return clif_tape_line(t.d, (UKL_GLOBAL const uint32_t*)t.v, x); }
 
 // --- The unit's nodes: a count a file, a prefix sum, a node's file --------------------------------
-
 
 // The file of the unit's node `g`: the last whose first node is at or before it.
 UKL_INLINE uint32_t file_of(PP_GLOBAL const uint32_t* bases, uint32_t n_files, uint32_t g) {
@@ -80,8 +84,9 @@ UKL_INLINE uint64_t word_at(PP_GLOBAL const uint64_t* d, uint32_t a) {
 }
 
 // Where a line splice at byte `i` (a `\\`, blanks, then a newline) ends, before `end`; `i`
-// where there is none (`rerail_c_lean::pp`'s `splice_at`).
-UKL_INLINE uint32_t splice_end(PP_GLOBAL const uint8_t* b, uint32_t i, uint32_t end) {
+// where there is none (`rerail_c_lean::pp`'s `splice_at`). A rare case's body, called (`UKL_RARE`): read at a
+// backslash only, inlined at 56 sites of `lp_piece` its exits counted past 255 there on the M1 (decision 0672).
+UKL_RARE uint32_t splice_end(PP_GLOBAL const uint8_t* b, uint32_t i, uint32_t end) {
     uint32_t k = i + 1u;
     for (; k < end && (b[k] == ((uint8_t)(' ')) || b[k] == ((uint8_t)('\t')) || b[k] == 0x0bu || b[k] == 0x0cu); k++) {}
     if (k < end && b[k] == ((uint8_t)('\n'))) return k + 1u;
@@ -149,7 +154,10 @@ UKL_INLINE uint64_t name_key(PP_GLOBAL const uint64_t* d, uint32_t a, uint32_t l
     return h ^ (h >> 29);
 }
 
-// Each identifier leaf's key, 0 for every other node: one thread a node of the unit.
+// A one-byte punctuator's key: its byte under this tag (no name's key is so small).
+#define KEY_PUNCT (0x100ul)
+// Each identifier leaf's key, a one-byte punctuator's its byte's (`KEY_PUNCT`), 0 for every other
+// node: one thread a node of the unit.
 UKL_INLINE void pp_names(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint32_t* total, PP_GLOBAL uint64_t* keys, uint32_t n_files, uint32_t g) {
     if (g >= total[0]) return;
     uint32_t f = file_of(bases, n_files, g);
@@ -160,6 +168,9 @@ UKL_INLINE void pp_names(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_
         uint32_t s = node_start(t, i);
         // From the document's first byte, 16-byte aligned in its slab.
         key = name_key(pf_words(data, files[f]), files[f].source + s, node_end(t, i) - s);
+    } else if (node_kind(t, i) == K_PUNCT) {
+        uint32_t s = node_start(t, i);
+        if (node_end(t, i) - s == 1u) key = KEY_PUNCT | (uint64_t)(data[pf_src(files[f]) + s]);
     }
     keys[g] = key;
 }

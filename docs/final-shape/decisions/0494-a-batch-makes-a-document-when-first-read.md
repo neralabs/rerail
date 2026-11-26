@@ -2,9 +2,9 @@
 
 (0474 until 2026-11-20, here and on phased-facts: the hub's 0474 is a level's formulas as phases.)
 
-Status: decided by the user (2026-11-19, Q285: "B: lazy Batch everywhere"). Builds 0458's "a document is made when
-first read" for every batch, the chunks' too. Follows 0353 (a view is a read of the tape) and 0458. Numbered 0464 until
-2026-11-19 (another branch's 0464 is the program image's).
+Status: built (audited 2026-11-23). Decided by the user (2026-11-19, Q285: "B: lazy Batch everywhere"). Builds 0458's
+"a document is made when first read" for every batch, the chunks' too. Follows 0353 (a view is a read of the tape) and
+0458. Numbered 0464 until 2026-11-19 (another branch's 0464 is the program image's).
 
 ## Intro
 
@@ -170,7 +170,11 @@ Each has its test before the code that meets it.
    - **The cycles, not the instructions.** About 2× 0458's cycles for 6% more instructions: the tape values' parts
      (`syntax::values::Values`, 0431 §8) were behind a read-write lock that every probe of a layered source took,
      21% of the samples in `lock_shared_slow`. They are an `ArcSwap` now: a probe loads them, and an admission makes
-     a new map under its own lock.
+     a new map under its own lock. That map is made from the last without copying it (2026-11-21): the parts are
+     blocks of 64 and the keys 256 shards, each shared by the maps that hold it, so an admission copies its
+     relations' last blocks and its keys' shards. Copied whole (`Arc::make_mut` on parts the probes' map shares),
+     each admission copied every part and key before it: 7.6 s of a 90 s run on corpus0 × B-now, the normal packs
+     2.605 T to 2.189 T instructions (test: `an_add_copies_only_its_last_block_and_its_keys_shard`).
    - **The proofs.** The whole program's well-founded check found the recursive components by a pass over the
      6,842 rules for each component: 0.165 s, in both the cold run and the edit. One pass over the rules, keyed by
      each relation's component: 0.056 s (the helpers' steps 0.025 s of it, checking every recursive component under
@@ -215,6 +219,35 @@ Each has its test before the code that meets it.
    by span does not say it either: its snapshot of the strata under way moves by tens of MB between runs, and the
    profile's own author-join sources (`rr::profile_join_sources`, 7 MB) are counted in ours alone. Open: the blocks'
    35 MB at the peak.
+
+   That gap is explained (a census of every block at the peak, two runs of ours against three of 0458's, the 50
+   files on the CPU): the free-listed blocks hold 114–140 MB live to 0458's 80–86 MB, and waste nothing (0458's
+   lists held 30–50 MB of pages besides); the plain blocks with no free list hold 23 MB to 0458's 1 MB (the
+   containment solve 10 MB, the batch's block 5 MB, atoms 4 MB). The live difference is data that left 0458's heap
+   for blocks (sketches, statistics, atoms, the solves), the column filters (11 MB, new, 0477), the relations' own
+   index buckets (5–8 MB), and the solves grown on the way (16 B a row where 0458's heap held 8 B a pair).
+7. The axes' solves: 8 bytes a row, shared within a batch. R7. Done (2026-11-21, user: "build A, and fold in sharing
+   the repeated solves"). An axis is file-local: a solve row's `n` and `a` lie in one document, and an id is its
+   document's key over its node's low 32 bits. A 4-byte column may now hold a value's low bits under key runs
+   (`rows::ColDir::runs`: a table in the relation's block of each run's first row and high bits, one run a
+   document); every read (`ColDir::get`, CLIF's `col_get` and its search `col_high`, the kernels' relation.h)
+   returns the value, so no reader changed. A table of each node's id was rejected: it is the node view's id
+   column made, a copy of what the projection's numbering holds (and the chunk's `low`, a listed copy, 0353 step
+   4). The host's and the device's writers write the solves so (`Part::over_key_runs`): 3.06 M rows over the 50
+   files, 24 MB where they were 49 MB, each read a 4-byte load and a search of a few runs in cache.
+
+   Of those rows 155 k (5%) were solves made twice: 27 k an `inside` whose set nests nowhere, the same rows as its
+   batch's `nearest`; 128 k two `nearest` solves of the same documents in two phases' runs (phase 1, phase struct
+   and the main run each project their documents). A batch's axes over one set of kinds share their solves now
+   (`within::Solves`): each mode's is made once, and an `inside` that nests nowhere reads its `nearest`'s relation.
+   Open: the phases' solves of the same documents, which need a solve held per document across the phases' runs
+   (rows in its tape's ids, keyed by its digest), not per batch.
+
+   The column filters stay at 8 bits a key (user, 2026-11-21): at 4 bits they took 5 MB to 11 MB at the peak, with
+   up to six times the false positives (20% at the outgrow point to 3.3%), and no run of these files moved.
+
+   Cold, two alternated rounds (load 6): outputs identical; 216.6 G instructions to 216.8 G before the sharing,
+   764 MB of footprint to 762–777 MB.
 
 ## Reads side by side make a document once (2026-11-20)
 

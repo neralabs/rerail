@@ -1,7 +1,6 @@
 # 0009: The planner lowers programs, statistics and inputs to the same integers
 
-Status: accepted
-Date: 2026-10-27
+Status: built (audited 2026-11-23). Accepted Date: 2026-10-27
 
 ## Question
 `logic::plan` (T's planner, Phase 6 row 5) compares and builds symbols as text, as T's facts file
@@ -11,7 +10,7 @@ and its splits, and the outputs meet atom-valued columns (O13)? This affects eve
 and every target.
 
 ## Prior work consulted
-- ast-index-spike design index, topic 21: planning resolves names in the query's grammar. With
+- SQL index prototype design index, topic 21: planning resolves names in the query's grammar. With
   the primary grammar's names, a Rust query found 0 results instead of 71 (D S133 L727-747). The index carries global codes (D S071).
   Agreement: agrees; kind and field constants are lowered in the program's dialect.
 - History index 2.22: the Python interner was used to look up Rust names in a mixed store

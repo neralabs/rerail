@@ -388,6 +388,7 @@ mod tests {
             CallConv::SystemV,
             CallConv::WindowsFastcall,
             CallConv::PreserveMost,
+            CallConv::PreserveAll,
         ] {
             assert_eq!(Ok(cc), cc.to_string().parse())
         }

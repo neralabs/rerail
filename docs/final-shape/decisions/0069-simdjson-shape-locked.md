@@ -1,9 +1,8 @@
 # 0069: Compiled languages keep simdjson's shape, locked by tests
 
-Status: accepted (user, 2026-11-07: "We should be able to get approximately SIMDJSON performance
-on the CPU, since we should generate nearly identical code … ensure that the correct shape is
-locked in from now on"; the plan, "yes, please go ahead with it, and make sure that you lock in
-the improvements with tdd")
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-07: "We should be able to get approximately SIMDJSON
+performance on the CPU, since we should generate nearly identical code … ensure that the correct shape is locked in
+from now on"; the plan, "yes, please go ahead with it, and make sure that you lock in the improvements with tdd")
 
 ## Intro
 
@@ -24,7 +23,7 @@ after:  each value at its own delay; outputs and fallback masks never aligned;
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike ran no block programs. Its rule of measuring against
+- **SQL index prototype indexes:** the spike ran no block programs. Its rule of measuring against
   the real reference holds: simdjson's stage 1 and full parse, timed on this machine, on the same
   files (`fixtures/simdjson-stage1/stage1_indexes.cpp`).
 - **Lessons ledger #28** (proxies are not the cost; only end-to-end CPU time counts). **Agrees,

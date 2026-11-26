@@ -1,7 +1,6 @@
 # 0008: Base facts are read through per-wave vtab bindings over core facts; integers only
 
-Status: accepted
-Date: 2026-10-27
+Status: built (audited 2026-11-23). Accepted Date: 2026-10-27
 
 ## Question
 How do SQL statements of a wave (Phase 7) and the logic planner (Phase 6 row 5) read base facts:
@@ -11,7 +10,7 @@ tapes and held by digest (`facts::families`). Affects every target: the cold aud
 cost on every document, the warm run on a few, and an outer SQL query sees the same relations.
 
 ## Prior work consulted
-- ast-index-spike design index, topic 2: no node table ([STABLE]; D S072 L4241-4285: "the node
+- SQL index prototype design index, topic 2: no node table ([STABLE]; D S072 L4241-4285: "the node
   table, not the tape, was the cost", about 30 s to 4 s), and no per-query temporary node table
   (D S037 L2442-2593, SORA L816-834). Agreement: agrees; nothing here writes node rows.
 - Design index topic 8 and history index 2.10: vtabs push filters inside and return integers, not

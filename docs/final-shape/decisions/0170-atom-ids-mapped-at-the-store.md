@@ -1,6 +1,6 @@
 # 0170: A process whose atoms fork from the store's maps its ids at the store
 
-Status: decided (2026-11-13), with provisional ids (0160, `RERAIL_ATOMS_PROVISIONAL=1`)
+Status: built (audited 2026-11-23). Decided (2026-11-13), with provisional ids (0160, `RERAIL_ATOMS_PROVISIONAL=1`)
 
 ## Intro
 
@@ -39,8 +39,9 @@ and maps them to the store's wherever a row crosses the store's boundary.
    - `Mapped`: rows with symbol columns, mapped inside the job. Frames (`b's'` columns, typed from the program's
      declarations: the kept strata, the retained part, and the kept cross-file part's inputs, which were untyped
      before and are read back only when their types match), the memo's entries (their symbol columns, known from
-     the program's declarations, `memo::register_syms`), and the kept statistics by constant (`stat_blob`: the
-     exact maps of symbol columns, `Keeper::map_symbols`).
+     the program's declarations, `memo::register_syms`), and the kept statistics by constant (the exact maps of
+     symbol columns: since t33 step 6 an atom column of a kept relation, `keeper_exact`, which the kept writer maps
+     and `Keeper::of_kept` maps back).
    - `None`: no atoms in the rows (tapes, plans, programs, automata, statistics of files, pins, the pending atoms
      themselves, the planning choices, whose facts keep their own string table).
    - `Unmapped` (the default): rows that may hold a `Sym` in an untyped column. A forked process drops them, as a
@@ -69,7 +70,7 @@ and maps them to the store's wherever a row crosses the store's boundary.
 6. **Batched.** Every id lookup and translation is one statement per batch: the segments a batch names read once
    (`map::fetch`, `WHERE first IN rarray`), strings found by key in one `rarray` lookup (`find`), the derivation
    tables' names in one lookup (`Atoms::lookup_all`) and one `json_each` read, key rows written by
-   `bounded_insert`. A job maps all its rows in one call (`map_entries`, `Keeper::map_symbols`).
+   `bounded_insert`. A job maps all its rows in one call (`map_entries`; the kept statistics' exact maps in `Keeper::of_kept`).
 
 7. **The writer** retries a batch that finds the store busy, with backoff, until the job's deadline. Mapping holds
    the write lock longer than a plain write; a writer that failed `busy` lost the run's results.
@@ -278,7 +279,7 @@ boundaries that map them now take and return a brand:
   module alone. Writing an entry with this process's ids, or using one with the store's, does not type-check.
   Not forked, `to_store` borrows (no copy); forked, it maps every entry in one call, as before.
 
-The rows of the frames, cross rows and derivations keep their typed columns (`map_columns`, `map_symbols`): their
+The rows of the frames, cross rows and derivations keep their typed columns (`map_columns`): their
 callers wrap the values in the brand at the call, so the claim is made where the values are.
 
 ## Departures and open points
@@ -324,7 +325,7 @@ Test: `a_forked_processs_unnamed_atoms_queue_no_write` (store).
 
 - 0049 (the lease), 0104 (no SQL inside the waves), 0111 (atoms found by key), 0146 (the memo), 0160 (provisional
   ids and the translation it called for).
-- ast-index-spike indexes: interned ids were process-local, with no shared store to map against.
+- SQL index prototype indexes: interned ids were process-local, with no shared store to map against.
 
 ## A support relation's kind columns are not atoms (2026-11-15)
 

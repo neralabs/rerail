@@ -13,3 +13,6 @@ rerail-simdjson = { path = "../simdjson" }
 rerail-simdjson-native = { path = "../simdjson_native" }
 # The process's instructions and cycles (`proc_pid_rusage`), for the measurement against simdjson.
 libc = "0.2.189"
+# The Bitlex parser's generated Rust and format 16's writer, for `three_parsers_phase_by_phase`.
+rerail-json-aot = { path = "../json_aot" }
+rerail-tape-format = { path = "../tape_format" }

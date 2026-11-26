@@ -1,9 +1,11 @@
 # 0083: Typing and libraries run as phases of one engine in separate fact spaces; searches are a memoised program kind
 
-Status: proposed (2026-11-08). Draft for review. Its phases are on the run path since 2026-11-18 ("Built: the phases
-on the run path", steps 1 and 2 of 3). Numbered 0083: final-rerail-shape holds 0081, More-ergonomic-rule-syntax holds 0081 and 0082.
-It supersedes, for typing, the cross-file keys of 0065 §2 (one key per import component) and 0076. It keeps
-0065 §1 (no rounds), §2a (requests answered inside a fixpoint) and §3 (terms, instantiation by value).
+Status: partly built (audited 2026-11-23). Left: Run-path step 3 (imports read P1/P2); §4 searches (recast as demand
+rules by 0144); maintenance of stored fixpoint by deltas; Cranelift/Metal for searches. Proposed (2026-11-08). Draft
+for review. Its phases are on the run path since 2026-11-18 ("Built: the phases on the run path", steps 1 and 2 of 3).
+Numbered 0083: final-rerail-shape holds 0081, More-ergonomic-rule-syntax holds 0081 and 0082. It supersedes, for
+typing, the cross-file keys of 0065 §2 (one key per import component) and 0076. It keeps 0065 §1 (no rounds), §2a
+(requests answered inside a fixpoint) and §3 (terms, instantiation by value).
 
 ## Intro
 
@@ -18,7 +20,7 @@ Measured this week, on the 84-file data-layer corpus with typeshed (267 document
 | warm, nothing changed | | 8.0 s, 386 MB |
 | one workspace file edited | the whole fixpoint again | 24.9 s, 570 MB |
 | replay per import component, `calls_cx` (0076 §8) | 7.8 s | 53.7 s |
-| one comment added to `l1100_exceptions/exceptions.py` | 39.3 s: 41 of 133 components missed | 87.7 s |
+| one comment added to the corpus's exceptions module | 39.3 s: 41 of 133 components missed | 87.7 s |
 
 Four things cause this:
 
@@ -341,7 +343,7 @@ no edge, at 138.7 s user CPU and 625 MB. Typeshed's flows are declared (stubs), 
 A run of a1234 with typeshed has not been made yet.
 
 The dumps per call show what changed:
-- a1234 against base: one call. `l2050_transaction/tests/test_legacy_wrappers_runtime.py:116` reaches
+- a1234 against base: one call. A test of the corpus's transaction package reaches
   `_resolve_legacy_result_async` through a module's computed value. It goes from agree to unknown.
 - k3 against base: three calls in `transaction.py` go from unknown to agree. Closed-world subclasses made them open.
 
@@ -501,7 +503,7 @@ typed, 985 calls resolved. `leg-083-typed` runs both phases and P3 in 22 s, and 
 
 ## Prior work consulted
 
-**ast-index-spike design index:**
+**SQL index prototype design index:**
 - §17: semantic edges are "a separate layer keyed by symbols" (D S020 L2049-2058). This decision is that layer,
   as phases. Cross-file resolution was out of scope there.
 - §7: transitive closure belongs to the caller, with a bound, and "a derived edge table may be legitimate"

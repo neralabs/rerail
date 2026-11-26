@@ -1,10 +1,12 @@
 # 0353: Blocks are never copied: every reader reads the data where it lives
 
-Status: decided (2026-11-17), by the user: "the entire point is that the CPU and GPU kernels all operate on exactly
-the same linear data"; "it must be clear EVERYWHERE that blocks NEVER get copied into different data-structures for
-'convenience'". The plan below is being built. Supersedes the parts of 0289 §1–2, 0293 §6 and 0325 step 5 named in
-"What it replaces". Follows 0140 (the tape is the engine's bytes), 0266 (blocks), 0293 (one tape API, read in place),
-0310 (reads written once, three backends) and 0325 (relations are blocks).
+Status: partly built (audited 2026-11-23; steps 3-8 merged 2026-11-23). Left: 5 marked copies, step 3's one
+(core.rerail's per-node rows) and step 4a's four (a queued tape not in a room, the parsers' columns, a source made in
+memory). Decided (2026-11-17), by the user: "the entire point is that the CPU and GPU kernels all operate on
+exactly the same linear data"; "it must be clear EVERYWHERE that blocks NEVER get copied into different
+data-structures for 'convenience'". The plan below is being built. Supersedes the parts of 0289 §1–2, 0293 §6 and 0325
+step 5 named in "What it replaces". Follows 0140 (the tape is the engine's bytes), 0266 (blocks), 0293 (one tape API,
+read in place), 0310 (reads written once, three backends) and 0325 (relations are blocks).
 
 Amended between memory domains by 0440 §7.2 (the user, 2026-11-18): within one domain (a host's RAM and its unified GPUs) this holds as written; between domains (a discrete GPU's memory, another host) a block is copied as the same bytes, never into another data structure, and the engine keeps the copies coherent.
 
@@ -303,11 +305,20 @@ program read them, and `Batch::made` bound those rows in place of the views (`li
 no span: 3 interleaved pairs at load 23–25, `extra document rows` 0.094–0.135 s and 254–271 MB allocated to none;
 findings 1,629 in each; 73.5 B instructions (median) against 80.2 B.
 
-Where spans are made, the nodes' and tokens' place rows are still made beside the spans' (the spans' are derived
-facts; the nodes' are copies of tape answers), and bound in place of the view. The view already covers the whole
-source and its lines (`Locs::positions`, the `ExtraSpan::Line` ids); the other spans (`src_line_lf`, `tape_line`,
-matches, comments, `rx_span`) have their byte ranges only in `Extra`. Q216: those ranges written once into the
-batch's block, and the view reading them past its own positions, so nothing makes a node's place.
+**Where spans are made** (Q216, 2026-11-22), no node's or token's place is made either. In core.rr's shape `Extra`
+makes place rows for its spans alone (`Extra::node_places` is false): a match, a comment no node is, `source` and
+`src_line`. A span is a derived fact, placed once where it is made (`LineTable::place`). Each place relation is bound
+as the `Loc` view's rows, then those (`places::Places`, `places::join`). Two branches built this at once (this one
+and benchmarks-on-integration's b5fe5fcaa6, which measured 71 MB of the M3's 150 MB batch block); the merge of
+2026-11-22 keeps one type. A lookup by id goes to the side that holds the id
+(`granules::is_extra`), so a probe of a node's place reads the tape and makes no document. The device reads it in
+place as one relation: the kernels' `vread` of a placed kind reads a row below the view's count through the views'
+reads, and a row past it from the spans' relation where it lies in its block (`PlacedDir`: the view's directory,
+the spans' block and descriptor, the view's rows). `views_made_on_the_device_are_the_hosts_rows` copies and indexes
+each place relation of a span-reading program on the device. Before, such a probe
+made the node's document and its group: on ep2's `body` edit, 38 unchanged documents, about 0.09 s of 4.0 s.
+`a_span_reader_s_places_are_the_view_s_then_the_spans` checks the made rows (spans' alone), the view's rows first,
+and each line span's place.
 
 **Step 3's other relations of row 7** (2026-11-17), each checked against "Not copies":
 - `visit_index` (CPython's visit order), `host_node` (a guest node's innermost host node, an axis's answer) and
@@ -316,7 +327,15 @@ batch's block, and the view reading them past its own positions, so nothing make
 - `intval` and `op_t` are read by no core.rr library rule; in core.rr's shape `NodeRows` runs only where a program
   reads them. In T's shape they come with `NodeRows`' eager `text`, `name` and `str`, deferred with Q121.
 - What row 7 keeps: `core_rr`'s and `NodeRows`' eager derived values (`text`, `name`, `value`'s literals, T's
-  rows), deferred (Q121), and the nodes' place rows beside spans (Q216).
+  rows), deferred (Q121).
+- core.rerail's tape answers that `core_rr` made as rows are views (2026-11-22): `op` (`View::Op`: a numbered node's
+  anonymous children, the rank item `Item::Op`, zero-width ones included; a Python two-word operator is one child,
+  the grammar's alias, so no row is made for it or for any other), `end_point` (`View::End`: a node's position among `Locs::ends`),
+  `spread` (`View::Spread`: a rank item the walk marks from the code table) and the token order, `first_token`,
+  `last_token`, `token_before`, `token_after` (`View::Tok`, `syntax/tokens.rs`): the lexemes are a rank item,
+  each answer a rank and a select, each relation's rows the places marked as having one. The rank index's groups
+  are 15 words for its ten items. Tests hold each to what `core_rr` made (`the_token_order_is_the_sorted_tokens`,
+  `core_rr_relations_hold_what_core_rr_says`, `op_is_every_anonymous_child_and_op_ats_two_word_operators`).
 
 Found on the way and fixed:
 - `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by
@@ -381,21 +400,22 @@ Each row is marked in the code with `copy (0353 step N)`.
 |---|---|---|---|---|
 | 1 | Gone (step 3): the projection's per-node arrays. `core`, `local`, `up`, `size` and `fielded` are the rank index; scans carry `idx` and `depth` in the walk, and a point read climbs for `depth`. Only a point read of `idx` makes a column, derived once (see "Node identity") | — | — | Done |
 | 2 | Gone (step 2): definition ids by node, `DefIds::low`, `order`, `back`. The granule table answers them. | — | — | Done |
-| 3 | The chunk block's node columns: `core`, `up`, `fielded`, `low`, `start`, `end`, `kind`, `field`, and the canonical code copy. `low` is made by one scan of the granule table. `core`, `up` and `fielded` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 22 bytes a node; 0.07 s a run | Step 4 |
-| 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 660.8 MB, 111.5 ms a run | Step 4 |
-| 5 | Views and flat relations uploaded from the host. Symbols' names no longer (0478 step 2e, 2026-11-19: every text kernel reads them through the atoms directory; `texts` and `DevText` are deleted) | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident` | 7.4 MB, 22.1 ms a run (with the names) | Steps 4, 6 |
-| 6 | Gone (step 5, 2026-11-18): an axis's pairs copied into the chunk, then expanded to ids. The solve writes ids once into a relation of its own, which every reader reads where it lies; `put_pairs` and `VIEW_AXIS` are deleted. `has` is still made per looked-up node and uploaded (row 5) until its probe climbs the tape | — | — | Done |
-| 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`) | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.45–0.49 s of CPU a run | Step 3 |
-| 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | Every row a CPU stratum derives | Step 6 |
-| 9 | A second key's index copies the relation (`DevIndex::moved`); a relation of many parts merged for the device (`in_block`). Since 0384 (steps 1–8, 2026-11-18) a relation is one relation or a chain of continuations read in place, so the merge is left only where a part is appended after another relation's rows (`append_part`, counted), with a chain's newest two segments compacted past `MAX_SEGMENTS` | `metal_join.rs`; `facts/rows.rs` | Q85 counts them; 0 merges on cold 300-file runs | Step 6 |
-| 10 | A device fixpoint's total copied into a run's block at its end | `device.rs` (0325 step 4) | Each recursive stratum's rows | Step 6 |
-| 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
-| 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
-| 13 | The transducer's residency: every tape it reads copied into slabs of its own. (Documents copied between slabs, `gather`, are gone, 0471: a batch reads each document in its own slab, by the slabs' GPU addresses.) | `residency::slabs::admit_docs`, `insert`'s `place` | Each tape a Metal batch reads | Step 7 |
-| 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 4 bytes a line, 8 a span, each batch that makes the views | Step 4 |
+| 3 | The chunk block's node columns: `core`, `up`, `fielded`, `low`, `start`, `end`, `kind`, `field`, and the canonical code copy. `low` is made by one scan of the granule table. `core`, `up` and `fielded` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 0: gone | Done (step 4, 2026-11-22) |
+| 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 0: gone | Done (step 4, 2026-11-22) |
+| 5 | Views and flat relations uploaded from the host. Symbols' names no longer (0478 step 2e, 2026-11-19: every text kernel reads them through the atoms directory; `texts` and `DevText` are deleted). `tape`, `ast_depth` and `node_order` are read in place since 2026-11-20 (`view_tape`, `view_depth`, `view_order`, written once in CLIF: a node's parent, its numbered nodes under it by `view_end`'s rank, its depth by a climb, its order key by `num_order_of`): on the M3's 300-file run they were 69.8 MB (`ast_depth`) and 13.7 MB (`tape`) of 176.3 MB uploaded (ab111). Each upload is counted by why it was not read in place and by its columns (`device.upload (...)`) | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident` | 0: gone. On cold hogql its last 39 calls were relations of no rows | Done (step 6, 2026-11-22) |
+| 6 | Gone (step 5, 2026-11-18): an axis's pairs copied into the chunk, then expanded to ids. The solve writes ids once into a relation of its own, which every reader reads where it lies; `put_pairs` and `VIEW_AXIS` are deleted. `has` probed by its node or its ancestor is walked on the tape on the device (6fdbc1eb2, `DevRel::has`); read whole or by both columns it is still uploaded (row 5). Measured (ab98, 2026-11-20, the M3, 300 files, `--metal`, 1 GB, load 5–9; each arm with 960374749f's planner fix): 463 violations each run; instructions 544 G without the walk, 554 G with it (means of three runs, within their spread of about 30 G), wall 24 s each; `has` walked 6 times a run; row 5's uploads rose from 312.1 MB in 863 calls to 454.3 MB in 949, since strata a keyed `has` kept on the CPU now run on the device and upload their other inputs | — | — | Done |
+| 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`). In core.rerail's shape a node's `text` is read in place (2026-11-22); left: T's shape's `NodeRows` (Q121) and `text` of a span or of a node only a cross-file relation binds | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.0 MB, 0.3 ms on cold hogql (0.45–0.49 s of CPU a run before) | Step 3 |
+| 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | 0: gone (21 MB in 972 calls on cold hogql before: push_fresh 15.6, absorb 5.3, the device's staged 0.1) | Done (step 6, 2026-11-22) |
+| 9 | A relation of many parts merged for the device (`in_block`). The key's copy is gone (step 6, 2026-11-22), and a relation alone in a block has room for its whole directory. Before: a second key's index copied the relation (`DevIndex::moved`). Gone (step 6, 2026-11-22): parts in two blocks are bound through links, a key past a full directory goes in a block beside it (`Relation::try_link`, `FAR_BASE`, `Part::far_link`), a chain reads down its jumps with no compaction, and parts in more blocks are read by part. Since 0384 (steps 1–8, 2026-11-18) a relation is one relation or a chain of continuations read in place, so the merge is left only where a part is appended after another relation's rows (`append_part`, counted), with a chain's newest two segments compacted past `MAX_SEGMENTS`. A recursive component's deltas on the device are made with room for an index of each key its plans probe them by (`Own::keyed`, `Part::for_device_indexed`, 2026-11-20), and its totals grow in a block with room for theirs (row 10). That was not most of the row: on the M3's 300-file run it copied 852.4 MB in 279 copies before (ab108) and 901.8 MB in 322 after (ab109). The site now says where the relation copied lies, the device's own (an upload, a delta) or in a block of the run's with no room left, and the device's report counts each (`moved`): 766.4 MB in 247 copies were in a block with no room (ab110). A head relation the device writes of 4,096 rows or more is now alone in a block with room for its indexes (`head_room`, `Part::with_index_room`, anonymous memory taken as written): 621.7 MB in 114 copies left (ab111), each about 5 MB, of relations not yet told apart | `metal_join.rs`; `facts/rows.rs`; `device.rs` | Q85 counts them; 0 merges on cold 300-file runs; 0 on cold hogql since 2026-11-22 (8.3 MB in 2 before: the axis relation, room for 2 indexes, probed by 3 keys) | Done |
+| 10 | Gone (2026-11-20): a device fixpoint's total copied into a run's block at its end, and each round's total made anew with the last round's rows copied into it (rounds × rows). A set head's relation is now one relation in a block of the run's life from its first round, each round's new rows written past its rows, its indexes forgotten as it grows, taken by the store as it lies (`SetHead`), as a lattice head's is (decision 0384 step 5). Measured before: 187.4 MB in 225 copies at the end on the M3's 300-file run (ab109); the rounds' copies were not counted | `device.rs` (0325 step 4) | 0 | Done |
+| 11 | Gone (step 7, 2026-11-22): the transducer's packed batch's copies of the tape. Its node records and child lists went first (every executor reads the tape, decisions 0310, 0324); its sources and line starts, the last, are read where the documents hold them: a batch shares each file's source (`PackedBatch::sources`, read by `source_of` in the batch's numbering), and the CPU JIT's context points at the document's own source and tree-sitter line starts (`TapeDoc::transducer_rows`, made once with the document), `line_start_at` adding the file's `source_base` | — | — | Done |
+| 12 | Gone (step 8, 2026-11-22): findings, frames and memo entries copied into rows of their own. The kept writer packs every put's rows where they lie (`packed::RowsIn`); granules, views, inputs and a stratum's relations are lent; the documents' entries, the statistics' words and the documents' table are read where they lie; a request's rows reach its answerer as a handle on its relation's rows (`component::Asked`), and a request's answers are held after the rows the engine holds, shared (`retain_with`) | — | — | Done |
+| 13 | Gone (step 7, 2026-11-22): the transducer's residency's copy of an in-memory tape and its source into slabs of its own. A document's tape and source are each in a slab's room (a loader reads the source into one, `placed::read_text`; a document's constructor houses what it is given, `TapeImage::housed`, `placed::housed`), and the residency takes both as they lie (`insert_lying`): its view names the tape at its own place and the source by an i64 offset from it (`TapeView::source_high`), in another slab by the slabs' device addresses. A document held apart is refused (`residency.apart`), never copied | — | — | Done |
+| 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 0: gone | Done (step 4, 2026-11-22) |
 | 15 | Gone (step 4b, 2026-11-18): a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went first (the CPU reads 16z in place); then the transducer's residency's (`unblock_into` into its slab, for the kernels: the label and program kernels read the stored bytes through the batch's cache), and a 16z batch's views made on the device (they are read in place through a cache). `unblock_into` is deleted. | — | — | Done |
 | 16 | Gone (0446, 2026-11-19): a label level's fact rows, uploaded as `(node, label)` pairs for the pattern kernels (`Pass::Fact`). The host writes the findings once into the batch's fact block, and the CPU and the kernels read them there | — | — | Done |
-| 17 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`); a queued tape not in a room read into a vector (`queued_image`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image` | 4.1 MB a run on hogql 16z | Step 4a |
+| 17 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`, and `TapeImage::housed` for an image restored from a vector); a queued tape not in a room read into a vector (`queued_image`); a source made in memory (a test's literal, an edit's text) written into its room (`placed::housed`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image`; `tape/placed.rs`, `housed` | 4.1 MB a run on hogql 16z | Step 4a |
+| 18 | Gone (2026-11-22, t52 step 4): each chunk's export rows written again into the export's relation (`Exports::add`, decision 0384 step 1). An export now holds the chunk's parts where they lie (`Rows::append_segment`), and a repeat or a dead row is dead in it. The memo's hits (warm runs, `append_own`) still write their rows, under row 12 | `plan/corpus/exports.rs`, `Exports::add` | 2,264 MB of 10.1 GB on 3,089 files (102 exports) | t52 step 4 |
 
 ## The plan
 
@@ -501,11 +521,16 @@ Each step ends with:
          against 119.7–128.3 B (noise); the Metal binding, 1 pair at load 45, 102.7 B against 112.9 B, peak
          1,207 MB against 1,289 MB. Checks: the JIT's reads of a 16z tape of 6 blocks equal `F16Z`'s, node by
          node, and the JIT executor's outputs over one equal format 15's.
-       - The tape crate's `F16Z` still decodes with `lz4_sys` into its thread's two blocks, then reads them with the
-         generated format 16 reads: the same block, decoded by a second decoder. Built once (f9451f0dd: `tape_lz4`,
-         the CLIF decoder translated by the Rust backend, its slot's loads bounded by the decoder) and taken out
-         again the same day: decision 0434 (the Oscar worktree) rewrites 16z as four pieces a block, and this
-         branch stays off the 16 and 16z paths until it lands. The one decoder is redone on 0434's form then.
+       - One decoder (2026-11-18): the tape crate's `F16Z` decodes a block with `tape_lz4`, the reads' LZ4 decoder
+         (`z_lz4`, which `tape_z_block` inlines for the JIT and the kernels) translated by the Rust backend, into its
+         thread's two blocks, then reads them with the generated format 16 reads. `lz4_sys` only compresses (the
+         writer). The Rust backend checks a load against the tape's bytes when it is read-only and not aligned (the
+         tape's own); the decoder's loads of its slot (a match's copies) are bounded by the decoder itself
+         (decision 0463), and a read that takes an address (`tape_lz4`'s destination) is `unsafe`. The kernels'
+         UKL leaves `tape_lz4` out (`HOST_ONLY`). Taken out once (f9451f0dd's first form) while 0434 rewrote
+         16z, and redone on 0434's form (rr-align's roll-up 7, merged here 2026-11-19). Check:
+         `the_reads_decoder_decodes_what_lz4_compressed` (400 blocks of literals and matches at every offset, a
+         block cut short); hogql 16z, findings 1,629.
        - The device's views read a 16z batch in place (2026-11-18; `views.refused.z_on_device` gone): the join
          kernels include the reads with the 16z case (`metal_tape_reads_z.metal`); a batch whose tapes are 16z
          gets one cache (`device_chunk::zcache_spec`), which every stage that reads its views shares, resident
@@ -661,10 +686,13 @@ Each step ends with:
          `[ns, starts[ns], ne, ends[ne]]`; the byte loop goes). The entry holds the positions' counts and a run to the
          lines; `loc_line` (a relation's read of the same body as `lines_line`) finds a line. A guest's places are
          its host's lines through its placement, a copied stretch or a point, from the entry's scalars (decision
-         0055). A normalized string's pieces and an embedder's segments live in no block: such a batch makes its
-         places (counted, `views.refused.locs.guest_*`). On hogql every guest is a copied stretch.
-       - Left made: the axis (step 5); a batch whose tapes are not on the device (the device's budget spent); a
-         batch with a guest whose placement is not a copied stretch or a point. `expand_view`, `VIEW_EXPAND`,
+         0055). A normalized string's pieces and an embedder's segments live in no block: such a guest's entry holds
+         its spans placed (`ViewDoc::placed`, `PLACED_TABLE`: each position's host span, made once into the block
+         as the host places it, `Placement::host`), so its batch's places are read in place too (2026-11-22: a
+         stratum over a Vue guest made `line` and `docof` by launches of their own, past decision 0603's one
+         launch). On hogql every guest is a copied stretch.
+       - Left made: the axis (step 5); a batch whose tapes are not on the device (the device's budget spent).
+         `expand_view`, `VIEW_EXPAND`,
          ChunkDoc's node columns and `fill_lines`/`fill_locs` (row 14) stay for them.
        - Found on the way: the slabs holding tapes were never retired (4d's first part); now they are retired once
          only the pool holds them, so a long session frees them with its tapes.
@@ -709,9 +737,20 @@ Each step ends with:
      copies 125.9 MB a run against 792.4 MB (rows 4, 6 and the axis's row 9 at 0: 472.1, 143.0 and up to 124.5 MB);
      strata refused at run time 2, 2 and 2 against 22, 10 and 5; peak 817–928 MB against 831–1,023 MB; instructions
      106.1–113.0 B against 103.1–108.2 B; findings 1,629, and 1,629 in format 15.
+   - A second build of the same (benchmarks-on-integration, cd091ab09 and ec0835fc7, 2026-11-19: ids written from
+     the solve's pairs on its first whole read) was superseded by this one when the branches merged; its device
+     test is kept on this one (`device::tests::views_made_on_the_device_are_the_hosts_rows`, the device's read in
+     place). Measured on the bench's full shape (the M3, a 512 MB budget, Q203 (c)): the residency's made views,
+     142 MB of 511 at a refusal, gone; refusals 21–68 a run against 44–88; 463 violations in each. Without index
+     room each device index copied the relation whole (`DevIndex::moved`, 16 MB at a refusal), as this one's
+     `with_index_room` avoids.
 6. **The executors write and index in place.**
    - The CPU's head rows are claimed and written in the relation's block, as the device's are (0325 step 4). A
      round's new rows are the relation's delta range; `Fresh`'s staging and merge go.
+     On the device, a recursive set head's delta is its rows `had..` read in place by their ids in it
+     (`DevRel::from`, `Stage::r_from`, `IxP::from`; f3966d4103, 2026-11-21): its second write went (299.5 MB on the
+     M3's 300-file run, ab127; none in ab128). A lattice head's delta, its changed rows, scattered, is still written
+     again.
    - A relation is made with room for the indexes its readers will probe, which the planner knows when it plans the
      stratum. `DevIndex::moved` goes.
    - A device fixpoint's total is in a block of the run's life from its start.
@@ -749,6 +788,474 @@ A scan of a whole view reads its rows in one walk (`Source::for_rows_in`), as `f
 After: 322 G against 314 G on format 15 (+2.6%), 319 against 315 on format 16 (+1.1%), 397 against 391 on 16z
 (+1.4%), and the same findings on all three. What remains is in-place reading the arrays never paid for: on format
 15 the parent search, and the select that finds the tape node of a node probed by its id.
+
+### Step 3 on the CPU: the executor reads the device's directory (2026-11-21)
+
+**The user (2026-11-21):** "we need to REMOVE all of the host-side CPU stuff. The CPU needs to run on the same blocks
+as the GPU only. … NO CPU-SIDE RUST POINTER-BASED DATA STRUCTURES." And: "A single memo as part of execution is
+fine, it can be done on both the CPU and the GPU. And caches are fine, so long as they are implemented in a way that
+both CPU and GPU can use and share them."
+
+**Where it stands.** The device reads the views in place (step 4d). The batch's block holds a directory (`ViewDir`):
+a `ViewRow` for each document, with each view's first row, its numbering's entry (`ViewDoc`) and its tape. The
+kernels read every view through the reads written once (`rerail_clif::view_reads`: `clif_view_node`,
+`clif_view_number`, …). The CPU's executor reads none of this. Its views are `Viewed` over host structures of its
+own:
+
+| Host structure (CPU only) | What it answers | Its home in the block |
+|---|---|---|
+| `made::Docs` (`slots`, `keys`, `tags`, `given`) and `Projected`'s fields (`key`, `file`, `tag`) | A document by key or index, its projection | `ViewRow` and `ViewDoc` |
+| `Batch::offsets` (`made::Offsets`, a vector a view) | A view's first row of each document | `ViewRow::rows` |
+| `DOC`, `LOCATED` (thread-locals) | The last document found | A memo argument of the directory's reads |
+| `of_tag`, `programs` | A tag's documents; a file's programs | A directory's ranges by tag and by file |
+| `kinds` (`KindRows`) | The `node` view's rows by kind | An index in the batch's block |
+| `given_rows`, `Shared` (`strings`, `at`, `atoms`) | Rows by relation; a group's strings | The run's relations; the atoms directory |
+
+The kernels search the directory by hand too: four bisections with no memo, by row (`vread`, `child_next`,
+`view_expand`) and by key (`by_parent`).
+
+**The steps.**
+1. **The directory is position-independent and always made.** Its addresses (`ViewDir::chunk`, `ViewDir::rows`,
+   `ViewRow::tape`, `ViewRow::lines`) become offsets, and each executor passes its own bases: host addresses on the
+   CPU, device addresses on the GPU. A tape held in a vector (no device) is a base of its own. The directory is made
+   with the batch, on every platform, whether or not a device is open (no `placed::device()` gate).
+2. **The searches are reads written once.** A document by row of a view, and by key, are CLIF reads over the
+   directory. Each takes a memo: the document found last, tried before the bisection. The CPU passes the probe's
+   or scan's cursor, and a kernel passes its own. They replace the four bisections in UKL and `Batch::doc` and
+   `Batch::locate`.
+3. **The CPU's views are the reads.** `Viewed`'s scans and probes read through `view_reads` (the generated Rust;
+   the JIT inlines the CLIF) over the directory. Check: every view's rows equal `Viewed`'s, for every view and
+   dialect, cold and warm, before `Viewed`'s own reads go.
+4. **The host structures in the table go.** Each one is deleted with its last reader, and the table here shrinks
+   to nothing.
+
+Each step ends with findings unchanged (1,629 on cold hogql), instructions measured against the step before, and
+Metal checked on the farm's Macs (the mini, then the M3, then the M1 Max, one test at a time).
+
+**Step 1, done (2026-11-21).** The directory holds no address of its own:
+- `ViewDir::at` is the directory's offset in the batch's block. An executor finds the block's start as the
+  directory's address less it (`view_block` in the kernels).
+- `rows` and `homes` are offsets in the block.
+- A row's tape and lines are a home's number and an offset in it (`ViewRow::homes`, `tape`, `lines`).
+- The homes table (`ViewHome`) is the one place a base lies. It gives each slab's, or each tape vector's, host and
+  device address, and each executor reads its own column.
+
+The 16z cache is a home too: a block of its own, which the reads of both executors share and write. Binding the
+batch's block for writing would make the host wait on every pass that reads it. The cache offset in a stored view
+(`TapeView::side`) is still the device's: the join kernels read the view where it lies, in global memory, and
+cannot set it per read. The host's reads will set their own from the same homes (step 3).
+
+`build_dir` no longer asks for a device. It refuses a batch only for a document in another block, or one with no
+tape read in place. The device's address (`ViewsInPlace::dir`) is given only when every home has a device address.
+The directory is made on its first ask. The CPU asks from step 3, so until then a CPU run makes none: cold hogql
+still gives 1,629 findings, at 88.1 B instructions against 87.1 B before. Test:
+`the_views_directory_is_the_hosts_too`. On Metal, the mini passes `a_views_index_is_in_its_block_for_every_thread`,
+`views_made_on_the_device_are_the_hosts_rows` and `a_view_made_on_the_device_is_made_at_each_stratum`, and the M3
+passes the first. A home's device base is `ViewHome::gpu`, since `device` is a Metal keyword.
+
+**Step 2, the reads (2026-11-21).** The directory's two searches are written once: `dir_doc_of_row(view, row, memo)`
+and `dir_doc_of_key(key, memo)` in CLIF, in the relation family, with the directory as the descriptor. The host's
+twins, written directly, are `ViewDir::doc_of_row` and `doc_of_key`. Each tries the memo first and then bisects.
+A stale memo costs a comparison, never a wrong document. The memo is a value the caller passes and keeps; it is
+never thread or process state.
+
+The kernels' three bisections by row (`vread`, `child_next`) and by key (`by_parent`) now call the reads. `vread`
+takes its caller's memo: the copy kernel and `ix_bucket` share one across a row's columns, and every other caller
+passes a fresh one, which costs what the bisection cost. `view_expand`'s search (`chunk_views.uglykl`) is over the
+chunk's copied document array, not the directory, and goes with that copy.
+
+Tests:
+- `the_directorys_searches_are_the_jits`: the host's searches against the JIT's.
+- `the_kernels_directory_searches_are_the_hosts`: the device's against the host's, for every row of every view,
+  every key and keys of none, with each memo.
+
+**Step 2, the CPU's searches (2026-11-21).** `Batch::doc` runs before documents are made (decision 0494), and
+`Batch::locate` reads first rows made from the documents' counts alone. So the batch's one directory is written in
+two layers:
+- **The search layer.** Each row's key, written when the batch's documents are known (`made::directory`, from
+  `Docs::new` and `Docs::grown`), and each view's first rows (`ViewRow::rows`, ten slots: the nine views of
+  `VIEWS` and `child`'s sibling view), written once from the counts on the first read of any (`Batch::firsts`).
+  The header's `ends` holds each view's rows in all. `made::Docs` keeps no keys of its own (`Docs::key` reads the
+  row), and `made::Offsets` holds no vectors: `made::Firsts` reads a view's slot in the directory.
+- **The reads layer.** Each row's entry, homes, tape, lines and view, and the header's homes and cache, written into
+  the same directory when the device or the reads ask for it (`build_dir`), field by field beside the search
+  layer's readers. A layered source's directory (`views_over`, a fixpoint's admitted values) is still made whole,
+  apart, from its batches' first rows.
+
+`Batch::doc` is `ViewDir::doc_of_key`, and `Batch::locate` is `ViewDir::doc_of_row`, on the CPU. The memo each
+passes is still held in the `DOC` and `LOCATED` thread-locals: `Source::value` has no cursor to carry it yet. Step 3
+passes the executor's memo through the scans and probes and deletes both.
+
+Tests: `the_directorys_searches_are_the_jits` checks that the device's directory is the batch's (one directory, its
+offset `Docs::dir_at`), and the lazy-probe tests (`a_probe_makes_the_document_it_names_alone`,
+`a_batch_made_by_group_holds_the_eager_batchs_rows`) read the search layer before any document is made.
+
+Cold hogql still gives 1,629 findings, at 89.4 B and 91.2 B instructions (step 1: 88.4 B and 88.1 B; this Mac at a
+load of about 33). On Metal, the M3 passes `the_kernels_directory_searches_are_the_hosts`,
+`a_views_index_is_in_its_block_for_every_thread`, `views_made_on_the_device_are_the_hosts_rows` and
+`a_view_made_on_the_device_is_made_at_each_stratum`. The mini could not build: its Xcode license is not agreed to.
+
+**Step 3, the memo (2026-11-21).** The `DOC` and `LOCATED` thread-locals are gone. `Batch::locate`, `doc`, `node`,
+`loc` and `id` take the caller's memo (`&mut u32`, a document index for both searches, started at
+`vtab::NO_MEMO`). A source's readers pass theirs through `Source::row_at_memo` and `value_memo`, and the trait's
+own row-by-row scans (`for_rows`, `for_rows_in`, `rows_of`) keep one across their rows. Each of `Viewed`'s lookups
+keeps one across its values. Readers that read one row at a time with no memo (`row_at`, `value`) search afresh.
+Cold hogql gives 1,629 findings at 91.4 B and 90.0 B instructions (89.4 B and 91.2 B before), so the executor's
+point reads (`RowRef`) carry no memo yet.
+
+**Step 3, the views' reads (2026-11-21).** **The user (2026-11-21):** "why does step 2 need to use the JIT? Surely we
+can make Rust code that reads the same data structure". So the CPU's reads are Rust written directly, not the JIT:
+- `rerail_tape_format::view_reads`: `Tape` (formats 15, 16 and 16z) and `Doc`, a document's views as reads of its
+  entry (`ViewDoc`), its tape and its lines where they lie: node, child, field, core, line, the four `Loc` views and
+  the report location, the CLIF reads' twins. Also the views no CLIF reads yet (tape, `ast_depth`, `node_order`,
+  `next_sibling`), their first definition here.
+- `rerail_tape_format::reads::f16z`: 16z's reads through the shared cache (`cache::get`, the CLIF lookup's twin,
+  decision 0536's shape), so the host's reads and the device's decode into the same cache.
+
+The directory's reads layer is written a row at a time (`made::Docs::reads`), on its document's first read through
+the views, so a lazy batch makes only the documents it reads (decision 0494). Its homes are fixed: row `i`'s tape in
+home `2i`, its lines in `2i + 1`, the 16z cache in `2n` (`ViewDir::cache` names it once made). A row holds its tape's
+length (`ViewRow::bytes`, in the row's tail padding: the layout the kernels read is unchanged). The device's
+directory (`device_chunk::views_in_place`) is the batch's, now held by the batch rather than its chunk: it writes
+every row through the same `reads`, then finds what the device reads. A layered source's directory (`views_over`)
+is still made whole, apart.
+
+`Viewed`'s point reads (`value_memo`, `row_at_memo`, and `value` and `row_at` through them) find the document by the
+memo and read the column through its row (`Docs::read`, a `Doc`). A row is read off the projection only where it
+has no tape read, counted once by why (`views.refused.*`): a document in another block, a tape not read in place,
+a 16z entry larger than the batch's cache was made for (a lazy batch's cache is sized by its first 16z document),
+and, for the `Loc` views, positions not in the block (a guest's segments or mapped placement). `Viewed`'s scans
+(`each_row`) and lookups still walk `Projected`; they go next, with the host structures of step 4.
+
+Tests: `the_views_read_through_the_directory_are_the_projections` (every view's every row and column, both ways,
+through `Source::value` and `row_at` too, each format, core.rerail's shape and T's, a docstring-only document among
+them), `the_view_reads_are_the_hosts_rows` (the Rust reads against the JIT's and the hand-made rows),
+`the_rust_16z_reads_are_the_jits`, and the syntax tests (71 on Linux).
+
+Cold hogql gives 1,629 findings at 91.3 B and 91.3 B instructions (91.4 B and 90.0 B before; this Mac at a load of
+about 12), and its profile counts no `views.refused.*`: every document's rows are read through the directory. On
+Metal, the M3 passes `the_kernels_directory_searches_are_the_hosts`, `a_views_index_is_in_its_block_for_every_thread`,
+`views_made_on_the_device_are_the_hosts_rows` and `a_view_made_on_the_device_is_made_at_each_stratum` (the mini's
+Xcode license is still not agreed to).
+
+**Step 3, the scans (2026-11-21).** `Viewed`'s scans (`each_row`: `for_rows`, `for_rows_in`, `for_rows_keyed`,
+`rows_of`, `filter_eq`) and its lookups' matches (`read_matches`) read each row through its document's directory
+row (`Docs::read`, a `Doc`), as its point reads do: a row is its view's read of the entry and the tape, the
+kernels' reads' twins. The walk over the projection (`each_row_projected`) is left for the rows with no tape read
+(`views.refused.*`, counted). A lookup still finds its rows by the projection's rank index and granule table (in the
+batch's block): only the columns are read through the directory. `documents_of` reads the keys from the directory
+and the file from the document's input, so no document is made for them.
+
+**Step 4, the host structures (2026-11-21).** Each one of the table goes with its last reader, or moves into the
+batch's block:
+- `made::Docs::tags`: a document's tag is its tape's (`Facts::tag`, read from its input).
+- `made::Docs::given`: each document's counts as the documents' table gave them are written once beside the
+  directory, in the batch's block (`made::directory`, `[nodes, fielded, siblings, places, 1]` a row, zeros where
+  none was given).
+- `Projected`'s `key`, `file` and `tag`: a projection's entry (`ViewDoc`) is made in its block as the projection is,
+  with its key, file and tag; `Projected::key` and `file` read it, and `tag` is its tape's. The views' reads fill in
+  the rest of the same entry on the first read (`ViewEntry::new`), once: the layered directory (`views_over`) names
+  the same entry, where it made a second one before.
+- `of_tag`, `programs`: the batch's documents by tag (`by_tag`, `tag_at`) and its programs by file are `Cells` in
+  the batch's block.
+- `kinds` (`KindRows`): the `node` view's index by kind is `Cells` in the batch's block (its keys, starts and
+  matches), sorted in scratch where it is made.
+- `given_rows`: the relations' kept counts are a table in the batch's block, one `[hash, rows]` a relation, by its
+  name's hash, ascending, read by bisection (the families' relations and the text tests', by name since the hub's
+  Q332: two names of one hash are both not given, so a count is never another's).
+
+- `Shared` (`strings`, `at`, `atoms`): the batch's strings are atoms of the atoms directory (`Atoms::intern`,
+  `value`), interned as the rows are made; `Shared` keeps only the batch's atom ids and their meets, and the
+  admitted texts are read back from the directory (`texts_of`).
+- The layered directory (`views_over`): made in the chunk's block from each batch's own reads layer
+  (`views_in_place`), its rows and homes renumbered (a derived row each, `// copy: derived`); it names each batch's
+  entries and keeps each batch's caches (`caches`), so no projection is read again for it. A batch not in the
+  chunk's block is refused (`views.refused.block`, counted).
+
+`Batch::ensure` now claims the documents it makes under the same lock that finds them missing: two readers side by
+side could both find a document missing and both make it (`reads_side_by_side_make_each_document_once`, 1 run in 3
+before; 10 of 10 after).
+
+Left of the table: `made::Docs::slots` (each document's input and its projection, made on its first read).
+
+Cold hogql gives 1,629 findings at 90.2 B and 89.9 B instructions (91.3 B and 91.3 B before; this Mac at a load of
+about 12; 90.8 B and 90.5 B with `Shared` as atoms), and its profile counts no `views.refused.*`: every scan's
+rows are read through the directory. On Metal, the M3 passes `the_kernels_directory_searches_are_the_hosts`, `a_views_index_is_in_its_block_for_every_thread`,
+`views_made_on_the_device_are_the_hosts_rows`, `a_view_made_on_the_device_is_made_at_each_stratum` and
+`cpu_and_metal_read_the_same_tape_values` (with the layered directory over the batches' reads).
+
+**Step 3 on the CPU, row 7: a node's text is read, not made a row a node** (2026-11-22). In core.rerail's shape,
+`core_rr` made `text` a row per node, eagerly, for every rule that read it. Now `text(v, t)` is the read
+`t = @rr_node_text_any(v)` (`preparation::text::TextByNode`), through the run's binding of `rr_long_text_node`
+(`LongTexts`, which holds the batch and reads the node's bytes in its tape), wherever `v` is a node:
+- bound in a column declared `node` of a base relation (`rr::core_node_columns`, read off core.rerail's text, since a
+  version lowers `node`, `span` and `loc` alike), or of a matcher's relation;
+- or bound in a column of a file-local derived relation that only ever holds such nodes (a greatest fixpoint over the
+  rules' heads, `node_columns`, over `FileLocal`'s split).
+
+`text` stays a relation, read as rows, where its node is a span, is bound by the text itself (`text(n, "x")` binding
+`n`), or is bound only by a cross-file relation. That last case matters: the cross part runs over versions, and a
+warm retraction would read the node in the edited file's new document, since keys are per path. A pass that reads
+a node now counts as reading its input (`file_local::reads_a_node`: `InputsRead`, `crossing`), and the long-text
+binding is kept with its documents even with no rows (`Values::add`, `Layered::sources_of`).
+
+Two warm-edit costs found on the way and removed, with no new structure:
+- The 0090 §4 threshold sized a changed read by its source's `len()`. For a corpus batch's made-on-read relation
+  (`MadeRows`) that made every document to count it, the unchanged ones too
+  (`a_warm_edit_of_a_host_file_reads_as_a_cold_run`). It now reads the rows the run was planned with
+  (`model.stats.card`): for a semijoin, those at the nodes the exports hold, which is all its strata read.
+- A semijoin's kept statistics are patched by an edit at the held nodes (`held_counted`): the changed documents'
+  old rows at the nodes held before, out; their new rows at the nodes held now, in. They are not counted again over
+  every held document (`r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit`).
+
+`warm_tests`' `HOSTED` binds its `text` node cross-file now (`used(c) :- called(c, x), defined(x)`), so the
+warm-edit tests keep covering the relation route.
+
+Tests: `text_of_a_bound_node_is_read_in_place` (each kind of binder; spans, lookups by text, cross-file binders and
+T's shape kept), the warm and made-batch tests, and the quick tiers of rerail-logic, rerail-tests-logic and
+rerail-tests-lang on Linux. Cold hogql gives the same 1,629 findings at 80.1 B instructions (88 B before; this Mac at
+a load of about 11), and row 7 counts 0.0 MB and 0.3 ms.
+
+**Step 4: the GPU reads every view in place** (2026-11-22). The chunk is gone: `device_chunk::build`, its node
+columns and codes (row 3), `expand_view` and the views made from them (row 4), and the line starts and spans copied
+beside them (row 14). `chunk_views.uglykl` is deleted. A view the batch's directory does not read in place is not
+made on the device: `Source::device_view` gives `None` (counted as `views.refused.not_on_device.<view>`), and the
+stratum reads the source's rows where they lie, or uploads them as any other host relation (row 5, step 6).
+- **The kind-set axes are solved off the tape.** `axis_count` and `axis_write` (join_stages.uglykl) climb each node's
+  ancestors through `clif_view_up` over the batch's `node` view (`ViewsInPlace::node_view`), and test each one's
+  kind atom against the set's bits. They write the pairs' ids into one relation in a block (`Part::over_key_runs`),
+  with each node's run start in the batch's block (`metal_join::axis_in_place`, installed as
+  `nearest::AxisSolve`). A layered source's axis is solved the same way over its layered directory
+  (`views_over`), the batch's rows and then each value's. An axis is no node source, so the layered solve takes the
+  axis's own batch (`Within::batch`); asking `python_batch` sent containment's every-ancestor relation to the host,
+  873 MB uploaded a run.
+- **A view filtered by constants is read in place whole** (`WHERE idx = 0`, `View::eqs`; row 5's step-4 share). The
+  stage adds each constant as a key (`with_consts`): its index is over its key columns and the filtered ones, a
+  parent's walk (`by_parent`) takes the children off the tape, and `matches` checks every candidate against the
+  constants. Its columns are the source's (`View::column`), never `owner_col`'s, which maps a whole view's alone.
+  A stage that checks no keys (a filter, mode 3) uploads the filtered rows as before.
+
+Measured on cold hogql on the M1 Max, Metal: 1,629 findings, the same digest as the CPU run. The copies table counts
+35.9 MB in all, 662 MB with only the chunk removed (the axis uploaded), and 69.7 MB of row 5 before. What is left is
+row 5's 39 calls of host relations (step 6), rows 8 and 9 (step 6), and row 17 (step 4a). Tests:
+`a_filtered_view_is_read_in_place_its_constants_keys` (a view of reordered columns, each kind of probe and a
+filter's), `a_has_axis_on_the_device_is_walked_on_the_tape`, `views_read_on_the_device_are_the_hosts_rows`,
+`a_view_not_read_in_place_is_not_made_on_the_device`, and the containment test over `axis_in_place`. They run with
+the rest of rerail-device-metal's setfix and join tests on the M1 Max, and the syntax tests run on Linux. The
+device-metal test binary now registers the carried context and the core names as it loads (`test_load`), as
+rerail-logic's does. Without them, five tests whose runs hand jobs to the pool panicked.
+
+**Step 6, row 5: nothing is uploaded** (2026-11-22). `DevRel::upload` is deleted, with the reports' upload
+counts. A relation the device binds lies in a block, or is a view read in place. One of no rows is an empty relation
+of the device's own. Any other refuses its stratum at run time, named
+(`device.not_in_place (why): what`, "has no device form"), and the stratum runs on the CPU, which reads the rows where
+they lie. On cold hogql the last 39 uploads were relations of no rows, so no stratum is refused for it. The tests
+that took an upload now expect the refusal: a view whose tapes the device does not read, a filter's filtered view,
+and `has` read whole.
+
+**Step 6, row 9 on hogql: an axis has room for every key.** Its last two copies were the axis relation
+(`Part::over_key_runs`), made with room for two indexes, `n` and `a`, and probed by three keys: `!within(n, a)`
+probes both. Its two columns have at most four keys, so it now has room for four (`Part::AXIS_INDEXES`). The room is
+address space, its pages taken as an index is written. `DevIndex::moved` stays as the counted fallback of a relation
+in a shared block of the run's that has no room left. On the M3's 300-file run that was most of the row (ab110,
+ab111). It goes when such a relation is made with its readers' index room, measured there.
+
+Cold hogql on the M1 Max, Metal: 1,629 findings, the CPU run's digest, and 27.5 MB copied in all: rows 8 and 17.
+
+**Step 6, row 8: the CPU's head rows are written where they lie** (2026-11-22). A wave's writers write a head's
+rows into its wave room (`rows::WaveRoom`, `Rel::wave_room`), past the relation's rows. The room is the tail's own
+room (lent, as the device's is; or the tail moved where its block has no room, as a push moves it). Past the
+tail's block it goes on in regions of their own, each with room for twice the rows before it. A writer claims 1,024
+slots at a time under the room's lock, which also makes the room as claims pass what is reserved. A row is written
+once, into a slot that is already its relation's. `Fresh` holds its spans of slots, not rows.
+
+- **Settle, in place.** The settle sorts slot ids, drops repeats and held rows, and lays the kept rows out in place
+  (`rows::permute`). Each row moves once along its permutation cycle, with one row held aside for each cycle.
+- **Morsels.** A morsel's rows are absorbed as they lie: `absorb` appends its spans, and the rest of the last span
+  before them is a hole. The wave's end lays the kept rows out at slots `0..m` (`WaveRoom::lay_out`). `finish` then
+  claims them in the tail and appends the regions past it as the relation's tail.
+- **Internal space.** What the writers left between rows (a span's unwritten rest, a dropped repeat) ends up past
+  the rows. It is room the next wave writes into, not space inside the relation.
+- **Determinism.** The order of the writers' claims does not reach the relation: the kept rows are laid out in the
+  first order, on every column, the same order the old merge gave.
+- **The device's rows.** The device writes a head's rows into the same room (`Placed::Wave`), giving back the slots
+  past the rows it wrote while they are the last claimed. On its own, the device's lots lie at slots `0..m` and are
+  claimed without a host read. Beside the CPU's rows, a CPU row that a device lot repeats is dropped (the lots are
+  read where they lie), so no device row is read back into `Fresh`. The rows read back through `add` are written
+  into the room too.
+- **A lattice.** Its candidate rows go into a room that is a relation of its own (rule heads in a block), and the
+  fold reads them there.
+- **The closure seed's rows** are taken the same way, pending as a push puts them. A first build gave a leveled
+  closure a row twice. The device's leveled-recursion test caught it, comparing against the CPU's rows.
+
+Tests: a wave's four writers, past a block, laid out in place (`a_waves_writers_write_in_place_and_their_rows_are_laid_out`);
+`permute`'s cycles (`rows_are_laid_out_by_their_cycles`); the existing `Fresh` tests (merged not sorted, checked
+once as a sorted batch, a reorder), the scalar tests, and the device tests.
+
+Cold hogql on the M1 Max, Metal: 1,629 findings, the CPU run's digest, and 6.6 MB copied in all: row 17 (step 4a).
+
+The extension's fixpoint (`logic/native/extension/setfix.rs`) is a second engine whose relations are vectors, not
+blocks. Its `Fresh` is not this row's.
+
+**Step 6, row 9: nothing is copied for a key** (2026-11-22). `DevIndex::moved` is deleted, and so is the report's
+`moved` count. A relation whose block has no room for a key's index now refuses its stratum, which runs on the CPU
+reading the relation where it lies, as row 5's uploads do. `device.no_index_room` counts each refusal, by why the
+block refused (its directory full, or no bytes left) and by where the relation lies. A view's relation of no values
+whose block is full is still made anew (`DevIndex::fresh`): it holds no rows.
+
+- **Room for the directory.** A relation alone in a host block (`Part::with_index_room`, `over_key_runs`: a kept
+  source, an axis) now has room for an index at every entry of its directory (`ADDED_INDEXES`, 16). Before, each
+  maker guessed a count: its columns and two, its columns and one, or four. The room is the block's address space,
+  and its pages are taken only as an index is written. `Part::AXIS_INDEXES` is deleted.
+- **Measuring it.** Run with `--metal`, the 300-file bench now binds the device (before it, the bench's strata ran
+  on the CPU and the earlier "0 moved" measured nothing). Two kinds of read were added so the device reads more in
+  place:
+  - a filtered view of a source in a block, whose constants are keys the stage adds;
+  - a derived relation's rows, which `Derived` now gives as its relation's block or its whole view's.
+
+  One run copied 8.9 MB in 8 relations (`DevIndex::moved`). The next run of the same build copied none, since the
+  copies depend on which strata the device takes.
+- **A head's later lots.** Where an earlier lot's block has no room past it, a head's next lot goes on in the wave's
+  room (row 8), not in a relation moved to a block with room (`Part::moved_room`). The device's large head lots no
+  longer get a block of their own (`ALONE_ROWS` is deleted): they are written into the wave room like the CPU's.
+
+The 300-file bench on the M1 Max (`--metal`, load 8–10): 463 violations, as before. Copies 52.9 MB: row 7
+(step 3) 49.9 MB and row 17 3.0 MB. No row 9 copies, no index refusals, and no relations merged. Cold hogql: 1,629
+findings with the CPU run's digest, and 6.5 MB copied, all row 17.
+
+Test: `a_key_past_a_relations_room_is_refused_not_copied` replaces `a_relation_moved_for_an_index_lives_until_its_batch_is_done`.
+
+**Step 6, row 9: parts in two blocks are bound through links, and a full block's index goes beside it**
+(2026-11-22). The GPU reads offsets, never addresses: a relation's descriptor names its base by its offset in a
+block, and the launch binds each block it reaches to a buffer slot of its own.
+
+- **Links.** `Relation::try_link` writes a descriptor that reads another relation's rows where they lie
+  (`ALIASED`: its release leaves them alone), its ids below `base_rows` its base's. `Rows::links` reads a relation's
+  parts as one chain of links in its last part's block: the parts before it go first, as one relation of another
+  block. That base is a far base (`FAR_BASE`): its offset is from the far block's start, not the link's.
+- **`rel_get` takes the far block.** Its third argument is the far block's start. On the CPU this is the host's
+  address (`Relation::get_far`). In a kernel it is the offset between its two bindings (`rel_b` in the join stages,
+  `col_value` in the column statistics), made from them and never stored. Every kernel that reads a relation binds
+  the far block last, or the relation's own block again when there is none (`DevRel::far_or`).
+- **An index past a full directory.** A relation whose block has no room for a key's index now gets the index in a
+  device block of its own: on a link there whose far base is the relation (`Part::far_link`), counted by
+  `device.index_beside`. A relation that cannot be linked, because its chain already reaches another block, still
+  refuses its stratum (`device.no_index_room`).
+- **The host reads by part.** The host's index build refuses a far chain, which the device indexes.
+
+**Step 6, row 9: nothing is merged** (2026-11-22). The last two copies of row 9 are deleted:
+
+- **A chain is never compacted.** A chain of forks of forks was bounded at `MAX_SEGMENTS` (8) by writing its newest
+  two segments into one. Now each continuation's descriptor holds a jump (`jump_off`, `jump_rows`, `depth`): an
+  ancestor in the same block, chosen as Myers' skew-binary jumps are, so a read down a chain of `n` takes O(log n)
+  steps (`rel_get`, `Relation::get_far`: the jump when the id lies at or past it, else the base). A far base's link
+  has none, and its chain in the far block has its own. `MAX_SEGMENTS` is deleted.
+- **Parts in more blocks than a reader binds are read by part.** `Rows::merged`, its count and its report are
+  deleted. `Rows::in_block` is `None` for them, as for any rows not in one relation: the device refuses that
+  stratum, and the CPU reads each part where it lies, its segment found by a binary search of their first ids.
+
+Test: `a_deep_chain_of_forks_reads_down_its_jumps` (500 levels, the JIT's reads against the host's, at most
+3·log₂ n steps).
+
+Tests: `parts_in_two_blocks_are_bound_through_links`, `the_device_reads_a_chain_through_its_far_base` (a far
+chain's index and copy against one relation's), `an_index_past_a_full_directory_goes_in_a_block_beside`, and
+`a_key_past_a_relations_room_goes_beside_not_copied`, which replaces `a_key_past_a_relations_room_is_refused_not_copied`.
+All pass on CUDA (spark) and Metal (M1 Max).
+
+### Step 8: the frames are read where they lie (2026-11-22)
+
+Row 12 was counted first (`Site(12, "8")`): 216.0 MB in 21,643 calls on the M1 Max's 300-file run, all of it a
+granule's rows gathered into its kept entry. The store's writer then read every flat put's rows into columns for
+the packer (`kept_facts::columns`), after the profile is reported, so it went uncounted.
+
+- **The packer reads rows where they lie.** `col`'s encoder takes any `Vals`, a column read by position, and
+  `packed` takes any `RowsIn`, rows read by row and column: `prepare_rows` checks the order, sorts positions (a
+  derived order, never the rows) and dedupes; each column's part is read through as whole, split or less column 0's
+  as it is written. The plan for a column's forms takes one pass over the rows (`col::Stats`, which chooses as
+  `choose` does: `one_pass_statistics_choose_as_choose_does`). `KeptWriter::put_rows` writes a `KeptWhat::Read`.
+  `kept_facts::columns` is deleted; a relation's put and a flat one are read through `PutRows`, and the atom
+  columns are mapped as read (`Mapped`, each distinct atom mapped once).
+- **The puts lend their rows.** A changed granule is runs of its input's rows (`GranuleRows`: each owner's range
+  in a maintained input's source, or each row by its place), a run's document found once by its memo
+  (`Source::value_memo`). A view's put reads its live rows through it (`LiveRows`), an input's whole rows are one
+  run (`retain::source_rows`, `kept_strata::keep`), and a stratum's relation reaches `KeptStrata::ran` whole
+  (`RanRows::Held`, its digest taken in place, `plan::held_digest`), not flattened by `component::kept_rows`.
+- **Readers read the entries where they lie.** An input's documents are `retain::Docs`: those a run computed
+  (`Made`), the kept entry itself, found by a search of its leading column (`Kept`), or an edit's documents over the
+  kept ones (`Over`, which the owner patch made by cloning the kept table). The documents' frame is written from
+  them, the writer sorting. A layout (`lay_out`) reads the entry for its ranges. The statistics' words, a base
+  relation's statistics and the documents' table decode from the entry's words by position
+  (`kept_stats::from_words`, `RelStats::decode_at`, `Sketch::decode_at`).
+
+The 300-file bench on the M1 Max (`--metal`): 463 violations. The writer held 4.3–8.9 MB of puts, against
+420.9–422.7 MB with the gather, and took 7.3–7.9 s of its threads against 3.6–4.7 s: a view's value is read once a
+column and form, and the gather read it once. The writer runs after the run. Row 12: 216.0 MB to under 0.1 MB.
+Cold hogql: 1,629 findings with the CPU run's digest.
+
+**The request protocol** (the same day). A request's rows reached its answerer as rows of their own: read out of
+the request relation (`component::pending`), out of the engine's relation (`answer_complete`'s `asked`,
+`component::kept_rows`), or out of a replayed stratum's kept rows (`kept_strata_rows`), and copied again onto the
+channel to the main thread's answerer and into its record (`Asks::post`). Now they are a `component::Asked`: a handle
+on the relation's rows (`Rows::clone`, which shares them) with the ids it reads, or a relation read through it
+(`InRel::value`), and after them the rows an answer held back (rows the answers made). The channel carries the handle.
+A loader's answered keys are positions among those asked. The rounds keep the keys they have answered as a set to test
+against: a record the rounds derive, not the rows read instead. A relation that gains a request's answers keeps its
+rows, shared, and the answers it lacks go after them (`retain_with`); before, its rows were read out and the relation
+made again (`HELD_AGAIN`, which neither bench reached). `component::kept_rows` is deleted.
+
+The 300-file bench and cold hogql: no row 12 copy (it was 0.0 MB in 3 and 9 calls); 463 violations; 1,629 findings
+with the CPU run's digest.
+
+### Step 7: the transducer reads the tape (2026-11-22)
+
+Row 11. The packed batch held no node records or child lists already: the CPU JIT, the grid and the register
+machines read each document's tape. What it still copied was each file's source, concatenated, and its line
+starts, made again for every batch (`build_tapes`, about one word a line). Now:
+
+- The batch keeps each file's source as its document holds it (`PackedBatch::sources`: the document's `Arc`,
+  shared). Files keep their place in the batch's numbering of source bytes (`source_start`), which the device's
+  document table numbers alike; `source_of(file, start, length)` reads a range in that numbering, `None` past the
+  file's bytes. The published results' checks and their decoding read values through it.
+- The CPU JIT's context points at the file's own source, based by its `source_start` so the batch's numbering
+  indexes it (`context.source`), and at the document's line starts: tree-sitter's rows (only `\n` ends one, as the
+  batch's did), from 0, made once with the document (`TapeDoc::transducer_rows`, the positions' table). The JIT's
+  three reads of a line start add the file's `source_base` (`line_start_at`).
+- The `Layout` of a resident batch and an in-place one differ only in the derived classes' rows now.
+
+Tests: the transducer crates' libraries on Linux (251) and their Metal and in-place tests on the M1 Max (232). Cold
+hogql: 1,629 findings with the CPU run's digest (its rule set runs no transducer batch, so row 11 was 0 there).
+
+### Step 7, row 13: the residency takes a document as it lies (2026-11-22)
+
+Row 13 was the residency's copy of an in-memory document into a slab: its tape serialized for its digest and
+copied, its source copied beside it. Neither lay in device memory. Now both do, and the residency binds them:
+
+- A source is a room-backed text (`tape_format::home::Text`, a `Home` known to be UTF-8, read as `&str`), held as
+  `Arc<Text>` everywhere a `Arc<String>` was: documents, facts, the store's queue, the workspace. The corpus's one
+  read of each file (the observer's digest read, decision 0300, and a builder's read of a file it holds no text for)
+  writes it straight into a slab's room (`snapshot::read_placed` with the engine's `placed::placer`; a Git blob is
+  decoded into it), and every reader shares that text (`texts::Sources` holds `Arc<Text>`).
+- A document's constructor (`TapeDoc::restore_tree`) houses what it is given where a device reads tapes: an image
+  held in a vector is written into its room in place of the clone it made (`TapeImage::housed`, row 17's
+  `place_stored`), and a source made in memory is written into a room (`placed::housed`, row 17). A loader's text is
+  shared as it is.
+- `admit_docs` hashes a tape in its room (`tape_digest_and_image` serializes nothing for it) and takes the document
+  where it lies (`TapeDoc::in_place`, `insert_lying`): its first byte is its tape's, its language's table its slab's,
+  format 15's codes and line starts derived once into a room of its slab after it, and its source an i64 offset from
+  its first byte (`TapeView::source_high`; the view is 136 bytes, the 16z slot 160). A source in another slab is the
+  slabs' device addresses apart, as a batch reaches a document in another slab (0471); the document holds that slab
+  (`Resident::source`) and its batch makes it resident (`DocTable::slabs`). A tapes' slab held only by the pool and
+  its residents retires as other slabs do. A document held apart (no device room) is refused, counted
+  `residency.apart`, and read on the CPU.
+- The kernels read the source through `tape_source` (`device_tape.h`), the batch's entry included.
+
+Tests: the residency's (a batch over two slabs reads each tape and source at the very bytes its document reads), the
+transducer's Metal and in-place tests on the M1 Max (232), and the tape, text, store-read and view tests on Linux
+(213). Measured on the M1 Max, cold: hogql 1,629 findings with the CPU run's digest, copies 6.6 MB (row 17: 565
+tapes placed by their parse, 5 sources in hand housed; row 7: 2,018 node-row calls, 0.0 MB); the 300-file bench 463
+violations, copies 52.9 MB (row 7's node rows 49.9 MB; row 17 3.0 MB, 20 sources housed). Row 13 copies nothing:
+its site is deleted. The copies left are rows 7 (step 3) and 17 (step 4a).
+
 ## What it replaces
 
 - **0289 §1–2.** The chunk block holds the placed tapes, the line starts and the granule tables. It holds no node

@@ -20,12 +20,12 @@ is reverted.
   `src/runtime/daemon-control.ts`, `RerailDaemonOptions.enginePlatform`. `openNoFollow` takes the no-follow flag, and
   its test passes `0` to run the Windows path against a real symlink on Linux.
 - **On Windows itself.** `build-windows` builds the native engine on Windows once per run and hands it to the
-  `unit-windows` shards, and `rust-windows` runs the engine's `#[cfg(windows)]` Rust tests whenever the change selects
-  the engine's tests. `package.yml`, which `release.yml` and the environment matrix call, builds the engine for Windows
-  x64 and arm64 and refuses one that imports the Visual C++ runtime (`scripts/check/check-windows-runtime.mjs`);
-  `release.yml` then installs the package on a Windows x64 runner with `scripts/host/windows-install-smoke.ps1`. The
-  [environment matrix](environment-matrix.md) installs it on Windows 11 VMs. None of these but the three CI jobs runs
-  on a pull request.
+  `unit-windows` shards, which take the JavaScript package (dist/) from the Linux build job, and `rust-windows` runs the
+  engine's `#[cfg(windows)]` Rust tests whenever the change selects the engine's tests. `package.yml`, which
+  `release.yml` and the environment matrix call, builds the engine for Windows x64 and arm64 and refuses one that
+  imports the Visual C++ runtime (`scripts/check/check-windows-runtime.mjs`); `release.yml` then installs the package
+  on a Windows x64 runner with `scripts/host/windows-install-smoke.ps1`. The [environment matrix](environment-matrix.md)
+  installs it on Windows 11 VMs. None of these but the three CI jobs runs on a pull request.
 
 <details>
 <summary>Windows-safe paths</summary>
@@ -420,6 +420,14 @@ its exact text, so `src/setup/harness-registration.ts` writes and reads those it
 
 OMP and Pi load Rerail as an extension and run no hook command; a steer writes their commands for Git Bash.
 
+Claude Code's hook launcher turns on Node's compile cache before it loads the hook (`module.enableCompileCache`, in
+the folder `NODE_COMPILE_CACHE` names, else Node's own `node-compile-cache` in the user's temporary folder). Where the
+node that starts it is not the recorded node, it starts itself under the recorded node, which does the same, so the
+cache is on whatever node PATH has and the hook gets no environment variable it did not have. Every hook event starts
+a Node that loads the hook's script of over 2 MB; with the cache, V8 reads the code it compiled at an earlier event
+instead of parsing and compiling the script again. `NODE_DISABLE_COMPILE_CACHE=1` keeps it off. Codex's and Cursor's
+entries start the hook without the launcher, so they compile it at each event.
+
 Claude Code on Windows needs Git Bash. Claude Code itself runs without it, running commands in PowerShell instead.
 But `windowsCommandShell` is fixed per agent, not per machine, so Rerail's status line, command files and set-up's
 answers for Claude Code stay POSIX words that PowerShell cannot run. Its exec-form hooks run without any shell.
@@ -671,9 +679,35 @@ preimages and held steers.
 - The person's SID comes from `whoami /user`, whatever the account: `S-1-5-21-...` for a local or domain account,
   `S-1-12-1-...` for a Microsoft Entra ID (Azure AD) account, as on most company laptops.
 - A Rerail home or `.rerail\sessions` folder Rerail makes outside the profile gets the ACL when it is made, and a home
-  an earlier release made gets it at the next daemon launch. `rerail remote add` gives the `remote-tokens` folder the
-  ACL before it writes a token there, so a remote's token is private before any daemon launch. A failure is reported on
-  stderr and never fails the caller.
+  an earlier release made gets it at the next daemon launch. A `.rerail\sessions` Rerail did not make (Git makes one
+  for a repository that commits a file in it; a person, or Rerail 0.1.4, may have made it) gets it when the daemon
+  first opens a session there: the daemon reads the folder's ACL with `icacls` once per folder in its life and, when
+  the folder still inherits its parent's, gives it one under which what each account makes there is that account's
+  alone. The person may list the folder; each account an entry the folder inherits from its parent let add a folder
+  there, unless a deny entry set on the folder itself names it, may still add one, pass through it and read its
+  attributes and ACL, never list it: it gets that right on the folder itself, added to any entry already set there
+  for it, before the folder stops inheriting. Each file and folder in it,
+  the records already there included, grants its maker (CREATOR OWNER), SYSTEM and Administrators alone. Before that,
+  each agent host's lock and held-steer folder there (`<host>-locks`, `<host>-pending`) lets those accounts add files,
+  and one made later gets the same entry from whoever makes it, so an account sharing the checkout keeps recording. If
+  a lock or held-steer folder cannot be shared because `icacls` hit its time limit or did not start, the repair stops
+  before the records folder's ACL changes, and the next session tries again. Each `icacls` that reads or sets a
+  records folder's ACL, or that of a folder in it, runs with `/l`: a junction or symbolic link another account puts in
+  place of one has its own ACL read or changed, never that of what it points to. Windows takes about 0.1 to 0.2 ms per
+  file or folder already there to pass the ACL on, twice when other accounts keep the right to add a folder there (one
+  `icacls` adds their entry, the next stops the inheritance), neither with a time limit, and no session waits for
+  that: a session waits only for the read,
+  and one whose own folder is made before the ACL has been passed on (while it is, or just before it is done) first
+  gives its own folder the same ACL, one more `icacls`, so what it writes in its own folder is private from its first
+  byte. A session, lock or held-steer folder another account made before the first
+  repair keeps the ACL it had, as on 0.1.5, since only its maker may change it: the daemon log names a lock or
+  held-steer folder, and every account's hooks still lock there through the entries it inherited. Rerail's Git status reads nothing in a records folder (its
+  walk never enters one, and its built-in ignores name it, in any letter case where `core.ignoreCase` is on, as Git
+  for Windows sets it), so an account that may not list the folder, or read a file Git put there, keeps its
+  repository reuse there.
+  `rerail remote add` gives the `remote-tokens` folder the ACL before it writes a token there, so a remote's token is
+  private before any daemon launch. A failure is reported on stderr, a daemon's log, with `icacls`'s reason, and never
+  fails the caller.
 - `loadDaemonTls` refuses a TLS private key that `openToOthers` finds other accounts can read, naming those accounts
   and the `icacls` command that fixes it. When this account reads that key, the daemon then serves this computer alone,
   on loopback, and says why (`serveRerailDaemon`), so hooks keep recording while the key is fixed. A key whose ACL it

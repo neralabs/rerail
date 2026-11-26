@@ -335,38 +335,63 @@ impl TokenRule {
             }
             // Each region's last byte, from its fill (`Regions::body`): the closer's last, or
             // the byte before an `outside` closer; with `else E bytes M`, `E`'s `M`th byte.
-            TokenRule::Read(regions) => {
-                let name = |x: String| Expr::Name(x);
-                let prev = |e: Expr, k: u8| match k {
-                    0 => e,
-                    1 => call("prev", vec![e]),
-                    k => Expr::Call("prev".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
-                };
-                let mut out: Option<Expr> = None;
-                for r in regions {
-                    let f = name(format!("f_{}", r.kind));
-                    let mut last = if r.outside {
-                        and(f.clone(), not(call("next", vec![f])))
-                    } else if r.or.is_some() {
-                        r.closer_last(and(prev(f.clone(), 1), not(f)))
-                    } else {
-                        and(prev(f.clone(), r.bytes), not(prev(f, r.bytes - 1)))
-                    };
-                    if let Some((e, m)) = &r.empty {
-                        last = or(last, prev(name(e.clone()), m - 1));
-                    }
-                    out = Some(match out {
-                        Some(o) => or(o, last),
-                        None => last,
-                    });
-                }
-                out.unwrap_or(Expr::Empty)
-            }
+            TokenRule::Read(regions) => read_last(regions, true),
             // The opener, one byte; the closer and the parts are rows of their own (`Parts::rows`).
             TokenRule::ReadParts(..) => s.clone(),
             TokenRule::Inside(last, ..) => last.clone(),
         }
     }
+
+    /// A `read`'s regions with `open K` (`Region::open`): each `K`, and the byte where a token of the rule ends open
+    /// at the file's end: its region's fill at the file's last byte, which no region's closer ends at. There the
+    /// token is a `K`, as the lean lexer's `Bad`.
+    pub fn open_ends(&self) -> Vec<(String, Expr)> {
+        let TokenRule::Read(regions) = self else { return Vec::new() };
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let last_byte = not(Expr::Call("next".into(), vec![Arg::E(not(Expr::Empty))]));
+        let closed = read_last(regions, false);
+        regions.iter().filter_map(|r| r.open.as_ref().map(|k| (k.clone(), and(and(Expr::Name(format!("f_{}", r.kind)), last_byte.clone()), not(closed.clone()))))).collect()
+    }
+}
+
+/// A `read`'s last byte (`TokenRule::last`): each region's, from its fill (`Regions::body`); `open`: with a region's
+/// open at the file's end (`open K`).
+fn read_last(regions: &[Region], open: bool) -> Expr {
+    let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+    let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
+    let not = |a: Expr| Expr::Not(Box::new(a));
+    let call = |f: &str, args: Vec<Expr>| Expr::Call(f.to_string(), args.into_iter().map(Arg::E).collect());
+    let name = |x: String| Expr::Name(x);
+    let f_open = |r: &Region| name(format!("f_{}", r.kind));
+    let prev = |e: Expr, k: u8| match k {
+        0 => e,
+        1 => call("prev", vec![e]),
+        k => Expr::Call("prev".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
+    };
+    let mut out: Option<Expr> = None;
+    for r in regions {
+        let f = name(format!("f_{}", r.kind));
+        let mut last = if r.outside {
+            and(f.clone(), not(call("next", vec![f])))
+        } else if r.or.is_some() {
+            r.closer_last(and(prev(f.clone(), 1), not(f)))
+        } else {
+            and(prev(f.clone(), r.bytes), not(prev(f, r.bytes - 1)))
+        };
+        if let Some((e, m)) = &r.empty {
+            last = or(last, prev(name(e.clone()), m - 1));
+        }
+        // `open K`: a region open at the file's end ends at its last byte.
+        if open && r.open.is_some() {
+            last = or(last, and(f_open(r), not(call("next", vec![not(Expr::Empty)]))));
+        }
+        out = Some(match out {
+            Some(o) => or(o, last),
+            None => last,
+        });
+    }
+    out.unwrap_or(Expr::Empty)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -473,6 +498,11 @@ pub struct Region {
     /// after its opener's first, which is no closer (a `/*`'s `*`). `E`: the byte after an
     /// opener past `D` levels (1 to 15). No `or`, `outside`, `else` or `after`.
     pub nests: Option<(u8, String)>,
+    /// `open K`: an opener with no closer after it anywhere in the file is a token of kind `K` to
+    /// the file's end, as a lexer that finds no closer makes one bad token of the rest (`Bad`).
+    /// Without it such a file is refused. Not with `else`, `outside` or an `or`. `K` is the
+    /// lexer's error token: no rule takes it, `any` and `balanced` neither.
+    pub open: Option<String>,
 }
 
 impl Regions {
@@ -832,6 +862,10 @@ pub enum Gram {
     Flag { flag: String, set: bool, body: Box<Gram> },
     /// `unless F A`: `A` where flag `F` is clear; where it is set, as if `A` were not there.
     Unless { flag: String, body: Box<Gram> },
+    /// `leaf K R`: one leaf of kind `K` over the tokens rule `R` reads, as the lean parser reads a JSON object's braces
+    /// and checks its text. `R` and the rules it reaches are choices of tokens and rules, and make no node
+    /// (`desugar_leaves`).
+    Leaf { kind: String, rule: String },
 }
 
 /// What a `reading` does with a node of a kind it names.
@@ -917,7 +951,7 @@ pub enum Stmt {
     /// `escape "WHY" when E`: a construct the lexer does not handle; a file with a bit of `E` goes
     /// to tree-sitter. Unlike an error, it does not say the file is malformed.
     Escape(String, Expr),
-    /// `assume "WHY" at starts NAME = E` (decision 0552): a fact the grammar's writer knows of the
+    /// `assume "WHY" at starts NAME = E` (decision 0607): a fact the grammar's writer knows of the
     /// token loop, that mask `NAME` is `E` at every byte a token starts at. It changes no mask: a
     /// lexer that reads tokens one at a time reads `NAME` there as `E`. The compiler proves it
     /// where it can (the prover, its answers cached by content, 0414); else a test build checks it
@@ -1019,14 +1053,15 @@ pub enum Stmt {
     /// `hidden KIND …` (in a tree): marks taken where the grammar can take them and skipped
     /// elsewhere. A mark not hidden, where the grammar can not take it, refuses the file.
     Hidden(Vec<String>),
+    /// `untaken KIND …` (in a tree): tokens no rule takes, the lexer's errors, as a region's `open K`
+    /// is: `any` and `balanced` take them no more than a rule does, as the lean parser fails at a
+    /// `Bad` where it reads any token.
+    Untaken(Vec<String>),
     /// `refuse MARK in LEVEL …` (in a tree): a hidden mark that refuses the file between a
     /// nested level's first token and its last (`json_bad` in a JSON document's levels).
     Refuse { mark: String, levels: Vec<String> },
     /// `reading NAME = ITEM, …` (in a tree): a way to read a made node (`reread`).
     Reading { name: String, reading: Reading },
-    /// `provisional FIELD …` (in a tree): fields a node holds only until a later token decides
-    /// what it is; a node that holds one at the file's end refuses the file.
-    Provisional(Vec<String>),
     /// `remember CHOICE …` (in a tree): choices of tokens whose token is remembered at its
     /// level; `as CHOICE` (and a reading's `K as CHOICE`) then names that token's kind. A nested
     /// level starts with its caller's and gives it back when it ends.
@@ -1039,6 +1074,36 @@ pub enum Stmt {
     /// them out (`docs/parser-generators/32-named-only-rr-tapes.md`). The parser marks each one
     /// `A as IMPLIED`; the statement stays, for the record.
     Implied { rule: String, tokens: Vec<String> },
+    /// `recover NODE at P, past P, …` (in a tree): `NODE`'s repetition is a file's statement loop, as a
+    /// hand-written parser's. A statement that fails is cut back to its first token and made one ERROR
+    /// leaf, from that token to the resume point: the first token after it where an `at` pattern holds,
+    /// or past the first where a `past` pattern holds (decision 0650).
+    Recover { node: String, clauses: Vec<RecoverClause> },
+    /// `ending RULE K as M [inner G]`, `ending RULE K refused` (in a tree): where nested level `RULE` ends, the node
+    /// made last at it, where it is a `K`, becomes an `M`, with no field of its own (its call's, where it returns, as
+    /// `decide`'s), the node its wrap holds first taking field `G`; or the file is refused (`refused`). The lean
+    /// parser's question after a call: `literal`'s `retag_atom` where its `term` was a call alone, a negation's
+    /// failure where its operand was a comparison (decision 0668).
+    Ending { rule: String, kind: String, ending: Ending },
+}
+
+/// What `ending` does with the node made last where its level ends.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Ending {
+    /// `as M [inner G]`: the node becomes an `M`, its field its call's, and the node its wrap holds first takes `G`.
+    Relabel { moved: String, inner: Option<String> },
+    /// `refused`: the file is refused (a statement, where the grammar recovers).
+    Refused,
+}
+
+/// One of `recover`'s patterns: `at` (the resume point at its first token) or `past` (past it), its
+/// tokens (each a choice, as a token mark's), and `first`: its first token first on its line (only
+/// blanks before it since a line terminator of the language).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecoverClause {
+    pub past: bool,
+    pub first: bool,
+    pub seq: Vec<Vec<TokenElem>>,
 }
 
 /// The kind `implied` gives a token (`A as IMPLIED`): it makes no leaf.
@@ -1047,6 +1112,9 @@ pub const IMPLIED: &str = "\u{0}implied";
 const IMPLIED_KIND: &str = "\u{1}";
 /// The kind `drop` gives the node just made at this level (`relabel _ as GONE`): it goes.
 pub const GONE: &str = "\u{0}gone";
+/// The field `decide` gives the node just made at this level: none of its own, the one its call sets where it
+/// returns.
+pub const DECIDED: &str = "\u{0}decided";
 
 /// Each `implied RULE 'A' … K …` of a tree's body, applied: its tokens in `RULE`'s own body
 /// marked `A as IMPLIED`, each written `'A'` or a token kind `K` (a character's content, whose
@@ -1067,7 +1135,7 @@ fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
                 }
             }
             // A token given a kind of its own, or merged, is a node's: not implied.
-            Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) => {}
+            Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter_mut().for_each(|g| mark(g, tokens, found)),
             Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) => mark(a, tokens, found),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => mark(body, tokens, found),
@@ -1370,21 +1438,16 @@ impl P {
         let mut out = vec![];
         // `(C | …)*`: a run of them (`Many`), alone in its element.
         if self.eat_p("(") {
-            let mut inner = self.token_choices()?;
-            // Its tokens' `with M` and `without M` (as the lean parsers' scans stop at a line
-            // end: `!peek_at(j).nl`).
-            while let Some(with) = if self.eat_kw("without") { Some(false) } else if self.eat_kw("with") { Some(true) } else { None } {
-                let m = self.ident()?;
-                inner.push(if with { TokenElem::With(m) } else { TokenElem::Without(m) });
-            }
+            let inner = self.token_choices()?;
+            // `with M`, `without M`: each token of the run with or without mark `M`, as the lean parser's
+            // `on_line` asks of each word it reads.
+            let inner = self.marked(inner, true)?;
             self.want_p(")")?;
             self.want_p("*")?;
-            // Kinds and words, or one `~` of them: a run of any other tokens; then marks.
-            let marks = inner.iter().filter(|c| matches!(c, TokenElem::With(_) | TokenElem::Without(_))).count();
-            let choices = &inner[..inner.len() - marks];
-            let not = matches!(choices, [TokenElem::Not(_)]);
-            if choices.is_empty() || !not && choices.iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_))) {
-                return self.err("a run of kinds and words, or of a `~` of them, then its `with`s and `without`s");
+            // Kinds and words, or one `~` of them: a run of any other tokens; then its marks.
+            let not = matches!(inner.first(), Some(TokenElem::Not(_)));
+            if !not && inner.iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::With(_) | TokenElem::Without(_))) {
+                return self.err("a run of kinds and words (`with`, `without` a mark), or of a `~` of them");
             }
             // `nest (O to C) …`: the depths it counts (`Nest`).
             let mut nests = vec![];
@@ -1469,7 +1532,13 @@ impl P {
         }
     }
     /// An element's `with M` and `without M`, after its choices of kinds and words.
-    fn with_marks(&mut self, mut c: Vec<TokenElem>) -> R<Vec<TokenElem>> {
+    fn with_marks(&mut self, c: Vec<TokenElem>) -> R<Vec<TokenElem>> {
+        self.marked(c, false)
+    }
+
+    /// `with_marks`, where `on_not` also after a `~` (a run's: `(~(A | B) without M)*`, each other token without `M`).
+    fn marked(&mut self, mut c: Vec<TokenElem>, on_not: bool) -> R<Vec<TokenElem>> {
+        let plain = |x: &TokenElem| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_));
         loop {
             let with = if self.eat_kw("without") {
                 false
@@ -1478,7 +1547,8 @@ impl P {
             } else {
                 return Ok(c);
             };
-            if !c.iter().all(|x| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_))) {
+            let after_not = on_not && matches!(c.first(), Some(TokenElem::Not(_))) && c[1..].iter().all(|x| matches!(x, TokenElem::Without(_) | TokenElem::With(_)));
+            if !after_not && !c.iter().all(plain) {
                 return self.err("`with` or `without` after an element of kinds and words");
             }
             let m = self.ident()?;
@@ -1627,6 +1697,15 @@ impl P {
                 items.push(Gram::Reread { reading, body });
                 break;
             }
+            // `decide`: the node just made at this level has no field of its own now, its call's where it returns
+            // (`relabel DECIDED`), as the lean parser's caller sets the field of the node a call made; the rest of the
+            // sequence is its body.
+            if matches!(self.peek(), Some(Tok::Ident(w)) if w == "decide") {
+                self.i += 1;
+                let body = Box::new(self.gram_seq()?);
+                items.push(Gram::Relabel { field: Some(DECIDED.into()), moved: None, inner: None, body });
+                break;
+            }
             // `drop`: the node just made at this level goes (a token the grammar implies, made
             // before the token that says so); the rest of the sequence is its body.
             if matches!(self.peek(), Some(Tok::Ident(w)) if w == "drop") {
@@ -1711,11 +1790,18 @@ impl P {
                 }
                 Ok(Gram::Any(except))
             }
+            // `refused`: no way on, as the lean parser's `Err(())`: a choice with no alternative.
+            "refused" => Ok(Gram::Alt(vec![])),
             "balanced" => {
                 let kind = self.kind()?;
                 let open = self.kind()?;
                 let close = self.kind()?;
                 Ok(Gram::Balanced { kind, open, close })
+            }
+            "leaf" => {
+                let kind = self.kind()?;
+                let rule = self.ident()?;
+                Ok(Gram::Leaf { kind, rule })
             }
             _ => Ok(Gram::Sym(name)),
         }
@@ -1852,8 +1938,8 @@ impl P {
     }
 
     // --- statements ---
-    /// `regions H [nests O .. C depth D else E] { K = O [bytes N] .. C [bytes N] [outside] [else E
-    /// bytes M] … }` (`Regions`).
+    /// `regions H { K = O [bytes N] .. C [bytes N] [outside] [else E bytes M] [nests D else E] [open K] … }`
+    /// (`Regions`).
     fn regions(&mut self) -> R<Regions> {
         let hidden = self.ident()?;
         let nest = if self.eat_kw("nests") {
@@ -1911,13 +1997,17 @@ impl P {
             } else {
                 None
             };
+            let open = if self.eat_kw("open") { Some(self.ident()?) } else { None };
+            if open.is_some() && (outside || empty.is_some() || or.is_some() || nests.is_some()) {
+                return self.err("`open` on a kind with no `outside`, `else`, `or` or `nests`");
+            }
             let mut after = Vec::new();
             let resumes = self.eat_kw("resumes");
             if resumes || self.eat_kw("after") {
                 while matches!(self.peek(), Some(Tok::Ident(_))) {
                     after.push(self.ident()?);
                 }
-                if after.is_empty() || outside || empty.is_some() || nests.is_some() {
+                if after.is_empty() || outside || empty.is_some() || nests.is_some() || open.is_some() {
                     return self.err("`after` or `resumes` and the kinds it names, on a kind with no `outside` or `else`");
                 }
             }
@@ -1927,7 +2017,7 @@ impl P {
             if !(1..=3).contains(&bytes) || (outside && bytes != 1) || (outside && or.is_some()) || empty.as_ref().is_some_and(|e| !(1..=3).contains(&e.1)) {
                 return self.err("a closer of 1 to 3 bytes (`outside`: 1, and no `or`), an `else` of 1 to 3");
             }
-            kinds.push(Region { kind, opener, opens: opens as u8, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes, nests });
+            kinds.push(Region { kind, opener, opens: opens as u8, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes, nests, open });
             self.nls();
         }
         if kinds.is_empty() {
@@ -2382,6 +2472,20 @@ impl P {
                 self.want_p("=")?;
                 Stmt::Check { kind, body: self.gram()? }
             }
+            "ending" => {
+                let rule = self.ident()?;
+                let kind = self.kind()?;
+                let ending = if self.eat_kw("refused") {
+                    Ending::Refused
+                } else if self.eat_kw("as") {
+                    let moved = self.kind()?;
+                    let inner = if self.eat_kw("inner") { Some(self.ident()?) } else { None };
+                    Ending::Relabel { moved, inner }
+                } else {
+                    return self.err("ending RULE K as M [inner G] | ending RULE K refused");
+                };
+                Stmt::Ending { rule, kind, ending }
+            }
             "refuse" => {
                 let mark = self.kind()?;
                 if !self.eat_kw("in") {
@@ -2461,22 +2565,35 @@ impl P {
                 }
                 Stmt::Remember(names)
             }
-            "provisional" => {
-                let mut fields = vec![];
-                while matches!(self.peek(), Some(Tok::Ident(_))) {
-                    fields.push(self.ident()?);
+            "recover" => {
+                let node = self.ident()?;
+                let mut clauses = vec![];
+                loop {
+                    let past = match self.peek() {
+                        Some(Tok::Ident(w)) if w == "at" => false,
+                        Some(Tok::Ident(w)) if w == "past" => true,
+                        _ => return self.err("recover NODE at P | past P, …"),
+                    };
+                    self.ident()?;
+                    let first = self.eat_kw("first");
+                    clauses.push(RecoverClause { past, first, seq: self.token_seq()? });
+                    if !self.is_p(",") {
+                        break;
+                    }
+                    self.want_p(",")?;
                 }
-                if fields.is_empty() {
-                    return self.err("provisional FIELD …");
-                }
-                Stmt::Provisional(fields)
+                Stmt::Recover { node, clauses }
             }
-            "extra" | "hidden" => {
+            "extra" | "hidden" | "untaken" => {
                 let mut kinds = vec![];
                 while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_))) {
                     kinds.push(self.kind()?);
                 }
-                if kw == "extra" { Stmt::Extra(kinds) } else { Stmt::Hidden(kinds) }
+                match kw.as_str() {
+                    "extra" => Stmt::Extra(kinds),
+                    "hidden" => Stmt::Hidden(kinds),
+                    _ => Stmt::Untaken(kinds),
+                }
             }
             "mark" => {
                 let kind = self.kind()?;
@@ -2850,6 +2967,138 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
     Ok(out)
 }
 
+/// A tree's statements with each `leaf K R` as the grammar's other elements say it, for the machine and the reference
+/// (decision 0673 step 6): `R` read again with its first token a leaf of `K` and every token after it merged into that
+/// leaf, a copy of each rule it reaches with its tokens merged, fields dropped. A `refuse M in L` holds in `L`'s copies
+/// too. The Rust writer keeps `leaf`: the rules then read the tokens and make nothing, and the leaf is made after them.
+pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
+    fn walk(g: &Gram, f: &mut dyn FnMut(&Gram)) {
+        f(g);
+        match g {
+            Gram::Seq(v) | Gram::Alt(v) => v.iter().for_each(|x| walk(x, f)),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => walk(a, f),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => walk(body, f),
+            Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
+        }
+    }
+    let mut any = false;
+    for s in stmts {
+        if let Stmt::Node { body, .. } | Stmt::Choice { body, .. } = s {
+            walk(body, &mut |g| any |= matches!(g, Gram::Leaf { .. }));
+        }
+    }
+    if !any {
+        return Ok(stmts.to_vec());
+    }
+    let rule = |n: &str| -> Option<(&Gram, bool, bool)> {
+        stmts.iter().find_map(|s| match s {
+            Stmt::Node { kind, nested, body, .. } if kind == n => Some((body, *nested, true)),
+            Stmt::Choice { name, nested, body, .. } if name == n => Some((body, *nested, false)),
+            _ => None,
+        })
+    };
+    let name = |r: &str, k: &str, first: bool| format!("{r}\u{0}{} {k}", if first { "first" } else { "leaf" });
+    // Each copy to write: the rule, the leaf's kind, whether the copy's first token opens the leaf.
+    let mut todo: Vec<(String, String, bool)> = Vec::new();
+    struct Cx<'b> {
+        kind: &'b str,
+        todo: &'b mut Vec<(String, String, bool)>,
+    }
+    fn copy<'s>(g: &Gram, first: bool, cx: &mut Cx<'_>, rule: &dyn Fn(&str) -> Option<(&'s Gram, bool, bool)>, name: &dyn Fn(&str, &str, bool) -> String) -> Result<Gram, String> {
+        let k = cx.kind.to_owned();
+        let token = |t: Gram| if first { Gram::As(k.clone(), Box::new(t)) } else { Gram::Merge(k.clone(), Box::new(t)) };
+        Ok(match g {
+            Gram::Lit(_) => token(g.clone()),
+            Gram::Sym(n) => match rule(n) {
+                Some((_, _, true)) => return Err(format!("leaf {k}: rule `{n}` makes a node")),
+                Some(_) => {
+                    if !cx.todo.iter().any(|t| t.0 == *n && t.2 == first) {
+                        cx.todo.push((n.clone(), k.clone(), first));
+                    }
+                    Gram::Sym(name(n, &k, first))
+                }
+                None => token(g.clone()),
+            },
+            Gram::Seq(v) => {
+                let mut out = Vec::new();
+                for (i, x) in v.iter().enumerate() {
+                    out.push(copy(x, first && i == 0, cx, rule, name)?);
+                }
+                Gram::Seq(out)
+            }
+            Gram::Alt(v) => Gram::Alt(v.iter().map(|x| copy(x, first, cx, rule, name)).collect::<Result<_, _>>()?),
+            Gram::Opt(_) | Gram::Star(_) if first => return Err(format!("leaf {k}: its first token may be none")),
+            Gram::Opt(a) => Gram::Opt(Box::new(copy(a, false, cx, rule, name)?)),
+            Gram::Star(a) => Gram::Star(Box::new(copy(a, false, cx, rule, name)?)),
+            Gram::Plus(a) if first => Gram::Seq(vec![copy(a, true, cx, rule, name)?, Gram::Star(Box::new(copy(a, false, cx, rule, name)?))]),
+            Gram::Plus(a) => Gram::Plus(Box::new(copy(a, false, cx, rule, name)?)),
+            // The leaf's kind is every token's; a field is the leaf's caller's.
+            Gram::Field(_, a) | Gram::As(_, a) | Gram::Merge(_, a) => copy(a, first, cx, rule, name)?,
+            Gram::Flag { flag, set, body } => Gram::Flag { flag: flag.clone(), set: *set, body: Box::new(copy(body, first, cx, rule, name)?) },
+            Gram::Unless { flag, body } => Gram::Unless { flag: flag.clone(), body: Box::new(copy(body, first, cx, rule, name)?) },
+            _ => return Err(format!("leaf {k}: its rules make nodes")),
+        })
+    }
+    let mut out = Vec::new();
+    for s in stmts {
+        out.push(match s {
+            Stmt::Node { kind, nested, whole, padded, body } => Stmt::Node { kind: kind.clone(), nested: *nested, whole: *whole, padded: *padded, body: leaves_in(body, &mut todo, &name)? },
+            Stmt::Choice { name: n, supertype, nested, body } => Stmt::Choice { name: n.clone(), supertype: supertype.clone(), nested: *nested, body: leaves_in(body, &mut todo, &name)? },
+            s => s.clone(),
+        });
+    }
+    // `leaf K R` in `g`: the first copy of `R`.
+    fn leaves_in(g: &Gram, todo: &mut Vec<(String, String, bool)>, name: &dyn Fn(&str, &str, bool) -> String) -> Result<Gram, String> {
+        let mut d = |x: &Gram| leaves_in(x, todo, name);
+        Ok(match g {
+            Gram::Leaf { kind, rule } => {
+                if !todo.iter().any(|t| t.0 == *rule && t.1 == *kind && t.2) {
+                    todo.push((rule.clone(), kind.clone(), true));
+                }
+                Gram::Sym(name(rule, kind, true))
+            }
+            Gram::Seq(v) => Gram::Seq(v.iter().map(&mut d).collect::<Result<_, _>>()?),
+            Gram::Alt(v) => Gram::Alt(v.iter().map(&mut d).collect::<Result<_, _>>()?),
+            Gram::Opt(a) => Gram::Opt(Box::new(d(a)?)),
+            Gram::Star(a) => Gram::Star(Box::new(d(a)?)),
+            Gram::Plus(a) => Gram::Plus(Box::new(d(a)?)),
+            Gram::Field(f, a) => Gram::Field(f.clone(), Box::new(d(a)?)),
+            Gram::Retag(k, a) => Gram::Retag(k.clone(), Box::new(d(a)?)),
+            Gram::Merge(k, a) => Gram::Merge(k.clone(), Box::new(d(a)?)),
+            Gram::As(k, a) => Gram::As(k.clone(), Box::new(d(a)?)),
+            Gram::Wrap { kind, field, moved, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), body: Box::new(d(body)?) },
+            Gram::Relabel { field, moved, inner, body } => Gram::Relabel { field: field.clone(), moved: moved.clone(), inner: inner.clone(), body: Box::new(d(body)?) },
+            Gram::Fold { kind, body } => Gram::Fold { kind: kind.clone(), body: Box::new(d(body)?) },
+            Gram::Reread { reading, body } => Gram::Reread { reading: reading.clone(), body: Box::new(d(body)?) },
+            Gram::Flag { flag, set, body } => Gram::Flag { flag: flag.clone(), set: *set, body: Box::new(d(body)?) },
+            Gram::Unless { flag, body } => Gram::Unless { flag: flag.clone(), body: Box::new(d(body)?) },
+            Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) => g.clone(),
+        })
+    }
+    let mut done = 0;
+    let mut copies: Vec<(String, String)> = Vec::new();
+    while done < todo.len() {
+        let (r, k, first) = todo[done].clone();
+        done += 1;
+        let Some((body, nested, node)) = rule(&r) else { return Err(format!("leaf {k}: no rule `{r}`")) };
+        if node {
+            return Err(format!("leaf {k}: rule `{r}` makes a node"));
+        }
+        let mut cx = Cx { kind: &k, todo: &mut todo };
+        let body = copy(body, first, &mut cx, &rule, &name)?;
+        copies.push((r.clone(), name(&r, &k, first)));
+        out.push(Stmt::Choice { name: name(&r, &k, first), supertype: None, nested, body });
+    }
+    // A mark refused in a rule is refused in its copies.
+    for s in &mut out {
+        if let Stmt::Refuse { levels, .. } = s {
+            let more: Vec<String> = copies.iter().filter(|(r, _)| levels.contains(r)).map(|(_, c)| c.clone()).collect();
+            levels.extend(more);
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tier2_tests {
     use super::*;
@@ -2935,6 +3184,17 @@ mod tier2_tests {
             Ok((vec![(false, vec![vec![word("@")], vec![TokenElem::Many(vec![TokenElem::Not(vec![word("{")])], vec![paren.clone()], vec![name.clone(), word(")")])], vec![TokenElem::Not(vec![word(".")])]])], false))
         );
         assert!(mark("mark k = lf, before \"@\" (name)* ending (~name) \".\"").is_err());
+        // Each token of a run without a mark (decision 0673 step 4); after a `~` too, each other token without it
+        // (decision 0632: Kotlin's `(~(…) without nl_end)*`).
+        assert_eq!(
+            mark("mark k = lf, before \"{\" (name | \",\" without k)* \"}\""),
+            Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![name.clone(), word(","), TokenElem::Without("k".into())], vec![], vec![])], vec![word("}")]])], false))
+        );
+        assert_eq!(
+            mark("mark k = lf, before \"{\" (~name without k)* \"}\""),
+            Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![TokenElem::Not(vec![name.clone()]), TokenElem::Without("k".into())], vec![], vec![])], vec![word("}")]])], false))
+        );
+        assert!(mark("mark k = lf, before \"{\" (name with k without k ~name)* \"}\"").is_err());
     }
 
     /// A settling mark's `drops` (decision 0416, its questions 0451): parsed with `settles`,

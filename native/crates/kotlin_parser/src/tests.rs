@@ -18,13 +18,11 @@ fn same(texts: &[&str]) {
     let c = compiled().unwrap_or_else(|e| panic!("the grammar compiles: {e}"));
     for &text in texts {
         let want = lean_text(text).unwrap_or_else(|| panic!("the lean parser refuses {text:?}"));
-        let image = c.parser.image(text.as_bytes()).unwrap_or_else(|why| panic!("the grammar refuses {text:?}: {why:?}\n{}\n{}", c.explain(text), c.words));
+        let image = c.tape(text).unwrap_or_else(|why| panic!("the grammar refuses {text:?}: {why}\n{}\n{}", c.explain(text), c.words));
         let got = image_text(&image).expect("a tape image");
         assert_eq!(got, want, "{text:?}");
         // The interpreter's, over the interpreter's tier 1: the same tape.
-        let run = c.program.block_programs[0].run(text.as_bytes());
-        let nodes = rerail_compiler::stream::run(&c.program, text.as_bytes(), &run).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why:?}"));
-        let interp = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, text.as_bytes());
+        let interp = c.interpreted(text).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why}"));
         assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
         // Tier 1 as Rust: the interpreter's records; tier 2 as Rust over them: the same tape.
         if let Some(why) = tier1_differs(c, text) {
@@ -130,9 +128,15 @@ fn rust_is_current() {
     }
 }
 
+/// `text`'s tape by the compiled tier 2 over tier 1's run `run` (the interpreter's, or a device's records), in format
+/// 16: or why it refuses the file.
+fn tape_over(c: &Compiled, text: &str, run: &rerail_compiler::block::BlockRun) -> Result<Tape, String> {
+    sixteen(c.parser.tier2.image16_on(text.as_bytes(), lean::TERMINATORS, run, lang(), c.numbers(), false)?)
+}
+
 /// `text`'s tape from the parser as Rust (`rerail_kotlin_aot`: tier 1, then tier 2), as text.
 fn aot_text(text: &str) -> Result<String, u32> {
-    let tape = rerail_kotlin_aot::parse(text.as_bytes())?;
+    let tape = rerail_kotlin_aot::parse(text.as_bytes(), &mut lean::sink())?.unwrap_or_else(|e| panic!("kotlin_aot's tree is no format 16 tape of Kotlin's table: {e}"));
     Ok(lean::tape_text(&tape))
 }
 
@@ -146,7 +150,7 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     // An escape of `A & ~L` the lowering makes a local check of tier 2's at `A`'s token
     // (`pending_checks`): the interpreter refuses the file there, tier 1 as Rust where it reads
     // the escape. Either way the file is refused.
-    if lx.refused && !refused && c.parser.image(text.as_bytes()).is_err() {
+    if lx.refused && !refused && c.tape(text).is_err() {
         return None;
     }
     if refused != lx.refused {
@@ -156,10 +160,15 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
         return None;
     }
     let (starts, lasts) = (&run.positions[0], &run.positions[1]);
-    let n = starts.len().max(lx.starts.len());
+    // Tier 1 as Rust keeps the comments apart from the tokens (as the lean lexer); the interpreter's records hold both,
+    // by where they start.
+    let mut recs: Vec<_> = lx.recs.iter().chain(&lx.extras).copied().collect();
+    recs.sort_by_key(|r| r.start);
+    let n = starts.len().max(recs.len());
     for k in 0..n {
         let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
-        let ours = (lx.starts.get(k), lx.lasts.get(k), lx.codes.get(k));
+        let rec = recs.get(k);
+        let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), rec.map(|r| &r.code));
         if theirs != ours {
             let at = |s: Option<&u32>| s.map_or(String::new(), |&s| text[s as usize..].chars().take(16).collect::<String>().replace('\n', "⏎"));
             return Some(format!("record {k}: the interpreter {theirs:x?} `{}`, tier 1 as Rust {ours:x?} `{}`", at(theirs.0), at(ours.0)));
@@ -712,11 +721,11 @@ fn a_string_with_templates_is_one_record() {
         }
         // The records' masks, as a device without the token loop reads them (Metal): the loop's
         // records, a region tier 2 splits its opener alone, and none at a template's `}`.
-        let bits = |o: u16| -> Vec<u32> {
+        let bits = |o: u16| -> rerail_tape_format::Vector<u32> {
             let words = &run.outputs[program.extract_outputs()[usize::from(o)]];
             (0..words.len() * 64).filter(|&b| b < bytes.len() && words[b / 64] >> (b % 64) & 1 == 1).map(|b| b as u32).collect()
         };
-        let opened: Vec<u32> = starts.iter().zip(lasts.iter()).map(|(&s, &l)| if matches!(bytes[s as usize], b'"' | b'\'') { s } else { l }).collect();
+        let opened: rerail_tape_format::Vector<u32> = starts.iter().zip(lasts.iter()).map(|(&s, &l)| if matches!(bytes[s as usize], b'"' | b'\'') { s } else { l }).collect();
         assert_eq!((bits(r.starts), bits(r.lasts)), (starts.clone(), opened), "the records' masks, {text:?}");
         // Tier 2 over them, coded by the record pass, as over a device's records.
         let table = rerail_compiler::records::WordTable::new(&r.words).expect("the words fit a table");
@@ -724,14 +733,12 @@ fn a_string_with_templates_is_one_record() {
         let (codes, bad) = rerail_compiler::records::pass(r, &table, bytes, &ms, &ml, &run.outputs);
         assert!(!bad, "the record pass refuses the masks' records, {text:?}");
         let mut device = run.clone();
-        device.positions[usize::from(r.starts)] = ms;
-        device.positions[usize::from(r.lasts)] = ml;
+        device.positions[usize::from(r.starts)] = ms.as_slice().into();
+        device.positions[usize::from(r.lasts)] = ml.as_slice().into();
         device.codes = codes;
-        let nodes = c.parser.tier2.run(bytes, &device).unwrap_or_else(|why| panic!("the CPU's tier 2 refuses the masks' records of {text:?}: {why:?}"));
-        let over = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, bytes);
+        let over = tape_over(c, text, &device).unwrap_or_else(|why| panic!("the CPU's tier 2 refuses the masks' records of {text:?}: {why}"));
         assert_eq!(image_text(&over).expect("a tape image"), want, "the CPU's tier 2 over the masks' records, {text:?}");
-        let nodes = rerail_compiler::stream::run(&c.program, bytes, &run).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why:?}"));
-        let interp = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, bytes);
+        let interp = c.interpreted(text).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why}"));
         assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
         // The CPU's tier 1: the interpreter's records and codes.
         let cpu = c.parser.tier1.extract(bytes);
@@ -739,10 +746,9 @@ fn a_string_with_templates_is_one_record() {
         let n = run.codes.len();
         assert_eq!((&cpu.positions[0][..n.min(cpu.positions[0].len())], &cpu.positions[1][..n.min(cpu.positions[1].len())], &cpu.codes[..]), (&starts[..], &lasts[..], &run.codes[..]), "the CPU's tier 1, {text:?}\n{}", c.explain(text));
         // The CPU's tier 2, over the interpreter's tier 1 and over its own: the lean parser's.
-        let nodes = c.parser.tier2.run(bytes, &run).unwrap_or_else(|why| panic!("the CPU's tier 2 refuses {text:?}: {why:?}\n{}", c.explain(text)));
-        let over = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, bytes);
+        let over = tape_over(c, text, &run).unwrap_or_else(|why| panic!("the CPU's tier 2 refuses {text:?}: {why}\n{}", c.explain(text)));
         assert_eq!(image_text(&over).expect("a tape image"), want, "the CPU's tier 2 over the interpreter's tier 1, {text:?}");
-        let image = c.parser.image(bytes).unwrap_or_else(|why| panic!("the CPU refuses {text:?}: {why:?}\n{}", c.explain(text)));
+        let image = c.tape(text).unwrap_or_else(|why| panic!("the CPU refuses {text:?}: {why}\n{}", c.explain(text)));
         assert_eq!(image_text(&image).expect("a tape image"), want, "the CPU, {text:?}");
         // Tier 1 and tier 2 as Rust.
         assert_eq!(tier1_differs(c, text), None, "tier 1 as Rust, {text:?}");
@@ -1279,7 +1285,7 @@ fn the_wide_corpus_lines_are_the_lean_parsers() {
 
 /// A string with the prefix `$$` (`$$"…"`, `$$"""…"""`): its templates take two `$`s, a `$` alone
 /// or a run short of a template's is content, and the prefix is a token of its own, as the lean
-/// parser's string reader counts a run against its prefix (decision 0650).
+/// parser's string reader counts a run against its prefix (decision 0699).
 #[test]
 fn prefixed_strings_are_the_lean_parsers() {
     same(&[
@@ -1514,7 +1520,7 @@ fn split_operators_are_the_lean_parsers() {
     ]);
     for text in ["val a = b ? .c\n", "val a = b > = c\n", "val a = b >\n  = c\n"] {
         assert!(lean_text(text).is_none(), "the lean parser reads {text:?}");
-        assert!(compiled().expect("compiles").parser.image(text.as_bytes()).is_err(), "the grammar reads {text:?}");
+        assert!(compiled().expect("compiles").image(text).is_none(), "the grammar reads {text:?}");
     }
 }
 
@@ -1536,8 +1542,8 @@ fn a_block_comment_before_a_comment_is_the_lean_parsers() {
         "import a.b\n\n/** d */\n// c\n// e\n\nprivate val u = 1\n",
         "package a\n/* x */\n// c\nimport b\n",
     ]);
-    // The tape's blocks between the two comments, at each node count: a name a node.
-    let texts: Vec<String> = (0..rerail_tape_format::CHECKPOINT_STRIDE).map(|k| format!("fun f() {{\n{}  /* x */\n  // c\n  d()\n}}\n", "  a\n".repeat(k))).collect();
+    // The moved comment behind each count of statements before it (up to 16): the commit point it may be before.
+    let texts: Vec<String> = (0..16).map(|k| format!("fun f() {{\n{}  /* x */\n  // c\n  d()\n}}\n", "  a\n".repeat(k))).collect();
     same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
@@ -1872,7 +1878,7 @@ fn show() {
                             eprintln!("rules {:?}; ends {:?}; kind of 1 {} 0 {}", r.rules, r.ends, r.kinds[usize::from(b'1')], r.kinds[usize::from(b'0')]);
                             for rule in &r.rules {
                                 if let rerail_compiler::records::EndRule::Last(o) = rule {
-                                    let w = |v: &Vec<Vec<u64>>| v.get(usize::from(*o)).and_then(|x| x.first()).map(|x| format!("{:016b}", x.reverse_bits() >> 48));
+                                    let w = |v: &[rerail_blocks::vector::Vector<u64>]| v.get(usize::from(*o)).and_then(|x| x.first()).map(|x| format!("{:016b}", x.reverse_bits() >> 48));
                                     eprintln!("last {o}: interp {:?} cpu {:?}", w(&run.outputs), w(&cpu.outputs));
                                 }
                             }
@@ -1882,7 +1888,7 @@ fn show() {
                             let o = b.mask_outputs()[m.parse::<usize>().unwrap()];
                             let run = b.run(text.as_bytes());
                             let cpu = c.parser.tier1.extract(text.as_bytes());
-                            let w = |v: &Vec<Vec<u64>>| v.get(o).and_then(|x| x.first()).map(|x| format!("{:064b}", x.reverse_bits()));
+                            let w = |v: &[rerail_blocks::vector::Vector<u64>]| v.get(o).and_then(|x| x.first()).map(|x| format!("{:064b}", x.reverse_bits()));
                             eprintln!("mask {m} output {o}: interp {:?}\n  cpu {:?} (cpu outputs {})", w(&run.outputs), w(&cpu.outputs), cpu.outputs.len());
                         }
                         for rd in r.readers.iter().filter(|rd| !rd.parts.is_empty()) {
@@ -1922,7 +1928,7 @@ fn show() {
                 Err(e) => eprintln!("reference: {e:?}"),
             }
         }
-        match c.parser.image(text.as_bytes()) {
+        match c.tape(&text) {
             Ok(image) => {
                 let got = image_text(&image).unwrap_or_default();
                 if got == lean {
@@ -2027,7 +2033,7 @@ fn fingerprint(c: &crate::Compiled) -> u64 {
 #[test]
 fn the_shipped_answers_answer_the_grammar() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("kotlin.answers");
-    rerail_compiler::answers::check_shipped(&path, crate::ANSWERS, |known| {
+    rerail_bitlex::answers::check_shipped(&path, crate::ANSWERS, |known| {
         let c = crate::compile_timed(GRAMMAR, known.clone(), &mut |_, _| {})?;
         let mut given = known;
         given.extend(c.proofs.iter().copied());
@@ -2103,7 +2109,7 @@ fn tier1_records() {
 #[test]
 #[ignore = "a tool: run by name"]
 fn tier1_cones() {
-    use rerail_compiler::bitlex_masks as bitlex_compile;
+    use rerail_bitlex::bitlex_masks as bitlex_compile;
     let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
     let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
     let kind = |name: &str| {
@@ -2113,7 +2119,7 @@ fn tier1_cones() {
             Some(*own.entry(name.to_owned()).or_insert(next))
         })
     };
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, crate::shipped_answers(), bitlex_compile::AsRust::No).expect("compiles");
     let b = &c.program;
     let n = b.ops.len();
@@ -2209,7 +2215,7 @@ fn tier1_cones() {
 #[ignore = "a probe: prints"]
 fn token_level_probe() {
     use ::bitlex::syntax::{Arg, Expr, Stmt};
-    use rerail_compiler::bitlex_masks as bitlex_compile;
+    use rerail_bitlex::bitlex_masks as bitlex_compile;
     use std::collections::{HashMap, HashSet};
     // The crate's grammar, or `RERAIL_KOTLIN_GRAMMAR`'s file (a variant measured without a build).
     let text = std::env::var("RERAIL_KOTLIN_GRAMMAR").map_or_else(|_| crate::GRAMMAR.to_owned(), |p| std::fs::read_to_string(p).expect("the grammar file"));
@@ -2363,7 +2369,7 @@ fn token_level_probe() {
             Some(*own.entry(name.to_owned()).or_insert(next))
         })
     };
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, crate::shipped_answers(), bitlex_compile::AsRust::No).expect("compiles");
     let mut by: HashMap<String, usize> = HashMap::new();
     for o in &c.origin {
@@ -2448,8 +2454,8 @@ fn reference_probe() {
         Err(e) => eprintln!("eval: {e:?}"),
     }
     let c = compiled().expect("compiles");
-    match c.parser.image(text.as_bytes()) {
-        Ok(i) => eprintln!("compiled: {}", image_text(&i).expect("an image")),
+    match c.tape(&text) {
+        Ok(i) => eprintln!("compiled: {}", image_text(&i).expect("a tape")),
         Err(e) => eprintln!("compiled refuses: {e:?}\n{}", c.explain(&text)),
     }
 }
@@ -2463,9 +2469,9 @@ fn lazy_probe() {
     let b = &c.program.block_programs[0];
     let r = b.records.as_ref().expect("records");
     let native = rerail_compiler::block_native::BlockNative::lower(b);
-    let bw = rerail_compiler::native_cpu_bytes::Bytewise::of(&native);
-    let lazy = rerail_compiler::native_cpu_block::lazy_marks(r, &|o| bw.can(o));
-    let coded = rerail_compiler::native_cpu_block::lazy_coded(r);
+    let bw = rerail_cpu_block::native_cpu_bytes::Bytewise::of(&native);
+    let lazy = rerail_cpu_block::native_cpu_block::lazy_marks(r, &|o| bw.can(o));
+    let coded = rerail_cpu_block::native_cpu_block::lazy_coded(r);
     for (k, &(o, w)) in r.marks.iter().enumerate() {
         let bit = |x: u32| x >> k & 1;
         eprintln!(
@@ -2478,7 +2484,7 @@ fn lazy_probe() {
         eprintln!("check: {ch:?}");
     }
     eprintln!("blanks: {:?} gap {:?} skip {:?} gaps {:b}", r.blanks, r.gap, r.skip, r.gaps);
-    let blank_bits = rerail_compiler::native_cpu_block::blank_bits(r, &|o| bw.can(o));
+    let blank_bits = rerail_cpu_block::native_cpu_block::blank_bits(r, &|o| bw.can(o));
     eprintln!("blank marks read by the CPU loop: {blank_bits:b}; records_made {:?}", native.records_made());
 }
 
@@ -2492,7 +2498,7 @@ fn probe() {
     for text in std::fs::read_to_string(path).expect("the probe file").split("\n---\n") {
         let text = format!("{}\n", text.trim_end_matches('\n'));
         let lean = lean_text(&text);
-        let ours = c.parser.image(text.as_bytes()).ok().and_then(|i| image_text(&i).ok());
+        let ours = c.image(&text).and_then(|i| image_text(&i).ok());
         let verdict = match (&lean, &ours) {
             (Some(a), Some(b)) if a == b => "same".to_string(),
             (Some(a), Some(b)) => {
@@ -2504,7 +2510,7 @@ fn probe() {
                 let run = c.program.block_programs[0].run(text.as_bytes());
                 let why = rerail_compiler::stream::run(&c.program, text.as_bytes(), &run).err();
                 let near = why.as_ref().and_then(|w| w.at).map(|a| text[a as usize..].chars().take(30).collect::<String>());
-                let jit2 = c.parser.tier2.run(text.as_bytes(), &run).map(|n| n.len());
+                let jit2 = tape_over(c, &text, &run).map(|t| t.len());
                 let cpu = c.parser.tier1.extract(text.as_bytes());
                 let same1 = cpu.codes == run.codes && cpu.positions == run.positions;
                 let first = (0..cpu.codes.len().min(run.codes.len())).find(|&i| cpu.codes[i] != run.codes[i] || cpu.positions.iter().zip(&run.positions).any(|(a, b)| a.get(i) != b.get(i)));
@@ -2546,9 +2552,8 @@ fn probe() {
                 }
                 Err(why) => eprintln!("  interpreter refuses: {why:?}"),
             }
-            if let Ok(nodes) = c.parser.tier2.run(text.as_bytes(), &run) {
-                let shown: Vec<String> = nodes.iter().map(|n| format!("{}[{}..{}]", n.kind, n.start, n.end)).collect();
-                eprintln!("  JIT tier 2:  {}", shown.join(" "));
+            if let Ok(t) = tape_over(c, &text, &run) {
+                eprintln!("  JIT tier 2:\n{}", image_text(&t).unwrap_or_default());
             }
         }
         if std::env::var_os("RERAIL_KOTLIN_PROBE_TOKENS").is_some() {

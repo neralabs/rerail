@@ -54,7 +54,7 @@ const EVALS_BEFORE_SOLVE: u64 = 1 << 16;
 /// answers are the same on any machine and under any load, sized to about a second of proving.
 /// Spent, a prover stops with its sound answer (not proved), as past its own limits.
 ///
-/// A question takes at most a 16th of it (decision 0650, [`Proofs::ask`]): the steps below its
+/// A question takes at most a 16th of it (decision 0699, [`Proofs::ask`]): the steps below its
 /// floor are not its. One hard question (an induction of 100,000 conflicts a solve)
 /// took all of Kotlin's, and every question after it was answered not proved.
 #[derive(Clone, Debug)]
@@ -697,7 +697,7 @@ pub fn first_bytes_in(work: &Budget, ops: &[BlockOp], tables: &[ClassTable], v: 
 /// Two values (an operation and its delay) proved never to hold at one byte.
 pub type Apart = ((u16, u8), (u16, u8));
 
-/// Whether `v` is zero by its shape alone (decision 0650): of its conjuncts (through `And`,
+/// Whether `v` is zero by its shape alone (decision 0699): of its conjuncts (through `And`,
 /// `AndNot` and `Prev`), one is a disjunct (through `Or` and `Prev`) of a negated one at the same
 /// lag, as a region's content row is its body less every part's bytes and a part's row is one of
 /// those parts. A conjunct `prev(x, k)` holding says `x` holds `k` bytes back, in the stream, so
@@ -1155,7 +1155,7 @@ struct Witnesses {
     files: Vec<Vec<u8>>,
     /// The operations `values` are of, and their words over the files end to end.
     ops: Vec<BlockOp>,
-    values: Vec<Vec<u64>>,
+    values: Vec<rerail_blocks::vector::Vector<u64>>,
     /// Each file's blocks in `values`, and whether a block is its file's first.
     spans: Vec<std::ops::Range<usize>>,
     first: Vec<bool>,
@@ -1216,11 +1216,11 @@ impl Witnesses {
 
     /// An operation of values made already, word by word: `None` for one that reads the bytes
     /// or carries (made by the interpreter, `remake`).
-    fn combine(&self, op: BlockOp) -> Option<Vec<u64>> {
+    fn combine(&self, op: BlockOp) -> Option<rerail_blocks::vector::Vector<u64>> {
         let at = |x: u16| &self.values[usize::from(x)];
         let two = |a: u16, b: u16, f: fn(u64, u64) -> u64| at(a).iter().zip(at(b)).map(|(&x, &y)| f(x, y)).collect();
         Some(match op {
-            BlockOp::Const(c) => vec![c; self.first.len()],
+            BlockOp::Const(c) => rerail_blocks::vector![c; self.first.len()],
             BlockOp::Not(a) => at(a).iter().map(|&x| !x).collect(),
             BlockOp::And(a, b) => two(a, b, |x, y| x & y),
             BlockOp::Or(a, b) => two(a, b, |x, y| x | y),
@@ -2146,7 +2146,7 @@ mod tests {
     }
 
     /// A value never set by its shape: a part's start under a body less the parts (through
-    /// `prev`, at its lag), and two fills proved apart; not where the lags differ (decision 0650).
+    /// `prev`, at its lag), and two fills proved apart; not where the lags differ (decision 0699).
     #[test]
     fn values_never_by_their_shape() {
         // 0 `x`, 1 `y`, 2 `x | y` (the parts), 3 `prev(x)`, 4 a body, 5 the body less the parts
@@ -2173,7 +2173,7 @@ mod tests {
     }
 
     /// A question takes a 16th of the budget at most: past it, it is not proved, and the next
-    /// question has the rest (decision 0650).
+    /// question has the rest (decision 0699).
     #[test]
     fn a_question_takes_its_share() {
         let work = Budget::new(1600);

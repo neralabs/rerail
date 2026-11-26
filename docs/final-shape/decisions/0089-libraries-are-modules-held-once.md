@@ -1,6 +1,7 @@
 # 0089: A library is a module, held once per run; its facts are one relation for every rule that reads it
 
-Status: accepted (2026-11-08). It answers O135.
+Status: partly built (audited 2026-11-23). Left: Stage 3: the per-unit memo (§6), a file's library rows kept under the
+library; one library per bound (.guests off). Accepted (2026-11-08). It answers O135.
 
 - **Stage 1 is built.** The full pack gives the same findings as with libraries pasted in, at a third to a half of
   the CPU. O135 has the measurements.
@@ -283,7 +284,7 @@ a `stat` later), the lowering of each program's own rules, and printing the prep
   reader needs is not made. Holding a library once never makes more of it than some reader asks for.
 - **Ledger 16** (the cost is repeated scans of the same broad relations). The 538 copies of a library made the
   same relations 538 times before the merge. Holding them once removes that repetition at its source.
-- **ast-index-spike design index §13 (sharing and dedup):**
+- **SQL index prototype design index §13 (sharing and dedup):**
   - S143: anchors share 4.0x across 1,970 queries;
   - S149 and S176: a union scoped to the whole corpus lost (0.86x, 7.27x scope inflation), while per-group sharing
     gained 1.45x.

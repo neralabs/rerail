@@ -1,6 +1,7 @@
 # 0531: The ladders are cut to their grammars
 
-Status: decided (the user, 2026-11-20: "yes, remove the other ladders too", after Kotlin's, 0484). Follows 0484.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-20: "yes, remove the other ladders too", after
+Kotlin's, 0484). Follows 0484.
 
 ## Intro
 
@@ -47,7 +48,8 @@ checked on every test run. The user asked for them to go, as Kotlin's did.
   index as a reader of its rows (0529).
 - **Metal on `jsonc`** (Q188): both JSON forms now run on Metal. On 42 of 378 `jsonc` files, all with comments, a
   comment's last bytes (extract 4) differ from the interpreter's. This predates both changes: it fails the same way
-  with the old seeds and with the newline output taken out. It is open in the work queue.
+  with the old seeds and with the newline output taken out. Settled: the test compares extracts only where tier 1
+  accepts the file (e6be1c0f92); it passes on Metal (roll-up 26, 2026-11-21).
 
 ## Tests
 
@@ -55,4 +57,5 @@ checked on every test run. The user asked for them to go, as Kotlin's did.
 - `rerail-rr-parser`: the whole library;
 - `rerail-c-directives`: the whole library;
 - `rerail-parser-tests`: `rr_tests`, `aot_tests` (each set), and JSON's quick tests;
-- `metal_tests::every_grammar_on_metal_equals_the_interpreter`: red, as above (Q188).
+- `metal_tests::every_grammar_on_metal_equals_the_interpreter`: red when this was written, as above; passes since
+  e6be1c0f92.

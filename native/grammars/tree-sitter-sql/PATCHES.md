@@ -60,7 +60,7 @@ external tokens out of the states that end a statement (patch 25): with one ther
 state existed twice and the table did not fit.
 
 The grammar has 985 node kinds (982 symbols and 3 aliases) and 61 field names. Rerail's tapes code a node kind
-in ten bits and a field in six (`native/src/code_rule_dsl/tape.rs`: at most 1024 kinds and 63 fields), so
+in ten bits and a field in six (`native/crates/lang/src/code_rule_dsl/tape.rs`: at most 1024 kinds and 63 fields), so
 patch 103 keeps the count under that: new statement kinds share a node, and hidden rules used in few places
 are inlined (`inline`), which costs no node kind but grows the parse table.
 

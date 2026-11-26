@@ -1,10 +1,9 @@
 # 0436: The preprocessor tape: one parse a file, an evaluator over tapes
 
-Status: decided (user, 2026-11-18: "Would it make more sense to define a preprocessor tape format
-and make a lean and bitlex/metal parser for it? Then we would have two phases, the parser and the
-evaluator, and the evaluator would operate over tapes. Might be much simpler"; "go ahead").
-Replaces 0430 (deleted at the user's direction: no setup in Rust, no array-program format).
-Numbered past the highest number in any worktree (0435).
+Status: built (audited 2026-11-23). Decided (user, 2026-11-18: "Would it make more sense to define a preprocessor tape
+format and make a lean and bitlex/metal parser for it? Then we would have two phases, the parser and the evaluator,
+and the evaluator would operate over tapes. Might be much simpler"; "go ahead"). Replaces 0430 (deleted at the user's
+direction: no setup in Rust, no array-program format). Numbered past the highest number in any worktree (0435).
 
 ## Intro
 

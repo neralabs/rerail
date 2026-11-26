@@ -20,6 +20,9 @@ pub const HEAD16: u32 = 120;
 pub const MAX_NODES: u32 = 1 << 30;
 /// No node.
 pub const NONE: u32 = u32::MAX;
+/// The state's flag: each node is final as it is written (no `retag` or `set_start`), so the frontier is the count
+/// and a block settles once the node after it opens or its last open node closes, as after a commit each node.
+pub const FINAL_AS_WRITTEN: u32 = 4;
 /// Format 16's magic, as a little-endian word.
 pub const MAGIC16: u64 = u64::from_le_bytes(*b"TMPTAPB6");
 
@@ -109,8 +112,10 @@ pub mod part {
     pub const SEEN: u32 = 13;
     pub const CKPT: u32 = 14;
     pub const LZ: u32 = 15;
+    /// The ERROR and MISSING nodes' indices (u32s), each block's listed as it is made final (`presence::faults`).
+    pub const ERRORS: u32 = 16;
     /// How many.
-    pub const COUNT: usize = 16;
+    pub const COUNT: usize = 17;
 }
 
 /// The writer's state, at the start of its region: the document's constants, the writer's variables, its parts.
@@ -133,7 +138,7 @@ pub struct State {
     /// A block's bytes, and where each of its columns starts in it.
     pub stride: u32,
     pub at: [u32; 5],
-    /// 1: a presence a block is kept; 2: the tape is 16z.
+    /// 1: a presence a block is kept; 2: the tape is 16z; 4: each node final as written (`FINAL_AS_WRITTEN`).
     pub flags: u32,
     /// The presence's words of kinds and of fields.
     pub kw: u32,
@@ -182,6 +187,7 @@ pub struct State {
     pub seen: Part,
     pub ckpt: Part,
     pub lz: Part,
+    pub errors: Part,
 }
 
 /// Byte `k`'s offset of `State`'s fields.
@@ -1351,6 +1357,11 @@ mod ops {
         let is_done = w.f.ins().icmp_imm(IntCC::NotEqual, done, 0);
         let short = w.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, n, end);
         let behind = w.f.ins().icmp(IntCC::UnsignedLessThan, frontier, end);
+        // Each node final as written: the frontier is the count.
+        let flags = w.get32(at::FLAGS);
+        let fin = w.f.ins().band_imm(flags, i64::from(FINAL_AS_WRITTEN));
+        let committing = w.f.ins().icmp_imm(IntCC::Equal, fin, 0);
+        let behind = w.f.ins().band(behind, committing);
         let not = w.f.ins().bor(is_done, short);
         let not = w.f.ins().bor(not, behind);
         let z = w.zero32();
@@ -1477,8 +1488,13 @@ mod ops {
                     w.set(kf, x);
                 });
                 let kfv = w.get(kf);
-                let kind = w.f.ins().band_imm(kfv, 0xffff);
+                // A MISSING code's word carries the fault bit (`presence::kind_word`): the presence's bit 0, ERROR's
+                // kind's, set beside its own.
+                let kind = w.f.ins().band_imm(kfv, 0x7fff);
                 let field = w.f.ins().ushr_imm(kfv, 16);
+                let fault = w.f.ins().ushr_imm(kfv, 15);
+                let fault = w.f.ins().band_imm(fault, 1);
+                let fault = w.u64of(fault);
                 let kw64 = w.u64of(kw);
                 let set_bit = |w: &mut W<'_, '_>, base: Value, word0: Value, bit: Value| {
                     let word = w.f.ins().ushr_imm(bit, 6);
@@ -1494,13 +1510,35 @@ mod ops {
                     let x = w.f.ins().bor(x, m);
                     w.st(x, at, 0);
                 };
+                let or_fault = |w: &mut W<'_, '_>, base: Value| {
+                    let x = w.ld(I64, base, 0);
+                    let x = w.f.ins().bor(x, fault);
+                    w.st(x, base, 0);
+                };
                 let z64 = w.c64(0);
                 set_bit(w, pres, z64, kind);
                 set_bit(w, pres, kw64, field);
+                or_fault(w, pres);
                 w.if_(keep, |w| {
                     let z64 = w.c64(0);
                     set_bit(w, mine, z64, kind);
                     set_bit(w, mine, kw64, field);
+                    or_fault(w, mine);
+                });
+                // An ERROR node (its kind 0) or a MISSING one listed in the ERRORS part, beside the fault bit it set.
+                let error = w.f.ins().icmp_imm(IntCC::Equal, kind, 0);
+                let missing = w.f.ins().icmp_imm(IntCC::NotEqual, fault, 0);
+                let listed = w.f.ins().bor(error, missing);
+                w.if_(listed, |w| {
+                    let len = w.part_len(part::ERRORS);
+                    let need = w.f.ins().iadd_imm(len, 4);
+                    w.room(part::ERRORS, need);
+                    let errors = w.part(part::ERRORS);
+                    let at = w.f.ins().iadd(errors, len);
+                    let first = w.f.ins().imul_imm(b, i64::from(Z));
+                    let node = w.f.ins().iadd(first, j);
+                    w.st(node, at, 0);
+                    w.set_part_len(part::ERRORS, need);
                 });
                 let j1 = w.f.ins().iadd_imm(j, 1);
                 w.set(jv, j1);
@@ -1684,10 +1722,13 @@ mod ops {
         w.f.ins().return_(&[z]);
     }
 
-    /// Fails unless node `i` is written and its block not final.
+    /// Fails unless node `i` is written, its block not final, and nodes are not final as written.
     fn changeable(w: &mut W<'_, '_>, i: Value) {
         let n = w.get32(at::N);
         let written = w.f.ins().icmp(IntCC::UnsignedLessThan, i, n);
+        let flags = w.get32(at::FLAGS);
+        let direct = w.f.ins().band_imm(flags, i64::from(FINAL_AS_WRITTEN));
+        let direct = w.f.ins().icmp_imm(IntCC::NotEqual, direct, 0);
         w.if_else(
             written,
             |w| {
@@ -1695,6 +1736,7 @@ mod ops {
                 let e = w.entry(b);
                 let done = w.ld(I32, e, 8);
                 let fin = w.f.ins().icmp_imm(IntCC::NotEqual, done, 0);
+                let fin = w.f.ins().bor(fin, direct);
                 w.fail_if(fin, fail::FINAL, i);
             },
             |w| w.fail(fail::FINAL, i),
@@ -3329,6 +3371,7 @@ mod ukl_header {
             ("HEAD16", HEAD16.into()),
             ("MAX_NODES", MAX_NODES.into()),
             ("NONE", NONE.into()),
+            ("FINAL_AS_WRITTEN", FINAL_AS_WRITTEN.into()),
             ("MAGIC16", MAGIC16),
             ("MAGIC16Z", MAGIC16Z),
             ("OPEN", OPEN.into()),
@@ -3367,6 +3410,7 @@ mod ukl_header {
             ("PART_SEEN", part::SEEN.into()),
             ("PART_CKPT", part::CKPT.into()),
             ("PART_LZ", part::LZ.into()),
+            ("PART_ERRORS", part::ERRORS.into()),
             ("AT_ESC", off(at::ESC)),
             ("AT_SOURCE_LEN", off(at::SOURCE_LEN)),
             ("AT_PREV_START", off(at::PREV_START)),

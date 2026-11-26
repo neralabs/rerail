@@ -44,6 +44,7 @@ Packs that port a linter are [linter-equivalent](#linter-equivalent) to it.
 | Node.js | framework | eslint-plugin-n 18.4.1 | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | eslint-plugin-vue 10.11.1 | 23 (21) | `*.vue` files |
 | React | framework | eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1 | 51 (32) | a `react` dependency, or `*.jsx` files |
+| Django | framework | none: Rerail's own rules | 27 (25) | a `django` dependency in `requirements*.txt` or `pyproject.toml`, or a `manage.py` |
 
 - **A project's own pack** is a `repository` pack you install from its folder with `rerail packs add <folder>`. It counts as a third party's pack.
 - **Starting values** are a pack's `mode` and `on`: what its rules start with in a repository that adds it. Repository or checkout settings override them.
@@ -58,7 +59,7 @@ A project's own pack holds rule documents in `rules/` and a `pack.json` whose ma
 Starting values also apply to rules a later upgrade adds.
 
 - **Mode:** the rule document's (`steer`), unless `pack.json` sets one. A port of a rule upstream only warns about is listed with `"mode": "log"` ([pack format](pack-format.md#packjson)).
-- **On:** a ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it. Such a rule is experimental, listed with `"on": false`. A reviewer also holds a rule off when its steer would do harm where no matcher change can tell the cases apart: `"on": false` with `heldOff`, one line saying why (Python's B009 and B010; the pack's README says more). Set-up then turns rules on or off to match the repository's own lint config ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)), except that it never turns a held-off rule on ([pack format](pack-format.md#packjson)).
+- **On:** a ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it. Such a rule is experimental, listed with `"on": false`. A reviewer also holds a rule off when its steer would do harm where no matcher change can tell the cases apart: `"on": false` with `heldOff`, one line saying why (Python's B009 and B010; the pack's README says more). Set-up then turns rules on or off to match the repository's own lint config ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)), except that it never turns a held-off rule on ([pack format](pack-format.md#packjson)). A rule of Rerail's own, with no upstream, starts on only when at least 90% of its read matches on the pack's corpus were real; below that it ships with `"on": false` (Django's get-handler-writes and host-header-without-get-host).
 - **Suppressions:** a rule honours its linter's suppression comments only if its document says so (`suppress`) and the repository's `suppressions` setting for it is `honour` ([rule scoping](rule-scoping.md#rules-attachments-and-settings)). The pack's `honourSuppressionComments` is the starting value.
 
 </details>
@@ -106,7 +107,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 <details>
 <summary>Each step in detail</summary>
 
-1. **Fetch.** Set-up fetches every listed pack under the update channel's npm dist-tag: `latest` by default, where each pack version is published ([pack format](pack-format.md#release)), or `next` for a pack with no `latest`. They land in a staging folder under `$RERAIL_HOME/packs/staging`, which installs nothing and is removed once read. Each is checked as the [catalog](#catalog-checks) does.
+1. **Fetch.** Set-up fetches every listed pack under the update channel's npm dist-tag: `latest` by default, where each pack version goes once it is promoted ([pack format](pack-format.md#release)), or `next`, where it is published first, for a pack with no `latest`. They land in a staging folder under `$RERAIL_HOME/packs/staging`, which installs nothing and is removed once read. Each is checked as the [catalog](#catalog-checks) does.
 2. **Keep newer versions.** A pack installed at a newer version than the tag's (`rerail packs add typescript@next`) is offered at that version. If it does not load (its core range, after setting up an older core again, say), set-up names it as unusable, with why, and does not offer it. The same goes for the tag's own version: when it does not load, because it is for a newer Rerail say, set-up names it with why and offers the version installed in its place, when that is another version and it loads. With none installed, the pack is not offered. An answer naming an older version than the installed one is refused; `rerail packs add` downgrades.
 3. **Ask.** Set-up lists each fitting pack with its rule count and why it fits, and the rules the repository's lint config turns on, turns off or configures. It warns when a yes replaces an installed version, which every repository on the computer runs. A fitting pack with no rule that starts on is named as having no rules yet, as is every such pack under "Skip, I'll pick packs". When no pack fits, it counts the files it scanned by ending, names the folders it did not scan, names up to two packs whose excludes left out every file they look for, with those excludes, and says what each pack looks for.
 4. **Install only what the answer carries.**
@@ -123,6 +124,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 - **`list`**: installed packs with versions, and any left out, with why.
 - **`add <id[@version]> …`**: installs a Rerail pack by id, or any pack by package name.
 - **`remove <id | package> …`**: uninstalls a package by name, or every installed package holding a pack id.
+- **`update`**: moves each installed pack to the newest version the active core accepts; `rerail update` ends with it.
 - **`recommend [--repo <dir>]`**: runs set-up's discovery and prints what fits, or why nothing does; installs nothing.
 - **`calibrate [--repo <dir>] [--dry-run] [--json]`**: reads the repository's lint config again and updates the settings it gave the repository's packs, keeping yours ([calibrate later](rule-scoping.md#calibrate-later)).
 
@@ -131,7 +133,8 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 
 - **`list`** names Rerail's packs by id and a third party's by package name.
 - **`add`** takes ids or package names (`@neralabs/rerail-pack-typescript`, `@acme/rerail-pack-sql`, `rerail-pack-lint`). It takes a version, range, dist-tag, or an existing tarball or folder; it refuses npm options, `npm:` aliases, git and URL specs. If a pack it installed is left out, or another stops loading, it puts the change back and fails with why.
-- **Updating a pack.** A pack is pinned to the version installed, so `add <id>` with no version leaves an installed pack where it is. Name the version (`add typescript@0.1.6`) or the tag (`add typescript@latest`); `rerail update` prints the command with the versions.
+- **Updating a pack.** A pack is pinned to the version installed, so `add <id>` with no version leaves an installed pack where it is. `update` moves every pack; to move one, name the version (`add typescript@0.1.6`) or the tag (`add typescript@latest`).
+- **`update`** takes each pack npm installed up to the version under the update channel's tag, or `next`'s for a pack the channel has no version of, and installs the newest version in between whose core range takes the active core: a newest version made for a later core gives way to an older one that fits. A prerelease counts only when the tag's version is one. It never moves a pack to an older version (one installed from `next`, say), and leaves one from a folder or tarball alone. Each pack installs and is checked on its own: one that fails or does not load is put back alone, the others still move, and the command exits 1, naming why. A third party's new version runs in Log until you approve it. A pack npm cannot be asked about gets a `warning:` line.
 - **`remove`** refuses to remove, by name, the package holding an id (the one loading under it, or Rerail's own) while another holder stays. Repositories adding the id would then run the other.
 
 </details>
@@ -143,9 +146,9 @@ Pack changes run one at a time, a running daemon picks them up without a restart
 <details>
 <summary>Lock, reload and core-range details</summary>
 
-- **Lock.** Set-up's install, `rerail packs add` and `remove` hold `$RERAIL_HOME/locks/packs.lock`. Others wait up to five minutes; the lock is free the moment the process holding it ends.
+- **Lock.** Set-up's install, `rerail packs add`, `remove` and `update` hold `$RERAIL_HOME/locks/packs.lock`. Others wait up to five minutes; the lock is free the moment the process holding it ends.
 - **Reload.** A running daemon re-reads the catalog at once after an install, removal or active-core change (`rerail update`), and rebuilds every checkout's rules and the dashboard's activity. Edits inside a folder-linked pack are seen only when its `pack.json` or `package.json` changes.
-- **Core range.** `peerDependencies["@neralabs/rerail"]` names the core versions a pack fits. Rerail's own packs name the oldest and no newest (`>=0.1.0-0`, or the release a pack first needs: `>=0.1.5-0` for `python` and `complexity`), so a newer core never leaves one out by its range; a third party's pack may name a newest too. When `rerail update` activates a core outside an installed pack's range, it names the pack and range. Repositories adding it run none of its rules until a fitting version is installed (`rerail packs add <package>@<version>`; `rerail update` ends by listing the newer versions that fit).
+- **Core range.** `peerDependencies["@neralabs/rerail"]` names the core versions a pack fits. Rerail's own packs published since 17 November 2026 name the oldest and no newest (`>=0.1.0-0`, or `>=<release>-0` when a pack ships something only that core release and newer can read), so a newer core never leaves one out by its range. Versions published before then name `<0.2.0` as their newest, so Rerail 0.2.0 and later leave them out until a newer version is installed (`rerail packs add <id>@latest`). A third party's pack may name a newest too. When `rerail update` activates a core outside an installed pack's range, it names the pack and range. Repositories adding it run none of its rules until a fitting version is installed, which `rerail update` does next when npm has one (`rerail packs update`).
 
 </details>
 
@@ -156,7 +159,7 @@ The catalog checks each installed pack on its own. A failing pack is left out an
 A pack must pass:
 
 1. **Package:** `package.json` is a pack's, named for its `pack.json` `id` and installed under that name.
-2. **`pack.json`:** valid, and every listed document exists.
+2. **`pack.json`:** valid, and every listed document exists. A rule written in `.rerail` is one the engine reads and checks.
 3. **Core range:** includes the active Rerail's version.
 4. **Compilation:** every code rule compiles, or is refused only for reading a token a tape may leave out.
 5. **No clash:** no other loading pack has its pack id or one of its rules.
@@ -167,9 +170,9 @@ A pack must pass:
 The catalog reads only packs the packs folder's `package.json` lists as its own dependencies. A pack npm installed only as another package's dependency is never read. It is reported as left out, saying it is not in that `package.json`, with `rerail packs add <package>` as the fix. If that `package.json` is missing or unreadable, every pack on disk is reported that way, with why, not as no packs.
 
 1. **Package.** `package.json` matches `rulePackPackageSchema`, named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`. So `@neralabs/rerail-pack-foo` in a `rerail-pack-foo` folder is left out (`it is installed as rerail-pack-foo, but its package.json names @neralabs/rerail-pack-foo`): no package borrows Rerail's publisher.
-2. **`pack.json`.** Valid (`rulePackFileSchema`, `match` included); every listed document carries the listed id. A rule document the schema refuses is named with its first issue (`Rule pack complexity: rules/<rule>.json clauses.0.forbid.ast.language Invalid option: …`).
+2. **`pack.json`.** Valid (`rulePackFileSchema`, `match` included); every listed document carries the listed id. A rule document the schema refuses is named with its first issue (`Rule pack complexity: rules/<rule>.json clauses.0.forbid.ast.language Invalid option: …`). Core asks the engine to read each `.rerail` document, with every file it includes, in a short-lived process that runs nothing; one it refuses leaves the pack out with the engine's words (`Rule pack django lists <rule>, whose document rules/<rule>.rerail the engine refuses: …`), as does one on Block, one that reads tool calls, or one whose findings carry a fix, none of which a pack's `.rerail` rule may do yet. The engine's reading of each file is kept beside the compile verdicts, by the bytes of the file and of every file it includes, so an unchanged pack starts no process.
 3. **Core range.** Prereleases included. It is the reason given whenever it leaves this Rerail out, also for a pack whose `pack.json` or rule documents this Rerail cannot read: a pack made for a newer Rerail holds what an older one does not know, and `it needs a newer Rerail (>=0.1.5-0) than this one (0.1.4)` says what to do where the refusal of an unknown field or language would not.
-4. **Compilation.** One refused only as `language-not-supported` loads, inactive until the engine reads its language. One refused for reading a token a tape may leave out (`a token test reads a token the tape may leave out`) is a form older packs were written in, which this engine no longer answers: the pack loads, and that rule alone is skipped where a repository runs it and reported, with the engine's reason, as any rule that fails to compile when it loads. A newer version of the pack runs it again. Any other refusal leaves the pack out.
+4. **Compilation.** One refused only as `language-not-supported` loads, inactive until the engine reads its language. One refused for reading a token a tape may leave out (`a token test reads a token the tape may leave out`) is a form older packs were written in, which this engine no longer answers: the pack loads, and that rule alone never runs. It keeps its settings and is shown as not running wherever rules are shown (`inactive` with code `reads-left-out-token` in the API, the dashboard's Not running, `rerail packs list` and `rerail rules show`), it is left out of every rule count, and set-up and the refresh that ends `rerail update` name the packs that have such rules. It is not a failed audit. A newer version of the pack runs it again. Any other refusal leaves the pack out.
 5. **No clash.** Rerail's own wins (`pack id sql is taken by @neralabs/rerail-pack-sql`); between third parties, the first by package name. Install location never decides. While Rerail's own pack for an id is installed but left out (by its core range, say), the other is left out too (`pack id sql is kept for @neralabs/rerail-pack-sql, which is installed but left out`). Repositories adding the id run nothing until Rerail's loads.
 
 Reasons are written for the person reading set-up, `rerail packs list` or `rerail update`:
@@ -210,7 +213,7 @@ It must be named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` (`<id>` from 
 - **Warning.** `rerail packs add`, and set-up before its question, say Rerail has not reviewed the pack, that its rules run in Log until a person approves this version, and that their steer text then reaches the coding agent.
 - **Approval.** Approve with `rerail rules approve <package>` or Approve on the pack's dashboard sheet. Each new version waits again. Rerail's own packs from npm need none.
 - **Clashes.** Pack and rule ids are not namespaced; repositories add packs by id. A third party's pack sharing a pack id or rule id with Rerail's is left out with why, and `rerail packs add` puts it back and fails.
-- **Set-up and updates.** Set-up fetches only Rerail's packs, but offers an installed third party's pack wherever it fits; `--packs` names it by package name (`@acme/rerail-pack-sql@1.0.0`). `rerail update` installs no pack: it ends by listing each installed pack with a newer version on its channel (or on `next`, for a pack the channel has no version of) that fits the active core, a third party's marked as waiting for approval again, and the `rerail packs add <id>@<version>` command that installs them. A pack from a folder or tarball is not listed, and one installed newer than the channel's (from `next`) is never offered an older version.
+- **Set-up and updates.** Set-up fetches only Rerail's packs, but offers an installed third party's pack wherever it fits; `--packs` names it by package name (`@acme/rerail-pack-sql@1.0.0`). `rerail update` ends by updating each installed pack, a third party's included, to the newest version on its channel (or on `next`, for a pack the channel has no version of) that fits the active core (`rerail packs update`). A third party's new version is marked as waiting for approval, and runs in Log until you approve it. A pack from a folder or tarball is left alone, and one installed newer than the channel's (from `next`) is never moved to an older version.
 
 </details>
 
@@ -218,7 +221,7 @@ It must be named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` (`<id>` from 
 
 A checkout can carry its own rules in `<checkout>/.rerail/rules/`, with no pack, install or attachment.
 
-Each `.json` rule document directly in that folder is one rule. Rerail reads the folder as pack `worktree`, for that checkout only. Each rule runs in Log until a person approves it (`rerail rules approve <id>`, in the checkout).
+Each `.json` rule document directly in that folder is one rule. Rerail reads the folder as pack `worktree`, for that checkout only. Each rule runs in Log until a person approves it (`rerail rules approve <id>`, in the checkout). A `.rerail` file there is left out, with why: a rule written in `.rerail` runs only from a rule pack for now.
 
 <details>
 <summary>What it reads, settings, edits and file checks</summary>
@@ -285,7 +288,7 @@ Core reads each installed pack's `pack.json` and listed documents into memory, r
 
 ## Format
 
-A pack is `packs/<id>/pack.json`, in the `rerail.rule-pack/v1` format, beside the rule documents it lists in `packs/<id>/rules/`.
+A pack is `packs/<id>/pack.json`, in the `rerail.rule-pack/v1` format, beside the rule documents it lists in `packs/<id>/rules/`. A rule document is a JSON document or a `.rerail` file ([Rules written in .rerail](pack-format.md#rules-written-in-rerail)), which takes no options and runs through the `.rerail` runner.
 
 Every `pack.json` field, with an example, is in [pack-format.md, "pack.json"](pack-format.md#packjson); what every pack must prove is its [validation contract](pack-format.md#the-validation-contract).
 

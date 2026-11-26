@@ -1,6 +1,6 @@
 # 0038: Rule bodies are simplified, plans are reused across chunks, and nearest ancestors are found by pointer jumping
 
-Status: accepted and built (2026-11-05, the user; list step 30)
+Status: built (audited 2026-11-23). Accepted and built (2026-11-05, the user; list step 30)
 
 ## Intro
 
@@ -43,7 +43,7 @@ The GPU cost is the algorithm. `nearest_costs_by_solver` (an ignored test in
 
 ## What the prior work says
 
-- **Planning is a first-class cost.** The AST-index spike's history index, lesson 8: planning was
+- **Planning is a first-class cost.** The SQL index prototype's history index, lesson 8: planning was
   39% of a batch (S220), and round trips went from 1,084 to 1 (S150). Our 61 of 75 s is the same
   illness.
 - **Sharing between equivalent rules is worth a lot; between different ones, little.** History

@@ -1,6 +1,6 @@
 # 0594: A kept fill's value is made in the rows that read it
 
-Status: decided (the user, 2026-11-21: "please address these": the second). Follows 0593, 0586 (the type after
+Status: decided (the user, 2026-11-21: "please address these": the second). Follows 0593, 0609 (the type after
 `as` a kept fill) and 0564 (the loop keeps the semicolon's fills).
 
 ## Intro

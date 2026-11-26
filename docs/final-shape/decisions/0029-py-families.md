@@ -1,6 +1,6 @@
 # 0029: the `py.*` fact families
 
-Status: accepted (2026-11-03, list step 25)
+Status: built (audited 2026-11-23). Accepted (2026-11-03, list step 25)
 
 ## Context
 
@@ -25,7 +25,7 @@ rules:
 
 ## Prior work consulted
 
-- **ast-index-spike** (`prior-work/ast-index-spike-design-index.md`):
+- **SQL index prototype** (`prior-work/sql-index-prototype-design-index.md`):
   - §17: cross-file semantic resolution is out of the syntax layer; "semantic edges are a separate
     layer keyed by symbols" (D S020 L2049-2058). A semantic-fact channel `t_fact(fid, pre, fkey,
     fval)` is "sought like vidx" (D S079), and a fact-anchored query seeds from it (D S099

@@ -69,6 +69,13 @@ describe("Cursor plugin contract", () => {
     }
   });
 
+  // A shell write in another worktree is the session's own only when its call ran there (#535).
+  it("keeps the folder a tool call ran in where the hook names one, and none where only the workspace root says", () => {
+    const call = { conversation_id: "c", generation_id: "g", hook_event_name: "preToolUse", tool_use_id: "t", tool_name: "Shell", tool_input: {} };
+    expect(cursorHookEvent({ ...call, cwd: "/repo/w", workspace_roots: ["/repo"] })).toMatchObject({ kind: "call", cwd: "/repo/w" });
+    expect(cursorHookEvent({ ...call, workspace_roots: ["/repo"] })).not.toHaveProperty("cwd");
+  });
+
   it("normalizes documented Cursor hook payloads and supported delivery outputs", () => {
     const common = {
       conversation_id: "cursor-session",
@@ -120,6 +127,22 @@ describe("Cursor plugin contract", () => {
     expect(cursorHookOutput("postToolUse", [{ ...delivery, requested: "block" }])).toEqual({ additional_context: "Preserve the session." });
     expect(cursorHookOutput("stop", [delivery])).toEqual({ followup_message: "Preserve the session." });
     expect(cursorHookOutput("stop", [])).toEqual({});
+  });
+
+  it("asks the agent to relay a titled rule's line by its title, as inline code, beside a block that names its id", () => {
+    const output = cursorHookOutput("postToolUse", [{
+      sessionId: "cursor-session",
+      requested: "steer",
+      mechanism: "deferred-context",
+      content: "Rerail found 1 problem in your last edit:\n- a.ts:1:1 — Take this shadow off. [local:no-shadows]",
+      ruleIds: ["local:no-shadows"],
+      rules: [{ id: "local:no-shadows", title: "No shadows, see http://example.com", state: "steered", url: "http://127.0.0.1:4737/#rule/local%3Ano-shadows" }],
+    }]);
+    expect(output).toEqual({
+      additional_context: "Rerail found 1 problem in your last edit:\n- a.ts:1:1 — Take this shadow off. [local:no-shadows]\n\n"
+        + "Cursor shows the user none of this. Begin your next reply with these lines, exactly as written:\n"
+        + "`◆ Rerail · No shadows, see http://example.com  steered`  ·  [why?](http://127.0.0.1:4737/#rule/local%3Ano-shadows)",
+    });
   });
 
   it("reads a workspace on Windows as a native path, in every form Cursor may send it", () => {
@@ -242,7 +265,7 @@ describe("Cursor plugin contract", () => {
     expect(followUp.followup_message).toContain("- a.ts:2:7 — Do not write bad. [test:no-bad]");
     // The person sees none of a hook's text in Cursor, so the agent is asked to relay the rule's line (with no dashboard
     // running here, the rule stays unlinked and the line carries no link).
-    expect(followUp.followup_message).toContain("Begin your next reply with these lines, exactly as written:\n◆ Rerail · test:no-bad  steered");
+    expect(followUp.followup_message).toContain("Begin your next reply with these lines, exactly as written:\n`◆ Rerail · test:no-bad  steered`");
     // Carried once.
     expect(await handleCursorEvent({ ...common, loop_count: 1 }, scriptedLoop({}), storage)).toEqual({});
 

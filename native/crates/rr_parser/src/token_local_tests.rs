@@ -2,7 +2,7 @@
 //! censuses run by hand, of tier 1's operations by their facts and of its values' sparsity
 //! (docs/parser-generators/25-token-local-work.md §5, 26 §1).
 
-use rerail_compiler::bitlex_masks::Named;
+use rerail_bitlex::bitlex_masks::Named;
 use rerail_compiler::token_local;
 
 /// Every claim on the `.rerail` grammar's tier 1 holds on its corpus (a sample of files, every
@@ -141,7 +141,7 @@ fn rr_totals() {
     let labels: Vec<String> = c.labels.iter().map(|(l, k)| format!("{l}@{k}")).collect();
     eprintln!("outputs {} delays {:?}\ntotals {:?} extracts {:?} masks {:?} delay {}\nlabels {labels:?}", b.outputs.len(), b.output_delays, b.total_outputs(), b.extract_outputs(), b.mask_outputs(), b.delay);
     // Tier 1's passes' machine code: instructions, memory loads and stores, stack ones.
-    let compiled = rerail_compiler::native_cpu_block::compile(&c.native).expect("compiles");
+    let compiled = rerail_cpu_block::native_cpu_block::compile(&c.native).expect("compiles");
     let code = compiled.loops_disassembly();
     let lines: Vec<&str> = code.lines().map(str::trim).filter(|l| !l.is_empty() && !l.ends_with(':')).collect();
     let memory = |l: &str| ["ldr", "str", "ldp", "stp", "ldur", "stur"].iter().any(|m| l.starts_with(m));
@@ -163,12 +163,12 @@ fn rr_sparse_marks_bound() {
     let mb = files.iter().map(|f| f.len()).sum::<usize>() as f64 / 1e6;
     let count = |p: &rerail_compiler::block::BlockProgram| {
         let native = rerail_compiler::block_native::BlockNative::lower(p);
-        let compiled = rerail_compiler::native_cpu_block::compile(&native).expect("compiles");
+        let compiled = rerail_cpu_block::native_cpu_block::compile(&native).expect("compiles");
         let ms = compiled.batch_cpu_seconds(&files, 9) * 1e3;
         eprintln!("  tier 1 alone: {ms:.2} ms CPU over {mb:.2} MB");
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
-            use rerail_metal::block_program::serial::{Segments, run_serial_split};
+            use rerail_metal_programs::block_program::serial::{Segments, run_serial_split};
             let batch: Vec<rerail_compiler::block::BatchFile<'_>> = files.iter().map(|&bytes| rerail_compiler::block::BatchFile { bytes, program: 0 }).collect();
             let gpu = (0..5).map(|_| run_serial_split(&[&native], &batch, Segments { blocks: 29, warm: 1 }).expect("runs").run.seconds).fold(f64::MAX, f64::min);
             eprintln!("  tier 1 on Metal: {:.2} ms GPU", gpu * 1e3);
@@ -179,7 +179,7 @@ fn rr_sparse_marks_bound() {
         let stack = lines.iter().filter(|l| memory(l) && l.contains("[sp")).count();
         (lines.len(), lines.iter().filter(|l| memory(l)).count() - stack, stack)
     };
-    let sparse = ["options_on", "over_on", "no_value", "one_name", "fix_on", "empty_parens", "suppress_on"];
+    let sparse = ["options_on", "over_on", "one_name", "fix_on", "suppress_on"];
     let ops: Vec<u16> = c.values.iter().filter(|v| sparse.iter().any(|s| v.name == format!("mark {s}"))).map(|v| v.op).collect();
     // The marks' masks are `starts & (m | prev(fill(..)))` of these: the outputs the masks name.
     let mut p = c.block.clone();

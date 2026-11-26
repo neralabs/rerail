@@ -67,25 +67,24 @@ pub fn placement<'a>(
     let codes = lang.table().len();
     let table = Table { key: u32::from(rerail_tape_format::f16::Lang::revision(lang)) << 8, len: 24 * codes };
     let bytes = document_bytes(tape_len, source_len);
-    let place = move |slab: &Arc<crate::slabs::Slab>, offset: usize, table_at: Option<TableAt>| -> Result<Placed, Error> {
+    let place = move |slab: &Arc<crate::slabs::Slab>, offset: usize, table_at: TableAt| -> Result<Placed, Error> {
         let base = slab.host();
         let source_at = offset + crate::slabs::aligned(tape_len);
         // SAFETY: `insert` gave `offset..offset + bytes` of the slab to this document alone.
         let (tape, source) = unsafe { (std::slice::from_raw_parts_mut(base.add(offset), tape_len), std::slice::from_raw_parts_mut(base.add(source_at), source_len)) };
         write(tape, source);
-        let p = rerail_tape_format::f16::placement(tape).map_err(|_| Error::BackendFailure)?;
-        let placed = p.view(lang, 0).map_err(|_| Error::BackendFailure)?;
-        let table_at = table_at.ok_or(Error::BackendFailure)?;
+        let p = rerail_tape_format::f16::placement(tape).map_err(|_| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
+        let placed = p.view(lang, 0).map_err(|_| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
         let new_table = (!table_at.held).then(|| {
             let mut t = vec![0u8; 24 * codes];
-            for (n, e) in lang.table().entries().iter().enumerate() {
+            for (n, e) in lang.table().entries().enumerate() {
                 // `DeviceCode`: kind, field (u16s), flags, class count, then room for its classes.
                 t[24 * n..24 * n + 2].copy_from_slice(&e.kind.to_le_bytes()); // copy: not block data
                 t[24 * n + 2..24 * n + 4].copy_from_slice(&e.field.to_le_bytes()); // copy: not block data
             }
             t
         });
-        let count = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
+        let count = |n: usize| u32::try_from(n).map_err(|_| crate::pp_arena::capacity(concat!(file!(), ":", line!())));
         let view = DocView {
             at: count(offset)?,
             nodes: count(p.n)?,
@@ -108,16 +107,17 @@ pub fn placement<'a>(
         let document = Resident {
             digest,
             slab: Arc::clone(slab),
+            source: None,
             view,
             at: offset,
             len: bytes,
             bytes: [crate::slabs::aligned(tape_len), crate::slabs::aligned(source_len + crate::slabs::SOURCE_MARGIN), 0],
             tape_length: tape_len,
-            table: Some(table),
+            table,
         };
         Ok(Placed { document, table: new_table })
     };
-    (digest, bytes, Some(table), Box::new(place))
+    (digest, bytes, table, Box::new(place))
 }
 
 impl Unit {
@@ -126,6 +126,18 @@ impl Unit {
     /// addresses reads a unit in one slab only.
     pub fn of(documents: Vec<Arc<Resident>>) -> Result<Unit, Error> {
         let block = documents.first().map(|d| Arc::clone(&d.slab));
+        Unit::from_slab(documents, block)
+    }
+
+    /// The unit's documents read from `base`'s first slab, the one a batch's command binds (a batch's unit,
+    /// `pp_expand::expand_batch`): refused (`BackendCapacity`) where a device with no buffer addresses has them in
+    /// another.
+    pub fn rebased(&self, base: &Unit) -> Result<Unit, Error> {
+        Unit::from_slab(self.documents.clone(), base.documents.first().map(|d| Arc::clone(&d.slab)))
+    }
+
+    /// `of`, each view's offset counting from `block`.
+    fn from_slab(documents: Vec<Arc<Resident>>, block: Option<Arc<crate::slabs::Slab>>) -> Result<Unit, Error> {
         let base = block.as_ref().map(|b| b.device_buffer().device_address());
         let mut slabs: Vec<Arc<crate::slabs::Slab>> = Vec::new();
         let mut views = Vec::with_capacity(documents.len());
@@ -133,7 +145,7 @@ impl Unit {
             let mut view = d.view;
             if block.as_ref().is_some_and(|b| b.id != d.slab.id) {
                 let (Some(Some(base)), Some(at)) = (base, d.slab.device_buffer().device_address()) else {
-                    return Err(Error::BackendCapacity);
+                    return Err(crate::pp_arena::capacity(concat!(file!(), ":", line!())));
                 };
                 view.set_offset((at as i64).wrapping_sub(base as i64).wrapping_add(i64::from(d.view.at)));
                 if !slabs.iter().any(|s| s.id == d.slab.id) {
@@ -202,15 +214,18 @@ pub struct PpDir {
     pub chain: u32,
 }
 
-/// The front passes' stores, and the grid's own: its control words (`GRID`: the barrier's and
-/// the expansion's stage), the groups' sums its scans share (`SUMS`), and the run's layout.
+/// The front passes' stores, and the program's own: its words (`PROG`: its phase, its tiles, the locals that cross
+/// its phases, its trace; `pp_grid.uglykl`'s `PR_*`), the tiles' sums its scans and sorts share (`SUMS`), the run's
+/// layout, its tiles a phase at most (`TMAX`), and a queue for a run of it alone (`on_program`).
 pub struct Front {
     n: usize,
     nodes: bool,
     /// The unit's views (`PpFile`s), in the arena.
     pub files: Buf,
-    pub grid: Buf,
+    pub prog: Buf,
     sums: Buf,
+    pub tiles: u32,
+    pub queue: Queue,
     pub lay: Buf,
     pub bases: Buf,
     pub dir_bases: Buf,
@@ -256,7 +271,7 @@ pub struct Front {
     dir_scan: Scan,
 }
 
-/// The stages a run of `pp_setup` ends after (`LAST`): the front, the definitions, or the whole
+/// The stages a unit's program ends after (`LAST`): the front, the definitions, or the whole
 /// setup with P1's iterations and the text inside them (`TO_VIS`), the check after it (`TO_ALL`).
 pub const TO_FRONT: u32 = 1;
 pub const TO_DEFS: u32 = 2;
@@ -264,8 +279,9 @@ pub const TO_VIS: u32 = 3;
 pub const TO_ALL: u32 = 4;
 
 impl Front {
-    /// `groups`: the grid's groups (the scans' and sorts' sums are four words a group).
-    pub fn new(arena: &Arena, unit: &Unit, nodes: bool, groups: u64) -> Result<Front, Error> {
+    /// Its tiles a phase at most from its nodes (`pp_arena::tiles_for`; a run's `TMAX` may be more, for its
+    /// expansion's tokens).
+    pub fn new(arena: &Arena, unit: &Unit, nodes: bool) -> Result<Front, Error> {
         let n = unit.len();
         let per_file = || arena.zeroed::<u32>(n);
         let per_node = || arena.zeroed::<u32>(unit.node_bound);
@@ -284,8 +300,10 @@ impl Front {
             n,
             nodes,
             files: arena.from_slice(&unit.views)?,
-            grid: arena.zeroed::<u32>(8)?,
-            sums: arena.zeroed::<u32>(4 * groups as usize + 4)?,
+            prog: arena.from_slice(&prog_start())?,
+            sums: arena.zeroed::<u32>(4 * crate::pp_arena::TILES_MOST as usize + 4)?,
+            tiles: crate::pp_arena::tiles_for(unit.node_bound),
+            queue: Queue::new(arena, &[crate::pp_arena::TILES_MOST])?,
             lay: arena.zeroed::<u32>(crate::pp_arena::SLOTS.len())?,
             bases: arena.from_slice(&bases)?,
             dir_bases: per_file()?,
@@ -329,7 +347,7 @@ impl Front {
 
     /// The front's slots of the layout, and the run's words: the stage it ends after.
     pub fn lay(&self, l: &mut Lay, last: u32) {
-        l.at("GRID", &self.grid).at("SUMS", &self.sums).at("FILES", &self.files).at("BASES", &self.bases);
+        l.at("PROG", &self.prog).at("SUMS", &self.sums).at("FILES", &self.files).at("BASES", &self.bases);
         l.at("TOTAL", &self.scan.total).at("DIR_BASES", &self.dir_bases).at("DIR_TOTAL", &self.dir_scan.total);
         l.at("DFLAG", &self.dflag).at("GFLAG", &self.gflag).at("AFLAG", &self.aflag).at("DEV", &self.dev).at("DRANK", &self.drank);
         l.at("GRANK", &self.grank).at("ARANK", &self.arank).at("NDEPTH", &self.depth).at("DEV_TOTAL", &self.dev_scan.total);
@@ -341,7 +359,10 @@ impl Front {
         l.at("TTOTAL", &self.tscan.total).at("TEXT_NODES", &self.text_nodes);
         l.at("DIR_GROUPS", &self.groups).at("GUARDED", &self.guarded).at("GUARDS", &self.guards).at("BAD", &self.bad).at("KEYS", &self.keys);
         l.at("NODES_OUT", &self.out).at("ROWS", &self.rows).at("DIR_KEYS", &self.dir_keys).at("DIR_ACTS", &self.dir_acts);
-        l.word("N_FILES", self.n as u32).word("NODES_FLAG", u32::from(self.nodes)).word("LAST", last);
+        l.word("N_FILES", self.n as u32).word("NODES_FLAG", u32::from(self.nodes)).word("LAST", last).word("TMAX", self.tiles);
+        if std::env::var_os("RERAIL_PP_TRACE").is_some() {
+            l.word("STOP", u32::MAX);
+        }
     }
 
     /// The slab of the unit's documents, as a pass binds it (the views' store where the unit
@@ -363,15 +384,25 @@ impl Front {
         &self.dir_scan.total
     }
 
-    /// Whether the run's grid failed a barrier (after it).
-    pub fn barrier_failed(&self) -> bool {
-        // SAFETY: the device finished writing the grid's words.
-        unsafe { *self.grid.host().cast::<u32>().add(2) != 0 }
+    /// The program's words (after a run).
+    fn prog_words(&self) -> &[u32] {
+        // SAFETY: the device finished writing the program's words; the store holds `PR_WORDS`.
+        unsafe { std::slice::from_raw_parts(self.prog.host().cast::<u32>(), PR_WORDS) }
     }
 
-    /// `pp_setup` over the arena, `groups` groups.
-    pub fn setup<'a>(&'a self, enc: &Enc<'a>, arena: &'a Arena, unit: &'a Unit, groups: u64) {
-        enc.run("pp_setup", &[("arena", arena), ("data", self.data(unit)), ("lay", &self.lay)], None, groups);
+    /// Whether the run's program ended (after it).
+    pub fn ended(&self) -> bool {
+        self.prog_words()[PR_END] != 0
+    }
+
+    /// The phases the run's program entered (after it).
+    pub fn phases(&self) -> u32 {
+        self.prog_words()[PR_PHASES]
+    }
+
+    /// The trace a run at `STOP` = `PP_TRACE_ON` wrote (after it): each phase's source line and device clock (ns).
+    pub fn trace(&self) -> Vec<(u32, u64)> {
+        self.prog_words()[PR_TRACE..].chunks(3).take_while(|c| c[0] != 0).map(|c| (c[0], u64::from(c[1]) | (u64::from(c[2]) << 32))).collect()
     }
 
     /// The results, read back for tests (after the command buffer is done).
@@ -380,7 +411,7 @@ impl Front {
         // SAFETY: the device finished writing every buffer; each holds the counts read here.
         unsafe {
             if *self.bad.host().cast::<u32>() != 0 {
-                return Err(Error::BackendFailure);
+                return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
             }
             let total = *self.scan.total.host().cast::<u32>();
             let dir_total = *self.dir_scan.total.host().cast::<u32>() as usize;
@@ -421,49 +452,199 @@ pub fn run_timed_over<'a>(resident: &'a [Arc<crate::slabs::Slab>], f: impl FnOnc
     // another command is refused.
     let records = scope.snapshot();
     if records.iter().any(|r| r.command != records[0].command) {
-        return Err(Error::BackendFailure);
+        return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
     }
     Ok((records.len(), seconds))
 }
 
 /// The front passes over `unit`, read back (`nodes`: each node as the device's reader gives it).
 pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
-    let mut groups = crate::pp_arena::groups();
-    loop {
-        let arena = Arena::new();
-        let front = Front::new(&arena, unit, nodes, groups)?;
-        arena.lease()?;
-        let mut l = Lay::new();
-        front.lay(&mut l, TO_FRONT);
-        if on_grid(&arena, unit, &front, &l, groups)?.is_none() {
-            groups = fewer(groups)?;
-            continue;
+    preempted_again(|| evaluate_once(unit, nodes))
+}
+
+fn evaluate_once(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
+    let arena = Arena::new();
+    let front = Front::new(&arena, unit, nodes)?;
+    arena.lease()?;
+    let mut l = Lay::new();
+    front.lay(&mut l, TO_FRONT);
+    on_unit(&arena, unit, &front, &l)?;
+    front.read()
+}
+
+/// The program's words (`pp_grid.uglykl`'s `PR_*`): its tiles, whether it ended, the phases it entered, and its
+/// trace's first word; the words in all.
+const PR_T: usize = 1;
+const PR_END: usize = 3;
+const PR_PHASES: usize = 7;
+const PR_TRACE: usize = 80;
+const PR_WORDS: usize = PR_TRACE + 3 * TRACE_N;
+
+/// A program's words before it runs: at its first phase, of one tile (the one its queue holds).
+fn prog_start() -> Vec<u32> {
+    let mut w = vec![0u32; PR_WORDS];
+    w[PR_T] = 1;
+    w
+}
+
+/// A batch's queue (`pp_grid.uglykl`'s `pp_run`, decision 0653): its words (`PQ_*`), each unit's layout's offset in
+/// the arena, and the ring's slots (`pp_arena::queue_slots`).
+pub struct Queue {
+    buf: Buf,
+    units: usize,
+    slots: usize,
+}
+
+/// The queue's words (`pp_grid.uglykl`'s `PQ_*`).
+const PQ_END: usize = 1;
+const PQ_CAP: usize = 3;
+const PQ_CTL: usize = 4;
+const PQ_BUDGET: usize = 9;
+const PQ_LAYS: usize = 16;
+/// An item's tile bits (`PP_TILE_BITS`): an item is a unit's index above them.
+const PP_TILE_BITS: u32 = 12;
+
+impl Queue {
+    /// A queue for units of `tiles` tiles a phase at most each.
+    pub fn new(arena: &Arena, tiles: &[u32]) -> Result<Queue, Error> {
+        let slots = crate::pp_arena::queue_slots(tiles);
+        Ok(Queue { buf: arena.zeroed::<u32>(PQ_LAYS + tiles.len() + slots)?, units: tiles.len(), slots })
+    }
+
+    /// Its words for a run of the units laid out at `lays` (after the arena is leased): each unit's first phase's
+    /// one tile queued.
+    fn start(&self, lays: &[u32]) {
+        assert!(lays.len() <= self.units && lays.len() < 1 << (32 - PP_TILE_BITS));
+        let n = lays.len();
+        // SAFETY: the store holds `PQ_LAYS + units + slots` words, and no command reads it yet.
+        let w = unsafe { std::slice::from_raw_parts_mut(self.buf.host().cast::<u32>(), PQ_LAYS + self.units + self.slots) };
+        w.fill(0);
+        w[0] = n as u32;
+        w[PQ_END] = crate::pp_arena::BUDGET;
+        w[PQ_CAP] = self.slots as u32;
+        // Head 0, tail and active the units' first tiles, no overflow, the ring's base 0.
+        w[PQ_CTL + 1] = n as u32;
+        w[PQ_CTL + 2] = n as u32;
+        w[PQ_BUDGET] = crate::pp_arena::BUDGET;
+        w[PQ_LAYS..PQ_LAYS + n].copy_from_slice(lays); // copy: not block data (the units' layouts' offsets)
+        let slots = PQ_LAYS + n;
+        for u in 0..n {
+            w[slots + u] = ((u as u32) << PP_TILE_BITS) + 1;
         }
-        return front.read();
+    }
+
+    /// Whether tiles are queued (after a command).
+    fn left(&self) -> bool {
+        // SAFETY: the device finished writing the queue's words.
+        let w = unsafe { std::slice::from_raw_parts(self.buf.host().cast::<u32>(), PQ_LAYS) };
+        let end = w[PQ_CTL + 4].wrapping_add(self.slots as u32);
+        w[PQ_CTL + 1].min(end) > w[PQ_CTL]
     }
 }
 
-/// Runs the persistent grid over the arena at `groups` groups, laid out as `l`, in one command
-/// buffer: `pp_setup` to the stage `l` names (the text pass is inside its P1 iterations,
-/// decision 0485), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and its GPU time in seconds, or
-/// `None` where a barrier failed (the grid's groups were not resident together).
-pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<Option<(usize, f64)>, Error> {
-    l.write(&front.lay);
-    let all = l.get("LAST") == TO_ALL;
-    let ran = run_timed_over(&unit.slabs, |enc| {
-        front.setup(enc, arena, unit, groups);
-        if all {
-            enc.run("pp_check", &[("arena", arena), ("lay", &front.lay)], None, 1);
-        }
-        Ok(())
-    })?;
-    Ok(if front.barrier_failed() { None } else { Some(ran) })
+/// The commands a batch's programs take at most (`on_program`): each `PP_LAUNCHES` launches of its budget.
+const COMMANDS: usize = 1 << 12;
+
+/// One unit's program over the arena laid out as `l` (`on_program`, its front's queue).
+pub fn on_unit(arena: &Arena, unit: &Unit, front: &Front, l: &Lay) -> Result<(usize, f64), Error> {
+    on_program(arena, &front.queue, &[(front, l)], front.data(unit), &unit.slabs)
 }
 
-/// The groups of the next run after a barrier failed: half, and none past one.
-pub fn fewer(groups: u64) -> Result<u64, Error> {
-    if groups <= 1 { Err(Error::BackendFailure) } else { Ok(groups / 2) }
+/// A batch's units' programs over the arena (decision 0653): each unit's stores laid out as its `Lay` (written into its
+/// front's slots), its setup to the stage its layout names (the text pass is inside its P1 iterations, decision
+/// 0485), on one queue (`queue`, for at least these units), in commands of `PP_LAUNCHES` launches of `pp_run`, a
+/// `pp_rebase` after each, while a program has tiles queued. `data` is the slab the units' views count from,
+/// `resident` their other slabs. The launches of a command, and the commands' GPU time in seconds. R9 of decision
+/// 0448 holds in each command. A program that did not end (its tiles past the ring's room, or the commands') is
+/// refused `X_QUEUE` where it runs to the whole setup, else a failure.
+pub fn on_program<'a>(arena: &'a Arena, queue: &'a Queue, units: &[(&Front, &Lay)], data: &'a dyn crate::pp_arena::Bound, resident: &'a [Arc<crate::slabs::Slab>]) -> Result<(usize, f64), Error> {
+    let mut lays = Vec::with_capacity(units.len());
+    for (front, l) in units {
+        l.write(&front.lay);
+        lays.push(u32::try_from(front.lay.offset()).map_err(|_| crate::pp_arena::capacity(concat!(file!(), ":", line!())))?);
+    }
+    queue.start(&lays);
+    let workers = crate::pp_arena::workers();
+    let (mut launches, mut gpu, mut commands) = (0, 0f64, 0);
+    for _ in 0..COMMANDS {
+        commands += 1;
+        let ran = run_timed_over(resident, |enc| {
+            for _ in 0..crate::pp_arena::PP_LAUNCHES {
+                enc.run("pp_run", &[("arena", arena), ("data", data), ("queue", &queue.buf)], None, workers);
+                enc.run("pp_rebase", &[("queue", &queue.buf)], None, 1);
+            }
+            Ok(())
+        })?;
+        (launches, gpu) = (ran.0, gpu + ran.1);
+        if units.iter().all(|(f, _)| f.ended()) || !queue.left() {
+            break;
+        }
+    }
+    // `RERAIL_PP_PROGRAM`: the commands the programs took, and each one's phases entered.
+    if std::env::var_os("RERAIL_PP_PROGRAM").is_some() {
+        let phases: Vec<String> = units.iter().map(|(f, _)| format!("{}{}", f.phases(), if f.ended() { "" } else { " (not ended)" })).collect();
+        eprintln!("PROGRAM {} units, {commands} commands, gpu {:.1} us; phases {}", units.len(), gpu * 1e6, phases.join(", "));
+    }
+    for (front, l) in units {
+        if front.ended() {
+            continue;
+        }
+        if l.get("LAST") != TO_ALL {
+            return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
+        }
+        // SAFETY: the commands are done; `CTL` holds the refusals' word at 2.
+        unsafe { *arena.host_at(l.get("CTL") as usize).cast::<u32>().add(2) |= crate::pp_expand::X_QUEUE };
+    }
+    if std::env::var_os("RERAIL_PP_TRACE").is_some() && units.len() == 1 && units[0].1.get("STOP") == u32::MAX {
+        report_trace(&units[0].0.trace(), gpu);
+    }
+    Ok((launches, gpu))
 }
+
+/// The trace's entries (`pp_grid.uglykl`'s `PP_TRACE_N`).
+const TRACE_N: usize = 2048;
+
+/// A trace's report: the phases' time by source line (where the device has a clock), most first, and the lines'
+/// text in the evaluator's source.
+pub(crate) fn report_trace(t: &[(u32, u64)], gpu: f64) {
+    let lines: Vec<&str> = crate::pp_arena::source().lines().collect();
+    let text = |l: u32| lines.get(l as usize - 1).map_or("", |s| s.trim()).chars().take(110).collect::<String>();
+    let mut by: std::collections::BTreeMap<u32, (u64, u32)> = Default::default();
+    for w in t.windows(2) {
+        let e = by.entry(w[0].0).or_default();
+        e.0 += w[1].1.saturating_sub(w[0].1);
+        e.1 += 1;
+    }
+    let span = t.last().map_or(0, |l| l.1).saturating_sub(t.first().map_or(0, |f| f.1));
+    eprintln!("TRACE {} phases, gpu {:.1} us, traced span {:.1} us", t.len(), gpu * 1e6, span as f64 / 1e3);
+    let mut v: Vec<_> = by.into_iter().collect();
+    v.sort_by_key(|(_, (ns, _))| std::cmp::Reverse(*ns));
+    for (line, (ns, n)) in v.iter().take(40) {
+        eprintln!("TRACE {:8.1} us {:5.1}% x{n:<4} L{line}: {}", *ns as f64 / 1e3, 100.0 * *ns as f64 / span.max(1) as f64, text(*line));
+    }
+    if std::env::var_os("RERAIL_PP_TRACE_ALL").is_some() {
+        for w in t.windows(2) {
+            eprintln!("TRACESEQ L{} {:.2} us", w[0].0, (w[1].1.saturating_sub(w[0].1)) as f64 / 1e3);
+        }
+    }
+}
+
+/// `run`, again where the system stopped it (`BackendPreempted`: macOS's GPU watchdog, the display waiting while
+/// other work holds the GPU), at most `PREEMPTED_RUNS` times in all; past them it is a failure. Any other failure is
+/// the caller's.
+pub fn preempted_again<T>(mut run: impl FnMut() -> Result<T, Error>) -> Result<T, Error> {
+    let mut stopped = 0;
+    loop {
+        match run() {
+            Err(Error::BackendPreempted) if stopped + 1 < PREEMPTED_RUNS => stopped += 1,
+            Err(Error::BackendPreempted) => return Err(crate::pp_arena::failure(concat!(file!(), ":", line!(), ": stopped by the system each run"))),
+            r => return r,
+        }
+    }
+}
+
+/// The runs of a unit the system may stop before it is a failure (`preempted_again`).
+pub const PREEMPTED_RUNS: u32 = 4;
 
 /// A name's key, as `pp_eval.uglykl`'s `name_key` makes it: its bytes 8 at a time, line splices
 /// left out (its phase-2 spelling).

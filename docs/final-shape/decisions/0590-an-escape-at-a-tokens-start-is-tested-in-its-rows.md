@@ -8,7 +8,7 @@ escape of the code is tested in the tokens it may hold in).
 **The problem.** Two escapes were tested at every token's first byte, before its row was picked:
 - "a `;` that starts a line", as
   `(open == usize::MAX && bit(&m_semicolon, s)) && ((open == usize::MAX || (… open == 7)) && fs_3)`;
-- "a dotted type after `as` before a `<`" (0586).
+- "a dotted type after `as` before a `<`" (0609).
 
 The lean lexer tests a `;` where it reads one.
 

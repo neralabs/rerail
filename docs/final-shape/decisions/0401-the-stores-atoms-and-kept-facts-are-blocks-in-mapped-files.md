@@ -1,9 +1,9 @@
 # 0401: The store's atoms and its kept facts are blocks, in files that are mapped
 
-Status: decided by the user (2026-11-18: "everything should be in blocks all the time"; "these should be blocks …
-I would prefer memory-mappable files than blobs"). Builds 0266's `Atoms` and `Facts` as what the store keeps.
-Replaces the atoms' segment rows and key (0049, 0111) and the cross part's frames (0104, 0295 §4) as storage.
-Steps 1–3 (atoms) built and 4 measured; 5 (the kept block) and 6 (the keep, beside the frames) built. **0456
+Status: built (audited 2026-11-23). Decided by the user (2026-11-18: "everything should be in blocks all the time";
+"these should be blocks … I would prefer memory-mappable files than blobs"). Builds 0266's `Atoms` and `Facts` as what
+the store keeps. Replaces the atoms' segment rows and key (0049, 0111) and the cross part's frames (0104, 0295 §4) as
+storage. Steps 1–3 (atoms) built and 4 measured; 5 (the kept block) and 6 (the keep, beside the frames) built. **0456
 replaces F1, F2 and F6's copy** (the kept relation as a copy of the run's, a base and one cumulative delta): kept
 facts are packed chunks appended to a chain; steps 7–10 continue as 0456's 4–7.
 
@@ -312,11 +312,18 @@ Facts:
 6. (built) The keep (`retain::write_frames`, `write_input_frames`; `write_kept`, `write_input_kept` since 0439) writes
    a space's delta, beside the frames.
 7. (built, 0438) The read (`preload_frames_live`, `kept_inputs`, the clean relations) binds views; F-R1–F-R3.
-8. Collection as a roll-up; F-R4.
+8. (built) Collection as a roll-up; F-R4. Each program (its `prepared_key`) keeps a reader record in each space it
+   reads: an entry of `READERS` listing the identities of the entries it asked and found, or put. A put's record
+   goes in the same file as its entries; what a run only asked goes at its end, before its manifest. A record only
+   grows: the writer adds a put of it to the one kept. Collection runs in the corpus collection pass, under its
+   lease, after the keep decision and while the dead plans are still marked dead (`corpus_plans.live = 0`). It
+   rewrites each space a dead program's record names as one base, without the entries only dead programs' records
+   name and without those records, and drops a space left empty (`collect_kept_facts`). An entry no record names
+   (an older build's, a session's) stays.
 9. (built, 0439, 0456) The virtual tables (`kept_entries`, `kept_facts`); F-R5. The frames retired: the engine writes and
    reads none, the store's frame machinery is gone, and an old store's frame tables are dropped when it is opened.
    The blocks are still larger than the frames were (0439, "Open").
-10. Measured on ep2 (the kept frames 0.064 s, the cross space's size).
+10. (measured, below) ep2: the kept reads 0.053 s (0.064 s the target), the cross space 160 MB, collection's roll-up.
 
 ## Measured
 
@@ -348,6 +355,12 @@ Open: the peak footprint rose 65 MB while the heap fell 83 MB and RSS fell 149 M
 it counts pages that are not resident. The different store states may be the cause. So may the atoms writer's
 writable shared mapping of `d4` (50 MB): the writer is opened only to append, and this warm run appended one atom.
 Neither `footprint` nor `vmmap` can attach to a process over the farm's ssh session, so it is not yet known (Q230).
+
+Answered (Q230, 2026-11-19), measured from inside the process: the profile reads the footprint and its high-water
+mark (`proc_pid_rusage`'s `ri_phys_footprint` and `ri_lifetime_max_phys_footprint`, `profile::memory`) every 5 ms,
+with each holder's share, so neither tool is needed. The peak was the cost model's training, begun in every process
+beside its run and never finished; it now waits until no run is under way. On 2026-11-22 the warm run's peak is
+70.1 MB profiled and 28 MB without the profile.
 
 ### The keep beside the frames (step 6, 2026-11-18)
 
@@ -382,3 +395,144 @@ instructions (231.0 G with the frames), warm 0.1 s, the edit 1.7 s and 32.8 G (3
 edited tree cold 7.3 s. Its 589 outputs are equal (F-R2), with 48 findings. The kept blocks took 211 MB on disk, where
 the frames took 39 MB; merged with 0456's chain (dc113d27e), the same runs keep 38.9 MB, 31.6 MB after a cold run
 alone (0439, "Met").
+
+### Collection and the kept data (steps 8 and 10, 2026-11-21)
+
+ep2 on m3 with the profiling build (42990efb6d), at a fresh state, its rules renamed `.rerail` (PR #508's rename);
+`tmp/m/ep2r/q-collect.sh`. Every run's rows are h1's (1334, 0 differ).
+
+| run | instructions | CPU | wall | peak | kept facts | the cross space |
+|---|---|---|---|---|---|---|
+| c0 cold | 2,473.7 G | 178.6 s | 94.5 s | 1,727 MB | 88.9 MB, 12 files (the earlier sequence's cold run, below) | |
+| e-qq990, the first under `RERAIL_PREPARE=parts` (another preparation: cold again) | 2,165.0 G | 162.2 s | 82.6 s | 1,736 MB | 175.5 MB, 15 files | 173.2 MB |
+| e-qq991, one constant changed | 53.0 G | 4.39 s | 2.93 s | 429 MB | 162.3 MB, 13 files | 160.0 MB |
+| e-qq992, one constant changed | 52.4 G | 4.24 s | 2.92 s | 426 MB | 162.4 MB, 13 files | 160.1 MB |
+| w1 warm, deciding under a 1 MB history | 35.9 G | 2.66 s | 2.22 s | 378 MB | 162.3 MB, 11 files | 160.0 MB |
+
+The roll-up at e-qq991's decision took the spaces from 175.5 MB in 15 files to 162.3 MB in 13: the entries only
+dead programs' records named. w1's decision (manifests 10 to 7, live plans 34 to 27) rewrote two more spaces
+(116 KB). The cold program's 86 MB of cross entries stay; c0's phase manifests (its root's protected lanes) are
+still kept, and they name its plans. That was not checked entry by entry: the `sql` command takes no query of
+`kept_entries`.
+
+A warm run after collection derives nothing more: w2, profiled, has the same rows. Its kept reads: the cross
+session's kept part 0.013 s, the kept inputs bound where they lie 0.030 s, the kept statistics 0.010 s (0.053 s).
+
+Before 42990efb6d, a run collected nothing under the `logic` command. The command's analysis run (decision 0547)
+holds a collection lease until it finishes, and a run's own pass (`record_run`) found it held every time. 13 runs
+(the same cold run, then three edits and a warm run without `RERAIL_PREPARE=parts`) made no keep decision, and all
+41 plans stayed live. `rerail-engine gc` on that store then decided (41 plans to 33 live). The roll-up took it
+from 89.2 MB in 15 files to 88.9 MB in 12, the cross space from 86.9 MB to 86.6 MB. The warm run after took 33.0 G
+against 32.7 G before. Now the analysis run collects as it finishes (`collect_after`).
+
+Against 6fc580233a (the step 6 commit, measured again on the M3 the same day, profiling binary), the regressions
+were three, each found in the two profiles:
+
+| ep2, M3 | 6fc580233a | before the fixes | the three below | and the narrow copies | and the edit's five |
+|---|---|---|---|---|---|
+| cold | 1,078-1,220 G | 2,476 G | 1,517 G | 1,022 G | 1,018 G |
+| warm | 1.8 G | 35.9 G | 2.0 G | 2.0 G | 1.9 G |
+| edit (`qq991`) | 43.9 G | 74-90 G | 75.8 G | 70.9 G | 49.6 G |
+
+- Warm (7127549186): every `logic` command begins an analysis run (0547), and the whole-run cutoff skipped any run
+  with a staged owner (since 395a6ac2f7). A hit now re-owns the recorded run's manifests.
+- Cold, `open_tuple` (d92e01dffb): 0299's combination floor priced `child($t, $c, _)` at a row a pair after a cross
+  product, and Q146's witness pricing then took the cross product as nearly free: 61 M rows, 19.7 s.
+- Cold, prepare 27 s against 1.4 s (9baa291010): the push held back one reader of a helper shared by 400
+  `violation` rules a round, so it ran about 400 rounds, each a split of the program.
+
+- The narrow copies of main's #923 (0c3dde2edb) doubled the program: 6,664 strata against 3,236, and
+  `rr_narrow_<rel>` evaluated its original's rules again (`ruff_safe_operand` and its copy, 1.6 s each). Taken
+  together: 15e8c73191 (from cost-classifier-metal-rf: a copy within one document is its original's rows under the
+  bound) and 0575's diffed copies with their two follow-ups (from investigate-bend-vs-datalog), which read the former
+  as change points (0575, "Beside the copies within one document"). 4,434 strata.
+
+The edit's five, each found in the edit's profile against 6fc580233a's (`tmp/m/ep2r/q-edit.sh`). The edit changes
+a rule's literal, so the cross program's key changes and every statistic kept under it is lost; Q396's semi-joins
+(`docof`, `end_line`, `visit_index`, `node_order`, `ast_depth`) are not kept inputs (0458 keeps the exports alone),
+so `kept_input_stats` never answered for them:
+- A semi-join counted at the held nodes walked every held node's document, making all 300 (1.1 s of the edit's
+  stats, 0.06 s before). Its rows at the held nodes are kept beside the documents' table (`#semijoin-at-held/`),
+  patched by the changed documents' nodes (b82ac99d4b).
+- The three whose keyed walk is refused (`docof`, `end_line`, `visit_index`) were measured whole each run. They are
+  counted as a base relation is, kept and patched beside the documents' table (ebb6e0d6ea).
+- The held nodes were made by visiting every export's rows (1.56 s of the edit's stats, 560,675 nodes). The kept
+  rows carry the digest of the exports they were taken of, the one the cross part's kept inputs are written with;
+  exports of that digest hold the kept rows' nodes (95eec15f57).
+- A semi-join answered by its kept rows still counted every row for its statistics. The kept rows carry them
+  (2ddc67b45e).
+- Phase 0 opened the image store and asked it for each held graph's image at every lookup (1,263 lookups of 316
+  graphs), since retaining a working tree's policies in the store that evaluates them (6e3f1618e8). It opens the
+  store on the first ask, and retains a held graph once a store (6f0044f081).
+
+The edit's stats phase went from 1.74 s to 0.15 s (0.08 s before). Then six passes that read the whole program
+where they need a part of it, each found in the edit's profile (`q-edit.sh`, own CPU of the span), the edit 49.6 G
+to 42.6 G (unprofiled; cold 1,010 G):
+- Export demand asked each relation whether it is a projection by a walk of its rules each time (0.162 s to 0.041 s;
+  4d135acdaf).
+- The well-founded check summarized a step for every relation of the program, three rounds; it summarizes those the
+  recursive components reach (0.153 s to 0.006 s; 20a060c098).
+- Folding own guests rechecked every rule each round of its one-document set, and rebuilt its cycle graph each round;
+  a worklist, and the graph built once (0.113 s to 0.025 s; 2ccef2cb0a).
+- The deferred joins' factorizing found keys for every relation; it finds those the intermediates reach (0.047 s to
+  0.021 s; a93b6781e0).
+- A semi-join's kept rows were copied out whole, the held nodes in each (1.4 M words each); they are read where they
+  lie when asked ("measure the base rows held" 0.142 s to 0.092 s; 39bf8dd996).
+- A module's bound families are read once (63e9d71717); "seed a scope" stayed at 0.029 s.
+
+What stays above 6fc580233a's edit, by the run's instructions a phase (42.6 G against 43.9 G):
+- combine, 6.7 G against 4.9 G: the program is larger, 11,143 rules and 4,847 relations against 9,472 and 4,344,
+  with the narrow copies above. Prepare is now under it, 27.7 G against 31.3 G.
+- stats, 1.7 G against 0.9 G: the edit takes the exports' statistics kept by file for all 1,366 exports (0.036 s,
+  0.026 s of it counting the constants the rules test in the rows held), and binds the kept inputs where they lie
+  (0.037 s); 6fc580233a's edit profile has no span of the first, and read its kept inputs from the frames
+  (0.012 s).
+- A profiled run's first phase is 1.0 s more than 6fc580233a's: the profile's join locations
+  (`profile_join_sources`) look up each file's graph and retain it. No run without the profile does that work.
+
+After the hub's merge (a8919bd06e), the edit took 37.9 G (prepare 23.9 G, combine 6.7 G, stats 1.1 G), cold 875 G,
+warm 2.1 G. The deferred joins installed each of their 10 requests as a derivation of the whole program, with its
+components found again and the relations' readers walked again for each. They install in rounds now
+(`upstream::install_requests`): a round's requests are planned on one version and made in one derivation, with
+its components found once. A round ends before a request whose plan an earlier one of the round would change: one
+that reads the earlier one's relation, or a relation its demand reads. If any guard in a round is not apart from
+its relation, the round falls back to one request at a time. A guard only adds edges, so a round whose guards are
+all apart installs what one request at a time would (the rounds test). The edit is 36.4 G (prepare 22.5 G), cold
+874 G, warm 2.0 G, the rows h1's.
+
+The combine read and parsed all 317 program texts on every edit, and built their include graphs, before the splice
+(decision 0373). The splice needs only each text's modules: its files with their digests and declared names, and
+its heads and declarations. A record kept in the store (`corpus::kept_texts`) holds those by text digest. A text
+is read again only when its digest is not in the record, or when one of its files no longer reads as kept (checked
+by stat). The others take their modules from the record, and their files are noted as read in program order.
+Combine is 4.0 G (from 6.6 G).
+
+The stats phase had two costs that grew with the program rather than the edit. Each export given whole was first
+forgotten by scanning every relation's constants and value columns, so the cost was quadratic in the 1,366 exports.
+The constants are kept by relation now, and an export's columns are removed by their own range. And the constants
+the rules test, in columns with too many values for an exact map, were counted in the held rows on every run. A
+column now watches those constants (`RelStats::watch`): it counts each exactly as documents come and go, and keeps
+the counts in the blob. A constant new to the keeper is counted once. Stats is 0.66 G after an edit or two (from
+1.16 G), and the edit is 33.4 G, cold 874 G, warm 2.1 G, the rows h1's.
+
+Three costs left after the hub merge (2026-11-22, m3, ep2):
+- The warm run looked at each file twice. `settings::program_texts` and `Texts::of` each check that the graphs of
+  phase 0 hold, and the second check looked at every file again: 0.42 G of the warm run's 1.9 G. One call's graphs
+  now share their looks (`phase0::Looks`), so the second check is 0.06 G and the warm run is 1.6 G.
+- Stats after an edit was not the counting of constants new to the keeper. The cold run already watches all 61
+  tested constants, and the first edit counted none. The cost was binding all 1,181 kept inputs (20,217 granules):
+  each lookup compared the relation names as strings, and each granule's entry was looked up again for its types and
+  digest. The lookup now compares bytes (`KeptFacts::rel_bytes`), and the entry keeps what it read. Stats was 0.75 G
+  on the first edit and 0.71 G on the second.
+- Each kept granule's atom columns were scanned for their greatest atom, to check that the store's numbering holds
+  its atoms (decision 0170, `readable`). The greatest is recorded as the granule is written: packing finds each
+  column's greatest value as it chooses the column's encoding, and the entry keeps the greatest of its atom columns
+  (`KeptEntry::atoms_max`; a roll-up's copy carries it, a reads-only entry reads its rows'). The entry's layout
+  changed, so the store's floor is 10 (`content-v10.sqlite`). Stats is 0.54 G on the first edit and 0.58 G on the
+  second.
+- The edit's extra 1.6 G in prepare was the fold of own guests' copies (`one_document`, decision 0165). It found what
+  each relation keeps in every row (`Kept::of`) by rounds over every rule, remaking each rule's graph and searching it
+  once a pair, and it did so again for each round of `same`: 2.98 G of the edit. `Kept::of` is now a worklist over
+  readers, with each variable's reach found once, and the shape it reads (`Shape`) is made once a fold.
+
+The edit is 30.9 G (35.0 G after the merge, 33.4 G before it), cold 712.3 G, warm 1.5 G, the rows h1's.

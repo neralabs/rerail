@@ -132,7 +132,7 @@ mask sq_close   = sq & ~escaped(backslash)
 # the regions say which `}` (a tail opens at a `}` only while a template is open, and a tail
 # closed at its quote ends the string), as the lean lexer reads a template's code.
 mask t_dollar   = dollar & next(lbrace) & ~escaped(bs) & ~prev(esc_dollar)
-# In a string with the prefix `$$` (decision 0650): `$${`, its last two `$`s and the brace.
+# In a string with the prefix `$$` (decision 0699): `$${`, its last two `$`s and the brace.
 mask t2_dollar  = dollar & next(dollar) & next(lbrace, 2) & ~escaped(bs) & ~prev(esc_dollar)
 # A `"` after `$$`: a string with that prefix, whose templates take two `$`s.
 mask q2         = prev(dollar) & prev(dollar, 2)
@@ -175,7 +175,7 @@ mask code       = ~region & ~t_brace
 escape "a template's code nested past 4 levels" when t_deep
 # An empty `${}`: a tail opens right after the `{` (a brace's would close at that `}`).
 escape "an empty `${}`" when (o_tail | o_rtail | o_tail2 | o_rtail2) & prev(lbrace)
-# A string's prefix (`$` or `$$` before its `"`, decision 0650): a token of its own, which the tape
+# A string's prefix (`$` or `$$` before its `"`, decision 0699): a token of its own, which the tape
 # leaves out. Three or more are not read.
 mask pre_at     = dollar & next(dq) | dollar & next(dollar) & next(dq, 2)
 escape "a `$` outside a string" when code & dollar & ~pre_at
@@ -370,7 +370,7 @@ mask name_tok   = fill(word_start, ~w)
 # A name runs over its word's bytes after its first, as the lean lexer's word reader. A number
 # runs over its bytes: a decimal's, or a `0x`'s or `0b`'s letter and digits.
 mask name_more  = name_tok & ~word_start
-# What the token loop reads of the masks above at a token's start (decision 0552): the regions
+# What the token loop reads of the masks above at a token's start (decision 0607): the regions
 # open only at a token's start, so no start is in one, and the token before a start ends there.
 assume "a name starts at a word's first letter: a start is never in a word" at starts word_start = alpha | high
 assume "a number starts at a digit not after one `.`: a start is never in a word" at starts int_at = digit & ~(zero & (next(x_letter) | next(b_letter))) & ~prev(dot & ~prev(dot))
@@ -443,7 +443,7 @@ token interpolation_expression_end = start o_tail | o_rtail | o_tail2 | o_rtail2
                     interpolation_expression_start = t2_dollar bytes 3
                   }
 # `\uXXXX`: tree-sitter keeps its `\u` as a token under the escape's node, its digits none.
-# A string's prefix: its `$`s, one token (decision 0650).
+# A string's prefix: its `$`s, one token (decision 0699).
 token string_prefix = start code & pre_at & ~prev(dollar) run dollar & next(dq)
 token "'"       = start o_chr read chr parts {
                     "\\u" = c_uesc bytes 2

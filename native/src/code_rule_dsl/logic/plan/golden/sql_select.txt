@@ -1,0 +1,288 @@
+# test/scripts/test_rdl_sql_select.py (RERAIL_BLESS_SQL=1 rewrites this file): per case, each distinct result under its calls. n: native nearest; d: delta literal; t: no, empty, first or every relation's tables.
+
+## neg all-wild
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n0d1t0 n0d1t1 n1d-t0 n1d-t1 n1d0t0 n1d0t1 n1d1t0 n1d1t1
+SELECT DISTINCT t1.c0 AS c0 FROM f.kind t1 WHERE t1.c1 = 'x' AND NOT EXISTS (SELECT 1 FROM f.child t2 WHERE 1)
+
+n0d-t2 n0d-t3 n0d1t2 n0d1t3 n1d-t2 n1d-t3 n1d1t2 n1d1t3
+SELECT DISTINCT t1.c0 AS c0 FROM full_kind t1 WHERE t1.c1 = 'x' AND NOT EXISTS (SELECT 1 FROM f.child t2 WHERE 1)
+
+n0d0t2 n0d0t3 n1d0t2 n1d0t3
+SELECT DISTINCT t1.c0 AS c0 FROM dl_kind t1 WHERE t1.c1 = 'x' AND NOT EXISTS (SELECT 1 FROM f.child t2 WHERE 1)
+
+## count all-wild
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n0d1t0 n0d1t1 n1d-t0 n1d-t1 n1d0t0 n1d0t1 n1d1t0 n1d1t1
+SELECT DISTINCT t1.c0 AS c0, (SELECT count(*) FROM f.child t2 WHERE 1) AS c1 FROM f.kind t1 WHERE t1.c1 = 'x'
+
+n0d-t2 n0d-t3 n0d1t2 n0d1t3 n1d-t2 n1d-t3 n1d1t2 n1d1t3
+SELECT DISTINCT t1.c0 AS c0, (SELECT count(*) FROM f.child t2 WHERE 1) AS c1 FROM full_kind t1 WHERE t1.c1 = 'x'
+
+n0d0t2 n0d0t3 n1d0t2 n1d0t3
+SELECT DISTINCT t1.c0 AS c0, (SELECT count(*) FROM f.child t2 WHERE 1) AS c1 FROM dl_kind t1 WHERE t1.c1 = 'x'
+
+## TopT in positive atom
+n0d-t0 n0d-t1 n1d-t0 n1d-t1
+SELECT DISTINCT t1.c0 AS c0 FROM cv t1 WHERE t1.c1 = 4611686018427387904
+
+n0d-t2 n0d-t3 n1d-t2 n1d-t3
+SELECT DISTINCT t1.c0 AS c0 FROM full_cv t1 WHERE t1.c1 = 4611686018427387904
+
+n0d0t0 n0d0t1 n1d0t0 n1d0t1
+SELECT DISTINCT t1.c0 AS c0 FROM delta_cv t1 WHERE t1.c1 = 4611686018427387904
+
+n0d0t2 n0d0t3 n1d0t2 n1d0t3
+SELECT DISTINCT t1.c0 AS c0 FROM dl_cv t1 WHERE t1.c1 = 4611686018427387904
+
+## repeated var in atom
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n1d-t0 n1d-t1 n1d0t0 n1d0t1
+SELECT DISTINCT t1.p AS c0 FROM f.child t1 WHERE t1.c = t1.p
+
+n0d-t2 n0d-t3 n1d-t2 n1d-t3
+SELECT DISTINCT t1.p AS c0 FROM full_child t1 WHERE t1.c = t1.p
+
+n0d0t2 n0d0t3 n1d0t2 n1d0t3
+SELECT DISTINCT t1.p AS c0 FROM dl_child t1 WHERE t1.c = t1.p
+
+## descend with n bound
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n0d1t0 n0d1t1 n0d2t0 n0d2t1 n1d-t0 n1d-t1 n1d0t0 n1d0t1 n1d1t0 n1d1t1 n1d2t0 n1d2t1
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t2.c0 AS n, t1.c0 AS s FROM f.kind t1 CROSS JOIN f.kind t2 WHERE t1.c1 = 'module' AND t2.c1 = 'identifier'), walk0(n, s, cur, stop) AS (SELECT s.n, s.s, s.s + 1, s.s + t.size FROM seed0 s JOIN f.tape t ON t.n = s.s WHERE t.size > 0 UNION ALL SELECT w.n, w.s, CASE WHEN k.kind IN ('module', 'function_definition') THEN w.cur + t.size + 1 ELSE w.cur + 1 END, w.stop FROM walk0 w JOIN f.node k ON k.n = w.cur JOIN f.tape t ON t.n = w.cur WHERE w.cur < w.stop), near0 AS (SELECT w.n, w.s, w.cur AS near_out FROM walk0 w WHERE w.cur <= w.stop AND w.cur = w.n) SELECT DISTINCT near0.n AS c0, near0.s AS c1 FROM near0 WHERE 1
+
+n0d-t2 n0d-t3 n0d2t2 n0d2t3 n1d-t2 n1d-t3 n1d2t2 n1d2t3
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t2.c0 AS n, t1.c0 AS s FROM full_kind t1 CROSS JOIN full_kind t2 WHERE t1.c1 = 'module' AND t2.c1 = 'identifier'), walk0(n, s, cur, stop) AS (SELECT s.n, s.s, s.s + 1, s.s + t.size FROM seed0 s JOIN f.tape t ON t.n = s.s WHERE t.size > 0 UNION ALL SELECT w.n, w.s, CASE WHEN k.kind IN ('module', 'function_definition') THEN w.cur + t.size + 1 ELSE w.cur + 1 END, w.stop FROM walk0 w JOIN f.node k ON k.n = w.cur JOIN f.tape t ON t.n = w.cur WHERE w.cur < w.stop), near0 AS (SELECT w.n, w.s, w.cur AS near_out FROM walk0 w WHERE w.cur <= w.stop AND w.cur = w.n) SELECT DISTINCT near0.n AS c0, near0.s AS c1 FROM near0 WHERE 1
+
+n0d0t2 n0d0t3 n1d0t2 n1d0t3
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t2.c0 AS n, t1.c0 AS s FROM dl_kind t1 CROSS JOIN full_kind t2 WHERE t1.c1 = 'module' AND t2.c1 = 'identifier'), walk0(n, s, cur, stop) AS (SELECT s.n, s.s, s.s + 1, s.s + t.size FROM seed0 s JOIN f.tape t ON t.n = s.s WHERE t.size > 0 UNION ALL SELECT w.n, w.s, CASE WHEN k.kind IN ('module', 'function_definition') THEN w.cur + t.size + 1 ELSE w.cur + 1 END, w.stop FROM walk0 w JOIN f.node k ON k.n = w.cur JOIN f.tape t ON t.n = w.cur WHERE w.cur < w.stop), near0 AS (SELECT w.n, w.s, w.cur AS near_out FROM walk0 w WHERE w.cur <= w.stop AND w.cur = w.n) SELECT DISTINCT near0.n AS c0, near0.s AS c1 FROM near0 WHERE 1
+
+n0d1t2 n0d1t3 n1d1t2 n1d1t3
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t2.c0 AS n, t1.c0 AS s FROM full_kind t1 CROSS JOIN dl_kind t2 WHERE t1.c1 = 'module' AND t2.c1 = 'identifier'), walk0(n, s, cur, stop) AS (SELECT s.n, s.s, s.s + 1, s.s + t.size FROM seed0 s JOIN f.tape t ON t.n = s.s WHERE t.size > 0 UNION ALL SELECT w.n, w.s, CASE WHEN k.kind IN ('module', 'function_definition') THEN w.cur + t.size + 1 ELSE w.cur + 1 END, w.stop FROM walk0 w JOIN f.node k ON k.n = w.cur JOIN f.tape t ON t.n = w.cur WHERE w.cur < w.stop), near0 AS (SELECT w.n, w.s, w.cur AS near_out FROM walk0 w WHERE w.cur <= w.stop AND w.cur = w.n) SELECT DISTINCT near0.n AS c0, near0.s AS c1 FROM near0 WHERE 1
+
+## climb with a bound
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n0d1t0 n0d1t1 n0d2t0 n0d2t1
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t2.c0 AS n, t1.c0 AS s FROM f.kind t1 CROSS JOIN f.kind t2 WHERE t1.c1 = 'module' AND t2.c1 = 'identifier'), walk0(n, s, cur) AS (SELECT s.n, s.s, t.par FROM seed0 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, w.s, t.par FROM walk0 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('module', 'function_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near0 AS (SELECT w.n, w.s, w.cur AS near_out FROM walk0 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('module', 'function_definition') AND w.cur = w.s) SELECT DISTINCT near0.n AS c0, near0.s AS c1 FROM near0 WHERE 1
+
+n0d-t2 n0d-t3 n0d2t2 n0d2t3
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t2.c0 AS n, t1.c0 AS s FROM full_kind t1 CROSS JOIN full_kind t2 WHERE t1.c1 = 'module' AND t2.c1 = 'identifier'), walk0(n, s, cur) AS (SELECT s.n, s.s, t.par FROM seed0 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, w.s, t.par FROM walk0 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('module', 'function_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near0 AS (SELECT w.n, w.s, w.cur AS near_out FROM walk0 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('module', 'function_definition') AND w.cur = w.s) SELECT DISTINCT near0.n AS c0, near0.s AS c1 FROM near0 WHERE 1
+
+n0d0t2 n0d0t3
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t2.c0 AS n, t1.c0 AS s FROM dl_kind t1 CROSS JOIN full_kind t2 WHERE t1.c1 = 'module' AND t2.c1 = 'identifier'), walk0(n, s, cur) AS (SELECT s.n, s.s, t.par FROM seed0 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, w.s, t.par FROM walk0 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('module', 'function_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near0 AS (SELECT w.n, w.s, w.cur AS near_out FROM walk0 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('module', 'function_definition') AND w.cur = w.s) SELECT DISTINCT near0.n AS c0, near0.s AS c1 FROM near0 WHERE 1
+
+n0d1t2 n0d1t3
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t2.c0 AS n, t1.c0 AS s FROM full_kind t1 CROSS JOIN dl_kind t2 WHERE t1.c1 = 'module' AND t2.c1 = 'identifier'), walk0(n, s, cur) AS (SELECT s.n, s.s, t.par FROM seed0 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, w.s, t.par FROM walk0 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('module', 'function_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near0 AS (SELECT w.n, w.s, w.cur AS near_out FROM walk0 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('module', 'function_definition') AND w.cur = w.s) SELECT DISTINCT near0.n AS c0, near0.s AS c1 FROM near0 WHERE 1
+
+n1d-t0 n1d-t1 n1d0t0 n1d0t1 n1d1t0 n1d1t1 n1d2t0 n1d2t1
+SELECT DISTINCT t2.c0 AS c0, t1.c0 AS c1 FROM f.kind t1 CROSS JOIN f.kind t2 WHERE t1.c1 = 'module' AND t2.c1 = 'identifier' AND tape_nearest(t2.c0, 'module,function_definition') = t1.c0
+
+n1d-t2 n1d-t3 n1d2t2 n1d2t3
+SELECT DISTINCT t2.c0 AS c0, t1.c0 AS c1 FROM full_kind t1 CROSS JOIN full_kind t2 WHERE t1.c1 = 'module' AND t2.c1 = 'identifier' AND tape_nearest(t2.c0, 'module,function_definition') = t1.c0
+
+n1d0t2 n1d0t3
+SELECT DISTINCT t2.c0 AS c0, t1.c0 AS c1 FROM dl_kind t1 CROSS JOIN full_kind t2 WHERE t1.c1 = 'module' AND t2.c1 = 'identifier' AND tape_nearest(t2.c0, 'module,function_definition') = t1.c0
+
+n1d1t2 n1d1t3
+SELECT DISTINCT t2.c0 AS c0, t1.c0 AS c1 FROM full_kind t1 CROSS JOIN dl_kind t2 WHERE t1.c1 = 'module' AND t2.c1 = 'identifier' AND tape_nearest(t2.c0, 'module,function_definition') = t1.c0
+
+## nearest first (empty FROM)
+n0d-t0 n0d-t1 n0d-t2 n0d-t3 n0d0t0 n0d0t1 n0d0t2 n0d0t3
+WITH RECURSIVE seed0 AS (SELECT DISTINCT  FROM  WHERE 1), walk0(, cur) AS (SELECT , t.par FROM seed0 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT , t.par FROM walk0 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('module', 'function_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near0 AS (SELECT , w.cur AS near_out FROM walk0 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('module', 'function_definition')) SELECT DISTINCT near0.near_out AS c0 FROM near0 WHERE 1
+
+n1d-t0 n1d-t1 n1d-t2 n1d-t3 n1d0t0 n1d0t1 n1d0t2 n1d0t3
+EXC KeyError: 'n'
+
+## nearest first descend
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n0d1t0 n0d1t1 n1d-t0 n1d-t1 n1d0t0 n1d0t1 n1d1t0 n1d1t1
+WITH RECURSIVE seed0 AS (SELECT DISTINCT  FROM  WHERE 1), walk0(, cur, stop) AS (SELECT , s.s + 1, s.s + t.size FROM seed0 s JOIN f.tape t ON t.n = s.s WHERE t.size > 0 UNION ALL SELECT , CASE WHEN k.kind IN ('module', 'function_definition') THEN w.cur + t.size + 1 ELSE w.cur + 1 END, w.stop FROM walk0 w JOIN f.node k ON k.n = w.cur JOIN f.tape t ON t.n = w.cur WHERE w.cur < w.stop), near0 AS (SELECT , w.cur AS near_out FROM walk0 w WHERE w.cur <= w.stop) SELECT DISTINCT near0.near_out AS c0 FROM near0 CROSS JOIN f.kind t1 WHERE t1.c0 = near0.near_out AND t1.c1 = 'x'
+
+n0d-t2 n0d-t3 n0d0t2 n0d0t3 n1d-t2 n1d-t3 n1d0t2 n1d0t3
+WITH RECURSIVE seed0 AS (SELECT DISTINCT  FROM  WHERE 1), walk0(, cur, stop) AS (SELECT , s.s + 1, s.s + t.size FROM seed0 s JOIN f.tape t ON t.n = s.s WHERE t.size > 0 UNION ALL SELECT , CASE WHEN k.kind IN ('module', 'function_definition') THEN w.cur + t.size + 1 ELSE w.cur + 1 END, w.stop FROM walk0 w JOIN f.node k ON k.n = w.cur JOIN f.tape t ON t.n = w.cur WHERE w.cur < w.stop), near0 AS (SELECT , w.cur AS near_out FROM walk0 w WHERE w.cur <= w.stop) SELECT DISTINCT near0.near_out AS c0 FROM near0 CROSS JOIN full_kind t1 WHERE t1.c0 = near0.near_out AND t1.c1 = 'x'
+
+n0d1t2 n0d1t3 n1d1t2 n1d1t3
+WITH RECURSIVE seed0 AS (SELECT DISTINCT  FROM  WHERE 1), walk0(, cur, stop) AS (SELECT , s.s + 1, s.s + t.size FROM seed0 s JOIN f.tape t ON t.n = s.s WHERE t.size > 0 UNION ALL SELECT , CASE WHEN k.kind IN ('module', 'function_definition') THEN w.cur + t.size + 1 ELSE w.cur + 1 END, w.stop FROM walk0 w JOIN f.node k ON k.n = w.cur JOIN f.tape t ON t.n = w.cur WHERE w.cur < w.stop), near0 AS (SELECT , w.cur AS near_out FROM walk0 w WHERE w.cur <= w.stop) SELECT DISTINCT near0.near_out AS c0 FROM near0 CROSS JOIN dl_kind t1 WHERE t1.c0 = near0.near_out AND t1.c1 = 'x'
+
+## two nearests then literals
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n0d1t0 n0d1t1 n0d2t0 n0d2t1 n0d3t0 n0d3t1 n0d4t0 n0d4t1 n0d5t0 n0d5t1 n0d6t0 n0d6t1 n0d7t0 n0d7t1
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS n FROM f.kind t1 WHERE t1.c1 = 'identifier' AND t1.c0 > 3), walk0(n, cur) AS (SELECT s.n, t.par FROM seed0 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, t.par FROM walk0 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('module', 'function_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near0 AS (SELECT w.n, w.cur AS near_out FROM walk0 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('module', 'function_definition')), seed3 AS (SELECT DISTINCT near0.n AS n, near0.near_out AS s, t2.s AS t FROM near0 CROSS JOIN f.text t2 WHERE t2.n = near0.near_out), walk3(n, s, t, cur) AS (SELECT s.n, s.s, s.t, t.par FROM seed3 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, w.s, w.t, t.par FROM walk3 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('class_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near3 AS (SELECT w.n, w.s, w.t, w.cur AS near_out FROM walk3 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('class_definition')) SELECT DISTINCT near3.n AS c0, near3.s AS c1, near3.near_out AS c2 FROM near3 WHERE near3.near_out <= near3.s AND NOT EXISTS (SELECT 1 FROM f.child t3 WHERE t3.p = near3.near_out AND t3.idx = 0)
+
+n0d-t2 n0d1t2 n0d2t2 n0d3t2 n0d4t2 n0d5t2 n0d6t2 n0d7t2
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS n FROM full_kind t1 WHERE t1.c1 = 'identifier' AND t1.c0 > 3), walk0(n, cur) AS (SELECT s.n, t.par FROM seed0 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, t.par FROM walk0 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('module', 'function_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near0 AS (SELECT w.n, w.cur AS near_out FROM walk0 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('module', 'function_definition')), seed3 AS (SELECT DISTINCT near0.n AS n, near0.near_out AS s, t2.s AS t FROM near0 CROSS JOIN f.text t2 WHERE t2.n = near0.near_out), walk3(n, s, t, cur) AS (SELECT s.n, s.s, s.t, t.par FROM seed3 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, w.s, w.t, t.par FROM walk3 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('class_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near3 AS (SELECT w.n, w.s, w.t, w.cur AS near_out FROM walk3 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('class_definition')) SELECT DISTINCT near3.n AS c0, near3.s AS c1, near3.near_out AS c2 FROM near3 WHERE near3.near_out <= near3.s AND NOT EXISTS (SELECT 1 FROM f.child t3 WHERE t3.p = near3.near_out AND t3.idx = 0)
+
+n0d-t3 n0d1t3 n0d2t3 n0d4t3 n0d5t3 n0d6t3 n0d7t3
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS n FROM full_kind t1 WHERE t1.c1 = 'identifier' AND t1.c0 > 3), walk0(n, cur) AS (SELECT s.n, t.par FROM seed0 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, t.par FROM walk0 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('module', 'function_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near0 AS (SELECT w.n, w.cur AS near_out FROM walk0 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('module', 'function_definition')), seed3 AS (SELECT DISTINCT near0.n AS n, near0.near_out AS s, t2.s AS t FROM near0 CROSS JOIN full_text t2 WHERE t2.n = near0.near_out), walk3(n, s, t, cur) AS (SELECT s.n, s.s, s.t, t.par FROM seed3 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, w.s, w.t, t.par FROM walk3 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('class_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near3 AS (SELECT w.n, w.s, w.t, w.cur AS near_out FROM walk3 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('class_definition')) SELECT DISTINCT near3.n AS c0, near3.s AS c1, near3.near_out AS c2 FROM near3 WHERE near3.near_out <= near3.s AND NOT EXISTS (SELECT 1 FROM f.child t3 WHERE t3.p = near3.near_out AND t3.idx = 0)
+
+n0d0t2
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS n FROM dl_kind t1 WHERE t1.c1 = 'identifier' AND t1.c0 > 3), walk0(n, cur) AS (SELECT s.n, t.par FROM seed0 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, t.par FROM walk0 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('module', 'function_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near0 AS (SELECT w.n, w.cur AS near_out FROM walk0 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('module', 'function_definition')), seed3 AS (SELECT DISTINCT near0.n AS n, near0.near_out AS s, t2.s AS t FROM near0 CROSS JOIN f.text t2 WHERE t2.n = near0.near_out), walk3(n, s, t, cur) AS (SELECT s.n, s.s, s.t, t.par FROM seed3 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, w.s, w.t, t.par FROM walk3 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('class_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near3 AS (SELECT w.n, w.s, w.t, w.cur AS near_out FROM walk3 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('class_definition')) SELECT DISTINCT near3.n AS c0, near3.s AS c1, near3.near_out AS c2 FROM near3 WHERE near3.near_out <= near3.s AND NOT EXISTS (SELECT 1 FROM f.child t3 WHERE t3.p = near3.near_out AND t3.idx = 0)
+
+n0d0t3
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS n FROM dl_kind t1 WHERE t1.c1 = 'identifier' AND t1.c0 > 3), walk0(n, cur) AS (SELECT s.n, t.par FROM seed0 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, t.par FROM walk0 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('module', 'function_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near0 AS (SELECT w.n, w.cur AS near_out FROM walk0 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('module', 'function_definition')), seed3 AS (SELECT DISTINCT near0.n AS n, near0.near_out AS s, t2.s AS t FROM near0 CROSS JOIN full_text t2 WHERE t2.n = near0.near_out), walk3(n, s, t, cur) AS (SELECT s.n, s.s, s.t, t.par FROM seed3 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, w.s, w.t, t.par FROM walk3 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('class_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near3 AS (SELECT w.n, w.s, w.t, w.cur AS near_out FROM walk3 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('class_definition')) SELECT DISTINCT near3.n AS c0, near3.s AS c1, near3.near_out AS c2 FROM near3 WHERE near3.near_out <= near3.s AND NOT EXISTS (SELECT 1 FROM f.child t3 WHERE t3.p = near3.near_out AND t3.idx = 0)
+
+n0d3t3
+WITH RECURSIVE seed0 AS (SELECT DISTINCT t1.c0 AS n FROM full_kind t1 WHERE t1.c1 = 'identifier' AND t1.c0 > 3), walk0(n, cur) AS (SELECT s.n, t.par FROM seed0 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, t.par FROM walk0 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('module', 'function_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near0 AS (SELECT w.n, w.cur AS near_out FROM walk0 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('module', 'function_definition')), seed3 AS (SELECT DISTINCT near0.n AS n, near0.near_out AS s, t2.s AS t FROM near0 CROSS JOIN dl_text t2 WHERE t2.n = near0.near_out), walk3(n, s, t, cur) AS (SELECT s.n, s.s, s.t, t.par FROM seed3 s JOIN f.tape t ON t.n = s.n WHERE t.par >= 0 UNION ALL SELECT w.n, w.s, w.t, t.par FROM walk3 w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ('class_definition') JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0), near3 AS (SELECT w.n, w.s, w.t, w.cur AS near_out FROM walk3 w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ('class_definition')) SELECT DISTINCT near3.n AS c0, near3.s AS c1, near3.near_out AS c2 FROM near3 WHERE near3.near_out <= near3.s AND NOT EXISTS (SELECT 1 FROM f.child t3 WHERE t3.p = near3.near_out AND t3.idx = 0)
+
+n1d-t0 n1d-t1 n1d0t0 n1d0t1 n1d1t0 n1d1t1 n1d2t0 n1d2t1 n1d3t0 n1d3t1 n1d4t0 n1d4t1 n1d5t0 n1d5t1 n1d6t0 n1d6t1 n1d7t0 n1d7t1
+SELECT DISTINCT t1.c0 AS c0, tape_nearest(t1.c0, 'module,function_definition') AS c1, tape_nearest(t1.c0, 'class_definition') AS c2 FROM f.kind t1 CROSS JOIN f.text t2 WHERE t1.c1 = 'identifier' AND t2.n = tape_nearest(t1.c0, 'module,function_definition') AND t1.c0 > 3 AND tape_nearest(t1.c0, 'module,function_definition') IS NOT NULL AND tape_nearest(t1.c0, 'class_definition') IS NOT NULL AND tape_nearest(t1.c0, 'class_definition') <= tape_nearest(t1.c0, 'module,function_definition') AND NOT EXISTS (SELECT 1 FROM f.child t3 WHERE t3.p = tape_nearest(t1.c0, 'class_definition') AND t3.idx = 0)
+
+n1d-t2 n1d1t2 n1d2t2 n1d3t2 n1d4t2 n1d5t2 n1d6t2 n1d7t2
+SELECT DISTINCT t1.c0 AS c0, tape_nearest(t1.c0, 'module,function_definition') AS c1, tape_nearest(t1.c0, 'class_definition') AS c2 FROM full_kind t1 CROSS JOIN f.text t2 WHERE t1.c1 = 'identifier' AND t2.n = tape_nearest(t1.c0, 'module,function_definition') AND t1.c0 > 3 AND tape_nearest(t1.c0, 'module,function_definition') IS NOT NULL AND tape_nearest(t1.c0, 'class_definition') IS NOT NULL AND tape_nearest(t1.c0, 'class_definition') <= tape_nearest(t1.c0, 'module,function_definition') AND NOT EXISTS (SELECT 1 FROM f.child t3 WHERE t3.p = tape_nearest(t1.c0, 'class_definition') AND t3.idx = 0)
+
+n1d-t3 n1d1t3 n1d2t3 n1d4t3 n1d5t3 n1d6t3 n1d7t3
+SELECT DISTINCT t1.c0 AS c0, tape_nearest(t1.c0, 'module,function_definition') AS c1, tape_nearest(t1.c0, 'class_definition') AS c2 FROM full_kind t1 CROSS JOIN full_text t2 WHERE t1.c1 = 'identifier' AND t2.n = tape_nearest(t1.c0, 'module,function_definition') AND t1.c0 > 3 AND tape_nearest(t1.c0, 'module,function_definition') IS NOT NULL AND tape_nearest(t1.c0, 'class_definition') IS NOT NULL AND tape_nearest(t1.c0, 'class_definition') <= tape_nearest(t1.c0, 'module,function_definition') AND NOT EXISTS (SELECT 1 FROM f.child t3 WHERE t3.p = tape_nearest(t1.c0, 'class_definition') AND t3.idx = 0)
+
+n1d0t2
+SELECT DISTINCT t1.c0 AS c0, tape_nearest(t1.c0, 'module,function_definition') AS c1, tape_nearest(t1.c0, 'class_definition') AS c2 FROM dl_kind t1 CROSS JOIN f.text t2 WHERE t1.c1 = 'identifier' AND t2.n = tape_nearest(t1.c0, 'module,function_definition') AND t1.c0 > 3 AND tape_nearest(t1.c0, 'module,function_definition') IS NOT NULL AND tape_nearest(t1.c0, 'class_definition') IS NOT NULL AND tape_nearest(t1.c0, 'class_definition') <= tape_nearest(t1.c0, 'module,function_definition') AND NOT EXISTS (SELECT 1 FROM f.child t3 WHERE t3.p = tape_nearest(t1.c0, 'class_definition') AND t3.idx = 0)
+
+n1d0t3
+SELECT DISTINCT t1.c0 AS c0, tape_nearest(t1.c0, 'module,function_definition') AS c1, tape_nearest(t1.c0, 'class_definition') AS c2 FROM dl_kind t1 CROSS JOIN full_text t2 WHERE t1.c1 = 'identifier' AND t2.n = tape_nearest(t1.c0, 'module,function_definition') AND t1.c0 > 3 AND tape_nearest(t1.c0, 'module,function_definition') IS NOT NULL AND tape_nearest(t1.c0, 'class_definition') IS NOT NULL AND tape_nearest(t1.c0, 'class_definition') <= tape_nearest(t1.c0, 'module,function_definition') AND NOT EXISTS (SELECT 1 FROM f.child t3 WHERE t3.p = tape_nearest(t1.c0, 'class_definition') AND t3.idx = 0)
+
+n1d3t3
+SELECT DISTINCT t1.c0 AS c0, tape_nearest(t1.c0, 'module,function_definition') AS c1, tape_nearest(t1.c0, 'class_definition') AS c2 FROM full_kind t1 CROSS JOIN dl_text t2 WHERE t1.c1 = 'identifier' AND t2.n = tape_nearest(t1.c0, 'module,function_definition') AND t1.c0 > 3 AND tape_nearest(t1.c0, 'module,function_definition') IS NOT NULL AND tape_nearest(t1.c0, 'class_definition') IS NOT NULL AND tape_nearest(t1.c0, 'class_definition') <= tape_nearest(t1.c0, 'module,function_definition') AND NOT EXISTS (SELECT 1 FROM f.child t3 WHERE t3.p = tape_nearest(t1.c0, 'class_definition') AND t3.idx = 0)
+
+## cmp only (empty final FROM)
+n0d-t0 n0d-t1 n0d-t2 n0d-t3 n0d0t0 n0d0t1 n0d0t2 n0d0t3 n1d-t0 n1d-t1 n1d-t2 n1d-t3 n1d0t0 n1d0t1 n1d0t2 n1d0t3
+EXC IndexError: list index out of range
+
+## empty body
+n0d-t0 n0d-t1 n0d-t2 n0d-t3 n1d-t0 n1d-t1 n1d-t2 n1d-t3
+EXC IndexError: list index out of range
+
+## unknown literal skipped
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n0d1t0 n0d1t1 n0d2t0 n0d2t1 n1d-t0 n1d-t1 n1d0t0 n1d0t1 n1d1t0 n1d1t1 n1d2t0 n1d2t1
+SELECT DISTINCT t1.c0 AS c0 FROM f.kind t1 WHERE t1.c1 = 'x'
+
+n0d-t2 n0d-t3 n0d1t2 n0d1t3 n0d2t2 n0d2t3 n1d-t2 n1d-t3 n1d1t2 n1d1t3 n1d2t2 n1d2t3
+SELECT DISTINCT t1.c0 AS c0 FROM full_kind t1 WHERE t1.c1 = 'x'
+
+n0d0t2 n0d0t3 n1d0t2 n1d0t3
+SELECT DISTINCT t1.c0 AS c0 FROM dl_kind t1 WHERE t1.c1 = 'x'
+
+## ops
+n0d-t0 n0d-t1 n0d1t0 n0d1t1 n0d2t0 n0d2t1 n0d3t0 n0d3t1 n0d4t0 n0d4t1 n0d5t0 n0d5t1 n0d6t0 n0d6t1 n1d-t0 n1d-t1 n1d1t0 n1d1t1 n1d2t0 n1d2t1 n1d3t0 n1d3t1 n1d4t0 n1d4t1 n1d5t0 n1d5t1 n1d6t0 n1d6t1
+SELECT DISTINCT t1.n AS c0 FROM intval t1 WHERE t1.v < 2 AND t1.v > 2 AND t1.v <= 2 AND t1.v >= 2 AND t1.v <> 2 AND t1.v = 2
+
+n0d-t2 n0d-t3 n0d1t2 n0d1t3 n0d2t2 n0d2t3 n0d3t2 n0d3t3 n0d4t2 n0d4t3 n0d5t2 n0d5t3 n0d6t2 n0d6t3 n1d-t2 n1d-t3 n1d1t2 n1d1t3 n1d2t2 n1d2t3 n1d3t2 n1d3t3 n1d4t2 n1d4t3 n1d5t2 n1d5t3 n1d6t2 n1d6t3
+SELECT DISTINCT t1.n AS c0 FROM full_intval t1 WHERE t1.v < 2 AND t1.v > 2 AND t1.v <= 2 AND t1.v >= 2 AND t1.v <> 2 AND t1.v = 2
+
+n0d0t0 n0d0t1 n1d0t0 n1d0t1
+SELECT DISTINCT t1.n AS c0 FROM delta_intval t1 WHERE t1.v < 2 AND t1.v > 2 AND t1.v <= 2 AND t1.v >= 2 AND t1.v <> 2 AND t1.v = 2
+
+n0d0t2 n0d0t3 n1d0t2 n1d0t3
+SELECT DISTINCT t1.n AS c0 FROM dl_intval t1 WHERE t1.v < 2 AND t1.v > 2 AND t1.v <= 2 AND t1.v >= 2 AND t1.v <> 2 AND t1.v = 2
+
+## bind then test
+n0d-t0 n0d-t1 n0d1t0 n0d1t1 n0d2t0 n0d2t1 n1d-t0 n1d-t1 n1d1t0 n1d1t1 n1d2t0 n1d2t1
+SELECT DISTINCT t1.n AS c0, (CASE WHEN t1.v = 4611686018427387904 OR 1 = 4611686018427387904 THEN 4611686018427387904 WHEN '+' = '+' THEN t1.v + 1 WHEN '+' = '-' THEN t1.v - 1 WHEN '+' = '*' AND abs(t1.v) < 1099511627776 AND abs(1) < 1099511627776 THEN t1.v * 1 ELSE 4611686018427387904 END) AS c1 FROM intval t1 WHERE (CASE WHEN t1.v = 4611686018427387904 OR 1 = 4611686018427387904 THEN 4611686018427387904 WHEN '+' = '+' THEN t1.v + 1 WHEN '+' = '-' THEN t1.v - 1 WHEN '+' = '*' AND abs(t1.v) < 1099511627776 AND abs(1) < 1099511627776 THEN t1.v * 1 ELSE 4611686018427387904 END) = t1.v
+
+n0d-t2 n0d-t3 n0d1t2 n0d1t3 n0d2t2 n0d2t3 n1d-t2 n1d-t3 n1d1t2 n1d1t3 n1d2t2 n1d2t3
+SELECT DISTINCT t1.n AS c0, (CASE WHEN t1.v = 4611686018427387904 OR 1 = 4611686018427387904 THEN 4611686018427387904 WHEN '+' = '+' THEN t1.v + 1 WHEN '+' = '-' THEN t1.v - 1 WHEN '+' = '*' AND abs(t1.v) < 1099511627776 AND abs(1) < 1099511627776 THEN t1.v * 1 ELSE 4611686018427387904 END) AS c1 FROM full_intval t1 WHERE (CASE WHEN t1.v = 4611686018427387904 OR 1 = 4611686018427387904 THEN 4611686018427387904 WHEN '+' = '+' THEN t1.v + 1 WHEN '+' = '-' THEN t1.v - 1 WHEN '+' = '*' AND abs(t1.v) < 1099511627776 AND abs(1) < 1099511627776 THEN t1.v * 1 ELSE 4611686018427387904 END) = t1.v
+
+n0d0t0 n0d0t1 n1d0t0 n1d0t1
+SELECT DISTINCT t1.n AS c0, (CASE WHEN t1.v = 4611686018427387904 OR 1 = 4611686018427387904 THEN 4611686018427387904 WHEN '+' = '+' THEN t1.v + 1 WHEN '+' = '-' THEN t1.v - 1 WHEN '+' = '*' AND abs(t1.v) < 1099511627776 AND abs(1) < 1099511627776 THEN t1.v * 1 ELSE 4611686018427387904 END) AS c1 FROM delta_intval t1 WHERE (CASE WHEN t1.v = 4611686018427387904 OR 1 = 4611686018427387904 THEN 4611686018427387904 WHEN '+' = '+' THEN t1.v + 1 WHEN '+' = '-' THEN t1.v - 1 WHEN '+' = '*' AND abs(t1.v) < 1099511627776 AND abs(1) < 1099511627776 THEN t1.v * 1 ELSE 4611686018427387904 END) = t1.v
+
+n0d0t2 n0d0t3 n1d0t2 n1d0t3
+SELECT DISTINCT t1.n AS c0, (CASE WHEN t1.v = 4611686018427387904 OR 1 = 4611686018427387904 THEN 4611686018427387904 WHEN '+' = '+' THEN t1.v + 1 WHEN '+' = '-' THEN t1.v - 1 WHEN '+' = '*' AND abs(t1.v) < 1099511627776 AND abs(1) < 1099511627776 THEN t1.v * 1 ELSE 4611686018427387904 END) AS c1 FROM dl_intval t1 WHERE (CASE WHEN t1.v = 4611686018427387904 OR 1 = 4611686018427387904 THEN 4611686018427387904 WHEN '+' = '+' THEN t1.v + 1 WHEN '+' = '-' THEN t1.v - 1 WHEN '+' = '*' AND abs(t1.v) < 1099511627776 AND abs(1) < 1099511627776 THEN t1.v * 1 ELSE 4611686018427387904 END) = t1.v
+
+## cat bind and full split
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n0d1t0 n0d1t1 n0d2t0 n0d2t1 n1d-t0 n1d-t1 n1d0t0 n1d0t1 n1d1t0 n1d1t1 n1d2t0 n1d2t1
+SELECT DISTINCT substr(t1.s, 1, t2.i - 1) AS c0, substr(t1.s, t2.i + 1) AS c1, t1.s AS c2 FROM f.text t1 CROSS JOIN rdl_int t2 WHERE t2.i <= length(t1.s) AND substr(t1.s, t2.i, 1) = '.'
+
+n0d-t2 n0d-t3 n0d1t2 n0d1t3 n0d2t2 n0d2t3 n1d-t2 n1d-t3 n1d1t2 n1d1t3 n1d2t2 n1d2t3
+SELECT DISTINCT substr(t1.s, 1, t2.i - 1) AS c0, substr(t1.s, t2.i + 1) AS c1, t1.s AS c2 FROM full_text t1 CROSS JOIN rdl_int t2 WHERE t2.i <= length(t1.s) AND substr(t1.s, t2.i, 1) = '.'
+
+n0d0t2 n0d0t3 n1d0t2 n1d0t3
+SELECT DISTINCT substr(t1.s, 1, t2.i - 1) AS c0, substr(t1.s, t2.i + 1) AS c1, t1.s AS c2 FROM dl_text t1 CROSS JOIN rdl_int t2 WHERE t2.i <= length(t1.s) AND substr(t1.s, t2.i, 1) = '.'
+
+## cat split, prefix bound
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n0d1t0 n0d1t1 n0d2t0 n0d2t1 n1d-t0 n1d-t1 n1d0t0 n1d0t1 n1d1t0 n1d1t1 n1d2t0 n1d2t1
+SELECT DISTINCT substr(t1.s, length(t2.s) + 2) AS c0 FROM f.text t1 CROSS JOIN f.text t2 WHERE substr(t1.s, 1, length(t2.s) + 1) = t2.s || '.'
+
+n0d-t2 n0d-t3 n0d2t2 n0d2t3 n1d-t2 n1d-t3 n1d2t2 n1d2t3
+SELECT DISTINCT substr(t1.s, length(t2.s) + 2) AS c0 FROM full_text t1 CROSS JOIN full_text t2 WHERE substr(t1.s, 1, length(t2.s) + 1) = t2.s || '.'
+
+n0d0t2 n0d0t3 n1d0t2 n1d0t3
+SELECT DISTINCT substr(t1.s, length(t2.s) + 2) AS c0 FROM dl_text t1 CROSS JOIN full_text t2 WHERE substr(t1.s, 1, length(t2.s) + 1) = t2.s || '.'
+
+n0d1t2 n0d1t3 n1d1t2 n1d1t3
+SELECT DISTINCT substr(t1.s, length(t2.s) + 2) AS c0 FROM full_text t1 CROSS JOIN dl_text t2 WHERE substr(t1.s, 1, length(t2.s) + 1) = t2.s || '.'
+
+## cat split, suffix bound
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n0d1t0 n0d1t1 n0d2t0 n0d2t1 n1d-t0 n1d-t1 n1d0t0 n1d0t1 n1d1t0 n1d1t1 n1d2t0 n1d2t1
+SELECT DISTINCT substr(t1.s, 1, length(t1.s) - length(t2.s) - 1) AS c0 FROM f.text t1 CROSS JOIN f.text t2 WHERE substr(t1.s, -length(t2.s) - 1) = '.' || t2.s AND length(t1.s) > length(t2.s)
+
+n0d-t2 n0d-t3 n0d2t2 n0d2t3 n1d-t2 n1d-t3 n1d2t2 n1d2t3
+SELECT DISTINCT substr(t1.s, 1, length(t1.s) - length(t2.s) - 1) AS c0 FROM full_text t1 CROSS JOIN full_text t2 WHERE substr(t1.s, -length(t2.s) - 1) = '.' || t2.s AND length(t1.s) > length(t2.s)
+
+n0d0t2 n0d0t3 n1d0t2 n1d0t3
+SELECT DISTINCT substr(t1.s, 1, length(t1.s) - length(t2.s) - 1) AS c0 FROM dl_text t1 CROSS JOIN full_text t2 WHERE substr(t1.s, -length(t2.s) - 1) = '.' || t2.s AND length(t1.s) > length(t2.s)
+
+n0d1t2 n0d1t3 n1d1t2 n1d1t3
+SELECT DISTINCT substr(t1.s, 1, length(t1.s) - length(t2.s) - 1) AS c0 FROM full_text t1 CROSS JOIN dl_text t2 WHERE substr(t1.s, -length(t2.s) - 1) = '.' || t2.s AND length(t1.s) > length(t2.s)
+
+## range with const doc
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n1d-t0 n1d-t1 n1d0t0 n1d0t1
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN f.kind t1 CROSS JOIN docof t3 WHERE t2.d = 3 AND t1.c0 BETWEEN t2.lo AND t2.hi AND t1.c1 = 'identifier' AND t3.c0 = t1.c0 AND t3.c1 = 3
+
+n0d-t2 n1d-t2
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN full_kind t1 CROSS JOIN docof t3 WHERE t2.d = 3 AND t1.c0 BETWEEN t2.lo AND t2.hi AND t1.c1 = 'identifier' AND t3.c0 = t1.c0 AND t3.c1 = 3
+
+n0d-t3 n1d-t3
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN full_kind t1 CROSS JOIN full_docof t3 WHERE t2.d = 3 AND t1.c0 BETWEEN t2.lo AND t2.hi AND t1.c1 = 'identifier' AND t3.c0 = t1.c0 AND t3.c1 = 3
+
+n0d0t2 n1d0t2
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN dl_kind t1 CROSS JOIN docof t3 WHERE t2.d = 3 AND t1.c0 BETWEEN t2.lo AND t2.hi AND t1.c1 = 'identifier' AND t3.c0 = t1.c0 AND t3.c1 = 3
+
+n0d0t3 n1d0t3
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN dl_kind t1 CROSS JOIN full_docof t3 WHERE t2.d = 3 AND t1.c0 BETWEEN t2.lo AND t2.hi AND t1.c1 = 'identifier' AND t3.c0 = t1.c0 AND t3.c1 = 3
+
+n0d1t0 n0d1t1 n1d1t0 n1d1t1
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN f.kind t1 CROSS JOIN delta_docof t3 WHERE t2.d = 3 AND t1.c0 BETWEEN t2.lo AND t2.hi AND t1.c1 = 'identifier' AND t3.c0 = t1.c0 AND t3.c1 = 3
+
+n0d1t2 n1d1t2
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN full_kind t1 CROSS JOIN delta_docof t3 WHERE t2.d = 3 AND t1.c0 BETWEEN t2.lo AND t2.hi AND t1.c1 = 'identifier' AND t3.c0 = t1.c0 AND t3.c1 = 3
+
+n0d1t3 n1d1t3
+SELECT DISTINCT t1.c0 AS c0 FROM f.stat_docrange t2 CROSS JOIN full_kind t1 CROSS JOIN dl_docof t3 WHERE t2.d = 3 AND t1.c0 BETWEEN t2.lo AND t2.hi AND t1.c1 = 'identifier' AND t3.c0 = t1.c0 AND t3.c1 = 3
+
+## range with bound doc
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n0d1t0 n0d1t1 n1d-t0 n1d-t1 n1d0t0 n1d0t1 n1d1t0 n1d1t1
+SELECT DISTINCT t2.c0 AS c0 FROM f.doc t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN f.kind t2 CROSS JOIN docof t4 WHERE t3.d = t1.d AND t2.c0 BETWEEN t3.lo AND t3.hi AND t2.c1 = 'identifier' AND t4.c0 = t2.c0 AND t4.c1 = t1.d
+
+n0d-t2 n0d1t2 n1d-t2 n1d1t2
+SELECT DISTINCT t2.c0 AS c0 FROM full_doc t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN f.kind t2 CROSS JOIN docof t4 WHERE t3.d = t1.d AND t2.c0 BETWEEN t3.lo AND t3.hi AND t2.c1 = 'identifier' AND t4.c0 = t2.c0 AND t4.c1 = t1.d
+
+n0d-t3 n1d-t3
+SELECT DISTINCT t2.c0 AS c0 FROM full_doc t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN full_kind t2 CROSS JOIN full_docof t4 WHERE t3.d = t1.d AND t2.c0 BETWEEN t3.lo AND t3.hi AND t2.c1 = 'identifier' AND t4.c0 = t2.c0 AND t4.c1 = t1.d
+
+n0d0t2 n1d0t2
+SELECT DISTINCT t2.c0 AS c0 FROM dl_doc t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN f.kind t2 CROSS JOIN docof t4 WHERE t3.d = t1.d AND t2.c0 BETWEEN t3.lo AND t3.hi AND t2.c1 = 'identifier' AND t4.c0 = t2.c0 AND t4.c1 = t1.d
+
+n0d0t3 n1d0t3
+SELECT DISTINCT t2.c0 AS c0 FROM dl_doc t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN full_kind t2 CROSS JOIN full_docof t4 WHERE t3.d = t1.d AND t2.c0 BETWEEN t3.lo AND t3.hi AND t2.c1 = 'identifier' AND t4.c0 = t2.c0 AND t4.c1 = t1.d
+
+n0d1t3 n1d1t3
+SELECT DISTINCT t2.c0 AS c0 FROM full_doc t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN dl_kind t2 CROSS JOIN full_docof t4 WHERE t3.d = t1.d AND t2.c0 BETWEEN t3.lo AND t3.hi AND t2.c1 = 'identifier' AND t4.c0 = t2.c0 AND t4.c1 = t1.d
+
+n0d2t0 n0d2t1 n1d2t0 n1d2t1
+SELECT DISTINCT t2.c0 AS c0 FROM f.doc t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN f.kind t2 CROSS JOIN delta_docof t4 WHERE t3.d = t1.d AND t2.c0 BETWEEN t3.lo AND t3.hi AND t2.c1 = 'identifier' AND t4.c0 = t2.c0 AND t4.c1 = t1.d
+
+n0d2t2 n1d2t2
+SELECT DISTINCT t2.c0 AS c0 FROM full_doc t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN f.kind t2 CROSS JOIN delta_docof t4 WHERE t3.d = t1.d AND t2.c0 BETWEEN t3.lo AND t3.hi AND t2.c1 = 'identifier' AND t4.c0 = t2.c0 AND t4.c1 = t1.d
+
+n0d2t3 n1d2t3
+SELECT DISTINCT t2.c0 AS c0 FROM full_doc t1 CROSS JOIN f.stat_docrange t3 CROSS JOIN full_kind t2 CROSS JOIN dl_docof t4 WHERE t3.d = t1.d AND t2.c0 BETWEEN t3.lo AND t3.hi AND t2.c1 = 'identifier' AND t4.c0 = t2.c0 AND t4.c1 = t1.d
+
+## range no docof (raises)
+n0d-t0 n0d-t1 n0d-t2 n0d-t3 n0d0t0 n0d0t1 n0d0t2 n0d0t3 n1d-t0 n1d-t1 n1d-t2 n1d-t3 n1d0t0 n1d0t1 n1d0t2 n1d0t3
+EXC StopIteration: 
+
+## unbound head var (raises)
+n0d-t0 n0d-t1 n0d-t2 n0d-t3 n0d0t0 n0d0t1 n0d0t2 n0d0t3 n1d-t0 n1d-t1 n1d-t2 n1d-t3 n1d0t0 n1d0t1 n1d0t2 n1d0t3
+EXC KeyError: 'zz'
+
+## string escaping
+n0d-t0 n0d-t1 n0d0t0 n0d0t1 n1d-t0 n1d-t1 n1d0t0 n1d0t1
+SELECT DISTINCT t1.n AS c0 FROM f.text t1 WHERE t1.s = 'it''s'
+
+n0d-t2 n0d-t3 n1d-t2 n1d-t3
+SELECT DISTINCT t1.n AS c0 FROM full_text t1 WHERE t1.s = 'it''s'
+
+n0d0t2 n0d0t3 n1d0t2 n1d0t3
+SELECT DISTINCT t1.n AS c0 FROM dl_text t1 WHERE t1.s = 'it''s'
+

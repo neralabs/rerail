@@ -14,6 +14,10 @@
 //! Outside a run, each gives a value of its own that nothing keeps.
 
 thread_local! {
+    /// The profile's span this thread's allocations are charged to (`rerail_prof::heap`'s id; 0 none): carried with a
+    /// job's handle (`job_run`, `enter`), so a job another thread runs is charged to the span that made it. Not carried,
+    /// a device lane's host work on its pool was "no span open" (67 MB of leases at the M3's 300-file peak).
+    pub static HEAP_SPAN: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     /// The run under way on this thread (decision 0441): its own state, `rerail_logic::run::Run`, made and carried by
     /// the crate that defines it, held here so that every crate below it reaches it too.
     pub static RUN: std::cell::RefCell<Option<std::sync::Arc<dyn RunOwn>>> = const { std::cell::RefCell::new(None) };
@@ -23,6 +27,10 @@ thread_local! {
 pub trait RunOwn: Send + Sync {
     /// A job's handle (`job_run`): the run, and the context it was taken in. `enter` puts both on the job's thread.
     fn with_context(&self) -> Option<(&std::sync::Arc<dyn RunOwn>, &Context)> {
+        None
+    }
+    /// A job's handle (`job_run`): the heap span it was made under (`HEAP_SPAN`), which `enter` puts on its thread.
+    fn heap_span(&self) -> Option<u32> {
         None
     }
     /// Its settings and its own values (`setting`, `local`).
@@ -40,6 +48,19 @@ pub fn run_own() -> Option<std::sync::Arc<dyn RunOwn>> {
 }
 
 pub type AnyArc = std::sync::Arc<dyn std::any::Any + Send + Sync>;
+
+/// The value of type `T` in `values`, made the first time it is asked for. It is made with the lock let go: a value's
+/// default may ask for another of the same values (a map's room, `rerail_blocks::maps::default_room`), and the lock is
+/// not reentrant. Two threads that both find none may both make one: the first put in is kept, and the other dropped.
+fn made<T: Default + Send + Sync + 'static>(values: &parking_lot::Mutex<std::collections::HashMap<std::any::TypeId, AnyArc>>) -> AnyArc {
+    let key = std::any::TypeId::of::<T>();
+    if let Some(v) = values.lock().get(&key) {
+        return std::sync::Arc::clone(v);
+    }
+    let fresh: AnyArc = std::sync::Arc::new(T::default());
+    std::sync::Arc::clone(values.lock().entry(key).or_insert(fresh))
+}
+
 
 /// The place a setting is read (its file, line and column) and the type it is read as.
 type SettingPlace = (&'static str, u32, u32, std::any::TypeId);
@@ -79,8 +100,7 @@ impl Machine {
     }
     /// Its value of type `T`, made the first time it is asked for.
     pub fn get<T: Default + Send + Sync + 'static>(&self) -> std::sync::Arc<T> {
-        let v = std::sync::Arc::clone(self.values.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
-        v.downcast::<T>().expect("a machine value's type is its key")
+        made::<T>(&self.values).downcast::<T>().expect("a machine value's type is its key")
     }
 }
 
@@ -99,8 +119,7 @@ impl Shared {
     }
     /// Its value of type `T`, made the first time it is asked for.
     pub fn get<T: Default + Send + Sync + 'static>(&self) -> std::sync::Arc<T> {
-        let v = std::sync::Arc::clone(self.values.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
-        v.downcast::<T>().expect("a shared value's type is its key")
+        made::<T>(&self.values).downcast::<T>().expect("a shared value's type is its key")
     }
     /// Its value of type `T`, if it was made.
     pub fn get_if_any<T: Send + Sync + 'static>(&self) -> Option<std::sync::Arc<T>> {
@@ -109,10 +128,10 @@ impl Shared {
 }
 
 /// The shared object of a run handed none: in a product build, one of its own (as apart from every other run as one in
-/// another process); in a test build (`test-hooks`), the tests' one (`TESTS`), as the process's statics were.
+/// another process); in a test build (`test-hooks`), the test's (`tests_object`).
 pub fn default_shared() -> std::sync::Arc<Shared> {
     #[cfg(feature = "test-hooks")]
-    return std::sync::Arc::clone(&TESTS);
+    return tests_object();
     #[cfg(not(feature = "test-hooks"))]
     Shared::new()
 }
@@ -126,7 +145,7 @@ pub fn default_shared() -> std::sync::Arc<Shared> {
 fn outside_a_run(what: &'static str) -> std::sync::Arc<Shared> {
     #[cfg(feature = "test-hooks")]
     if on_a_tests_thread() {
-        return std::sync::Arc::clone(&TESTS);
+        return tests_object();
     }
     missed(what);
     Shared::new()
@@ -192,6 +211,27 @@ pub fn misses() -> Vec<&'static str> {
 /// The tests' shared object (`default_shared`): test builds only.
 #[cfg(feature = "test-hooks")]
 static TESTS: std::sync::LazyLock<std::sync::Arc<Shared>> = std::sync::LazyLock::new(Shared::new);
+
+#[cfg(feature = "test-hooks")]
+thread_local! {
+    /// The object of the test whose thread this is (`tests_object`).
+    static TEST_OWN: std::cell::OnceCell<std::sync::Arc<Shared>> = const { std::cell::OnceCell::new() };
+}
+
+/// The shared object of a test build's caller with no entry point: on a test's own thread (libtest runs each on a
+/// thread named for it), the test's, on the tests' machine (`Shared::on`): its caches, learned models and kept plans its
+/// own, as a test in a process of its own has them: what a test counts or plans of its runs depends on no other test's
+/// (in one process beside 185 others, three tests that pass alone counted or planned otherwise). Elsewhere (the main thread, a thread a test starts), the tests' one (`TESTS`): a test that hands its object to
+/// threads it starts does so (`within`).
+#[cfg(feature = "test-hooks")]
+fn tests_object() -> std::sync::Arc<Shared> {
+    let named = std::thread::current().name().is_some_and(|n| n != "main");
+    // As the thread ends (a thread-local's drop reads it), its own is gone: the tests' one.
+    if named && on_a_tests_thread() && let Ok(own) = TEST_OWN.try_with(|o| std::sync::Arc::clone(o.get_or_init(|| Shared::on(TESTS.machine())))) {
+        return own;
+    }
+    std::sync::Arc::clone(&TESTS)
+}
 
 /// The value of type `T` that the run under way shares by design (`Shared`), made the first time it is asked for.
 /// Outside a run: `outside_a_run`'s.
@@ -275,22 +315,16 @@ pub fn threads() -> usize {
     })
 }
 
-/// Whether this is the process's main thread (the one `Machine::here` may hold: it lives as long as the process).
+/// The machine's main thread: the one `Machine::here` took into its pool as thread 0, which lives as long as the
+/// process. Recorded when it is taken in, not asked of the system: Windows has no call that says which thread is a
+/// process's main one (main's #929, where it was always false there). The machine's (decision 0442), not a global.
+#[derive(Default)]
+pub struct MainThread(std::sync::OnceLock<std::thread::ThreadId>);
+
+/// Whether this is the main thread of the run's machine (`MainThread`, `Machine::here`'s); false outside a run, and
+/// on a machine no main thread made.
 pub fn is_main_thread() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: no arguments.
-        unsafe { libc::pthread_main_np() == 1 }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: no arguments. The system call, not glibc's `gettid` (2.30): the Linux engine links against 2.17.
-        unsafe { libc::syscall(libc::SYS_gettid) == libc::c_long::from(libc::getpid()) }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        false
-    }
+    run_own().is_some_and(|run| run.shared().machine().get::<MainThread>().0.get() == Some(&std::thread::current().id()))
 }
 
 /// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory.
@@ -366,6 +400,7 @@ impl Machine {
     /// with it.
     pub fn here() -> std::sync::Arc<Machine> {
         let machine = Machine::new();
+        let _ = machine.get::<MainThread>().0.set(std::thread::current().id());
         let _ = machine.get::<Cores>().0.set(make_pool(true));
         machine
     }
@@ -438,7 +473,7 @@ pub fn shared_object() -> Option<std::sync::Arc<Shared>> {
 pub fn starter_object() -> Option<std::sync::Arc<Shared>> {
     #[cfg(feature = "test-hooks")]
     if run_own().is_none() && on_a_tests_thread() {
-        return Some(std::sync::Arc::clone(&TESTS));
+        return Some(tests_object());
     }
     shared_object()
 }
@@ -452,9 +487,12 @@ pub fn shared_here() -> std::sync::Arc<Shared> {
 /// Puts `run` on this thread (a job of it, on another thread) until the guard drops, then what the thread had. A job's
 /// handle (`job_run`) puts its context on the thread too; a run alone leaves the thread's context as it is.
 pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
-    struct Back(Option<Option<std::sync::Arc<dyn RunOwn>>>, Option<Context>);
+    struct Back(Option<Option<std::sync::Arc<dyn RunOwn>>>, Option<Context>, Option<u32>);
     impl Drop for Back {
         fn drop(&mut self) {
+            if let Some(span) = self.2 {
+                set_heap_span(span);
+            }
             let was = self.0.take().flatten();
             // The context first, as it was entered last; each dropped outside its cell (a value's drop may read it).
             let context = self.1.take().and_then(|c| CONTEXT.try_with(|x| x.replace(c)).ok());
@@ -465,6 +503,7 @@ pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
             left_run();
         }
     }
+    let was_span = run.as_ref().and_then(|job| job.heap_span()).map(|span| HEAP_SPAN.try_with(|s| s.replace(span)).unwrap_or(0));
     let (run, context) = match run {
         Some(job) => match job.with_context() {
             Some((run, context)) => (Some(std::sync::Arc::clone(run)), Some(context.clone())),
@@ -474,7 +513,19 @@ pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
     };
     let was_run = RUN.try_with(|r| r.replace(run)).ok().flatten();
     let was_context = context.and_then(|c| CONTEXT.try_with(|x| x.replace(c)).ok());
-    Back(Some(was_run), was_context)
+    Back(Some(was_run), was_context, was_span)
+}
+
+/// The heap span this thread's allocations are charged to now (`HEAP_SPAN`; 0 none).
+#[inline]
+pub fn heap_span() -> u32 {
+    HEAP_SPAN.try_with(std::cell::Cell::get).unwrap_or(0)
+}
+
+/// Charges this thread's allocations to heap span `id` from now (`HEAP_SPAN`).
+#[inline]
+pub fn set_heap_span(id: u32) {
+    let _ = HEAP_SPAN.try_with(|s| s.set(id));
 }
 
 /// Runs `f` in `run` (a job's handle, `job_run`) on this thread, and ends it there: `f` and everything it captured
@@ -538,11 +589,11 @@ pub fn within(shared: std::sync::Arc<Shared>) -> impl Drop {
 pub fn job_run() -> Option<std::sync::Arc<dyn RunOwn>> {
     let run = run_own().unwrap_or_else(|| std::sync::Arc::new(Bare(RunValues::default(), shared_here())));
     let context = context_here();
-    Some(std::sync::Arc::new(InContext(run, context)))
+    Some(std::sync::Arc::new(InContext(run, context, heap_span())))
 }
 
-/// A job's handle (`job_run`): the run, and the context the job was made in.
-struct InContext(std::sync::Arc<dyn RunOwn>, Context);
+/// A job's handle (`job_run`): the run, the context the job was made in, and the heap span open there.
+struct InContext(std::sync::Arc<dyn RunOwn>, Context, u32);
 
 /// Dropped on a thread that holds no run (a pool thread whose job carried it, its guard gone): the context drops
 /// with the run's shared object on the thread (`within`), as its values' drops may read it (a store's writers). The
@@ -559,6 +610,9 @@ impl Drop for InContext {
 impl RunOwn for InContext {
     fn with_context(&self) -> Option<(&std::sync::Arc<dyn RunOwn>, &Context)> {
         Some((&self.0, &self.1))
+    }
+    fn heap_span(&self) -> Option<u32> {
+        Some(self.2)
     }
     fn values(&self) -> &RunValues {
         self.0.values()
@@ -624,6 +678,43 @@ impl Context {
         }
         at
     }
+}
+
+/// The engine's switches (`RERAIL_*`) a caller set for its own runs (a test's, `switches::set`), latest last: read
+/// before the process's environment (`var`), so a test's mode reaches its runs and their jobs, and no other test's.
+/// The process's variables are the whole process's: a test that set them held every other test's runs off meanwhile.
+#[derive(Clone, Default)]
+pub struct Switches(pub std::sync::Arc<Vec<(String, String)>>);
+
+/// Switch `name` as `std::env::var` reads it, the context's (`Switches`) before the process's.
+pub fn var(name: &str) -> Result<String, std::env::VarError> {
+    match with_bound(|s: &Switches| s.0.iter().rev().find(|(k, _)| k == name).map(|(_, v)| v.clone())) {
+        Some(v) => Ok(v),
+        None => std::env::var(name),
+    }
+}
+
+/// Switch `name` as `std::env::var_os` reads it, the context's (`Switches`) before the process's.
+pub fn var_os(name: &str) -> Option<std::ffi::OsString> {
+    match with_bound(|s: &Switches| s.0.iter().rev().find(|(k, _)| k == name).map(|(_, v)| v.clone())) {
+        Some(v) => Some(v.into()),
+        None => std::env::var_os(name),
+    }
+}
+
+/// Every `RERAIL_*` switch set, by name: the process's variables, each the context sets (`Switches`) in its place. What
+/// a key of every switch hashes (a run's, `reuse`).
+pub fn vars() -> Vec<(String, String)> {
+    let mut out: std::collections::BTreeMap<String, String> = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
+        .filter(|(k, _)| k.starts_with("RERAIL_"))
+        .collect();
+    with_bound(|s: &Switches| {
+        for (k, v) in s.0.iter() {
+            out.insert(k.clone(), v.clone());
+        }
+    });
+    out.into_iter().collect()
 }
 
 /// The value of type `T` the run's context binds here (the nearest `bind`), else `T`'s default.
@@ -824,7 +915,7 @@ fn local_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
         missed(std::any::type_name::<T>());
         return std::sync::Arc::new(T::default());
     };
-    let v = std::sync::Arc::clone(run.values().locals.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
+    let v = made::<T>(&run.values().locals);
     let _ = SEEN.try_with(|seen| seen.borrow_mut().of(&run).locals.insert(std::any::TypeId::of::<T>(), v.clone()));
     v.downcast::<T>().expect("a local's type is its key")
 }
@@ -919,6 +1010,27 @@ pub fn test_run() -> impl Drop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The machine's main thread is recorded (`MainThread`), so `is_main_thread` is true there on every platform and
+    /// a run's wait on it sleeps on its bell (`rerail_accel::exec`'s `in_a_job` false), while another thread of the
+    /// machine's, in a run on it, is not its main thread (and helps the pool when it waits on its pool).
+    #[test]
+    fn the_machines_main_thread_sleeps_on_its_bell() {
+        let machine = Machine::here();
+        let shared = Shared::on(&machine);
+        let run = |shared: std::sync::Arc<Shared>| enter(Some(std::sync::Arc::new(Bare(RunValues::default(), shared))));
+        assert!(!is_main_thread(), "outside a run");
+        let _run = run(shared.clone());
+        assert!(is_main_thread(), "the thread `Machine::here` took in");
+        let other = std::thread::spawn(move || {
+            let _run = run(shared);
+            is_main_thread()
+        });
+        assert!(!other.join().unwrap(), "another thread, in a run on the machine");
+        let elsewhere = Shared::on(&Machine::new());
+        let _other_machine = run(elsewhere);
+        assert!(!is_main_thread(), "on a machine no main thread made");
+    }
 
     /// A run's last handle dropped on a thread that holds no run (a pool thread whose job carried it): what the run
     /// and its context hold drops with the run's shared object on the thread, so a value whose drop reads it (a

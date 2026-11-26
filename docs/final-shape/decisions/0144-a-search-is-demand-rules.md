@@ -1,7 +1,7 @@
 # 0144: A search is demand rules
 
-Status: draft (2026-11-10), for review. It replaces 0083 §4's "a search is a program kind" with ordinary rules,
-as 0103 did for caches.
+Status: built (audited 2026-11-23). Draft (2026-11-10), for review. It replaces 0083 §4's "a search is a program kind"
+with ordinary rules, as 0103 did for caches.
 
 Numbered 0107 where it was written; renumbered 0144 in the hub (2026-11-13) because another record had 0107.
 
@@ -69,7 +69,7 @@ Nothing new. Two things it already does matter:
 ## 5. Measured: `found` is not a search in P3
 
 P3's `found` was written as §1's demand rules and measured against its eager form on 54 of the corpus's files
-(`_internal`, `l1100_exceptions`, `l2055_lazy_result`), each run with a fresh store and no kept part, 2026-11-10:
+(three of its packages), each run with a fresh store and no kept part, 2026-11-10:
 
 | | eager `found` | demand (`mro_ask`) |
 |---|---|---|

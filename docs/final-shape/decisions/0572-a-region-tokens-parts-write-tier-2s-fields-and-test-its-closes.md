@@ -3,7 +3,7 @@
 Status: decided (the user, 2026-11-21: "Next: the same shift rule inside a region's body, which covers the
 raw-string and character escapes and most of tier 2's fields. Then the tails' closer tests, read from the token's
 own region. After that, the walk stays only for the test-build asserts, under test-hooks.", the instruction "do
-this"). The second part of 0551's step D. Follows 0566 (a shift outside the regions).
+this"). The second part of 0556's step D. Follows 0566 (a shift outside the regions).
 
 ## Intro
 

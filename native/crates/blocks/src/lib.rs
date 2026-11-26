@@ -23,9 +23,17 @@ pub mod alloc;
 pub mod atoms;
 pub mod block;
 pub mod bloom;
+#[cfg(target_vendor = "apple")]
+mod census;
+#[cfg(not(target_vendor = "apple"))]
+mod census {
+    pub(crate) fn counted(_: &'static str, _: usize) -> Option<std::sync::Arc<dyn std::any::Any + Send + Sync>> {
+        None
+    }
+}
 pub mod chunk;
 pub mod col;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod deferrable;
 pub mod facts;
 pub mod free;
@@ -36,12 +44,16 @@ pub const RELATION_READS: &str = "#include <ukl/reads/relation.h>\n";
 pub mod journal;
 pub mod kept;
 pub mod ledger;
+pub mod maps;
+pub mod mapped;
+pub use rerail_vector::vector;
 pub mod mem;
 pub mod packed;
 pub mod ranged;
 pub mod program;
 pub mod refs;
 pub mod region;
+pub mod order;
 pub mod relation;
 pub mod rows;
 pub mod scratch;
@@ -61,11 +73,8 @@ pub mod gpu;
 pub use block::{Block, Cells, Frozen, Header};
 pub use refs::{Ptr, Span};
 
-/// A type whose bytes are its value: no pointers, no padding the compiler chose (`structure!` checks).
-///
-/// # Safety
-/// Implementors are `#[repr(C)]` with every byte a named field, and hold no address.
-pub unsafe trait Pod: 'static {}
+/// A type whose bytes are its value (`rerail_vector::Pod`, below the tape format: decision 0628 §3).
+pub use rerail_vector::Pod;
 
 /// How a type is declared in UKL, and the declarations it needs first: C's fixed-width types, a structure a
 /// `typedef`, its assertions `UKL_STATIC_ASSERT`s, for a kernel on every backend (decision 0440).
@@ -79,7 +88,6 @@ pub trait KernelField {
 
 macro_rules! scalar {
     ($($t:ty => $c:literal),*) => {$(
-        unsafe impl Pod for $t {}
         impl KernelField for $t { fn ty() -> String { $c.into() } }
     )*};
 }
@@ -89,7 +97,6 @@ scalar!(u8 => "uint8_t", u16 => "uint16_t", u32 => "uint32_t", u64 => "uint64_t"
 // plain load. UKL declares it as the plain type; a kernel that claims passes it to `ukl_atomic_add`.
 scalar!(std::sync::atomic::AtomicU32 => "uint32_t", std::sync::atomic::AtomicU64 => "uint64_t", std::sync::atomic::AtomicI64 => "int64_t");
 
-unsafe impl<T: Pod, const N: usize> Pod for [T; N] {}
 impl<T: KernelField, const N: usize> KernelField for [T; N] {
     fn ty() -> String {
         T::ty()
@@ -175,3 +182,9 @@ pub fn footprint() -> u64 {
     }
     0
 }
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

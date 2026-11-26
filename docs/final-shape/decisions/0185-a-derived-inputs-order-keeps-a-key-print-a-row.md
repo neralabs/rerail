@@ -1,6 +1,6 @@
 # 0185: A derived input's order keeps a key print a row, so a probe reads prints, not rows
 
-(Numbered 0176 on its branch, jeremybarnes/final-rerail-shape-phased-facts; renumbered at the roll-up.)
+(Numbered 0176 on its branch, final-rerail-shape-phased-facts; renumbered at the roll-up.)
 
 Status: built (2026-11-13), `setfix/runs.rs` (`Run::prints`, `print_span`, `Index::printed`) and `setfix.rs` (the
 derived input's index). It narrows how decision 0112's derived-input order is probed (cd6df3ee4).

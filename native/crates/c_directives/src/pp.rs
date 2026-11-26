@@ -1,8 +1,8 @@
 //! The preprocessor tape (decision 0436) by its Bitlex grammar, `bitlex_pp/pp.bitlex` (C++'s; C's
 //! leaves out its lines marked `C++ only`), compiled once a process to tier 1 and tier 2 on
 //! Cranelift, the interpreter and Metal. Its reference is the lean writer,
-//! `rerail_c_pp::tape::image`: a file the grammar reads gives the same bytes, and one it refuses
-//! goes to the lean writer.
+//! `rerail_c_pp::tape::image`: a file the grammar reads gives the same tape, numbered in the same
+//! table (`rerail_c_pp::tape::lang`), and one it refuses goes to the lean writer.
 
 use crate::{Compiled, Seed, compile_kinds};
 use rerail_c_lean::pp::Options;
@@ -37,11 +37,11 @@ static CPP: std::sync::OnceLock<Result<Compiled, String>> = std::sync::OnceLock:
 /// The process's compiled grammar for C or C++, compiled the first time.
 pub fn compiled(cpp: bool) -> Result<&'static Compiled, &'static str> {
     let cell = if cpp { &CPP } else { &C };
-    cell.get_or_init(|| compile_kinds(&grammar(cpp), KINDS, FIELDS, seed(cpp))).as_ref().map_err(String::as_str)
+    cell.get_or_init(|| compile_kinds(&grammar(cpp), KINDS, FIELDS, seed(cpp), Some(rerail_c_pp::tape::lang()))).as_ref().map_err(String::as_str)
 }
 
 /// `src`'s tape: the grammar's, or the lean writer's where the grammar refuses the file.
-pub fn image(src: &[u8], cpp: bool) -> Vec<u8> {
+pub fn image(src: &[u8], cpp: bool) -> crate::Tape16 {
     compiled(cpp).ok().and_then(|c| c.image(src)).unwrap_or_else(|| rerail_c_pp::tape::image(src, options(cpp)))
 }
 

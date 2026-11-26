@@ -1,11 +1,11 @@
 # 0589: A mark of rows is the picked row's constant
 
-Status: decided (the user, 2026-11-21: "now please again compare the rust code"). Follows 0588 (the first
+Status: decided (the user, 2026-11-21: "now please again compare the rust code"). Follows 0614 (the first
 byte's group picks the row).
 
 ## Intro
 
-**The problem.** After the dispatch picked a token's row (0588), the loop still tested two token marks from
+**The problem.** After the dispatch picked a token's row (0614), the loop still tested two token marks from
 mask bits at the token's first byte:
 
 ```

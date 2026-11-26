@@ -1,6 +1,6 @@
 # 0024: a wave's execution shape: one node space, sets as bitmaps, every walk on the device
 
-Status: accepted (2026-11-01); built through step 6 (Progress)
+Status: built (audited 2026-11-23). Accepted (2026-11-01); built through step 6 (Progress)
 
 ## Context
 
@@ -207,7 +207,7 @@ a CPU-time table.
 
 ## Prior work
 
-The citations are to Pulling-it-all-together's `prior-work/` indexes (DI design index, HI history
+The citations are to PIAT's `prior-work/` indexes (DI design index, HI history
 index, LL lessons ledger) and the final-shape `notes/` tN files.
 
 **Agrees:**
@@ -221,7 +221,7 @@ index, LL lessons ledger) and the final-shape `notes/` tN files.
   over 5.4 M nodes, against 11–190 ms on one CPU thread (`t2:516-579`).
 - **Device-side enqueue for fixpoints:** 1.2–1.6 µs a wave against 386–890 µs for a CPU round trip
   (`t2:633-690`).
-- **Count, scan and scatter for outputs, not atomics per result:** Tempo measured 47 s against
+- **Count, scan and scatter for outputs, not atomics per result:** the predecessor measured 47 s against
   3 s (`t6:421-425`).
 - **Integer relations materialized, never blobs or file records** (HI L761, DI §10).
 - **Batched cached inserts into `WITHOUT ROWID` tables for write-back** (`t5:265`, `t5:183`).
@@ -241,7 +241,7 @@ index, LL lessons ledger) and the final-shape `notes/` tN files.
 - **File-level prefilters saturate** (D34, T57: ~1.02×). Whole-file ranges here are a
   representation of plans that already select whole files. They are not a new file-level filter;
   position-level anchoring stays the selective step.
-- **The spike ran no GPU experiments.** The GPU evidence is from Tempo and the Metal research
+- **The spike ran no GPU experiments.** The GPU evidence is from the predecessor and the Metal research
   notes (`t2`, `t6`), not from the spike.
 
 ## Open questions for measurement

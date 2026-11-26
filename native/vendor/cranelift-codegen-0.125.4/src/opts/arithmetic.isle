@@ -212,7 +212,11 @@
 
 (rule (simplify (iadd ty a (iadd ty b (iadd ty c d))))
       (subsume (iadd ty (iadd ty a b) (iadd ty c d))))
+;; Not where `c` is a constant (rerail's patch): `((a + b) + k) + d` is a sum
+;; of `a + b + k`, made outside a loop, and `d`, made in it; `(a + b) + (k + d)`
+;; would make the constant's sum in the loop.
 (rule (simplify (iadd ty (iadd ty (iadd ty a b) c) d))
+      (if-let false (value_is_iconst c))
       (subsume (iadd ty (iadd ty a b) (iadd ty c d))))
 
 (rule (simplify (imul ty a (imul ty b (imul ty c d))))

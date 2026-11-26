@@ -51,6 +51,8 @@ declare module "*/ui/sessions-model.js" {
   export function droppedEvents(s: { sessionId: string }): number;
   export function uncheckedBoundaries(s: { sessionId: string }): number;
   export function codeRulesPendingBoundaries(s: { sessionId: string }): number;
+  export function discoveryGapPlaces(s: { sessionId: string }): Array<{ path?: string; reason: string; boundary: string; observedAt: number }>;
+  export function discoveryGapsMore(s: { sessionId: string }): boolean;
   export function sessionCorrections(sessionId: string): Correction[];
   export function mcpToolLabel(toolName: unknown): string;
   export function callToolLabel(call: { verb: string; level: string; label: string; toolName: string }): string | null;
@@ -110,20 +112,23 @@ declare module "*/ui/poll.js" {
     configSource: Record<string, object>;
     /** Why the configured options don't apply; the rule then runs nowhere. */
     configError: string | null;
+    /** Why Rerail keeps the rule but never evaluates it; the rule then runs nowhere. */
+    inactive: { code: string; reason: string } | null;
   }
   export function toStoredRules(entries: readonly object[]): Map<string, StoredRule>;
 }
 
 declare module "*/ui/derive.js" {
   export function violationOutcome(finding: { mode?: string; logged: boolean }): "logged" | "steered";
-  export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
-  export function packSuppressions(rules: readonly object[], packId: string, owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
+  export function isRunning(stored: { enabled: boolean; configError?: string | null; inactive?: { reason: string } | null }): boolean;
+  export function notRunningReason(stored: { enabled: boolean; configError?: string | null; inactive?: { reason: string } | null }): string | null;
+  export function packSuppressions(rules: readonly object[]): string;
   export function inPack(rule: object, packId: string): boolean;
   /** Whether a stored rule came in a rule pack (`origin` "pack"), rather than from the library ("user"). */
   export function isFromPack(stored: { origin: string }): boolean;
   /** Whether a rule (or a pack) waits for a person's approval, and runs in Log until then. */
   export function awaitingApproval(item: { approval?: { approved: boolean } | null }): boolean;
-  /** Whether a rule waits for approval (it runs in Log) and is one created by you, from the library, not a pack's or a worktree's, nor an edited copy of a rule Rerail ships. */
+  /** Whether a rule waits for approval (it runs in Log) and is one created by you, from the library, not a pack's or a worktree's, nor an edited copy of another rule. */
   export function awaitingYourApproval(stored: { origin: string; approval?: { approved: boolean; subject: { kind: string } } | null; copiedFromRuleId?: string | null }): boolean;
   export function publisherLabel(pack: { publisher: string }): string;
   /** The skipped entries that are files of the worktree at `checkoutPath`'s `.rerail/rules`, by file name, with why. */
@@ -134,6 +139,13 @@ declare module "*/ui/derive.js" {
 
 declare module "*/ui/render/pack-panel.js" {
   export function packKind(pack: { category: string; publisher: string }): string;
+}
+
+declare module "*/ui/render/timeline.js" {
+  /** What Rerail did not see of the session, in a sentence's clauses: empty when it saw all of it. */
+  export function coverageGaps(s: { sessionId: string }): string;
+  /** The heading over the `shown` places a session's shell-write check could not check, from the session's count and whether it met more. */
+  export function placesHeading(s: { sessionId: string }, shown: number): string;
 }
 
 declare module "*/ui/state.js" {
@@ -198,18 +210,19 @@ declare module "*/ui/attachments.js" {
 declare module "*/ui/format.js" {
   /** A failure toast: what did not happen, then the error as a sentence. */
   export function failed(what: string, error: unknown): string;
+  /** Who a violation is credited to: its session, which its button opens, or the repository (`session` null). */
+  export function violationOwner(violation: { sessionId: string | null; host: string | null }): { session: string | null; label: string; title: string };
 }
 
 declare module "*/ui/settings-writes.js" {
   /** One settings write: the folder, the targets and the values it sets (`on: null` clears). */
-  export interface SettingPut { folder: string; targets: Array<{ kind: "rule" | "pack"; id: string }>; setting: { on?: boolean | null; suppressions?: "honour" | "ignore" } }
+  export interface SettingPut { folder: string; targets: Array<{ kind: "rule" | "pack"; id: string }>; setting: { on?: boolean | null } }
   /** The writes the whole-pack switch sends for pack `packId`: per folder, the pack's on, then its rules' own on cleared. */
   export function packSwitchWrites(packId: string, enabled: boolean): SettingPut[];
   /** The page's rule setting writes; `toast`, `invalidate` and `owner` (given the one pack a change is to) are the page's. */
   export function settingWrites(page: { toast: (message: string) => void; invalidate: () => void; owner: (packId?: string) => "repository" | "checkout" }): {
     setEnabled(ids: readonly string[], enabled: boolean, label: string, failed?: string): Promise<void>;
     setPackEnabled(packId: string, enabled: boolean, label: string, failed?: string): Promise<void>;
-    setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string, failed?: string): Promise<void>;
   };
 }
 
@@ -242,6 +255,10 @@ declare module "*/ui/pack-model.js" {
   export function catalogPacks<P extends Pack>(packs: readonly P[], kind: string): P[];
   export const SHEET_FILTER_AT: number;
   export function sheetRules(pack: Pack, query: string): Pack["rules"];
+  type Recommendation = { packId: string; reason?: string };
+  export function suggestedReason(recommendations: readonly Recommendation[] | null, packId: string): string | null;
+  export function suggestedSplit<P extends Pack>(packs: readonly P[], recommendations: readonly Recommendation[] | null): { suggested: P[]; others: P[] } | null;
+  export function startGroups<R extends { on?: boolean }>(rows: readonly R[]): { on: R[]; off: R[] };
 }
 
 declare module "*/ui/routes.js" {
@@ -249,6 +266,7 @@ declare module "*/ui/routes.js" {
   export interface Route {
     view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "logged" | "steered" | "declined";
     sessionFilter?: "all" | "corr" | "declined"; rule?: string; session?: string; jump?: boolean; conflict?: string;
+    section?: "about";
   }
   export function parseRoute(hash: string): Route;
   export function hashOf(route: Partial<Route>): string;
@@ -296,13 +314,16 @@ declare module "*/ui/settings-model.js" {
     tone: "on" | "warn" | "off" | "";
     command: { text: string; label: string } | null;
     problem?: string;
-    data?: { text: string; warn: boolean };
+    data?: { text: string; warn: boolean; fix: string | null };
   }
   export function agentStatus(agent: {
     id: string; name: string; found: boolean; connected: boolean; problem: string | null;
-    rerailData: { access: "kept-out" | "file-tools" | "open"; why: string };
+    rerailData: { access: "kept-out" | "file-tools" | "open"; why: string; fix: string | null };
   }): AgentStatus;
   export function installedLabel(ms: number | null | undefined): string | null;
+  export function releaseUrl(version: string): string;
+  export function isNewerVersion(a: string, b: string): boolean;
+  export function newerRelease(health: { version?: unknown; update?: { latest?: unknown; checkedAt?: unknown } | null } | null | undefined): string | null;
 }
 
 declare module "*/ui/render/rule-sheet-model.js" {
@@ -377,7 +398,8 @@ declare module "*/ui/merge-model.js" {
 }
 
 declare module "*/ui/render/enforcement.js" {
-  type Stored = { rule: { mode: string }; approval?: { approved: boolean } | null };
+  type Stored = { rule: { mode: string }; enabled?: boolean; configError?: string | null; inactive?: { reason: string } | null; approval?: { approved: boolean } | null };
   export const MODE_READ_ONLY: string;
-  export function enforcementOf(stored: Stored): { kind: "log" | "steer"; glyph: string; label: string; tip: string };
+  export function enforcementOf(stored: Stored): { kind: "log" | "steer" | "none"; glyph: string | null; label: string; tip: string };
+  export function modeEnforcementOf(stored: Stored): { kind: "log" | "steer"; glyph: string; label: string; tip: string };
 }

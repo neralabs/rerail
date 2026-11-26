@@ -1,7 +1,7 @@
 # 0146: The per-file memo is frames
 
-Status: accepted (2026-11-10). It builds t32 stage 5.1 and 5.2, and 0104's move 3 for the per-file memo, on
-this branch rather than More-ergonomic-rule-syntax, so that the work does not wait.
+Status: superseded by 0240 (audited 2026-11-23). Accepted (2026-11-10). It builds t32 stage 5.1 and 5.2, and 0104's
+move 3 for the per-file memo, on this branch rather than More-ergonomic-rule-syntax, so that the work does not wait.
 
 Numbered 0108 where it was written; renumbered 0146 in the hub (2026-11-13) because another record had 0108.
 
@@ -89,7 +89,7 @@ The memo's plan digest moves to `rerail.corpus-local/v3`: the plans made before 
 
 ## Prior work consulted
 
-- **ast-index-spike design index, §1 (L37):** "A row costs about 94 B. A set member inside a per-file blob
+- **SQL index prototype design index, §1 (L37):** "A row costs about 94 B. A set member inside a per-file blob
   costs about 5 B."
   - **Agrees.** One frame per document (§1).
 - **History index, finding 6:** "The recurring illness: a per-file cost turned into a per-row cost."
