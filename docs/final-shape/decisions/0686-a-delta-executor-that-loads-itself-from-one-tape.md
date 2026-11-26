@@ -1165,3 +1165,37 @@ Checks (Relax, local, 71 of 71):
   another block, and is read through `reads` from the two blocks.
 
 The shape script holds `l1.rs` to one `k0_pass` call, and `k0.rs` to one launch over `docs: &[K0Doc]`.
+
+**`run` takes and returns `Pins`** (B§8: `run(l0, globals, world, last: Option<&Pins>) -> Pins`).
+
+- `boot::run(l1, inst, l0, globals, docs, bench, last)` returns `(Pins, Doc, Work)`. Its `Pins` say where the run
+  left each trace it read or wrote: the document set's head, L1's outputs' heads, and the atoms' count.
+- A trace has two states, the committed one and the run's open layer on it. This is "B2's trace: two states" above:
+  no reads at other frontiers, no named pins. So `Pins` is a record that holds no block. P§12's `Trace::pin` (a
+  named frontier) is not built.
+- `last = None` is a cold run. Every bistate starts from ∅ (L2): the document set's, the atoms', and L1's outputs,
+  which are emptied first (`Trace::clear`).
+- `last = Some(p)` must be where the last run left the traces. Pins of any other state are refused, as a cache of
+  another state reads as ∅ (L5).
+- The document set (`boot::DocSet`) is B§7's first answerer and the trace it keeps (P§11.4: path → tape id,
+  partitioned by document). A changed document's old row is retracted where the set keeps it (`drop_parts`), so the
+  host no longer keeps a second map of the rows. Its trace is not rolled up, so a run's before is a layer in its
+  chain.
+- As agreed in B4, l0 is named by its path, which the file layer reads.
+
+The first build of this step pinned frontiers with a block that referred to the head, and let a run start from older
+pins. That is the named-pin API the user ruled out for B2, and the shape script's frontier check caught it; it was
+rebuilt as above before it was committed. The names `Boot` and `World`, which M0 retired with the first build, are
+not used: the document set is `DocSet`, and L1 and its instance are passed as they are.
+
+Checks (Relax, local, 72 of 72): `a_run_takes_and_returns_pins` covers four runs.
+
+- A cold run's pins are its traces' heads.
+- A run from them after an edit is the delta: the kept rows are retracted and the edit is read.
+- The old pins are then refused. A run from the new pins with nothing changed is the identity, and returns the same
+  pins.
+- A run with no pins is cold: it reads the document whole and gives the same rows.
+
+The harness over l0's edits now takes its states from the document set's heads, read by read. The shape script
+holds `boot.rs` to `run` taking and returning `Pins`, refusing other states' pins, and keeping no map of the set's
+rows.

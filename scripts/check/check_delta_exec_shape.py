@@ -466,6 +466,12 @@ def b6(failures: list) -> None:
         failures.append("k0.rs: k0_pass does not take every document of the run (one launch)")
     if len(re.findall(r"\brun_cpu\(", strip_rust(k0))) != 1:
         failures.append("k0.rs: k0_pass launched at more than one place")
+    boot = (CRATE / "src/boot.rs").read_text()
+    if not re.search(r"pub fn run\([^)]*last: Option<&Pins>\) -> Result<\(Pins,", boot):
+        failures.append("boot.rs: run does not take and return Pins (B§8)")
+    if not re.search(r"pins of another state", boot):
+        failures.append("boot.rs: a run from pins of another state is not refused (a trace has two states)")
+    hits(CRATE / "src/boot.rs", strip_rust(boot), r"\bHashMap\b|\bBTreeMap\b", "the document set's rows held beside its trace (read them in place)", failures)
     if not re.search(r'DROP_PARTS: &\[TwinPhase\]', (TWINS / "src/drop.rs").read_text()):
         failures.append("delta_twins/src/drop.rs: drop_parts has no twin")
     for path in sorted((CRATE / "src").rglob("*.rs")):

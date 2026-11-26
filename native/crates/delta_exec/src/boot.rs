@@ -1,89 +1,105 @@
-//! The boot's run, its first two lines (decision 0686, B6; B§8's `run`): the tape as a world read, then L1 over the
-//! tape since the last run.
+//! The boot's run, its first two lines (decision 0686, B6; B§8's `run`):
 //!
 //! ```text
-//! let tape = world.read(path);                 // the file layer's answer, interned when changed
-//! let mut program = k0_pass(tape.since(last), last);   // L1: the file is its grain
+//! pub fn run(l0: BlobId, globals: Facts, world: &dyn World, last: Option<&Pins>) -> Pins {
+//!     let tape = world.tape(l0, Grammar::Rr);                  // the rr parser, as a world read
+//!     let mut program = k0_pass(tape.since(last), last);        // L1: the file is its grain
 //! ```
 //!
-//! `Tape` is L1's tape and facts-in ports as a world read: each read answers the document through the file layer
-//! (B4), interns a changed tape (B5), and moves the ports to their next state, a changed document's old rows gone and
-//! its new rows added, an unchanged one's the identity (no layer). `run` steps L1's instance over the ports between
-//! the last two states. The rest of B§8's run (the loop, loads, the program's δ) comes after the target.
+//! `DocSet` is B§7's first answerer (path → bytes → parse → document) and the document set it keeps (P§11.4: path →
+//! tape id, partitioned by document): each read answers the document through the file layer (B4), interns a changed
+//! tape (B5) into the run's globals, and moves the document set to its next state, the document's old row retracted
+//! where the set keeps it (`drop_parts`) and its new row added; an unchanged document is the identity (no layer).
+//!
+//! `run` reads l0, then steps L1 over the document set since `last`. A trace has two states, the committed one and
+//! the run's open layer on it (0686, "B2's trace: two states"), so `Pins` are where the last run left each trace,
+//! and hold nothing back: a cold run (`last = None`) has every bistate from ∅ (L2), its outputs emptied first; a
+//! later run is given the last run's pins (L3), and pins of any other state are refused. The instance's cache is
+//! read as ∅ unless it names the run's before (L5). The rest of B§8's run (the loop, loads, the program's δ) comes
+//! after the target.
+//!
+//! As agreed in B4, l0 is named by its path, which the file layer reads, not by a blob id the caller already holds.
 
-use crate::contract::{Bench, Global, GlobalIn, InPort, Instance, Work, push_layer};
-use crate::dir::{BlockId, Directory};
-use crate::files::{Blobs, Doc, Files};
+use crate::contract::{Bench, Global, GlobalIn, Instance, Work};
+use crate::dir::BlockId;
+use crate::drop::{DropOps, drop_parts};
+use crate::files::{Doc, Files};
 use crate::intern::{InternOps, Interned};
 use crate::l1::{L1, tape_row, tape_shape};
+use crate::op::Tiling;
 use crate::sym::Atoms;
-use crate::op::Registry;
-use crate::trace::{RollUp, Trace, TraceOps};
-use std::collections::HashMap;
+use crate::trace::{RollUp, Trace};
 
-/// L1's tape port and its facts in (the atoms), as the world reads them.
-pub struct Tape {
+/// The document set as the file layer and Intern answer it: L1's tape port.
+pub struct DocSet {
     pub files: Files,
     pub interned: Interned,
     pub iops: InternOps,
-    pub atoms: Atoms,
-    /// The tape port's trace, every state kept.
-    pub ins: Vec<Trace>,
-    /// Each read's heads, the first every port's ∅.
-    pub heads: Vec<Vec<Option<BlockId>>>,
-    /// Each read's globals: the atoms at their count then.
-    pub globals: Vec<Vec<Global>>,
-    /// Each document's row in the tape port now, by path.
-    last: HashMap<String, Vec<i64>>,
+    pub drops: DropOps,
+    /// A row a document (`l1::tape_shape`), its layers kept (no roll-up): a run's before is a layer in its chain.
+    pub tape: Trace,
 }
 
-impl Tape {
-    pub fn new(files: Files, iops: InternOps, atoms: Atoms) -> Result<Tape, String> {
-        let ins = vec![Trace::new(&tape_shape())?.with_roll_up(RollUp::Never)];
-        let globals = vec![vec![Global { block: atoms.0, count: 0 }]];
-        Ok(Tape { files, interned: Interned::default(), iops, atoms, ins, heads: vec![vec![None]], globals, last: HashMap::new() })
+impl DocSet {
+    pub fn new(files: Files, iops: InternOps, drops: DropOps) -> Result<DocSet, String> {
+        Ok(DocSet { files, interned: Interned::default(), iops, drops, tape: Trace::new(&tape_shape())?.with_roll_up(RollUp::Never) })
     }
 
-    /// Reads document `path` (B§8's first line): its answer, and the ports' next state.
-    pub fn read(&mut self, reg: &Registry, traces: &TraceOps, dir: &mut Directory, blobs: &mut Blobs, path: &str) -> Result<Doc, String> {
-        let doc = self.files.answer(path, blobs, dir)?;
-        let mut now = self.heads.last().cloned().expect("a state");
-        if !doc.is_identity() {
-            let syms = self.interned.of(reg, &self.iops, dir, blobs, self.atoms, &doc)?;
-            let d = self.atoms.find(dir, &doc.module).ok_or("the module, interned")?;
-            let row = tape_row(d, &doc.after, &syms);
-            let mut pairs = vec![(row.clone(), 1)];
-            if let Some(o) = self.last.get(path) {
-                pairs.push((o.clone(), -1));
-            }
-            now[0] = Some(push_layer(reg, traces, dir, &mut self.ins[0], &pairs)?);
-            self.last.insert(path.to_string(), row);
+    /// Reads document `path` (B§8's first line): its answer; when it changed, its tape interned into `atoms`, and the
+    /// document set's next state, its old row retracted where the set keeps it and its new row added.
+    pub fn read(&mut self, bench: &mut Bench, atoms: Atoms, path: &str) -> Result<Doc, String> {
+        let doc = self.files.answer(path, &mut bench.blobs, &mut bench.dir)?;
+        if doc.is_identity() {
+            return Ok(doc);
         }
-        self.heads.push(now);
-        self.globals.push(vec![Global { block: self.atoms.0, count: u64::from(self.atoms.count(dir)) }]);
+        let syms = self.interned.of(&bench.reg, &self.iops, &mut bench.dir, &mut bench.blobs, atoms, &doc)?;
+        let d = atoms.find(&bench.dir, &doc.module).ok_or("the module, interned")?;
+        let runs = self.tape.open(&mut bench.dir, 4);
+        let written = (|| {
+            {
+                let b = bench.dir.block(runs).expect("just made");
+                let pin = rerail_blocks::region::pin_block(&b, "the document set", true)?;
+                rerail_blocks::layer::RunsW::new(&pin).push(&tape_row(d, &doc.after, &syms), 1).ok_or("the document set's runs, full")?;
+            }
+            if let Some(h) = self.tape.head() {
+                drop_parts(&bench.reg, &self.drops, &mut bench.dir, h, &[d], -1, runs)?;
+            }
+            Ok::<(), String>(())
+        })();
+        if let Err(e) = written {
+            bench.dir.release(runs);
+            return Err(e);
+        }
+        self.tape.commit(&bench.reg, &bench.traces, &mut bench.dir, runs, Tiling::WHOLE)?;
         Ok(doc)
     }
-
-    /// The ports between state `k - 1` and state `k` (`since(last)`: the last read's, `k` the newest).
-    pub fn since(&self, k: usize) -> Vec<InPort<'_>> {
-        self.ins.iter().enumerate().map(|(p, t)| (t, self.heads[k - 1][p], self.heads[k][p])).collect()
-    }
-
-    /// The globals between state `k - 1` and state `k`.
-    pub fn globals_since(&self, k: usize) -> Vec<GlobalIn> {
-        self.globals[k].iter().zip(&self.globals[k - 1]).map(|(a, b)| GlobalIn { block: a.block, before: Some(b.count), after: a.count }).collect()
-    }
-
-    /// The newest state's place.
-    pub fn now(&self) -> usize {
-        self.heads.len() - 1
-    }
 }
 
-/// B§8's run, its first two lines: `path` read, then L1 stepped over the tape since the last read.
-pub fn run(tape: &mut Tape, l1: &L1, inst: &mut Instance, bench: &mut Bench, path: &str) -> Result<(Doc, Work), String> {
-    let doc = tape.read(&bench.reg, &bench.traces, &mut bench.dir, &mut bench.blobs, path)?;
-    let k = tape.now();
-    let work = inst.step(l1, &mut bench.cx(), &tape.since(k), &tape.globals_since(k))?;
-    Ok((doc, work))
+/// Where a run left each trace it read or wrote (B§8's `Pins`): the document set's head, L1's outputs' heads, and
+/// its globals' counts. A record: it holds no block (a trace has two states, and a run reads from the committed one).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pins {
+    pub tape: Option<BlockId>,
+    pub outs: Vec<Option<BlockId>>,
+    pub atoms: Global,
+}
+
+/// B§8's run, its first two lines: `l0` read by the file layer, its changed names interned into `globals`, then L1
+/// over the document set since `last` (`None`: cold, every bistate from ∅, L1's outputs emptied first). Refused when
+/// `last` is not where the last run left the traces. The run's pins, l0's answer and L1's work.
+#[allow(clippy::too_many_arguments)]
+pub fn run(l1: &L1, inst: &mut Instance, l0: &str, globals: Atoms, docs: &mut DocSet, bench: &mut Bench, last: Option<&Pins>) -> Result<(Pins, Doc, Work), String> {
+    match last {
+        Some(p) if p.tape != docs.tape.head() || p.outs != inst.heads() || p.atoms.block != globals.0 => {
+            return Err(format!("pins of another state: {p:?} (a run starts where the last run left its traces)"));
+        }
+        Some(_) => {}
+        None => inst.outs.iter_mut().for_each(|t| t.clear(&mut bench.dir)),
+    }
+    let doc = docs.read(bench, globals, l0)?;
+    let count = u64::from(globals.count(&bench.dir));
+    let ins = [(&docs.tape, last.and_then(|p| p.tape), docs.tape.head())];
+    let atoms = [GlobalIn { block: globals.0, before: last.map(|p| p.atoms.count), after: count }];
+    let work = inst.step(l1, &mut bench.cx(), &ins, &atoms)?;
+    Ok((Pins { tape: docs.tape.head(), outs: inst.heads(), atoms: Global { block: globals.0, count } }, doc, work))
 }

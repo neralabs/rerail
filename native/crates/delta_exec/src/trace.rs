@@ -297,6 +297,14 @@ impl Trace {
         Ok(out)
     }
 
+    /// The trace emptied: its head let go (a cold run's outputs start from ∅, B§8). A trace has two states, the
+    /// committed one and the run's open layer on it: this drops the committed one.
+    pub fn clear(&mut self, dir: &mut Directory) {
+        if let Some(h) = self.head.take() {
+            dir.release(h);
+        }
+    }
+
     /// The digest of the state at `head`: the sum of its layers' digests (each its added rows' digests less its
     /// kills'), so a set has one digest whatever its layers. `None`, the empty state: 0.
     pub fn digest(&self, dir: &Directory, head: Option<BlockId>) -> Result<u64, String> {
