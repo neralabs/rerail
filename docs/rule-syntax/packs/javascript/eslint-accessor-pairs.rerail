@@ -6,8 +6,8 @@
 
 #include "tsx/eslint-a-functions.rerail"
 //   accessor (getters and setters by list and key), accessor_name, accessor_at, method_call, call_arg
-#include "tsx/names.rerail"
-//   ref_site: whether `Object` names a local variable
+#include "tsx/eslint-b-scope.rerail"
+//   builtin_ref: `Object` is the global, not a local variable nor turned off by `/* globals Object:off */`
 
 // ESLint's accessor-pairs: a setter with no getter of the same name beside it (and, with getWithoutSet, a
 // getter with no setter). Object literals, class bodies (static and instance members apart) and property
@@ -51,9 +51,9 @@ descriptor(o) :- kind(o, "object"), call_arg(c, a, 2), deparen(a, o), global_cal
 descriptor(o) :- kind(o, "object"), field(p, "value", v), deparen(v, o), kind(p, "pair"), child(g, p, _),
     call_arg(c, a, 1), deparen(a, g), global_call(c),
     (method_call(c, "Object", "create") ; method_call(c, "Object", "defineProperties")).
-.decl global_call(c: node)  // the callee's object is a name no declaration in the file binds
+.decl global_call(c: node)  // the callee's object is the global (ESLint 10's sourceCode.isGlobalReference)
 global_call(c) :- kind(c, "call_expression"), field(c, "function", m), deparen(m, e), field(e, "object", b),
-    !ref_site(b, _).
+    builtin_ref(b, _).
 // lacks(o, w): descriptor o has `set` without `get` (w = "set"), or the reverse. Names count only as plain
 // identifiers: `set: f`, `set`, `set() {}`; not "set": f or [set]: f, nor an accessor `get set() {}`.
 .decl lacks(o: node, w: symbol)
