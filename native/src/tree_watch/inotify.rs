@@ -255,8 +255,20 @@ impl Shared {
         self.watches.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The buffer. A report that panicked while it was held lost the events its read had read: the
+    /// next to take the buffer ends every watch first, so a take that waited for that read holds
+    /// every root's end even when it comes before the thread's own `fail`.
     fn reading(&self) -> MutexGuard<'_, Vec<u8>> {
-        self.reading.lock().unwrap_or_else(PoisonError::into_inner)
+        self.reading.lock().unwrap_or_else(|poisoned| {
+            self.fail();
+            poisoned.into_inner()
+        })
+    }
+
+    /// The reading failed: every watch ends, and none is taken any more.
+    fn fail(&self) {
+        self.failed.store(true, Ordering::Release);
+        self.notices.ended_all();
     }
 
     /// Reports one event of `descriptor` (`name`: the entry of its folder, absent for the folder's
@@ -624,8 +636,7 @@ fn contained(shared: &Shared, read: impl FnOnce()) {
         Ok(())
     });
     if read.is_err() {
-        shared.failed.store(true, Ordering::Release);
-        shared.notices.ended_all();
+        shared.fail();
     }
 }
 
@@ -1194,6 +1205,26 @@ mod tests {
         let notice = taken.iter().find(|notice| notice.root == root);
         assert!(
             notice.is_some_and(|notice| names(notice, "first")),
+            "{taken:?}"
+        );
+        watcher.close().expect("close");
+    }
+
+    #[test]
+    fn a_take_after_a_report_of_the_thread_panicked_holds_every_root_ended() {
+        let scratch = Scratch::new("thread-panic");
+        let (mut watcher, shared, root) = watched_paused(&scratch);
+        std::fs::create_dir(scratch.path("first")).expect("make a folder");
+        // The thread's report panics; the take comes before the thread marks the failure.
+        let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            read_once(&shared, usize::MAX, &mut |_, _, _| panic!("a report fails"))
+        }));
+        assert!(read.is_err());
+        let taken = watcher.take().expect("take");
+        assert!(
+            taken
+                .iter()
+                .any(|notice| notice.root == root && notice.ended),
             "{taken:?}"
         );
         watcher.close().expect("close");
