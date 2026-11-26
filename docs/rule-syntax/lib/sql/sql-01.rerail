@@ -1,0 +1,17 @@
+// sql/sql-01: source order for SQL, while core's `earlier` has no rows for it.
+//   src_before(m, n)      m starts before n in the same document (by start offset)
+//
+// core.rerail says earlier(m, n) is start-offset order outside Python, but the engine lowers it to visit_index and
+// fills visit_index for Python documents only, so on a .sql file every `earlier` is false (a probe: no
+// visit_index row and no earlier pair between any two identifiers of sqlfluff's AL08 fixtures). src_before is that
+// documented order, read off node's offsets. An ancestor and its first descendant start at the same offset, so
+// neither is src_before the other. When the engine gives SQL documents visit_index rows, this file goes and its
+// rules say `earlier` again.
+//
+// Builds on core only.
+.decl src_before(m: node, n: node)
+src_before(m, n) :- node(d, m, _, a, _), node(d, n, _, b, _), a < b.
+
+// Examples, one per rule that uses this library (packs/sql):
+//   AL04  SELECT 1 FROM t1 AS a JOIN t2 AS a USING (pk)       the second a: src_before(first relation, second)
+//   AL08  SELECT a AS foo, b AS foo FROM t                    the second foo: src_before(first item, second)
