@@ -4,12 +4,13 @@
  * as CI saw it on a loaded runner; on Linux the loader's exit 127), one ended at its time limit, and one that failed
  * for another reason (exit 1). Each such ask fails with the ending named, the folder is not taken for one outside Git,
  * and the next ask, whose Git answers, places it. Git's own answer that a folder is outside a repository still reads
- * as one, in a person's language too.
+ * as one, in a person's language too. The read of a clone's legacy id from Git's config takes the same rule: a clone
+ * whose config holds one gets no new id when that Git gives no answer.
  *
  * The stand-in is a real process, this Node running a script, started in place of the one Git that is asked where the
- * folder is ({@link STAND_IN}); every other Git is the machine's.
+ * folder is, or for the config's legacy id ({@link STAND_IN}); every other Git is the machine's, and each one a case
+ * starts for its set-up goes through `runProgram`, whose failure says how it ended.
  */
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,16 +19,17 @@ import { placeWithoutBlocking, repositoryIdentityLocation, repositoryIdentityLoc
 import { recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
 import { openRerailDatabase } from "../../../../src/engine/storage/database.js";
 import { removeFolderSync } from "../../../support/platform/remove-folder.js";
+import { runProgram } from "../../../support/processes/run-program.js";
 
-/** The ending the next ask of Git's location takes, and the script that plays it. */
-const next = vi.hoisted(() => ({ ending: undefined as string | undefined, script: "" }));
+/** The ending the next ask takes, the argument that names that ask, and the script that plays it. */
+const next = vi.hoisted(() => ({ ending: undefined as string | undefined, ask: "--show-toplevel", script: "" }));
 
 vi.mock("../../../../src/engine/child-process.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../../src/engine/child-process.js")>();
-  /** The program and arguments to start: the stand-in, once, for the ask of where a folder's repository is. */
+  /** The program and arguments to start: the stand-in, once, for the next ask `next.ask` names. */
   const started = (file: string, args: readonly string[]): [string, string[]] => {
     const ending = next.ending;
-    if (ending === undefined || !args.includes("--show-toplevel")) return [file, [...args]];
+    if (ending === undefined || !args.includes(next.ask)) return [file, [...args]];
     next.ending = undefined;
     return [process.execPath, [next.script, ending]];
   };
@@ -71,6 +73,7 @@ let made = 0;
 
 afterEach(() => {
   next.ending = undefined;
+  next.ask = "--show-toplevel";
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
@@ -78,13 +81,17 @@ afterAll(() => {
   removeFolderSync(root);
 });
 
+function git(cwd: string, ...args: string[]): void {
+  runProgram("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", ...args], { cwd });
+}
+
 /** A new checkout with one commit, which no read in this process has placed yet. */
 function checkout(): string {
   made += 1;
   const top = join(root, `checkout-${made}`);
-  execFileSync("git", ["init", "-q", top]);
+  git(root, "init", "-q", top);
   writeFileSync(join(top, "a.txt"), "a\n");
-  execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-q", "--allow-empty", "-m", "seed"], { cwd: top });
+  git(top, "commit", "-q", "--allow-empty", "-m", "seed");
   return top;
 }
 
@@ -146,6 +153,58 @@ describe("a read of where a folder's repository is, whose Git gives no answer", 
     await expect(asked).resolves.toMatchObject({ git: false });
     expect(write).not.toHaveBeenCalled();
   }, 30_000);
+});
+
+describe("a read of a clone's legacy id from Git's config, whose Git gives no answer", () => {
+  /** The endings of a Git that gave no answer, and Git's own death (128), which is no answer for a config value either. */
+  const ENDINGS: Readonly<Record<string, RegExp>> = {
+    "never-ran": SAID["never-ran"]!,
+    "past-limit": SAID["past-limit"]!,
+    "git-refuses": /: exit status 128 \(0x00000080\), signal none, stderr: fatal: bad config line 1 in file \.git\/config$/u,
+  };
+
+  for (const [ending, said] of Object.entries(ENDINGS)) {
+    it(`records nothing for a clone whose config holds its id when that Git ends so (${ending}), and the next record takes that id`, () => {
+      const top = checkout();
+      git(top, "config", "rerail.repository-id", "legacy-id");
+      const database = openRerailDatabase(join(root, `legacy-${made}.sqlite`));
+      try {
+        next.ask = "rerail.repository-id";
+        next.ending = ending;
+        expect(() => recordCheckout(database, top)).toThrow(said);
+        expect(next.ending).toBeUndefined();
+        expect(existsSync(join(top, ".git", "rerail-repository-id"))).toBe(false);
+        expect(recordCheckout(database, top).cloneId).toBe("legacy-id");
+      } finally {
+        database.$client.close();
+      }
+    }, 30_000);
+  }
+
+  it("names the ask in its line, and records no checkout or repository", () => {
+    const top = checkout();
+    git(top, "config", "rerail.repository-id", "legacy-id");
+    const database = openRerailDatabase(join(root, `legacy-${made}.sqlite`));
+    try {
+      next.ask = "rerail.repository-id";
+      next.ending = "never-ran";
+      expect(() => recordCheckout(database, top)).toThrow(`Git could not say which clone id the config of the repository of ${top} holds: `);
+      expect(database.$client.prepare("select count(*) as n from checkouts").get()).toEqual({ n: 0 });
+      expect(database.$client.prepare("select count(*) as n from repositories").get()).toEqual({ n: 0 });
+    } finally {
+      database.$client.close();
+    }
+  });
+
+  it("gives a clone whose config holds no id a new one, as Git's exit 1 says the key is not set", () => {
+    const top = checkout();
+    const database = openRerailDatabase(join(root, `legacy-${made}.sqlite`));
+    try {
+      expect(recordCheckout(database, top).cloneId).toMatch(/^git:[0-9a-f-]{36}$/u);
+    } finally {
+      database.$client.close();
+    }
+  });
 });
 
 describe("Git's own answer that a folder is outside any repository", () => {

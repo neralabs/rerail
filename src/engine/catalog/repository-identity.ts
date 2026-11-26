@@ -40,9 +40,9 @@ import {
   type RemoteAddress,
   type RemoteSource,
 } from "./checkouts/kept-remote.js";
-import { LOCATE_ARGS, locateAnswer } from "./checkouts/git-locate.js";
+import { LEGACY_ID_ARGS, LOCATE_ARGS, legacyIdAnswer, locateAnswer } from "./checkouts/git-locate.js";
 import { openNoFollowSync } from "../no-follow.js";
-import { GitUnavailableError, gitText, runGit, runGitAsync, sharedRead, type GitReadOptions, type GitReads, type GitResult, type SharedRead } from "../git.js";
+import { GitUnavailableError, runGit, runGitAsync, sharedRead, type GitReadOptions, type GitReads, type GitResult, type SharedRead } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
 /** Where a checkout keeps its clone id, and which checkout it is. */
@@ -836,12 +836,13 @@ function readOrCreateIdentity(identityPath: string, candidate: () => string): st
 /**
  * The clone id of a checkout in Git: the identity file's, else a legacy `rerail.repository-id` config value when it is
  * well formed, else a new one. Git's config is read only while no identity file is there, since the file wins once it
- * is: so a repository's worktrees, which share one, start no Git process to be recorded.
+ * is: so a repository's worktrees, which share one, start no Git process to be recorded. A Git that gives no answer
+ * for the config value throws `GitCouldNotAnswerError` ({@link legacyIdAnswer}) and no id is written.
  */
 function gitCloneId(location: RepositoryIdentityLocation): string {
   const existing = readIdentityFile(location.identityPath);
   if (existing !== undefined) return existing;
-  const legacyId = gitText(location.workspaceRoot, ["config", "--local", "--get", "rerail.repository-id"]) ?? "";
+  const legacyId = legacyIdAnswer(location.workspaceRoot, runGit(location.workspaceRoot, LEGACY_ID_ARGS));
   return readOrCreateIdentity(location.identityPath, () => CLONE_ID.test(legacyId) ? legacyId : `git:${randomUUID()}`);
 }
 
