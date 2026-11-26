@@ -3172,8 +3172,17 @@ impl<'a> G<'a> {
             let mut firsts: Option<Vec<String>> = Some(Vec::new());
             for (d, (_, def)) in defs.iter().enumerate() {
                 let mut c = Vec::new();
-                // The words the token must be (`run_alone`).
-                match (def.tokens.filter(|_| Self::run_alone(def)).and_then(|(_, seq)| self.first_words(seq)), firsts.as_mut()) {
+                // The words the token must be: its run's first words, and each `before`'s that may hold it (an `unless
+                // before` only narrows it), as the lean parser asks `as_split` only at an `as`.
+                let words = def.tokens.and_then(|(_, seq)| self.first_words(seq)).and_then(|mut ws| {
+                    for (unless, seq) in def.next {
+                        if !unless {
+                            ws.extend(self.first_words(seq)?);
+                        }
+                    }
+                    Some(ws)
+                });
+                match (words, firsts.as_mut()) {
                     (Some(ws), Some(all)) => all.extend(ws),
                     _ => firsts = None,
                 }

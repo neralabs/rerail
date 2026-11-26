@@ -4956,7 +4956,7 @@ impl<L: Layout> P<'_, L> {
     /// Mark `as_split` holds at the token, not taken there; once a token (`held`).
     #[inline]
     fn m_as_split(&mut self) -> bool {
-        self.taken >> 16 & 1 == 0 && self.held(16, Self::h_as_split)
+        matches!(self.word(), w::AS_1) && self.taken >> 16 & 1 == 0 && self.held(16, Self::h_as_split)
     }
 
     #[inline]
@@ -4982,7 +4982,7 @@ impl<L: Layout> P<'_, L> {
     /// Mark `is_split` holds at the token, not taken there; once a token (`held`).
     #[inline]
     fn m_is_split(&mut self) -> bool {
-        self.taken >> 17 & 1 == 0 && self.held(17, Self::h_is_split)
+        matches!(self.word(), w::BANG_68 | w::IS_2) && self.taken >> 17 & 1 == 0 && self.held(17, Self::h_is_split)
     }
 
     #[inline]
@@ -5060,7 +5060,7 @@ impl<L: Layout> P<'_, L> {
     /// Mark `enum_k` holds at the token, not taken there; once a token (`held`).
     #[inline]
     fn m_enum_k(&mut self) -> bool {
-        self.taken >> 37 & 1 == 0 && self.held(37, Self::h_enum_k)
+        matches!(self.word(), w::COMMA_27 | w::LBRACE_69 | w::SEMI_32) && self.taken >> 37 & 1 == 0 && self.held(37, Self::h_enum_k)
     }
 
     #[inline]
@@ -5216,7 +5216,7 @@ impl<L: Layout> P<'_, L> {
     /// Mark `acc` holds at the token, not taken there; once a token (`held`).
     #[inline]
     fn m_acc(&mut self) -> bool {
-        self.taken >> 58 & 1 == 0 && self.held(58, Self::h_acc)
+        matches!(self.word(), w::GET_107 | w::SET_108) && self.taken >> 58 & 1 == 0 && self.held(58, Self::h_acc)
     }
 
     #[inline]
